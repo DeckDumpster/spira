@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Armed by wiki-hooks-install.sh, which sets the wiki checkout's core.hooksPath here.
+# Tracked in the harness rather than copied into the wiki's .git/hooks, for the same reason
+# spira/hooks/pre-commit is tracked: a colleague's wiki checkout gets the fence armed, not
+# quietly missing it.
+set -uo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+exec bash "$HERE/../wiki-lint-links.sh" "$(git rev-parse --show-toplevel)"

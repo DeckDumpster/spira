@@ -77,6 +77,19 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         return OK;
     }
 
+    // This exact head already went red (marker left by _verdict_settle_publish_red);
+    // republishing it unchanged is a retry with no changed input (law-a-retry-must-change-an-input).
+    let red_file = c.queue_file("publish-red");
+    if let Ok(Some(kv)) = records::read_kv(&red_file) {
+        if kv.get("head") == Some(head_sha.as_str()) {
+            let fid = kv.get("fix_forward").unwrap_or("<unknown>");
+            w.out(format!("queue.sh publish: waiting on fix-forward {fid} for {name} — {base} has not moved past the red head"));
+            landing_log(&c.s.run, &format!("QUEUE PUBLISH_WAIT {} repo={name} fix_forward={fid} head={head_sha}", w.clock.now()));
+            return OK;
+        }
+        let _ = std::fs::remove_file(&red_file);
+    }
+
     let members = match range_members(w, &path, &c.s.landstate, &forge_sha, &head_sha) {
         Ok(m) => m,
         Err(e) => {

@@ -119,6 +119,11 @@ pub trait World {
     /// `gate_at`: the tree holds `rev` (proved) → Ok; Err(what went wrong) otherwise.
     fn checkout(&self, repo: &Path, tree: &Path, rev: &str, want: &str) -> Result<(), String>;
     fn remove_worktree(&self, repo: &Path, tree: &Path);
+    /// Install a trial's freshly built tools (sp-g9f3t): copy each `<tree>/target/aeon/<pkg>`
+    /// into `<dir>.tmp`, write `<dir>/TREE` = `tree_id`, rename it to `dir`, and remove every
+    /// other entry of `dir`'s parent. Err(why) when any step fails; nothing half-installed
+    /// is left at `dir`.
+    fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String>;
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).

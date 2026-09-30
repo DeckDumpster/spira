@@ -144,8 +144,8 @@ pub enum BeadEventKind {
     /// machine checks only the depth ceiling it can see from the event alone — whether the
     /// proposed stack itself is still fresh against each prerequisite's live row is a
     /// multi-row check the caller makes before ever proposing a claim (see
-    /// `stale_stack_entries`). `stack_max_depth` is the caller's own config read, carried
-    /// as evidence exactly like `lease_until`.
+    /// `claim_refusal_for_stale_stack`). `stack_max_depth` is the caller's own config read,
+    /// carried as evidence exactly like `lease_until`.
     Claim { holder: String, lease_until: i64, #[serde(default)] stack: Stack, #[serde(default)] stack_depth: u32, #[serde(default)] stack_max_depth: u32 },
     Release,
     HolderDead,
@@ -626,18 +626,34 @@ pub fn stale_stack_entries(stack: &Stack, prereqs: &[BeadRow]) -> Vec<StaleStack
         .collect()
 }
 
-/// Whether `submit` should be refused for a WORKING row because a `base_withdrawn` has
-/// disowned a tip its `stack` still names (design §1: "its eventual submit is refused while
-/// the stack names a withdrawn tip"). Reuses `stale_stack_entries` against the same live
-/// prerequisite rows the caller reads before proposing `submit` — the machine's own `apply`
-/// cannot make this check itself, since it sees only the one row being transitioned.
-pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Option<Refusal> {
-    let stale = stale_stack_entries(&row.stack, prereqs);
+/// Whether a `stack` — a row's already-recorded one, or a `claim`'s proposed one — should be
+/// refused because an entry no longer names its prerequisite's current certified tip (design
+/// §1: "the tip invariant, extended"). The machine's own `apply` cannot make this check
+/// itself, since it sees only the one row being transitioned; the caller makes it against the
+/// same live prerequisite rows it already read to build `stack` in the first place, right
+/// before proposing `submit` or `claim`.
+pub fn stale_stack_refusal(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal> {
+    let stale = stale_stack_entries(stack, prereqs);
     if stale.is_empty() {
         None
     } else {
         Some(Refusal::StackStale { prereqs: stale.into_iter().map(|e| e.prereq).collect() })
     }
+}
+
+/// `submit`'s stale-stack check (design §1: "its eventual submit is refused while the stack
+/// names a withdrawn tip") — [`stale_stack_refusal`] against the row's own recorded `stack`.
+pub fn submit_refusal_for_stale_stack(row: &BeadRow, prereqs: &[BeadRow]) -> Option<Refusal> {
+    stale_stack_refusal(&row.stack, prereqs)
+}
+
+/// `claim`'s stale-stack check — [`stale_stack_refusal`] against the stack a claim proposes,
+/// before that stack is ever recorded on the row. Without this, a claim whose proposal was
+/// computed against a prerequisite's tip that has since moved (e.g. a resubmit after
+/// CERTIFIED) would be accepted by the `Claim` arm, which validates only `stack_depth`
+/// against `stack_max_depth` and has no way to see the prerequisite's row.
+pub fn claim_refusal_for_stale_stack(stack: &Stack, prereqs: &[BeadRow]) -> Option<Refusal> {
+    stale_stack_refusal(stack, prereqs)
 }
 
 /// The hold-release rule (design §1) for a blocker that is a work bead in the *same
@@ -1219,6 +1235,21 @@ mod tests {
 
         prereq.tip = Some("old-tip".into());
         assert_eq!(submit_refusal_for_stale_stack(&r, &[prereq]), None, "a fresh stack must not block submit");
+    }
+
+    #[test]
+    fn claim_is_refused_when_the_proposed_stack_is_already_stale() {
+        let mut stack = Stack::new();
+        stack.insert("sp-a".into(), "old-tip".into());
+        let mut prereq = row(BeadState::Certified);
+        prereq.bead_id = "sp-a".into();
+        prereq.tip = Some("new-tip".into());
+
+        let refusal = claim_refusal_for_stale_stack(&stack, &[prereq.clone()]);
+        assert!(matches!(refusal, Some(Refusal::StackStale { .. })), "a claim proposing an already-superseded tip must be refused");
+
+        prereq.tip = Some("old-tip".into());
+        assert_eq!(claim_refusal_for_stale_stack(&stack, &[prereq]), None, "a fresh proposal must not be refused");
     }
 
     #[test]

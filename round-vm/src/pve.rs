@@ -247,6 +247,19 @@ impl<T: Transport> Provider for Pve<T> {
         )
     }
 
+    fn shutdown(&self, vmid: &str) -> Result<(), String> {
+        self.task(Method::Post, &format!("{}/status/shutdown", self.qemu(vmid)), &[])
+    }
+
+    fn make_template(&self, vmid: &str) -> Result<(), String> {
+        self.task(Method::Post, &format!("{}/template", self.qemu(vmid)), &[])
+    }
+
+    fn is_template(&self, vmid: &str) -> Result<bool, String> {
+        let d = self.t.call(Method::Get, &format!("{}/config", self.qemu(vmid)), &[])?;
+        Ok(truthy(d.get("template")))
+    }
+
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String> {
         let d = self.t.call(Method::Get, &format!("{}/qemu", self.node()), &[])?;
         let list = d.as_array().ok_or_else(|| format!("VM list is not a list: {d}"))?;
@@ -290,6 +303,8 @@ mod tests {
                 (Method::Post, p) if p.ends_with("/agent/exec") => json!({"pid": 42}),
                 (Method::Post, p) if p.ends_with("/agent/file-write") => Value::Null,
                 (Method::Get, p) if p.ends_with("/status/current") => json!({"status": "running"}),
+                (Method::Get, "/nodes/pve/qemu/123/config") => json!({"template": 1, "name": "t"}),
+                (Method::Get, p) if p.ends_with("/config") => json!({"name": "vm"}),
                 (Method::Get, p) if p.ends_with("/agent/network-get-interfaces") => json!({"result": [
                     {"name": "lo", "ip-addresses": [{"ip-address-type": "ipv4", "ip-address": "127.0.0.1"}]},
                     {"name": "ens18", "ip-addresses": [
@@ -358,6 +373,18 @@ mod tests {
         assert!(log[0].2.contains(&("name".into(), "round-123".into())));
         assert!(log[0].2.contains(&("pool".into(), "ci".into())));
         assert_eq!(log[1].1, "/nodes/pve/tasks/UPID%3Apve%3A0001%3Atask%3A/status");
+    }
+
+    #[test]
+    fn a_template_build_shuts_down_gracefully_and_converts() {
+        let p = pve();
+        p.shutdown("123").unwrap();
+        assert_eq!(last(&p, "/status/shutdown").0, Method::Post);
+        p.make_template("123").unwrap();
+        let (m, path, _) = last(&p, "/template");
+        assert_eq!((m, path.as_str()), (Method::Post, "/nodes/pve/qemu/123/template"));
+        assert!(p.is_template("123").unwrap());
+        assert!(!p.is_template("124").unwrap());
     }
 
     #[test]

@@ -32,6 +32,7 @@ means the same thing.
 | `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
+| `round-vm template <tree-dir> [--vmid N]` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 
 Every option also accepts the `--opt=value` spelling. An unknown verb or no verb exits 1.
 
@@ -48,10 +49,18 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    serves `<state>` on `SPIRA_ROUND_VM_MIRROR_PORT`.
 3. `acquire`. The VM is **leased to this process** from this point on.
 4. Wait until ssh reaches the VM. On the VM: clone `git://<host-addr>:<port>/mirror.git`,
-   then `cargo run -q --profile release -p testenv -- --mode parallel --profile release
-   [--suites CSV] round` with `SPIRA_BATCH_MAXPAR` and, if given, `RUSTUP_TOOLCHAIN`
-   (the cutover from testenv-batch.sh); then stage `target/release`'s executables into
-   `~/round-bins/`.
+   then act as a **launcher** (runtime-is-a-release, sp-dvfea; the GitHub CI twin is
+   sp-6cbna): `cargo build --profile release --workspace` (a failure exits 4, testenv's
+   build-failure code), stage that build as a release with the round's own `release build
+   <sha> --bin-dir target/release --releases ~/round-releases`, and set `SPIRA_RELEASE`,
+   `SPIRA_REPO=~/round-work` (a release is not a checkout; without it testenv, run from the
+   release, cannot resolve the base ref) and `PATH` **outright** (`$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:~/.cargo/bin:` the system
+   directories), refusing (exit 2) unless `spira-config` then resolves into that release.
+   Both are written to `~/round-launcher.env` for the attribution jobs (§2.2a), which source
+   it. Without this every conf.sh load on the VM printed `spira-config: command not found`
+   (conf.sh fails closed without it, sp-c7b85). Then `testenv --mode parallel --profile
+   release [--suites CSV] round` by name from the release, with `SPIRA_BATCH_MAXPAR` and, if
+   given, `RUSTUP_TOOLCHAIN`; then stage `target/release`'s executables into `~/round-bins/`.
 5. rsync back `batch-results/` (flattened out of any one-level `BATCH_KEY` nesting into the
    results dir, default `$SPIRA_RUN/batch-results`), `tsd/*.jsonl` (merged into
    `$SPIRA_RUN/tsd`, tagged `ran_on`, `vcpus`, `maxpar`) and `round-bins/`.
@@ -104,7 +113,7 @@ the job's branch is fetched into the mirror as `refs/heads/attr-<job>`, then on 
   --suites <csv>` there — no build;
 - `aeon`: the same clone, `--profile aeon` (a debug build of that tree);
 - `round`: waits for the corpus; checks the ref out in `~/round-work` itself and runs
-  `cargo run --profile release -p testenv -- --profile release --suites <csv>` (incremental on
+  `cargo build -p testenv --bin testenv`, then that `testenv --profile release --suites <csv>` (incremental on
   the corpus's own target), then stages `target/release` into `~/round-bins/` as the corpus does.
 
 Every job runs with `SPIRA_VERDICT_TTL=0` (a rerun is never a cache hit nor a refused repeat)
@@ -112,6 +121,69 @@ and `SPIRA_BATCH_RESULTS=~/attr-results/<job>`. After `corpus.done`, `run` keeps
 `close` exists and no job is in flight, or `SPIRA_ROUND_VM_ATTR_LINGER` seconds (default 3600)
 pass, then releases the VM (G2 unchanged: a signal still releases it). The exit code is the
 corpus's, as without the spool.
+
+### 2.2b `template` — a round template whose test image is built, not loaded (sp-dvfea)
+
+**Why.** A round's VM must hold `localhost/spira-testenv:<tag>` (the tag is the hash of the
+Containerfile, the bd pin and deps.toml), or testenv builds the image on the VM before any
+suite runs. Measured 2026-09-30 (sp-dp872's proof round): `up:1139` of a 1615 s round — a
+cold `podman build` (a Go toolchain, bd compiled from source, a Rust toolchain). Template 108
+did carry an image, but a **loaded** one (`podman load`) of an older tag: a loaded image has
+no build cache, so when the tag moved — though only 4 of its 23 layers differ, all of them
+from `COPY conf.sh`/`deps.toml` onward — the VM rebuilt all 23 from nothing. Shipping the
+host's image instead (`podman save | ssh podman load`) was measured and rejected: the host's
+disk is the contended resource (100% util, 2 s read waits during a round), and the 2 GB
+stream ran past 17 minutes.
+
+**What.** `round-vm template <tree-dir>` makes a new template from the current one
+(`PVE_TEMPLATE_VMID`) whose image is **built on the template itself**, so the template keeps
+podman's layer cache. A later closure change then rebuilds only the steps it touches — for a
+`conf.sh`/`deps.toml`/doctor change, the last few layers, in seconds — and a round whose tag
+equals the template's builds nothing. The cargo registry is warmed with the tree's
+`Cargo.lock` too.
+
+It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_VMID` in
+`pve.env` is the operator's infrastructure change, and so is destroying the old template.
+
+1. Preflight (exit 2): `<tree-dir>` is a git checkout; `SPIRA_ROUND_VM_HOST_PUBKEY` and
+   `SPIRA_ROUND_VM_HOST_KEY` are readable.
+2. VMID: `--vmid N` if given (templates belong in their own range; nextid lands in the band
+   round clones use), else the hypervisor's nextid.
+3. **Linked** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` — the
+   same clone a round VM gets, so the old template's base disk stays referenced and cannot
+   be destroyed while the new one exists. A full clone was tried first and abandoned: it
+   copies the whole 250 GB disk (24% after 9 minutes) on the storage the Spira host's own
+   disk shares, and the host's load went to 57 with its API calls timing out; the aborted
+   clone also left a `lock: clone` placeholder that only root@pam can remove. It is never named
+   `round-<vmid>`, so no `acquire`, `release` or reap can destroy it (G4).
+4. Start, wait for the address, deliver the key (the same code as provision, §2.4), wait for
+   ssh.
+5. Stream `git archive <commit>` of the tree to `/root/template-work` on the VM, then run
+   `TEMPLATE_SCRIPT` there: `testenv.sh image` (builds with podman's default `--layers`,
+   keeping the cache), `podman rmi` every other `localhost/spira-testenv:*` tag, `cargo
+   fetch --locked`, then delete the work tree and `/root/.ssh/authorized_keys`. The script
+   prints `image=<ref>`; a missing line is a failure.
+6. Graceful shutdown (the guest flushes its image store), verify stopped, convert to a
+   template, verify `template: 1` in its config.
+7. Any failure from step 3 on destroys the VM — fenced on the exact name this run gave it —
+   and reports the reason; a VM that will not die is named on stderr for the operator.
+
+**Operator procedure** (infrastructure — an agent builds and proves, the operator switches):
+1. `round-vm template <a checkout of local/main> --vmid 91xx` (templates in their own range);
+   stdout is `<vmid> <image-ref>`. About 17 minutes, a cold build with its heartbeat.
+2. Prove it without touching production: `SPIRA_PVE_ENV=<a copy of pve.env naming the new
+   VMID> SPIRA_ROUND_VM_STATE_DIR=<scratch> SPIRA_ROUND_VM_MIRROR_PORT=<a free port> round-vm
+   run <tree> --suites test-batcher.sh`; the round's `phases:` line must show `up:` in seconds
+   and the stderr `template image: ... present`. Release the scratch pool's ready VM after.
+3. Switch: set `PVE_TEMPLATE_VMID=<vmid>` in `pve.env` (G7: the next acquire reads it; the
+   ready VM already cloned from the old template is used once more).
+4. The old template stays while the new one's linked base references it; destroying it is
+   the operator's call and `qm destroy` refuses while a linked clone depends on it.
+
+**How the operator knows to run it.** `REMOTE_SCRIPT` checks, before testenv starts, whether
+the VM already holds the round's tag, and says so on the round's stderr either way:
+`round-vm: template image: <ref> present` or `... absent — this round builds it; refresh
+the template with round-vm template`.
 
 ### 2.3 Guarantees
 
@@ -127,7 +199,9 @@ corpus's, as without the spool.
   `doomed`, retried on every `acquire`.
 - **G4 Destroy is fenced.** round-vm only ever destroys a VM named `round-<vmid>`. A
   handle naming anything else (the template, another client's VM that won a `nextid`
-  race) is refused and never touched.
+  race) is refused and never touched. The one other name it destroys is the
+  `round-template-<commit12>` a `template` run gave its own half-built clone (§2.2b), and
+  only from inside that run.
 - **G5 No local mode.** No path runs the batch anywhere but the VM.
 - **G6 One alarm per outage.** The first failure of an outage mails the operator
   (`$SPIRA_HOME/mail.sh send <mailbox> --kind alert`, mailbox `SPIRA_ROUND_VM_MAIL_MAILBOX`,
@@ -247,6 +321,10 @@ pub trait Provider {
     fn stop(&self, vmid: &str) -> Result<(), String>;
     fn destroy(&self, vmid: &str) -> Result<(), String>;
     fn name_of(&self, vmid: &str) -> Result<Option<String>, String>; // None: the VMID is gone
+    // `template` (§2.2b) only:
+    fn shutdown(&self, vmid: &str) -> Result<(), String>;                // graceful, task-waited
+    fn make_template(&self, vmid: &str) -> Result<(), String>;           // POST .../template
+    fn is_template(&self, vmid: &str) -> Result<bool, String>;           // GET .../config: template == 1
 }
 ```
 
@@ -266,6 +344,8 @@ insecure fallback. Responses it reads, each wrapped in `{"data": ...}`:
 | `POST .../agent/exec` | `{"pid": 42}` |
 | `GET .../agent/exec-status?pid=42` | `{"exited": 1\|true, "exitcode": 0}` |
 | `POST .../agent/file-write` | `null` |
+| `POST .../status/shutdown`, `POST .../template` | a task UPID string (or `null`) |
+| `GET .../qemu/<id>/config` | `{"template": 1, ...}` (absent when not a template) |
 
 ### 3.4 Round result (`<state>/manifests/<tree-sha>.json`)
 

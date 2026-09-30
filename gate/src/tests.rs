@@ -78,6 +78,17 @@ struct Fake {
     // ---- the tree owns its gate (sp-quu2w)
     /// `<rev>:<path>` a revision does not carry (`ls_tree_has` is false for it).
     gone: RefCell<HashSet<String>>,
+    // ---- tools keyed by the tree (sp-g9f3t)
+    /// (status, output) a gate-string run returns when its SPIRA_LINT_BIN is this path —
+    /// a binary that would answer differently from the one built from the tree under test.
+    lint_by_bin: RefCell<HashMap<String, (i32, String)>>,
+    /// What the gate tree's `HEAD^{tree}` reads instead of the last checkout's tree.
+    tree_drift: RefCell<Option<String>>,
+    /// Apply `tree_drift` only once this many checkouts have happened (0 = always).
+    drift_after_checkouts: Cell<usize>,
+    /// Every install_tools call: (dir, tree id). An Err to return instead, when set.
+    installs: RefCell<Vec<(PathBuf, String)>>,
+    install_err: RefCell<Option<String>>,
 }
 
 fn ctx() -> Ctx {
@@ -162,6 +173,11 @@ impl Fake {
             silent_fences: RefCell::new(HashSet::new()),
             trees: RefCell::new(Vec::new()),
             gone: RefCell::new(HashSet::new()),
+            lint_by_bin: RefCell::new(HashMap::new()),
+            tree_drift: RefCell::new(None),
+            drift_after_checkouts: Cell::new(0),
+            installs: RefCell::new(Vec::new()),
+            install_err: RefCell::new(None),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -237,6 +253,15 @@ impl World for Fake {
         Some(PathBuf::from("/tmp/files"))
     }
     fn rev_parse(&self, _: &Path, rev: &str) -> Option<String> {
+        if rev == "HEAD^{tree}" {
+            if let Some(d) = self.tree_drift.borrow().clone() {
+                if self.checkouts.borrow().len() > self.drift_after_checkouts.get() {
+                    return Some(d);
+                }
+            }
+            let at = self.checkouts.borrow().last().cloned().unwrap_or_default();
+            return Some(format!("tree-of-{at}"));
+        }
         if rev.ends_with("^{tree}") {
             return Some(format!("tree-of-{}", rev.trim_end_matches("^{tree}")));
         }
@@ -328,6 +353,19 @@ impl World for Fake {
         self.checkouts.borrow_mut().push(rev.to_string());
         Ok(())
     }
+    fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
+        if let Some(e) = self.install_err.borrow().clone() {
+            return Err(e);
+        }
+        self.installs.borrow_mut().push((dir.to_path_buf(), id.to_string()));
+        let mut files = self.files.borrow_mut();
+        files.retain(|p, _| !p.starts_with(dir.parent().unwrap()) || p.starts_with(dir));
+        files.insert(dir.join("TREE"), format!("{id}\n"));
+        for p in pkgs {
+            files.insert(dir.join(p), "#!built".into());
+        }
+        Ok(())
+    }
     fn remove_worktree(&self, _: &Path, _: &Path) {
         self.removed_trees.set(self.removed_trees.get() + 1);
     }
@@ -380,6 +418,10 @@ impl World for Fake {
                 .unwrap_or((0, format!("{kind} ok")));
         }
         self.trees.borrow_mut().push(tree.to_path_buf());
+        let lint = env.iter().find(|(k, _)| k == "SPIRA_LINT_BIN").map(|(_, v)| v.clone());
+        if let Some(r) = lint.and_then(|l| self.lint_by_bin.borrow().get(&l).cloned()) {
+            return r;
+        }
         let (rc, out) = self
             .runs
             .borrow()
@@ -2036,8 +2078,8 @@ fn a_tree_definition_is_the_gate_and_the_column_is_ignored() {
     let cmds = f.cmds.borrow();
     assert!(cmds[0].starts_with("cargo build --profile aeon") && cmds[0].contains("-p spira-lint"), "{cmds:?}");
     let lint = f.env_of(1, "SPIRA_LINT_BIN");
-    // path-ok: the binary the tools phase built in the gate tree, asserted.
-    assert!(lint.starts_with(&format!("{RUN}/worktree/.gate.")) && lint.ends_with("/target/aeon/spira-lint"), "{lint}");
+    // The binary the tools phase built, installed keyed by the merge's tree (sp-g9f3t).
+    assert_eq!(lint, format!("{GATE_TREE}/target/gate-tools/tree-of-{MERGE_SHA}/spira-lint"));
     assert!(f.appended.borrow().iter().any(|l| l.contains("phases=tools:")), "{:?}", f.appended.borrow());
 }
 
@@ -2198,4 +2240,106 @@ fn the_runners_budget_knobs_reach_the_gate_command() {
     f.run();
     assert_eq!(f.env_of(0, "SPIRA_TESTENV_SETUP_SHARE"), "70");
     assert_eq!(f.env_of(0, "SPIRA_TESTENV_WARM_SLOTS"), "0");
+}
+
+// ------------------------------------------------- tools keyed by the tree (sp-g9f3t)
+
+/// The 2026-09-30 base-red, as a fixture: the branch trial is red on its own, so the base
+/// trial runs in the same gate tree. A spira-lint from another tree — the unkeyed
+/// `target/aeon/spira-lint` the branch trial left, or a keyed directory stamped for some other
+/// tree — flags literals the base's own spira-lint allows. Reading either would charge the
+/// branch's red to local/main (BASE_FAIL); the base's own tools, keyed by its tree, pass.
+#[test]
+fn the_base_trial_runs_tools_keyed_by_the_base_tree_never_a_stale_one() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red on the branch".into()));
+    // literal-ok: the 2026-09-30 finding, quoted as the stale tool's answer.
+    let stale = (1, "literal-lint: aeon/src/tests.rs:249: \"needs-ryan\"".to_string());
+    // path-ok: the unkeyed build output the branch trial left in the gate tree.
+    let unkeyed = format!("{GATE_TREE}/target/aeon/spira-lint");
+    let other = format!("{GATE_TREE}/target/gate-tools/tree-of-OTHER/spira-lint");
+    f.lint_by_bin.borrow_mut().insert(unkeyed.clone(), stale.clone());
+    f.lint_by_bin.borrow_mut().insert(other.clone(), stale);
+    f.files.borrow_mut().insert(PathBuf::from(&other), "#!stale".into());
+    f.files.borrow_mut().insert(PathBuf::from(format!("{GATE_TREE}/target/gate-tools/tree-of-OTHER/TREE")), "tree-of-OTHER\n".into());
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=branch-red"), "{}", f.verdict_line());
+    // Every gate-string run named a binary keyed by the tree that run judged.
+    let ran = f.ran.borrow();
+    let lints: Vec<String> = ran
+        .iter()
+        .filter_map(|e| e.iter().find(|(k, _)| k == "SPIRA_LINT_BIN").map(|(_, v)| v.clone()))
+        .collect();
+    assert!(!lints.is_empty());
+    assert!(lints.contains(&format!("{GATE_TREE}/target/gate-tools/tree-of-{BASE}/spira-lint")), "{lints:?}");
+    assert!(!lints.iter().any(|l| l == &unkeyed || l == &other), "{lints:?}");
+}
+
+/// The gate tree does not hold the tree the trial judges: no tool is built or read, and the
+/// branch trial is refused, never judged.
+#[test]
+fn a_gate_tree_holding_another_tree_is_refused_before_its_tools_are_built() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    *f.tree_drift.borrow_mut() = Some("tree-of-SOMETHING-ELSE".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=tools-unattributed"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("holds tree tree-of-SOMETHING-ELSE, not tree-of-m3rg3"), "{}", f.stderr());
+    assert!(f.cmds.borrow().is_empty(), "{:?}", f.cmds.borrow());
+}
+
+/// An install that fails leaves nothing keyed: the trial is refused, never judged with the
+/// unkeyed build.
+#[test]
+fn a_failed_install_is_refused_not_judged() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    *f.install_err.borrow_mut() = Some("disk full".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=tools-unattributed"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("disk full"), "{}", f.stderr());
+    // The build ran; no step did.
+    assert_eq!(gate_runs(&f).len(), 0, "{:?}", f.cmds.borrow());
+}
+
+/// The base trial's tree cannot be attributed: no base trial, so whose red it is stays
+/// unestablished — NO_VERDICT, never BASE_FAIL on a guess.
+#[test]
+fn a_base_trial_whose_tree_cannot_be_attributed_does_not_run() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "a-fence: red".into()));
+    assert_eq!(f.run(), BASEFAIL, "control: the base trial runs and is red: {}", f.stderr());
+
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "a-fence: red".into()));
+    // The base checkout does not leave the gate tree holding the base's tree.
+    f.drift_after_checkouts.set(1);
+    *f.tree_drift.borrow_mut() = Some("tree-of-STALE".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
+    assert!(f.stderr().contains(&format!("holds tree tree-of-STALE, not tree-of-{BASE}")), "{}", f.stderr());
+}
+
+/// Tools stamped for the very tree a trial judges are reused, not rebuilt; the stamp and
+/// every package prove them.
+#[test]
+fn tools_stamped_for_the_same_tree_are_reused() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "a-fence: red on the branch".into()));
+    for id in [MERGE_SHA, BASE] {
+        let dir = format!("{GATE_TREE}/target/gate-tools/tree-of-{id}");
+        f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/TREE")), format!("tree-of-{id}\n"));
+        f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/spira-lint")), "#!built".into());
+    }
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(!f.cmds.borrow().iter().any(|c| c.starts_with("cargo build")), "{:?}", f.cmds.borrow());
+    assert!(f.stderr().contains(&format!("tools for tree tree-of-{BASE} reused")), "{}", f.stderr());
+    let meter = f.appended.borrow().join("\n");
+    assert!(!meter.contains("tools:"), "{meter}");
+    // A stamp for the tree with a package missing is not reuse: it is rebuilt.
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    let dir = format!("{GATE_TREE}/target/gate-tools/tree-of-{MERGE_SHA}");
+    f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/TREE")), format!("tree-of-{MERGE_SHA}\n"));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.cmds.borrow()[0].starts_with("cargo build"), "{:?}", f.cmds.borrow());
 }

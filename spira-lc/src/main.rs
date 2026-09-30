@@ -220,7 +220,23 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
     let ev = bead::BeadEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
-    let outcome = bead::apply(&row, &ev);
+    // The tip invariant, extended (design stacked-dependents-2026-09-28 §1): a claim whose
+    // proposed stack names a prerequisite tip that is no longer that prerequisite's current
+    // certified tip is refused the same way a stale-tip submit is — checked here, against
+    // live prerequisite rows, because `bead::apply` sees only the one row being claimed.
+    let outcome = match &kind {
+        bead::BeadEventKind::Claim { stack, .. } if !stack.is_empty() => {
+            let prereqs = match stack.keys().map(|id| rows::fetch_bead(conn, id)).collect::<Result<Vec<_>, _>>() {
+                Ok(rs) => rs.into_iter().flatten().collect::<Vec<_>>(),
+                Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
+            };
+            match bead::claim_refusal_for_stale_stack(stack, &prereqs) {
+                Some(refusal) => lifecycle::Outcome::refuse(row.clone(), refusal),
+                None => bead::apply(&row, &ev),
+            }
+        }
+        _ => bead::apply(&row, &ev),
+    };
     let evidence = serde_json::to_value(&kind).unwrap_or(Value::Null);
     let rec = db::EventRecord {
         machine: "bead".into(),

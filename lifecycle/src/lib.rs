@@ -36,7 +36,8 @@ pub enum Refusal {
     /// A `base_withdrawn` (or `prereq_landed`) named a `(prereq, tip)` the row's own `stack`
     /// does not carry — a misrouted or stale cascade, not evidence about this row.
     NotInStack { prereq: String, tip: String },
-    /// `submit` while the row's `stack` still names a tip `base_withdrawn` disowned.
+    /// `submit` while the row's `stack` still names a tip `base_withdrawn` disowned, or a
+    /// `claim` whose proposed `stack` names a prerequisite tip that is no longer current.
     StackStale { prereqs: Vec<String> },
 }
 

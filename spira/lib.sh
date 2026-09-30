@@ -1912,10 +1912,12 @@ bead_reopen() {
     # closes it — the work is done and certification proceeds from submitted, so a
     # CERTIFIED record written moments earlier (the session's own queue.sh submit, or
     # aeon.sh's self-certify, sp-u9f82) must stay admissible. Withdrawing it here would
-    # strand every converted bead: open, submitted, and never batched.
+    # strand every converted bead: open, submitted, and never batched. This is the only
+    # cause admission-exempt in _census_deliberate_reopen_causes (below): eject is also
+    # deliberate for census, but a CERTIFIED-unbatched eject still needs to withdraw.
     local _wd_st _wd_tip
     read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    if [ "${_wd_st:-}" = CERTIFIED ] && [ "$cause" != work-close-converted ]; then
+    if [ "${_wd_st:-}" = CERTIFIED ] && ! _census_reopen_admission_exempt "$cause"; then
         local _wd_reason="$cause"
         [ -n "$suites" ] && _wd_reason="$cause suites=$suites"
         land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$_wd_reason"
@@ -1930,7 +1932,7 @@ bead_reopen() {
     # conflict or a red gate while it still carries the label is open, unclaimable and never
     # landed — stranded. The submitted conversion itself (work-close-converted) is the one
     # reopen that ADDS the label, right after this call, and is left alone.
-    if [ "$cause" != work-close-converted ]; then
+    if ! _census_reopen_admission_exempt "$cause"; then
         bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
     fi
     release_claim "$id" || rc=1
@@ -3374,6 +3376,12 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     # above, no covers: entry retires it (_census_class_fold_map) because nothing should
     # ever suppress it by name — it never appears.
     local reopen_timing_exclude="(event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence'))"
+    # DELIBERATE-CAUSE FOLD. A reopen whose cause is in _census_deliberate_reopen_causes
+    # (adjacent to _census_class_fold_map below) is the system working, not a fault
+    # (law-a-deliberate-state-is-not-a-fault): excluded from the ranked class list here,
+    # the same way an operator's hand-written row is excluded by actor_filter below —
+    # still counted, by _census_deliberate_sql, just never selectable (sp-eiatd).
+    local deliberate_fold="(event_type = 'reopen' AND new_value IN ($(_census_deliberate_causes_sql_list)))"
     # ACTOR PREDICATE. Ranks only events a harness component wrote (harness or an
     # aeon-* session); an operator's hand-written events-table row — e.g. zeroing an
     # attempt-ledger offset with a fabricated requeued/unjudged-<cause> row — is real
@@ -3381,7 +3389,7 @@ _census_events_sql() {   # _census_events_sql [since_epoch_s]
     # separately by _census_handwritten_sql instead (law-absence-needs-a-positive-
     # control, law-a-deliberate-state-is-not-a-fault).
     local actor_filter="(actor = 'harness' OR actor LIKE 'aeon-%')"
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT %s AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND %s%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR %s OR %s) AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND %s%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR %s)%s) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$conflict_fold" "$rebase_aeon_fold" "$eviction_fold" "$prod_dirty_fold" "$unfinished_fold" "$reopen_timing_exclude" "$actor_filter" "$since_clause" "$conflict_fold" "$rebase_aeon_fold" "$actor_filter" "$since_clause" "$eviction_fold" "$actor_filter" "$since_clause" "$prod_dirty_fold" "$actor_filter" "$since_clause" "$unfinished_fold" "$actor_filter" "$since_clause" "$actor_filter" "$since_clause" "$conflict_fold" "$since_clause"
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT %s AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND %s%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR %s OR %s) AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND %s%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR %s)%s) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$conflict_fold" "$rebase_aeon_fold" "$eviction_fold" "$prod_dirty_fold" "$unfinished_fold" "$reopen_timing_exclude" "$deliberate_fold" "$actor_filter" "$since_clause" "$conflict_fold" "$rebase_aeon_fold" "$actor_filter" "$since_clause" "$eviction_fold" "$actor_filter" "$since_clause" "$prod_dirty_fold" "$actor_filter" "$since_clause" "$unfinished_fold" "$actor_filter" "$since_clause" "$actor_filter" "$since_clause" "$conflict_fold" "$since_clause"
 }
 # _census_handwritten_sql — events excluded from the ranked query above by the actor
 # predicate, grouped so the excluded actor stays visible. Not time-windowed: this is
@@ -3406,6 +3414,63 @@ _census_class_fold_map() {
     printf 'sp-requeue-workflow-run-stale-sha sp-reopen-workflow-run-stale-sha\n'
     printf 'sp-requeue-workflow-run-wrong-file sp-reopen-workflow-run-wrong-file\n'
     printf 'sp-requeue-workflow-run-unverifiable sp-reopen-workflow-run-unverifiable\n'
+}
+
+# _census_deliberate_reopen_causes -> "<cause> <admission-exempt:0|1>" pairs, one per
+# line — the single declared list of reopen causes that are the system working, not a
+# fault (law-a-deliberate-state-is-not-a-fault): firing queue.sh eject, or converting a
+# closed work bead to submitted, is a correct outcome, so census must count these but
+# never rank them for a Maechen remedy (sp-eiatd). Kept adjacent to _census_class_fold_map
+# above, the same way that fold is kept adjacent to the SQL that uses it — both
+# bead_reopen (below) and _census_events_sql/_census_deliberate_sql read this one list.
+#
+# <admission-exempt> marks the one behavior specific to work-close-converted: whether the
+# CERTIFIED landstate and the submitted label survive the reopen. work-close-converted is
+# bookkeeping (aeon.sh's teardown carrying a finished bead to the landing pass), not
+# rework, so it alone stays admissible. Every other deliberate cause — eject withdraws a
+# CERTIFIED-but-unbatched bead that DOES need rework — still needs WITHDRAWN written and
+# the label stripped, or batch.sh's second line of defence (its own comment: "every eject
+# strips the label") would re-admit a bead the operator just pulled from the queue.
+_census_deliberate_reopen_causes() {
+    printf 'work-close-converted 1\n'
+    printf 'eject 0\n'
+}
+
+# _census_reopen_admission_exempt <cause> -> 0 (stays CERTIFIED/submitted) or 1 (does not)
+_census_reopen_admission_exempt() {
+    local _c _exempt
+    while read -r _c _exempt; do
+        [ "$_c" = "$1" ] && [ "$_exempt" = 1 ] && return 0
+    done <<< "$(_census_deliberate_reopen_causes)"
+    return 1
+}
+
+# _census_deliberate_causes_sql_list -> a quoted, comma-separated SQL IN-list of every
+# deliberate cause's name, built from _census_deliberate_reopen_causes so the ranking
+# exclusion and the visibility query below can never name a different set.
+_census_deliberate_causes_sql_list() {
+    local _dc _dexempt _list=""
+    while read -r _dc _dexempt; do
+        [ -n "$_dc" ] || continue
+        _list="${_list:+$_list, }'$(printf '%s' "$_dc" | sed "s/'/''/g")'"
+    done <<< "$(_census_deliberate_reopen_causes)"
+    printf '%s' "${_list:-''}"
+}
+
+# _census_deliberate_sql [since_epoch_s] -> the deliberate-cause reopen counts excluded
+# from _census_events_sql's ranked list above. Not ranked, never selectable, but still a
+# real count (law-absence-needs-a-positive-control) — census.sh shows it under
+# --with-suppressed the same way _census_handwritten_sql's actor-excluded rows are shown.
+_census_deliberate_sql() {
+    local since_clause=""
+    if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
+        since_clause=" AND created_at > '$(date -u -d "@${1}" '+%Y-%m-%d %H:%M:%S')'"
+    fi
+    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' AND new_value IN (%s)%s GROUP BY event_type, new_value ORDER BY 3 DESC" \
+        "$(_census_deliberate_causes_sql_list)" "$since_clause"
+}
+census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> tabular output of deliberate-cause reopen counts, empty when none
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$(_census_deliberate_sql "${1:-}")" 2>/dev/null
 }
 census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
     local q

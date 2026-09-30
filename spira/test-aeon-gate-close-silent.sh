@@ -152,6 +152,13 @@ seed_delivers() {
         "$1" "$_lbl" | testdb_seed
 }
 
+# A successor bead, already closed — the target of `bd supersede --with`.
+seed_closed() {
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
+    printf '{"id":"%s","title":"t","status":"closed","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "$_lbl" | testdb_seed
+}
+
 # The shim commits work and closes the bead, simulating a session that did the work and
 # closed without ever running its own gate. sp-cert-nocommit closes with nothing committed
 # (delivers:action carries the evidence). sp-cert-already also writes a CERTIFIED landstate
@@ -173,7 +180,11 @@ if [ "$BEAD_ID" = sp-cert-already ]; then
     mkdir -p "$SPIRA_RUN/landstate"
     printf 'CERTIFIED %s %s ' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/$BEAD_ID"
 fi
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$BEAD_ID" --reason "done" >/dev/null 2>&1
+if [ "$BEAD_ID" = sp-cert-super ]; then
+    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" supersede "$BEAD_ID" --with sp-cert-super-succ >/dev/null 2>&1
+else
+    BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$BEAD_ID" --reason "done" >/dev/null 2>&1
+fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
 SHIM
@@ -273,6 +284,24 @@ nowant "defer: queue.sh submit was never called — no blocking self-cert" "spir
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-ok 2>/dev/null)"
 nowant "defer: no landstate is written — certification is the landing pass's to run" "CERTIFIED $tip" \
     "$(cat "$SPIRA_RUN/landstate/sp-cert-ok" 2>/dev/null)"
+
+# ======================================================================================
+echo
+echo "st=3, but the close is superseded — never handed to certification, close stands (sp-vjf6u):"
+# ======================================================================================
+fresh; seed_closed sp-cert-super-succ; seed sp-cert-super
+run_aeon 3 0
+nowant "superseded: note does not hand certification to the landing pass" "handed to the landing pass" \
+    "$(bead_notes sp-cert-super)"
+want "superseded: log says the branch is not handed to certification" \
+    "not handing spira/sp-cert-super to certification" "$(cat "$TMP/out" 2>/dev/null)"
+is   "superseded: bead stays closed, not converted to submitted" "closed" "$(bead_status sp-cert-super)"
+nowant "superseded: not carrying the submitted label" "spira-submitted" "$(bead_labels sp-cert-super)"
+nowant "superseded: queue.sh submit was never called" "spira/sp-cert-super " \
+    "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
+tip="$(git -C "$REPO" rev-parse spira/sp-cert-super 2>/dev/null)"
+nowant "superseded: no landstate is written" "CERTIFIED $tip" \
+    "$(cat "$SPIRA_RUN/landstate/sp-cert-super" 2>/dev/null)"
 
 # ======================================================================================
 echo

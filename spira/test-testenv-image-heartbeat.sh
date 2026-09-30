@@ -41,6 +41,8 @@ case "$1" in
     image) exit 1 ;;
     build)
         echo "STEP 1/9: FROM docker.io/library/ubuntu:24.04"
+        echo "[2/3] STEP 3/4: RUN apt-get update -q"
+        echo "Ign:2 http://archive.ubuntu.com/ubuntu noble InRelease"
         sleep "${STUB_BUILD_SLEEP:-0}"
         if [ "${STUB_BUILD_RC:-0}" != "0" ]; then
             printf '%s\n' "${STUB_BUILD_ERR:-build failed}"
@@ -113,6 +115,13 @@ grep 'testenv: building — ' "$ERR" | grep -qE 'memory .* free' \
 grep 'testenv: building — ' "$ERR" | grep -q 'STEP' \
     && ok "the heartbeat line names the build stage" \
     || bad "the heartbeat line names the build stage" "no [STEP] in heartbeat line"
+# A multi-stage build prefixes every step with its stage, [2/3] STEP 3/4 (sp-dvfea).
+grep 'testenv: building — ' "$ERR" | grep -qF '[2/3] STEP 3/4: RUN apt-get update' \
+    && ok "the heartbeat names a multi-stage build's furthest step" \
+    || bad "the heartbeat names a multi-stage build's furthest step" "no [[2/3] STEP 3/4] in heartbeat line"
+grep -qF 'testenv:   last output: Ign:2 http://archive.ubuntu.com/ubuntu noble InRelease' "$ERR" \
+    && ok "the heartbeat shows the build's latest output line" \
+    || bad "the heartbeat shows the build's latest output line" "no [last output:] line"
 
 # ──────────────────────────────────────────────────────────────────────────────
 echo

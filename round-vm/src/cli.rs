@@ -16,7 +16,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|template <tree-dir> [--vmid <n>]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -106,7 +106,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     };
     let rest = rest.to_vec();
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "_provision-bg" => {}
+        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
@@ -119,6 +119,17 @@ pub fn main_with(args: Vec<String>) -> i32 {
     }
     let run_args = if verb == "run" {
         match parse_run_args(&rest) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                eprintln!("{e}");
+                return 2;
+            }
+        }
+    } else {
+        None
+    };
+    let template_args = if verb == "template" {
+        match crate::template::parse_template_args(&rest) {
             Ok(a) => Some(a),
             Err(e) => {
                 eprintln!("{e}");
@@ -180,6 +191,10 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
+        "template" => {
+            let Some(a) = template_args.as_ref() else { return 2 };
+            no_panic(|| template(&cfg, a))
+        }
         "run" => {
             let me = ProcId::current();
             let sig_pool = pool_for(&cfg);
@@ -200,6 +215,58 @@ pub fn main_with(args: Vec<String>) -> i32 {
             code
         }
         _ => unreachable!(),
+    }
+}
+
+/// `round-vm template` (DESIGN.md §2.2b): preflight, then build; prints `<vmid> <image>`.
+fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
+    use crate::run::Host;
+    let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port };
+    if !host.is_checkout(&a.tree_dir) {
+        eprintln!("round-vm template: not a git checkout: {}", a.tree_dir.display());
+        return 2;
+    }
+    if std::fs::File::open(&cfg.host_key).is_err() {
+        eprintln!("round-vm template: SPIRA_ROUND_VM_HOST_KEY not readable: {}", cfg.host_key.display());
+        return 2;
+    }
+    let (commit, _) = match host.head(&a.tree_dir) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("round-vm template: {e}");
+            return 2;
+        }
+    };
+    let attempt = match real_attempt() {
+        Ok(at) => at,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
+    let spec = crate::provider::ProvisionSpec {
+        iface: &attempt.iface,
+        ssh_user: &attempt.ssh_user,
+        pubkey: &attempt.pubkey,
+        timing: attempt.timing,
+    };
+    let guest = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
+    match crate::template::build(attempt.provider.as_ref(), &guest, &spec, cfg.ssh_tries, &a.tree_dir, &commit, a.vmid.clone()) {
+        Ok(b) => {
+            println!("{} {}", b.vmid, b.image);
+            eprintln!(
+                "round-vm template: template {} holds {} with its build cache. Nothing was repointed: to use it, set PVE_TEMPLATE_VMID={} in {}",
+                b.vmid,
+                b.image,
+                b.vmid,
+                cfg.pve_env_path.display()
+            );
+            0
+        }
+        Err(e) => {
+            eprintln!("round-vm template: {e}");
+            1
+        }
     }
 }
 
@@ -225,5 +292,7 @@ mod tests {
         assert_eq!(main_with(s(&["release"])), 2);
         assert_eq!(main_with(s(&["run"])), 2);
         assert_eq!(main_with(s(&["run", "/t", "--bogus"])), 2);
+        assert_eq!(main_with(s(&["template"])), 2);
+        assert_eq!(main_with(s(&["template", "/t", "--vmid", "x"])), 2);
     }
 }
