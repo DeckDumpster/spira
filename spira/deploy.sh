@@ -40,7 +40,7 @@
 #  10. release install-tarball — unpack, atomic symlink swap, daemon-reload, restart units.
 #  11. activated release's install.sh — re-render unit files with SPIRA_HOME and SPIRA_PROD
 #      set to the release, so unit ExecStart paths are not stamped from the invoking directory.
-#  12. cockpit/layout.sh ensure.
+#  12. layout ensure.
 #  13. world.sh resume.
 #  14. Health check: world.sh status, doctor.sh, skew.sh check.
 #      On failure: restore prior state, restart, resume, exit 1 naming what failed.
@@ -49,7 +49,7 @@
 #   0  deployed
 #   1  refused (already current, drain timeout without --force, migration mismatch, health-check rollback)
 #   2  fatal (usage error, draft release, fetch failed, activation error)
-# covers: spira/deploy.sh release/src/install.rs spira/world.sh cockpit/layout.sh
+# covers: spira/deploy.sh release/src/install.rs spira/world.sh layout
 set -uo pipefail
 
 # Captured before conf.sh derives anything from THIS checkout, for _render_release_units to
@@ -79,7 +79,7 @@ _ACTIVATE="${SPIRA_ACTIVATE_SH:-release}"
 # enable/restart/prune, now a bare-name binary on the release launcher PATH like every other
 # sibling tool here — never `bash <path>`, and never systemd/ (which is not on that PATH).
 _INSTALL="${SPIRA_INSTALL_SH:-units-install}"
-_COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
+_COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-layout}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-doctor.sh}"
 _SKEW="${SPIRA_SKEW_SH:-skew.sh}"
 _SLAY="${SPIRA_SLAY_SH:-slay.sh}"
@@ -313,7 +313,7 @@ if [ "$dry_run" = 1 ]; then
     unset _dry_tags _dry_probe
     printf 'deploy: would units-install (re-render units with SPIRA_PROD=%s/current/spira)\n' \
         "$SPIRA_RELEASES"
-    printf 'deploy: would cockpit/layout.sh ensure\n'
+    printf 'deploy: would layout ensure\n'
     printf 'deploy: would world.sh resume\n'
     printf 'deploy: would run health checks\n'
     exit 0

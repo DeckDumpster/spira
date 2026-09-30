@@ -27,7 +27,7 @@
 #
 # defect: sp-9zs0y
 # tier: T1
-# covers: cockpit/rebuild.sh cockpit/layout.sh
+# covers: cockpit/ops/src/rebuild.rs cockpit/ops/src/layout.rs
 # hermetic-ok: its own TMUX_TMPDIR server and temp dirs; reads no operator state it can change
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -71,8 +71,12 @@ mkdir -p "$T/bin"
 printf '#!/usr/bin/env bash\nexec sleep 300\n' > "$FAKE_MAIL"
 chmod +x "$FAKE_MAIL"
 
-rebuild()      { TMUX_TMPDIR="$T"  COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
-rebuild_mail() { TMUX_TMPDIR="$TM" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="$FAKE_MAIL" bash "$COCKPIT/rebuild.sh" "$@" 2>&1; }
+# `rebuild`/`layout` are binaries now (sp-llbmi), invoked by name from the tree's build
+# on PATH; cockpit-remote stays a script, pointed at explicitly since SPIRA_COCKPIT is
+# not set in this fixture.
+VIEW="$COCKPIT/remote/cockpit-remote"
+rebuild()      { TMUX_TMPDIR="$T"  SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="" command rebuild "$@" 2>&1; }
+rebuild_mail() { TMUX_TMPDIR="$TM" SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC" COCKPIT_MAIL="$FAKE_MAIL" command rebuild "$@" 2>&1; }
 
 echo "test-cockpit-rebuild.sh"
 
@@ -137,7 +141,7 @@ echo "4. an unusable socket path is reported, not mistaken for a wedged server:"
 # the whole fix.
 LONG="$T/$(printf 'x%.0s' $(seq 1 120))"
 mkdir -p "$LONG" 2>/dev/null || LONG="$T/toolong"
-out3="$(TMUX_TMPDIR="$LONG" bash "$COCKPIT/rebuild.sh" probe 2>&1)"
+out3="$(TMUX_TMPDIR="$LONG" command rebuild probe 2>&1)"
 if [[ "$out3" == *"unusable"* ]]; then
     ok "an over-long socket path is called unusable"
 else
@@ -161,8 +165,8 @@ if [ -z "$sess_p5" ]; then
 else
     TMUX_TMPDIR=$T tmux respawn-pane -k -t "$sess_p5" "sleep 60" 2>/dev/null
     sleep 1
-    out5="$(TMUX_TMPDIR=$T COCKPIT_CONCIERGE="$FAKE_CONC_BARE" \
-        bash "$COCKPIT/rebuild.sh" 2>&1)"; rc5=$?
+    out5="$(TMUX_TMPDIR=$T SPIRA_VIEW="$VIEW" COCKPIT_CONCIERGE="$FAKE_CONC_BARE" \
+        command rebuild 2>&1)"; rc5=$?
     is   "positive control: rebuild fails when session pane has no brief" "1" "$rc5"
     want "positive control: verify names the session pane as the failure" \
          "FAIL  session pane" "$out5"

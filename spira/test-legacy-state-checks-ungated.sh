@@ -24,7 +24,13 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 lc() { tr '[:upper:]' '[:lower:]' <<< "$1"; }
 
 audit_body()  { awk '/^    fn audit\(/{f=1} f{print} f && /^    }$/{exit}' "$1"; }
-sweep_body()  { awk '/^  sweep\)$/{f=1} f{print} f && /^  ;;$/{exit}' "$1"; }
+# THE TERMINATOR MUST MATCH THE FILE'S OWN INDENTATION, NOT A GUESS AT ONE: groomer.sh's case
+# arms close on a 4-space `    ;;`, never a 2-space one (there is no `^  ;;$` line in the file
+# at all) — so the old 2-space pattern never matched and this silently read from `sweep)` to
+# EOF every time, passing only because nothing after `sweep)` happened to say
+# "lifecycle_enforce" yet. sp-rfodk's `deadlocked)` case correctly does (DESIGN.md's own
+# switch, spira-claim/DESIGN.md §6a/§9) and the over-capture turned that correct code red.
+sweep_body()  { awk '/^  sweep\)$/{f=1} f{print} f && /^    ;;$/{exit}' "$1"; }
 
 # ---------------------------------------------------------------------------------------
 # CHECK5: check5() still exists, and audit()'s call to it carries no lifecycle_enforce gate.

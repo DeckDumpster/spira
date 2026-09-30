@@ -322,13 +322,13 @@ else
             PASS "cockpit snapshot fresh — $_rdy_snap (${_rdy_snap_age}s old)"
         fi
     fi
-    # Check for the two tagged panes (panel, health) that layout.sh creates.
+    # Check for the two tagged panes (panel, health) that `layout` creates.
     if ! command -v tmux >/dev/null 2>&1; then
         WARN "tmux not on PATH — cannot check cockpit panes" \
              "Install tmux or set SPIRA_PATH in spira.conf."
     elif [ "$_ckp_tmux_up" = "0" ]; then
         WARN "no tmux server running — cockpit panes absent" \
-             "Build the cockpit: $SPIRA_COCKPIT/layout.sh up"
+             "Build the cockpit: layout up"
     else
         for _ctag in panel health; do
             _cpane="$(tmux list-panes -a -F '#{@cockpit} #{pane_id}' 2>/dev/null \
@@ -337,7 +337,7 @@ else
                 PASS "cockpit $_ctag pane present — $_cpane"
             else
                 WARN "cockpit $_ctag pane absent" \
-                     "Rebuild the cockpit: $SPIRA_COCKPIT/layout.sh up"
+                     "Rebuild the cockpit: layout up"
             fi
         done
     fi

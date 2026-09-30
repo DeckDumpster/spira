@@ -5,7 +5,7 @@
 # A repair loop that only runs while a session is alive cannot repair the case where the
 # session died.
 Description=Repair the cockpit tmux layout and the session hook's registration
-Documentation=file://@SPIRA_COCKPIT@/layout.sh
+Documentation=file://@SPIRA_PROD_ROOT@/cockpit/ops/DESIGN.md
 After=default.target
 
 [Service]
@@ -32,7 +32,7 @@ Type=oneshot
 # (DESIGN.md "activate": "never current, so a unit states exactly what it runs") no longer
 # registers a NEW, unrecognisable entry each time. 27 had accumulated before this was fixed.
 ExecStartPre=-@SPIRA_PROD_ROOT@/bin/release session-hook install
-ExecStart=@SPIRA_PROD_COCK@/layout.sh ensure
+ExecStart=@SPIRA_PROD_ROOT@/bin/layout ensure
 TimeoutStartSec=60
 StandardOutput=append:@SPIRA_RUN@/cockpit-heal.log
 StandardError=append:@SPIRA_RUN@/cockpit-heal.log

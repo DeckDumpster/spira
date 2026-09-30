@@ -21,7 +21,7 @@
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
-# covers: spira/cockpit.sh spira/lib.sh cockpit/health.sh
+# covers: spira/cockpit.sh spira/lib.sh cockpit/ops/src/health.rs
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #
@@ -159,7 +159,7 @@ want "output has SP_QUEUE_NEXT_N" "SP_QUEUE_NEXT_N=" "$out"
 want "output has SP_QUEUE_BATCH_PR=42" "SP_QUEUE_BATCH_PR=42" "$out"
 
 echo "--- health.sh pane ---"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 {
     printf '%s\n' "$out" | python3 -c '
 import sys
@@ -178,7 +178,7 @@ pane="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_BD="${REAL_BD:-bd}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    bash "$PANE" once 0 120 2>/dev/null)"
+    "$PANE" once 0 120 2>/dev/null)"
 
 want "pane renders QUEUE label" "QUEUE" "$pane"
 want "pane shows batch #42" "batch #42" "$pane"
@@ -239,7 +239,7 @@ _rows2="$(printf '%s\n' "$out2" | grep -c '^SP_QUEUE_NEXT[0-9]')"
     && ok "SP_QUEUE_NEXT rows emitted are capped (got $_rows2)" \
     || bad "SP_QUEUE_NEXT rows emitted are capped" "got [$_rows2]"
 
-PANE2="$HERE/../cockpit/health.sh"
+PANE2="health"
 {
     printf '%s\n' "$out2" | python3 -c '
 import sys
@@ -257,7 +257,7 @@ pane2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$REPO2" \
     SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" SPIRA_BD="${REAL_BD:-bd}" \
     SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
-    bash "$PANE2" once 0 120 2>/dev/null)"
+    "$PANE2" once 0 120 2>/dev/null)"
 
 want "pane header reads 32 certified" "32 certified" "$pane2"
 nowant "pane header does not read 20 certified" "20 certified" "$pane2"

@@ -77,14 +77,17 @@ printf '# empty\n' > "$FIXTURE/spira/watchers"
 # $FIXTURE/spira. install-intake.sh had a stub here before; nothing in uninstall.sh's own
 # flow calls `release intake` at all (its ALERT DROP-INS step removes them directly).
 
-# Stub cockpit/layout.sh: record calls; do not kill any real sessions.
+# Stub `layout`: record calls; do not kill any real sessions. `layout` is a binary now
+# (sp-llbmi), invoked by name from PATH — the stub goes in $FIXTURE/spira, which `un()`
+# below puts first on PATH, so it shadows the real compiled binary that is also on PATH
+# (per the "invoked by name from the tree's build on PATH" convention).
 mkdir -p "$FIXTURE/cockpit"
-cat > "$FIXTURE/cockpit/layout.sh" <<'LAYOUT'
+cat > "$FIXTURE/spira/layout" <<'LAYOUT'
 #!/usr/bin/env bash
-printf 'layout.sh: %s\n' "$*" >> "${LAYOUT_LOG:-/dev/null}"
+printf 'layout: %s\n' "$*" >> "${LAYOUT_LOG:-/dev/null}"
 exit 0
 LAYOUT
-chmod +x "$FIXTURE/cockpit/layout.sh"
+chmod +x "$FIXTURE/spira/layout"
 
 # Directories wired into the test environment.
 DEST="$TMP/home/.config/systemd/user"
@@ -220,7 +223,7 @@ JSON
 
 # Seed ~/.local/bin symlinks pointing into the harness.
 ln -sf "$FIXTURE/cockpit/remote-cockpit" "$LOCAL_BIN/cockpit-remote" 2>/dev/null || \
-    ln -sf "$FIXTURE/cockpit/layout.sh" "$LOCAL_BIN/cockpit-remote"
+    ln -sf "$FIXTURE/spira/layout" "$LOCAL_BIN/cockpit-remote"
 
 # ==========================================================================
 echo
