@@ -570,6 +570,15 @@ impl<'w, W: World> Trial<'w, W> {
             ]
         };
 
+        // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
+        // holds, which must be the merge's.
+        let want_tree = w.rev_parse(&repo, &format!("{rev}^{{tree}}")).unwrap_or_default();
+        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs) {
+            Ok(t) => t,
+            Err(e) => {
+                return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
+            }
+        };
         let (rc, out, ph) = run_composed(
             w,
             &tree,
@@ -577,11 +586,11 @@ impl<'w, W: World> Trial<'w, W> {
             &with_bins(
                 env(&label, ctx.var("SPIRA_VERDICT_REPEAT_CONSIDERED"), &comp),
                 tree_def.as_ref(),
-                &tree,
+                tools.as_ref(),
             ),
             &timeout,
             &cmd,
-            tree_def.as_ref().and_then(|d| d.tools_command(jobs)).as_deref(),
+            tools.as_ref(),
             jobs,
             &re.required,
             "",
@@ -655,6 +664,10 @@ impl<'w, W: World> Trial<'w, W> {
             .next()
             .unwrap_or_else(|| "-".into());
 
+        if rc == NOVERDICT && out.contains(TOOLS_UNATTRIBUTED) {
+            return v(NOVERDICT, "tools-unattributed", format!(
+                "{out}\ngate: no verdict on {br} — its tools could not be attributed to the tree under test."));
+        }
         if let Some(d) = parse::harness_fault_detail(&out) {
             return v(NOVERDICT, "harness-fault", format!(
                 "gate: {name}'s batch reported a harness fault — container died mid-batch ({d}).\ngate: command: {cmd}\n{out}"));
@@ -693,10 +706,25 @@ impl<'w, W: World> Trial<'w, W> {
                 None
             }
         };
-        if let Some((base_cmd, bdef)) = base_gate
-            .as_ref()
-            .filter(|_| self.gate_at(&repo, &tree, &base_rev, &base_rev).is_ok())
-        {
+        // THE BASE'S TOOLS ARE THE BASE'S, PROVABLY (sp-g9f3t): after the checkout, the gate
+        // tree must hold the base's tree id, and the tools the steps read are keyed by it —
+        // never the branch trial's build left in target/aeon, never another tree's. One that
+        // cannot be attributed leaves the base untested (BaseUntestable), never judged.
+        let base_tree = w.rev_parse(&repo, &format!("{base_rev}^{{tree}}")).unwrap_or_default();
+        let base_tools = base_gate.as_ref().and_then(|(_, bdef)| {
+            if let Err(e) = self.gate_at(&repo, &tree, &base_rev, &base_rev) {
+                w.eprint(&e);
+                return None;
+            }
+            match tools_for(w, &tree, &base_tree, bdef.as_ref(), jobs) {
+                Ok(t) => Some(t),
+                Err(e) => {
+                    w.eprint(&format!("{e}\ngate: no base trial — {base}'s tools cannot be attributed to {base}'s tree."));
+                    None
+                }
+            }
+        });
+        if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools) {
             // A branch red before its suites step ran (a fence, the selector) is judged on the
             // base's fences only: the base's suites answer no question this red asks, and they
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
@@ -717,11 +745,11 @@ impl<'w, W: World> Trial<'w, W> {
                         &base_comp,
                     ),
                     bdef.as_ref(),
-                    &tree,
+                    base_tools.as_ref(),
                 ),
                 &timeout,
                 base_cmd,
-                bdef.as_ref().and_then(|d| d.tools_command(jobs)).as_deref(),
+                base_tools.as_ref(),
                 jobs,
                 &re.required,
                 "base-",
@@ -1170,13 +1198,78 @@ fn short(rev: &str) -> &str {
 
 /// The environment with each `bin` of a tree definition pointing at the binary built from
 /// `tree` (sp-quu2w), replacing the installed one the context named.
+/// Marks a trial that stopped because its tools could not be attributed to its tree.
+pub const TOOLS_UNATTRIBUTED: &str = "gate: tools-unattributed";
+
+/// A trial's tools (sp-g9f3t; DESIGN.md "Tools keyed by the tree they were built from"):
+/// where they live, keyed by the tree id they were built from, and the build to run first
+/// (None when that directory already holds this tree's).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Tools {
+    pub build: Option<String>,
+    pub tree: PathBuf,
+    pub dir: PathBuf,
+    pub id: String,
+    pub pkgs: Vec<String>,
+}
+
+/// The tools of the trial about to run in `tree`, which must hold `want` (a git tree id).
+/// Ok(None) when the definition builds nothing; Err naming the mismatch when the gate tree
+/// holds another tree, or its HEAD cannot be read — the caller refuses, never guesses.
+pub fn tools_for<W: World>(
+    w: &W,
+    tree: &Path,
+    want: &str,
+    d: Option<&def::Def>,
+    jobs: u64,
+) -> Result<Option<Tools>, String> {
+    let Some(d) = d.filter(|d| !d.bins.is_empty()) else {
+        return Ok(None);
+    };
+    let have = w.rev_parse(tree, "HEAD^{tree}").unwrap_or_default();
+    if want.is_empty() || have != want {
+        return Err(format!(
+            "{TOOLS_UNATTRIBUTED}: {} holds tree {}, not {} — its tools would not be the tree's",
+            tree.display(),
+            if have.is_empty() { "<unreadable>" } else { &have },
+            if want.is_empty() { "<unresolved>" } else { want }
+        ));
+    }
+    let dir = def::Def::tools_dir(tree, want);
+    let pkgs = d.packages();
+    let build = if tools_proved(w, &dir, want, &pkgs).is_ok() {
+        w.eprint(&format!("gate: tools for tree {want} reused from {} (built from this tree)", dir.display()));
+        None
+    } else {
+        d.tools_command(jobs)
+    };
+    Ok(Some(Tools { build, tree: tree.to_path_buf(), dir, id: want.to_string(), pkgs }))
+}
+
+/// `dir` is stamped with `id` and holds every package.
+fn tools_proved<W: World>(w: &W, dir: &Path, id: &str, pkgs: &[String]) -> Result<(), String> {
+    let stamp = w.read(&dir.join(def::TOOLS_STAMP)).unwrap_or_default();
+    if stamp.trim() != id {
+        return Err(format!(
+            "{TOOLS_UNATTRIBUTED}: {} is stamped '{}', not tree {id}",
+            dir.display(),
+            stamp.trim()
+        ));
+    }
+    match pkgs.iter().find(|p| !w.exists(&dir.join(p))) {
+        Some(p) => Err(format!("{TOOLS_UNATTRIBUTED}: {} lacks {p}", dir.display())),
+        None => Ok(()),
+    }
+}
+
 pub fn with_bins(
     mut env: Vec<(String, String)>,
     d: Option<&def::Def>,
-    tree: &Path,
+    tools: Option<&Tools>,
 ) -> Vec<(String, String)> {
+    let Some(t) = tools else { return env };
     for b in d.map(|d| d.bins.as_slice()).unwrap_or(&[]) {
-        let p = def::Def::bin_path(tree, b).to_string_lossy().into_owned();
+        let p = t.dir.join(&b.package).to_string_lossy().into_owned();
         env.retain(|(k, _)| k != &b.var);
         env.push((b.var.clone(), p));
     }
@@ -1191,7 +1284,7 @@ pub fn run_composed<W: World>(
     env: &[(String, String)],
     timeout: &str,
     cmd: &str,
-    tools: Option<&str>,
+    tools: Option<&Tools>,
     jobs: u64,
     reentry: &[String],
     prefix: &str,
@@ -1208,12 +1301,22 @@ pub fn run_composed<W: World>(
     let mut phases = Vec::new();
     // THE TOOLS PHASE (sp-quu2w): the binaries the steps call, built from the tree under
     // test, before any step runs. A tree whose tools do not build is judged like any red.
-    if let Some(t) = tools {
-        let t0 = w.now();
-        let (rc, out) = w.run_gate(tree, env, &left(), t);
-        phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
-        if rc != 0 || w.signalled() {
-            return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
+    // Built into the shared target/, then installed into the directory keyed by the tree id
+    // (sp-g9f3t), and — built or reused — proved before any step reads it.
+    if let Some(tl) = tools {
+        if let Some(t) = &tl.build {
+            let t0 = w.now();
+            let (rc, out) = w.run_gate(tree, env, &left(), t);
+            phases.push((format!("{prefix}tools"), w.now().saturating_sub(t0)));
+            if rc != 0 || w.signalled() {
+                return (rc, format!("{out}\ngate: phase 'tools' failed (exit {rc}): {t}"), phases);
+            }
+            if let Err(e) = w.install_tools(&tl.tree, &tl.pkgs, &tl.dir, &tl.id) {
+                return (NOVERDICT, format!("{out}\n{TOOLS_UNATTRIBUTED}: {e}"), phases);
+            }
+        }
+        if let Err(e) = tools_proved(w, &tl.dir, &tl.id, &tl.pkgs) {
+            return (NOVERDICT, e, phases);
         }
     }
     let first = if comp.suites_off() { "fences" } else { "gate" };

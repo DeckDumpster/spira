@@ -602,6 +602,9 @@ impl World for Real {
             if have.is_empty() { "nothing" } else { &have }
         ))
     }
+    fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+        install_tools_at(tree, pkgs, dir, tree_id)
+    }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
         let _ = self
             .git(repo)
@@ -700,6 +703,42 @@ impl World for Real {
 
 const NOVERDICT_RC: i32 = crate::engine::NOVERDICT;
 
+/// [`World::install_tools`] on the filesystem (sp-g9f3t). Copies, never links: a hard link
+/// into `target/aeon` would change under the next build of a different tree.
+pub fn install_tools_at(tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
+    let parent = dir
+        .parent()
+        .ok_or_else(|| format!("gate: {} has no parent directory", dir.display()))?;
+    fs::create_dir_all(parent).map_err(|e| format!("gate: cannot create {}: {e}", parent.display()))?;
+    // Every other keyed directory goes first: the tree is locked for this trial, so nothing
+    // else reads them, and none of them may be mistaken for this tree's.
+    if let Ok(rd) = fs::read_dir(parent) {
+        for e in rd.flatten() {
+            if e.path() != dir {
+                let p = e.path();
+                let _ = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+            }
+        }
+    }
+    let _ = fs::remove_dir_all(dir);
+    let tmp = PathBuf::from(format!("{}.tmp", dir.display()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| format!("gate: cannot create {}: {e}", tmp.display()))?;
+    for p in pkgs {
+        let src = tree.join("target").join("aeon").join(p);
+        fs::copy(&src, tmp.join(p)).map_err(|e| {
+            let _ = fs::remove_dir_all(&tmp);
+            format!("gate: cannot install {} into {}: {e}", src.display(), tmp.display())
+        })?;
+    }
+    fs::write(tmp.join(crate::def::TOOLS_STAMP), format!("{tree_id}\n"))
+        .and_then(|_| fs::rename(&tmp, dir))
+        .map_err(|e| {
+            let _ = fs::remove_dir_all(&tmp);
+            format!("gate: cannot stamp {} for tree {tree_id}: {e}", dir.display())
+        })
+}
+
 /// `date -u +%Y-%m-%dT%H:%M:%SZ` for an epoch.
 pub fn utc_of(t: u64) -> String {
     let days = (t / 86400) as i64;
@@ -725,6 +764,30 @@ pub fn utc_of(t: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn install_tools_copies_stamps_and_clears_every_other_tree() {
+        use std::fs;
+        let t = testkit::TempDir::new("gate-tools");
+        let tree = t.path();
+        fs::create_dir_all(tree.join("target/aeon")).unwrap();
+        fs::write(tree.join("target/aeon/spira-lint"), "built-from-A").unwrap();
+        let root = tree.join(crate::def::TOOLS_DIR);
+        fs::create_dir_all(root.join("B")).unwrap();
+        fs::write(root.join("B/spira-lint"), "built-from-B").unwrap();
+        let dir = root.join("A");
+        super::install_tools_at(tree, &["spira-lint".into()], &dir, "A").unwrap();
+        assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
+        assert_eq!(fs::read_to_string(dir.join("TREE")).unwrap(), "A\n");
+        assert!(!root.join("B").exists(), "another tree's tools survived");
+        // A later build of the tree does not reach into the installed copy.
+        fs::write(tree.join("target/aeon/spira-lint"), "built-from-C").unwrap();
+        assert_eq!(fs::read_to_string(dir.join("spira-lint")).unwrap(), "built-from-A");
+        // A package the build did not produce: Err, and nothing left at the keyed path.
+        let e = super::install_tools_at(tree, &["nope".into()], &root.join("D"), "D").unwrap_err();
+        assert!(e.contains("cannot install"), "{e}");
+        assert!(!root.join("D").exists() && !root.join("D.tmp").exists());
+    }
+
     #[test]
     fn utc_of_formats_like_date() {
         assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");

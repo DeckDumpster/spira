@@ -552,8 +552,9 @@ land with is what its gate runs.
   column keeps today's check against the base (NO_VERDICT `cmd-missing-file`).
 * **Tools from the tree.** Each `bin <VAR> <package>` is built before any step, in a `tools`
   phase (`cargo build --profile aeon -j <jobs> -p <package>…`, then `[ -x
-  target/aeon/<package> ]`), and the steps get `<VAR>=<gate tree>/target/aeon/<package>` in
-  place of the installed value. The aeon profile is the unit phases' profile, so a unit
+  target/aeon/<package> ]`), and the steps get `<VAR>=<gate tree>/target/gate-tools/<tree id>/<package>` (the
+  build's output, copied into a directory keyed by the tree it was built from — see "Tools
+  keyed by the tree they were built from") in place of the installed value. The aeon profile is the unit phases' profile, so a unit
   composition's build reuses it. The spira repository declares `bin SPIRA_LINT_BIN
   spira-lint`. A tools phase that fails is a red like any other and is attributed by the base
   trial.
@@ -590,6 +591,64 @@ land with is what its gate runs.
   runner. `bin SPIRA_TESTENV_BIN testenv` is one line if that is ever wanted.
 * **Dropped:** the config gate string as the spira repository's source of truth, and
   hand-editing it at landing.
+
+## Tools keyed by the tree they were built from (sp-g9f3t)
+
+### Intent
+
+A trial's tools must provably be the tree under test's own. Both trials build in the one gate
+tree (the base trial checks the landing ref out over the branch trial's merge), into the one
+`target/`, and the steps read `target/aeon/<package>` — a path that names no tree. Whether the
+binary there was built from the base or is the branch's, left behind, rests on cargo's mtime
+fingerprints and nothing the gate can show. On 2026-09-30 two base trials judged local/main
+red with `base-tools:0` and the question "which spira-lint did the base run?" had no answer
+from the record. (That red turned out not to be a stale binary — see "The finding" — but a
+gate that cannot answer the question cannot rule it out either.)
+
+### Contract
+
+* **The tree is proved before its tools are built.** Before a trial's tools phase the gate
+  reads `HEAD^{tree}` of the gate tree and requires it to equal the tree id of the revision
+  that trial judges (the merge's for the branch trial, the pinned base commit's for the base
+  trial). A mismatch, or an unreadable HEAD, is `tools-unattributed`: NO_VERDICT for the
+  branch trial; for the base trial, no base trial (BaseUntestable, NO_VERDICT). Never a guess.
+* **Tools live in a directory keyed by that tree id:** `<gate tree>/target/gate-tools/<tree
+  id>/<package>`, with `TREE` holding the id. The steps get `<VAR>=` that path — never
+  `target/aeon/<package>`. After a build, the gate (Rust, `World::install_tools`) copies each
+  `target/aeon/<package>` into `<dir>.tmp`, writes `TREE`, renames it into place, and removes
+  every other keyed directory beside it (the gate tree is locked for the whole trial, so no
+  other gate reads them).
+* **Reuse only for the same tree.** A keyed directory whose `TREE` equals the id and that holds
+  every package is reused without building (the `tools` phase is not run and not metered, and
+  the trial says so on stderr). A directory keyed by any other tree is never read.
+* **Fail closed after the phase too.** Whether built or reused, before any step runs the gate
+  re-reads `TREE` and checks every package exists there; otherwise `tools-unattributed`
+  exactly as above. An install that fails is the same.
+
+### The finding (sp-g9f3t)
+
+The two 2026-09-30 base-reds (12:18Z sp-t26yx, 12:32Z sp-9thdw) were not a stale binary: the
+same freshly built `spira-lint`, on the same local/main tree, flips between 0 and 5
+literal-lint findings on file mtimes alone. literal-lint asks `spira/schema.sh` for the
+configured names; schema.sh sources conf.sh, which reads the operator's
+`~/.config/spira/spira.toml` (`ask_label = "needs-ryan"`) when it is newer than the tree's
+`spira/chamber/*.fayth`, and otherwise regenerates a persona-only `spira.toml` into the tree
+and reads that (ask = the default, `needs-operator`). The reused gate tree keeps old fayth
+mtimes, and something rewrote the operator's spira.toml at 12:32:08Z, so both trials of the
+next gate read the box's config and flagged every `needs-ryan` fixture literal. The fix is in
+spira-lint (literal-lint pins schema.sh's config inputs, see its DESIGN.md); this section
+closes the question the gate could not answer.
+
+### Decisions
+
+* **In the gate tree, not a shared cache under SPIRA_RUN.** A shared cache keyed by tree would
+  let concurrent gates prune each other's directories; inside the locked gate tree nothing
+  else reads them, and `git clean -e target` already keeps them across checkouts.
+* **The build stays incremental in the shared `target/`.** A cold per-tree `CARGO_TARGET_DIR`
+  would rebuild every dependency for every new base (minutes a gate). What is attributed is
+  the binary the steps run: copied out of a build run in a tree proved to hold the id.
+* **Copying is Rust (`install_tools`), not more shell in the tools string.** The proof and the
+  install are logic; the tools string stays `cargo build … && [ -x … ]`.
 
 ## Boundaries (ports)
 

@@ -75,10 +75,9 @@ pub const LAND_ESCALATE: &str = r#"IFS= read -r _why
 _ev="$(cat)"
 land_escalate "$_why" "$_ev""#;
 
-/// S4 — CHECK 3b/3c: queue-mode dependents and coordination beads with open children.
+/// S4 — CHECK 3b: queue-mode dependents. (CHECK 3c, open children, is Rust: open_children.rs.)
 pub const CHECK3B: &str = r#"mark_queue_waiters 2>/dev/null || true
-close_landed_queue_waiters 2>/dev/null || true
-mark_open_children 2>/dev/null || true"#;
+close_landed_queue_waiters 2>/dev/null || true"#;
 
 /// S5 — spira_event: four NUL-terminated fields on stdin (kind, target, title, detail).
 pub const EVENT: &str = r#"IFS= read -r -d '' _k; IFS= read -r -d '' _t; IFS= read -r -d '' _ti; IFS= read -r -d '' _de
