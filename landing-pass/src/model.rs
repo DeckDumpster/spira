@@ -89,7 +89,6 @@ pub struct Settings {
     pub queue_bin: Option<PathBuf>,
     pub queue_dir: PathBuf,
     pub lc_bin: Option<PathBuf>,
-    pub prod: PathBuf,
     pub halt_grace: u64,
     /// conf.sh's PATH (`SPIRA_PATH` prepended to the box's tail) — what every command
     /// landing.sh ran was looked up in. `halt` runs podman and testenv.sh under it.
@@ -136,7 +135,6 @@ impl Settings {
             queue_bin: Some(PathBuf::from("queue")),
             queue_dir: run.join("queue"),
             lc_bin: None,
-            prod: run.join("home"),
             halt_grace: 30,
             path: None,
             bdjson_fixture: None,

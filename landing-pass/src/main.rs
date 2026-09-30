@@ -228,7 +228,6 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         }
     };
     let grace = ctx.as_ref().map(|(s, _)| s.halt_grace).unwrap_or(30);
-    let prod = ctx.as_ref().map(|(s, _)| s.prod.clone()).or_else(home).unwrap_or_default();
     let queue_dir = ctx.as_ref().map(|(s, _)| s.queue_dir.clone()).unwrap_or_else(|| run.join("queue"));
     let hc = HaltCtx {
         files: Files::new(&run),
@@ -242,7 +241,7 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         std::env::var("SPIRA_PATH").ok().as_deref(),
         std::env::var("PATH").ok().as_deref(),
     );
-    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { prod, path }, &RealGit);
+    let (rc, out, err) = halt::halt(&hc, &HaltArgs { reason, dry_run }, &RealHalt { path }, &RealGit);
     for l in out {
         println!("{l}");
     }

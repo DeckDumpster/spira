@@ -164,13 +164,21 @@ pub struct RealPrTools<'a> {
 
 impl<'a> PrTools for RealPrTools<'a> {
     fn branch_helper(&self, repo: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32 {
-        let mut c = command("bash");
-        c.arg(&self.s.pr_pass_branch_sh).arg(repo).arg(br).arg(id).arg(base).arg(name).arg(tip);
+        // A bare name (the default) is the launcher-PATH program, run directly; a configured
+        // SPIRA_PR_PASS_BRANCH_SH path is run with bash.
+        let mut c = if self.s.pr_pass_branch_sh.components().count() == 1 {
+            command(&self.s.pr_pass_branch_sh)
+        } else {
+            let mut c = command("bash");
+            c.arg(&self.s.pr_pass_branch_sh);
+            c
+        };
+        c.arg(repo).arg(br).arg(id).arg(base).arg(name).arg(tip);
         c.env("SPIRA_HOME", &self.s.home).env("SPIRA_RUN", &self.s.run).env("SPIRA_DB", &self.s.db);
         c.env("SPIRA_ID_PREFIX", &self.s.id_prefix).stdin(Stdio::null());
         // The switch as this pass resolved it is already pinned into the environment the
-        // helper inherits (lifecycle::pin_for_children): OFF, its lc-delivery.sh calls hold a
-        // non-executable SPIRA_LC_BIN and never reach spira-lc.
+        // helper inherits (lifecycle::pin_for_children): OFF, SPIRA_LIFECYCLE_ENFORCE=0 and its
+        // lc-delivery.sh calls never reach spira-lc.
         // The helper's own lines go straight to this pass's stdout (the unit's log).
         c.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         match c.status() {
@@ -180,7 +188,7 @@ impl<'a> PrTools for RealPrTools<'a> {
     }
 
     fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String> {
-        let lc = self.s.lc_bin.as_ref().filter(|b| crate::real::executable(b)).ok_or("SPIRA_LC_BIN is not an executable")?;
+        let lc = self.s.lc_bin.as_ref().ok_or("no spira-lc program")?;
         let mut c = command(lc);
         c.arg("show").arg(id).stdin(Stdio::null());
         let (rc, so, se) = run_capture(c);
