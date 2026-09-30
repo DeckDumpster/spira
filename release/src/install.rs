@@ -41,11 +41,28 @@ impl Unpack for RealUnpack {
 pub struct InstallOpts {
     pub dry_run: bool,
     pub settle: Duration,
+    /// Skip the unconditional "restart every active spira-*.service" step (DESIGN.md
+    /// "install-tarball"). For a caller that renders unit files immediately afterward
+    /// (deploy.sh's `_render_release_units`, and the acceptance harness's own
+    /// install_tarball+install_sh pair) that blind restart is pure duplication: every
+    /// ExecStart line is templated from the release's own path
+    /// (release/DESIGN.md "Render" — `SPIRA_HOME`/`SPIRA_PROD` are `<rel>/spira`, not
+    /// `current/spira`), so restarting BEFORE the render re-templates those lines just
+    /// bounces the unit back onto the release it was already running — it cannot be what
+    /// switches a running unit onto the new release. The render's own restart (only units
+    /// whose `Exec*` actually changed) is what does that, moments later. Two restarts of
+    /// the same unit within the same handful of seconds raced a socket/run-dir release the
+    /// first instance was still tearing down and failed the second with "the control
+    /// process exited with error code" for spira-cockpit-prod.service, deterministically
+    /// enough under host load to roll back a release that added nothing wrong (acceptance
+    /// phase B, sp-r15cf). Default false — a standalone `release install-tarball` with no
+    /// render to follow still needs its own restart to bring the box up to date.
+    pub skip_restart: bool,
 }
 
 impl Default for InstallOpts {
     fn default() -> Self {
-        InstallOpts { dry_run: false, settle: Duration::from_secs(3) }
+        InstallOpts { dry_run: false, settle: Duration::from_secs(3), skip_restart: false }
     }
 }
 
@@ -96,7 +113,11 @@ pub fn install(cfg: &Config, sc: &dyn Systemctl, un: &dyn Unpack, tarball: &Path
     if o.dry_run {
         eprintln!("release: DRY RUN: would unpack {} -> {}", tarball.display(), dir.display());
         eprintln!("release: DRY RUN: would swap current -> {name}");
-        eprintln!("release: DRY RUN: would daemon-reload and restart active spira-*.service units");
+        if o.skip_restart {
+            eprintln!("release: DRY RUN: would daemon-reload (--skip-restart: the caller's own render restarts what changed)");
+        } else {
+            eprintln!("release: DRY RUN: would daemon-reload and restart active spira-*.service units");
+        }
         return Ok(Installed { name, ..Default::default() });
     }
 
@@ -141,24 +162,28 @@ pub fn install(cfg: &Config, sc: &dyn Systemctl, un: &dyn Unpack, tarball: &Path
 
     let mut restarted = Vec::new();
     let mut restart_failed = Vec::new();
-    match sc.list_active("spira-*.service") {
-        Ok(units) if units.is_empty() => eprintln!("release: no active spira-*.service units to restart"),
-        Ok(units) => {
-            eprintln!("release: restarting: {}", units.join(" "));
-            for u in units {
-                match sc.restart(&u) {
-                    Ok(()) => restarted.push(u),
-                    Err(e) => restart_failed.push(format!("{u}: {e}")),
+    if o.skip_restart {
+        eprintln!("release: --skip-restart — the caller's own render will restart what changed");
+    } else {
+        match sc.list_active("spira-*.service") {
+            Ok(units) if units.is_empty() => eprintln!("release: no active spira-*.service units to restart"),
+            Ok(units) => {
+                eprintln!("release: restarting: {}", units.join(" "));
+                for u in units {
+                    match sc.restart(&u) {
+                        Ok(()) => restarted.push(u),
+                        Err(e) => restart_failed.push(format!("{u}: {e}")),
+                    }
+                }
+                if !restart_failed.is_empty() {
+                    eprintln!("release: WARN: some units failed to restart: {}", restart_failed.join("; "));
+                }
+                if !o.settle.is_zero() {
+                    std::thread::sleep(o.settle);
                 }
             }
-            if !restart_failed.is_empty() {
-                eprintln!("release: WARN: some units failed to restart: {}", restart_failed.join("; "));
-            }
-            if !o.settle.is_zero() {
-                std::thread::sleep(o.settle);
-            }
+            Err(e) => eprintln!("release: WARN: could not list active spira-*.service units — continuing: {e}"),
         }
-        Err(e) => eprintln!("release: WARN: could not list active spira-*.service units — continuing: {e}"),
     }
 
     let (pruned, prune_failed) = prune(cfg, &name);

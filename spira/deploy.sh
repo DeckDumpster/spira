@@ -558,8 +558,21 @@ spira_config_set SPIRA_PROD "$_new_prod" \
 log "deploy: spira.toml updated — SPIRA_PROD = $_new_prod"
 
 # Activate the tarball.
+#
+# --skip-restart (sp-r15cf): install-tarball's own restart cannot be what switches a
+# running unit onto the new release — every ExecStart line is templated with the
+# RELEASE'S OWN path (release/DESIGN.md "Render": SPIRA_HOME/SPIRA_PROD are <rel>/spira,
+# a specific hash, never "current"), and that templating has not happened yet here; it
+# happens in _render_release_units below. Restarting now just bounces a unit back onto
+# the release it was already running, then _render_release_units restarts the same unit
+# AGAIN seconds later once its Exec lines actually changed — twice in the same handful of
+# seconds, racing whatever the first instance was still releasing (a socket, a run-dir
+# lock) and failing the second with "the control process exited with error code" for
+# spira-cockpit-prod.service, deterministically enough under host load to roll back a
+# release that added nothing wrong (acceptance phase B). The render's restart is the one
+# that matters; this step only needs to land the bits and swap the symlink.
 log "deploy: activating"
-"$_ACTIVATE" install-tarball "$_tarball" || { _rollback "release install-tarball failed"; }
+"$_ACTIVATE" install-tarball --skip-restart "$_tarball" || { _rollback "release install-tarball failed"; }
 
 # Record the release tag in .tags/ (beside the release dirs, not inside the read-only one).
 printf '%s\n' "$tag" > "$SPIRA_RELEASES/.tags/$release_stem" || {
