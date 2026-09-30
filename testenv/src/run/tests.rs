@@ -83,6 +83,7 @@ struct World {
     lines: Mutex<Vec<String>>,
     /// Warm slots whose refill the run asked for.
     refills: Mutex<Vec<usize>>,
+    sweeps: Mutex<usize>,
 }
 
 impl World {
@@ -131,6 +132,9 @@ impl World {
             ("SPIRA_BATCH_MAXPAR", "2".into()),
             // the warm path has its own tests; the rest keep the §4.1 worktree rules
             ("SPIRA_TESTENV_WARM_SLOTS", "0".into()),
+            // hermetic: the host's free space and RAM do not decide a unit test
+            ("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB", "0".into()),
+            ("SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB", "0".into()),
             ("HOME", root.display().to_string()),
         ]
         .into_iter()
@@ -144,6 +148,7 @@ impl World {
             env,
             lines: Mutex::new(vec![]),
             refills: Mutex::new(vec![]),
+            sweeps: Mutex::new(0),
         }
     }
 
@@ -174,6 +179,8 @@ impl World {
             cwd: cwd.to_path_buf(),
             runner_identity: b"runner-v1".to_vec(),
             warm_refill: &|i, _| self.refills.lock().unwrap().push(i),
+            spawn_sweep: &|_| *self.sweeps.lock().unwrap() += 1,
+            runner_exe: self.runner_exe(),
         };
         let mut full = vec![];
         full.extend(args.iter().map(|s| s.to_string()));
@@ -181,6 +188,15 @@ impl World {
         let inv = parse(&full).unwrap();
         assert!(matches!(inv, Invocation::Run(_)));
         execute(inv, &deps)
+    }
+
+    /// A stand-in for the testenv executable the setup runner is linked from.
+    fn runner_exe(&self) -> PathBuf {
+        let p = self.root.join("runner-exe");
+        if !p.exists() {
+            fs::write(&p, b"runner").unwrap();
+        }
+        p
     }
 
     fn last(&self) -> String {
@@ -1370,4 +1386,40 @@ fn without_a_deadline_or_with_artifacts_there_is_no_warm_path() {
         .cloned()
         .collect();
     assert!(ups[0][2].starts_with("spira-batch-"));
+}
+
+#[test]
+fn a_gate_trial_off_the_warm_path_spawns_the_sweep_instead_of_running_it() {
+    // D12 (sp-t26yx): under --deadline the orphan sweep never runs on the critical path.
+    let w = World::new("sweep-detached");
+    let rt = runtime();
+    rt.containers
+        .lock()
+        .unwrap()
+        .push("spira-batch-dead".into());
+    fs::write(w.owner.join("spira-batch-dead.owner"), "999999999\n").unwrap();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--deadline", "300", "--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+    assert!(rt.purged.lock().unwrap().is_empty(), "nothing swept inline");
+    assert_eq!(*w.sweeps.lock().unwrap(), 1, "the sweep was spawned");
+    assert!(!w.lines.lock().unwrap().iter().any(|l| l.contains("phases:") && l.contains("sweep:")));
+}
+
+#[test]
+fn a_scratch_root_without_room_is_refused_never_a_disk_fallback() {
+    // sp-t26yx: fail closed when the scratch filesystem is short.
+    let mut w = World::new("scratch-short");
+    w.env
+        .insert("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB".into(), u64::MAX.to_string());
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=scratch-short");
+    assert!(rt.exec_argv().is_empty(), "nothing built or run");
 }

@@ -7,6 +7,61 @@ use std::fs::{self, File, OpenOptions};
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
+/// Where the scratch and warm slots live (sp-t26yx, DESIGN.md §4.1): `$SPIRA_TESTENV_SCRATCH`
+/// when set; else `$SPIRA_RUN/worktree` when `$SPIRA_RUN` is itself on a tmpfs; else
+/// `/tmp/spira-testenv-<hash of $SPIRA_RUN>` when `/tmp` is a tmpfs; else
+/// `$SPIRA_RUN/worktree`. A slot is disposable build state (cargo's `target/`, 1.4–2.4 GB,
+/// rewritten on every relink): on a RAM-backed tmpfs it never competes for the host disk.
+pub fn scratch_root(run: &Path) -> PathBuf {
+    if let Some(v) = std::env::var_os("SPIRA_TESTENV_SCRATCH").filter(|v| !v.is_empty()) {
+        return PathBuf::from(v);
+    }
+    let legacy = run.join("worktree");
+    if crate::testdb::on_tmpfs(run) || !crate::testdb::on_tmpfs(Path::new("/tmp")) {
+        return legacy;
+    }
+    use sha2::{Digest, Sha256};
+    let h = Sha256::digest(run.as_os_str().as_encoded_bytes());
+    let hex: String = h.iter().take(6).map(|b| format!("{b:02x}")).collect();
+    PathBuf::from(format!("/tmp/spira-testenv-{hex}"))
+}
+
+/// Refuse a slot the scratch filesystem cannot hold (fail closed, sp-t26yx): at least
+/// `min_free_mib` free on it, and — when it is a tmpfs, whose pages are RAM — at least
+/// `min_mem_mib` of MemAvailable, so a build never pushes the host into swap (which is disk).
+pub fn scratch_room(base: &Path, min_free_mib: u64, min_mem_mib: u64) -> Result<(), String> {
+    let free = free_mib(base).ok_or_else(|| format!("cannot statvfs {}", base.display()))?;
+    if free < min_free_mib {
+        return Err(format!(
+            "scratch {} has {free} MiB free, below the {min_free_mib} MiB a slot needs (SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB)",
+            base.display()
+        ));
+    }
+    if crate::testdb::on_tmpfs(base) {
+        let avail = crate::util::meminfo_kb(&crate::util::read("/proc/meminfo"), "MemAvailable")
+            .unwrap_or(0)
+            / 1024;
+        if avail < min_mem_mib {
+            return Err(format!(
+                "scratch {} is a tmpfs and MemAvailable is {avail} MiB, below {min_mem_mib} MiB (SPIRA_TESTENV_SCRATCH_MIN_MEM_MIB)",
+                base.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn free_mib(p: &Path) -> Option<u64> {
+    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
+    // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    #[allow(clippy::unnecessary_cast)]
+    Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64) / (1024 * 1024))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeEntry {
     pub path: PathBuf,
@@ -169,6 +224,9 @@ pub(crate) fn prepare_slot(repo: &Path, slot: &Path, commit: &str) -> Result<(),
     }
 }
 
+/// The prefix of [`acquire`]'s error when the scratch root has no room (fail closed).
+pub const SCRATCH_SHORT: &str = "scratch-short";
+
 pub struct Request<'a> {
     pub repo: &'a Path,
     pub rev: &'a str,
@@ -176,13 +234,20 @@ pub struct Request<'a> {
     pub cwd: &'a Path,
     pub run_dir: &'a Path,
     pub slots: usize,
+    /// [`scratch_room`]'s bounds for a slot on the scratch root.
+    pub min_free_mib: u64,
+    pub min_mem_mib: u64,
 }
 
 /// The first free warm slot (DESIGN.md §11.2), locked and checked out at the commit; None
 /// when every slot is busy or unusable (the caller falls back to [`acquire`]).
 pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<Worktree> {
-    let base = req.run_dir.join("worktree");
+    let base = scratch_root(req.run_dir);
     fs::create_dir_all(&base).ok()?;
+    if let Err(e) = scratch_room(&base, req.min_free_mib, req.min_mem_mib) {
+        log(&format!("no warm slot: {e}"));
+        return None;
+    }
     for i in 0..slots {
         let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
         let Some(lock) = try_lock(&lock_path) else {
@@ -223,9 +288,10 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
             req.rev
         ));
     }
-    let base = req.run_dir.join("worktree");
+    let base = scratch_root(req.run_dir);
     fs::create_dir_all(&base)
         .map_err(|e| format!("cannot create worktree directory {}: {e}", base.display()))?;
+    scratch_room(&base, req.min_free_mib, req.min_mem_mib).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
     for i in 0..req.slots {
         let slot = base.join(format!(".testenv-slot-{i}"));
         let Some(lock) = try_lock(&base.join(format!(".testenv-slot-{i}.lock"))) else {
@@ -272,6 +338,44 @@ mod tests {
     use std::process::Command;
 
     const LIST: &str = "worktree /srv/harness\nHEAD aaa\nbranch refs/heads/main\n\nworktree /run/worktree/sp-x\nHEAD bbb\nbranch refs/heads/spira/sp-x\n\nworktree /run/worktree/round-5\nHEAD ccc\ndetached\n";
+
+    #[test]
+    fn the_scratch_root_is_the_tmpfs_never_the_disk() {
+        if std::env::var_os("SPIRA_TESTENV_SCRATCH").is_some() {
+            eprintln!("skip: SPIRA_TESTENV_SCRATCH is set");
+            return;
+        }
+        // a run dir already on a tmpfs keeps its own worktree/ (unit tests, a tmpfs SPIRA_RUN)
+        if crate::testdb::on_tmpfs(Path::new("/dev/shm")) {
+            assert_eq!(
+                scratch_root(Path::new("/dev/shm/r")),
+                PathBuf::from("/dev/shm/r/worktree")
+            );
+        }
+        // a disk-backed run dir moves to /tmp when /tmp is a tmpfs, keyed by the run dir
+        let a = scratch_root(Path::new("/proc/a"));
+        let b = scratch_root(Path::new("/proc/b"));
+        if crate::testdb::on_tmpfs(Path::new("/tmp")) {
+            assert!(a.to_string_lossy().starts_with("/tmp/spira-testenv-"), "{a:?}");
+            assert_ne!(a, b, "two runs never share slots");
+            assert_eq!(a, scratch_root(Path::new("/proc/a")), "stable");
+        } else {
+            assert_eq!(a, PathBuf::from("/proc/a/worktree"));
+        }
+    }
+
+    #[test]
+    fn scratch_room_refuses_below_its_bounds() {
+        let d = testkit::TempDir::new("scratch-room");
+        assert!(scratch_room(&d, 0, 0).is_ok());
+        let e = scratch_room(&d, u64::MAX, 0).unwrap_err();
+        assert!(e.contains("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB"), "{e}");
+        if crate::testdb::on_tmpfs(&d) {
+            let e = scratch_room(&d, 0, u64::MAX).unwrap_err();
+            assert!(e.contains("MemAvailable"), "{e}");
+        }
+        assert!(scratch_room(Path::new("/nonexistent/x"), 0, 0).is_err());
+    }
 
     #[test]
     fn porcelain_parses_detached_and_branches() {
@@ -333,6 +437,8 @@ mod tests {
             cwd: &root,
             run_dir: &run,
             slots: 1,
+            min_free_mib: 0,
+            min_mem_mib: 0,
         };
         let wt = acquire(&r1, &|_| {}).unwrap();
         assert!(matches!(wt.kind, Kind::Slot { .. }));
@@ -348,6 +454,8 @@ mod tests {
             cwd: &root,
             run_dir: &run,
             slots: 1,
+            min_free_mib: 0,
+            min_mem_mib: 0,
         };
         let eph = acquire(&r2, &|_| {}).unwrap();
         assert!(matches!(eph.kind, Kind::Ephemeral));
@@ -380,6 +488,8 @@ mod tests {
             cwd: &root,
             run_dir: &run,
             slots: 1,
+            min_free_mib: 0,
+            min_mem_mib: 0,
         };
         let wt = acquire(&r3, &|_| {}).unwrap();
         assert!(matches!(wt.kind, Kind::InPlace));

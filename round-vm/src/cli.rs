@@ -82,6 +82,23 @@ fn pool_for(cfg: &Config) -> Pool {
     }
 }
 
+/// What a panic inside round-vm exits with: its own harness fault (DESIGN.md §2.2), never
+/// Rust's 101, which no caller has a row for (sp-dp872).
+pub const PANIC_EXIT: i32 = 2;
+
+/// Runs `f`, turning a panic into [`PANIC_EXIT`] with the panic's text on stderr (the default
+/// hook has already printed its location).
+pub fn no_panic(f: impl FnOnce() -> i32) -> i32 {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(code) => code,
+        Err(p) => {
+            let what = p.downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| p.downcast_ref::<String>().cloned()).unwrap_or_default();
+            eprintln!("round-vm: internal fault (panic): {what} — exit {PANIC_EXIT}, no verdict");
+            PANIC_EXIT
+        }
+    }
+}
+
 pub fn main_with(args: Vec<String>) -> i32 {
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("{USAGE}");
@@ -173,7 +190,14 @@ pub fn main_with(args: Vec<String>) -> i32 {
             });
             let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
-            run(&RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote }, run_args.as_ref().unwrap())
+            let Some(a) = run_args.as_ref() else { return 2 };
+            let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote };
+            let code = no_panic(|| run(&env, a));
+            if code == PANIC_EXIT {
+                // G2: a panic mid-run must not leave this run's VM leased to a dying process.
+                pool.release_owned_by(me, &real_attempt);
+            }
+            code
         }
         _ => unreachable!(),
     }
@@ -185,6 +209,13 @@ mod tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn a_panic_is_exit_2_never_101() {
+        assert_eq!(no_panic(|| panic!("boom")), 2);
+        assert_eq!(no_panic(|| panic!("{}", String::from("formatted"))), 2);
+        assert_eq!(no_panic(|| 1), 1, "a normal exit passes through");
     }
 
     #[test]
