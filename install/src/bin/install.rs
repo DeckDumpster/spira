@@ -210,7 +210,19 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
-        skip(&format!("database exists at {db}"));
+        // A bead count, not just an existence check (original: `bd -C $SPIRA_DB list --limit
+        // 0 --json`, 10s timeout, length of the JSON array, "?" on any failure to parse or
+        // to run at all). This ALSO proves the post-init skip check keeps -C — only the
+        // fresh-init call below lost it (test-install-bd-init-cwd.sh property 3).
+        let bead_count = Command::new("timeout")
+            .args(["10", "bd", "-C", &db, "list", "--limit", "0", "--json"])
+            .output()
+            .ok()
+            .and_then(|o| o.status.success().then(|| o.stdout))
+            .and_then(|out| serde_json::from_slice::<serde_json::Value>(&out).ok())
+            .and_then(|v| v.as_array().map(|a| a.len().to_string()))
+            .unwrap_or_else(|| "?".to_string());
+        skip(&format!("database exists at {db} ({bead_count} bead(s))"));
     } else {
         db_fresh = true;
         if opts.dry {
@@ -505,15 +517,15 @@ fn main() -> ExitCode {
         if panel > 0 {
             skip("cockpit panes already present");
         } else if opts.dry {
-            would("run: cockpit/layout.sh up");
+            would("run: layout up");
         } else {
             info("building cockpit panes");
-            let _ = Command::new(cockpit_dir.join("layout.sh")).arg("up").status();
+            let _ = tool_status("layout", &["up"]);
             changes += 1;
         }
     } else {
         info("tmux server not reachable — build the cockpit when ready:");
-        info(&format!("  {repo}/cockpit/layout.sh up"));
+        info("  layout up");
     }
 
     // ---- phase 6.5: spira-lc system user --------------------------------------------------

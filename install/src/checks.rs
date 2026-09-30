@@ -54,6 +54,7 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
     if cur == "HEAD" {
         let (ok, tag) = git(&["describe", "--exact-match", "--tags", "HEAD"]);
         if ok && !tag.is_empty() {
+            println!("install: release install from tag {tag} — landref currency not applicable");
             return Ok(());
         }
     }

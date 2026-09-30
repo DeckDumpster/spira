@@ -261,12 +261,11 @@ _flag="$_BREAKER_FLAG"
 _db_name="$_DBNAME2"
 _fake_db="$FAKE_DB"
 case "\$*" in
-    *-C*init*--server*)
-        _db=""
-        while [ \$# -gt 0 ]; do
-            [ "\$1" = "-C" ] && { _db="\$2"; shift 2; continue; }
-            shift
-        done
+    *init*--server*)
+        # cwd == SPIRA_DB, not -C (sp-31dm0: bd init's own remote-less repository is
+        # allowed, and -C makes a fresh init look inside a directory bd refuses to treat
+        # as one; original install.sh: `(cd "\$SPIRA_DB" && ... bd init ...)`, never -C).
+        _db="\$PWD"
         if [ -n "\$_db" ]; then
             mkdir -p "\$_db/.beads"
             printf '{"dolt_mode":"server","dolt_server_port":PORT,"dolt_database":"%s","project_id":"test"}\n' \

@@ -29,6 +29,7 @@ path = "src/bin/render_unit.rs"
 [dependencies]
 release = { path = "../release" }
 spira-config = { path = "../spira-config" }
+serde_json = "1"
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
