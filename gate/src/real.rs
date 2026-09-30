@@ -52,6 +52,11 @@ const VARS: &[&str] = &[
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
     "LANDSTATE",
+    "SPIRA_BUILD_CACHE",
+    "SPIRA_GATE_TARGET_ROOT",
+    "SPIRA_GATE_TARGET_CAP_MIB",
+    "SPIRA_GATE_TARGET_MIN_FREE_MIB",
+    "SPIRA_GATE_TARGET_MIN_MEM_MIB",
     "SPIRA_RELEASE",
     "SPIRA_PATH",
     "HOME",
@@ -608,6 +613,25 @@ impl World for Real {
     }
     fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String> {
         install_tools_at(tree, pkgs, dir, tree_id)
+    }
+    fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
+        spira_config::build::wrapper(path, Some(setting))
+    }
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String> {
+        use crate::target;
+        let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
+            return Ok(format!("gate: no tmpfs for the build (/tmp is not one and SPIRA_GATE_TARGET_ROOT is unset) — {} builds in the tree", tree.display()));
+        };
+        let trees = tree.parent().unwrap_or(Path::new("/"));
+        let p = target::prepare(&root, trees, tree, lim, &target::free_mib, &target::mem_available_mib)?;
+        let mut line = format!("gate: build on tmpfs at {}", p.dir.display());
+        if p.disk_freed_mib > 0 {
+            line.push_str(&format!(" ({} MiB of build output moved off the disk)", p.disk_freed_mib));
+        }
+        if !p.orphans.is_empty() || !p.evicted.is_empty() {
+            line.push_str(&format!("; removed {} orphaned and evicted {} least recently used target(s)", p.orphans.len(), p.evicted.len()));
+        }
+        Ok(line)
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
         let _ = self

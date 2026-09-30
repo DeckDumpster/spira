@@ -17,6 +17,10 @@ path = "src/main.rs"
 name = "bd-meter"
 path = "src/bd_meter_main.rs"
 
+[[bin]]
+name = "target-reap"
+path = "src/target_reap_main.rs"
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

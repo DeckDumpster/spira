@@ -369,3 +369,12 @@ remains for `install.sh` and `unit-ensure.sh`, which own unit membership.
 ## Not this bead
 
 Launchers that set PATH (sp-31gtu, sp-gypjk).
+
+## Build IO (sp-z61hj)
+
+`release build` without `--bin-dir` compiles through the box's sccache
+(`spira-config/DESIGN-build-cache.md`): absent sccache is an error, `SPIRA_BUILD_CACHE=off`
+opts out loudly. The target is passed as `--target-dir`, never `CARGO_TARGET_DIR` (sccache
+hashes every `CARGO_*` variable, so an env target would give every release its own cache
+keys), and a caller's `CARGO_INCREMENTAL` is removed.
+

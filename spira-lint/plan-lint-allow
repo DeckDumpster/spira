@@ -66,10 +66,8 @@ spira/test-install-dolt.sh
 spira/test-install-hooks-artifact.sh
 spira/test-install-instance.sh
 spira/test-install-rehearsal.sh
-spira/test-land-build-ensure.sh
 spira/test-landed-search.sh
 spira/test-landing-base-fail.sh
-spira/test-landing-build.sh
 spira/test-landing-cutover-round.sh
 spira/test-landing-halt.sh
 spira/test-landing-queue-early.sh

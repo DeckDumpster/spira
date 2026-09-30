@@ -1870,6 +1870,10 @@ fn build(
             ));
             return Some(Finish::fault(3, "artifacts-missing", 0));
         }
+        Err(BuildError::NoCache(e)) => {
+            stderr(&format!("batch: {e} — harness fault"));
+            return Some(Finish::fault(3, "no-build-cache", 0));
+        }
         Err(BuildError::Deadline) => {
             stderr("batch: cargo was still building at the trial's setup cutoff — killed; this is not the candidate's build failure");
             return Some(Finish::fault(2, "deadline-build", 0));

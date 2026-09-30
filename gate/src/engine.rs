@@ -93,6 +93,8 @@ struct State {
     /// The gate command's PATH, set outright: the launcher's release PATH, then cargo for the
     /// tree builds (sp-31gtu). Empty until SPIRA_RELEASE has been read.
     path: String,
+    /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
+    build_env: Vec<(String, String)>,
 }
 
 pub struct Trial<'w, W: World> {
@@ -163,6 +165,19 @@ impl<'w, W: World> Trial<'w, W> {
         match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
             Ok(p) => self.s.path = p,
             Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
+        }
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
+        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
+        // through the box's one sccache, resolved on the PATH the command gets. Absent is a
+        // refusal, never a cold build of every dependency; SPIRA_BUILD_CACHE=off opts out, loudly.
+        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
+            Ok(wr) => {
+                if wr == spira_config::build::Wrapper::Off {
+                    w.eprint(&format!("gate: {}", wr.describe()));
+                }
+                self.s.build_env = wr.env();
+            }
+            Err(e) => return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")),
         }
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
@@ -487,6 +502,19 @@ impl<'w, W: World> Trial<'w, W> {
             w.eprint(&e);
             return v(NOVERDICT, "tree-unidentified", "");
         }
+        // THE BUILD IS ON TMPFS (sp-z61hj): the tree's build directories are links into a
+        // RAM-backed root; short of room is a refusal, never the disk.
+        let lim = crate::target::Limits::from_vars(
+            ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+        );
+        match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+            Ok(line) => w.eprint(&line),
+            Err(e) => {
+                return v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."));
+            }
+        }
 
         let list = if status_list.trim().is_empty() {
             files.clone()
@@ -567,7 +595,12 @@ impl<'w, W: World> Trial<'w, W> {
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
                 e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
                 e("SPIRA_TESTENV_WARM_SLOTS", ctx.var("SPIRA_TESTENV_WARM_SLOTS")),
+                // The build cache's switch reaches testenv, which resolves its own wrapper.
+                e(spira_config::build::CACHE_ENV, ctx.var(spira_config::build::CACHE_ENV)),
             ]
+            .into_iter()
+            .chain(self.s.build_env.iter().cloned())
+            .collect()
         };
 
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree

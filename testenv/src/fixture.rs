@@ -339,6 +339,9 @@ impl<'a> Session<'a> {
             ),
             kv("CARGO_HOME", CONTAINER_CARGO),
             kv("CARGO_TARGET_DIR", CONTAINER_CARGO_TARGET),
+            // The container has no sccache (sp-z61hj): a suite that drives a Spira build tool
+            // in here builds uncached on purpose, never refused for the host's cache.
+            kv(spira_config::build::CACHE_ENV, "off"),
         ]
     }
 

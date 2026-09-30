@@ -904,3 +904,16 @@ the container adds nothing to the disk either.
 teardown; an external `podman save` of the 2 GB testenv image ran at least 16 minutes during the
 measurements (10:51–11:07Z+), and the two probe rounds in that window were the worst. Those are host/operator matters (podman's
 `static_dir`/database backend, and what else runs image operations on the gate host).
+
+## Build IO (sp-z61hj)
+
+Full contract: `spira-config/DESIGN-build-cache.md`. The builder (`src/build.rs`) compiles
+through the box's sccache (`RUSTC_WRAPPER`, resolved on testenv's own PATH) and one-shot
+(`--config profile.<p>.incremental=false`; a caller's `CARGO_INCREMENTAL` is removed, since
+sccache hashes it into every key). sccache absent is `VERDICT FAULT rc=3
+reason=no-build-cache` — never a cold build of every dependency; `SPIRA_BUILD_CACHE=off` opts
+out, loudly. The fixture container sets `SPIRA_BUILD_CACHE=off` (it has no sccache; testenv
+builds on the host). The crate also ships **`target-reap`** (`src/reap.rs`): the `target/`
+of every `$SPIRA_RUN/worktree/<bead id>` whose bead is closed is removed, on one `bd show`;
+an unreadable answer removes nothing. The landing pass runs it once per pass.
+

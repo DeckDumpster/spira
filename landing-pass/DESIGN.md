@@ -36,7 +36,7 @@ Around the walk the pass also: settles each queued repository's open round befor
 certifying (`queue step`), prunes the landstate records nothing will read again, advances
 the checkout humans read (`skew.sh refresh`) for push/queue, asks about closed beads whose
 GitHub issue has no landing (`_gh_unlanded_scan`), installs unit templates that landed
-(`unit-ensure.sh`), and rebuilds binaries whose source landed (`land-build-ensure.sh`).
+(`unit-ensure.sh`), and reaps the build output of worktrees whose bead is closed (`target-reap`, sp-z61hj; it replaced `land-build-ensure.sh`, whose post-landing release rebuild was redundant — a landing publishes a release from tested binaries).
 
 ### Four outcomes, one of them the branch's fault
 
@@ -165,7 +165,7 @@ All paths under `$SPIRA_RUN` unless absolute. Formats unchanged (§3).
 | `confine.sh <id> <branch> <repo-path> <base> <labels>` | labels are the bead's own label words | push/hold |
 | `queue step <repo>` | stdout+stderr combined, relabelled | queued repos, before and after the walk |
 | `skew.sh refresh <repo-path>` | | push, queue |
-| `$SPIRA_REPO/systemd/unit-ensure.sh` (systemd/ is not on PATH), `land-build-ensure.sh` | | once per pass |
+| `$SPIRA_REPO/systemd/unit-ensure.sh` (systemd/ is not on PATH), `target-reap` (sp-z61hj) | | once per pass |
 | `testenv.sh down --name <c> --volumes --force-foreign` | | `halt` |
 | `forge pr-state/pr-create/pr-list-open/pr-automerge <repo> …` | `pr-create`'s body on stdin | `pr_branch`'s `land_pr`/needs_refresh decision (sp-t4y60) |
 | `spira-lc show/event delivery …` | | pr pass content proof (unchanged) |
@@ -277,7 +277,7 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 8. **Queue step, after**: `queue late: <line>`.
 9. `skew.sh refresh <path>` for push and queue(forge) repositories (queue.local's base is
    local; its refresh belongs to land-local, as before).
-10. `_gh_unlanded_scan` (seam). `unit-ensure.sh`, `land-build-ensure.sh` (lines logged).
+10. `_gh_unlanded_scan` (seam). `unit-ensure.sh`, `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
 11. The pass-complete line; status file; remove `landing.run`/`landing.containers`.
 
 ### 4.1 Per repository: enumerate, scan, order
