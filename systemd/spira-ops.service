@@ -39,7 +39,7 @@ ExecCondition=/bin/bash -c 'f=@SPIRA_RUN@/ops-sweep-prompt.txt; l=$(head -1 "$f"
 # Repair the wiring on every pass. A new store gets a new alert template that an install
 # run months ago never saw; this is idempotent, costs a find and a diff, and is the
 # cockpit-ensure lesson — repair from systemd, not from a session that may be dead.
-ExecStartPre=-@SPIRA_PROD@/install-intake.sh install
+ExecStartPre=-@SPIRA_PROD_ROOT@/bin/release intake install
 # Anything the spool is still holding because the database was unreachable when the event
 # arrived. A write-ahead record nobody drains is a lost event with extra steps.
 ExecStartPre=-@SPIRA_PROD@/incident.sh drain

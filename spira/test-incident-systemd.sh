@@ -5,7 +5,7 @@
 #   ./test-incident-systemd.sh
 #
 # THE GAP. `mtgc-alert-<store>@.service` fires from OnFailure= on every failed unit and
-# calls `incident.sh systemd <unit>`. install-intake.sh wires it; test-incident.sh's own
+# calls `incident.sh systemd <unit>`. `release intake install` wires it; test-incident.sh's own
 # comments name it as one of three paths through drain_one, but nothing had ever invoked
 # it — the path a real production failure actually takes was untested end to end.
 #
@@ -17,7 +17,7 @@
 # and this suite has no systemd user session to make that path interesting to reproduce.
 #
 # tier: T2
-# covers: spira/incident.sh spira/incident-stub-bd.py spira/install-intake.sh
+# covers: spira/incident.sh spira/incident-stub-bd.py
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

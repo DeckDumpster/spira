@@ -6,6 +6,8 @@ use release::canary::{self, CanaryOpts};
 use release::config::{self, Config, Flags};
 use release::git::RealGit;
 use release::install::{self, InstallOpts, RealUnpack};
+use release::intake::{self, RealTemplates};
+use release::session_hook;
 use release::stage::{self, StageOpts};
 use release::systemctl::RealSystemctl;
 use release::verify::{self, VerifyOpts};
@@ -26,6 +28,8 @@ const USAGE: &str = "usage:
   release canary [--stage ROOT] [--deadline SECS]
   release canary-worker
   release acceptance <tag> --scratch-repo <path> [...]   (release acceptance --help)
+  release session-hook install|status|uninstall|prune <substring>
+  release intake install|status|uninstall
 every subcommand also takes --releases D and --run D";
 
 struct Args {
@@ -108,6 +112,177 @@ fn resolve_stage_opts(env: &config::Env, root: Option<PathBuf>) -> Result<StageO
     Ok(StageOpts { root, harness_spira, bd_embedded, testdb_baseline, scope_label: String::new() })
 }
 
+fn usage_err(m: String) -> (u8, String) {
+    (2, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") })
+}
+
+fn fail_err(m: String) -> (u8, String) {
+    (1, m)
+}
+
+/// The release root `install`/`status` address the hook/meter through, and its PATH tail.
+///
+/// PREFERS `<releases>/current` when [`Config`] resolves and that path actually exists — the
+/// production shape this bead's whole fix is about (DESIGN.md "session-hook"): a release
+/// rotates, `current` never does, so the registered command never needs to change again.
+///
+/// FALLS BACK TO `$SPIRA_RELEASE` ITSELF, taken as the release root directly with no
+/// `current` join, in two cases only: `Config` cannot resolve at all (no host config
+/// document, no `SPIRA_RELEASES`), or it resolves but the releases directory has no
+/// `current` link yet.
+/// This never fires in production, where `current` always exists and every launcher already
+/// sets `SPIRA_RELEASE` before calling this — it fires in a single-release environment with
+/// no rotation and no `current` concept at all (a test fixture's own synthetic release, or
+/// `concierge.sh start` running against one), where addressing "through current" has no
+/// meaning to begin with and refusing to register anything would be strictly worse.
+fn release_root_for_session_hook(flags: &Flags, env: &config::Env) -> Result<(PathBuf, String), (u8, String)> {
+    let live_release = || env.get("SPIRA_RELEASE").filter(|s| !s.is_empty()).map(PathBuf::from);
+    match Config::resolve(flags, env) {
+        Ok(cfg) => {
+            let want = cfg.releases.join(activate::CURRENT);
+            let tail = cfg.path_tail().map_err(fail_err)?;
+            if want.exists() {
+                Ok((want, tail))
+            } else if let Some(rel) = live_release() {
+                Ok((rel, tail))
+            } else {
+                Ok((want, tail)) // no fallback available — let install()/status() name the missing hook
+            }
+        }
+        Err(e) => match live_release() {
+            Some(rel) => Ok((rel, String::new())),
+            None => Err(fail_err(e)),
+        },
+    }
+}
+
+/// `release session-hook install|status|uninstall|prune <substring>` (DESIGN.md
+/// "session-hook"). `uninstall`/`prune` touch only the settings file and resolve no
+/// [`Config`] at all; `install`/`status` additionally need the release's own `current` and
+/// PATH tail, so [`Config::resolve`] is called only on those two branches — never
+/// unconditionally, which would refuse an uninstall on a box whose releases directory
+/// cannot be found (exactly the state an uninstall may be reached from).
+fn session_hook_cmd(env: &config::Env, a: &Args, rest: &[String]) -> Result<(), (u8, String)> {
+    let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("session-hook needs a subcommand: install, status, uninstall or prune <substring>".into()))?;
+    let settings = env
+        .get("SPIRA_CLIENT_SETTINGS")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| env.get("HOME").filter(|s| !s.is_empty()).map(|h| PathBuf::from(h).join(".claude/settings.json")))
+        .ok_or_else(|| fail_err("no settings file: set SPIRA_CLIENT_SETTINGS or HOME".into()))?;
+    let mut doc = session_hook::load(&settings).map_err(fail_err)?;
+    match sub.as_str() {
+        "uninstall" => {
+            if !srest.is_empty() {
+                return Err(usage_err("session-hook uninstall takes no arguments".into()));
+            }
+            let changed = session_hook::uninstall(&mut doc);
+            session_hook::save(&settings, &doc).map_err(fail_err)?;
+            println!("release: session-hook uninstall: {}", changed.join(", "));
+            return Ok(());
+        }
+        "prune" => {
+            let needle = srest.first().ok_or_else(|| usage_err("session-hook prune needs a substring".into()))?;
+            let changed = session_hook::prune(&mut doc, needle);
+            session_hook::save(&settings, &doc).map_err(fail_err)?;
+            println!("release: session-hook prune: {}", changed.join(", "));
+            return Ok(());
+        }
+        "install" | "status" => {}
+        other => return Err(usage_err(format!("unknown session-hook subcommand {other}"))),
+    }
+
+    let (current, tail) = release_root_for_session_hook(&a.flags, env)?;
+    let paths = session_hook::resolve(&current, &tail, settings).map_err(fail_err)?;
+    match sub.as_str() {
+        "install" => {
+            if !srest.is_empty() {
+                return Err(usage_err("session-hook install takes no arguments".into()));
+            }
+            let changed = session_hook::install(&mut doc, &paths).map_err(fail_err)?;
+            if session_hook::save(&paths.settings, &doc).map_err(fail_err)? {
+                println!("release: session-hook install: {}", changed.join(", "));
+            }
+        }
+        "status" => {
+            if !srest.is_empty() {
+                return Err(usage_err("session-hook status takes no arguments".into()));
+            }
+            println!("session hook: {}", paths.hook.display());
+            println!("meter:        {}", paths.meter.display());
+            println!("settings:     {}", paths.settings.display());
+            let (lines, ok) = session_hook::status(&doc, &paths);
+            for l in &lines {
+                println!("{l}");
+            }
+            if !ok {
+                return Err((1, String::new()));
+            }
+        }
+        _ => unreachable!("filtered above"),
+    }
+    Ok(())
+}
+
+/// `release intake install|status|uninstall` (DESIGN.md "intake"). Needs only the systemd
+/// unit directory — [`config::unit_dir_from_env`], never the full [`Config`], which would
+/// couple every intake call to the releases directory resolving even though intake has
+/// nothing to do with one.
+fn intake_cmd(env: &config::Env, rest: &[String]) -> Result<(), (u8, String)> {
+    let (sub, srest) = rest.split_first().ok_or_else(|| usage_err("intake needs a subcommand: install, status or uninstall".into()))?;
+    if !srest.is_empty() {
+        return Err(usage_err(format!("intake {sub} takes no arguments")));
+    }
+    let unit_dir = config::unit_dir_from_env(env).map_err(fail_err)?;
+    let pattern = env.get("SPIRA_ALERT_GLOB").filter(|s| !s.is_empty()).cloned();
+    let reload = env.get("SPIRA_SYSTEMCTL_RELOAD").map(|s| s != "0").unwrap_or(true);
+    let sc = RealSystemctl::from_env();
+    match sub.as_str() {
+        "install" => {
+            let release_root = env
+                .get("SPIRA_RELEASE")
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .ok_or_else(|| fail_err("SPIRA_RELEASE is not set — intake needs it to find the release's own incident.sh".into()))?;
+            let o = intake::Opts { unit_dir, pattern, incident: release_root.join("spira/incident.sh"), reload };
+            match intake::install(&RealTemplates, &sc, &o).map_err(fail_err)? {
+                None => println!("install-intake: {}", intake::NO_GLOB),
+                Some(r) => {
+                    let unverified = if r.unverified.is_empty() { String::new() } else { format!(", {} unverified: {}", r.unverified.len(), r.unverified.join(" ")) };
+                    println!("release: intake install: {} template(s), {} wired{unverified}", r.total, r.wired.len());
+                    if !r.unverified.is_empty() {
+                        return Err((1, String::new()));
+                    }
+                }
+            }
+        }
+        "status" => {
+            let o = intake::Opts { unit_dir, pattern, incident: PathBuf::new(), reload };
+            match intake::status(&RealTemplates, &o).map_err(fail_err)? {
+                None => println!("install-intake: {}", intake::NO_GLOB),
+                Some((lines, wired, total)) => {
+                    for l in &lines {
+                        println!("{l}");
+                    }
+                    println!("{wired} of {total} alert template(s) wired to incident.sh");
+                    if total == 0 || wired != total {
+                        return Err((1, String::new()));
+                    }
+                }
+            }
+        }
+        "uninstall" => {
+            let o = intake::Opts { unit_dir, pattern, incident: PathBuf::new(), reload };
+            match intake::uninstall(&RealTemplates, &sc, &o).map_err(fail_err)? {
+                None => println!("install-intake: {}", intake::NO_GLOB),
+                Some(removed) => println!("release: intake: removed {} drop-in(s)", removed.len()),
+            }
+        }
+        other => return Err(usage_err(format!("unknown intake subcommand {other}"))),
+    }
+    Ok(())
+}
+
 fn run(argv: &[String]) -> Result<(), (u8, String)> {
     let usage = |m: String| (2u8, if m.is_empty() { USAGE.to_string() } else { format!("{m}\n{USAGE}") });
     let a = parse(argv).map_err(usage)?;
@@ -162,6 +337,14 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             canary::canary_worker().map_err(fail)?;
             return Ok(());
         }
+        // session-hook/intake are handled here, before Config::resolve, for the same reason
+        // stage/canary are: `uninstall`/`prune` (session-hook) touch only the client's own
+        // settings file and need no release at all, and `intake` needs only the unit
+        // directory — resolving the full Config would refuse every one of them on a box
+        // whose releases directory cannot be found, which is exactly the state an uninstall
+        // may be reached from.
+        "session-hook" => return session_hook_cmd(&env, &a, rest),
+        "intake" => return intake_cmd(&env, rest),
         _ => {}
     }
 
@@ -242,7 +425,11 @@ fn main() -> ExitCode {
     match run(&argv) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, msg)) => {
-            eprintln!("release: {msg}");
+            // An empty message means the detail was already printed (e.g. `session-hook
+            // status`'s own lines) — nothing to add on stderr, just the exit code.
+            if !msg.is_empty() {
+                eprintln!("release: {msg}");
+            }
             ExitCode::from(code)
         }
     }
