@@ -21,7 +21,7 @@
 #   been RED. Case 3 provides the structural claim for any future addition.
 #
 # tier: T1
-# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service systemd/units.sh
+# covers: spira/build-tarball.sh .github/workflows/release.yml systemd/*.service install/src/manifest.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -39,11 +39,13 @@ export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 # A unit names the release binary it runs as @SPIRA_PROD_ROOT@/bin/<name> (sp-gypjk): the
 # name in the path IS the bin/ entry, so there is no token table to keep in step.
 # ---------------------------------------------------------------------------
-# OPTIONAL units, derived from systemd/units.sh itself (not a hand-copied list — the old
-# list silently fell out of sync, missing spira-landing-pass.service/.timer). Every
-# OPTIONAL+= line units.sh can ever emit is read, regardless of which conditions this box
-# happens to evaluate true, matching test-timer-templates.sh's UNITS/_ENABLE_TMPL parse.
-OPTIONAL_BLOCK="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$REPO_ROOT/systemd/units.sh")"
+# OPTIONAL units, derived from units-install itself (sp-31dm0: systemd/units.sh is
+# retired; not a hand-copied list — the old list silently fell out of sync, missing
+# spira-landing-pass.service/.timer). `--list-optional` is the UNION of every template any
+# combination of this box's conditional inputs can ever push into OPTIONAL, regardless of
+# which this box happens to evaluate true, matching test-timer-templates.sh's
+# UNITS/_ENABLE_TMPL parse.
+OPTIONAL_BLOCK="$(units-install --list-optional)"
 is_optional() { case "$OPTIONAL_BLOCK" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
 # ---------------------------------------------------------------------------

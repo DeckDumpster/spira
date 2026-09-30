@@ -18,12 +18,12 @@
 #
 # TEST SEAMS
 # ----------
-# SPIRA_SYSTEMCTL — systemctl binary (used by install.sh --diff, set in conf.sh)
+# SPIRA_SYSTEMCTL — systemctl binary (used by units-install --diff, set in conf.sh)
 # SPIRA_LOGINCTL  — loginctl binary for linger checks
 # SPIRA_TMUX      — tmux binary for cockpit-pane checks
-# SPIRA_INSTALL_FORCE=1 — passed through to install.sh --diff to bypass gate checks
+# SPIRA_INSTALL_FORCE=1 — passed through to units-install --diff to bypass gate checks
 #
-# covers: systemd/units.sh spira/conf.sh
+# covers: install/src/manifest.rs spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -43,15 +43,18 @@ SPIRA_TMUX="${SPIRA_TMUX:-tmux}"
 UNITDIR="${HOME}/.config/systemd/user"
 _owned_user="${USER:-$(id -un 2>/dev/null || true)}"
 
-# SOURCE UNITS.SH from the same directory as the real install.sh. install.sh uses
-# readlink -f to locate units.sh from the real file's directory — not the invocation
-# path — so a fixture symlink at $FIXTURE/systemd/install.sh still resolves the real
-# units.sh. We replicate that logic here so the two share exactly one definition of
-# the unit list (law-prefer-the-real-dependency).
-_owned_real_install="$(readlink -f "$HERE/../systemd/install.sh" 2>/dev/null \
-    || printf '%s' "$HERE/../systemd/install.sh")"
-. "$(dirname "$_owned_real_install")/units.sh" || exit 1
-unset _owned_real_install
+# THE UNIT MANIFEST, from units-install itself (sp-31dm0: systemd/units.sh is retired; the
+# manifest — UNITS/ENABLE/OPTIONAL/UNBUILT, inst_name, inst_watch_name — is install/src/
+# manifest.rs now). `--list-manifest` prints the installed names already resolved for
+# $SPIRA_INSTANCE, so this reads them directly rather than re-deriving inst_name/
+# inst_watch_name in bash a second time (law-prefer-the-real-dependency).
+declare -a _OWNED_UNIT_NAMES=() _OWNED_UNBUILT_NAMES=()
+while IFS=' ' read -r _kind _name; do
+    case "$_kind" in
+        unit)    _OWNED_UNIT_NAMES+=("$_name") ;;
+        unbuilt) _OWNED_UNBUILT_NAMES+=("$_name") ;;
+    esac
+done < <(units-install --list-manifest) || exit 1
 
 # ---------------------------------------------------------------------------
 # LIST: kind|id|location|phase|retention
@@ -59,21 +62,14 @@ unset _owned_real_install
 _row() { printf '%s|%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" "$5"; }
 
 _owned_units() {
-    local u inst_u wname inst_w
-    for u in "${UNITS[@]}"; do
-        [ "$u" = "spira-watch@.service" ] && continue
-        inst_u="$(inst_name "$u")"
+    local inst_u
+    for inst_u in "${_OWNED_UNIT_NAMES[@]+"${_OWNED_UNIT_NAMES[@]}"}"; do
         _row unit "$inst_u" "$UNITDIR/$inst_u" install keep
-    done
-    for wname in "${_watch_names[@]}"; do
-        inst_w="$(inst_watch_name "$wname")"
-        _row unit "$inst_w" "$UNITDIR/$inst_w" install keep
     done
     # UNITS THIS BOX DECLINED (UNBUILT: a unit whose external program — inotifywait — is
     # absent here). Listed as optional so an absent one is simply absent, and so an uninstall
     # still removes one another install put there.
-    for u in "${UNBUILT[@]+"${UNBUILT[@]}"}"; do
-        inst_u="$(inst_name "$u")"
+    for inst_u in "${_OWNED_UNBUILT_NAMES[@]+"${_OWNED_UNBUILT_NAMES[@]}"}"; do
         _row unit "$inst_u" "$UNITDIR/$inst_u" install optional
     done
 }
@@ -211,17 +207,10 @@ _cockpit_pane_status() {
 }
 
 _check_units() {
-    local u inst_u status wname inst_w
-    for u in "${UNITS[@]}"; do
-        [ "$u" = "spira-watch@.service" ] && continue
-        inst_u="$(inst_name "$u")"
+    local inst_u status
+    for inst_u in "${_OWNED_UNIT_NAMES[@]+"${_OWNED_UNIT_NAMES[@]}"}"; do
         status="$(_unit_status "$inst_u")"
         printf '%s|%s|%s|%s\n' unit "$inst_u" "$UNITDIR/$inst_u" "$status"
-    done
-    for wname in "${_watch_names[@]}"; do
-        inst_w="$(inst_watch_name "$wname")"
-        status="$(_unit_status "$inst_w")"
-        printf '%s|%s|%s|%s\n' unit "$inst_w" "$UNITDIR/$inst_w" "$status"
     done
 }
 

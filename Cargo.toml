@@ -43,6 +43,7 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "install",
 ]
 resolver = "2"
 

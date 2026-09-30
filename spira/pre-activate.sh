@@ -136,7 +136,9 @@ check_store() {
 
 # --- units: every systemd unit renders with no unresolved placeholder ---
 check_units() {
-    local inst="$REL/systemd/install.sh"
+    # sp-31dm0: units-install is a compiled binary in the release's bin/ now, not
+    # systemd/install.sh.
+    local inst="$REL/bin/units-install"
     if [ ! -x "$inst" ]; then
         fail units "$inst not found"
         return
@@ -145,7 +147,7 @@ check_units() {
     out="$("$inst" --render 2>&1)"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        fail units "install.sh --render exited $rc: $(printf '%s' "$out" | tail -5)"
+        fail units "units-install --render exited $rc: $(printf '%s' "$out" | tail -5)"
         return
     fi
     local left

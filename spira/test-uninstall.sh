@@ -61,8 +61,6 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
-ln -s "$HERE/../systemd/install.sh"  "$FIXTURE/systemd/install.sh"
-ln -s "$HERE/../systemd/units.sh"    "$FIXTURE/systemd/units.sh"
 for f in conf.sh watchd.sh lib.sh owned.sh install-session-hook.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
@@ -179,7 +177,7 @@ _seed_units() {
         SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
         "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
         "SPIRA_INSTALL_FORCE=1" \
-        bash "$FIXTURE/systemd/install.sh" test --render 2>&1)"
+        units-install test --render 2>&1)"
     rc=$?
     if [ "$rc" != 0 ]; then
         printf 'fixture: install.sh --render failed (rc=%s)\n' "$rc" >&2

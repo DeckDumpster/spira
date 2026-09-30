@@ -3,7 +3,7 @@
 # test-pre-activate.sh — pre-activate.sh gates a release against five checks
 # before releases/current moves onto it (release verify runs it and refuses the flip
 # when the gate fails). Every check gets a fixture release dir with stubbed
-# probes (a fake spira-config, a fake bd, a fake install.sh --render, a fake
+# probes (a fake spira-config, a fake bd, a fake units-install --render, a fake
 # self-test.sh) rather than the real dependency, since pre-activate exists
 # specifically to run before those real dependencies are trusted.
 #
@@ -33,7 +33,7 @@ mkbd 0
 # default. Callers override one probe at a time to isolate that check's failure.
 #   DEP_VMIN DEP_PROBE_OUT DEP_PROBE_RC   deps.toml's single runtime dep
 #   CONFIG_RC                             spira-config stub's exit code
-#   UNITS_OUT UNITS_RC                    install.sh --render stub
+#   UNITS_OUT UNITS_RC                    units-install --render stub
 #   SELFTEST_RC                           self-test.sh stub
 mkrel() {
     local dir="$1"
@@ -64,13 +64,13 @@ EOF
 exit ${CONFIG_RC:-0}
 EOF
     chmod +x "$dir/bin/spira-config"
-    cat > "$dir/systemd/install.sh" <<EOF
+    cat > "$dir/bin/units-install" <<EOF
 #!/usr/bin/env bash
 [ "\$1" = "--render" ] || exit 2
 printf '%s\n' "${UNITS_OUT:-clean unit text}"
 exit ${UNITS_RC:-0}
 EOF
-    chmod +x "$dir/systemd/install.sh"
+    chmod +x "$dir/bin/units-install"
     cat > "$dir/spira/self-test.sh" <<EOF
 #!/usr/bin/env bash
 exit ${SELFTEST_RC:-0}
@@ -164,7 +164,7 @@ is   "store: bd migrate status fails: exit 1" 1 "$rc"
 want "store: bd migrate status fails: FAILs"  "FAIL store" "$out"
 mkbd 0
 
-# ── units: install.sh --render must exit 0 with no placeholder left unfilled ─────────
+# ── units: units-install --render must exit 0 with no placeholder left unfilled ─────────
 REL="$TMP/rel-units-ok"; UNITS_OUT="Description=fine" UNITS_RC=0 mkrel "$REL"
 run "$REL"
 is   "units: clean render: exit 0"        0 "$rc"
@@ -177,8 +177,8 @@ want "units: leftover placeholder: names it" "@SPIRA_HOME@" "$out"
 
 REL="$TMP/rel-units-crash"; UNITS_RC=1 mkrel "$REL"
 run "$REL"
-is   "units: install.sh --render itself fails: exit 1" 1 "$rc"
-want "units: install.sh --render itself fails: FAILs"  "FAIL units" "$out"
+is   "units: units-install --render itself fails: exit 1" 1 "$rc"
+want "units: units-install --render itself fails: FAILs"  "FAIL units" "$out"
 
 # ── self-test: the release's own smoke test gates activation too ─────────────────────
 REL="$TMP/rel-selftest-ok"; SELFTEST_RC=0 mkrel "$REL"

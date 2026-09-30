@@ -34,7 +34,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
+# covers: spira/install-session-hook.sh spira/hooks/session.sh spira/watchd.sh spira/mail.sh install/src/bin/units_install.rs systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -455,8 +455,10 @@ echo "the repair is wired, not merely available"
 # session on the box and looks, from inside one, exactly like a working hook. So the wiring is
 # asserted rather than described — install writes it once, and a timer repairs it.
 ROOT="$(cd "$HERE/.." && pwd -P)"
+# sp-31dm0: systemd/install.sh is retired; units-install (install/src/bin/units_install.rs)
+# calls install-session-hook.sh install unconditionally now, in the same place.
 has "the installer registers it on a fresh box" \
-    "$(cat "$ROOT/systemd/install.sh")" "install-session-hook.sh"
+    "$(cat "$ROOT/install/src/bin/units_install.rs")" "install-session-hook.sh"
 has "and a timed unit repairs it afterwards" \
     "$(cat "$ROOT/systemd/cockpit-ensure.service")" "install-session-hook.sh install"
 

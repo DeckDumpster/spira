@@ -9,7 +9,7 @@
 # ----------------
 # deploy.sh step 7 runs `SPIRA_DOCTOR=1 doctor.sh | grep '^  FAIL  '` before activation and
 # refuses the deploy on any match. doctor.sh used to have a unit-installation section that
-# diffed the box's installed units against the templates on disk (install.sh --diff, exposed
+# diffed the box's installed units against the templates on disk (units-install --diff, exposed
 # standalone as `skew.sh units`); a unit the incoming release adds is, by definition, not yet
 # installed, so that section reported it MISSING — a FAIL — before the step that would have
 # installed it (step 11). Any release that added a unit refused to deploy itself.
@@ -26,10 +26,11 @@
 # "release adds a unit the box lacks" case, not a fixture that never had a chance to fail.
 #
 # THE FIXTURE IS BUILT FROM THE REAL INSTALLER (law-prefer-the-real-dependency), the same
-# approach as test-unit-drift.sh: real templates, real install.sh, a DEST this test controls.
+# approach as test-unit-drift.sh: real templates, the real units-install binary, a DEST
+# this test controls.
 #
 # tier: T1
-# covers: spira/deploy.sh spira/doctor.sh systemd/install.sh spira/skew.sh
+# covers: spira/deploy.sh spira/doctor.sh install/src/bin/units_install.rs spira/skew.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -49,7 +50,6 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
 for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
@@ -71,7 +71,7 @@ inst() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # Render every template and install it, simulating a box fully caught up on the

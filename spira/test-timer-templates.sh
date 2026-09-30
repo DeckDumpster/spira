@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service spira/collect.sh supervise/** UC-instance-lifecycle-31
+# covers: systemd/*.timer systemd/*.service install/src/manifest.rs install/src/values.rs systemd/concierge.service systemd/beads-push.service spira/collect.sh supervise/** UC-instance-lifecycle-31
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec
@@ -22,40 +22,29 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 UNIT_DIR="$HERE/../systemd"
-UNITS_SH="$UNIT_DIR/units.sh"
 
 echo "test-timer-templates.sh"
 
 # ============================================================================
 echo
-echo "Parse units.sh — UNITS, ENABLE and OPTIONAL:"
+echo "units-install --list-union — UNITS, ENABLE and OPTIONAL:"
 # ============================================================================
 
-[ -r "$UNITS_SH" ] || bail "units.sh not readable at $UNITS_SH"
-
-units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
-enable_block="$(awk '/_ENABLE_TMPL=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
-[ -n "$units_block" ] || bail "UNITS block parseable — awk found nothing; remaining checks are invalid"
-[ -n "$enable_block" ] || bail "_ENABLE_TMPL block parseable — awk found nothing; remaining checks are invalid"
-ok "UNITS block parseable (${#units_block} bytes)"
-ok "_ENABLE_TMPL block parseable (${#enable_block} bytes)"
-
-# CONDITIONAL UNITS ARE STILL INSTALLED UNITS. units.sh appends some template names inside an
-# `if` (UNITS+=/ENABLE+=) and records the declined case in OPTIONAL+=. The static array
-# literal above cannot see those lines, so the membership tests below also read every
-# UNITS+=/ENABLE+= append line, and a timer that is only conditional must appear in an
-# OPTIONAL+= line too — that keeps "never silently absent" true while letting a box decline
-# a unit on purpose and say so.
-# A TOP-LEVEL (unindented) UNITS+= line is unconditional — as much a member as the literal
-# (sp-gypjk: loom, broker, landing-pass and reconciler-flow are appended this way, since a
-# release always carries their binaries). Only an indented append sits inside an `if`.
-units_block="$units_block
-$(grep -E '^UNITS\+=\(' "$UNITS_SH")"
-units_all="$units_block
-$(grep -E '^[[:space:]]*UNITS\+=\(' "$UNITS_SH")"
-enable_all="$enable_block
-$(grep -E '^[[:space:]]*ENABLE\+=\(' "$UNITS_SH")"
-optional_block="$(grep -E '^[[:space:]]*OPTIONAL\+=\(' "$UNITS_SH")"
+# sp-31dm0: systemd/units.sh is retired; the manifest is install/src/manifest.rs now.
+# `--list-union` is the UNION across every combination of this box's conditional inputs —
+# "is this template listed ANYWHERE", the same completeness view the old static text parse
+# of every UNITS+=/ENABLE+=/OPTIONAL+= line (conditional or not) gave.
+_list_union_out="$(SPIRA_INSTANCE=t units-install --list-union 2>/dev/null)" \
+    || bail "units-install --list-union failed"
+units_all="$(printf '%s\n' "$_list_union_out" | awk '$1=="UNITS"{print $2}')"
+enable_all="$(printf '%s\n' "$_list_union_out" | awk '$1=="ENABLE"{print $2}')"
+optional_block="$(printf '%s\n' "$_list_union_out" | awk '$1=="OPTIONAL"{print $2}')"
+units_block="$units_all"
+enable_block="$enable_all"
+[ -n "$units_block" ] || bail "UNITS list non-empty — units-install found nothing; remaining checks are invalid"
+[ -n "$enable_block" ] || bail "ENABLE list non-empty — units-install found nothing; remaining checks are invalid"
+ok "UNITS list non-empty (${#units_block} bytes)"
+ok "ENABLE list non-empty (${#enable_block} bytes)"
 is_optional() { case "$optional_block" in *"$1"*) return 0 ;; *) return 1 ;; esac; }
 
 # POSITIVE CONTROL: spira-sentinel.timer is the canary. If the parsers are broken or the
@@ -338,10 +327,11 @@ _rd_prod="$_rd_tmp/releases/current/spira"
 _rd_prod_root="$_rd_tmp/releases/current"
 mkdir -p "$_rd_repo" "$_rd_prod" "$_rd_prod_root/cockpit"
 
-# Render using render.py directly — the actual module install.sh and unit-ensure.sh both
-# call, not a copy of its substitution logic.
+# Render using render-unit directly (sp-31dm0: render.py is retired) — the actual binding
+# units-install and unit-ensure both call (install::values::render), not a copy of its
+# substitution logic.
 render_unit() {
-    python3 "$UNIT_DIR/render.py" "$1" \
+    render-unit "$1" \
         --home "$_rd_repo" --repo "$_rd_repo" --run "$_rd_tmp/run" --db "$_rd_tmp/db" \
         --cockpit "$_rd_prod_root/cockpit" --prod "$_rd_prod" --instance test
 }

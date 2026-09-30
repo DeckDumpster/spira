@@ -445,8 +445,11 @@ impl<'a> Session<'a> {
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
         ]);
         env.extend(self.release_env());
-        let install = self.in_release("systemd/install.sh");
-        self.setup_as_user(&["bash", &install, &self.instance], env)
+        // sp-31dm0: systemd/install.sh is retired; the per-instance unit installer is the
+        // compiled units-install binary in the release's own bin/ now, run directly (no
+        // `bash` wrapper).
+        let install = self.in_release("bin/units-install");
+        self.setup_as_user(&[&install, &self.instance], env)
     }
 
     /// The setup's steps, in order (sp-t26yx, DESIGN.md §11.4): stage; unless `install` is
@@ -1130,7 +1133,7 @@ mod tests {
         assert_eq!(argv[3][3], "spira-watch-queue-watch");
         assert_eq!(
             argv[4],
-            vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
+            vec!["/tmp/spira-release-abc123/bin/units-install", "abc123"]
         );
         let execs = rt.execs.lock().unwrap();
         for r in execs.iter().take(5) {
@@ -1263,7 +1266,7 @@ mod tests {
     fn a_setup_cut_during_install_is_a_deadline_fault_named_install() {
         let rt = FakeRuntime::new();
         rt.on(
-            |r| r.argv.get(1).is_some_and(|a| a.ends_with("/systemd/install.sh")),
+            |r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
             |_| ExecOutcome { rc: RC_DEADLINE, output: String::new() },
         );
         let e = run_setup(&session(&rt), true, &["jq"]).unwrap_err();

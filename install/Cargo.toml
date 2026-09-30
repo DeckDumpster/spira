@@ -1,0 +1,32 @@
+[package]
+name = "install"
+version = "0.1.0"
+edition = "2021"
+description = "install — rewrite wave 6a (sp-31dm0): the root installer, the per-instance unit renderer/writer, and the non-disruptive unit ensure. Replaces install.sh, systemd/install.sh, systemd/unit-ensure.sh, systemd/units.sh and systemd/render.py."
+
+[lib]
+name = "install"
+path = "src/lib.rs"
+
+[[bin]]
+name = "install"
+path = "src/bin/install.rs"
+
+[[bin]]
+name = "units-install"
+path = "src/bin/units_install.rs"
+
+[[bin]]
+name = "unit-ensure"
+path = "src/bin/unit_ensure.rs"
+
+[[bin]]
+name = "render-unit"
+path = "src/bin/render_unit.rs"
+
+[dependencies]
+release = { path = "../release" }
+spira-config = { path = "../spira-config" }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

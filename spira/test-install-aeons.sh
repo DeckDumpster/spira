@@ -16,7 +16,8 @@
 #
 # THIS IS THE ONE T2 SMOKE of install.sh's full path that cluster 1 (docs/test-plan/
 # instance-lifecycle.md) keeps: the per-unit apply decision itself (changed / unchanged /
-# masked / disabled / halted / suspended) is table-driven in test-install-decide.sh against
+# masked / disabled / halted / suspended) is table-driven in install::decide's own unit
+# tests now (sp-31dm0: test-install-decide.sh retired) against
 # the extracted _unit_action, with no rendered DEST tree and no recording systemctl. The
 # no-op, selective-restart, aeon-safety and watch-preservation cases that used to live here
 # duplicated that table and are gone; only what a full run — not the decision table — can
@@ -155,7 +156,7 @@ inst() {
         "DRAIN_STATE=$DRAIN_STATE" \
         "SPIRA_INSTALL_FORCE=${MOCK_FORCE:-}" \
         SPIRA_DRAIN_INTERVAL=0 \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # Seed DEST with rendered units so every installed unit matches what install.sh would

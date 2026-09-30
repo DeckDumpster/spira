@@ -15,9 +15,10 @@
 #    Positive control: remove the planted suspension → silence, proving silence is
 #    agreement and not a broken check (law-absence-needs-a-positive-control).
 #
-# install.sh's own honouring of a suspension is table-driven in test-install-decide.sh
+# units-install's own honouring of a suspension is table-driven in install::decide's own
+# unit tests now (sp-31dm0: test-install-decide.sh retired, systemd/install.sh retired)
 # over the shared (suspended?, enabled?) predicate — cluster 6, docs/test-plan/
-# instance-lifecycle.md — not re-driven here through a full install.sh run.
+# instance-lifecycle.md — not re-driven here through a full units-install run.
 #
 # systemctl IS STUBBED throughout. A suite that queries the real service manager is
 # green for as long as the box happens to be in the state its author had.

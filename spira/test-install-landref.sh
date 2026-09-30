@@ -27,7 +27,7 @@
 #
 # defect: sp-mlcd sp-y9zp
 # tier: T1
-# covers: systemd/install.sh spira/lib.sh
+# covers: install/src/bin/units_install.rs spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -76,14 +76,17 @@ git -C "$CLONE" commit -qm "extra commit"
 git -C "$CLONE" push -q origin main
 
 # ---------------------------------------------------------------------------
-# Minimal harness fixture. install.sh resolves its sibling scripts relative
-# to $SRC (the systemd/ dir). conf.sh and lib.sh are symlinked so spira_landref
-# is available. watchd.sh is stubbed: exits 0 with no output, so the watcher
+# Minimal harness fixture. units-install resolves the landref check directly against
+# git (install::checks::check_landref), sp-31dm0. conf.sh and lib.sh are symlinked so
+# spira_landref (still read by other tools) is available too. watchd.sh is stubbed: exits 0 with no output, so the watcher
 # manifest loop has nothing to do and does not interfere.
 # ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
+for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer "$HERE/../systemd/"*.yaml; do
+    [ -e "$f" ] || continue
+    ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
+done
 ln -s "$HERE/conf.sh"  "$FIXTURE/spira/conf.sh"
 ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
 
@@ -124,8 +127,8 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/loginctl"; chmod +x "$MOCK_B
 
 GIT_BIN="$(dirname "$(command -v git)")"
 
-# inst <SPIRA_REPO> [env-overrides...] -- [install.sh-args]
-# Run install.sh in a clean environment. SPIRA_INSTALL_FORCE defaults to empty.
+# inst <SPIRA_REPO> [env-overrides...] -- [units-install-args]
+# Run units-install in a clean environment. SPIRA_INSTALL_FORCE defaults to empty.
 inst() {
     local repo="$1"; shift
     local force=""
@@ -148,7 +151,7 @@ inst() {
         SPIRA_DOLT_DATA= \
         SPIRA_TESTDB_DATA= \
         "SPIRA_INSTALL_FORCE=$force" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 mkdir -p "$TMP/home/.config/systemd/user" "$TMP/run"

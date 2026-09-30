@@ -121,6 +121,11 @@ id = "UC-instance-lifecycle-20"
 tier = "T1"
 statement = "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit"
 
+[use_case.uncovered]
+reason = "test-install-collisions.sh (its only suite) retired: systemd/install.sh is retired (sp-31dm0) and the check it sourced under SPIRA_INSTALL_LIB=1 is install::guards::check_path_collisions now, proved by cargo test -p install: guards::tests::a_shared_run_dir_across_instances_collides, guards::tests::the_same_instance_never_collides_with_itself, guards::tests::conf_key_parsing_strips_quotes_and_expands_home — not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-31dm0"
+
 [[use_case]]
 id = "UC-instance-lifecycle-21"
 tier = "T1"
@@ -130,6 +135,11 @@ statement = "the unit installer refuses while this instance's aeons are live (be
 id = "UC-instance-lifecycle-22"
 tier = "T1"
 statement = "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-aeon-*` is never restarted or enabled"
+
+[use_case.uncovered]
+reason = "test-install-decide.sh retired: systemd/install.sh's _unit_action is install::decide::decide now (sp-31dm0), proved by cargo test -p install: decide::tests::a_mask_outranks_every_other_signal, suspended_outranks_disabled_and_halted, operator_disabled_outranks_halted, a_halted_world_enables_without_starting, unchanged_and_active_is_skipped, changed_and_active_is_restarted, everything_else_is_enable_now — the full six-input table, not by a spira/test-*.sh suite this matrix can see. The spira-aeon-* clause is structural now: transient aeon units are never in the manifest ENABLE set this decision runs over (install::manifest), so they are unreachable by construction rather than refused by a case in the table"
+date = "2026-09-30"
+bead = "sp-31dm0"
 
 [[use_case]]
 id = "UC-instance-lifecycle-23"

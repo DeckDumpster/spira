@@ -98,7 +98,7 @@ inst() {
         SPIRA_INSTANCE=prod MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
         BD_ANSWER_AFTER="${BD_ANSWER_AFTER:-0}" \
         SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
-        bash "$FIXTURE/systemd/install.sh" 2>&1
+        units-install 2>&1
 }
 first_line() { grep -nE "$1" "$LOG" | head -1 | cut -d: -f1; }
 

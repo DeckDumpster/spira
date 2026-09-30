@@ -106,8 +106,10 @@ impl Run<'_> {
         self.h.show(&c)
     }
 
+    /// `install` (sp-31dm0: a compiled binary at `current/bin/install` now, replacing the
+    /// root `install.sh` script — no `bash` wrapper).
     fn install_sh(&self) -> i32 {
-        let c = Cmd::new("bash").arg(Self::s(&self.o.releases().join("current/install.sh"))).arg("--skip-build").envs(&self.install_env());
+        let c = Cmd::new(Self::s(&self.o.releases().join("current/bin/install"))).arg("--skip-build").envs(&self.install_env());
         self.h.show(&c)
     }
 

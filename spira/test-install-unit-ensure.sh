@@ -94,7 +94,7 @@ ensure() {
         SPIRA_SYSTEMCTL="$TMP/sc" \
         SPIRA_PROD="${_ENSURE_PROD:-$PROD}" \
         SPIRA_BROKER_ENABLE="${_ENSURE_BROKER_ENABLE:-0}" \
-        bash "$HERE/../systemd/unit-ensure.sh" "$@" 2>&1
+        unit-ensure "$@" 2>&1
 }
 
 # ==========================================================================
@@ -108,7 +108,7 @@ rendered="$(env -i PATH="$BIN:$PATH" HOME="$TMP/home" \
     SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" \
     SPIRA_INSTANCE=prod SPIRA_DOLT_DATA="" SPIRA_TESTDB_DATA="" \
     SPIRA_PROD="$PROD" \
-    bash "$HERE/../systemd/install.sh" --render 2>&1)"
+    units-install --render 2>&1)"
 
 # Write all units to DEST (full install).
 current_unit=""

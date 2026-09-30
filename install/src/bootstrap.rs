@@ -1,0 +1,123 @@
+//! Shared setup for the `units-install` and `unit-ensure` binaries: resolving host values and
+//! the manifest from the environment a caller (`deploy.sh`, `landing-pass`, a human) already
+//! set, exactly as `systemd/install.sh` and `unit-ensure.sh` both did by sourcing the same
+//! `conf.sh`/`units.sh`. Kept out of the library's own tested modules (which take everything
+//! as plain values) so the environment-reading glue is the only thing duplicated nowhere.
+
+use crate::manifest::{self, Manifest};
+use crate::values::HostValues;
+use std::env;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub fn env_var(k: &str) -> String {
+    env::var(k).unwrap_or_default()
+}
+
+pub fn nonempty_env(k: &str) -> Option<String> {
+    env::var(k).ok().filter(|v| !v.is_empty())
+}
+
+pub fn which(prog: &str) -> Option<String> {
+    let path = env::var("PATH").ok()?;
+    for dir in path.split(':') {
+        let p = Path::new(dir).join(prog);
+        if p.is_file() {
+            return Some(p.to_string_lossy().to_string());
+        }
+    }
+    None
+}
+
+/// Resolve host values from the environment (conf.sh's own precedence: explicit environment
+/// wins; this derives nothing beyond `SPIRA_HOME = SPIRA_REPO/spira` when unset).
+pub fn host_from_env(instance: &str) -> HostValues {
+    let repo = nonempty_env("SPIRA_REPO").unwrap_or_default();
+    let home = nonempty_env("SPIRA_HOME").unwrap_or_else(|| format!("{repo}/spira"));
+    let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
+    HostValues {
+        home,
+        repo,
+        run: env_var("SPIRA_RUN"),
+        db: env_var("SPIRA_DB"),
+        cockpit: env_var("SPIRA_COCKPIT"),
+        dolt_data: env_var("SPIRA_DOLT_DATA"),
+        testdb_data: env_var("SPIRA_TESTDB_DATA"),
+        dolt,
+        prod: env_var("SPIRA_PROD"),
+        instance: instance.to_string(),
+        testdb_port: env_var("SPIRA_TESTDB_PORT"),
+        snap_stale_s: env_var("SPIRA_SNAP_STALE_S"),
+        path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
+    }
+}
+
+/// `watchd.sh units` — the watcher manifest. Still bash (not this bead's scope); called by
+/// bare name exactly as units.sh did.
+pub fn watch_names() -> Result<Vec<String>, String> {
+    let out = Command::new("watchd.sh").arg("units").output().map_err(|e| format!("cannot run watchd.sh: {e}"))?;
+    if !out.status.success() {
+        return Err("the watcher manifest is malformed".into());
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    Ok(text.split_whitespace().map(|u| u.strip_prefix("spira-watch@").unwrap_or(u).strip_suffix(".service").unwrap_or(u).to_string()).collect())
+}
+
+/// `ctrl.sh`'s suspended set, read once. A missing/failing `ctrl.sh` means nothing is
+/// suspended, matching the bash fallback.
+pub fn suspended_set() -> std::collections::BTreeSet<String> {
+    let out = Command::new("ctrl.sh").arg("list").arg("--json").output();
+    let Ok(out) = out else { return Default::default() };
+    if !out.status.success() {
+        return Default::default();
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut out_set = std::collections::BTreeSet::new();
+    for chunk in text.split("\"subject\"") {
+        if !chunk.starts_with(|c: char| c == ':' || c.is_whitespace()) {
+            continue;
+        }
+        let Some(name_start) = chunk.find('"') else { continue };
+        let rest = &chunk[name_start + 1..];
+        let Some(name_end) = rest.find('"') else { continue };
+        let name = &rest[..name_end];
+        if rest[name_end..].split("\"suspended\"").nth(1).map(|s| s.trim_start().starts_with(':') && s.trim_start()[1..].trim_start().starts_with("true")).unwrap_or(false) {
+            out_set.insert(name.to_string());
+        }
+    }
+    out_set
+}
+
+pub fn unit_dir() -> PathBuf {
+    if let Some(d) = nonempty_env("SPIRA_UNIT_DIR") {
+        return PathBuf::from(d);
+    }
+    crate::orchestrate::default_unit_dir(&nonempty_env).unwrap_or_else(|| PathBuf::from(".config/systemd/user"))
+}
+
+pub fn templates_dir() -> PathBuf {
+    let d = nonempty_env("SPIRA_HOME").map(|h| PathBuf::from(h).join("../systemd")).or_else(|| nonempty_env("SPIRA_REPO").map(|r| PathBuf::from(r).join("systemd"))).unwrap_or_else(|| PathBuf::from("systemd"));
+    d.canonicalize().unwrap_or(d)
+}
+
+/// Build this box's manifest from the environment, printing units.sh's own informational
+/// notes to stderr.
+pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
+    let inotify_present = which("inotifywait").is_some();
+    let m = manifest::build(&manifest::Inputs {
+        instance: instance.to_string(),
+        dolt_data_set: nonempty_env("SPIRA_DOLT_DATA").is_some(),
+        testdb_data_set: nonempty_env("SPIRA_TESTDB_DATA").is_some(),
+        broker_enable: env_var("SPIRA_BROKER_ENABLE") == "1",
+        inotify_present,
+        watch_names: watch_names(),
+    })?;
+    for note in &m.notes {
+        eprintln!("note: {note}");
+    }
+    Ok(m)
+}
+
+pub fn world_halted() -> bool {
+    nonempty_env("SPIRA_RUN").map(|r| Path::new(&r).join("world.halted").exists()).unwrap_or(false)
+}

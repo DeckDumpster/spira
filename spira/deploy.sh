@@ -75,7 +75,10 @@ _WORLD="${SPIRA_WORLD_SH:-world.sh}"
 # daemon-reload, restart. SPIRA_ACTIVATE_SH keeps its name (a test double's own binary,
 # not necessarily named "release") but now takes the subcommand as its own first argument.
 _ACTIVATE="${SPIRA_ACTIVATE_SH:-release}"
-_INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
+# units-install (sp-31dm0) replaces systemd/install.sh: the same per-instance render, write,
+# enable/restart/prune, now a bare-name binary on the release launcher PATH like every other
+# sibling tool here — never `bash <path>`, and never systemd/ (which is not on that PATH).
+_INSTALL="${SPIRA_INSTALL_SH:-units-install}"
 _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-doctor.sh}"
 _SKEW="${SPIRA_SKEW_SH:-skew.sh}"
@@ -308,7 +311,7 @@ if [ "$dry_run" = 1 ]; then
     fi
     rm -f "$_dry_probe"
     unset _dry_tags _dry_probe
-    printf 'deploy: would systemd/install.sh (re-render units with SPIRA_PROD=%s/current/spira)\n' \
+    printf 'deploy: would units-install (re-render units with SPIRA_PROD=%s/current/spira)\n' \
         "$SPIRA_RELEASES"
     printf 'deploy: would cockpit/layout.sh ensure\n'
     printf 'deploy: would world.sh resume\n'
@@ -447,7 +450,7 @@ _render_release_units() {
         SPIRA_REPO="$SPIRA_RELEASES/current" \
         SPIRA_HOME="$SPIRA_RELEASES/current/spira" \
         SPIRA_PROD="$SPIRA_RELEASES/current/spira" SPIRA_INSTALL_FORCE=1 \
-        bash "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/systemd/install.sh}"
+        "${SPIRA_INSTALL_SH:-$SPIRA_RELEASES/current/bin/units-install}"
 }
 
 # _activated_release_cmd <cmd> [args...] — run a release-relative tool (doctor.sh, skew.sh)
@@ -526,7 +529,7 @@ _rollback() {
     else
         # First deploy: remove current so nothing points at the failed release.
         rm -f "$SPIRA_RELEASES/current" 2>/dev/null || true
-        SPIRA_PROD="$_orig_prod" SPIRA_INSTALL_FORCE=1 bash "$_INSTALL" 2>/dev/null || true
+        SPIRA_PROD="$_orig_prod" SPIRA_INSTALL_FORCE=1 "$_INSTALL" 2>/dev/null || true
         "$_SC" --user daemon-reload 2>/dev/null || true
         "$_SC" --user list-units "spira-*-${SPIRA_INSTANCE}.service" \
             --state=active --no-legend 2>/dev/null \

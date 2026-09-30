@@ -165,6 +165,21 @@ pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<Strin
         }
         host.get(k).cloned()
     };
+    render_from_lookup(template_name, text, lookup, watcher, instance)
+}
+
+/// The shared core of [`render`] and of `install`'s general-purpose renderer (which has no
+/// single release directory to derive keys from — [[`SPIRA_HOME`]] and `SPIRA_PROD` can
+/// differ, e.g. a split dev/prod checkout): given a complete, precomputed value map, apply
+/// systemd/render.py's rules — every `@KEY@` filled or the template is refused by name
+/// ([`OPTIONAL_EMPTY`] aside), `%i` becomes the watcher name, a `spira-*.timer`'s
+/// `Unit=spira-<x>.service` gains the instance suffix, and the output carries exactly one
+/// trailing newline.
+pub fn render_from_values(template_name: &str, text: &str, values: &BTreeMap<String, String>, watcher: Option<&str>, instance: &str) -> Result<String, String> {
+    render_from_lookup(template_name, text, |k| values.get(k).cloned(), watcher, instance)
+}
+
+fn render_from_lookup(template_name: &str, text: &str, lookup: impl Fn(&str) -> Option<String>, watcher: Option<&str>, instance: &str) -> Result<String, String> {
     let mut unknown = Vec::new();
     let mut empty = Vec::new();
     for k in placeholders(text) {
@@ -199,7 +214,8 @@ pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<Strin
     Ok(normalize(&out))
 }
 
-/// Exactly one trailing newline — what `install.sh` and `unit-ensure.sh` write.
+/// Exactly one trailing newline — what `units-install` and `unit-ensure` (sp-31dm0; formerly
+/// `systemd/install.sh` and `systemd/unit-ensure.sh`) write.
 pub fn normalize(text: &str) -> String {
     format!("{}\n", text.trim_end_matches('\n'))
 }

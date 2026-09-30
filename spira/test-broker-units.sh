@@ -27,21 +27,20 @@ echo "test-broker-units.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # get_enable BROKER_ENABLE
-# Source units.sh in a minimal env and print the ENABLE array, one entry per line.
+# units-install --list-enable (sp-31dm0: systemd/units.sh is retired; the manifest is
+# install/src/manifest.rs now), one entry per line, in a minimal env.
 get_enable() {
     local broker_enable="$1"
     env -i \
         PATH="$PATH" \
         SPIRA_INSTANCE=prod \
         SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
         SPIRA_BROKER_ENABLE="$broker_enable" \
         SPIRA_SELF_TEST=0 \
-        bash -c '
-            . "$SPIRA_HOME/../systemd/units.sh" 2>/dev/null
-            printf "%s\n" "${ENABLE[@]}"
-        '
+        units-install --list-enable 2>/dev/null
 }
 
 # ==========================================================================

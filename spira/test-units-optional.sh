@@ -18,37 +18,44 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/run"
 
-# _units <inotify-mode> — source units.sh in a subprocess with that gate set, print its
-# UNITS/OPTIONAL/ENABLE arrays.
-# inotify-mode "without" shadows the `command` builtin so `command -v inotifywait` fails:
-# conf.sh rebuilds PATH itself (unconditionally adding /usr/bin), so hiding a system
-# inotifywait by editing PATH does not work — the shadow is the only reliable lever.
-# env -i prevents any of the three from leaking in from this suite's own environment.
+# _units <inotify-mode> — units-install --list-templates (sp-31dm0: systemd/units.sh is
+# retired; the manifest is install/src/manifest.rs now) in a subprocess with that gate set,
+# reshaped into the UNITS:/OPTIONAL:/ENABLE: lines this suite's assertions read.
+# inotify-mode "without": units-install resolves `inotifywait` with its own raw PATH scan
+# (install::bootstrap::which), not `command -v` — so unlike the old bash (which needed a
+# `command` shadow because conf.sh unconditionally re-added /usr/bin to PATH), a PATH that
+# genuinely excludes inotifywait's directory is enough here. env -i prevents any of the
+# three from leaking in from this suite's own environment.
 _units() {
-    local inotify_mode="$1"
+    local inotify_mode="$1" path="$PATH"
+    if [ "$inotify_mode" = without ]; then
+        local iw_dir d newpath=""
+        iw_dir="$(dirname "$(command -v inotifywait 2>/dev/null || true)")"
+        while IFS= read -r d; do
+            [ "$d" = "$iw_dir" ] && continue
+            newpath="${newpath:+$newpath:}$d"
+        done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
+        path="$newpath"
+    fi
     env -i \
-        PATH="$PATH" \
+        PATH="$path" \
         SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
         SPIRA_INSTANCE=prod \
         SPIRA_DOLT_DATA= \
         SPIRA_TESTDB_DATA= \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" \
-        bash -s -- "$@" 2>"$TMP/notes" <<'SUBSH'
-set -uo pipefail
-if [ "$1" = without ]; then
-    command() {
-        case "$*" in
-            "-v inotifywait"|"--version inotifywait") return 1 ;;
-            *) builtin command "$@" ;;
-        esac
-    }
-fi
-. "$SPIRA_HOME/../systemd/units.sh"
-printf 'UNITS: %s\n' "${UNITS[*]}"
-printf 'OPTIONAL: %s\n' "${OPTIONAL[*]}"
-printf 'ENABLE: %s\n' "${ENABLE[*]}"
-SUBSH
+        units-install --list-templates 2>"$TMP/notes" \
+        | awk '
+            /^UNITS / { units = units " " $2 }
+            /^OPTIONAL / { optional = optional " " $2 }
+            /^ENABLE / { enable = enable " " $2 }
+            END {
+                print "UNITS:" units
+                print "OPTIONAL:" optional
+                print "ENABLE:" enable
+            }'
 }
 
 DEF_INOTIFY=with

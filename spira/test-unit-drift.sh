@@ -55,7 +55,7 @@ inst() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # ==========================================================================
