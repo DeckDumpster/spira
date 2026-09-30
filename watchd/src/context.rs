@@ -148,42 +148,98 @@ impl Context {
     }
 }
 
-/// `SPIRA_HOME` from this process's own environment when set, else `<release-root>/spira` —
-/// this binary lives in `<release-root>/bin/watchd`, a SIBLING of `spira/`, never inside it
-/// (same fallback `gate`'s `default_home` uses, sp-0tpcs). Getting this one `.parent()` short
-/// resolves to `bin/` instead of the release root and every conf.sh-seam call then fails
-/// closed with "conf.sh could not be sourced" — caught here, not by a test, because a test
-/// that builds its fixture beside the binary would not have noticed either.
+/// `SPIRA_HOME` from this process's own environment when set, else found by searching
+/// upward from this binary's own directory for an ancestor whose `spira/conf.sh` exists.
+///
+/// NOT AN ENVIRONMENT LOOKUP EVEN WHEN A CALLER ALREADY SOURCED conf.sh: conf.sh
+/// deliberately does not `export` SPIRA_HOME ("for the same reason `SPIRA_ID_PREFIX` is
+/// not" — a value a worktree's own conf.sh resolved must never leak into a child process
+/// that might be running against a different checkout's idea of itself). So a shell that
+/// sourced conf.sh and then runs `watchd` by bare name hands it NO `SPIRA_HOME` at all;
+/// this binary has always had to find its own, the same as `gate` and every other
+/// Rust-rewritten tool.
+///
+/// NOT A FIXED PARENT COUNT either (the scar this replaced): a release runs this binary
+/// from `<release>/bin/watchd`, one level below `spira/`'s sibling; a testenv or
+/// aeon-profile build tree runs it from `<checkout>/target/aeon/watchd`, TWO levels below.
+/// Fixing the depth to the release's shape made the conf.sh seam fail closed
+/// ("conf.sh could not be sourced") on every other build layout, caught by an aeon-profile
+/// testenv run inside a container, not by a unit test whose fixture happened to sit beside
+/// the binary either way.
 pub fn home_dir() -> PathBuf {
     if let Ok(h) = std::env::var("SPIRA_HOME") {
         if !h.is_empty() {
             return PathBuf::from(h);
         }
     }
-    std::env::current_exe().ok().and_then(|p| spira_dir_from_exe(&p)).unwrap_or_else(|| PathBuf::from("spira"))
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file()))
+        .unwrap_or_else(|| PathBuf::from("spira"))
 }
 
-/// `<exe's-parent's-parent>/spira` — pure, so the arithmetic is unit tested without needing
-/// to fake `current_exe()`. `None` when the exe path is too shallow to have two ancestors
-/// (never true for a real release layout; `home_dir` falls back to a bare `"spira"` then).
-fn spira_dir_from_exe(exe: &Path) -> Option<PathBuf> {
-    exe.parent().and_then(|d| d.parent()).map(|release_root| release_root.join("spira"))
+/// Walks `exe`'s directory and each ancestor after it, looking for the first whose
+/// `spira/` satisfies `exists` (real filesystem in `home_dir`; an in-memory set in tests,
+/// so the walk itself is unit tested without touching disk). `None` if no ancestor's
+/// `spira/` does — `home_dir` falls back to a bare `"spira"` then.
+fn find_spira_dir(exe: &Path, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let mut dir = exe.parent()?;
+    loop {
+        let candidate = dir.join("spira");
+        if exists(&candidate) {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
-    #[test]
-    fn spira_dir_is_a_sibling_of_bin_not_inside_it() {
-        // The exe lives at <release-root>/bin/watchd; conf.sh lives at
-        // <release-root>/spira/conf.sh — a sibling, never <release-root>/bin/spira.
-        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/watchd");
-        assert_eq!(spira_dir_from_exe(exe), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
+    fn has(dirs: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
     }
 
     #[test]
-    fn a_shallow_exe_path_has_no_home_to_derive() {
-        assert_eq!(spira_dir_from_exe(Path::new("watchd")), None);
+    fn a_release_layout_finds_spira_one_level_above_bin() {
+        // <release>/bin/watchd; spira/ is a sibling of bin/, one level up.
+        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/watchd");
+        let exists = has(&["/opt/spira/spira-releases/abc123/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
+    }
+
+    #[test]
+    fn a_testenv_aeon_profile_build_finds_spira_two_levels_above_target_aeon() {
+        // <checkout>/target/aeon/watchd; spira/ is beside the checkout root, not beside
+        // target/aeon/ — the exact shape that broke the fixed-parent-count version inside
+        // a testenv container (this crate's own scar).
+        let exe = Path::new("/workspace/target/aeon/watchd");
+        let exists = has(&["/workspace/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/workspace/spira")));
+    }
+
+    #[test]
+    fn a_plain_cargo_debug_build_finds_spira_two_levels_above_target_debug() {
+        let exe = Path::new("/checkout/target/debug/watchd");
+        let exists = has(&["/checkout/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/checkout/spira")));
+    }
+
+    #[test]
+    fn no_ancestor_with_a_spira_dir_is_none() {
+        let exe = Path::new("/a/b/c/watchd");
+        assert_eq!(find_spira_dir(exe, |_| false), None);
+    }
+
+    #[test]
+    fn the_nearest_ancestor_wins_when_more_than_one_could_match() {
+        // A pathological case (an ancestor further up also happens to have a spira/) —
+        // the walk must stop at the first (nearest) match, not the outermost.
+        let exe = Path::new("/a/b/c/watchd");
+        let exists = has(&["/a/b/spira", "/a/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/a/b/spira")));
     }
 }

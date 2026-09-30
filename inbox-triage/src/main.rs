@@ -37,19 +37,30 @@ fn dedup_key(body: &str) -> String {
     oldest_re.replace_all(&step1, "oldest Ns").into_owned()
 }
 
-/// `SPIRA_HOME` from the environment, else `<release-root>/spira` — this binary lives at
-/// `<release-root>/bin/inbox-triage`, a sibling of `spira/`, never inside it (same fallback
-/// `gate` and `watchd` use).
+/// `SPIRA_HOME` from the environment, else found by searching upward from this binary's own
+/// directory for an ancestor whose `spira/conf.sh` exists (same approach as `watchd`'s
+/// `home_dir`, including the reason a fixed parent count is not enough: conf.sh does not
+/// export SPIRA_HOME, and a release's `<release>/bin/inbox-triage` and a testenv/aeon-profile
+/// build's `<checkout>/target/aeon/inbox-triage` put `spira/` a different number of levels
+/// up).
 fn home_dir() -> PathBuf {
     if let Ok(h) = std::env::var("SPIRA_HOME") {
         if !h.is_empty() {
             return PathBuf::from(h);
         }
     }
-    std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
-        .unwrap_or_else(|| PathBuf::from("spira"))
+    std::env::current_exe().ok().and_then(|p| find_spira_dir(&p, |d| d.join("conf.sh").is_file())).unwrap_or_else(|| PathBuf::from("spira"))
+}
+
+fn find_spira_dir(exe: &Path, exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let mut dir = exe.parent()?;
+    loop {
+        let candidate = dir.join("spira");
+        if exists(&candidate) {
+            return Some(candidate);
+        }
+        dir = dir.parent()?;
+    }
 }
 
 const SCRIPT: &str = r#"set -uo pipefail
@@ -170,6 +181,32 @@ fn read_new_lines(file: &mut File, offset: u64) -> std::io::Result<(u64, Vec<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+
+    fn has(dirs: &[&str]) -> impl Fn(&Path) -> bool {
+        let set: HashSet<PathBuf> = dirs.iter().map(PathBuf::from).collect();
+        move |p: &Path| set.contains(p)
+    }
+
+    #[test]
+    fn a_release_layout_finds_spira_one_level_above_bin() {
+        let exe = Path::new("/opt/spira/spira-releases/abc123/bin/inbox-triage");
+        let exists = has(&["/opt/spira/spira-releases/abc123/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/opt/spira/spira-releases/abc123/spira")));
+    }
+
+    #[test]
+    fn a_testenv_aeon_profile_build_finds_spira_two_levels_above_target_aeon() {
+        let exe = Path::new("/workspace/target/aeon/inbox-triage");
+        let exists = has(&["/workspace/spira"]);
+        assert_eq!(find_spira_dir(exe, exists), Some(PathBuf::from("/workspace/spira")));
+    }
+
+    #[test]
+    fn no_ancestor_with_a_spira_dir_is_none() {
+        let exe = Path::new("/a/b/c/inbox-triage");
+        assert_eq!(find_spira_dir(exe, |_| false), None);
+    }
 
     #[test]
     fn strips_the_leading_timestamp_token() {
