@@ -11,16 +11,24 @@ use testenv::runtime::{self, Podman};
 /// Spawn `testenv warm refill <i>` detached: its own process group, no stdio of ours (a
 /// gate reading our stdout must not wait on it), output appended to
 /// `$SPIRA_RUN/testenv-warm.log`.
+///
+/// Its harness is the SLOT's checkout, never ours (sp-t26yx): a gate's testenv lives in a
+/// transient `.gate.harness.*` worktree that the gate removes as soon as we exit, and a
+/// refill that booted through that worktree's `testenv.sh` found it gone every time
+/// ("no image tag — no spare"), so no gate trial ever claimed a spare and every one paid
+/// a cold `up`. The slot holds the tree the trial just tested and outlives it.
 fn spawn_refill(i: usize, run: &std::path::Path) {
-    spawn_warm(&["refill".to_string(), i.to_string()], run);
+    let slot = testenv::warm::paths(run, i).0;
+    let harness = slot.join("spira/testenv.sh").is_file().then_some(slot);
+    spawn_warm(&["refill".to_string(), i.to_string()], run, harness);
 }
 
 /// Spawn `testenv warm sweep` detached (DESIGN.md D12), exactly as the refill.
 fn spawn_sweep(run: &std::path::Path) {
-    spawn_warm(&["sweep".to_string()], run);
+    spawn_warm(&["sweep".to_string()], run, None);
 }
 
-fn spawn_warm(sub: &[String], run: &std::path::Path) {
+fn spawn_warm(sub: &[String], run: &std::path::Path, harness: Option<std::path::PathBuf>) {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let Ok(exe) = std::env::current_exe() else {
@@ -34,9 +42,15 @@ fn spawn_warm(sub: &[String], run: &std::path::Path) {
         Ok((f, g)) => (Stdio::from(f), Stdio::from(g)),
         Err(_) => (Stdio::null(), Stdio::null()),
     };
-    let _ = Command::new(exe)
+    let mut cmd = Command::new(exe);
+    if let Some(h) = harness {
+        cmd.env("SPIRA_TESTENV_HARNESS", h);
+    }
+    // Never the caller's cwd: a gate's is the worktree it is about to remove.
+    let _ = cmd
         .arg("warm")
         .args(sub)
+        .current_dir(run)
         .env("SPIRA_RUN", run)
         .stdin(Stdio::null())
         .stdout(out)
