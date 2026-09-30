@@ -143,6 +143,32 @@ fn renderer_rev() -> String {
         .unwrap_or_default()
 }
 
+/// The alternate `$SPIRA_RUN` derivation that actually holds a `cockpit.env`, when the
+/// snapshot is absent at `run` but present at the repo-relative or XDG alternative —
+/// `conf.sh` derives `$SPIRA_RUN` from whether `$SPIRA_REPO` is writable, so a writer and
+/// a reader can legitimately disagree. Only meaningful (and only called) when the
+/// snapshot is absent at `run`; mirrors `snap_absent_banner`'s own probe exactly.
+fn mismatch_alt(run: &str) -> Option<String> {
+    let instance = env_nonempty("SPIRA_INSTANCE").unwrap_or_else(|| "prod".to_string());
+    let inst_sfx = if instance == "prod" { String::new() } else { format!("-{instance}") };
+    let mut alts = Vec::new();
+    if let Some(repo) = env_nonempty("SPIRA_REPO") {
+        alts.push(format!("{repo}/.runtime/spira{inst_sfx}"));
+    }
+    let xdg_data = env_nonempty("XDG_DATA_HOME")
+        .unwrap_or_else(|| format!("{}/.local/share", env_nonempty("HOME").unwrap_or_default()));
+    alts.push(format!("{xdg_data}/spira{inst_sfx}/run"));
+    for alt in alts {
+        if alt == run {
+            continue;
+        }
+        if Path::new(&alt).join("cockpit.env").is_file() {
+            return Some(alt);
+        }
+    }
+    None
+}
+
 fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
     let snap_path = Path::new(run).join("cockpit.env");
     let (content, exists) = read_snapshot(&snap_path);
@@ -173,6 +199,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
         halt: gather_halt(run),
         drain: gather_drain(run),
         run_dir: run.to_string(),
+        mismatch_alt: if exists { None } else { mismatch_alt(run) },
         renderer_rev: renderer_rev(),
         collector_rev: snap.get("SP_COLLECTOR_REV").unwrap_or("").to_string(),
         tok_win_spark: String::new(),
@@ -261,8 +288,12 @@ fn main() {
                 let run = run_dir();
                 let (mut inputs, _c) = build_inputs(&run);
                 let (content, exists) = read_snapshot(&path);
+                let frag_snap = Snapshot::parse(&content);
+                inputs.collector_rev = frag_snap.get("SP_COLLECTOR_REV").unwrap_or("").to_string();
+                inputs.age_secs = frag_snap.get("SP_AT").and_then(|v| v.parse::<i64>().ok()).map(|at| inputs.now - at);
                 inputs.snapshot_content = Box::leak(content.into_boxed_str());
                 inputs.snapshot_exists = exists;
+                inputs.mismatch_alt = if exists { None } else { mismatch_alt(&run) };
                 inputs.cols = cols;
                 for line in render(rows, cols, &inputs) {
                     println!("{line}");

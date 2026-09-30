@@ -32,6 +32,7 @@ LAYOUT="layout"
 _FAKE_RELEASE="$(mktemp -d)"
 mkdir -p "$_FAKE_RELEASE/bin"
 cp "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
+cp "$(command -v health)" "$_FAKE_RELEASE/bin/health"
 
 command -v tmux >/dev/null 2>&1 || { echo "  SKIP  tmux is not on PATH"; exit 77; }
 
@@ -39,6 +40,15 @@ TMP="$(mktemp -d)"
 TMUXDIR="$TMP/tmux-fixture"
 mkdir -p "$TMUXDIR"
 FIXTURE_UP=0
+
+# classify_argv's mail check compares argv[0]'s basename against COCKPIT_MAIL's — a
+# shebang script exec'd directly would show up as "bash" there (the kernel interprets the
+# shebang), same limitation the bash original had. `exec -a NAME` sets argv[0] to "fakemail"
+# on a plain `sleep`, with no script/shebang involved at all. A file named "fakemail" still
+# has to exist on PATH — Conf::from_env's `on_path` check never executes it, only checks
+# `is_file()`.
+printf '#!/usr/bin/env bash\ntrue\n' > "$_FAKE_RELEASE/bin/fakemail"
+chmod +x "$_FAKE_RELEASE/bin/fakemail"
 
 cleanup() {
     [ "$FIXTURE_UP" -eq 1 ] && TMUX_TMPDIR="$TMUXDIR" tmux kill-server 2>/dev/null || true
@@ -64,8 +74,10 @@ well_formed() {
 
     local sess="$sname:0"
     local health mail
-    health=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}')
-    mail=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess:0" -v -P -F '#{pane_id}')
+    health=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+    mail=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess:0" -v -P -F '#{pane_id}' \
+        "exec -a fakemail sleep 300")
     local sess_id
     sess_id=$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t "$sess" -F '#{pane_id}' | head -1)
 
@@ -88,8 +100,10 @@ with_duplicate() {
 
     local sess="$sname:0"
     local h1 h2 sess_id
-    h1=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}')
-    h2=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}')
+    h1=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
+    h2=$(TMUX_TMPDIR="$TMUXDIR" tmux split-window -t "$sess" -h -P -F '#{pane_id}' \
+        "exec env PATH=$_FAKE_RELEASE/bin:\$PATH health loop")
     sess_id=$(TMUX_TMPDIR="$TMUXDIR" tmux list-panes -t "$sess" -F '#{pane_id}' | head -1)
 
     TMUX_TMPDIR="$TMUXDIR" tmux set-option -p -t "$h1" @cockpit health
@@ -103,7 +117,7 @@ call_repair() {   # call_repair <window> -> nothing; runs the real `ensure`, whi
     local window="$1"
     TMUX_TMPDIR="$TMUXDIR" env -i SPIRA_RELEASE="$_FAKE_RELEASE" HOME="$TMP" \
         PATH="$_FAKE_RELEASE/bin:/usr/bin:/bin" TMUX_TMPDIR="$TMUXDIR" \
-        MAIL_CMD="" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
+        COCKPIT_MAIL="fakemail" SPIRA_REPO="$TMP" SPIRA_COCKPIT="$COCKPIT_DIR" \
         SPIRA_RUN="$RUN" SPIRA_INSTANCE=fixture COCKPIT_CWD="$TMP" \
         COCKPIT_BOTTOM_PCT=30 COCKPIT_RIGHT_PCT=33 \
         "$LAYOUT" ensure 2>/dev/null || true

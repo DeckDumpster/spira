@@ -28,6 +28,9 @@ LAYOUT="layout"
 _FAKE_RELEASE="$(mktemp -d)"
 mkdir -p "$_FAKE_RELEASE/bin"
 ln -sf "$(command -v "$LAYOUT")" "$_FAKE_RELEASE/bin/layout"
+# The health pane's command is built from $SPIRA_RELEASE/bin on PATH (Conf::rel_prefix),
+# so the real `health` binary needs to be there too, not just `layout`.
+ln -sf "$(command -v health)" "$_FAKE_RELEASE/bin/health"
 
 T1="$(mktemp -d)"; T2="$(mktemp -d)"
 cleanup() {

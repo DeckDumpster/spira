@@ -65,12 +65,16 @@ fn halt_banner(h: &HaltState) -> Vec<String> {
 
 fn drain_banner(d: &DrainState, now: i64) -> Vec<String> {
     let Some(mtime) = d.stamp_mtime else { return Vec::new() };
-    let mins = if mtime > 0 { (now - mtime) / 60 } else { return vec![format!(
-        "{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}?{DIM}m — loop and landing continue{RST}"
-    )] };
-    vec![format!(
-        "{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}{mins}{DIM}m — loop and landing continue{RST}"
-    )]
+    let mins_disp = if mtime > 0 { (now - mtime) / 60 } else {
+        return vec![
+            format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}?{DIM}m — loop and landing continue{RST}"),
+            format!("  {DIM}lift it:{RST} world.sh resume"),
+        ];
+    };
+    vec![
+        format!("{B}{WARN} \u{23f8} DRAINING {RST}{DIM} summons gated for {RST}{mins_disp}{DIM}m — loop and landing continue{RST}"),
+        format!("  {DIM}lift it:{RST} world.sh resume"),
+    ]
 }
 
 fn hotfix_banner(snap: &Snapshot) -> Vec<String> {
@@ -91,7 +95,21 @@ fn hotfix_banner(snap: &Snapshot) -> Vec<String> {
     out
 }
 
-fn snap_absent_banner(cols: i64, run_dir: &str) -> Vec<String> {
+/// `mismatch_alt`: the alternate `$SPIRA_RUN` derivation (repo-relative or XDG) that
+/// actually holds a `cockpit.env`, when it differs from `run_dir` — computed by the
+/// caller (it needs the filesystem and `$SPIRA_REPO`/`$XDG_DATA_HOME`/`$SPIRA_INSTANCE`),
+/// passed in so this stays a pure string-formatting function. `conf.sh` derives
+/// `$SPIRA_RUN` from whether `$SPIRA_REPO` is writable, so a service installed from a
+/// writable repo and a reader invoked from a read-only release tree can derive two
+/// different paths for the same collector (law-absence-needs-a-positive-control).
+fn snap_absent_banner(cols: i64, run_dir: &str, mismatch_alt: Option<&str>) -> Vec<String> {
+    if let Some(alt) = mismatch_alt {
+        return vec![
+            format!("{B}{WARN} \u{25a0} PATH MISMATCH{RST} {DIM}— SPIRA_RUN differs for writer and reader{RST}"),
+            format!("  {DIM}exists at{RST} {}", fit(alt, cols - 12)),
+            format!("  {DIM}reader at{RST} {}", fit(run_dir, cols - 12)),
+        ];
+    }
     vec![format!("{DIM}  no snapshot — cockpit not yet run at {}{RST}", fit(run_dir, cols - 28))]
 }
 
@@ -107,6 +125,7 @@ pub fn header_line(
     stalled_probe_names: &[String],
     snap_exists: bool,
     run_dir: &str,
+    mismatch_alt: Option<&str>,
     halt: &HaltState,
     drain: &DrainState,
     now: i64,
@@ -145,21 +164,21 @@ pub fn header_line(
     let firing = snap.get("SP_AURON_FIRING").unwrap_or("0");
     if firing == "?" {
         out.push(format!(
-            "{DIM}ALERT{RST}  {BAD}{B}? — Auron's heartbeat could not be read{RST}"
+            " {DIM}ALERT{RST}  {BAD}{B}? — Auron's heartbeat could not be read{RST}"
         ));
     } else if firing != "0" {
         let keys = snap.q("SP_AURON_KEYS").replace(',', " ");
-        out.push(format!("{DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
+        out.push(format!(" {DIM}ALERT{RST}  {BAD}{B}{firing}{RST} firing  {BAD}{keys}{RST}"));
     }
 
     let overrides_n = snap.get("SP_OVERRIDES_N").unwrap_or("0");
     if overrides_n == "?" {
-        out.push(format!("{DIM}overrides{RST}  {BAD}?{RST} — could not be read"));
+        out.push(format!(" {DIM}overrides{RST}  {BAD}?{RST} — could not be read"));
     } else if overrides_n != "0" {
         let failed = snap.get("SP_OVERRIDES_FAILED").unwrap_or("0");
         let failed_seg = if failed != "0" { format!("{BAD}{failed} failed{RST}  ") } else { String::new() };
         let list = snap.q("SP_OVERRIDES_LIST").replace(',', " ");
-        out.push(format!("{DIM}overrides{RST}  {failed_seg}{list}"));
+        out.push(format!(" {DIM}overrides{RST}  {failed_seg}{list}"));
     }
 
     if snap_exists {
@@ -169,10 +188,10 @@ pub fn header_line(
                 let killed = snap.get(&format!("SP_PROBE_KILLED_{name}")).unwrap_or("?");
                 parts.push(format!("{name}: timeout \u{d7}{killed}"));
             }
-            out.push(format!("{DIM}STALE{RST}  {BAD}{B}{}{RST}", parts.join("  ")));
+            out.push(format!(" {DIM}STALE{RST}  {BAD}{B}{}{RST}", parts.join("  ")));
         }
     } else {
-        out.extend(snap_absent_banner(cols, run_dir));
+        out.extend(snap_absent_banner(cols, run_dir, mismatch_alt));
     }
 
     out
@@ -190,7 +209,7 @@ pub struct TokensExtra<'a> {
 pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<String> {
     let mut out = Vec::new();
     out.push(format!(
-        "{DIM}TOKENS/{}h{RST}  {B}{}{RST} billed  {ACC}{}{RST}",
+         " {DIM}TOKENS/{}h{RST}  {B}{}{RST} billed  {ACC}{}{RST}",
         snap.q("SP_TOK_WINDOW_H"),
         tok(snap.q("SP_TOK_WIN")),
         extra.tok_win_spark,
@@ -248,13 +267,13 @@ pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<St
         _ => String::new(),
     };
 
-    out.push(format!("{DIM}WIN{RST}    5h {c5}{p5}%{RST}  {DIM}reset {dur5}{RST}{eta5}{age_sfx}"));
+    out.push(format!(" {DIM}WIN{RST}    5h {c5}{p5}%{RST}  {DIM}reset {dur5}{RST}{eta5}{age_sfx}"));
     out.push(format!("        7d {c7}{p7}%{RST}  {DIM}reset {dur7}{RST}{eta7}"));
     out
 }
 
 fn unread_row(label: &str, what: &str) -> String {
-    format!("{DIM}{label:<6}{RST} {BAD}{B}?{RST} {DIM}{what}{RST}")
+    format!(" {DIM}{label:<6}{RST} {BAD}{B}?{RST} {DIM}{what}{RST}")
 }
 
 /// One aeon's four rows for `now_section`. `lease` is `?` or minutes. Trailing moments
@@ -364,17 +383,17 @@ pub fn now_section(snap: &Snapshot, cols: i64, live_aeon_n: i64, trace_lines: i6
     let snap_n_raw = snap.get("SP_AEON_N");
     if snap_n_raw.is_none() || snap_n_raw == Some("?") {
         return if live_aeon_n > 0 {
-            vec![format!("{DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
+            vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} details pending snapshot{RST}")]
         } else {
             vec![unread_row("NOW", "cannot read the aeon roster")]
         };
     }
     let snap_n: i64 = snap_n_raw.unwrap().parse().unwrap_or(0);
     if snap_n == 0 && live_aeon_n == 0 {
-        return vec![format!("{DIM}NOW{RST}    {DIM}no aeon working{RST}")];
+        return vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")];
     }
     if snap_n == 0 && live_aeon_n > 0 {
-        return vec![format!("{DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} not yet in snapshot{RST}")];
+        return vec![format!(" {DIM}NOW{RST}    {OK}{B}{live_aeon_n} aeon(s) live{RST} {DIM}\u{2014} not yet in snapshot{RST}")];
     }
     let mut out = Vec::new();
     for i in 0..snap_n as usize {
@@ -417,10 +436,10 @@ pub fn next_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     }
     let mut out = Vec::new();
     if n == 0 {
-        out.push(format!("{DIM}NEXT{RST}   {B}{count_line}{RST} {DIM}\u{2014} nothing to claim{RST}"));
+        out.push(format!(" {DIM}NEXT{RST}   {B}{count_line}{RST} {DIM}\u{2014} nothing to claim{RST}"));
         return out;
     }
-    out.push(format!("{DIM}NEXT{RST}   {B}{count_line}{RST} {DIM}\u{2014} across all partitions:{RST}"));
+    out.push(format!(" {DIM}NEXT{RST}   {B}{count_line}{RST} {DIM}\u{2014} across all partitions:{RST}"));
     for i in 0..MAX_NEXT_ROWS {
         let Some(raw) = snap.get(&format!("SP_NEXT{i}")).filter(|s| !s.is_empty()) else { break };
         out.push(next_row(cols, raw));
@@ -477,7 +496,7 @@ pub fn queue_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     // section's lifetime.
     fn hdr(hdr_done: &mut bool, out: &mut Vec<String>) {
         if !*hdr_done {
-            out.push(format!("{DIM}QUEUE{RST}  "));
+            out.push(format!(" {DIM}QUEUE{RST}  "));
             *hdr_done = true;
         } else {
             out.push("        ".to_string());
@@ -633,12 +652,12 @@ pub fn recent_row(cols: i64, raw: &str, pad: i64) -> String {
 pub fn recent_section(snap: &Snapshot, cols: i64, snap_exists: bool) -> Vec<String> {
     let Some(ev0) = snap.get("SP_EVENT0").filter(|s| !s.is_empty()) else {
         return if snap_exists {
-            vec![format!("{DIM}RECENT{RST} {DIM}nothing in the window{RST}")]
+            vec![format!(" {DIM}RECENT{RST} {DIM}nothing in the window{RST}")]
         } else {
             vec![unread_row("RECENT", "no snapshot to read")]
         };
     };
-    let mut out = vec![format!("{DIM}RECENT{RST} {}", recent_row(cols, ev0, 8))];
+    let mut out = vec![format!(" {DIM}RECENT{RST} {}", recent_row(cols, ev0, 8))];
     for i in 1..MAX_RECENT_ROWS {
         let Some(ev) = snap.get(&format!("SP_EVENT{i}")).filter(|s| !s.is_empty()) else { break };
         out.push(format!("        {}", recent_row(cols, ev, 8)));
@@ -676,7 +695,7 @@ pub fn inflow_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     }
     let kcol = if snap.get("SP_INFLOW_DEFECT").unwrap_or("0") == "0" { DIM } else { WARN };
     let mut out = vec![format!(
-        "{DIM}INFLOW{RST} {B}{}{RST} {DIM}new/{}m{RST}  {kcol}{}{RST}",
+         " {DIM}INFLOW{RST} {B}{}{RST} {DIM}new/{}m{RST}  {kcol}{}{RST}",
         n_raw.unwrap(),
         snap.q("SP_INFLOW_WIN"),
         snap.get("SP_INFLOW_KINDS").filter(|s| !s.is_empty()).unwrap_or("-"),
@@ -696,7 +715,7 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
     let n: i64 = n_raw.unwrap().parse().unwrap_or(-1);
     let stuck: i64 = snap.get("SP_AWAITING_STUCK").unwrap_or("0").parse().unwrap_or(-1);
     if n == 0 && stuck == 0 {
-        return vec![format!("{DIM}CI{RST}     {DIM}nothing parked on CI{RST}")];
+        return vec![format!(" {DIM}CI{RST}     {DIM}nothing parked on CI{RST}")];
     }
     let age_disp = snap.get("SP_AWAITING_AGE").unwrap_or("");
     let ci_col = if age_disp.ends_with('h') || age_disp.ends_with('d') { WARN } else { DIM };
@@ -710,7 +729,7 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
         String::new()
     };
     let mut out = vec![format!(
-        "{DIM}CI{RST}     {B}{}{RST} bead(s) waiting on a run   {DIM}oldest{RST} {} {ci_col}{}{RST}{stuck_txt}",
+         " {DIM}CI{RST}     {B}{}{RST} bead(s) waiting on a run   {DIM}oldest{RST} {} {ci_col}{}{RST}{stuck_txt}",
         n_raw.unwrap(),
         snap.get("SP_AWAITING_OLDEST").unwrap_or("?"),
         age_disp.is_empty().then(|| "?".to_string()).unwrap_or_else(|| age_disp.to_string()),
@@ -734,7 +753,7 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     } else {
         OK
     };
-    out.push(format!("{DIM}ATTN{RST}   {DIM}waiting on you{RST} {B}{}{RST}", snap.q("SP_WAITING")));
+    out.push(format!(" {DIM}ATTN{RST}   {DIM}waiting on you{RST} {B}{}{RST}", snap.q("SP_WAITING")));
 
     let age_col_unused = ();
     let _ = age_col_unused;
@@ -751,7 +770,7 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
         Some(v) => if v.parse::<i64>().unwrap_or(0) >= 24 { WARN } else { DIM },
     };
     out.push(format!(
-        "{DIM}SEND{RST}   {B}{} branches unsent{RST} \u{b7} {bd_col}{} awaiting rites{RST} \u{b7} {DIM}oldest {}h{RST}{unadopt_seg}",
+         " {DIM}SEND{RST}   {B}{} branches unsent{RST} \u{b7} {bd_col}{} awaiting rites{RST} \u{b7} {DIM}oldest {}h{RST}{unadopt_seg}",
         snap.q("SP_UNSENT"),
         snap.get("SP_BRANCH_DONE").unwrap_or("?"),
         snap.q("SP_UNSENT_OLDEST_H"),
@@ -771,7 +790,7 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     ));
 
     out.push(format!(
-        "{DIM}BEADS{RST}  {DIM}24h{RST}  closed {} \u{b7} {DIM}opened{RST} {}",
+         " {DIM}BEADS{RST}  {DIM}24h{RST}  closed {} \u{b7} {DIM}opened{RST} {}",
         snap.q("SP_CLOSED_24H"),
         snap.q("SP_OPENED_24H"),
     ));
@@ -837,10 +856,177 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
         _ => "?".to_string(),
     };
     out.push(format!(
-        "{DIM}LAND{RST}   {DIM}last{RST} {}  {DIM}rc{RST} {land_rc_col}{land_rc}{RST}  {DIM}branches{RST} {}  {DIM}moved{RST} {}",
+         " {DIM}LAND{RST}   {DIM}last{RST} {}  {DIM}rc{RST} {land_rc_col}{land_rc}{RST}  {DIM}branches{RST} {}  {DIM}moved{RST} {}",
         age_str(&land_age, 600),
         snap.q("SP_LAND_BRANCHES"),
         snap.q("SP_LAND_MOVED"),
+    ));
+
+    let gate_live = snap.get("SP_GATE_LIVE").unwrap_or("0");
+    if gate_live != "0" && gate_live != "?" {
+        out.push(format!("        {B}{gate_live} gate(s) running:{RST}"));
+        let gate_n: i64 = snap.get("SP_GATE_N").unwrap_or("0").parse().unwrap_or(0);
+        for gi in 0..gate_n {
+            let gs = snap.q(&format!("SP_GATE{gi}_SLUG"));
+            let ga = snap.q(&format!("SP_GATE{gi}_AGE"));
+            let gp = snap.q(&format!("SP_GATE{gi}_PHASE"));
+            let gw = snap.get(&format!("SP_GATE{gi}_WHY")).unwrap_or("");
+            let age_s = if ga == "?" {
+                "?".to_string()
+            } else {
+                match ga.parse::<i64>() {
+                    Ok(v) if v < 120 => format!("{v}s"),
+                    Ok(v) => format!("{}m", v / 60),
+                    Err(_) => "?".to_string(),
+                }
+            };
+            let phase_col = if gp == "waiting" { WARN } else { DIM };
+            let why_sfx = if gw.is_empty() {
+                String::new()
+            } else {
+                let f = fit(&format!(" \u{b7} {gw}"), cols - 30 - gs.chars().count() as i64 - age_s.chars().count() as i64);
+                format!(" {DIM}{f}{RST}")
+            };
+            out.push(format!(
+                "        {ACC}{gs}{RST}  {phase_col}{gp:<7}{RST}  {DIM}{age_s}{RST}{why_sfx}"
+            ));
+        }
+    } else if gate_live == "?" {
+        out.push(format!("        {BAD}{B}? cannot read gate state{RST}"));
+    }
+    let landprog_n: i64 = snap.get("SP_LANDPROG_N").unwrap_or("0").parse().unwrap_or(0);
+    if landprog_n != 0 {
+        for li in 0..landprog_n {
+            if let Some(lp) = snap.get(&format!("SP_LANDPROG{li}")).filter(|s| !s.is_empty()) {
+                out.push(format!("        {DIM}{}{RST}", fit(lp, cols - 10)));
+            }
+        }
+    }
+
+    let graph = format!(
+        "open {} \u{b7} ready {} \u{b7} working {} \u{b7} poison {} \u{b7} strand {} (ledger {})",
+        snap.q("SP_OPEN"),
+        snap.q("SP_READY"),
+        snap.q("SP_INPROG"),
+        snap.q("SP_POISON"),
+        snap.q("SP_STRAND_GHOST"),
+        snap.q("SP_STRANDS"),
+    );
+    let graph_col = if snap.get("SP_POISON").unwrap_or("0") == "0" { DIM } else { WARN };
+    out.push(format!("        {graph_col}{}{RST}", fit(&graph, cols - 8)));
+
+    let ll = snap.q("SP_LIVELOCKED");
+    let ic = snap.q("SP_INVALID_CLOSED");
+    let uf = snap.q("SP_UNFILED_FOLLOW");
+    let col_for = |v: &str| match v {
+        "0" => DIM,
+        "?" => "\x1b[31m\x1b[1m",
+        _ => "\x1b[33m\x1b[1m",
+    };
+    if ll != "0" || ic != "0" || uf != "0" {
+        out.push(format!(
+             " {DIM}LOCK{RST}   {DIM}livelocked{RST} {}{ll}{RST} \u{b7} {DIM}invalid-closed{RST} {}{ic}{RST} \u{b7} {DIM}unfiled-follow{RST} {}{uf}{RST}",
+            col_for(ll), col_for(ic), col_for(uf),
+        ));
+        let ll_n: i64 = snap.get("SP_LIVELOCK_N").unwrap_or("0").parse().unwrap_or(0);
+        for i in 0..ll_n.min(5) {
+            if let Some(row) = snap.get(&format!("SP_LIVELOCK{i}")).filter(|s| !s.is_empty()) {
+                out.push(format!("        {DIM}  {WARN}{}{RST}", fit(row, cols - 12)));
+            }
+        }
+        let ic_n: i64 = snap.get("SP_INVCLSD_N").unwrap_or("0").parse().unwrap_or(0);
+        for i in 0..ic_n.min(5) {
+            if let Some(row) = snap.get(&format!("SP_INVCLSD{i}")).filter(|s| !s.is_empty()) {
+                out.push(format!("        {DIM}  {WARN}{}{RST}", fit(row, cols - 12)));
+            }
+        }
+        let uf_n: i64 = snap.get("SP_UNFLFLW_N").unwrap_or("0").parse().unwrap_or(0);
+        for i in 0..uf_n.min(5) {
+            if let Some(row) = snap.get(&format!("SP_UNFLFLW{i}")).filter(|s| !s.is_empty()) {
+                out.push(format!("        {DIM}  {WARN}{}{RST}", fit(row, cols - 12)));
+            }
+        }
+    }
+
+    let fault_col = match snap.get("SP_YIELD_FAULT") {
+        Some("0") => OK,
+        None | Some("?") => "\x1b[31m\x1b[1m",
+        _ => WARN,
+    };
+    let solo = match snap.get("SP_YIELD_SOLO_MED") {
+        Some(v) if v != "?" => format!("{v}s"),
+        _ => "?".to_string(),
+    };
+    let conc = match snap.get("SP_YIELD_CONC_MED") {
+        Some(v) if v != "?" => format!("{v}s"),
+        _ => "?".to_string(),
+    };
+    out.push(format!(
+         " {DIM}GATE{RST}   {DIM}reds{RST} {} \u{b7} {DIM}defect{RST} {} \u{b7} {DIM}gate fault{RST} {fault_col}{}{RST} \u{b7} {DIM}unknown{RST} {}",
+        snap.q("SP_YIELD_REDS"),
+        snap.q("SP_YIELD_DEFECT"),
+        snap.q("SP_YIELD_FAULT"),
+        snap.q("SP_YIELD_UNKNOWN"),
+    ));
+    out.push(format!(
+        "        {DIM}cost{RST} {solo} solo \u{b7} {conc} with another gate overlapping {DIM}(median){RST}"
+    ));
+
+    let st_sum = match snap.get("SP_SUITE_LAST_SUM") {
+        Some(v) if v != "?" => format!("{v}s"),
+        _ => "?".to_string(),
+    };
+    let st_wall = match snap.get("SP_SUITE_LAST_WALL") {
+        Some(v) if v != "?" => format!("{v}s"),
+        _ => "?".to_string(),
+    };
+    out.push(format!(" {DIM}SUITES{RST} {DIM}sum{RST} {st_sum}  {DIM}wall{RST} {st_wall}"));
+
+    // "disk /" names the root mount; the value (with its own trailing "%" from `num`'s
+    // label) follows directly, same for "workspaces".
+    out.push(format!(
+         " {DIM}BOX{RST}    {DIM}disk{RST} / {}  {DIM}workspaces{RST} {}  {DIM}cpu{RST} {}% idle  {DIM}load{RST} {}",
+        num(snap.q("SP_DISK_ROOT_PCT"), 85, "%"),
+        num(snap.q("SP_DISK_WS_PCT"), 85, "%"),
+        snap.q("SP_CPU_IDLE"),
+        snap.q("SP_LOAD1"),
+    ));
+
+    let m_unread = snap.q("SP_MAIL_UNREAD");
+    let m_oldest = snap.get("SP_MAIL_OLDEST_AGE").unwrap_or("-");
+    if m_unread == "?" {
+        out.push(format!(" {DIM}MAIL{RST}   {BAD}{B}? cannot read mailbox{RST}"));
+    } else {
+        let mut age_sfx = String::new();
+        if m_oldest != "-" && m_unread != "0" {
+            age_sfx = format!("  {DIM}oldest {}{RST}", mail_dur(m_oldest));
+        }
+        let m_col = if m_unread == "0" { DIM } else { "\x1b[33m\x1b[1m" };
+        out.push(format!(" {DIM}MAIL{RST}   {m_col}{m_unread} unread{RST}{age_sfx}"));
+        let mn: i64 = snap.get("SP_MAIL_N").unwrap_or("0").parse().unwrap_or(0);
+        for mi in 0..mn.min(5) {
+            let Some(mrow) = snap.get(&format!("SP_MAIL{mi}")).filter(|s| !s.is_empty()) else { continue };
+            let mut parts = mrow.splitn(3, '|');
+            let m_age_raw = parts.next().unwrap_or("0");
+            let m_state = parts.next().unwrap_or("");
+            let m_subj = parts.next().unwrap_or("");
+            let m_dur = mail_dur(m_age_raw);
+            let st_col = match m_state {
+                "NEW" => "\x1b[33m\x1b[1m",
+                "READ" => ACC,
+                "DONE" => DIM,
+                _ => BAD,
+            };
+            let f = fit(m_subj, cols - 22);
+            out.push(format!("        {DIM}{m_dur:>4}{RST}  {st_col}{m_state:<4}{RST}  {DIM}{f}{RST}"));
+        }
+    }
+
+    out.push(format!(
+         " {DIM}OPS{RST}    {DIM}never-fired{RST} {} \u{b7} {DIM}recurred (no hold){RST} {} \u{b7} {DIM}sweep-last{RST} {}",
+        num(snap.q("SP_SOP_NEVER_FIRED"), 5, ""),
+        bad_unless_zero(snap.q("SP_SOP_RECURRED"), ""),
+        age_str(snap.q("SP_SWEEP_AGE"), 1800),
     ));
 
     out
@@ -878,7 +1064,7 @@ mod tests {
     fn now_section_idle_when_both_zero() {
         let s = snap(&[("SP_AEON_N", "0")]);
         let out = now_section(&s, 80, 0, 2);
-        assert_eq!(out, vec![format!("{DIM}NOW{RST}    {DIM}no aeon working{RST}")]);
+        assert_eq!(out, vec![format!(" {DIM}NOW{RST}    {DIM}no aeon working{RST}")]);
     }
 
     #[test]
@@ -920,7 +1106,7 @@ mod tests {
     #[test]
     fn ci_section_prints_even_at_zero() {
         let s = snap(&[("SP_AWAITING_N", "0"), ("SP_AWAITING_STUCK", "0")]);
-        assert_eq!(ci_section(&s, 80), vec![format!("{DIM}CI{RST}     {DIM}nothing parked on CI{RST}")]);
+        assert_eq!(ci_section(&s, 80), vec![format!(" {DIM}CI{RST}     {DIM}nothing parked on CI{RST}")]);
     }
 
     #[test]

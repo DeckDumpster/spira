@@ -114,7 +114,7 @@ stdout_out=$(
   BD_BIN="$BD_OK" \
   COCKPIT_DB="$DB" \
   SPIRA_DB="$SPIRA_DB_PATH" \
-  bash "$COCKPIT/resolve.sh" sp-test-id "close reason" 2>/dev/null
+  resolve sp-test-id "close reason" 2>/dev/null
 ) && rc3=0 || rc3=$?
 
 if [ "$rc3" -eq 0 ]; then
