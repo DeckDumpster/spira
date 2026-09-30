@@ -274,7 +274,7 @@ echo "test-branch-guard.sh — hooks/pre-commit: the tracked hook runs exclude.s
 # real, already-built binary is placed at $HREPO/bin/spira-lint — conf.sh's spira_bin
 # resolves $SPIRA_REPO/bin/<name>, and $SPIRA_REPO derives from where conf.sh itself sits,
 # so this is exactly the shape of an installed release, just rooted at $HREPO instead of
-# /home/ryan/spira/harness.
+# the operator's real install.
 # ---------------------------------------------------------------------------------------
 _real_lint_bin="$( . "$HERE/conf.sh" >/dev/null 2>&1; printf '%s' "${SPIRA_LINT_BIN:-}")"
 [ -x "${_real_lint_bin:-}" ] || bail "spira-lint is not built (SPIRA_LINT_BIN) — cannot exercise the pre-commit hook's scratch-fence stage"
