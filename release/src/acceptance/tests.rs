@@ -198,7 +198,7 @@ impl Fake {
             ("systemctl", ["--user", "list-units", "--state=active", ..]) => ok("spira-sentinel-t.timer loaded active waiting\n"),
             ("systemctl", ["--user", "list-units", "--state=failed", ..]) => ok(if self.failed_unit { "spira-ops-t.service loaded failed failed\n" } else { "" }),
             ("systemctl", _) => ok(""),
-            (_, ["install-tarball", tb]) => {
+            (_, ["install-tarball", tb]) | (_, ["install-tarball", "--skip-restart", tb]) => {
                 self.activate(Path::new(tb).file_name().unwrap().to_string_lossy().trim_end_matches(".tar.gz"));
                 ok("")
             }

@@ -1556,7 +1556,7 @@ spira_conf_defaults() {
     : "${SPIRA_DOLT_DATA=${XDG_DATA_HOME:-$HOME/.local/share}/spira/dolt}"
     # The alert units whose failure should be filed as an incident bead, as a find(1) name
     # pattern. Empty means none: these are the operator's own unit names and nothing here can
-    # guess them, so install-intake.sh says so rather than wiring whatever matches.
+    # guess them, so `release intake install` says so rather than wiring whatever matches.
     : "${SPIRA_ALERT_GLOB:=}"
 
     # ---- WHAT THE ACCOUNT SPENDS -------------------------------------------------------

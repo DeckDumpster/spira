@@ -332,17 +332,18 @@ start)
     # THE SESSION HOOK IS ENSURED ON EVERY start, not only the first — this is also what the
     # 10-minute re-ensure timer calls, so "start (and restart)" is the same code path. Runs
     # before the already-running check below so a concierge already up still gets it repaired.
-    # install-session-hook.sh install is itself idempotent (writes the client's settings file
+    # `release session-hook install` is itself idempotent (writes the client's settings file
     # only on change), so this costs nothing in the steady state. FAILS LOUDLY RATHER THAN
     # START DEGRADED: a concierge up without this hook looks identical to one with it until
     # the first compaction opens a context with no Monitor attached and nothing arms one.
     #
-    # SPIRA_HOME IS OVERRIDDEN TO THIS FILE'S OWN LOCATION FOR THIS ONE CALL. SPIRA_HOME
-    # elsewhere in this script is configurable — compose_brief deliberately points it at a
-    # fixture chamber under test — but the session hook is a property of the CODE, not of
-    # whatever chamber a caller is composing a brief from, so registering it must never
-    # depend on that seam.
-    if ! env SPIRA_HOME="$HARNESS/spira" install-session-hook.sh install; then
+    # NO SPIRA_HOME OVERRIDE, ANY MORE (sp-7jr34). It used to be pinned to THIS FILE'S OWN
+    # LOCATION so the registration never depended on whatever chamber a caller was composing
+    # a brief from — but that also pinned the registered command to whichever release
+    # happened to invoke this, which is exactly how 27 sha-pinned entries accumulated, one per
+    # activation. `release session-hook install` addresses the hook through `current` itself,
+    # never through its own caller's location, so there is nothing left here to override.
+    if ! release session-hook install; then
         echo "concierge: could not register the SessionStart hook — refusing to start without it" >&2
         exit 1
     fi

@@ -19,7 +19,7 @@
 # `mtgc-alert-<store>@.service` fires from `OnFailure=` on every unit worth hearing about,
 # and pushes the failed unit's journal tail to Pushover. That is a notification: it reaches
 # the operator's phone and then it is gone. This turns the same event into work with an identity —
-# a bead Ops claims with a lease, resolves, and closes with evidence. `install-intake.sh`
+# a bead Ops claims with a lease, resolves, and closes with evidence. `release intake install`
 # is the wiring; nothing here has to be remembered by a human.
 #
 # WRITE-AHEAD, THEN FILE

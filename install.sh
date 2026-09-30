@@ -852,16 +852,16 @@ if [ "$_ephemeral" = 1 ] || [ "$_no_hook" = 1 ]; then
     phase_skip "session hook skipped (--ephemeral or --no-session-hook)"
 else
     if [ "$_dry" = 1 ]; then
-        _hook_status="$(install-session-hook.sh status 2>/dev/null)" || true
+        _hook_status="$(release session-hook status 2>/dev/null)" || true
         if printf '%s\n' "$_hook_status" | grep -qE '^ok\s+SessionStart'; then
             phase_skip "session hook already installed"
         else
-            phase_info "would run: spira/install-session-hook.sh install"
+            phase_info "would run: release session-hook install"
         fi
     else
         phase_info "installing session hook"
-        install-session-hook.sh install \
-            || _phase_fail "hooks" "install-session-hook.sh failed"
+        release session-hook install \
+            || _phase_fail "hooks" "release session-hook install failed"
         _changes=$((_changes+1))
     fi
 fi
@@ -869,10 +869,10 @@ fi
 # Alert intake — wire SPIRA_ALERT_GLOB units if set. Skipped under --ephemeral.
 if [ -n "${SPIRA_ALERT_GLOB:-}" ] && [ "$_ephemeral" = 0 ]; then
     if [ "$_dry" = 1 ]; then
-        phase_info "would run: spira/install-intake.sh install (SPIRA_ALERT_GLOB=$SPIRA_ALERT_GLOB)"
+        phase_info "would run: release intake install (SPIRA_ALERT_GLOB=$SPIRA_ALERT_GLOB)"
     else
         phase_info "wiring alert intake for SPIRA_ALERT_GLOB=$SPIRA_ALERT_GLOB"
-        install-intake.sh install 2>&1 | sed 's/^/  /' || true
+        release intake install 2>&1 | sed 's/^/  /' || true
     fi
 else
     phase_skip "alert intake skipped (SPIRA_ALERT_GLOB not set or --ephemeral)"
