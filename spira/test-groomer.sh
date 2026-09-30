@@ -34,7 +34,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-GROOMSH="$HERE/groomer.sh"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
 NONE="$T/none.conf"
 
@@ -82,7 +81,7 @@ run_groomer() {
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_DB="$T/fixture.db" \
-        bash "$GROOMSH" "$@" 2>&1
+        groomer.sh "$@" 2>&1
 }
 
 # ==========================================================================================

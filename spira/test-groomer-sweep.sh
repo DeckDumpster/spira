@@ -27,7 +27,6 @@ trap 'exit 143' INT TERM
 
 . "$HERE/testlib.sh"
 
-GROOMSH="$HERE/groomer.sh"
 MAP="$TMP/repo-map"
 RUN="$TMP/run"; mkdir -p "$RUN"
 
@@ -51,7 +50,7 @@ run_sweep() {
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$SCOPE" \
-        bash "$GROOMSH" sweep "$@" 2>&1
+        groomer.sh sweep "$@" 2>&1
 }
 
 status_of() {
@@ -162,7 +161,7 @@ after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$SCOPE" \
-    bash "$HERE/cockpit.sh" livelock 2>/dev/null)"
+    cockpit.sh livelock 2>/dev/null)"
 
 want  "after sweep: unclaimable bead still reported"       "sp-sw-unc"  "$after_ll"
 want  "after sweep: described bead still reported"         "sp-sw-desc" "$after_ll"

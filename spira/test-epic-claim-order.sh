@@ -231,7 +231,7 @@ $(bead sp-e1-x sp-e1 3)
 $(epic sp-e2 1)
 $(bead sp-e2-z sp-e2 2)
 JSONL
-cut_out="$(bash "$HERE/epic-rank.sh" --label plan)"
+cut_out="$(epic-rank.sh --label plan)"
 is "grouped, group order by epic rank, members by their own priority within a group" \
 "== sp-e1 (P1, started) ==
   sp-e1-y
@@ -273,7 +273,6 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$AEON_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-export SPIRA_WORK_BIN="$TMP/no-work-bin" SPIRA_LC_BIN="$TMP/no-lc-bin"  # legacy aeon path under --with-bins; sp-74gzo retires this
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -288,7 +287,7 @@ chmod +x "$BIN/claude"
 
 ( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
-  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
+  aeon --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
 
 # A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
 # the landing pass closes a work bead directly, so "claimed and finished" reads as
@@ -334,9 +333,8 @@ JSONL
 # resumability pass still run for real and only the rank itself is forced to fail. Ranking
 # moved out of python (aeon.sh's epic_rank_rows) into spira-claim with the Rust cutover, so
 # the old python3 shim no longer reached the call under test.
-REAL_CLAIM="${SPIRA_CLAIM_BIN:-}"
-[ -x "$REAL_CLAIM" ] \
-    || { echo "test-epic-claim-order: spira-claim is not built (SPIRA_CLAIM_BIN) — T8 cannot force the rank" >&2; exit 1; }
+REAL_CLAIM="$(command -v spira-claim)" \
+    || { echo "test-epic-claim-order: spira-claim is not on PATH — T8 cannot force the rank" >&2; exit 1; }
 BIN2="$TMP/bin2"; mkdir -p "$BIN2"
 cat > "$BIN2/spira-claim" <<STUB
 #!/usr/bin/env bash
@@ -352,9 +350,9 @@ STUB
 chmod +x "$BIN2/spira-claim"
 
 AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
-( SPIRA_CLAIM_BIN="$BIN2/spira-claim" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+( PATH="$BIN2:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such3.conf" \
-  "$SPIRA_AEON_BIN" --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
+  aeon --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
 t8_rc=$?
 
 [ "$t8_rc" -ne 0 ] && ok "aeon.sh exits non-zero on a forced rank failure (never the 'idle' success exit)" \

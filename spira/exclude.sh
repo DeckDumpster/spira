@@ -259,7 +259,7 @@ the database's own directory with \`bd -C <db>\`, and remove the store from here
     if [ -n "$offenders" ]; then
         printf '%s\n' "$offenders" | refusal "$ROOT" \
             "Remove them, and add the ignore stanza so it cannot happen again:
-    $HERE/exclude.sh install $ROOT"
+    exclude.sh install $ROOT"
         bad=1
     fi
 

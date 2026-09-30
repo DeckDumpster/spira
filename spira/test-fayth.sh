@@ -469,7 +469,7 @@ SCHEMA_T="$T/no.conf"
 
 # POSITIVE CONTROL: schema_name fails on a made-up key before we check the real ones.
 schema_out="$(SPIRA_HOME="$HERE" SPIRA_CONF="$SCHEMA_T" \
-    bash "$HERE/schema.sh" name no-such-partition-xyz 2>&1)" && schema_exit=0 || schema_exit=$?
+    schema.sh name no-such-partition-xyz 2>&1)" && schema_exit=0 || schema_exit=$?
 
 if [ "$schema_exit" -eq 2 ] && [[ "$schema_out" == *"no-such-partition-xyz"* ]]; then
     ok "schema_name: undeclared key exits 2 and names the missing key"
@@ -482,7 +482,7 @@ fi
 # can hand to a caller by validated name (not just by default fallback in the variable form).
 for key in plan incident; do
     label="$(SPIRA_HOME="$HERE" SPIRA_CONF="$SCHEMA_T" \
-        bash "$HERE/schema.sh" name "$key" 2>/dev/null)" && key_exit=0 || key_exit=$?
+        schema.sh name "$key" 2>/dev/null)" && key_exit=0 || key_exit=$?
     if [ "$key_exit" -eq 0 ] && [ -n "$label" ]; then
         ok "schema_name '$key' is declared, resolves to: $label"
     else
@@ -493,7 +493,7 @@ done
 
 # DISCRIMINATING: a custom SPIRA_PLAN_LABEL must propagate through schema_name.
 custom_label="$(SPIRA_HOME="$HERE" SPIRA_CONF="$SCHEMA_T" \
-    SPIRA_PLAN_LABEL=work bash "$HERE/schema.sh" name plan 2>/dev/null)"
+    SPIRA_PLAN_LABEL=work schema.sh name plan 2>/dev/null)"
 is "schema_name plan: SPIRA_PLAN_LABEL=work propagates to 'work', not 'plan'" \
    "work" "$custom_label"
 

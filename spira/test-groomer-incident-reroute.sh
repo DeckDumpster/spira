@@ -37,7 +37,6 @@ trap 'exit 143' INT TERM
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
-GROOMSH="$HERE/groomer.sh"
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; mkdir -p "$RUN"
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -64,7 +63,7 @@ run_sweep() {
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL=spira \
-        bash "$GROOMSH" sweep "$@" 2>&1
+        groomer.sh sweep "$@" 2>&1
 }
 
 labels_of() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }

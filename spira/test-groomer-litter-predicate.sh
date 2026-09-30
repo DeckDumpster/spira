@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 predicate() {   # predicate <bead-json> -> "HAS_CONTENT <0|1>\nMETA <text>"
-    printf '%s' "$1" | python3 "$HERE/groomer-litter-predicate.py"
+    printf '%s' "$1" | groomer-litter-predicate.py
 }
 
 echo "test-groomer-litter-predicate.sh"

@@ -52,7 +52,6 @@ trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up groomersplitpiece || { echo "test-groomer-split-piece: could not build a fixture database"; exit 1; }
 testdb_reset
 
-GROOMSH="$HERE/groomer.sh"
 export SPIRA_CONF="/nonexistent-$$.conf"
 
 seed() {
@@ -90,7 +89,7 @@ seed sp-tgsp-orig "parent, split via split-piece"
 bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
 bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
 
-child="$("$GROOMSH" split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
+child="$(groomer.sh split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
 rc=$?
 is "split-piece exits 0" "0" "$rc"
 [ -n "$child" ] || { echo "test-groomer-split-piece: split-piece returned no id" >&2; exit 1; }
@@ -118,7 +117,7 @@ echo
 # ======================================================================================
 echo "split-piece: usage errors"
 # ======================================================================================
-"$GROOMSH" split-piece >/dev/null 2>&1
+groomer.sh split-piece >/dev/null 2>&1
 is "split-piece with no id exits 1" "1" "$?"
 
 echo

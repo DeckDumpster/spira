@@ -10,6 +10,7 @@
 # pre-activate.sh before the symlink flips. What is left for a box that is already running is
 # read-only, fast questions, each its own function so watchtower can call them directly:
 #
+#   doctor_check_release_tools    — is every Spira tool on PATH, by name (sp-gypjk)
 #   doctor_check_chamber_overlays — which operator overlay, if any, is in force
 #   doctor_check_gate_compile_check — does every Rust repo's configured gate command still
 #                                     reach a compile check (sp-1hmrm)
@@ -38,6 +39,29 @@ OK()   { printf '  ok    %s\n' "$1"; }
 CONF="${SPIRA_CONF_FILE:-}"
 
 # --------------------------------------------------------------------------------------
+# RELEASE TOOLS (sp-gypjk). Every Spira tool is invoked by its bare name on the PATH the
+# launcher set — the release's bin/ and spira/ first. There is no resolver and no fallback,
+# so the one question is whether each name resolves; each missing one is named.
+# --------------------------------------------------------------------------------------
+SPIRA_RELEASE_TOOLS="loom broker czar-pass reconciler queue-watch spira-supervise spira-config
+tsd-write spira reconciler-flow sentinel strand spira-claim queue aeon testenv rebase-stale
+round-vm spira-lint batcher landing-pass work gate intent-report bd-meter beads-store
+suite-select panel spira-lc gate-run gate-check gate-diag test-plan tsd-lifecycle-export
+mail.sh gate.sh world.sh"
+doctor_check_release_tools() {
+    local t missing="" n=0
+    for t in $SPIRA_RELEASE_TOOLS; do
+        n=$((n+1))
+        command -v "$t" >/dev/null 2>&1 || missing="$missing $t"
+    done
+    if [ -n "$missing" ]; then
+        FAIL "not on PATH:$missing" "PATH is $PATH — the launcher sets it to the release's bin/ and spira/"
+    else
+        OK "all $n release tools resolve on PATH"
+    fi
+}
+
+# --------------------------------------------------------------------------------------
 # CONFIG FILES. Once spira.toml exists it is the only file conf.sh reads (spira_toml_resolve,
 # sp-usxfl) and the only one any harness writer targets (spira_config_set) — a spira.conf
 # left beside it is inert, not backing anything up, and an operator hand-editing it would see
@@ -62,11 +86,10 @@ doctor_check_config_files() {
     # to retire (sp-4bw2i). validate is the one authority on whether the document in force
     # is well-formed.
     if [ -n "$toml" ]; then
-        local bin out
-        bin="$(spira_config_bin 2>/dev/null || true)"
-        if [ -z "$bin" ]; then
-            WARN "cannot validate $toml — no spira-config binary found"
-        elif out="$("$bin" validate "$toml" 2>&1)"; then
+        local out
+        if ! command -v spira-config >/dev/null 2>&1; then
+            FAIL "cannot validate $toml — spira-config is not on PATH"
+        elif out="$(spira-config validate "$toml" 2>&1)"; then
             OK "spira.toml validates — $toml"
         else
             FAIL "spira.toml fails validation — $toml" "$out"
@@ -99,11 +122,7 @@ doctor_check_chamber_overlays() {
 # --------------------------------------------------------------------------------------
 doctor_check_overrides() {
     local out rc
-    if [ ! -x "$SPIRA_HOME/overrides.sh" ]; then
-        WARN "overrides.sh missing at $SPIRA_HOME/overrides.sh"
-        return
-    fi
-    out="$("$SPIRA_HOME/overrides.sh" doctor 2>&1)"; rc=$?
+    out="$(overrides.sh doctor 2>&1)"; rc=$?
     if [ "$rc" = 0 ]; then
         OK "no problems (checked $SPIRA_OVERRIDES)"
         return
@@ -137,7 +156,7 @@ doctor_check_gate_compile_check() {
         checked=$((checked + 1))
         # The gate the landing ref defines: its checked-in gate.steps, or the row's column
         # for a repository that never adopted one (sp-quu2w) — resolved by the gate itself.
-        gate="$("${SPIRA_GATE_BIN:-gate-binary-unset}" --home "$SPIRA_HOME" --definition "$name" 2>&1)" \
+        gate="$(gate --home "$SPIRA_HOME" --definition "$name" 2>&1)" \
             || gate="<unresolved: ${gate:-no output}>"
         case "$gate" in
             *build-fence.sh*)
@@ -371,9 +390,9 @@ doctor_check_failed_units() {
 # --------------------------------------------------------------------------------------
 doctor_check_orphan_units() {
     local sc="${SPIRA_SYSTEMCTL:-systemctl}" inst="${SPIRA_INSTANCE:-prod}" out rows
-    if ! rows="$(bash "$SPIRA_HOME/watchd.sh" manifest 2>/dev/null)"; then
+    if ! rows="$(watchd.sh manifest 2>/dev/null)"; then
         FAIL "cannot read the watcher manifest" \
-             "Check: bash $SPIRA_HOME/watchd.sh manifest"
+             "Check: watchd.sh manifest"
         return
     fi
     local known=" " name kind rest
@@ -402,7 +421,7 @@ doctor_check_orphan_units() {
         wname="${unit#spira-watch-}"; wname="${wname%-"$inst".service}"
         case "$known" in *" $wname "*) continue ;; esac
         FAIL "$unit is enabled but '$wname' has no daemon row in the manifest" \
-             "Check: bash $SPIRA_HOME/watchd.sh prune"
+             "Check: watchd.sh prune"
         n=$((n+1))
     done <<< "$out"
     [ "$n" -eq 0 ] && OK "no orphan spira-watch units"
@@ -516,6 +535,10 @@ doctor_check_concierge_singleton() {
 }
 
 echo "spira doctor"
+
+echo
+echo "release tools"
+doctor_check_release_tools
 
 echo
 echo "config files"

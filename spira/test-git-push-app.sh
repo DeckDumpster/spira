@@ -24,6 +24,9 @@ LIB="$HERE/lib.sh"
 CONF_SH="$HERE/conf.sh"
 BIN="$TMP/bin"
 mkdir -p "$BIN"
+# conf.sh keeps the caller's PATH first and only APPENDS SPIRA_PATH (sp-gypjk), so a stub
+# goes first on the PATH this suite hands the run.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 # =========================================================================
 echo
@@ -57,10 +60,9 @@ chmod +x "$BIN/curl"
 
 printf 'fake-key-content\n' > "$TMP/fake-key.pem"
 
-# SPIRA_PATH puts stub binaries first in PATH even after conf.sh rewrites PATH.
 out="$(env -i \
     HOME="$TMP" \
-    SPIRA_PATH="$BIN" \
+    PATH="$BIN:$TOOLS:/usr/bin:/bin" \
     SPIRA_CONF=/nonexistent \
     SPIRA_GH_APP_ID=12345 \
     SPIRA_GH_APP_INSTALLATION_ID=67890 \
@@ -80,7 +82,7 @@ echo "3. CREDENTIAL HELPER — exits non-zero without credentials"
 rc_nc=0
 out_nc="$(env -i \
     HOME="$TMP" \
-    SPIRA_PATH="$BIN" \
+    PATH="$BIN:$TOOLS:/usr/bin:/bin" \
     SPIRA_CONF=/nonexistent \
     bash "$CRED_HELPER" get 2>&1)" || rc_nc=$?
 wantrc "no credentials → non-zero exit" 1 "$rc_nc"
@@ -92,7 +94,7 @@ echo "4. CREDENTIAL HELPER — store and erase are no-ops (exit 0, no output)"
 # =========================================================================
 for action in store erase; do
     rc_noop=0
-    out_noop="$(env -i HOME="$TMP" SPIRA_PATH="$BIN" SPIRA_CONF=/nonexistent \
+    out_noop="$(env -i HOME="$TMP" PATH="$BIN:$TOOLS:/usr/bin:/bin" SPIRA_CONF=/nonexistent \
         bash "$CRED_HELPER" "$action" 2>&1)" || rc_noop=$?
     wantrc "$action exits 0" 0 "$rc_noop"
     is     "$action emits nothing" "" "$out_noop"
@@ -102,8 +104,8 @@ done
 echo
 echo "5. spira_git_push — adds credential.helper and URL rewriting when App creds are set"
 # =========================================================================
-# Stub git records all arguments. SPIRA_PATH keeps the stub in PATH after conf.sh
-# rewrites it. We clear the args file inside the subshell AFTER lib.sh is sourced
+# Stub git records all arguments; it is first on PATH (conf.sh no longer rewrites PATH).
+# We clear the args file inside the subshell AFTER lib.sh is sourced
 # so only the spira_git_push call is captured, not conf.sh's git calls.
 cat > "$BIN/git" <<EOF
 #!/usr/bin/env bash
@@ -114,7 +116,7 @@ chmod +x "$BIN/git"
 
 rm -f "$TMP/git-args"
 (
-    export SPIRA_PATH="$BIN"
+    export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"
@@ -139,7 +141,7 @@ echo "6. spira_git_push — plain git push when App creds are not configured"
 # =========================================================================
 rm -f "$TMP/git-args"
 (
-    export SPIRA_PATH="$BIN"
+    export PATH="$BIN:$PATH"
     export SPIRA_HOME="$HERE/.."
     export SPIRA_CONF=/nonexistent
     export SPIRA_REPO="$TMP/fake-repo"

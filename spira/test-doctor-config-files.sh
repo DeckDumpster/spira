@@ -24,10 +24,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-doctor-config-files.sh"
 
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -67,14 +69,13 @@ TOML="$TMP/spira.toml"
 # itself fail, which is how PROPERTY 3 reaches a genuinely conf-only state below.
 run_doctor() {
     env -i \
-        PATH="$TMP/bin:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/bin:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF="$1" \
         SPIRA_TOML="$2" \
         SPIRA_REPO="$TMP" \
         SPIRA_REPO_MAP="${3:-$TMP/repo-map}" \
         SPIRA_CHAMBER="$TMP/chamber" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_PATH="$TMP/bin" \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
@@ -85,7 +86,7 @@ run_doctor() {
         SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=60 \
-        bash "$HERE/doctor.sh" 2>/dev/null || true
+        doctor.sh 2>/dev/null || true
 }
 
 # ==========================================================================

@@ -26,6 +26,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -129,13 +132,12 @@ printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
 # The guard against the real model: conf.sh REPLACES $PATH, so shimming by PATH alone
 # would invoke the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"
-[ -x "${SPIRA_AEON_BIN:-}" ] \
-    || { echo "test-groom-escalation-check: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run the real model" >&2; exit 1; }
-# The aeon ranks through spira-claim, resolved by conf.sh (testdb.sh sourced it) from
-# SPIRA_ARTIFACTS. run_aeon's env -i drops SPIRA_ARTIFACTS, so the resolved path is passed
-# explicitly — without it every pass is a "claim-error spira-claim not found".
-[ -x "${SPIRA_CLAIM_BIN:-}" ] \
-    || { echo "test-groom-escalation-check: spira-claim is not built (SPIRA_CLAIM_BIN) — the aeon cannot claim" >&2; exit 1; }
+# aeon and the spira-claim it ranks through are found by name on the suite's PATH, which
+# run_aeon's env -i carries over (sp-gypjk).
+command -v aeon >/dev/null 2>&1 \
+    || { echo "test-groom-escalation-check: aeon is not on PATH — refusing to run the real model" >&2; exit 1; }
+command -v spira-claim >/dev/null 2>&1 \
+    || { echo "test-groom-escalation-check: spira-claim is not on PATH — the aeon cannot claim" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -183,10 +185,9 @@ run_aeon() {    # run_aeon <fayth> <act>
         SPIRA_CONF="$TMP/nonexistent.conf" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
-        SPIRA_CLAIM_BIN="${SPIRA_CLAIM_BIN:-}" \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         BEADS_NO_AUTO_IMPORT=1 \
-        timeout 240 "$SPIRA_AEON_BIN" --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
+        timeout 240 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }
 field()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
 import sys,json
@@ -236,11 +237,11 @@ nowant "check did not run at all" "groom-escalation-check" "$(cat "$TMP/out")"
 
 echo
 echo "SPIRA_GROOM_ASK_LABEL is in the conf key list and defaults to groom-asked:"
-keys="$(env -i HOME="$TMP" PATH="/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
+keys="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_CONF_KEYS"' 2>/dev/null)"
 want "SPIRA_GROOM_ASK_LABEL is in the key list" "SPIRA_GROOM_ASK_LABEL" "$keys"
 
-val="$(env -i HOME="$TMP" PATH="/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
+val="$(env -i HOME="$TMP" PATH="$TOOLS:/usr/bin:/bin" SPIRA_CONF="$TMP/none.conf" \
     bash -c '. "'"$HERE"'/conf.sh" && printf "%s" "$SPIRA_GROOM_ASK_LABEL"' 2>/dev/null)"
 is "SPIRA_GROOM_ASK_LABEL defaults to groom-asked" "groom-asked" "$val"
 

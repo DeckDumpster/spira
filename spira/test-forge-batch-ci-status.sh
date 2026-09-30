@@ -13,6 +13,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 has() { [[ "$3" == *"$2"* ]] && ok "$1" || bad "$1" "wanted [$2] in [$3]"; }
 
 echo "test-forge-batch-ci-status.sh"
@@ -34,10 +37,10 @@ GH
 chmod +x "$TMP/gh"
 
 bcs() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" \
         RUN_LIST_GATE="$TMP/run-list-gate.json" RUN_LIST_ANY="$TMP/run-list-any.json" \
-        bash "$HERE/forge.sh" batch-ci-status "$TMP/repo" main 2>/dev/null
+        forge.sh batch-ci-status "$TMP/repo" main 2>/dev/null
 }
 
 echo

@@ -19,9 +19,11 @@ gate_fixture_init() {
     MAP="$tmp/repo-map"; HOMEDIR="$tmp/home"; SPIRA_CONF_NONE="$tmp/nonexistent.conf"
     SPIRA_DB_NONE="$tmp/nonexistent-db"; GATELOG="$tmp/gate.log"; VDIR="$tmp/verdicts"
     mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
-    # The gate is the Rust binary gate.sh execs (sp-0tpcs): the tree under test's own build
-    # (testenv's SPIRA_ARTIFACTS), else this checkout's bin/. env -i drops it, so it is passed.
-    GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-$HERE/../bin}/gate}"
+    # The gate is the Rust binary gate.sh execs by name (sp-0tpcs, sp-gypjk). env -i drops
+    # the suite's PATH, so the run's PATH is rebuilt from it: the fixture's own spira/ copy
+    # first (so a sibling the copied gate.sh names is the copy), then the directory the
+    # suite's PATH resolves `gate` in — the tree under test's build.
+    GATE_PATH_DIR="$(dirname "$(command -v gate)")" || { echo "gate-fixture: gate is not on PATH" >&2; return 1; }
     cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
        "$HERE/skew.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" \
        "$HERE/lifecycle-cert.sh" "$SH/"
@@ -48,11 +50,11 @@ gate_fixture_branch() {
 # gate_fixture_run <branch> <repo-name> [VAR=VAL ...] — the copied gate.sh, in the fixed env.
 gate_fixture_run() {
     local br="$1" repo="$2"; shift 2
-    env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+    env -i HOME="$HOMEDIR" PATH="$SH:$GATE_PATH_DIR:/usr/bin:/bin" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
         SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" \
-        SPIRA_VERDICT_TTL=0 SPIRA_GATE_BIN="$GATE_BIN" \
+        SPIRA_VERDICT_TTL=0 \
         "$@" bash "$SH/gate.sh" "$br" "$repo" 2>&1
 }

@@ -46,7 +46,7 @@ STUB
 chmod +x "$TMP/gh"
 echo '[]' > "$TMP/prs"
 
-run() { SPIRA_GH="$TMP/gh" bash "$HERE/forge.sh" runs-active "$TMP" 2>/dev/null; }
+run() { SPIRA_GH="$TMP/gh" forge.sh runs-active "$TMP" 2>/dev/null; }
 
 cat > "$TMP/payload" <<'J'
 {"workflow_runs":[

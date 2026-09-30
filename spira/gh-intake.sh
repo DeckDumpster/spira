@@ -360,7 +360,7 @@ print("Default: ignore. To promote one, apply the label `spira:accept` from an o
 PY
 )"
     printf '%s\n' "$body_lines" \
-    | "$HERE/mail.sh" send operator \
+    | mail.sh send operator \
         --from "gh-intake <intake@spira>" \
         --subject "$count new untrusted GitHub issue(s) in $REPO" \
         --kind note \

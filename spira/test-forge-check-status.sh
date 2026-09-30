@@ -13,6 +13,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-forge-check-status.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -63,18 +66,18 @@ runlist() {   # runlist <run-status> <conclusion> [sha] [url]
 runlist_none() { printf '[]\n' > "$TMP/runlist.json"; }
 
 status() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null | head -1
+        forge.sh check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null | head -1
 }
 status_all() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
         ANNOTATIONS="${ANNOTATIONS:-}" JOBS_JSON="${JOBS_JSON:-}" \
         ARTIFACTS_JSON="${ARTIFACTS_JSON:-}" ARTIFACT_ZIP="${ARTIFACT_ZIP:-}" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null
+        forge.sh check-status "$TMP/repo" 7 "$BRANCH" 2>/dev/null
 }
 
 echo
@@ -107,11 +110,11 @@ printf '[{"databaseId":1,"status":"completed","conclusion":"failure","headSha":"
 printf '[{"databaseId":2,"status":"in_progress","conclusion":"","headSha":"%s","url":"https://example.invalid/actions/runs/2"}]\n' \
     "$SHA" > "$TMP/runlist-b.json"
 _status_for_branch() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" \
         BRANCH_A="$BRANCH_A_SAVE" RUNLIST_A="$TMP/runlist-a.json" \
         BRANCH_B="$BRANCH_B_SAVE" RUNLIST_B="$TMP/runlist-b.json" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" "$1" "$2" 2>/dev/null | head -1
+        forge.sh check-status "$TMP/repo" "$1" "$2" 2>/dev/null | head -1
 }
 is "PR 369 (its own branch) reads red" "red" "$(_status_for_branch 369 "$BRANCH_A_SAVE")"
 is "PR 370 (same commit, its own still-running branch) is NOT red" "pending" \
@@ -123,9 +126,9 @@ echo "(this is the fail-closed direction: a caller that forgot to pass the branc
 echo "never read a red it cannot prove belongs to this PR):"
 runlist completed failure
 is "no branch given reads pending" "pending" \
-    "$(env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+    "$(env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh" BRANCH_A="$BRANCH" RUNLIST_A="$TMP/runlist.json" \
-        bash "$HERE/forge.sh" check-status "$TMP/repo" 7 "" 2>/dev/null | head -1)"
+        forge.sh check-status "$TMP/repo" 7 "" 2>/dev/null | head -1)"
 
 echo
 echo "gate-diag.sh format: annotation_level=failure, spira/test-*.sh path → red-suite:"
@@ -220,9 +223,9 @@ grep -q -- '--failed' "$RERUN_LOG" \
 
 # Test: completed run → rerun with no --failed, no cancel.
 : > "$RERUN_LOG"
-env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" RUN_STATUS=completed \
-    bash "$HERE/forge.sh" workflow-rerun "$TMP/repo" 99 2>/dev/null
+    forge.sh workflow-rerun "$TMP/repo" 99 2>/dev/null
 grep -q -- '--failed' "$RERUN_LOG" \
     && bad "rerun: no --failed when run completed" "found --failed in: $(cat "$RERUN_LOG")" \
     || ok  "rerun: no --failed when run completed"
@@ -232,9 +235,9 @@ grep -q 'run cancel' "$RERUN_LOG" \
 
 # Test: in_progress run → cancel called before rerun, still no --failed.
 : > "$RERUN_LOG"
-env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" RUN_STATUS=in_progress \
-    bash "$HERE/forge.sh" workflow-rerun "$TMP/repo" 99 2>/dev/null
+    forge.sh workflow-rerun "$TMP/repo" 99 2>/dev/null
 grep -q 'run cancel' "$RERUN_LOG" \
     && ok  "rerun: cancel called when in_progress" \
     || bad "rerun: cancel called when in_progress" "no cancel in: $(cat "$RERUN_LOG")"
@@ -256,9 +259,9 @@ grep -q 'force-cancel' "$RERUN_LOG" \
     || bad "run-cancel: positive control detects force-cancel" "planted force-cancel not found"
 
 : > "$RERUN_LOG"
-env -i PATH="/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_RUN="$TMP/run" SPIRA_GH="$TMP/gh-rr" RERUN_LOG="$RERUN_LOG" \
-    bash "$HERE/forge.sh" run-cancel "$TMP/repo" 99 2>/dev/null
+    forge.sh run-cancel "$TMP/repo" 99 2>/dev/null
 grep -q 'force-cancel' "$RERUN_LOG" \
     && bad "run-cancel: never calls force-cancel" "found force-cancel in: $(cat "$RERUN_LOG")" \
     || ok  "run-cancel: never calls force-cancel"

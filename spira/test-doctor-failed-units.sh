@@ -20,6 +20,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-doctor-failed-units.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -66,7 +69,7 @@ MOCK
 
 run_doctor() {
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$BIN" \
@@ -75,7 +78,7 @@ run_doctor() {
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_INSTANCE=prod \
-        bash "$HERE/doctor.sh" 2>/dev/null
+        doctor.sh 2>/dev/null
 }
 units_section() { sed -n '/^systemd units$/,/^$/p' <<< "$1"; }
 

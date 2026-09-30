@@ -5,6 +5,6 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-_tok="$("${SPIRA_BROKER_BIN}" token)" || {
+_tok="$(broker token)" || {
     printf 'gh-app.sh: broker token failed\n' >&2; exit 1; }
 exec env GH_TOKEN="$_tok" gh "$@"

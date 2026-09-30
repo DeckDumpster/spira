@@ -21,13 +21,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-# Resolved BEFORE conf.sh (sourced transitively by testdb.sh below), which can overwrite
-# PATH with the harness's own tool directories first — see test-poison.sh's own note.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin"
 DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
 [ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — install dolt before running this suite"
 
@@ -37,7 +30,7 @@ testdb_require test-deadlock-sweep
 TMP="$(mktemp -d)"
 LC_SERVER_PID=""
 trap 'testdb_drop; [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT; trap 'exit 143' INT TERM
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$PATH"
+export PATH="$PATH:$(dirname "$DOLT_BIN")"
 unset SPIRA_LC_SOCKET
 # attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
 # testdb-mode: server — attempts_of/requeues_of read the events table via bd sql, which embedded mode refuses.
@@ -75,25 +68,21 @@ for _ in $(seq 1 50); do
 done
 [ "$lc_up" = 1 ] || bail "dolt sql-server for spira_lifecycle never came up: $(cat "$LC_TMP/server.log")"
 
-LC_CARGO_TARGET="$LC_TMP/cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_CARGO_TARGET" \
-    "$CARGO_BIN" build --manifest-path "$SRC_ROOT/spira-lc/Cargo.toml" --quiet 2>"$LC_TMP/build.log" \
-    || bail "spira-lc failed to build: $(cat "$LC_TMP/build.log")"
-export SPIRA_LC_BIN="$LC_CARGO_TARGET/debug/spira-lc"
+# spira-lc is the tree under test's own build, by name on the suite's PATH (sp-gypjk).
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$LC_TMP"
 export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
-"$SPIRA_LC_BIN" admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
+spira-lc admin-apply-ddl "$SRC_ROOT/lifecycle/schema.sql" >"$LC_TMP/schema.log" 2>&1
 wantrc "spira_lifecycle schema applies cleanly" 0 $?
 # shellcheck disable=SC1090
 . "$HERE/lc.sh"
 # mkpoison <id> — a fresh READY row, then a real Hold{Poison} event through lc_hold, the
 # same shape test-poison.sh's own mkpoison uses.
 mkpoison() {
-    "$SPIRA_LC_BIN" create-bead "$1" >/dev/null 2>&1
+    spira-lc create-bead "$1" >/dev/null 2>&1
     lc_hold "$1" poison "seed" test >/dev/null 2>&1
 }
 lcheld() { lc_held "$1" poison; }
@@ -153,7 +142,7 @@ for b in sp-rq-s sp-rq-k; do
 done
 sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
           SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
-          bash "$HERE/attempts.sh" deadlocked "$@" 2>&1; }
+          attempts.sh deadlocked "$@" 2>&1; }
 out="$(sweep)"
 want "the deadlocked bead is named"            "WOULD    sp-rq-s" "$out"
 want "the genuinely failed one is kept"        "KEEP     sp-rq-k" "$out"

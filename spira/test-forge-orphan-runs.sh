@@ -34,8 +34,8 @@ esac
 STUB
 chmod +x "$TMP/gh"
 
-run_for_branch()     { SPIRA_GH="$TMP/gh" bash "$HERE/forge.sh" runs-for-branch "$TMP" "spira/queue/20260924T000000Z" 2>/dev/null; }
-run_queue_branches()  { SPIRA_GH="$TMP/gh" bash "$HERE/forge.sh" runs-queue-branches "$TMP" 2>/dev/null; }
+run_for_branch()     { SPIRA_GH="$TMP/gh" forge.sh runs-for-branch "$TMP" "spira/queue/20260924T000000Z" 2>/dev/null; }
+run_queue_branches()  { SPIRA_GH="$TMP/gh" forge.sh runs-queue-branches "$TMP" 2>/dev/null; }
 
 echo
 echo "runs-for-branch: only the non-completed run on the branch is reported:"

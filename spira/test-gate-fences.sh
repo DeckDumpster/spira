@@ -49,7 +49,7 @@ for _rule in payload-argv-lint config-fence fence-scripts \
              testdb-mode-lint bd-stdin-lint incident-cause-lint \
              inventory literal-lint scratch-fence wiki-add-fence tmux-scope-fence gh-intake-lint; do
     want "gate-spira.sh runs spira-lint's $_rule rule" \
-         "\"\$SPIRA_LINT_BIN\" --only $_rule" "$gate_src"
+         "spira-lint --only $_rule" "$gate_src"
 done
 
 # Every path gate_fence_list names must be a real, readable file — a stale entry (a fence

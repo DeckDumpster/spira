@@ -68,14 +68,16 @@ if [ -z "${GH_REPO:-}" ] && [ -n "${SPIRA_GH_REPO:-}" ]; then
 fi
 
 _SC="${SPIRA_SYSTEMCTL:-systemctl}"
-_WORLD="${SPIRA_WORLD_SH:-$HERE/world.sh}"
-_ACTIVATE="${SPIRA_ACTIVATE_SH:-$HERE/activate.sh}"
+# Sibling tools by bare name on the launcher's PATH (sp-gypjk); systemd/ and cockpit/ are
+# not on that PATH, so those two stay addressed relative to this tree.
+_WORLD="${SPIRA_WORLD_SH:-world.sh}"
+_ACTIVATE="${SPIRA_ACTIVATE_SH:-activate.sh}"
 _INSTALL="${SPIRA_INSTALL_SH:-$HERE/../systemd/install.sh}"
 _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-$HERE/../cockpit/layout.sh}"
-_DOCTOR="${SPIRA_DOCTOR_SH:-$HERE/doctor.sh}"
-_SKEW="${SPIRA_SKEW_SH:-$HERE/skew.sh}"
-_SLAY="${SPIRA_SLAY_SH:-$HERE/slay.sh}"
-_CTRL="${SPIRA_CTRL_SH:-$HERE/ctrl.sh}"
+_DOCTOR="${SPIRA_DOCTOR_SH:-doctor.sh}"
+_SKEW="${SPIRA_SKEW_SH:-skew.sh}"
+_SLAY="${SPIRA_SLAY_SH:-slay.sh}"
+_CTRL="${SPIRA_CTRL_SH:-ctrl.sh}"
 
 # Save the pre-deploy production directory; first-deploy rollback restores units here.
 _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"
@@ -472,7 +474,7 @@ _rollback() {
                 [ "${_pdu_s}" = "enabled" ] || continue
                 _pdu_cs="${_pdu_u%"-${SPIRA_INSTANCE}.service"}"; _pdu_cs="${_pdu_cs%"-${SPIRA_INSTANCE}.timer"}"
                 _pdu_cs="${_pdu_cs%.service}"; _pdu_cs="${_pdu_cs%.timer}"
-                if [ -x "$_CTRL" ] && "$_CTRL" check "$_pdu_cs" >/dev/null 2>&1; then
+                if command -v "$_CTRL" >/dev/null 2>&1 && "$_CTRL" check "$_pdu_cs" >/dev/null 2>&1; then
                     printf 'deploy: rollback: %s is suspended — skipping\n' "$_pdu_u" >&2
                     continue
                 fi

@@ -48,10 +48,11 @@ if [ "${r:-0}" -eq 0 ]; then
     exit 0
 fi
 
-[ -x "${SPIRA_AEON_BIN:-}" ] || die "escape.sh $FAYTH: aeon binary not built (SPIRA_AEON_BIN)"
+# systemd-run is handed the PATH-resolved aeon (a transient unit has no launcher PATH).
+_aeon="$(command -v aeon)" || die "escape.sh $FAYTH: aeon is not on PATH"
 log "escape.sh $FAYTH: $r ready — summoning directly (pool and lane checks bypassed)"
 mapfile -t _sargv < <(summon_argv "$FAYTH")
 "${SPIRA_SUMMON:-systemd-run}" --user --collect --quiet \
     --unit="spira-aeon-$FAYTH-escape-$(date +%s)" \
     "${_sargv[@]}" \
-    "$SPIRA_AEON_BIN" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null
+    "$_aeon" --home "$SPIRA_HOME" "$FAYTH" ${DRY_FLAG} 2>/dev/null

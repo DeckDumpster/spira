@@ -22,13 +22,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-doctor-gate-compile-check.sh"
 
-SPIRA_CONFIG_BIN="$(testlib_spira_config_bin)" || skip "no spira-config binary found — cannot be built here"
-GATE_BIN="${SPIRA_GATE_BIN:-${SPIRA_ARTIFACTS:-}/gate}"
-[ -x "$GATE_BIN" ] || GATE_BIN="$HERE/../bin/gate"
-[ -x "$GATE_BIN" ] || skip "no gate binary found — cannot be built here"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
@@ -82,14 +81,12 @@ TOML="$TMP/spira.toml"
 # the fixture repos above are addressed directly.
 run_doctor() {
     env -i \
-        PATH="$TMP/bin:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/bin:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_TOML="$TOML" \
         SPIRA_REPO="$TMP" \
         SPIRA_REPO_MAP="$1" \
         SPIRA_CHAMBER="$TMP/chamber" \
-        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
-        SPIRA_GATE_BIN="$GATE_BIN" \
         SPIRA_PATH="$TMP/bin" \
         SPIRA_DB="$TMP/db" \
         SPIRA_RUN="$TMP/run" \
@@ -100,7 +97,7 @@ run_doctor() {
         SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=60 \
-        bash "$HERE/doctor.sh" 2>/dev/null || true
+        doctor.sh 2>/dev/null || true
 }
 
 # ==========================================================================
@@ -134,7 +131,7 @@ echo "the selector alone reaches none (sp-aprxm; the suite-select binary since s
 # ==========================================================================
 RMAP_TOUCHED="$TMP/repo-map-touched"
 cat > "$RMAP_TOUCHED" <<EOF
-rustrepo | $TMP/rustrepo | queue | origin/main | | "\$SPIRA_SELECT_BIN" gate "\$SPIRA_GATE_BASE" "\$SPIRA_GATE_BRANCH"
+rustrepo | $TMP/rustrepo | queue | origin/main | | suite-select gate "\$SPIRA_GATE_BASE" "\$SPIRA_GATE_BRANCH"
 EOF
 touched_out="$(run_doctor "$RMAP_TOUCHED")"
 want "selector-only row: FAIL names the repo" "FAIL  rustrepo: gate command has no reachable compile check" "$touched_out"

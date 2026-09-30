@@ -26,7 +26,7 @@ first() {  # first <dir> <suite>=<status>...
     for kv in "$@"; do printf '%s 1 1 - parallel explicit\n' "${kv#*=}" > "$d/key/${kv%%=*}.result"; done
 }
 run() { GATE_RETRY_BATCH="$TMP/batch" STUB_LOG="$TMP/log" STUB_STATUS="$1" STUB_RC="$2" \
-        bash "$HERE/gate-retry.sh" "$TMP/r" deadbeef > "$TMP/out" 2>&1; }
+        gate-retry.sh "$TMP/r" deadbeef > "$TMP/out" 2>&1; }
 
 echo "test-gate-retry.sh"
 first "$TMP/r" a.sh=ok b.sh=red c.sh=timeout d.sh=skip

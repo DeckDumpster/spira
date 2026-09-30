@@ -17,6 +17,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 . "$HERE/testlib/gate-fixture.sh"
 
 command -v flock  >/dev/null 2>&1 || { echo "  SKIP  flock is not on PATH";  exit 77; }
@@ -61,15 +64,15 @@ MARK="$TMP/mid-run"; PIDFILE="$TMP/gate.pid"
 printf 'repo | %s | push | origin/main |  | rm -f %s; : > %s; sleep 30\n' \
     "$REPO" "$MARK" "$MARK" > "$MAP"
 (
-    export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR PIDFILE GATE_BIN
+    export HOMEDIR SPIRA_CONF_NONE REPO RUN SPIRA_DB_NONE MAP GATELOG VDIR SH BR PIDFILE TOOLS
     setsid bash -c '
         echo "$$" > "$PIDFILE"
-        exec env -i HOME="$HOMEDIR" PATH="/usr/bin:/bin" \
+        exec env -i HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
             GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
             SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
             SPIRA_DB="$SPIRA_DB_NONE" SPIRA_REPO_MAP="$MAP" \
             SPIRA_GATE_LOG="$GATELOG" SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
-            SPIRA_GATE_BIN="$GATE_BIN" bash "$SH/gate.sh" "$BR" repo
+            bash "$SH/gate.sh" "$BR" repo
     '
 ) >/dev/null 2>&1 &
 

@@ -52,7 +52,6 @@ B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
-GATE_CHECK="$HERE/gate-check.sh"
 
 # ======================================================================================
 # PART 1: STUCK GATE REPORTING (real bd, real database).

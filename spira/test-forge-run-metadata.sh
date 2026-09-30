@@ -15,6 +15,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-forge-run-metadata.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -33,10 +36,10 @@ chmod +x "$TMP/gh"
 
 # Helper: run forge.sh run-metadata with controlled JSON responses.
 run_metadata() {
-    env -i PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin" \
+    env -i PATH="$TOOLS:/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin" \
         HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_GH="$TMP/gh" RUN_JSON="$TMP/run.json" JOBS_JSON="$TMP/jobs.json" \
-        bash "$HERE/forge.sh" run-metadata "$TMP/repo" 42 2>/dev/null
+        forge.sh run-metadata "$TMP/repo" 42 2>/dev/null
 }
 
 # epoch_secs_ago <n> → ISO8601 timestamp for n seconds ago

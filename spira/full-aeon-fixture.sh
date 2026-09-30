@@ -59,8 +59,8 @@ FAYTH
 
     FA_BIN="$FA_TMP/bin"; mkdir -p "$FA_BIN"
     export SPIRA_AGENT="$FA_BIN/claude" TMP="$FA_TMP"
-    [ -x "${SPIRA_AEON_BIN:-}" ] \
-        || { printf 'full-aeon-fixture: the aeon binary is not built (SPIRA_AEON_BIN) — refusing to run\n' >&2; exit 1; }
+    command -v aeon >/dev/null 2>&1 \
+        || { printf 'full-aeon-fixture: aeon is not on PATH — refusing to run\n' >&2; exit 1; }
 }
 
 # fa_teardown — call from the caller's own `trap ... EXIT INT TERM`; not registered here
@@ -78,7 +78,7 @@ fa_seed() {   # fa_seed <id> [updated_at]
 
 fa_run_aeon() {   # fa_run_aeon [fayth] -> prints the aeon binary's rc; output captured to $FA_TMP/out
     rm -rf "$SPIRA_RUN/worktree"
-    "$SPIRA_AEON_BIN" --home "$FA_HOME" "${1:-builder}" > "$FA_TMP/out" 2>&1
+    aeon --home "$FA_HOME" "${1:-builder}" > "$FA_TMP/out" 2>&1
     printf '%s' "$?"
 }
 

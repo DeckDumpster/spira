@@ -32,6 +32,9 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+# The tree's tools for a minimal-PATH run (sp-gypjk): where this suite's PATH finds the
+# tree's build, and the tree's own spira/.
+TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 
 echo "test-doctor-operator-channel.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
@@ -39,7 +42,7 @@ mkdir -p "$TMP/home/.local/bin" "$TMP/run"
 
 run_doctor() {
     env -i \
-        PATH="/usr/local/bin:/usr/bin:/bin" \
+        PATH="$TMP/home/.local/bin:$TOOLS:/usr/local/bin:/usr/bin:/bin" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_DB="$TMP/db" \
@@ -47,7 +50,7 @@ run_doctor() {
         SPIRA_INSTANCE=prod \
         SPIRA_DOCTOR_INSTALLING=1 \
         "$@" \
-        bash "$HERE/doctor.sh" 2>&1
+        doctor.sh 2>&1
 }
 op_section() { sed -n '/^operator channel$/,/^$/p' <<< "$1"; }
 

@@ -113,7 +113,7 @@ run_doctor_srv() {
         SPIRA_REPO_MAP=/nonexistent \
         SPIRA_NOTIFY=/nonexistent \
         SPIRA_WATCHERS="$TMP/watchers-empty" \
-        bash "$HERE/doctor.sh" 2>/dev/null
+        doctor.sh 2>/dev/null
 }
 
 # A server-mode store: .beads exists, but NO embeddeddolt directory.
