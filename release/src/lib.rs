@@ -3,6 +3,7 @@
 //! Builds, verifies, activates, rolls back and prunes `spira-releases/<sha>/`: the one thing
 //! the running system executes.
 
+pub mod acceptance;
 pub mod activate;
 pub mod build;
 pub mod canary;

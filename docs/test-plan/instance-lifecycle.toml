@@ -249,9 +249,9 @@ statement = "`ctrl.sh`: a suspension needs a reason and an owner; check/list/res
 [[use_case]]
 id = "UC-instance-lifecycle-46"
 tier = "T2"
-statement = "`acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code"
+statement = "`acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `release acceptance`'s exit code"
 
 [[use_case]]
 id = "UC-instance-lifecycle-47"
 tier = "T1"
-statement = "`acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` unmasked, extracts bead ids robustly, proves landing by ancestry, records a git note, and emits a single PASS/FAIL line"
+statement = "`release acceptance` (was `acceptance-run.sh`) runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` unmasked, extracts bead ids robustly, proves landing by ancestry, records a git note, and emits a single PASS/FAIL line"

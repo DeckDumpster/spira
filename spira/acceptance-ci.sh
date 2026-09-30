@@ -5,7 +5,9 @@
 # Usage: acceptance-ci.sh <tag> [--prev-tag <t>] [--bd-db <path>]
 #                                [--agent <path>] [--record] [--waive-upgrade]
 #
-# Override acceptance-run.sh for testing: SPIRA_ACCEPTANCE_RUN=<path>
+# The run itself is `release acceptance` (sp-ak7qm; release/DESIGN.md "acceptance"): the
+# candidate's own binary, which acceptance.yml takes from the release asset onto
+# ~/.local/bin before this script runs. Override for testing: SPIRA_RELEASE_BIN=<path>.
 #
 # DECLARED WAIVER (law-waive-upgrade-once-when-the-fix-cannot-reach-the-predecessor).
 # A tag-push-triggered run has no --waive-upgrade input to set by hand, and a
@@ -78,7 +80,7 @@ printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
 export SPIRA_ACCEPTANCE_FORENSICS="${SPIRA_ACCEPTANCE_FORENSICS:-$HOME/acceptance-forensics}"
 mkdir -p "$SPIRA_ACCEPTANCE_FORENSICS"
 
-_run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db")
+_run_args=("$_tag" --scratch-repo "$HOME/scratch-repo" --bd-db "$_bd_db" --notes-repo "$_NOTES_REPO")
 [ -n "$_agent" ]        && _run_args+=(--agent "$_agent")
 [ "$_do_record" -eq 1 ] && _run_args+=(--record)
 [ -n "$_prev_tag" ]     && _run_args+=(--prev-tag "$_prev_tag")
@@ -98,7 +100,7 @@ printf -- '--- end ---\n'
 git -C "$_NOTES_REPO" config user.email "acceptance@spira.local" 2>/dev/null || true
 git -C "$_NOTES_REPO" config user.name "Spira Acceptance" 2>/dev/null || true
 
-# actions/checkout does not fetch refs/notes/*; fetch before acceptance-run.sh writes
+# actions/checkout does not fetch refs/notes/*; fetch before release acceptance writes
 # so the note appends onto the remote's history and the push is a fast-forward.
 if [ -n "${GH_TOKEN:-}" ]; then
     git -C "$_NOTES_REPO" fetch origin \
@@ -106,7 +108,7 @@ if [ -n "${GH_TOKEN:-}" ]; then
 fi
 
 _run_rc=0
-"${SPIRA_ACCEPTANCE_RUN:-acceptance-run.sh}" "${_run_args[@]}" || _run_rc=$?
+"${SPIRA_RELEASE_BIN:-release}" acceptance "${_run_args[@]}" || _run_rc=$?
 
 _push_ok=0
 if [ -n "${GH_TOKEN:-}" ]; then
