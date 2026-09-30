@@ -78,6 +78,8 @@ lc_root_sql() { "$DOLT_BIN" --data-dir "$LC_TMP" --host 127.0.0.1 --port "$LC_PO
 
 # spira-lc is the tree's own build, by name on this suite's PATH (sp-gypjk) — never a
 # second cargo build of it here.
+# lc.sh consults spira-lc only with lifecycle ON (sp-gypjk: the switch, not a binary path).
+export SPIRA_LIFECYCLE_ENFORCE=1
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$LC_PORT"
 export SPIRA_LC_DB=spira_lifecycle
