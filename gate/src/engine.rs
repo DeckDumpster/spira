@@ -155,10 +155,13 @@ impl<'w, W: World> Trial<'w, W> {
         };
         // THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the gate command runs under `env -i`
         // with PATH built from SPIRA_RELEASE — never the PATH this process inherited — so a
-        // bare tool name in a step is the running release's. cargo is appended for the tree
-        // builds (`bin` lines, unit phases). Unset is a refusal naming it, never a fallback.
-        match spira_config::release_path_from_env(Some(ctx.var(spira_config::RELEASE_ENV))) {
-            Ok(p) => self.s.path = format!("{p}:{}/.cargo/bin", ctx.var("HOME")),
+        // bare tool name in a step is the running release's. The box's own tool tail
+        // (spira.path, sp-c7b85) is appended after the system directories for cargo (the
+        // tree builds — `bin` lines, unit phases) and every other box tool a step might name.
+        // Unset SPIRA_RELEASE, or a tail entry inside a release or a checkout, is a refusal
+        // naming it, never a fallback.
+        match spira_config::release_path_from_env_with_tail(Some(ctx.var(spira_config::RELEASE_ENV)), ctx.var("SPIRA_PATH")) {
+            Ok(p) => self.s.path = p,
             Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
         }
         let repo = PathBuf::from(repo);

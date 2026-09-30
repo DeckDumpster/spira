@@ -102,7 +102,12 @@ impl Config {
     /// The host values unit templates are rendered with (DESIGN.md "Render"): the
     /// environment, else the host config, else conf.sh's own default. A key with no value maps
     /// to the empty string, which the renderer refuses when a template uses it.
-    pub fn host_values(&self) -> BTreeMap<String, String> {
+    ///
+    /// `Err` only for `SPIRA_PATH_TAIL` (sp-c7b85): the box's own tool-directory tail
+    /// (`spira.path`, or its `SPIRA_PATH` environment override) is refused, naming the entry,
+    /// when it resolves inside a release or a checkout — every other key here has no such
+    /// refusal, so this is the one way `host_values` itself can fail.
+    pub fn host_values(&self) -> Result<BTreeMap<String, String>, String> {
         let s = &self.spira;
         let pick = |k: &str, t: Option<&String>, d: Option<String>| -> String {
             self.env(k).or_else(|| t.filter(|v| !v.is_empty()).cloned()).or(d).unwrap_or_default()
@@ -117,7 +122,13 @@ impl Config {
         m.insert("SPIRA_TESTDB_PORT".into(), pick("SPIRA_TESTDB_PORT", None, Some("3308".into())));
         m.insert("SPIRA_SNAP_STALE_S".into(), pick("SPIRA_SNAP_STALE_S", s.snap_stale_s.as_ref(), Some("60".into())));
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
-        m
+        let tail = pick("SPIRA_PATH", s.path.as_ref(), None);
+        let refusals = spira_config::tail_refusals(&tail);
+        if !refusals.is_empty() {
+            return Err(refusals.join("; "));
+        }
+        m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
+        Ok(m)
     }
 
     fn which(&self, prog: &str) -> Option<String> {

@@ -24,7 +24,7 @@ StartLimitBurst=5
 # name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple
 # THE DISPATCHER, NOT THE COMMAND. `watchd.sh exec %i` resolves the row's target through the
 # manifest, so the manifest stays the single source of truth and no path is baked into a unit

@@ -95,6 +95,76 @@ pub fn release_path_from_env(value: Option<&str>) -> Result<String, String> {
     }
 }
 
+/// A single colon-separated segment of `tail` (sp-c7b85's fix to sp-31gtu's launcher PATH,
+/// which carried the release and the system directories but never the box's own —
+/// `spira.path` — so a Rust binary launched directly by a unit, rather than through
+/// `conf.sh`, resolved `bd`/`claude`/`dolt`/`gh`/`cargo` by bare name against nothing) that
+/// resolves inside a release (any path with a `spira-releases` component) or inside a
+/// checkout (a directory that is, or is enclosed by, one tracking `.git`) — the two shapes
+/// "ABSOLUTELY ZERO ambiguity about which binaries to use" (runtime-is-a-release) exists to
+/// rule out. `None` when the segment is neither.
+fn tail_segment_refusal(seg: &str) -> Option<String> {
+    let p = Path::new(seg);
+    if p.components().any(|c| c.as_os_str() == "spira-releases") {
+        return Some(format!(
+            "spira.path entry {seg:?} is inside spira-releases — a launcher's PATH tail may name only the box's own tool directories, never a release"
+        ));
+    }
+    let mut cur = Some(p);
+    while let Some(c) = cur {
+        if c.join(".git").exists() {
+            return Some(format!(
+                "spira.path entry {seg:?} is inside a checkout ({} tracks .git) — a launcher's PATH tail may name only the box's own tool directories, never a checkout",
+                c.display()
+            ));
+        }
+        cur = c.parent();
+    }
+    None
+}
+
+/// Every colon-separated entry of `tail` that [`tail_segment_refusal`] flags, in order — the
+/// pure check [`release_path_with_tail`] applies before it will append anything.
+pub fn tail_refusals(tail: &str) -> Vec<String> {
+    tail.split(':').filter(|s| !s.is_empty()).filter_map(tail_segment_refusal).collect()
+}
+
+/// [`release_path`] plus the box's own tool-directory tail (`spira.path`: `~/.local/bin` for
+/// `bd`, `dolt`, `gh`, `claude` and `duckdb`, `~/.cargo/bin` for an aeon's `cargo test`),
+/// appended after the system directories — never before them, so a bare Spira tool name still
+/// means only the release's own copy (sp-c7b85, amending sp-31gtu's rendering, which omitted
+/// this tail for every launcher that invokes a Rust binary directly instead of sourcing
+/// `conf.sh`, whose own PATH-append already carried it). An empty tail changes nothing.
+/// Refuses, naming the offending entry, when [`tail_refusals`] finds one.
+pub fn release_path_with_tail(release: &str, tail: &str) -> Result<String, String> {
+    let base = release_path(release);
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return Ok(base);
+    }
+    let refusals = tail_refusals(tail);
+    if !refusals.is_empty() {
+        return Err(refusals.join("; "));
+    }
+    Ok(format!("{base}:{tail}"))
+}
+
+/// [`release_path_with_tail`] of `$SPIRA_RELEASE`, or the refusal naming it — the tail-aware
+/// counterpart to [`release_path_from_env`], for a launcher that resets its environment
+/// (`env -i`) and so cannot lean on an inherited PATH for either half.
+pub fn release_path_from_env_with_tail(release: Option<&str>, tail: &str) -> Result<String, String> {
+    let base = release_path_from_env(release)?;
+    let tail = tail.trim();
+    if tail.is_empty() {
+        return Ok(base);
+    }
+    let refusals = tail_refusals(tail);
+    if !refusals.is_empty() {
+        return Err(refusals.join("; "));
+    }
+    Ok(format!("{base}:{tail}"))
+}
+
 pub const LIFECYCLE_ENFORCE_ENV: &str = "SPIRA_LIFECYCLE_ENFORCE";
 
 /// THE lifecycle switch's resolution rule (operator decision 2026-09-28: `lifecycle_enforce`
@@ -996,6 +1066,47 @@ mod tests {
         for v in [None, Some(""), Some("  ")] {
             assert!(release_path_from_env(v).unwrap_err().contains("SPIRA_RELEASE is not set"));
         }
+    }
+
+    #[test]
+    fn release_path_with_tail_appends_after_the_system_dirs() {
+        assert_eq!(
+            release_path_with_tail("/r/spira-releases/abc", "/home/ryan/.local/bin:/home/ryan/.cargo/bin").unwrap(),
+            "/r/spira-releases/abc/bin:/r/spira-releases/abc/spira:/usr/local/bin:/usr/bin:/bin:/home/ryan/.local/bin:/home/ryan/.cargo/bin"
+        );
+        // An empty (or all-whitespace) tail changes nothing — same as before this bead.
+        for empty in ["", "   "] {
+            assert_eq!(release_path_with_tail("/r/spira-releases/abc", empty).unwrap(), release_path("/r/spira-releases/abc"));
+        }
+    }
+
+    #[test]
+    fn release_path_with_tail_refuses_a_tail_entry_inside_a_release() {
+        let e = release_path_with_tail("/r/spira-releases/abc", "/r/spira-releases/def/bin").unwrap_err();
+        assert!(e.contains("spira-releases"), "{e}");
+        assert!(e.contains("/r/spira-releases/def/bin"), "{e}");
+    }
+
+    #[test]
+    fn release_path_with_tail_refuses_a_tail_entry_inside_a_checkout() {
+        let dir = std::env::temp_dir().join(format!("spira-config-test-checkout-{}", std::process::id()));
+        let bin = dir.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let e = release_path_with_tail("/r/spira-releases/abc", bin.to_str().unwrap()).unwrap_err();
+        assert!(e.contains("checkout"), "{e}");
+        assert!(e.contains(".git"), "{e}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn release_path_from_env_with_tail_composes_both_refusals() {
+        assert_eq!(
+            release_path_from_env_with_tail(Some("/h/"), "/x/y").unwrap(),
+            "/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin:/x/y"
+        );
+        assert!(release_path_from_env_with_tail(None, "/x/y").unwrap_err().contains("SPIRA_RELEASE is not set"));
+        assert!(release_path_from_env_with_tail(Some("/h/"), "/r/spira-releases/def").unwrap_err().contains("spira-releases"));
     }
 
     #[test]

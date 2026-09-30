@@ -53,6 +53,7 @@ const VARS: &[&str] = &[
     "SPIRA_TESTENV_WARM_SLOTS",
     "LANDSTATE",
     "SPIRA_RELEASE",
+    "SPIRA_PATH",
     "HOME",
 ];
 

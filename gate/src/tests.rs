@@ -89,6 +89,8 @@ fn ctx() -> Ctx {
         ("SPIRA_CERTIFY_PAR", "2"),
         ("HOME", "/home/u"),
         ("SPIRA_RELEASE", "/rel"),
+        // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
+        ("SPIRA_PATH", "/home/u/.cargo/bin"),
         ("LANDSTATE", "/run/landstate"),
     ] {
         vars.insert(k.to_string(), v.to_string());
@@ -518,6 +520,17 @@ fn the_gate_command_gets_the_launcher_path_set_outright_from_spira_release() {
         "the release's bin/ and spira/, the system dirs, cargo for tree builds — nothing inherited"
     );
     assert_eq!(f.env_of(0, "SPIRA_RELEASE"), "/rel");
+}
+
+#[test]
+fn a_path_tail_entry_inside_a_release_is_no_verdict_naming_it_and_nothing_runs() {
+    let f = Fake::new();
+    f.ancestor.set(true);
+    f.set_var("SPIRA_PATH", "/x/spira-releases/def/bin");
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=release-unset"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("spira-releases"), "{}", f.stderr());
+    assert!(f.ran.borrow().is_empty(), "no gate command ran");
 }
 
 #[test]

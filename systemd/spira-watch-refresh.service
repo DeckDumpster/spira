@@ -15,7 +15,7 @@ After=default.target
 # name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 # @SPIRA_PROD@ runs, @SPIRA_HOME@ documents. The exec line must name the checkout
 # systemd actually uses; the script sources conf.sh from its own directory, so SPIRA_HOME

@@ -14,7 +14,7 @@ StartLimitBurst=5
 # name is that release's. Rendered from the release root (spira-releases/<sha>; the harness
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=simple
 ExecStart=@SPIRA_PROD@/spira-mail-deliver.sh
 Restart=always

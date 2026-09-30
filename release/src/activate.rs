@@ -199,7 +199,7 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
         return Err(format!("release {sha} does not match its MANIFEST; not activating:\n  {}", problems.join("\n  ")));
     }
     let instance = cfg.instance();
-    let host = cfg.host_values();
+    let host = cfg.host_values()?;
     let mut changes = Vec::new();
     let mut errors = Vec::new();
     for m in units::installed(&cfg.unit_dir, &rel, &instance)? {

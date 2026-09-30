@@ -667,14 +667,31 @@ spira_toml_resolve() {
 }
 
 # spira_toml_read <file> — apply `spira-config export --sh` for spira.toml to any key NOT
-# already set in the environment. An invalid document is reported and nothing here fails
-# the caller: every key still falls through to spira_conf_defaults, because a harness that
-# refuses to start over one bad config is one that cannot be repaired from the box it is
-# broken on.
+# already set in the environment. An invalid DOCUMENT (spira-config ran and refused the
+# content) is reported and nothing here fails the caller: every key still falls through to
+# spira_conf_defaults, because a harness that refuses to start over one bad config is one
+# that cannot be repaired from the box it is broken on.
+#
+# spira-config being UNRESOLVABLE is a different failure, and FAIL-CLOSED (sp-c7b85, a scar
+# from running by hand without the launcher PATH): exit 127 is bash's own signal for "command
+# not found", never something spira-config itself returns, so it names a PATH problem — no
+# SPIRA_RELEASE, or a launcher that never put the release on it — not a bad document. Falling
+# through from there once derived SPIRA_DB=~/.local/share/spira/db and SPIRA_RUN to match, and
+# a tool run against that address is a tool that could write to a store that is not
+# production's. A config file EXISTS here (the caller already checked); silently deriving
+# defaults around it, rather than refusing, is exactly the fail-open this closes. `exit`, not
+# `return`, because a `return 1` from the final command of the `&&` that calls this only
+# aborts a `set -e` caller — the refusal has to hold whether or not the sourcing script opted
+# into errexit.
 spira_toml_read() {
-    local file="$1" out line key val
+    local file="$1" out line key val rc
     [ -f "$file" ] || return 0
     out="$(spira-config export --sh "$file" 2>&1)" || {
+        rc=$?
+        if [ "$rc" -eq 127 ]; then
+            printf 'spira.toml:%s: spira-config not found on PATH — SPIRA_RELEASE is unset, or the launcher PATH omits the release, so this cannot be resolved from the box'"'"'s own tools; refusing rather than deriving defaults around a config file that exists\n' "$file" >&2
+            exit 1
+        fi
         printf 'spira.toml:%s: %s\n' "$file" "$out" >&2
         return 0
     }

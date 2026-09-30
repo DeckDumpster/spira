@@ -161,7 +161,7 @@ impl World {
     /// Install the units as `install.sh` would have, rendered against release `sha`.
     fn install_units(&self, sha: &str) {
         let rel = self.rel(sha);
-        let host = self.cfg.host_values();
+        let host = self.cfg.host_values().unwrap();
         for (inst, tpl, w) in [
             ("spira-tool-prod.service", "spira-tool.service", None),
             ("spira-job-prod.service", "spira-job.service", None),
@@ -411,10 +411,12 @@ fn render_names_the_release_and_refuses_what_it_cannot_fill() {
 }
 
 /// Every service template this tree ships, rendered against a release, carries that release's
-/// launcher PATH, set outright (sp-31gtu): the acceptance "rendered units carry the release
-/// PATH", checked against the real templates rather than a fixture.
-#[test]
-fn every_shipped_service_renders_the_release_path_set_outright() {
+/// launcher PATH, set outright (sp-31gtu), with the box's own tool-directory tail appended
+/// after the system directories (sp-c7b85): the acceptance "rendered units carry the release
+/// PATH" (both beads), checked against the real templates rather than a fixture. `tail` is
+/// `SPIRA_PATH_TAIL` exactly as `host_values` would set it — empty (sp-31gtu's shape) or a
+/// `:`-prefixed tail (sp-c7b85's fix).
+fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let rel = Path::new("/r/spira-releases").join(A);
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
@@ -422,6 +424,7 @@ fn every_shipped_service_renders_the_release_path_set_outright() {
     for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "DOLT", "SPIRA_INSTANCE"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
+    host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
     let mut n = 0;
     for e in std::fs::read_dir(&dir).unwrap().flatten() {
         let name = e.file_name().to_string_lossy().to_string();
@@ -434,7 +437,7 @@ fn every_shipped_service_renders_the_release_path_set_outright() {
         let path_lines: Vec<&str> = out.lines().filter(|l| l.starts_with("Environment=PATH=")).collect();
         assert_eq!(
             path_lines,
-            [format!("Environment=PATH={r}/bin:{r}/spira:/usr/local/bin:/usr/bin:/bin").as_str()],
+            [format!("Environment=PATH={r}/bin:{r}/spira:/usr/local/bin:/usr/bin:/bin{want_tail}").as_str()],
             "{name}"
         );
         assert!(out.contains(&format!("\nEnvironment=SPIRA_RELEASE={r}\n")), "{name}");
@@ -448,6 +451,16 @@ fn every_shipped_service_renders_the_release_path_set_outright() {
         n += 1;
     }
     assert!(n >= 30, "read the shipped templates ({n})");
+}
+
+#[test]
+fn every_shipped_service_renders_the_release_path_set_outright() {
+    every_shipped_service_carries_path("", "");
+}
+
+#[test]
+fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs() {
+    every_shipped_service_carries_path(":/home/ryan/.local/bin:/home/ryan/.cargo/bin", ":/home/ryan/.local/bin:/home/ryan/.cargo/bin");
 }
 
 // ---------------------------------------------------------------- activate
@@ -728,6 +741,30 @@ fn config_resolves_roots_from_flags_env_then_toml_and_refuses_when_nothing_does(
     assert_eq!(Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap().releases, PathBuf::from("/e"));
     let f = Flags { releases: Some("/f".into()), ..Default::default() };
     assert_eq!(Config::resolve_with(&f, &env, Some(toml)).unwrap().releases, PathBuf::from("/f"));
+}
+
+#[test]
+fn host_values_carries_the_configured_path_tail_env_over_config_and_refuses_a_bad_one() {
+    let mut env = Env::new();
+    env.insert("HOME".into(), "/h".into());
+    env.insert("SPIRA_RELEASES".into(), "/e".into());
+    // Nothing configured: the tail is empty, not an error.
+    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(""));
+    // The typed key.
+    let toml: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/home/ryan/.local/bin:/home/ryan/.cargo/bin\"\n").unwrap();
+    let c = Config::resolve_with(&Flags::default(), &env, Some(toml.clone())).unwrap();
+    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/home/ryan/.local/bin:/home/ryan/.cargo/bin"));
+    // The environment wins over the typed key.
+    let mut env2 = env.clone();
+    env2.insert("SPIRA_PATH".into(), "/x/bin".into());
+    let c = Config::resolve_with(&Flags::default(), &env2, Some(toml)).unwrap();
+    assert_eq!(c.host_values().unwrap().get("SPIRA_PATH_TAIL").map(String::as_str), Some(":/x/bin"));
+    // A tail entry inside a release is refused, naming it.
+    let bad: spira_config::SpiraToml = spira_config::validate("[spira]\npath = \"/x/spira-releases/def/bin\"\n").unwrap();
+    let c = Config::resolve_with(&Flags::default(), &env, Some(bad)).unwrap();
+    let e = c.host_values().unwrap_err();
+    assert!(e.contains("spira-releases"), "{e}");
 }
 
 #[test]

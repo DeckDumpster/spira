@@ -32,6 +32,16 @@ mkdir -p "$DEST"
 SC="${SPIRA_SYSTEMCTL:-systemctl}"
 DOLT="$(command -v dolt 2>/dev/null || true)"
 
+# THE BOX'S OWN PATH TAIL (sp-c7b85) — same resolution and refusal install.sh uses;
+# see its comment there. Failing this is a hard exit: no unit gets written on a bad
+# tail.
+_ue_path_tail="$(spira-config path-tail 2>&1)"; _ue_path_tail_rc=$?
+if [ "$_ue_path_tail_rc" -ne 0 ]; then
+    printf 'unit-ensure: %s\n' "$_ue_path_tail" >&2
+    exit 1
+fi
+unset _ue_path_tail_rc
+
 # render <template> [<watcher-name>] — the same render.py install.sh uses, so the
 # two callers can never drift the way their independent heredoc copies once did.
 render() {
@@ -40,7 +50,8 @@ render() {
         --cockpit "$SPIRA_COCKPIT" --dolt-data "$SPIRA_DOLT_DATA" \
         --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
-        --snap-stale-s "$SPIRA_SNAP_STALE_S" --watcher-name "${2:-}"
+        --snap-stale-s "$SPIRA_SNAP_STALE_S" --watcher-name "${2:-}" \
+        --path-tail "$_ue_path_tail"
 }
 
 declare -A _ue_new=()

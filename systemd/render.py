@@ -31,6 +31,7 @@ def main() -> int:
     p.add_argument("--testdb-port", default="")
     p.add_argument("--snap-stale-s", default="")
     p.add_argument("--watcher-name", default="")
+    p.add_argument("--path-tail", default="")
     args = p.parse_args()
 
     m = {
@@ -46,6 +47,13 @@ def main() -> int:
         "SPIRA_INSTANCE": args.instance,
         "SPIRA_TESTDB_PORT": args.testdb_port,
         "SPIRA_SNAP_STALE_S": args.snap_stale_s,
+        # The box's own tool-directory tail (sp-c7b85), appended after the system
+        # directories every unit's PATH line already ends with — never before them, so a
+        # bare Spira tool name still means only the release's own copy. Resolved and
+        # refused (a tail entry inside a release or a checkout) by `spira-config
+        # path-tail`, once, so this file carries no logic of its own about it — empty
+        # when nothing is configured, which changes nothing.
+        "SPIRA_PATH_TAIL": (":" + args.path_tail) if args.path_tail else "",
     }
     # FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
     # is wanted — everything runs from the development checkout (SPIRA_HOME). An

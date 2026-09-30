@@ -221,4 +221,29 @@ want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no config readable" \
     "$BOOT_HOME/.cargo/bin" "$boot_path"
 
 # ==========================================================================
+echo
+echo "FAIL-CLOSED (sp-c7b85) — a config file exists but spira-config is unresolvable:"
+# ==========================================================================
+# The scar: run by hand without the launcher PATH, conf.sh could not find spira-config
+# ("spira-config: command not found", bash's exit 127) and silently fell back to derived
+# defaults (SPIRA_DB=~/.local/share/spira/db, ...) instead of refusing — a tool run that
+# way could write to a store that is not production's. Distinguished from the BOOTSTRAP
+# case above by one thing: a readable spira.toml is actually THERE to be read.
+# /usr/bin:/bin (never this suite's own PATH, which carries spira-config) still resolves
+# `bash` and `git` — spira_conf_defaults's SPIRA_HOME_REPO detection runs `git` before
+# spira_toml_read ever gets a chance to fail, so a git-less PATH would fail for an
+# unrelated reason first.
+if env -i PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$FIXTURE" \
+    bash -c ". '$HARNESS/spira/conf.sh'" >"$T/unresolvable.out" 2>&1
+then
+    bad "conf.sh refuses when spira-config is unresolvable and a config file exists" \
+        "exited 0 instead of refusing"
+else
+    ok "conf.sh refuses when spira-config is unresolvable and a config file exists"
+fi
+want "the refusal names spira-config" "spira-config" "$(cat "$T/unresolvable.out")"
+want "the refusal names SPIRA_RELEASE (why spira-config could not be found)" \
+    "SPIRA_RELEASE" "$(cat "$T/unresolvable.out")"
+
+# ==========================================================================
 tl_summary

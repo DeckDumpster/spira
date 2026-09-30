@@ -200,6 +200,17 @@ _install_real_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || p
 # `dolt` is resolved once, absolutely, because a systemd unit has no PATH worth the name.
 DOLT="$(command -v dolt 2>/dev/null || true)"
 
+# THE BOX'S OWN PATH TAIL (sp-c7b85), resolved and refused once, here, by `spira-config
+# path-tail` — never re-derived by this file or by render.py, which would be a second
+# copy of the same check to forget. A tail entry inside a release or a checkout is a
+# refusal, not a silent drop, so installing units never bakes in a bogus PATH.
+_install_path_tail="$(spira-config path-tail 2>&1)"; _install_path_tail_rc=$?
+if [ "$_install_path_tail_rc" -ne 0 ]; then
+    printf 'install: %s\n' "$_install_path_tail" >&2
+    exit 1
+fi
+unset _install_path_tail_rc
+
 # render <template> [<watcher-name>] -> the unit for this instance on stdout.
 #
 # THE RENDERER ITSELF LIVES IN render.py, NOT HERE, and is shared with unit-ensure.sh:
@@ -215,7 +226,8 @@ render() {
         --cockpit "$SPIRA_COCKPIT" --dolt-data "$SPIRA_DOLT_DATA" \
         --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
-        --snap-stale-s "$SPIRA_SNAP_STALE_S" --watcher-name "${2:-}"
+        --snap-stale-s "$SPIRA_SNAP_STALE_S" --watcher-name "${2:-}" \
+        --path-tail "$_install_path_tail"
 }
 
 # --laptop: link only the cockpit dialer on this machine and exit. The two halves of the

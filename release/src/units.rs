@@ -146,9 +146,14 @@ fn substitute(text: &str, value: impl Fn(&str) -> Option<String>) -> String {
     out
 }
 
+/// Placeholders an empty value fills rather than refuses — just `SPIRA_PATH_TAIL`
+/// (sp-c7b85): "nothing configured" is its ordinary, common case, unlike every other host key
+/// here, where an empty value means the caller forgot to set something the unit needs.
+const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL"];
+
 /// Render one template against release `rel` (systemd/render.py's rules, in Rust).
 /// `host` supplies the host keys. A placeholder no key fills, or a key the template uses
-/// with an empty value, is an error naming it.
+/// with an empty value, is an error naming it — except [`OPTIONAL_EMPTY`].
 pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<String, String>, watcher: Option<&str>, instance: &str) -> Result<String, String> {
     let rv = release_values(rel);
     let lookup = |k: &str| -> Option<String> {
@@ -165,7 +170,7 @@ pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<Strin
     for k in placeholders(text) {
         match lookup(&k) {
             None => unknown.push(k),
-            Some(v) if v.is_empty() => empty.push(k),
+            Some(v) if v.is_empty() && !OPTIONAL_EMPTY.contains(&k.as_str()) => empty.push(k),
             Some(_) => {}
         }
     }

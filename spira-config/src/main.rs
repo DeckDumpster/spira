@@ -7,6 +7,7 @@
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
+//!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!
 //! `validate`, `get` and `export` read `spira.toml` from: the file argument if one is
 //! given, else `$SPIRA_TOML`, else `./spira.toml`, else stdin — the same "explicit, then
@@ -19,8 +20,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use spira_config::{
-    convert, export_sh, get_path, json_schema, set_path, shrink_reason, unset_path, validate,
-    validate_with_warnings, write_atomic, SpiraToml,
+    convert, discover, export_sh, get_path, json_schema, load, set_path, shrink_reason,
+    tail_refusals, unset_path, validate, validate_with_warnings, write_atomic, SpiraToml,
 };
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
@@ -114,6 +115,33 @@ fn cmd_export_sh(file: Option<&str>) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `path-tail` — the box's own PATH tail every launcher appends after the release and system
+/// directories (sp-c7b85, brain `runtime-is-a-release-2026-09-29`): `$SPIRA_PATH` if it is set
+/// (nonempty), else `[spira].path` from the config `discover` finds, else empty. Prints the
+/// tail on stdout and exits 0, or refuses (naming the entry) when a segment resolves inside a
+/// release or a checkout — the one place this check runs, so `render.py`, `install.sh` and
+/// `unit-ensure.sh` (bash and Python, which carry no logic of their own) get it from here
+/// rather than each growing its own copy.
+fn cmd_path_tail() -> ExitCode {
+    let tail = match env::var("SPIRA_PATH") {
+        Ok(v) if !v.trim().is_empty() => v,
+        _ => match discover(None).map(|p| load(&p)).transpose() {
+            Ok(doc) => doc.and_then(|d| d.spira).and_then(|s| s.path).unwrap_or_default(),
+            Err(e) => {
+                eprintln!("spira-config path-tail: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+    };
+    let refusals = tail_refusals(&tail);
+    if !refusals.is_empty() {
+        eprintln!("spira-config path-tail: {}", refusals.join("; "));
+        return ExitCode::FAILURE;
+    }
+    println!("{tail}");
+    ExitCode::SUCCESS
 }
 
 fn cmd_schema() -> ExitCode {
@@ -383,9 +411,10 @@ fn main() -> ExitCode {
             }
         },
         Some("schema") => cmd_schema(),
+        Some("path-tail") => cmd_path_tail(),
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|convert|set|unset|schema> ...\n\
+                "usage: spira-config <validate|get|export|convert|set|unset|schema|path-tail> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -394,7 +423,8 @@ fn main() -> ExitCode {
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
-                 \x20 schema"
+                 \x20 schema\n\
+                 \x20 path-tail"
             );
             ExitCode::FAILURE
         }
