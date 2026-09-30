@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 
 pub struct Cfg {
     pub spira_run: PathBuf,
-    pub spira_home: String,
+    /// The REAL `spira/` install directory (where `lib.sh` and `cockpit/moot-sweep.sh`'s
+    /// sibling actually live), found via `main::lib_sh_dir` — never `$SPIRA_HOME`, which a
+    /// caller may point elsewhere for data purposes while still expecting lib.sh's actual
+    /// code (sp-lnmbq: the idle-while-ready fixture does exactly this).
+    pub lib_sh_dir: String,
     pub db: String,
     pub home_repo: String,
     pub ask_label: String,
@@ -71,7 +75,7 @@ impl Cfg {
     }
     pub fn moot_sh(&self) -> String {
         self.moot_sh.clone().unwrap_or_else(|| {
-            Path::new(&self.spira_home)
+            Path::new(&self.lib_sh_dir)
                 .parent()
                 .map(|p| p.join("cockpit/moot-sweep.sh").to_string_lossy().into_owned())
                 .unwrap_or_else(|| "cockpit/moot-sweep.sh".to_string())

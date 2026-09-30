@@ -266,7 +266,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     // AEONS ALIVE / IDLE-WHILE-READY -------------------------------------------------------
     let ledger_path = run.join("aeon-ledger.log");
     let probe = seams::pipeline_probe(
-        &cfg.spira_home,
+        &cfg.lib_sh_dir,
         if ledger_path.is_file() { ledger_path.to_str() } else { None },
     );
     let aeons_live_disp = match &probe {

@@ -41,18 +41,34 @@ fn spira_run() -> PathBuf {
     getenv("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira-run"))
 }
 
-/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH. The bash always had
-/// lib.sh's functions available by sourcing it relative to `$0` (`. "$(dirname "$0")/
-/// lib.sh"`) regardless of whether `SPIRA_HOME` was set; a compiled binary has no `$0`
-/// directory to be relative TO, so this is the equivalent self-location for the seams
-/// that need it (`git::spira_landref`, `seams::repo_root`, `seams::timer_priority_and_
-/// suspended`, `seams::pipeline_probe`) — every production caller sets `SPIRA_HOME`
-/// anyway, but a test harness that only puts `spira/` on PATH (the common shape for a
-/// suite run in a clean `env -i`) must still resolve it.
+/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH. Used only for
+/// `--disabled-timer-check`'s `world.sh`/`ctrl.sh` seam, which the bash reached the same
+/// way (`. "${SPIRA_HOME}/world.sh"` — a literal `$SPIRA_HOME`, never `$0`-relative): a
+/// test that overrides `SPIRA_HOME` means that seam too, and production always sets it
+/// anyway. The fallback only matters for a suite run in a clean `env -i` that puts
+/// `spira/` on PATH without setting `SPIRA_HOME` at all.
 fn spira_home() -> String {
     if let Some(h) = getenv("SPIRA_HOME") {
         return h;
     }
+    lib_sh_dir()
+}
+
+/// Where `lib.sh` itself lives, found on `$PATH` — NEVER `$SPIRA_HOME`. The bash always
+/// had lib.sh's functions available by sourcing it relative to `$0`
+/// (`. "$(dirname "$0")/lib.sh"`) at the top of the script, regardless of what `SPIRA_HOME`
+/// was set to; `SPIRA_HOME` only steers what lib.sh's OWN functions read afterwards (e.g.
+/// `bulk_ready_by_fayth`'s chamber lookup). A compiled binary has no `$0` directory to be
+/// relative to, so this is the equivalent self-location — used by every seam that needs
+/// lib.sh's CODE (`git::spira_landref`, `seams::repo_root`, `seams::pipeline_probe`).
+/// Conflating this with `$SPIRA_HOME` was a real bug (sp-lnmbq): a suite that points
+/// `SPIRA_HOME` at a fixture directory holding only a `chamber/` and no `lib.sh` at all
+/// (test-watchtower.sh's idle-while-ready section) made every one of those seams source
+/// nothing and fail closed, even though the fixture never intended to replace lib.sh
+/// itself — only what its ALREADY-real functions read. `SPIRA_HOME` still reaches those
+/// functions correctly: it is inherited in the subprocess's own environment, never passed
+/// as the sourcing path.
+fn lib_sh_dir() -> String {
     incident::which("lib.sh")
         .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_string_lossy().into_owned()))
         .unwrap_or_default()
@@ -69,7 +85,7 @@ fn world_halted(run: &std::path::Path) -> bool {
 fn build_sweep_cfg() -> sweep::Cfg {
     sweep::Cfg {
         spira_run: spira_run(),
-        spira_home: spira_home(),
+        lib_sh_dir: lib_sh_dir(),
         db: getenv("SPIRA_DB").unwrap_or_default(),
         home_repo: getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
         ask_label: getenv("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()),
@@ -128,7 +144,7 @@ fn main() {
             let mut tc_land_ref = getenv("SPIRA_TC_LAND_REF");
             if tc_land_ref.is_none() {
                 if let Some(repo) = &tc_repo {
-                    tc_land_ref = git::spira_landref(&spira_home(), repo);
+                    tc_land_ref = git::spira_landref(&lib_sh_dir(), repo);
                 }
             }
             let ctx = throttle::Ctx {
@@ -175,7 +191,7 @@ fn main() {
             pr_stall::run(
                 n,
                 &run.join("landstate"),
-                &spira_home(),
+                &lib_sh_dir(),
                 &getenv("SPIRA_DB").unwrap_or_default(),
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
                 &resolved_incident_sh(),

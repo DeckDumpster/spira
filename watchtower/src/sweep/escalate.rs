@@ -353,7 +353,7 @@ mod tests {
     fn cfg_with(d: &std::path::Path, incident_sh: String) -> Cfg {
         Cfg {
             spira_run: d.to_path_buf(),
-            spira_home: String::new(),
+            lib_sh_dir: String::new(),
             db: "db".into(),
             home_repo: "spira".into(),
             ask_label: "needs-operator".into(),
