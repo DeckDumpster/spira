@@ -66,6 +66,11 @@ id = "UC-aeon-execution-13"
 tier = "T1"
 statement = "the close verdict (commit-naming keeps closed; no commit reopens) is decided identically by aeon and sentinel"
 
+[use_case.uncovered]
+reason = "test-aeon-verdict.sh deleted (sp-qf1l8, law-a-test-that-flips-is-deleted): red 428s then green on an immediate serial rerun of the same tree on GitHub CI (PR #460, run 36706346456), CI's own diagnostics classified it red-green (flake). Root-cause-and-re-add filed as sp-jupa4. See docs/test-plan/aeon-execution.md for what was lost."
+date = "2026-09-30"
+bead = "sp-qf1l8"
+
 [[use_case]]
 id = "UC-aeon-execution-14"
 tier = "T1"
