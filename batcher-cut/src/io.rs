@@ -1092,67 +1092,7 @@ mod land_tests {
         let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
     }
 }
-
-#[cfg(test)]
-mod forge_default_tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    // Serialises the one test here that touches the real process environment (PATH,
-    // SPIRA_FORGE). Same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        path: Option<std::ffi::OsString>,
-        forge: Option<std::ffi::OsString>,
-    }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.path {
-                Some(p) => std::env::set_var("PATH", p),
-                None => std::env::remove_var("PATH"),
-            }
-            match &self.forge {
-                Some(f) => std::env::set_var("SPIRA_FORGE", f),
-                None => std::env::remove_var("SPIRA_FORGE"),
-            }
-        }
-    }
-
-    // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
-    // No such file or directory (os error 2)" — because the default named the retired
-    // `forge.sh` instead of the release's `forge` binary. With SPIRA_FORGE unset and a PATH
-    // holding ONLY a stub named `forge` (never `forge.sh`, exactly what forge.sh's deletion
-    // left production with), `crate::default_forge()`'s value must actually reach it.
-    #[test]
-    fn default_forge_value_actually_reaches_a_bare_forge_stub_on_path() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard { path: std::env::var_os("PATH"), forge: std::env::var_os("SPIRA_FORGE") };
-        std::env::remove_var("SPIRA_FORGE");
-
-        let dir = testkit::TempDir::new("batcher-cut-default-forge-test");
-        testkit::write_exe(
-            dir.join("forge"),
-            "#!/bin/sh\ncase \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac\n",
-        );
-        // PREPEND (never replace): other tests run concurrently in this binary and need the
-        // real PATH (sh, spira-lc stubs, …) to keep resolving; the stub only needs to win
-        // the lookup for the bare name `forge` itself.
-        let real_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut new_path = dir.path().as_os_str().to_os_string();
-        new_path.push(":");
-        new_path.push(&real_path);
-        std::env::set_var("PATH", &new_path);
-
-        let forge = crate::default_forge();
-        assert_eq!(forge, PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
-
-        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge, land: Land::Forge };
-        let pr = forge_pr_create(&repo, "head", "base", "title", "body").expect("forge_pr_create should reach the stub");
-        assert_eq!(pr, "42");
-    }
-}
-
+// Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
 #[cfg(test)]
 mod result_path_tests {
     #[test]

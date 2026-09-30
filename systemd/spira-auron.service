@@ -9,7 +9,7 @@
 # observe the failure of the thing running it, so the one condition the sentinel can never
 # report is the one that matters most: that it has stopped.
 Description=Spira Auron — escalate a stalled loop, and do nothing else
-Documentation=file://@SPIRA_HOME@/auron.sh
+Documentation=file://@SPIRA_PROD_ROOT@/auron/DESIGN.md
 After=default.target
 
 [Service]
@@ -20,18 +20,19 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-# Inert until the program exists on main. These units are installed by the same change
-# that ADDS auron.sh, so between arming the timer and the branch landing there is a window
-# in which ExecStart would fail every two minutes — and a unit that is red for reasons
-# nobody should act on is exactly the noise that hides the one that matters. An
-# ExecCondition that exits non-zero makes systemd SKIP the pass and record success, so the
-# timer sits silent and starts working by itself the moment the file is there. No step for
-# anyone to remember, which is the scar ops.fayth left: it landed complete and never ran.
-# @SPIRA_PROD@ runs, @SPIRA_HOME@ documents. Exec lines must name the checkout systemd
-# actually uses. The ExecCondition guards the same path so the two agree; testing a path
-# that differs from ExecStart would make the guard moot.
-ExecCondition=/usr/bin/test -x @SPIRA_PROD@/auron.sh
-ExecStart=@SPIRA_PROD@/auron.sh
+# Inert until the binary exists on main. These units are installed by the same change
+# that ADDS auron.sh (and, as of sp-zpaq0, the binary that replaced it), so between arming
+# the timer and the branch landing there is a window in which ExecStart would fail every
+# two minutes — and a unit that is red for reasons nobody should act on is exactly the
+# noise that hides the one that matters. An ExecCondition that exits non-zero makes
+# systemd SKIP the pass and record success, so the timer sits silent and starts working by
+# itself the moment the file is there. No step for anyone to remember, which is the scar
+# ops.fayth left: it landed complete and never ran.
+# @SPIRA_PROD_ROOT@ is the release root; @SPIRA_PROD@ (its spira/ subdir) is --home, the
+# same convention aeon's own launchers use. The ExecCondition guards the same path
+# ExecStart runs; testing a path that differs from ExecStart would make the guard moot.
+ExecCondition=/usr/bin/test -x @SPIRA_PROD_ROOT@/bin/auron
+ExecStart=@SPIRA_PROD_ROOT@/bin/auron --home @SPIRA_PROD@
 # A pass is a handful of file reads and ONE bd query, and it is designed to finish in
 # about a second. Sixty is not a budget, it is a fence: whatever goes wrong here, Auron
 # must not become the thing that hangs. A killed run writes no heartbeat, and a missing

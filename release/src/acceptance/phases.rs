@@ -13,6 +13,28 @@ impl Run<'_> {
         p.display().to_string()
     }
 
+    /// The acceptance run's own bootstrap `spira.conf` (phase A, fresh install) — just
+    /// enough for `install.sh`/`configure.sh` to proceed non-interactively, written BEFORE
+    /// either runs so this run needs no prompt. `SPIRA_ID_PREFIX` is REQUIRED here for the
+    /// same reason `configure.sh` itself writes it for a real install (sp-k6m1m):
+    /// `spira-config validate` (doctor, pre-activate) refuses a `[spira]` table that sets
+    /// anything but names no id prefix — and this file already sets `SPIRA_OPERATED` and
+    /// `SPIRA_RELEASES`, so it is never the empty table that check lets through. Regression
+    /// sp-oppza: this bootstrap file, not `configure.sh` (which never overwrites a file
+    /// already here), is what a fresh acceptance install's box actually gets — omitting the
+    /// key here broke phase A the moment sp-k6m1m made it required.
+    pub(super) fn bootstrap_conf_text(&self, releases: &Path) -> String {
+        let mut c = String::new();
+        if let Some(a) = &self.o.a.agent {
+            c.push_str(&format!("SPIRA_AGENT = {a}\n"));
+        }
+        c.push_str("SPIRA_OPERATED = 0\n");
+        c.push_str("SPIRA_ID_PREFIX = sp\n");
+        c.push_str(&format!("SPIRA_RELEASES = {}\n", Self::s(releases)));
+        c.push_str(&format!("SPIRA_RELEASE_REPO = {}\n", Self::s(&self.o.release_src())));
+        c
+    }
+
     /// The release under test's launcher environment — what a launcher gives every Spira
     /// process: `SPIRA_RELEASE` naming `current`, `PATH` with its `bin/` and `spira/` first
     /// (every tool is called by bare name, sp-gypjk), and `SPIRA_CONF` (DESIGN.md Decision 2).
@@ -87,9 +109,18 @@ impl Run<'_> {
 
     /// `release install-tarball <tb>` by this binary (DESIGN.md Decision 1), with a run dir of
     /// its own as a sibling of the releases dir.
+    ///
+    /// `--skip-restart` (sp-r15cf): every call here is immediately followed by `install_sh()`
+    /// below, which re-renders and restarts whatever unit's `Exec*` actually changed — the
+    /// restart that matters, since `install-tarball`'s own restart happens before any
+    /// re-templating and just bounces a unit back onto the release it was already running
+    /// (release/DESIGN.md "Render"). Doing both raced a unit's own teardown on phase D's
+    /// aged install, over real surviving state where units are already active, and failed
+    /// the second restart deterministically enough under host load to make install.sh refuse.
     fn install_tarball(&self, tb: &Path) -> i32 {
         let c = Cmd::new(Self::s(&self.o.release_bin))
             .arg("install-tarball")
+            .arg("--skip-restart")
             .arg(Self::s(tb))
             .env("SPIRA_CONF", Self::s(&self.o.conf()))
             .env("SPIRA_RELEASES", Self::s(&self.o.releases()))
@@ -375,13 +406,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     let conf = r.o.conf();
     let _ = fs::create_dir_all(conf.parent().unwrap_or(Path::new("/")));
     let _ = fs::create_dir_all(r.o.release_src());
-    let mut c = String::new();
-    if let Some(a) = &r.o.a.agent {
-        c.push_str(&format!("SPIRA_AGENT = {a}\n"));
-    }
-    c.push_str("SPIRA_OPERATED = 0\n");
-    c.push_str(&format!("SPIRA_RELEASES = {}\n", releases.display()));
-    c.push_str(&format!("SPIRA_RELEASE_REPO = {}\n", r.o.release_src().display()));
+    let c = r.bootstrap_conf_text(&releases);
     if let Err(e) = fs::write(&conf, c) {
         r.bad("phase A: spira.conf written", &format!("{}: {e}", conf.display()));
     }

@@ -273,9 +273,9 @@ for j, l in enumerate(lines[-n:]):
     # (law-absence-needs-a-positive-control).
     #
     # THE HEARTBEAT, NOT THE LOG. auron.log is appended to by systemd on every run
-    # including a run that died on its first line; auron.status is written by auron.sh
-    # itself, last, only once a whole pass has completed. Only the second one distinguishes
-    # "it ran" from "it worked".
+    # including a run that died on its first line; auron.status is written by the auron
+    # binary itself (formerly auron.sh, retired sp-zpaq0), last, only once a whole pass
+    # has completed. Only the second one distinguishes "it ran" from "it worked".
     echo "SP_AURON_TIMER=$(unit_active "$(spira_unit auron timer)")"
     echo "SP_AURON_AGE=$(age_of "$SPIRA_RUN/auron.status")"
     # What it is currently saying. A failed read renders `?`, never 0: "no alerts firing"

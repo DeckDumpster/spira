@@ -852,8 +852,8 @@ unset _ENABLE_ORDERED
 # moment to put it there — a fresh clone that had to be told to run a second command would go
 # without it. `cockpit-ensure` repairs the same registration on a timer, so this is the first
 # write rather than the only one, and both are silent when there is nothing to change.
-install-session-hook.sh install || \
-    echo "note: the session hook was not registered — run install-session-hook.sh install" >&2
+release session-hook install || \
+    echo "note: the session hook was not registered — run release session-hook install" >&2
 
 # LINK THE COCKPIT VIEW FOLLOWER. The server-side half of the cockpit is now shipped in the
 # harness at cockpit/remote/cockpit-remote; link it to ~/.local/bin/cockpit-remote so that
