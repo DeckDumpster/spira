@@ -61,7 +61,7 @@ fn main() {
 /// lane skip, no-trigger — is success (bash exit 0).
 fn run(world: &dyn World) -> bool {
     let scope_label = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
-    let maechen_label = env_or("SPIRA_MAECHEN_LABEL", "maechen-sweep");
+    let maechen_label = env_or("SPIRA_MAECHEN_LABEL", "maechen-sweep"); // literal-ok: Rust fallback mirroring conf.sh's own default when SPIRA_MAECHEN_LABEL is unset
     let labels = engine::trigger_labels(&scope_label, &maechen_label);
 
     // DEDUP — at most one open-or-in-progress trigger bead at a time.
@@ -90,7 +90,7 @@ fn run(world: &dyn World) -> bool {
         world.log(&format!("time trigger: {elapsed}s elapsed since last pass (threshold: {max_gap}s)"));
     }
 
-    // LANDING TRIGGER — home repo always counted; additional repos from the repo-map,
+    // LANDING TRIGGER — home repo always counted; additional repos from $SPIRA_REPO_MAP,
     // skipping the home repo to avoid double-counting.
     let home_repo = world.home_repo();
     let mut landing_count: u64 = 0;

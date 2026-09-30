@@ -36,6 +36,20 @@ version_min = ""
 version_probe = "git --version"
 
 [[dep]]
+name = "hostname"
+tier = "optional"
+purpose = "incident's systemd-unit evidence gathering names the host it ran on; missing it degrades to an empty host field, never a failure to file"
+version_min = ""
+version_probe = "hostname --version"
+
+[[dep]]
+name = "journalctl"
+tier = "optional"
+purpose = "incident's systemd-unit evidence gathering includes the failing unit's last 40 journal lines; missing it degrades to '(journal unavailable)', never a failure to file"
+version_min = ""
+version_probe = "journalctl --version"
+
+[[dep]]
 name = "tar"
 tier = "runtime"
 purpose = "release build extracts git archive of the commit it builds (release crate)"

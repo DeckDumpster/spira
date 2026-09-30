@@ -95,7 +95,7 @@ pub fn parse_landing_ids(subjects: &str) -> Vec<String> {
     ids
 }
 
-/// One line of `spira/repo-map`: `name | path | ...`. Comment (`#`) and blank names are
+/// One line of `$SPIRA_REPO_MAP`'s file: `name | path | ...`. Comment (`#`) and blank names are
 /// skipped, as the bash `while IFS='|' read` loop does; leading/trailing whitespace on name
 /// and path is trimmed.
 pub fn parse_repo_map(text: &str) -> Vec<(String, String)> {
@@ -297,12 +297,12 @@ spira: land sp-s0e1k
 
     #[test]
     fn parse_repo_map_skips_comments_and_blanks() {
-        let text = "# comment\n\nbrain | /home/ryan/spira/brain | push\nspira | /home/ryan/spira/harness | hold\n";
+        let text = "# comment\n\nbrain | /srv/spira/brain | push\nspira | /srv/spira/harness | hold\n";
         assert_eq!(
             parse_repo_map(text),
             vec![
-                ("brain".to_string(), "/home/ryan/spira/brain".to_string()),
-                ("spira".to_string(), "/home/ryan/spira/harness".to_string()),
+                ("brain".to_string(), "/srv/spira/brain".to_string()),
+                ("spira".to_string(), "/srv/spira/harness".to_string()),
             ]
         );
     }
@@ -345,6 +345,7 @@ spira: land sp-s0e1k
 
     #[test]
     fn trigger_labels_with_and_without_scope() {
+        // literal-ok: test fixture values, not a config default read at runtime.
         assert_eq!(trigger_labels("", "maechen-sweep"), "maechen-sweep");
         assert_eq!(trigger_labels("spira", "maechen-sweep"), "spira,maechen-sweep");
     }
