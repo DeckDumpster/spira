@@ -441,7 +441,7 @@ out="$(fence_run "echo '$FENCE_REP_CMD'" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-15/fence-single-quoted-prose-allows" '"decision":"block"' "$out"
 
 # The verb is a %s argument so this fixture is not itself a bare-dash bd create in source
-# (test-bd-stdin.sh lints every script for one).
+# (spira-lint's bd-stdin-lint rule lints every script for one).
 heredoc_cmd="$(printf "bd -C /db %s title --description - <<'DESC'\n%s\nDESC" create "$FENCE_REP_CMD")"
 out="$(fence_run "$heredoc_cmd" SPIRA_AEON=test-aeon)"
 nowant "UC-safety-fences-15/fence-heredoc-prose-allows" '"decision":"block"' "$out"
