@@ -101,11 +101,14 @@ pub fn decide(
     }
 }
 
-/// True iff the stall is the known deliberate one (the async-gate epic, sp-c8w16/sp-74gwk,
-/// not yet on the land ref) — an EXACT count of 2, not "at least 2": a third, unrelated
-/// commit mentioning either id must not silently widen the carve-out.
+/// True iff the stall is the known deliberate one: the async-gate epic (sp-c8w16,
+/// sp-74gwk) is NOT fully on the land ref yet, so the landing loop legitimately freezes
+/// pending that implementation. False — a real fault, escalate — only when BOTH commits
+/// are already on the land ref and the queue is stalled anyway, which the carve-out was
+/// never meant to excuse. An exact count of 2 for "fully landed", not "at least 2": a
+/// third, unrelated commit mentioning either id must not silently widen the carve-out.
 pub fn is_deliberate_stall(async_on_main_count: u32) -> bool {
-    async_on_main_count == 2
+    async_on_main_count != 2
 }
 
 fn disp(v: Option<i64>) -> String {
@@ -279,11 +282,14 @@ mod tests {
     }
 
     #[test]
-    fn deliberate_stall_is_an_exact_match_on_two() {
-        assert!(is_deliberate_stall(2));
-        assert!(!is_deliberate_stall(0));
-        assert!(!is_deliberate_stall(1));
-        assert!(!is_deliberate_stall(3));
+    fn deliberate_stall_is_false_only_at_an_exact_match_on_two() {
+        // Both async-gate commits on the land ref: the freeze has no excuse left. Real fault.
+        assert!(!is_deliberate_stall(2));
+        // Anything else (including a third, unrelated commit mentioning either id): the
+        // implementation is not fully landed, so the freeze is still the deliberate one.
+        assert!(is_deliberate_stall(0));
+        assert!(is_deliberate_stall(1));
+        assert!(is_deliberate_stall(3));
     }
 
     // --- hysteresis --------------------------------------------------------------------
