@@ -89,9 +89,10 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("czar-pass.swept")),
             // By name on the launcher's PATH (sp-gypjk); SPIRA_INCIDENT_SH / SPIRA_FORGE
-            // remain the seams that name another script.
+            // remain the seams that name another script. forge.sh is retired (sp-t4y60) —
+            // sp-yv4b3 found this default still naming the deleted script.
             incident_sh: env::var("SPIRA_INCIDENT_SH").unwrap_or_else(|_| "incident.sh".into()),
-            forge_sh: env::var("SPIRA_FORGE").unwrap_or_else(|_| "forge.sh".into()),
+            forge_sh: env::var("SPIRA_FORGE").unwrap_or_else(|_| "forge".into()),
             queue_dir: env::var("SPIRA_QUEUE_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("queue")),
@@ -1135,7 +1136,70 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Serialises the two tests below that touch the real process environment (SPIRA_FORGE,
+    // PATH) — same pattern as release's `ENV_LOCK`/`PathGuard` (release/src/tests.rs).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct EnvGuard {
+        forge: Option<std::ffi::OsString>,
+        path: Option<std::ffi::OsString>,
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match &self.forge {
+                Some(f) => env::set_var("SPIRA_FORGE", f),
+                None => env::remove_var("SPIRA_FORGE"),
+            }
+            match &self.path {
+                Some(p) => env::set_var("PATH", p),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
+    // No such file or directory (os error 2)" — because this default named the retired
+    // `forge.sh` instead of the release's `forge` binary. Fails on the pre-fix default.
+    #[test]
+    fn config_from_env_defaults_forge_sh_to_the_bare_release_binary() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE"), path: env::var_os("PATH") };
+        env::remove_var("SPIRA_FORGE");
+        let cfg = Config::from_env();
+        assert_eq!(cfg.forge_sh, "forge", "default must name the bare release binary, not forge.sh");
+    }
+
+    // End-to-end: with SPIRA_FORGE unset and a PATH holding ONLY a stub named `forge`
+    // (never `forge.sh`, exactly what forge.sh's deletion left production with), the
+    // resolved default must actually reach it through `run_forge`/`script`.
+    #[test]
+    fn default_forge_sh_actually_reaches_a_bare_forge_stub_on_path() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE"), path: env::var_os("PATH") };
+        env::remove_var("SPIRA_FORGE");
+
+        let dir = scratch_dir("default-forge-stub");
+        testkit::write_exe(
+            dir.join("forge"),
+            "#!/bin/sh\ncase \"$1\" in batch-ci-status) printf 'run-id: 1\\nrun-conclusion: success\\n' ;; *) exit 1 ;; esac\n",
+        );
+        // PREPEND (never replace): other tests run concurrently in this binary and need the
+        // real PATH to keep resolving; the stub only needs to win the lookup for the bare
+        // name `forge` itself.
+        let real_path = env::var_os("PATH").unwrap_or_default();
+        let mut new_path = dir.path().as_os_str().to_os_string();
+        new_path.push(":");
+        new_path.push(&real_path);
+        env::set_var("PATH", &new_path);
+
+        let cfg = Config::from_env();
+        assert_eq!(cfg.forge_sh, "forge");
+        let out = run_forge(&cfg.forge_sh, &["batch-ci-status", "/tmp/r", "branch"]).expect("run_forge should reach the stub");
+        assert!(out.contains("run-conclusion"), "unexpected output: {out:?}");
+    }
 
     // A private scratch directory per test, so parallel `cargo test` threads never collide
     // on the same path (the real callers always get SPIRA_RUN handed to them by the caller,
