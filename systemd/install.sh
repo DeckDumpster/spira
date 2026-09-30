@@ -66,7 +66,7 @@ _seed_prod_instance() {
     local conf="$1" toml_candidate="$2" instance="$3" target
     target="$(spira_toml_write_target_for "$conf" "$toml_candidate")"
     [ -n "$target" ] || return 1
-    [ "$("$SPIRA_CONFIG_BIN" get spira.instance "$target" 2>/dev/null)" = "$instance" ] && return 0
+    [ "$(spira-config get spira.instance "$target" 2>/dev/null)" = "$instance" ] && return 0
     spira_config_set_at "$conf" "$toml_candidate" SPIRA_INSTANCE "$instance" \
         && printf 'install: seeded %s with instance = %s\n' "$target" "$instance"
 }
@@ -215,10 +215,7 @@ render() {
         --cockpit "$SPIRA_COCKPIT" --dolt-data "$SPIRA_DOLT_DATA" \
         --testdb-data "$SPIRA_TESTDB_DATA" --dolt "$DOLT" --prod "$SPIRA_PROD" \
         --instance "$SPIRA_INSTANCE" --testdb-port "$SPIRA_TESTDB_PORT" \
-        --supervise-bin "$SPIRA_SUPERVISE_BIN" --snap-stale-s "$SPIRA_SNAP_STALE_S" \
-        --landing-pass-bin "$SPIRA_LANDING_PASS_BIN" \
-        --sentinel-bin "$SPIRA_SENTINEL_BIN" --queue-bin "$SPIRA_QUEUE_BIN" --aeon-bin "$SPIRA_AEON_BIN" \
-        --reconciler-flow-bin "$SPIRA_RECONCILER_FLOW_BIN" --watcher-name "${2:-}"
+        --snap-stale-s "$SPIRA_SNAP_STALE_S" --watcher-name "${2:-}"
 }
 
 # --laptop: link only the cockpit dialer on this machine and exit. The two halves of the

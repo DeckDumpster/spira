@@ -20,7 +20,6 @@
 #                                   a tree that had it installed them; owned.sh lists them
 #                                   so an uninstall run from a tree that lacks it still
 #                                   removes them.
-#   _watch_unbuilt                — watcher names skipped the same way
 #   _watch_names                  — plain watcher names from the manifest (e.g. "testview")
 #   watch_units                   — space-joined per-instance watcher unit names,
 #                                   space-padded at both ends for membership tests
@@ -166,52 +165,23 @@ else
     OPTIONAL+=(dolt-beads-test.service)
 fi
 
-# spira-loom.service requires the compiled loom binary. Skip when absent — loom.sh is
-# executable (passes the ExecStart check) but exec's the binary, so the unit would cycle in
-# activating forever. Build the binary and re-run install.sh to install the unit.
-if [ -x "${SPIRA_LOOM_BIN:-}" ]; then
-    UNITS+=(spira-loom.service)
-    ENABLE+=("$(inst_name spira-loom.service)")
-else
-    OPTIONAL+=(spira-loom.service); UNBUILT+=(spira-loom.service)
-    echo "note: loom binary not built at ${SPIRA_LOOM_BIN:-<path not set>} — not installing spira-loom.service." >&2
-    echo "      Build it: cd \$SPIRA_REPO/loom && cargo build --release, then re-run install.sh." >&2
-fi
+# spira-loom.service: loom is in every release's bin/ (sp-gypjk — no "not built" state).
+UNITS+=(spira-loom.service)
+ENABLE+=("$(inst_name spira-loom.service)")
 
-# spira-broker.service/.timer require the compiled broker binary. The broker also has no
-# producer yet — nothing in the harness submits intents to it. Install the units when the
-# binary is present; enable the timer only when SPIRA_BROKER_ENABLE=1 as well (the
+# spira-broker.service/.timer: the broker has no producer yet — nothing in the harness submits
+# intents to it — so the timer is enabled only when SPIRA_BROKER_ENABLE=1 as well (the
 # operator's explicit opt-in while a producer is in development).
-if [ -x "${SPIRA_BROKER_BIN:-}" ]; then
-    UNITS+=(spira-broker.service spira-broker.timer)
-    if spira_broker_producer_present; then
-        ENABLE+=("$(inst_name spira-broker.timer)")
-    fi
-else
-    OPTIONAL+=(spira-broker.service spira-broker.timer); UNBUILT+=(spira-broker.service spira-broker.timer)
-    echo "note: broker binary not built at ${SPIRA_BROKER_BIN:-<path not set>} — not installing spira-broker.service." >&2
-    echo "      Build it: cd \$SPIRA_REPO/broker && cargo build --release, then re-run install.sh." >&2
+UNITS+=(spira-broker.service spira-broker.timer)
+if spira_broker_producer_present; then
+    ENABLE+=("$(inst_name spira-broker.timer)")
 fi
 
-# spira-landing-pass.service/.timer require the compiled landing-pass binary. Same hazard.
-if [ -x "${SPIRA_LANDING_PASS_BIN:-}" ]; then
-    UNITS+=(spira-landing-pass.service spira-landing-pass.timer)
-    ENABLE+=("$(inst_name spira-landing-pass.timer)")
-else
-    OPTIONAL+=(spira-landing-pass.service spira-landing-pass.timer); UNBUILT+=(spira-landing-pass.service spira-landing-pass.timer)
-    echo "note: landing-pass binary not built at ${SPIRA_LANDING_PASS_BIN:-<path not set>} — not installing spira-landing-pass.service." >&2
-    echo "      Build it: cd \$SPIRA_REPO/landing-pass && cargo build --release, then re-run install.sh." >&2
-fi
+UNITS+=(spira-landing-pass.service spira-landing-pass.timer)
+ENABLE+=("$(inst_name spira-landing-pass.timer)")
 
-# spira-reconciler-flow.service/.timer require the compiled reconciler-flow binary. Same hazard.
-if [ -x "${SPIRA_RECONCILER_FLOW_BIN:-}" ]; then
-    UNITS+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
-    ENABLE+=("$(inst_name spira-reconciler-flow.timer)")
-else
-    OPTIONAL+=(spira-reconciler-flow.service spira-reconciler-flow.timer); UNBUILT+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
-    echo "note: reconciler-flow binary not built at ${SPIRA_RECONCILER_FLOW_BIN:-<path not set>} — not installing spira-reconciler-flow.service." >&2
-    echo "      Build it: cargo build --release --workspace, then re-run install.sh." >&2
-fi
+UNITS+=(spira-reconciler-flow.service spira-reconciler-flow.timer)
+ENABLE+=("$(inst_name spira-reconciler-flow.timer)")
 
 # ONE INSTANCE PER `daemon` ROW, AND THE MANIFEST DECIDES WHICH. `log` rows name a file
 # something else already writes, so they get no unit; enabling one would double up whatever
@@ -227,29 +197,16 @@ fi
 # can produce per-instance watcher unit files. watch_units accumulates the installed unit
 # names (e.g., "spira-watch-testview-prod.service") for the prune membership check below.
 _watch_names=()
-_watch_unbuilt=()
 watch_units=" "
-# A DAEMON ROW WHOSE PROGRAM IS NOT BUILT IS NOT INSTALLED — the same hazard as loom below:
-# watchd.sh is executable, but it execs a binary that is not there, so the unit cycles in
-# activating forever and fails the install. Say so, as loom does, rather than skip silently.
-_watch_manifest="$("$SPIRA_HOME/watchd.sh" manifest 2>/dev/null)" || _watch_manifest=""
-if watch_list="$("$SPIRA_HOME/watchd.sh" units)"; then
+if watch_list="$(watchd.sh units)"; then
     for _wu in $watch_list; do
         _wname="${_wu#spira-watch@}"; _wname="${_wname%.service}"
         _inst_wu="$(inst_watch_name "$_wname")"
-        _wtarget="$(printf '%s\n' "$_watch_manifest" | awk -F'|' -v n="$_wname" '$1==n{print $3; exit}')"
-        _wbin="${_wtarget%% *}"
-        if [ -n "$_wbin" ] && [ ! -x "$_wbin" ]; then
-            echo "note: watcher $_wname: $_wbin is not built — not installing $_inst_wu." >&2
-            echo "      Build it: cd \$SPIRA_REPO && make build, then re-run install.sh." >&2
-            _watch_unbuilt+=("$_wname")
-            continue
-        fi
         ENABLE+=("$_inst_wu")
         watch_units="$watch_units$_inst_wu "
         _watch_names+=("$_wname")
     done
-    unset _wu _wname _inst_wu _wtarget _wbin
+    unset _wu _wname _inst_wu
 else
     echo "install: the watcher manifest is malformed — installing none of it" >&2
     # `return` rather than `exit` because this file is sourced: `exit` here would

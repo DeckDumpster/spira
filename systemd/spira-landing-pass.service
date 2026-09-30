@@ -5,7 +5,7 @@ After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_LANDING_PASS_BIN@ --pass
+ExecStart=@SPIRA_PROD_ROOT@/bin/landing-pass --pass
 # A pass enumerates repos, rebases branches, and pushes/opens pull requests.
 # No gate.sh, no container — bounded in seconds under normal load.
 TimeoutStartSec=120

@@ -13,7 +13,7 @@ Type=oneshot
 # persona lands complete and never runs, which is what happened to ops.fayth. The chamber is
 # the roster now. Set SPIRA_FAYTHS only to NARROW this host deliberately; the sentinel logs
 # a WARN naming every fayth such a setting leaves out.
-ExecStart=@SPIRA_SENTINEL_BIN@
+ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel
 # A pass is deterministic bead and git queries; the inference tier is rate limited to
 # once an hour inside the script and runs detached, so this ceiling never truncates it.
 TimeoutStartSec=900

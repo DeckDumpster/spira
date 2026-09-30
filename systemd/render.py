@@ -29,13 +29,7 @@ def main() -> int:
     p.add_argument("--prod", default="")
     p.add_argument("--instance", default="")
     p.add_argument("--testdb-port", default="")
-    p.add_argument("--supervise-bin", default="")
     p.add_argument("--snap-stale-s", default="")
-    p.add_argument("--landing-pass-bin", default="")
-    p.add_argument("--reconciler-flow-bin", default="")
-    p.add_argument("--sentinel-bin", default="")
-    p.add_argument("--queue-bin", default="")
-    p.add_argument("--aeon-bin", default="")
     p.add_argument("--watcher-name", default="")
     args = p.parse_args()
 
@@ -51,13 +45,7 @@ def main() -> int:
         "SPIRA_PROD": args.prod,
         "SPIRA_INSTANCE": args.instance,
         "SPIRA_TESTDB_PORT": args.testdb_port,
-        "SPIRA_SUPERVISE_BIN": args.supervise_bin,
         "SPIRA_SNAP_STALE_S": args.snap_stale_s,
-        "SPIRA_LANDING_PASS_BIN": args.landing_pass_bin,
-        "SPIRA_RECONCILER_FLOW_BIN": args.reconciler_flow_bin,
-        "SPIRA_SENTINEL_BIN": args.sentinel_bin,
-        "SPIRA_QUEUE_BIN": args.queue_bin,
-        "SPIRA_AEON_BIN": args.aeon_bin,
     }
     # FALLBACK: an empty SPIRA_PROD is the documented signal that no checkout split
     # is wanted — everything runs from the development checkout (SPIRA_HOME). An

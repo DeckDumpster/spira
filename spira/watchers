@@ -81,7 +81,7 @@
 # transition is ALSO mailed straight to the concierge mailbox as it happens — the log line
 # is history, not the delivery, so it does not depend on a session holding a Monitor or on
 # the watch-notify escalation timer being armed.
-pr-notify|daemon|@SPIRA_HOME@/pr-notify.sh watch --interval 90|@SPIRA_HOME@/pr-notify.sh health
+pr-notify|daemon|pr-notify.sh watch --interval 90|pr-notify.sh health
 
 # THE VIEW FOLLOWER is the highest-consequence watcher here — it decides which window the
 # operator is looking at — and it is the hardest one to catch failing, because it acts on
@@ -94,20 +94,20 @@ pr-notify|daemon|@SPIRA_HOME@/pr-notify.sh watch --interval 90|@SPIRA_HOME@/pr-n
 # asks the multiplexer what IS, and calls the two disagreeing DEGRADED. Optional, because the
 # surface it steers is the operator's own: SPIRA_VIEW names the program and is empty until it
 # is set.
-?view|daemon|@SPIRA_VIEW@ watch|@SPIRA_HOME@/watchd.sh health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
+?view|daemon|@SPIRA_VIEW@ watch|watchd.sh health-view @SPIRA_VIEW@ @SPIRA_VIEW_SESSION@
 
 # MAIL-DELIVER monitors the delivery daemon that wakes registered readers on new mail.
 # It is not owned by watchd (it has its own unit), so the kind is `extern`. The health
 # command asks the daemon itself whether it is still watching every registered mailbox —
 # daemon liveness only. Aged unread mail is mail-health.sh's alarm, canonical over every
 # mailbox, so it is not asked here too.
-mail-deliver|extern|mail-deliver|@SPIRA_HOME@/spira-mail-deliver.sh health
+mail-deliver|extern|mail-deliver|spira-mail-deliver.sh health
 
 # INBOX-KEEPER is the only path that may type into the concierge pane, and only a re-arm
 # line when no inbox-triage.sh Monitor has read SPIRA_CONCIERGE_INBOX for a while with
 # events waiting (a /clear or compaction killed it). Everything else reaches the concierge
 # through that durable inbox, never a keystroke. See inbox-keeper.sh.
-inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh
+inbox-keeper|daemon|inbox-keeper.sh
 
 # PUBLISH-BACKLOG is a daemon: it scans every repo-map row on a cadence and, for the ones in
 # queue.local mode, mails the concierge when local/main's unpublished commits cross
@@ -117,7 +117,7 @@ inbox-keeper|daemon|@SPIRA_HOME@/inbox-keeper.sh
 # local landings) while the forge silently falls behind. `watchd drain publish-backlog`
 # delivers queued crossings; only the crossing itself is mailed (TRANSITIONS, NOT STATE,
 # same as pr-notify), so a backlog stuck over threshold does not become a siren.
-publish-backlog|daemon|@SPIRA_HOME@/publish-backlog.sh watch --interval 900|@SPIRA_HOME@/publish-backlog.sh health
+publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.sh health
 
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
@@ -125,4 +125,4 @@ publish-backlog|daemon|@SPIRA_HOME@/publish-backlog.sh watch --interval 900|@SPI
 # queue's log, which misses whole transitions. Latch on with `watchd.sh tail queue-watch`.
 # The health probe fails when the last poll is stale or was blind, so silence is never
 # mistaken for a quiet queue.
-queue-watch|daemon|@SPIRA_QUEUE_WATCH_BIN@ watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|@SPIRA_QUEUE_WATCH_BIN@ health --run @SPIRA_RUN@
+queue-watch|daemon|queue-watch watch --run @SPIRA_RUN@ --db @SPIRA_DB@ --home @SPIRA_HOME@|queue-watch health --run @SPIRA_RUN@

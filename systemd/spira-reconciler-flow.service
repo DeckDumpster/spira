@@ -5,7 +5,7 @@ After=default.target
 
 [Service]
 Type=oneshot
-ExecStart=@SPIRA_RECONCILER_FLOW_BIN@ --pass
+ExecStart=@SPIRA_PROD_ROOT@/bin/reconciler-flow --pass
 # A pass runs a handful of duckdb queries over run/tsd/, one bd list and at most one mail
 # send per gap. 60s is generous for all of that on a quiet box.
 TimeoutStartSec=60

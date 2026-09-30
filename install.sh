@@ -454,10 +454,10 @@ if [ -z "${SPIRA_INSTALL_CONFLICT_CONSIDERED:-}" ]; then
 
     # OURS IS EITHER HOME THE SENTINEL UNIT CAN EXEC FROM: a unit written before the Rust
     # cutover ExecStarts $SPIRA_HOME/sentinel.sh; one written after ExecStarts the sentinel
-    # binary conf.sh resolved (@SPIRA_SENTINEL_BIN@, the release's bin/, never SPIRA_HOME).
+    # release's bin/sentinel (@SPIRA_PROD_ROOT@/bin/sentinel, never SPIRA_HOME).
     # Comparing only SPIRA_HOME refused every reinstall of a cutover install as foreign.
     _conflict_foreign "$UNITDIR" "$SPIRA_HOME" "${SPIRA_INSTANCE:-prod}" "$_units_lib" 2>/dev/null \
-        || _conflict_foreign "$UNITDIR" "$(dirname "${SPIRA_SENTINEL_BIN:-$SPIRA_HOME/sentinel}")" \
+        || _conflict_foreign "$UNITDIR" "$(dirname "${SPIRA_PROD:-$SPIRA_HOME}")/bin" \
                "${SPIRA_INSTANCE:-prod}" "$_units_lib" \
         || exit "$?"
     phase_info "conflict 1 clear: no foreign harness owns these unit names"
@@ -982,7 +982,6 @@ else
         fi
 
         for _unit in spira-lc.service spira-lc.socket; do
-            _lc_bin="$(command -v spira-lc 2>/dev/null)" || _lc_bin="$(spira_bin spira-lc 2>/dev/null)"
             "$SPIRA_HOME/systemd/render.py" "$SPIRA_HOME/systemd/$_unit" \
                 --home "$SPIRA_HOME" --repo "$SPIRA_REPO" --run "$SPIRA_RUN" \
                 > "/etc/systemd/system/$_unit.tmp" \
@@ -990,7 +989,7 @@ else
                     install -m 0644 "/etc/systemd/system/$_unit.tmp" "/etc/systemd/system/$_unit"
             rm -f "/etc/systemd/system/$_unit.tmp"
         done
-        unset _lc_bin _unit
+        unset _unit
         phase_act "reload systemd" systemctl daemon-reload
         phase_act "enable spira-lc.socket (spira-lc.service itself is socket-activated, not enabled directly)" \
             systemctl enable --now spira-lc.socket

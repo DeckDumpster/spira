@@ -15,7 +15,7 @@ StartLimitBurst=5
 # the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
 # by the manager (sp-3az9w established that bash cannot satisfy this; sp-mplcb fixes it).
 Type=notify
-ExecStart=@SPIRA_SUPERVISE_BIN@ @SPIRA_PROD@/collect.sh loop
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-supervise @SPIRA_PROD@/collect.sh loop
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_SNAP_STALE_S=@SPIRA_SNAP_STALE_S@
 Restart=always
