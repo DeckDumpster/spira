@@ -5,11 +5,11 @@
 # left over from before that guard existed), and leaves alone any branch whose PR is
 # still open — the live batch's own run in particular (sp-1p04d).
 #
-# What forge.sh's runs-queue-branches itself excludes — a non-spira/queue/* branch, i.e.
-# main's push gate — is covered in test-forge-orphan-runs.sh; this suite is the sweep's own
-# decision once handed a list of candidate runs.
+# What forge's runs-queue-branches itself excludes — a non-spira/queue/* branch, i.e.
+# main's push gate — is covered by the forge crate's own unit tests; this suite is the
+# sweep's own decision once handed a list of candidate runs.
 #
-# covers: spira/lib.sh spira/forge.sh spira/batch.sh
+# covers: spira/lib.sh forge/src/cmds.rs spira/batch.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -15,7 +15,7 @@
 #
 # defect: sp-7kcj2
 # tier: T1
-# covers: spira/batch.sh spira/forge.sh spira/conf.sh
+# covers: spira/batch.sh forge/src/* spira/conf.sh
 # scar: batch.sh returned early on _batch_is_open with no mergeability check; a DIRTY PR
 #       pinned members at BATCHED indefinitely with no alarm.
 set -uo pipefail

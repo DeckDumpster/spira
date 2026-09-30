@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # test-lifecycle-delivery-cutover.sh — the pr and push delivery machines wired into
-# landing-pass, pr-pass-branch.sh and landing.sh's push mode (sp-n1ilm), against a real
-# throwaway spira_lifecycle database.
+# landing-pass (its pr_branch module, sp-t4y60) and landing.sh's push mode (sp-n1ilm),
+# against a real throwaway spira_lifecycle database.
 #
 # WHAT THIS PROVES:
 #   - PLANTED ABSENCE FIRST: with no delivery row at all — the ordinary case until the bead
@@ -24,7 +24,7 @@
 #
 # defect: sp-n1ilm
 # tier: T2
-# covers: spira-lc/src/callers.rs spira/pr-pass-branch.sh landing-pass/* lifecycle/* spira-lc/*
+# covers: spira-lc/src/callers.rs landing-pass/* lifecycle/* spira-lc/*
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -1,13 +1,16 @@
 //! The pr-mode pass (`landing-pass --pass`, spira-landing-pass.timer): for every pr-mode
 //! repository, for every spira/* branch whose bead is done — rebase, confine, force-push,
-//! open or refresh the pull request, observe merged/closed — through pr-pass-branch.sh, one
-//! branch at a time. The pull request's own CI is the gate; gate.sh is never called here.
+//! open or refresh the pull request, observe merged/closed — one branch at a time, through
+//! [`crate::pr_branch`] (sp-t4y60; used to shell out to pr-pass-branch.sh, now in-process).
+//! The pull request's own CI is the gate; gate.sh is never called here.
 //!
 //! Behaviour is this crate's pr pass as it was, with the repository rows and settings now
 //! coming from the one resolver (DESIGN.md §8 D1–D2).
 
 use crate::model::{BeadRow, LandMode, RepoRow, Settings};
-use crate::ports::{Beads, Git, Procs};
+use crate::ports::{Beads, Git, Lib, Procs, Tools};
+use crate::pr_branch;
+use crate::records::Files;
 use crate::report::Reporter;
 use crate::util::{command, run_capture, unix_now};
 use std::collections::HashMap;
@@ -15,8 +18,6 @@ use std::path::Path;
 use std::process::Stdio;
 
 pub trait PrTools {
-    /// pr-pass-branch.sh <repo> <br> <id> <base> <name> <tip> → its exit status.
-    fn branch_helper(&self, repo: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32;
     /// Record pr mode's `merged` exit by content proof when the delivery row is PR_OPEN.
     /// Ok covers the quiet cases (delivered, no row, a row not in PR_OPEN); Err is a machine
     /// that could not be asked or refused the event. Called only with the switch ON.
@@ -28,8 +29,11 @@ pub struct PrPass<'a> {
     pub repos: &'a [RepoRow],
     pub beads: &'a dyn Beads,
     pub git: &'a dyn Git,
+    pub lib: &'a dyn Lib,
+    pub land_tools: &'a dyn Tools,
     pub procs: &'a dyn Procs,
     pub tools: &'a dyn PrTools,
+    pub files: &'a Files,
     pub out: &'a Reporter,
     /// The LIFECYCLE: lines this pass printed on stderr (kept for tests).
     pub loud: std::cell::RefCell<Vec<String>>,
@@ -143,7 +147,17 @@ impl<'a> PrPass<'a> {
                 continue;
             }
             // 0 opened/refreshed; 7 merged, delivered; 8 closed unmerged, returned.
-            if matches!(self.tools.branch_helper(&r.path, br, id, &base, name, tip), 0 | 7 | 8) {
+            let ctx = pr_branch::Ctx {
+                lib: self.lib,
+                git: self.git,
+                beads: self.beads,
+                tools: self.land_tools,
+                files: self.files,
+                pr_refresh_max: self.s.pr_refresh_max,
+                log: &|m: &str| self.log(&format!("landing-pass {name}: {m}")),
+            };
+            let rc = pr_branch::run(&ctx, &r.path, br, id, &base, name, tip, &base_fq, r);
+            if matches!(rc, 0 | 7 | 8) {
                 acted += 1;
             }
         }
@@ -163,30 +177,6 @@ pub struct RealPrTools<'a> {
 }
 
 impl<'a> PrTools for RealPrTools<'a> {
-    fn branch_helper(&self, repo: &Path, br: &str, id: &str, base: &str, name: &str, tip: &str) -> i32 {
-        // A bare name (the default) is the launcher-PATH program, run directly; a configured
-        // SPIRA_PR_PASS_BRANCH_SH path is run with bash.
-        let mut c = if self.s.pr_pass_branch_sh.components().count() == 1 {
-            command(&self.s.pr_pass_branch_sh)
-        } else {
-            let mut c = command("bash");
-            c.arg(&self.s.pr_pass_branch_sh);
-            c
-        };
-        c.arg(repo).arg(br).arg(id).arg(base).arg(name).arg(tip);
-        c.env("SPIRA_HOME", &self.s.home).env("SPIRA_RUN", &self.s.run).env("SPIRA_DB", &self.s.db);
-        c.env("SPIRA_ID_PREFIX", &self.s.id_prefix).stdin(Stdio::null());
-        // The switch as this pass resolved it is already pinned into the environment the
-        // helper inherits (lifecycle::pin_for_children): OFF, SPIRA_LIFECYCLE_ENFORCE=0 and its
-        // `spira-lc deliver` calls answer from the switch without reaching the machine.
-        // The helper's own lines go straight to this pass's stdout (the unit's log).
-        c.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-        match c.status() {
-            Ok(st) => st.code().unwrap_or(1),
-            Err(_) => 1,
-        }
-    }
-
     fn deliver_by_content(&self, id: &str, merge_sha: &str) -> Result<(), String> {
         let lc = self.s.lc_bin.as_ref().ok_or("no spira-lc program")?;
         let mut c = command(lc);

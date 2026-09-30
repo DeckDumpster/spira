@@ -94,7 +94,9 @@ pub struct Settings {
     /// landing.sh ran was looked up in. `halt` runs podman and testenv.sh under it.
     pub path: Option<String>,
     pub bdjson_fixture: Option<PathBuf>,
-    pub pr_pass_branch_sh: PathBuf,
+    /// `SPIRA_PR_REFRESH_MAX` (default 5): how many times the pr pass rebases and re-pushes
+    /// an open pull request before escalating (sp-t4y60, `needs_refresh`).
+    pub pr_refresh_max: u32,
     /// The config document conf.sh resolved (`SPIRA_TOML_FILE`), for the lifecycle switch.
     pub toml: Option<PathBuf>,
     /// THE lifecycle switch (DESIGN.md §9), resolved once per invocation by
@@ -138,7 +140,7 @@ impl Settings {
             halt_grace: 30,
             path: None,
             bdjson_fixture: None,
-            pr_pass_branch_sh: run.join("home/pr-pass-branch.sh"),
+            pr_refresh_max: 5,
             toml: None,
             lifecycle_enforce: false,
             run,
@@ -160,6 +162,8 @@ pub struct BeadRow {
     pub closed_at: String,
     pub priority: i64,
     pub external_ref: Option<String>,
+    /// The bead's title — `land_pr`'s PR title (`"<id>: <title>"`, `"Spira"` when empty).
+    pub title: String,
 }
 
 impl BeadRow {
@@ -202,7 +206,8 @@ impl BeadRow {
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty() && *s != "-")
             .map(String::from);
-        Some(BeadRow { id, status, raw_status, repo, labels, superseded, closed_at, priority, external_ref })
+        let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        Some(BeadRow { id, status, raw_status, repo, labels, superseded, closed_at, priority, external_ref, title })
     }
 
     pub fn has_label(&self, l: &str) -> bool {
