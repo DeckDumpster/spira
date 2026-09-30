@@ -41,8 +41,21 @@ fn spira_run() -> PathBuf {
     getenv("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira-run"))
 }
 
+/// `$SPIRA_HOME`, falling back to `lib.sh`'s own directory on PATH. The bash always had
+/// lib.sh's functions available by sourcing it relative to `$0` (`. "$(dirname "$0")/
+/// lib.sh"`) regardless of whether `SPIRA_HOME` was set; a compiled binary has no `$0`
+/// directory to be relative TO, so this is the equivalent self-location for the seams
+/// that need it (`git::spira_landref`, `seams::repo_root`, `seams::timer_priority_and_
+/// suspended`, `seams::pipeline_probe`) — every production caller sets `SPIRA_HOME`
+/// anyway, but a test harness that only puts `spira/` on PATH (the common shape for a
+/// suite run in a clean `env -i`) must still resolve it.
 fn spira_home() -> String {
-    getenv("SPIRA_HOME").unwrap_or_default()
+    if let Some(h) = getenv("SPIRA_HOME") {
+        return h;
+    }
+    incident::which("lib.sh")
+        .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_string_lossy().into_owned()))
+        .unwrap_or_default()
 }
 
 fn resolved_incident_sh() -> String {

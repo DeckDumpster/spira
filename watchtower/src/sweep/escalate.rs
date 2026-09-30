@@ -153,9 +153,14 @@ fn hotfix(d: &SweepData, cfg: &Cfg) {
     let Some(running_line) = out.lines().find(|l| l.starts_with("RUNNING UNLANDED ")) else {
         return;
     };
+    // `sed -n 's/^RUNNING UNLANDED \([0-9a-f]\{40\}\):.*/\1/p'` — exactly 40 lowercase hex
+    // digits immediately followed by a colon, or no match at all (no escalation).
     let rest = running_line.trim_start_matches("RUNNING UNLANDED ");
-    let sha: String = rest.chars().take_while(|c| c.is_ascii_hexdigit()).collect();
-    if sha.len() != 40 {
+    let sha: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        .collect();
+    if sha.len() != 40 || rest.as_bytes().get(40) != Some(&b':') {
         return;
     }
     let Some(inc) = usable_inc(cfg) else {

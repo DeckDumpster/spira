@@ -113,7 +113,7 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Writes: an `incident.sh` bead (red-check / auto-merge-off), `rm` the landstate record
   (CONFLICTING), or `gh pr merge --auto --squash` (otherwise).
 - Env seams: `SPIRA_PR_STALL_MINS` (60), `SPIRA_GH` (gh), `GH_TIMEOUT` (120),
-  `SPIRA_INCIDENT_SH`, `SPIRA_DB`.
+  `SPIRA_INCIDENT_SH`, `SPIRA_DB`, `SPIRA_HOME` (for `seams::repo_root`, §3/§6).
 
 ### `--disabled-timer-check`
 - Reads: `world.sh`'s `TIMER_PRIORITY` and `ctrl.sh`'s suspension map (via the seam, §3);
@@ -135,6 +135,14 @@ runs `cockpit/moot-sweep.sh --apply`.
 
 ## 6. Seams
 
+- `main::spira_home` — `$SPIRA_HOME`, falling back to `command -v lib.sh`'s directory.
+  The bash always had lib.sh's functions regardless of `SPIRA_HOME`, by sourcing it
+  relative to `$0` (`. "$(dirname "$0")/lib.sh"`); a compiled binary has no `$0` directory
+  to be relative to, and every seam below that needs lib.sh (`git::spira_landref`,
+  `seams::repo_root`, `seams::timer_priority_and_suspended`, `seams::pipeline_probe`) goes
+  through this resolution. Production always sets `SPIRA_HOME` (the systemd unit, sentinel's
+  dispatch); the fallback matters for a suite run in a clean `env -i` that puts only
+  `spira/` on `PATH`, the common shape once `SPIRA_HOME` stops being assumed.
 - `incident::file` — spawns `bash $SPIRA_INCIDENT_SH file <title> -` with the same
   `SPIRA_INCIDENT_*` env and body-on-stdin contract as every bash call site.
 - `seams::timer_priority_and_suspended` — one `bash -c` that sources `world.sh`
