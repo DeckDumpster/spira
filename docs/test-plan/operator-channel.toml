@@ -206,10 +206,20 @@ id = "UC-operator-channel-32"
 tier = "T1"
 statement = "watch-refresh restarts an active daemon watcher when its target, a sibling library, the config, conf.sh, the manifest, the dispatcher or its unit's ExecStart…"
 
+[use_case.uncovered]
+reason = "test-watch-refresh.sh deleted (sp-48f6g, law-a-test-that-flips-is-deleted): the restarting-pass exec-count assertion went red then green on reruns of the identical tree (18/18 clean in isolation, red in 2 of 5 full-gate batches); sp-43627 finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-43627"
+
 [[use_case]]
 id = "UC-operator-channel-33"
 tier = "T1"
 statement = "A refresh pass fails loudly and restarts nothing when systemctl show fails, the start time is unreadable or the manifest is malformed. The orphan reaper…"
+
+[use_case.uncovered]
+reason = "test-watch-refresh.sh deleted (sp-48f6g, law-a-test-that-flips-is-deleted): the restarting-pass exec-count assertion went red then green on reruns of the identical tree (18/18 clean in isolation, red in 2 of 5 full-gate batches); sp-43627 finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-43627"
 
 [[use_case]]
 id = "UC-operator-channel-34"
