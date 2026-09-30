@@ -228,7 +228,7 @@ _acquire_tarball() {
 _install_from_tarball() {
     local _tb="$1" _rel="$2" _cf="$3"
     SPIRA_CONF="$_cf" SPIRA_RELEASES="$_rel" SPIRA_ACTIVATE_FORCE=1 \
-        bash "$HERE/activate.sh" "$_tb" || return 1
+        activate.sh "$_tb" || return 1
 }
 
 # _extract_bead_id <bd-create-output> — the bead id from `bd create`'s "Created issue:"
@@ -254,14 +254,12 @@ _phase_env() {
 }
 
 # _ci_env <array-name> <conf> — env array for running deploy.sh/uninstall.sh/world.sh/
-# doctor.sh straight from THIS CHECKOUT, as opposed to an activated release. conf.sh
-# there resolves SPIRA_CONFIG_BIN from $HERE's own SPIRA_REPO, which carries neither
-# bin/spira-config (a release artifact) nor a cargo build of it, so the binary that
-# reads spira.conf is missing and NO config key — including SPIRA_OPERATED=0 — is ever
-# read. Point it at the release under test's own copy instead of building one here.
+# doctor.sh. Every tool they call (spira-config first: without it NO config key —
+# including SPIRA_OPERATED=0 — is ever read) is invoked by bare name, so this is a
+# launcher: it puts the release under test's bin/ at the front of PATH (sp-gypjk).
 _ci_env() {
     local -n _cie_arr="$1"
-    _cie_arr=(SPIRA_CONF="$2" SPIRA_CONFIG_BIN="${_releases}/current/bin/spira-config")
+    _cie_arr=(SPIRA_CONF="$2" PATH="${_releases}/current/bin:$PATH")
 }
 
 # _run_ready <ready.sh path> [env=VAL ...] — run ready.sh under the given environment,

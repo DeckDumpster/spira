@@ -201,8 +201,7 @@ PY
 # sweep is actually acting on either way.
 lineage_brief() {        # lineage_brief <session> <this transcript>
     local rows
-    [ -x "$HERE/archive.sh" ] || { printf 'unknown — no transcript archive on this installation.'; return; }
-    rows="$("$HERE/archive.sh" lineage "$1" --json 2>/dev/null)" || rows=""
+    rows="$(archive.sh lineage "$1" --json 2>/dev/null)" || rows=""
     # THE ROWS GO IN ON STDIN, not interpolated into the script. They carry paths an operator
     # typed, and a value pasted into a program is a value that can end the string it is in.
     rows="$(printf '%s' "$rows" | python3 -c '
@@ -262,8 +261,8 @@ archive() {              # archive <session> <transcript> <at_turn> <ctx> <why> 
         prompt="${prompt//\{\{FROM_TURN\}\}/$from}"
         prompt="${prompt//\{\{WHY\}\}/$why}"
         prompt="${prompt//\{\{LINEAGE\}\}/$(lineage_brief "$sid" "$tp")}"
-        prompt="${prompt//\{\{ARCHIVIST\}\}/$HERE/archivist.sh}"
-        prompt="${prompt//\{\{NOTIFY\}\}/$SPIRA_HOME/mail.sh}"
+        prompt="${prompt//\{\{ARCHIVIST\}\}/archivist.sh}"
+        prompt="${prompt//\{\{NOTIFY\}\}/mail.sh}"
         # EMPTY IS "YOU HAVE NO WIKI", NEVER A GUESS, and it substitutes a whole paragraph
         # rather than a path — a brief that rendered as a bare empty string would leave the
         # agent with a sentence pointing at nowhere, which is worse than no sentence. A
@@ -408,7 +407,7 @@ digest_send() {
         fi
         local body
         body="$(printf '## Note\nRecorded today, and where:\n\n'; cat "$DIGEST_PENDING")"
-        if [ -x "$SPIRA_HOME/mail.sh" ] && printf '%s\n' "$body" | "$SPIRA_HOME/mail.sh" send operator \
+        if printf '%s\n' "$body" | mail.sh send operator \
                 --from "Archivist <archivist@spira>" \
                 --subject "Archivist digest: $n item(s) recorded today" \
                 --kind note --digest; then
@@ -451,7 +450,7 @@ sweep|list)
         # ONE MEASUREMENT, SHARED. ctx-meter.sh is what the status line and the dashboard read,
         # so asking it — rather than parsing the transcript again here — is what stops the
         # watcher from acting on a number the operator is not being shown.
-        e="$("$HERE/ctx-meter.sh" env "$tp" 2>/dev/null)" || e=""
+        e="$(ctx-meter.sh env "$tp" 2>/dev/null)" || e=""
         ctx="$(sed -n 's/^SP_CTX_NOW=//p' <<<"$e")"
         turns="$(sed -n 's/^SP_CTX_TURNS=//p' <<<"$e")"
         nxt="$(sed -n 's/^SP_CTX_NEXT=//p' <<<"$e")"
@@ -579,7 +578,7 @@ PY
 )
     fi
     [ -n "$tp" ] && [ -f "$tp" ] || die "no transcript for '${2:-the newest session}'"
-    e="$("$HERE/ctx-meter.sh" env "$tp" 2>/dev/null)" || e=""
+    e="$(ctx-meter.sh env "$tp" 2>/dev/null)" || e=""
     ctx="$(sed -n 's/^SP_CTX_NOW=//p' <<<"$e")"
     turns="$(sed -n 's/^SP_CTX_TURNS=//p' <<<"$e")"
     archive "$sid" "$tp" \

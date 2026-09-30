@@ -98,7 +98,7 @@ TM="tmux -L $SOCKET"
 # from outside, and the way anybody finds out is the next violated statute.
 compose_brief() {
     local md="$SPIRA_HOME/chamber/$FAYTH.md" out statutes n
-    local bead_tool="$SPIRA_HOME/bead.sh"
+    local bead_tool="bead.sh"
     local wiki_clause=""
     [ -n "${SPIRA_WIKI:-}" ] && wiki_clause=" It is the brain wiki — read its \`CLAUDE.md\` first; it governs over anything here that disagrees. Brain carries no copy of the harness."
     [ -f "$md" ] || { echo "concierge: no brief at $md" >&2; return 1; }
@@ -135,7 +135,7 @@ compose_brief() {
         sed -e "s|{{CWD}}|$BRAIN|g" \
             -e "s|{{SPIRA_HOME}}|$SPIRA_HOME|g" \
             -e "s|{{COCKPIT}}|$SPIRA_COCKPIT|g" \
-            -e "s|{{ASK}}|$SPIRA_HOME/mail.sh|g" \
+            -e "s|{{ASK}}|mail.sh|g" \
             -e "s|{{RULE}}|$HARNESS/rule.sh|g" \
             -e "s|{{DB}}|$SPIRA_DB|g" \
             -e "s|{{STATUTE_COUNT}}|$n|g" \
@@ -336,7 +336,7 @@ start)
     # fixture chamber under test — but the session hook is a property of the CODE, not of
     # whatever chamber a caller is composing a brief from, so registering it must never
     # depend on that seam.
-    if ! env SPIRA_HOME="$HARNESS/spira" "$HARNESS/spira/install-session-hook.sh" install; then
+    if ! env SPIRA_HOME="$HARNESS/spira" install-session-hook.sh install; then
         echo "concierge: could not register the SessionStart hook — refusing to start without it" >&2
         exit 1
     fi

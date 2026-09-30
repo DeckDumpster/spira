@@ -85,7 +85,7 @@ if [ "${1:-}" = start ]; then
         --setenv=SPIRA_ACCEPTANCE_LOCAL_NAME="${SPIRA_ACCEPTANCE_LOCAL_NAME:-}" \
         --setenv=SPIRA_ACCEPTANCE_LOCAL_FORENSICS="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-}" \
         --setenv=GH_TOKEN="${GH_TOKEN:-}" \
-        -- bash "$HERE/acceptance-local.sh" "$@" || exit 1
+        -- acceptance-local.sh "$@" || exit 1
     printf 'acceptance-local: started %s\n' "$UNIT"
     printf 'acceptance-local: log at %s\n' "$LOG"
     printf 'acceptance-local: stop with: acceptance-local.sh stop %s\n' "$ROUND"
@@ -131,7 +131,7 @@ FORENSICS_OUT="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-$SPIRA_RUN/acceptance-local-f
 
 _wd="$(mktemp -d)"
 _al_cleanup() {
-    bash "$HERE/testenv.sh" down --name "$CNAME" >/dev/null 2>&1 || true
+    testenv.sh down --name "$CNAME" >/dev/null 2>&1 || true
     rm -rf "$_wd"
 }
 trap _al_cleanup EXIT INT TERM
@@ -178,7 +178,7 @@ log "acceptance-local: tarball built: $(basename "$_al_tarball")"
 # acceptance-agent.sh run from the source tree under test, exactly as
 # acceptance.yml's own checkout drives a tarball downloaded separately.
 # ---------------------------------------------------------------------------
-bash "$HERE/testenv.sh" down --name "$CNAME" >/dev/null 2>&1 || true
+testenv.sh down --name "$CNAME" >/dev/null 2>&1 || true
 log "acceptance-local: starting container $CNAME"
 # WHAT /workspace IS, AND THE PREDECESSOR (phases B-D only).
 _al_mount="$TREE"
@@ -216,7 +216,7 @@ if [ -n "$PRED" ]; then
     fi
 fi
 
-bash "$HERE/testenv.sh" up --name "$CNAME" --checkout "$_al_mount" >&2 || {
+testenv.sh up --name "$CNAME" --checkout "$_al_mount" >&2 || {
     printf 'acceptance-local: container did not come up\n' >&2
     exit 2
 }
@@ -244,7 +244,7 @@ fi
 # 3. RUN — the same scratch-repo shape acceptance-ci.sh builds for the forge
 # run, then acceptance-run.sh phase A against the tarball.
 # ---------------------------------------------------------------------------
-bash "$HERE/testenv.sh" exec --name "$CNAME" --user spirauser bash -c '
+testenv.sh exec --name "$CNAME" --user spirauser bash -c '
 set -uo pipefail
 git init --bare --initial-branch=main "$HOME/scratch-repo.git" >/dev/null
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo" >/dev/null
@@ -265,7 +265,7 @@ printf "scratch-repo | %s | push | origin/main | |\n" "$HOME/scratch-repo" \
 # default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
 # failed at "bead filed" before reaching anything the release does.
 log "acceptance-local: running acceptance-run.sh $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
-bash "$HERE/testenv.sh" exec --name "$CNAME" --user spirauser bash -c "
+testenv.sh exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
 mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
@@ -284,7 +284,7 @@ _al_rc=$?
 if [ "$_al_rc" -eq 1 ]; then
     rm -rf "$FORENSICS_OUT"
     mkdir -p "$(dirname "$FORENSICS_OUT")"
-    _al_home="$(bash "$HERE/testenv.sh" exec --name "$CNAME" --user spirauser \
+    _al_home="$(testenv.sh exec --name "$CNAME" --user spirauser \
         bash -c 'printf %s "$HOME"' 2>/dev/null)"
     if [ -n "$_al_home" ] \
         && podman cp "$CNAME:$_al_home/acceptance-forensics" "$FORENSICS_OUT" 2>/dev/null; then

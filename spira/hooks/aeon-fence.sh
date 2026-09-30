@@ -83,47 +83,55 @@ except Exception: print("")' 2>/dev/null)"
 
 [ -n "$cmd" ] || exit 0
 
-# Returns "1" if /$1 appears as an exec target in $2; "" if only as a git file argument.
-# Splits compound commands on shell separators; sub-commands starting with "git" are
-# file operations, not invocations.
+# Returns "1" if $1 is executed in $2 — by bare name (the release's tools are invoked by
+# name on PATH, sp-gypjk) or by a path ending /$1, directly or through bash/sh/source; ""
+# if it only appears as an argument (a git file operation, a cat). Splits compound commands
+# on shell separators. An optional $3 names the one verb that stays allowed (queue stats).
 _exec_ctx() {
     python3 -c '
 import sys, re
-script = sys.argv[1]; cmd = sys.argv[2]
-pat = "/" + script
-EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", "."}
-for sub in re.split(r"&&|\|\||;", cmd):
-    sub = sub.strip()
-    if pat not in sub: continue
-    toks = sub.split()
-    if not toks: continue
-    t = toks[0]
-    if t in EXEC or t.startswith("/") or t.startswith("./") or pat in t:
-        print("1"); break
-' "$1" "$2" 2>/dev/null
+script = sys.argv[1]; cmd = sys.argv[2]; allow = sys.argv[3] if len(sys.argv) > 3 else ""
+EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", ".", "exec", "env", "timeout"}
+def is_script(tok):
+    return tok == script or tok.endswith("/" + script)
+def hit(text, depth=0):
+    for sub in re.split(r"&&|\|\||;|\|", text):
+        toks = sub.replace("\"", " ").replace("'"'"'", " ").split()
+        while toks and "=" in toks[0] and not toks[0].startswith("="):
+            toks = toks[1:]
+        while toks and toks[0] in EXEC:
+            toks = toks[1:]
+            if toks and toks[0] == "-c" and depth < 3:
+                if hit(" ".join(toks[1:]), depth + 1): return True
+                toks = []
+                break
+            while toks and (toks[0].startswith("-") or toks[0].isdigit() or "=" in toks[0]):
+                toks = toks[1:]
+        if toks and is_script(toks[0]):
+            if allow and len(toks) > 1 and toks[1] == allow:
+                continue
+            return True
+    return False
+if hit(cmd): print("1")
+' "$@" 2>/dev/null
 }
 
 reason=""
 
 for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
     case "$cmd" in
-        *"/$_script"*)
+        *"$_script"*)
             [ "$(_exec_ctx "$_script" "$cmd")" = "1" ] && { reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break; } ;;
     esac
 done
 
 if [ -z "$reason" ]; then
+    # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18), invoked by name:
+    # match either, bare or by path; `stats` stays the one allowed verb.
     case "$cmd" in
-        # queue.sh is the queue binary now (queue/DESIGN.md §7.2 row 18): match the old script,
-        # the installed binary and its conf.sh variable; `stats` stays the one allowed verb.
-        *"/queue.sh"*|*"/bin/queue "*|*'$SPIRA_QUEUE_BIN'*|*'${SPIRA_QUEUE_BIN}'*)
-            case "$cmd" in
-                *"/queue.sh stats"*|*"/bin/queue stats"*|*'QUEUE_BIN" stats'*|*'QUEUE_BIN stats'*|*'QUEUE_BIN} stats'*) ;;
-                *)
-                    { [ "$(_exec_ctx "queue.sh" "$cmd")" = "1" ] || [ "$(_exec_ctx "bin/queue" "$cmd")" = "1" ] \
-                        || case "$cmd" in *'SPIRA_QUEUE_BIN'*) true ;; *) false ;; esac; } && \
-                        reason="aeons may not operate the queue (sp-kz8ob: queue stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
-            esac ;;
+        *queue*)
+            { [ "$(_exec_ctx "queue.sh" "$cmd" stats)" = "1" ] || [ "$(_exec_ctx "queue" "$cmd" stats)" = "1" ]; } && \
+                reason="aeons may not operate the queue (sp-kz8ob: queue stats is the only read-only subcommand; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)" ;;
     esac
 fi
 

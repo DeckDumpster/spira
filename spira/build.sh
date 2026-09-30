@@ -26,13 +26,10 @@ while [ $# -gt 0 ]; do
 done
 
 if [ "$skip_build" = 1 ]; then
-    printf 'build.sh: --skip-build — prebuilt binaries expected at:\n'
-    printf '  loom:         %s\n' "$SPIRA_LOOM_BIN"
-    printf '  panel:        %s\n' "$SPIRA_PANEL"
-    printf '  broker:       %s\n' "$SPIRA_BROKER_BIN"
-    printf '  czar-pass:    %s\n' "$SPIRA_CZAR_PASS_BIN"
-    printf '  supervise:    %s\n' "$SPIRA_SUPERVISE_BIN"
-    printf '  landing-pass: %s\n' "$SPIRA_LANDING_PASS_BIN"
+    printf 'build.sh: --skip-build — prebuilt binaries expected on PATH (the release bin/):\n'
+    for _b in loom panel broker czar-pass spira-supervise landing-pass; do
+        printf '  %-14s %s\n' "$_b:" "$(command -v "$_b" || printf 'NOT ON PATH')"
+    done
     exit 0
 fi
 
@@ -43,7 +40,7 @@ make -C "$SPIRA_REPO" build || {
 
 if [ "$with_bd" = 1 ]; then
     printf 'build.sh: building bd (--with-bd)\n'
-    bash "$HERE/build-bd.sh" --install
+    build-bd.sh --install
 fi
 
 printf 'build.sh: done\n'

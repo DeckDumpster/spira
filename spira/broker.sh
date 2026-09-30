@@ -3,4 +3,4 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/conf.sh"
-exec "${SPIRA_BROKER_BIN}" "$@"
+exec broker "$@"

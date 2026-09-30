@@ -166,9 +166,9 @@ fail_out() { echo "beads-push: $stamp — $1" >&2; exit 1; }
 # connection to the live sql-server named in .beads/metadata.json) and commits and
 # verifies through that alone (beads-store/DESIGN.md). Production is unaffected: it has
 # SPIRA_DOLT_DATA configured, which beads-store resolves the same way the bash above did.
-BEADS_STORE_BIN="$(spira_bin beads-store)" \
-    || fail_out "beads-store binary not found (spira_bin beads-store) — cannot commit before push."
-commit_out="$("$BEADS_STORE_BIN" commit --db "$DB" --message "beads-push: $stamp" 2>&1)"
+command -v beads-store >/dev/null 2>&1 \
+    || fail_out "beads-store not on PATH — cannot commit before push."
+commit_out="$(beads-store commit --db "$DB" --message "beads-push: $stamp" 2>&1)"
 commit_rc=$?
 [ "$commit_rc" -eq 0 ] || fail_out "$commit_out"
 if [ "$commit_out" -gt 0 ] 2>/dev/null; then
