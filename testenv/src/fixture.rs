@@ -571,13 +571,20 @@ impl<'a> Session<'a> {
                     log(&format!("install rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
                     fault(Fault::Install("install failed — harness fault".into()), "install")
                 }
-                other => fault(
-                    Fault::Install(format!(
-                        "ctrl suspend failed for {} — harness fault",
-                        other.strip_prefix("suspend:").unwrap_or(other)
-                    )),
-                    "install",
-                ),
+                other => {
+                    // The other three branches dump their step's own output tail before
+                    // faulting; this one (every "suspend:<unit>" step) did not, which is
+                    // why sp-6onps's "ctrl suspend failed" fault carried no evidence at
+                    // all — this was the one branch that left an operator guessing.
+                    log(&format!("{other} rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
+                    fault(
+                        Fault::Install(format!(
+                            "ctrl suspend failed for {} — harness fault",
+                            other.strip_prefix("suspend:").unwrap_or(other)
+                        )),
+                        "install",
+                    )
+                }
             });
         }
         if out.rc == RC_DEADLINE {
