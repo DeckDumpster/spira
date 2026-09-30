@@ -75,6 +75,7 @@ MAIL_DIR="$TMP/elsewhere/mail"
 mkdir -p "$MAIL_DIR/concierge/new" "$MAIL_DIR/concierge/cur" "$MAIL_DIR/concierge/tmp"
 CONF="$TMP/spira.conf"
 cat > "$CONF" <<EOF
+SPIRA_ID_PREFIX = sp
 # THE FIXTURE DECLARES ITSELF IN FORCE. The hook refuses to print from a harness that is not
 # the one systemd runs, so a clone that left SPIRA_PROD at its derived default would be silent
 # here and every assertion below would pass on an empty string.

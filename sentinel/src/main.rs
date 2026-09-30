@@ -1,7 +1,7 @@
 //! sentinel — the loop's heartbeat (DESIGN.md). Replaces spira/sentinel.sh.
 //!
 //!   sentinel                 one full pass                     (spira-sentinel.service)
-//!   sentinel --report        print the open beads under SPIRA_GOAL, change nothing
+//!   sentinel --report        print the open plan beads, change nothing
 //!   sentinel --summon-only   CHECK 7 alone                     (spira-summon.service, and
 //!                            every aeon unit's ExecStopPost)
 //!   sentinel --audit         the decoupled audit worker        (the spira-audit unit)

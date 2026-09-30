@@ -410,7 +410,7 @@ echo "--purge — config and runtime directories removed:"
 
 _seed_units || { printf 'fixture: re-seed for purge failed\n'; exit 1; }
 mkdir -p "$CONF_DIR"
-printf 'SPIRA_INSTANCE=test\n' > "$CONF_DIR/spira.conf"
+printf 'SPIRA_ID_PREFIX=sp\nSPIRA_INSTANCE=test\n' > "$CONF_DIR/spira.conf"
 mkdir -p "$SPIRA_RUN_DIR/archive"
 
 purge_out="$(env -i \

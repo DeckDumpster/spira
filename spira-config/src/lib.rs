@@ -228,15 +228,15 @@ pub enum CzarStage {
     Act,
 }
 
-/// `[spira]` — host-wide keys. Every field is optional: `conf.sh` derives a default for
-/// each of these from where the harness is installed, and a clean clone sets none of them.
+/// `[spira]` — host-wide keys. Every field but one is optional: `conf.sh` derives a default
+/// for each of these from where the harness is installed, and a clean clone sets none of
+/// them. The exception is `id_prefix` — see [`require_id_prefix`].
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SpiraSection {
     pub home_repo: Option<String>,
     pub db: Option<String>,
     pub run: Option<String>,
-    pub goal: Option<String>,
     pub path: Option<String>,
     pub workspaces: Option<String>,
     pub prod: Option<String>,
@@ -319,6 +319,10 @@ pub struct SpiraSection {
     pub chamber: Option<String>,
     pub chamber_overlay: Option<String>,
     pub overrides: Option<String>,
+    /// REQUIRED whenever `[spira]` sets anything: the prefix of this installation's own bead
+    /// ids, without the hyphen (`sp` for `sp-k6m1m`). Nothing derives it — it used to be cut
+    /// from the retired `goal` key (sp-k6m1m). `spira-config validate` (doctor,
+    /// pre-activate) refuses a `[spira]` table without it ([`require_id_prefix`]).
     pub id_prefix: Option<String>,
     pub health_timeout: Option<String>,
     pub wake: Option<String>,
@@ -720,6 +724,9 @@ pub struct RetiredKey {
 /// a key present in history but neither active nor listed here is reported as silently
 /// dropped.
 pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
+    // Spira works the whole backlog continuously; there is no single goal bead (per Ryan,
+    // 2026-09-30, sp-2f9sa). The id prefix it used to imply is its own key now: id_prefix.
+    RetiredKey { key: "goal", bead: "sp-k6m1m" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
     RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
@@ -791,6 +798,56 @@ pub fn missing_from_retirement(
 /// refused: see [`validate_with_warnings`] for the warning that names it.
 pub fn validate(text: &str) -> Result<SpiraToml, String> {
     validate_with_warnings(text).map(|(doc, _)| doc)
+}
+
+/// [`validate_with_warnings`] plus [`require_id_prefix`] — the check `spira-config validate`
+/// runs (doctor, pre-activate): the document is well-formed AND names this installation's
+/// id prefix.
+pub fn validate_strict(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
+    let (doc, warnings) = validate_with_warnings(text)?;
+    require_id_prefix(&doc)?;
+    Ok((doc, warnings))
+}
+
+/// Whether `p` can be a bead id prefix: non-empty ASCII letters, digits and `_` — never a
+/// hyphen, which is the separator between the prefix and the id.
+pub fn valid_id_prefix(p: &str) -> bool {
+    !p.is_empty() && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Whether `[spira]` sets any key at all. An empty table — the shape `convert` writes when
+/// it regenerates only `[persona.*]` — says nothing about the host, so it needs no prefix.
+fn spira_sets_anything(s: &SpiraSection) -> bool {
+    match toml::Value::try_from(s) {
+        Ok(toml::Value::Table(t)) => t.values().any(|v| !matches!(v, toml::Value::Array(a) if a.is_empty())),
+        _ => true,
+    }
+}
+
+/// THE ID PREFIX FAILS CLOSED (sp-k6m1m). A `[spira]` table that sets anything must name
+/// `id_prefix`, and it must be a usable prefix. It used to be derived in conf.sh from the
+/// goal epic's id (`${SPIRA_GOAL%%-*}`); with the goal retired nothing derives it. A
+/// document with no `[spira]` table, or an empty one, passes: it configures no installation.
+///
+/// WHERE IT REFUSES: [`validate_strict`] — `spira-config validate`, which is what `doctor`
+/// and the release's `pre-activate` run against the config in force, so a release cannot
+/// be activated over a config without one. The typed READERS ([`validate`], [`load`]) do not
+/// refuse a whole document for it: a daemon that cannot parse its config falls back to
+/// defaults for every key, which is a far wider failure than the one key being absent.
+pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
+    let Some(s) = doc.spira.as_ref() else { return Ok(()) };
+    match s.id_prefix.as_deref() {
+        Some(p) if valid_id_prefix(p) => Ok(()),
+        Some(p) => Err(format!(
+            "spira.id_prefix: {p:?} is not a bead id prefix (letters, digits and _ only, no hyphen)"
+        )),
+        None if !spira_sets_anything(s) => Ok(()),
+        None => Err(
+            "spira.id_prefix: required — the prefix of this installation's own bead ids, without \
+             the hyphen (e.g. \"sp\"); it is no longer derived from the retired goal key (sp-k6m1m)"
+                .into(),
+        ),
+    }
 }
 
 /// Like [`validate`], but returns one warning per [`RETIRED_SPIRA_KEYS`] member found under
@@ -1136,11 +1193,11 @@ mod tests {
         }
         let dir = testkit::TempDir::new("spira-config-lce");
         let p = dir.join("spira.toml");
-        std::fs::write(&p, "[spira]\nlifecycle_enforce = true\n").unwrap();
+        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = true\n").unwrap();
         assert!(lifecycle_enforce(Some(&p)));
-        std::fs::write(&p, "[spira]\nlifecycle_enforce = false\n").unwrap();
+        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nlifecycle_enforce = false\n").unwrap();
         assert!(!lifecycle_enforce(Some(&p)));
-        std::fs::write(&p, "[spira]\nnot_a_key = 1\n").unwrap();
+        std::fs::write(&p, "[spira]\nid_prefix = \"sp\"\nnot_a_key = 1\n").unwrap();
         assert!(!lifecycle_enforce(Some(&p)), "an invalid document is off");
         assert!(!lifecycle_enforce(Some(&dir.join("absent.toml"))), "a named but absent document is off");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1148,25 +1205,25 @@ mod tests {
 
     #[test]
     fn valid_minimal_document() {
-        let doc = validate("[spira]\nmax_aeons = 4\n").expect("valid");
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = 4\n").expect("valid");
         assert_eq!(doc.spira.unwrap().max_aeons, Some(4));
     }
 
     #[test]
     fn unknown_key_names_its_path() {
-        let err = validate("[spira]\nbogus = 1\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap_err();
         assert!(err.starts_with("spira.bogus"), "{err}");
     }
 
     #[test]
     fn wrong_type_names_its_path() {
-        let err = validate("[spira]\nmax_aeons = \"four\"\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nmax_aeons = \"four\"\n").unwrap_err();
         assert!(err.starts_with("spira.max_aeons"), "{err}");
     }
 
     #[test]
     fn bad_enum_names_its_path() {
-        let err = validate("[spira]\nczar_stage_deadlock = \"sometimes\"\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nczar_stage_deadlock = \"sometimes\"\n").unwrap_err();
         assert!(err.starts_with("spira.czar_stage_deadlock"), "{err}");
     }
 
@@ -1188,13 +1245,13 @@ mod tests {
         // be silently absorbed into that value by conf.sh's KEY=value reader. TOML has no
         // such ambiguity to inherit: a bare word is not a legal value at all, so the same
         // line is a hard parse error here rather than a value nobody refused.
-        let err = validate("[spira]\ndb = /home/x # a trailing comment\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\ndb = /home/x # a trailing comment\n").unwrap_err();
         assert!(!err.is_empty());
     }
 
     #[test]
     fn the_inline_comment_scar_is_harmless_quoted() {
-        let doc = validate("[spira]\ndb = \"/home/x\" # a trailing comment\n").expect("valid");
+        let doc = validate("[spira]\nid_prefix = \"sp\"\ndb = \"/home/x\" # a trailing comment\n").expect("valid");
         assert_eq!(doc.spira.unwrap().db, Some("/home/x".to_string()));
     }
 
@@ -1208,7 +1265,7 @@ mod tests {
 
     #[test]
     fn export_sh_quotes_and_uppercases() {
-        let doc = validate("[spira]\nhome_repo = \"a b\"\nmax_aeons = 4\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nhome_repo = \"a b\"\nmax_aeons = 4\n").unwrap();
         let out = export_sh(&doc);
         assert!(out.contains("HOME_REPO='a b'\n"), "{out}");
         assert!(out.contains("MAX_AEONS='4'\n"), "{out}");
@@ -1219,7 +1276,7 @@ mod tests {
         // sp-9hwim: a caller reading a bool key off export --sh (mail.sh's SPIRA_MAIL_MUTE)
         // must match on "1|true", the same spelling every other [spira] bool key already
         // uses — never a bare `= "1"`, which a TOML `true` would silently fail.
-        let doc = validate("[spira]\nmail_mute = true\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmail_mute = true\n").unwrap();
         let out = export_sh(&doc);
         assert!(out.contains("MAIL_MUTE='true'\n"), "{out}");
     }
@@ -1232,7 +1289,7 @@ mod tests {
 
     #[test]
     fn set_path_replaces_without_disturbing_siblings() {
-        let doc = validate("[spira]\nprod = \"/old\"\nmax_aeons = 4\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nprod = \"/old\"\nmax_aeons = 4\n").unwrap();
         let doc = set_path(&doc, "spira.prod", "/new").unwrap();
         let spira = doc.spira.unwrap();
         assert_eq!(spira.prod, Some("/new".to_string()));
@@ -1247,7 +1304,7 @@ mod tests {
 
     #[test]
     fn a_retired_key_warns_instead_of_erroring() {
-        let (doc, warnings) = validate_with_warnings("[spira]\nqueue_local_gate = 1\n")
+        let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
             .expect("a retired key must not be a hard error");
         assert!(doc.spira.is_some());
         assert!(
@@ -1289,7 +1346,7 @@ mod tests {
         // sp-b4oct: a live spira.toml still carrying the aeon/landing CPU quota validates,
         // with one warning per key naming the retiring bead, and nothing exports them.
         let (doc, warnings) = validate_with_warnings(
-            "[spira]\naeon_cpu_quota = \"400\"\nland_cpu_quota = \"70\"\n",
+            "[spira]\nid_prefix = \"sp\"\naeon_cpu_quota = \"400\"\nland_cpu_quota = \"70\"\n",
         )
         .expect("a retired CPU quota key must not be a hard error");
         for key in ["aeon_cpu_quota", "land_cpu_quota"] {
@@ -1306,7 +1363,7 @@ mod tests {
     fn a_misspelt_key_still_errors() {
         // Positive control for a_retired_key_warns_instead_of_erroring: a key that looks
         // like a retired one but isn't must still be refused, not silently accepted.
-        let err = validate("[spira]\nqueue_local_gatee = 1\n").unwrap_err();
+        let err = validate("[spira]\nid_prefix = \"sp\"\nqueue_local_gatee = 1\n").unwrap_err();
         assert!(err.starts_with("spira.queue_local_gatee"), "{err}");
     }
 
@@ -1349,7 +1406,7 @@ mod tests {
 
     #[test]
     fn unset_path_removes_the_key_and_keeps_siblings() {
-        let doc = validate("[spira]\nmax_live_aeons = 3\nmax_aeons = 4\n").unwrap();
+        let doc = validate("[spira]\nid_prefix = \"sp\"\nmax_live_aeons = 3\nmax_aeons = 4\n").unwrap();
         let doc = unset_path(&doc, "spira.max_live_aeons").unwrap();
         // omitted entirely from the serialized document, not written as an empty value.
         let out = toml::to_string_pretty(&doc).unwrap();
@@ -1421,7 +1478,7 @@ mod tests {
     fn load_reads_and_validates() {
         let dir = scratch_dir("load-ok");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nmax_aeons = 4\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nmax_aeons = 4\n").unwrap();
         let doc = load(&path).expect("valid document");
         assert_eq!(doc.spira.unwrap().max_aeons, Some(4));
     }
@@ -1430,7 +1487,7 @@ mod tests {
     fn load_names_the_path_on_a_parse_error() {
         let dir = scratch_dir("load-bad");
         let path = dir.join(FILE_NAME);
-        std::fs::write(&path, "[spira]\nbogus = 1\n").unwrap();
+        std::fs::write(&path, "[spira]\nid_prefix = \"sp\"\nbogus = 1\n").unwrap();
         let err = load(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "{err}");
     }

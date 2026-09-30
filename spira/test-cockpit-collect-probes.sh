@@ -53,7 +53,7 @@ run_merge() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
         collect.sh merge 2>/dev/null
 }
@@ -89,7 +89,7 @@ printf '_PROBE_AT=0\n_PROBE_STATUS=never\n_PROBE_KILLED=0\n' > "$FRAG_DIR/queue.
 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
     collect.sh _probe_body_test queue 10 queue 2>/dev/null || true

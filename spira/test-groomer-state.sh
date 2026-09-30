@@ -63,7 +63,6 @@ run_sweep() {
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
@@ -115,16 +114,16 @@ git -C "$TMP/wt-ready" commit -q -m "sp-st-ready: clean work"
 git -C "$REPO" worktree remove --force "$TMP/wt-ready"
 
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"]}
-{"id":"sp-st-lbo","title":"landed but still open","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-lbo","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-openok","title":"genuinely open, no commit anywhere","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-openok","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-nobranch","title":"closed, no branch label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-nobranch","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-succ","title":"successor, still open","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-succ","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-supr","title":"closed, superseded, no branch label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-supr","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-st-supr","depends_on_id":"sp-st-succ","type":"supersedes"}]}
-{"id":"sp-st-conflict","title":"closed, branch conflicts with base","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-conflict"],"dependencies":[{"issue_id":"sp-st-conflict","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-ready","title":"closed, branch merges cleanly","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-ready"],"dependencies":[{"issue_id":"sp-st-ready","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-cl","title":"closed, content-landed label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","content-landed"],"dependencies":[{"issue_id":"sp-st-cl","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-st-blocked","title":"blocked by the conflicting closed bead","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-blocked","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-st-blocked","depends_on_id":"sp-st-conflict","type":"blocks"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"]}
+{"id":"sp-st-lbo","title":"landed but still open","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-lbo","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-openok","title":"genuinely open, no commit anywhere","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-openok","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-nobranch","title":"closed, no branch label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-nobranch","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-succ","title":"successor, still open","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-succ","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-supr","title":"closed, superseded, no branch label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-supr","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-st-supr","depends_on_id":"sp-st-succ","type":"supersedes"}]}
+{"id":"sp-st-conflict","title":"closed, branch conflicts with base","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-conflict"],"dependencies":[{"issue_id":"sp-st-conflict","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-ready","title":"closed, branch merges cleanly","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-ready"],"dependencies":[{"issue_id":"sp-st-ready","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-cl","title":"closed, content-landed label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","content-landed"],"dependencies":[{"issue_id":"sp-st-cl","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-blocked","title":"blocked by the conflicting closed bead","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-blocked","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-st-blocked","depends_on_id":"sp-st-conflict","type":"blocks"}]}
 JSONL
 
 # ==========================================================================================

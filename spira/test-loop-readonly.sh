@@ -119,7 +119,7 @@ testdb_up "loopro_$$" >/dev/null 2>&1
 iszero "testdb_up exits 0" "$?"
 
 testdb_seed <<JSONL
-{"id":"sp-lr-goal","title":"loop-readonly goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-lr-epic","title":"loop-readonly epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-lr-work","title":"sentinel loop readonly test bead","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 
@@ -170,7 +170,6 @@ SENTINEL_OUT="$(
     SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$(command -v bd)}" \
     SPIRA_CONF=/nonexistent \
-    SPIRA_GOAL=sp-lr-goal \
     SPIRA_FAYTHS=builder \
     SPIRA_MAX_AEONS=1 \
     SPIRA_SUMMON="$STUB_SUMMON" \

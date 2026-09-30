@@ -68,7 +68,7 @@ run_sops() {    # run_sops [env KEY=val ...] — extra env entries are prepended
         SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$RUN" \
         SPIRA_DB="$TMP/nodb" SPIRA_BDJSON_FIXTURE="$TMP/shelf.json" \
         SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_FAYTHS=t \
         SPIRA_SOP_LEDGER="$LEDGER" SPIRA_NOW="$NOW" \
         "$@" \
         cockpit.sh sops 2>/dev/null

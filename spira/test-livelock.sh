@@ -63,7 +63,7 @@ run_ll() {    # run_ll [KEY=val ...]  — extra args override env vars
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal \
+        SPIRA_REPO_MAP="$MAP" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \

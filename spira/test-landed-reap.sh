@@ -54,11 +54,14 @@ for a in "$@"; do
         -C)                skip_next=1 ;;
         --json)            ;;
         --reason-file)     skip_next=1 ;;
-        show|close|label)  cmd="$a" ;;
+        show|close|label|list)  cmd="$a" ;;
         *)                 argv+=("$a") ;;
     esac
 done
 case "$cmd" in
+    list)   # the positive control (spira_db_reachable): the store lists at least one bead
+        printf '[{"id":"sp-any"}]\n'
+        ;;
     show)
         f="$dir/${argv[0]:-}.json"
         if [ -f "$f" ]; then printf '['; cat "$f"; printf ']\n'; else printf '[]\n'; fi

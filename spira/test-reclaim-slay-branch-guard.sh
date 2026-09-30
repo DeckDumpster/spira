@@ -55,7 +55,6 @@ REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_REPO="$REPO"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_GOAL=sp-goal
 export SPIRA_REPO_MAP="$TMP/repo-map"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
 printf '# fixture\n' > "$TMP/repo-map"
@@ -83,7 +82,7 @@ seed() {
     [ -n "$as" ] && line="$line,\"assignee\":\"$as\""
     line="$line,\"updated_at\":\"2026-09-09T00:00:00Z\"}"
     testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-09T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-09T00:00:00Z"}
 $line
 JSONL
 }

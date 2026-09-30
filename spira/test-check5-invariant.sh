@@ -107,7 +107,7 @@ sentinel() {
     local faiths="${1:-t}"
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="$faiths" SPIRA_INFERENCE_EVERY=999999 \
+    SPIRA_FAYTHS="$faiths" SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
@@ -131,8 +131,8 @@ echo "POSITIVE CONTROL — a closed work bead with no landstate is reported to O
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-bare","title":"bare closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-bare","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-bare","title":"bare closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-bare","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-bare.log"
 rm -f "$RUN/landstate/sp-bare"
@@ -153,8 +153,8 @@ echo "LANDED — ancestry-verified commit and landstate; bead is not reported:"
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-land","title":"land","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-land","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-land","title":"land","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-land","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-land.log"
 
@@ -182,10 +182,10 @@ echo "DROPPED and SUPERSEDED survive without a landstate record, same as before:
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-drop","title":"dropped","status":"closed","issue_type":"task","labels":["spira","plan","spira-dropped","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-drop","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-succ","title":"successor","status":"open","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-succ","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-supr","title":"superseded","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-supr","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-supr","depends_on_id":"sp-succ","type":"supersedes"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-drop","title":"dropped","status":"closed","issue_type":"task","labels":["spira","plan","spira-dropped","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-drop","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-succ","title":"successor","status":"open","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-succ","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-supr","title":"superseded","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-supr","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-supr","depends_on_id":"sp-succ","type":"supersedes"}]}
 JSONL
 touch "$RUN/sp-drop.log" "$RUN/sp-supr.log"
 rm -f "$RUN/landstate/sp-drop" "$RUN/landstate/sp-supr"
@@ -204,8 +204,8 @@ echo "CONTENT-LANDED — a closed bead labeled content-landed survives without a
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-cl","title":"content landed","status":"closed","issue_type":"task","labels":["spira","plan","content-landed","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cl","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-cl","title":"content landed","status":"closed","issue_type":"task","labels":["spira","plan","content-landed","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cl","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-cl.log"
 rm -f "$RUN/landstate/sp-cl"
@@ -222,8 +222,8 @@ echo "NON-CODE TYPE — a closed event bead with no landstate is never examined:
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-ev","title":"an event bead","status":"closed","issue_type":"event","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-ev","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-ev","title":"an event bead","status":"closed","issue_type":"event","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-ev","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-ev.log"
 rm -f "$RUN/landstate/sp-ev"
@@ -240,8 +240,8 @@ echo "DELIVERS — a closed bead with a delivers: label survives without a lands
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-dlv","title":"delivered by note","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","delivers:note:$RUN/sp-dlv.log"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-dlv","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-dlv","title":"delivered by note","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","delivers:note:$RUN/sp-dlv.log"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-dlv","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-dlv.log"
 rm -f "$RUN/landstate/sp-dlv"
@@ -258,8 +258,8 @@ echo "HAND-CLOSED — a closed bead with no \$SPIRA_RUN/<id>.log is never examin
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-hand","title":"closed by hand","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-hand","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-hand","title":"closed by hand","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-hand","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 rm -f "$RUN/sp-hand.log" "$RUN/landstate/sp-hand"
 : > "$INC_LOG"
@@ -275,8 +275,8 @@ echo "UNMAPPED REPO — a closed bead naming a repo absent from the repo-map is 
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-ghost","title":"ghost repo","status":"closed","issue_type":"task","labels":["spira","plan","repo:ghost"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-ghost","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-ghost","title":"ghost repo","status":"closed","issue_type":"task","labels":["spira","plan","repo:ghost"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-ghost","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-ghost.log"
 rm -f "$RUN/landstate/sp-ghost"
@@ -294,8 +294,8 @@ echo "CANNOT RESOLVE REF — a mapped repo whose land ref cannot be determined i
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-other","title":"other repo, no resolvable ref","status":"closed","issue_type":"task","labels":["spira","plan","repo:other"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-other","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-other","title":"other repo, no resolvable ref","status":"closed","issue_type":"task","labels":["spira","plan","repo:other"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-other","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-other.log"
 rm -f "$RUN/landstate/sp-other"
@@ -314,8 +314,8 @@ echo "PARTITION ENUMERATION — a second persona's partition is examined too:"
 printf 'FAYTH_LABELS="ops"\nFAYTH_MAX_CONCURRENT=0\n' > "$SH/chamber/ops.fayth"
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["ops"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-opsbare","title":"bare closed, ops partition","status":"closed","issue_type":"task","labels":["ops","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-opsbare","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["ops"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-opsbare","title":"bare closed, ops partition","status":"closed","issue_type":"task","labels":["ops","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-opsbare","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-opsbare.log"
 rm -f "$RUN/landstate/sp-opsbare"
@@ -346,10 +346,10 @@ echo "LANDED PROVEN BY THE COMMIT GRAPH — no landstate file, but the base name
 # own "spira: land <id>" merge subject, or an aeon's "<id>: ..." commit.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-qland","title":"queue-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qland","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-cland","title":"colon-landed","status":"closed","issue_type":"bug","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cland","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-mland","title":"merge-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mland","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-qland","title":"queue-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qland","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-cland","title":"colon-landed","status":"closed","issue_type":"bug","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-cland","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-mland","title":"merge-landed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mland","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-qland.log" "$RUN/sp-cland.log" "$RUN/sp-mland.log"
 rm -f "$RUN/landstate/sp-qland" "$RUN/landstate/sp-cland" "$RUN/landstate/sp-mland"
@@ -377,8 +377,8 @@ echo "GENUINELY UNLANDED — a mention or a longer id sharing the prefix is not 
 # begins with it), but none is a landing record for sp-unl itself, so it is still reported.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-unl","title":"unlanded","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unl","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-unl","title":"unlanded","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unl","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-unl.log"
 rm -f "$RUN/landstate/sp-unl"
@@ -400,8 +400,8 @@ echo "  resolved by its recorded branch tip (sp-7youp's exact shape, sp-noa5s):"
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-nosubj","title":"landed under an unrecognised subject","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-nosubj"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-nosubj","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-nosubj","title":"landed under an unrecognised subject","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-nosubj"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-nosubj","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-nosubj.log"
 rm -f "$RUN/landstate/sp-nosubj"
@@ -425,8 +425,8 @@ echo "RESOLVER 3 RESOLVE — the same, but an incident was already filed for it:
 testdb_reset
 INC_HASH="$(ref_hash "closed-not-landed:sp-brold")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-brold","title":"landed under an unrecognised subject, incident already open","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-brold"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-brold","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-brold","title":"landed under an unrecognised subject, incident already open","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-brold"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-brold","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-broldinc","title":"CLOSED NOT LANDED: sp-brold has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 touch "$RUN/sp-brold.log"
@@ -453,8 +453,8 @@ echo "RESOLVER 3 COMPANION — a recorded branch NOT an ancestor of the base sti
 # must actually be merged, not merely named.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-unmerged","title":"branch recorded but never merged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-unmerged"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unmerged","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-unmerged","title":"branch recorded but never merged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO","branch:spira/sp-unmerged"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unmerged","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-unmerged.log"
 rm -f "$RUN/landstate/sp-unmerged"
@@ -475,9 +475,9 @@ echo "A FLOOD IS IMPOSSIBLE — N+1 unlanded beads file exactly N, and the skip 
 # ======================================================================================
 testdb_reset
 {
-    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    printf '{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
     for n in 1 2 3; do
-        printf '{"id":"sp-fl%s","title":"flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-fl%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        printf '{"id":"sp-fl%s","title":"flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-fl%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
         touch "$RUN/sp-fl$n.log"; rm -f "$RUN/landstate/sp-fl$n"
     done
 } | testdb_seed
@@ -497,9 +497,9 @@ echo "THE COUNT CAP IS NOT ENOUGH — a wall-clock budget bounds filing too:"
 # (sp-dxntp: 735s in this loop alone pushed a pass past its TimeoutStartSec).
 testdb_reset
 {
-    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    printf '{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
     for n in 1 2; do
-        printf '{"id":"sp-tb%s","title":"time-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-tb%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        printf '{"id":"sp-tb%s","title":"time-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-tb%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
         touch "$RUN/sp-tb$n.log"; rm -f "$RUN/landstate/sp-tb$n"
     done
 } | testdb_seed
@@ -522,8 +522,8 @@ echo "RESOLVE — proving a bead landed closes the incident this check filed for
 testdb_reset
 INC_HASH="$(ref_hash "closed-not-landed:sp-old")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-old","title":"old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-old","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-old","title":"old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-old","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-oldinc","title":"CLOSED NOT LANDED: sp-old has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 touch "$RUN/sp-old.log"
@@ -548,8 +548,8 @@ echo "RESOLVE — the same for the landstate proof, not only the commit-graph pr
 testdb_reset
 INC_HASH="$(ref_hash "closed-not-landed:sp-lsold")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-lsold","title":"landstate-old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lsold","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-lsold","title":"landstate-old","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lsold","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-lsoldinc","title":"CLOSED NOT LANDED: sp-lsold has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 touch "$RUN/sp-lsold.log"
@@ -576,8 +576,8 @@ echo "RESOLVE CLOSES A BLOCKED INCIDENT — Ops rolled it up under an open root-
 testdb_reset
 INC_HASH="$(ref_hash "closed-not-landed:sp-blkd")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-blkd","title":"blocked-instance","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-blkd","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-blkd","title":"blocked-instance","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-blkd","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-rootcause","title":"root cause parent incident","status":"open","issue_type":"bug","labels":["spira","incident"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-blkdinc","title":"CLOSED NOT LANDED: sp-blkd has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-blkdinc","depends_on_id":"sp-rootcause","type":"blocks"}]}
 JSONL
@@ -611,8 +611,8 @@ echo "RESOLVE FAILURE IS LOGGED, NOT SILENT — a close that still fails is name
 testdb_reset
 INC_HASH="$(ref_hash "closed-not-landed:sp-failsrc")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-failsrc","title":"proven landed, but its incident's close will fail","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-failsrc","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-failsrc","title":"proven landed, but its incident's close will fail","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-failsrc","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-failinc","title":"CLOSED NOT LANDED: sp-failsrc has no LANDED record on $HOME_REPO","status":"open","issue_type":"bug","labels":["spira","incident","ref:$INC_HASH"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 touch "$RUN/sp-failsrc.log"
@@ -646,8 +646,8 @@ echo "RESOLVE HAS NO EFFECT WHEN NO INCIDENT WAS EVER FILED — proving landed a
 # with no incident on record, and must not error, log a resolve, or touch any bead.
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-noinc","title":"landed, never flagged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-noinc","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-noinc","title":"landed, never flagged","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-noinc","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-noinc.log"
 rm -f "$RUN/landstate/sp-noinc"
@@ -665,10 +665,10 @@ echo "RESOLVING IS BOUNDED TOO — N+1 provably-landed incidents resolve exactly
 # ======================================================================================
 testdb_reset
 {
-    printf '{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
+    printf '{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}\n'
     for n in 1 2 3; do
         h="$(ref_hash "closed-not-landed:sp-rl$n")"
-        printf '{"id":"sp-rl%s","title":"resolve-flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rl%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
+        printf '{"id":"sp-rl%s","title":"resolve-flood","status":"closed","issue_type":"task","labels":["spira","plan","repo:%s"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rl%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' "$n" "$HOME_REPO" "$n"
         printf '{"id":"sp-rl%sinc","title":"CLOSED NOT LANDED: sp-rl%s has no LANDED record","status":"open","issue_type":"bug","labels":["spira","incident","ref:%s"],"updated_at":"2026-09-04T00:00:00Z"}\n' "$n" "$n" "$h"
         touch "$RUN/sp-rl$n.log"; rm -f "$RUN/landstate/sp-rl$n"
         git -C "$REPO" commit -q --allow-empty -m "spira: land sp-rl$n"
@@ -692,8 +692,8 @@ echo "THE COUNT CAP IS NOT ENOUGH — a wall-clock budget bounds resolving too:"
 testdb_reset
 h="$(ref_hash "closed-not-landed:sp-rb1")"
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-rb1","title":"resolve-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rb1","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-rb1","title":"resolve-budget","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-rb1","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-rb1inc","title":"CLOSED NOT LANDED: sp-rb1 has no LANDED record","status":"open","issue_type":"bug","labels":["spira","incident","ref:$h"]}
 JSONL
 touch "$RUN/sp-rb1.log"

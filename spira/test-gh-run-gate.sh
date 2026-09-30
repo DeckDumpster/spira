@@ -78,7 +78,7 @@ echo "gate blocks and unblocks a bead:"
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira","plan"]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 {"id":"sp-work","title":"do the thing","status":"open","issue_type":"task","labels":["spira","plan"]}
 JSONL
 
@@ -113,7 +113,7 @@ echo "bd gate check uses metadata.repo (cross-repo isolation):"
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira","plan"]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 {"id":"sp-a","title":"repo-a bead","status":"open","issue_type":"task","labels":["spira","plan"]}
 {"id":"sp-b","title":"repo-b bead","status":"open","issue_type":"task","labels":["spira","plan"]}
 JSONL

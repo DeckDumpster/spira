@@ -6,8 +6,10 @@ entry points. This document is the contract. The code satisfies it, and the unit
 
 ## 1. Intent
 
-Every pass compares the work graph to its goal state and closes the gap with the one
-deterministic action each gap names. The shape is the operator's: "look at the current state,
+Every pass compares the work graph to its desired state and closes the gap with the one
+deterministic action each gap names. There is no goal bead: Spira works the whole backlog
+continuously (the operator's answer to sp-2f9sa, sp-k6m1m), so "the work" is every open plan bead, never
+one epic's children, and no pass ever declares it finished. The shape is the operator's: "look at the current state,
 the goal state, reflect on the gap … cheap, quick, and frequent to run with deterministic
 heuristics; drop down to inference when judgement is required."
 
@@ -84,7 +86,7 @@ The two modes:
 
 ```
 sentinel                 one full pass                                  (spira-sentinel.service)
-sentinel --report        STATE only: print the open beads under SPIRA_GOAL, change nothing
+sentinel --report        STATE only: print the open plan beads, change nothing
 sentinel --summon-only   CHECK 7 alone                                  (spira-summon.service;
                          every aeon unit's ExecStopPost via lib.sh summon_refill_argv)
 sentinel --audit         the decoupled audit worker (CHECK 4/5/6b/7c/7d), started by the
@@ -101,8 +103,8 @@ other first argument, or none, means a full pass. The one second argument read i
 
 | exit | when |
 |---|---|
-| 0 | the pass ran to its end. That includes the `goal reached` pass, every `--summon-only` pass whether it summoned or declined, `--report`, and `--audit` |
-| 1 | `DATABASE UNREADABLE` (the bulk store read failed) or `GOAL UNRESOLVABLE` (SPIRA_GOAL names no bead). Both are skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also, with `lifecycle_enforce` ON, a full pass or audit run in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
+| 0 | the pass ran to its end. That includes every `--summon-only` pass whether it summoned or declined, `--report`, and `--audit` |
+| 1 | `DATABASE UNREADABLE` (the bulk store read failed), skipped under `SPIRA_SKIP_RECLAIM=1`. Also any mode when the harness itself cannot be found: the context probe failed, or lib.sh was not found (new, `FATAL` line). Also, with `lifecycle_enforce` ON, a full pass or audit run in which the lifecycle machine could not be read or written (`LIFECYCLE UNREACHABLE`); that pass still runs every other check first |
 
 Nothing is printed on stdout except log lines, the verbatim output of the scripts it calls,
 and `--report`'s listing. The units append stdout and stderr to `$SPIRA_RUN/sentinel.log`,
@@ -114,10 +116,10 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 
 | line | parsed by |
 |---|---|
-| `state: goal=<g> open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: goal=` marks a pass start), auron-classify.py:49, cockpit-metrics.py:64,75, chamber/czar.md |
+| `state: open=<n> plan_ready=<n> in_progress=<n> aeons=<n> fayths=[<f …>]` | strand (`: state: open=` marks a pass start, `probe::PASS_MARKER`), auron-classify.py:49, cockpit-metrics.py:64,75, chamber/czar.md |
 | `CHECK7 <fayth>: not evaluated (pass budget exhausted)` (the seam emits it) | strand probe.rs:363, strand.sh:369 |
 | `ACT <msg>` for every act/progress (`summoned a <f> aeon`, `invoked reflection`, `poisoned <id> after <n> attempts`, `reclaimed <n> stale lease(s)`, …) | cockpit-metrics.py:65,69, cockpit.sh:626 |
-| `pass complete — <a> action(s), <p> progress[, goal reached]` | auron-classify.py:110 |
+| `pass complete — <a> action(s), <p> progress` | auron-classify.py:110 |
 | `summon-only pass complete — <a> action(s)`, `audit pass complete — <a> action(s), <p> progress` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-metrics.py:236 |
 | `CHECK5: …` summary lines | unpoison.sh:145 (reads sentinel.log, but CHECK 5 logs to audit.log; pre-existing, §9) |
@@ -252,7 +254,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 
 | key | default | used by |
 |---|---|---|
-| `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_GOAL` | conf.sh | everything |
+| `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_HOME` | conf.sh | everything |
 | `SPIRA_BD` | `bd` | store |
 | `BD_TIMEOUT` | 180 | every bd call (lib.sh `bdq`) |
 | `SPIRA_BDQ_CONN_RETRIES` | 2 | retry on `invalid connection` |
@@ -276,7 +278,7 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_LAND_MAXSEC` | 3600 | CHECK 6 |
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
-| `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB and goal checks, STATE, CHECK 2/2c/3/7c/7d) |
+| `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3/7c/7d) |
 | `SPIRA_SKIP_CLOSED_CHECK` | 0 | skips CHECK 5 |
 | `SPIRA_LIFECYCLE_ENFORCE` / `spira.lifecycle_enforce` | off | **the lifecycle switch** (§2.9). The unit's own environment wins (`1`/`true` = on, anything else = off). It is read from this process's original environment, not conf.sh's, which defaults it to 0. Else `spira.lifecycle_enforce` in the spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read with the spira-config library. Else off. This is the same resolution as the aeon crate (concierge/rw-aeon `aeon/src/conf.rs`). Binary presence is never consulted |
 | `SPIRA_RECLAIM_SKIP_LABEL` | `spira-waiting-operator` | OFF's CHECK 2 protection label. The key was retired by sp-i2m7y; this is its last default, kept as a literal |
@@ -353,7 +355,7 @@ lets the refill ExecStopPost, which has no environment, still work.
   derives its answer from the snapshot in-process: STATE, CHECK 2, 4, 5 and the ready cache
   here; strand and the seams through the exported snapshot files.
 - **G2. The DB check is the bulk read.** A failed `bd list --all` is `DATABASE UNREADABLE`
-  and exit 1. A pass that cannot see the graph never reports `goal reached` (sp-4fss).
+  and exit 1. A pass that cannot see the graph reports no `state:` line and no `pass complete` (sp-4fss).
 - **G3. Fail closed.** A failed `counts` makes no CHECK 4 decision this pass. The same holds
   for a failed lifecycle read of the poison set (ON), a failed ready read
   (plan_ready unknown, so neither CHECK 3 nor CHECK 8 fires on it), and an unresolvable base
@@ -447,7 +449,7 @@ enum Mode { Pass, Report, SummonOnly, Audit, OpenChildren { dry: bool } }
 All numbered checks keep their names in the tsd phase rows (`setup`, `CHECK1`, `CHECK2`,
 `CHECK2b`, `CHECK2c`, `CHECK3`, `CHECK6`, `CHECK3b`, `CHECK3c`, `CHECK7`, `CHECK8`, `end`).
 These rows are the per-check timing; the `end` phase is never flushed, so a complete pass is
-one with a `CHECK8` row (or `CHECK7`, when the goal is reached). The full
+one with a `CHECK8` row. The full
 pass writes them. The audit worker writes none: the old one crashed with
 `_phase: command not found`.
 
@@ -473,16 +475,15 @@ pass writes them. The audit worker writes none: the old one crashed with
    - Under `SPIRA_SKIP_RECLAIM≠1`, a failed `bd list --all` logs
      `DATABASE UNREADABLE — bd cannot reach <db>; state is unknown and this pass cannot close any gap`
      and exits 1.
-   - `SPIRA_GOAL` not among the rows logs
-     `GOAL UNRESOLVABLE — <goal> names no bead in <db>; this pass cannot assess completion`
-     and exits 1.
    - The raw ready read follows.
    - Under `SPIRA_SKIP_RECLAIM=1` a failed read is not fatal: that snapshot is simply not
      exported, as before.
 
 **STATE** (full pass and --report). Every value comes from the snapshot:
 
-- `open_children`: rows with `parent == goal`, `id ≠ goal` and `status ≠ closed`.
+- `open_plan` (`Snapshot::plan_open`): rows whose labels ⊇ {scope?, `plan`}, with
+  `status ≠ closed` and type not `epic`/`event` — the whole open plan backlog, wherever a
+  bead is parented. Logged as `open=`.
 - `plan_ready`: rows in the ready snapshot whose labels ⊇ {scope?, `plan`} and are disjoint
   from {`spira-poison`, ask}.
 - `plan_inprog`: `status == in_progress` and labels ⊇ {scope?, `plan`}.
@@ -492,11 +493,9 @@ Under SKIP_RECLAIM all four are 0 and empty.
 
 The pass then logs `state: …` and applies `roster_warnings`, ported: a WARN line per
 chamber fayth left out of SPIRA_FAYTHS, deduplicated by the stamp. `--report` then prints
-`\nOpen beads under <goal>:\n` and one `  <id>` line per open child (§9, B3), and exits 0.
+`\nOpen plan beads:\n` and one `  <id>` line per open plan bead (§9, B3), and exits 0.
 
-**CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5. With `n_open == 0`, log
-`goal reached — <goal> has no open children; finishing the sending`, and set the flag. This
-is not an early exit.
+**CHECK 1 — completed pilgrimages.** Runs pilgrimage.sh as §2.5.
 
 **CHECK 2 — dead workers** (skipped under SKIP_RECLAIM). OFF: `legacy.rs`, the label and `bd reclaim` (§2.9). ON: `lifecycle.rs`, described below.
 
@@ -707,7 +706,6 @@ cost 302 s against a 60 s pass budget (§5).
 
 - Audit: write `audit.status` (`SP_AUDIT_AT=<now>`, `SP_AUDIT_RC=0`), log
   `audit pass complete — <a> action(s), <p> progress`, exit 0.
-- Goal reached: log `pass complete — <a> action(s), <p> progress, goal reached`, exit 0.
 
 **CHECK 8 — judgement.** `check8_should_judge(plan_ready, plan_inprog, n_open, progressed,
 last, now, every)` decides:
@@ -917,7 +915,7 @@ named unit tests.
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
 | 39 | `spira/sending.sh:488` | `lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true` | `if [ "${SPIRA_LIFECYCLE_ENFORCE:-0}" = 1 ]; then lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true; else bdq label add "$id" content-landed >/dev/null 2>&1 \|\| true; fi` (restores CHECK 5's `content-landed` exemption in OFF mode) |
 | 40 | `strand` crate (`check.rs` `act_ghost`/`lc_holder_dead`; the wait-held exemption in `probe.rs`) | spira-lc only | behind `SPIRA_LIFECYCLE_ENFORCE`. OFF: `bd reclaim --id <id> --older-than 1s`, and the exemption reads the `spira-waiting-operator` label. That is strand's own change, not made here (§2.9 gaps) |
-| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `goal_open_children` (5528); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (attempts.sh). |
+| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (attempts.sh). |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:
@@ -993,3 +991,35 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
   SENT/HELD/KEEP/FAILED all look in `sentinel.log` for lines the audit worker writes to
   `audit.log`. Cutover row 18 fixes the first. The other two want a decision: read both
   logs, or have the audit unit append to sentinel.log.
+
+## 10. Decisions — the goal is retired (sp-k6m1m)
+
+The operator's answer to sp-2f9sa: Spira has no single goal bead; it works the backlog
+continuously. What the pass keeps, and what it drops:
+
+- **Kept: the backlog count.** `open=` is now every open plan bead (`plan_open`), not the
+  goal epic's direct children. CHECK 3 and CHECK 8 reason about it exactly as before
+  (`plan_ready == 0 && plan_inprog == 0 && open > 0` → recompute blocked / judgement), so a
+  plan bead parented nowhere — or under any epic — can now starve the plan and be judged. The
+  goal-children set was the wrong question for that already (lib.sh's own comment said so,
+  and `dispatchable_open` exists because of it).
+- **Dropped: `goal reached`.** A continuous backlog is never finished. The pass used to skip
+  CHECK 8 after `goal reached`; CHECK 8 does nothing with `open == 0` anyway, so the only
+  visible change is that the phase row `CHECK8` is written on every complete pass and the
+  `pass complete` line never carries `, goal reached`.
+- **Dropped: `GOAL UNRESOLVABLE`.** Nothing is configured that could fail to resolve.
+- **Changed: the state line.** `state: goal=<g> open=…` → `state: open=…`. strand's
+  pass-start marker moves with it (`: state: open=`, `strand::probe::PASS_MARKER`), and the
+  two Python readers of rotated logs accept one leading `<field>=<value>` so a tail that
+  still holds old passes parses.
+- **Changed: `--report`.** Prints `Open plan beads:` and the backlog ids.
+- **Bounded: what judgement is shown.** reflect.sh runs one `bd show` per id it is given.
+  A goal's children were a handful; the backlog is hundreds. CHECK 8 passes the first
+  `REFLECT_IDS` (25) and its `STARVED — <n> open` line still carries the full count. Note
+  also that production's goal (`sp-spira`) never existed, so `open` was always 0 there and
+  CHECK 3's recompute and CHECK 8's judgement never fired; with the backlog they can, still
+  rate-limited by `SPIRA_INFERENCE_EVERY`.
+- **Moved: the id prefix.** conf.sh derived `SPIRA_ID_PREFIX` from the goal's id. It is now
+  the required `[spira] id_prefix` key: `spira-config validate` — what doctor and the
+  release's pre-activate run against the config in force — refuses a `[spira]` table without
+  one, so a release cannot be activated over it (fail closed).

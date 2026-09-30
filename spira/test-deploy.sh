@@ -703,6 +703,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _toml_file="$TMP/test-deploy.toml"
 cat > "$_toml_file" <<'EOF'
 [spira]
+id_prefix = "sp"
 max_aeons = 4
 EOF
 if ! grep -q '^prod' "$_toml_file" 2>/dev/null; then
@@ -731,6 +732,7 @@ fi
 rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 cat > "$_toml_file" <<'EOF'
 [spira]
+id_prefix = "sp"
 prod = "/old/checkout/spira"
 max_aeons = 4
 EOF
@@ -788,6 +790,7 @@ rm -rf "$RELEASES"; mkdir -p "$RELEASES"
 _ord_toml="$TMP/ordering.toml"
 cat > "$_ord_toml" <<'EOF'
 [spira]
+id_prefix = "sp"
 prod = "/old/checkout/spira"
 EOF
 > "$_toml_timing_file"

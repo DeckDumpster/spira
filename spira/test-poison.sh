@@ -7,8 +7,8 @@
 #
 # THE ORIGINAL DEFECT THIS REPRODUCES. There were two predicates for "which beads are
 # ours" and they disagreed. Summoning goes through fayth_ready, which asks each persona its
-# own FAYTH_LABELS; the valve that stops a bead failing forever iterated the goal epic's
-# children. A bead carrying a partition's labels but parented outside the goal was therefore
+# own FAYTH_LABELS; the valve that stops a bead failing forever iterated one root epic's
+# children. A bead carrying a partition's labels but parented outside that epic was therefore
 # dispatchable and unpoisonable — summoned every pass, failing every time, never reaching the
 # valve that exists to stop exactly that.
 #
@@ -32,10 +32,11 @@
 # a green result cannot be a check that only happens to work for the one partition it was
 # written against.
 #
-# EVERY CASE HERE IS A PAIR, because the whole defect is a set that LOOKS complete. Each
-# poisoned bead is also asserted absent from goal_open_children — that is the proof the old
-# code could not have found it — and each bead the valve must leave alone is paired with one
-# it must take (law-absence-needs-a-positive-control).
+# EVERY CASE HERE IS A PAIR, because the whole defect is a set that LOOKS complete. The
+# unparented bead and an epic's child are both asserted IN the dispatchable set the valve
+# iterates (the old epic-children predicate, deleted with the goal in sp-k6m1m, held only the
+# child), and each bead the valve must leave alone is paired with one it must take
+# (law-absence-needs-a-positive-control).
 #
 # The database is a REAL bd on a fixture dropped by a trap, because what is under test is
 # which beads a query returns and a model of bd would be a second implementation of the
@@ -230,7 +231,7 @@ sentinel() {
     audit_out="$(
         SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO="$REPO" \
-        SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
+        SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
@@ -240,7 +241,7 @@ sentinel() {
     normal_out="$(
         SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO="$REPO" \
-        SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
+        SPIRA_FAYTHS="${ROSTER:-t tinc}" SPIRA_INFERENCE_EVERY=0 \
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
@@ -253,7 +254,7 @@ sentinel() {
 # lib.sh under the same configuration, so the two set predicates can be asked directly
 # rather than inferred from a pass's output.
 predicate() {   # predicate <fn> -> that lib predicate's output under the fixture
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_GOAL=sp-goal \
+    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash -c ". \"$SH/lib.sh\"; $1" 2>/dev/null
 }
@@ -261,13 +262,13 @@ predicate() {   # predicate <fn> -> that lib predicate's output under the fixtur
 # the real tool against the real fixture repo — not a model of what it would do.
 deadlocked() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
+    SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash "$SH/attempts.sh" deadlocked "$@" 2>&1
 }
 # attempts.sh clear, same configuration — the operator's own remedy against the real store.
 clearpoison() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="${ROSTER:-t tinc}" \
+    SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash "$SH/attempts.sh" clear "$@" 2>&1
 }
 status_of() { B show "$1" --json 2>/dev/null | python3 -c '
@@ -287,7 +288,7 @@ notpoisoned() { poisoned "$2" && bad "$1" "$2 was poisoned" || ok "$1"; }
 # Parenthood is a `parent-child` dependency, which is how the live database expresses it:
 # `bd children` is an alias for `bd list --parent`, and a bare "parent" field on an import
 # row creates no edge at all.
-seed() {   # seed — the goal, one unclaimable child of it, and that child's blocker
+seed() {   # seed — a root epic, one unclaimable child of it, and that child's blocker
     testdb_reset
     # THE ASK'S SUPPRESSION AND THE LIFT'S DEDUP ARE BOTH MARKS IN THE RUN DIRECTORY, and
     # testdb_reset does not reach either — it resets the database, not $SPIRA_RUN. Without
@@ -297,11 +298,11 @@ seed() {   # seed — the goal, one unclaimable child of it, and that child's bl
     # at count 3, the exact count sp-wiyr2's lift recorded).
     rm -rf "$RUN/poison-asked" "$RUN/requeue-asked" "$RUN/reclaim-asked" "$RUN/poison-lifted"
     testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-root","title":"root epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-block","title":"the blocker","status":"open","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-open","title":"blocked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-open","depends_on_id":"sp-block","type":"blocks"}]}
+{"id":"sp-open","title":"blocked","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-root","type":"parent-child"},{"issue_id":"sp-open","depends_on_id":"sp-block","type":"blocks"}]}
 JSONL
-    mklc sp-goal sp-block sp-open
+    mklc sp-root sp-block sp-open
 }
 
 # `sp-orphan` IS the bug: it carries the builder's labels, so bd ready offers it and an aeon
@@ -313,7 +314,7 @@ JSONL
 # in_progress and back N times, matching POISON_AT=3 for orphan/kid and POISON_AT-1 for young.
 POISON_SEED=$(cat <<JSONL
 {"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-kid","title":"a child of the goal","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-kid","title":"a child of the root epic","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-root","type":"parent-child"}]}
 {"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 )
@@ -345,18 +346,14 @@ seed_poison() {
 echo "test-poison.sh"
 
 # --------------------------------------------------------------------------------------
-# THE CAUSE, ESTABLISHED BEFORE THE FIX. An in_progress child IS returned by
-# goal_open_children — so sp-orphan is not missing from that set because of a status race,
-# and a change to the status filter would be a fix to nothing.
+# THE SET THE VALVE ITERATES holds both shapes: an unparented dispatchable bead (the one the
+# old epic-children predicate missed) and an epic's child (the one it held).
 # --------------------------------------------------------------------------------------
 seed_poison
-B update sp-kid --status in_progress >/dev/null 2>&1
-want "goal_open_children returns in_progress beads too" "sp-kid" "$(predicate goal_open_children)"
-B update sp-kid --status open >/dev/null 2>&1
-nowant "a dispatchable unparented bead is not among the goal's children" \
-       "sp-orphan" "$(predicate goal_open_children)"
-want   "but it IS in the set the summoner can dispatch" \
+want   "an unparented dispatchable bead IS in the set the summoner can dispatch" \
        "sp-orphan" "$(predicate dispatchable_open)"
+want   "and so is an epic's child" \
+       "sp-kid" "$(predicate dispatchable_open)"
 
 # --------------------------------------------------------------------------------------
 # THE VALVE COVERS THAT SET.
@@ -380,7 +377,7 @@ nowant "the event mail is not in the operator mailbox" "kind: bead.poisoned" "$(
 # held and takes the `;;` branch — the spira_event call is never reached.
 : > "$MAIL_LOG"; out="$(sentinel)"
 nowant "an already-poisoned bead emits nothing new to mail" "3 in_progress" "$(cat "$MAIL_LOG")"
-ispoisoned  "a goal child at the threshold is poisoned too"    sp-kid
+ispoisoned  "an epic's child at the threshold is poisoned too"  sp-kid
 notpoisoned "and a bead below the threshold is left alone"     sp-young
 want        "the check names the size of the set it examined"  "CHECK4 examining" "$out"
 

@@ -111,7 +111,7 @@ unsent() {    # unsent <fixture-file>
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_BDJSON_FIXTURE="$1" \
         cockpit.sh unsent 2>/dev/null

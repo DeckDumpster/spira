@@ -220,7 +220,6 @@ spira/test-tsd-producers.sh
 spira/test-unclaimable.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
-spira/test-watch-notify.sh
 spira/test-watch-refresh.sh
 spira/test-withdrawn-suites-recert.sh
 spira/test-work-container.sh

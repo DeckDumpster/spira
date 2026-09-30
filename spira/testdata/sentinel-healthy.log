@@ -1,418 +1,418 @@
-2026-09-06T15:40:19Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:40:19Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:40:53Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:40:53Z spira: ACT summoned a builder aeon
 2026-09-06T15:40:54Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:40:54Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:42:19Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:42:19Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:42:47Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:42:47Z spira: ACT summoned a builder aeon
 2026-09-06T15:42:47Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:42:47Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:44:39Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:44:39Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:45:06Z spira: governor [measure]: WOULD withhold — cpu 20% idle, floor 25% (not enforcing)
 2026-09-06T15:45:08Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:45:08Z spira: ACT summoned a builder aeon
 2026-09-06T15:45:09Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:45:09Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:46:44Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:46:44Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:47:12Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:47:12Z spira: ACT summoned a builder aeon
 2026-09-06T15:47:13Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:47:13Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:49:09Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:49:09Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:49:39Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:49:39Z spira: ACT summoned a builder aeon
 2026-09-06T15:49:40Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:49:40Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:51:15Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:51:15Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:51:47Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:51:47Z spira: ACT summoned a builder aeon
 2026-09-06T15:51:47Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:51:47Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:53:15Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:53:15Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:53:47Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:53:47Z spira: ACT summoned a builder aeon
 2026-09-06T15:53:48Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:53:48Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:55:23Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:55:23Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:55:54Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:55:54Z spira: ACT summoned a builder aeon
 2026-09-06T15:55:55Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:55:55Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:57:36Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:57:36Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T15:58:08Z spira: CHECK7 builder: 13 ready, 2 free — summoning
 2026-09-06T15:58:08Z spira: ACT summoned a builder aeon
 2026-09-06T15:58:08Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T15:58:08Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T15:59:36Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
+2026-09-06T15:59:36Z spira: state: open=12 plan_ready=14 in_progress=0 aeons=0 fayths=[builder ops ]
 2026-09-06T16:00:07Z spira: CHECK7 builder: 14 ready, 2 free — summoning
 2026-09-06T16:00:07Z spira: ACT summoned a builder aeon
 2026-09-06T16:00:07Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:00:07Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T16:01:38Z spira: state: goal=sp-spira open=12 plan_ready=14 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T16:01:38Z spira: state: open=12 plan_ready=14 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T16:02:09Z spira: CHECK7 builder: 13 ready, 1 free — summoning
 2026-09-06T16:02:09Z spira: ACT summoned a builder aeon
 2026-09-06T16:02:09Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:02:09Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T16:03:39Z spira: state: goal=sp-spira open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:03:39Z spira: state: open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:04:11Z spira: CHECK7 builder: 12 ready, at concurrency cap
 2026-09-06T16:04:11Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:04:11Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:05:39Z spira: state: goal=sp-spira open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:05:39Z spira: state: open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:06:08Z spira: CHECK7 builder: 12 ready, at concurrency cap
 2026-09-06T16:06:08Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:06:08Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:07:40Z spira: state: goal=sp-spira open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:07:40Z spira: state: open=12 plan_ready=13 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:08:10Z spira: CHECK7 builder: 11 ready, at concurrency cap
 2026-09-06T16:08:10Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:08:10Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:09:51Z spira: state: goal=sp-spira open=11 plan_ready=12 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:09:51Z spira: state: open=11 plan_ready=12 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:10:23Z spira: CHECK7 builder: 12 ready, 1 free — summoning
 2026-09-06T16:10:23Z spira: ACT summoned a builder aeon
 2026-09-06T16:10:23Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:10:23Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T16:12:02Z spira: state: goal=sp-spira open=12 plan_ready=12 in_progress=3 aeons=2 fayths=[builder ops ]
+2026-09-06T16:12:02Z spira: state: open=12 plan_ready=12 in_progress=3 aeons=2 fayths=[builder ops ]
 2026-09-06T16:12:12Z spira: ACT reopened sp-pane-input — does not rebase onto origin/main
 2026-09-06T16:12:31Z spira: CHECK7 builder: 11 ready, at concurrency cap
 2026-09-06T16:12:31Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:12:31Z spira: pass complete — 1 action(s), 1 progress
-2026-09-06T16:14:08Z spira: state: goal=sp-spira open=12 plan_ready=22 in_progress=3 aeons=2 fayths=[builder ops ]
+2026-09-06T16:14:08Z spira: state: open=12 plan_ready=22 in_progress=3 aeons=2 fayths=[builder ops ]
 2026-09-06T16:14:40Z spira: CHECK7 builder: 21 ready, at concurrency cap
 2026-09-06T16:14:41Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:14:41Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:16:08Z spira: state: goal=sp-spira open=12 plan_ready=22 in_progress=3 aeons=2 fayths=[builder ops ]
+2026-09-06T16:16:08Z spira: state: open=12 plan_ready=22 in_progress=3 aeons=2 fayths=[builder ops ]
 2026-09-06T16:16:41Z spira: CHECK7 builder: 21 ready, at concurrency cap
 2026-09-06T16:16:41Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:16:41Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:18:18Z spira: state: goal=sp-spira open=12 plan_ready=22 in_progress=3 aeons=0 fayths=[builder ops ]
+2026-09-06T16:18:18Z spira: state: open=12 plan_ready=22 in_progress=3 aeons=0 fayths=[builder ops ]
 2026-09-06T16:18:21Z spira: ACT handled 1 stranded item(s)
 2026-09-06T16:18:53Z spira: ACT CI red on sp-pd-grepq — handed back to the queue at P0
 2026-09-06T16:18:53Z spira: CHECK7 builder: 22 ready, 2 free — summoning
 2026-09-06T16:18:53Z spira: ACT summoned a builder aeon
 2026-09-06T16:18:54Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:18:54Z spira: pass complete — 3 action(s), 2 progress
-2026-09-06T16:20:23Z spira: state: goal=sp-spira open=12 plan_ready=22 in_progress=3 aeons=0 fayths=[builder ops ]
+2026-09-06T16:20:23Z spira: state: open=12 plan_ready=22 in_progress=3 aeons=0 fayths=[builder ops ]
 2026-09-06T16:20:27Z spira: ACT poisoned sp-pd-grepq after 3 attempts
 2026-09-06T16:20:56Z spira: CHECK7 builder: 21 ready, 2 free — summoning
 2026-09-06T16:20:56Z spira: ACT summoned a builder aeon
 2026-09-06T16:20:57Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:20:57Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T16:22:39Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=4 aeons=0 fayths=[builder ops ]
+2026-09-06T16:22:39Z spira: state: open=12 plan_ready=21 in_progress=4 aeons=0 fayths=[builder ops ]
 2026-09-06T16:23:09Z spira: CHECK7 builder: 20 ready, 2 free — summoning
 2026-09-06T16:23:09Z spira: ACT summoned a builder aeon
 2026-09-06T16:23:09Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:23:09Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T16:24:59Z spira: state: goal=sp-spira open=12 plan_ready=20 in_progress=5 aeons=0 fayths=[builder ops ]
+2026-09-06T16:24:59Z spira: state: open=12 plan_ready=20 in_progress=5 aeons=0 fayths=[builder ops ]
 2026-09-06T16:25:29Z spira: CHECK7 builder: 19 ready, 2 free — summoning
 2026-09-06T16:25:29Z spira: ACT summoned a builder aeon
 2026-09-06T16:25:29Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:25:29Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T16:27:19Z spira: state: goal=sp-spira open=12 plan_ready=19 in_progress=6 aeons=1 fayths=[builder ops ]
+2026-09-06T16:27:19Z spira: state: open=12 plan_ready=19 in_progress=6 aeons=1 fayths=[builder ops ]
 2026-09-06T16:27:24Z spira: ACT handled 2 stranded item(s)
 2026-09-06T16:28:00Z spira: CHECK7 builder: 20 ready, 1 free — summoning
 2026-09-06T16:28:00Z spira: ACT summoned a builder aeon
 2026-09-06T16:28:01Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:28:01Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T16:29:29Z spira: state: goal=sp-spira open=12 plan_ready=20 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:29:29Z spira: state: open=12 plan_ready=20 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:30:07Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:30:07Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:30:07Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:31:39Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:31:39Z spira: state: open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:32:13Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:32:13Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:32:13Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:34:01Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:34:01Z spira: state: open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:34:46Z spira: governor [measure]: WOULD withhold — cpu 14% idle, floor 25% (not enforcing)
 2026-09-06T16:34:48Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:34:48Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:34:48Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:36:10Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:36:10Z spira: state: open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:36:55Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:36:55Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:36:55Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:38:10Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:38:10Z spira: state: open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:38:48Z spira: governor [measure]: WOULD withhold — cpu 7% idle, floor 25% (not enforcing)
 2026-09-06T16:38:49Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:38:49Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:38:49Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:40:20Z spira: state: goal=sp-spira open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:40:20Z spira: state: open=12 plan_ready=21 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:40:58Z spira: governor [measure]: WOULD withhold — cpu 24% idle, floor 25% (not enforcing)
 2026-09-06T16:41:00Z spira: CHECK7 builder: 20 ready, at concurrency cap
 2026-09-06T16:41:01Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:41:01Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:42:20Z spira: state: goal=sp-spira open=12 plan_ready=23 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:42:20Z spira: state: open=12 plan_ready=23 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:43:01Z spira: CHECK7 builder: 23 ready, at concurrency cap
 2026-09-06T16:43:01Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:43:01Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:44:28Z spira: state: goal=sp-spira open=12 plan_ready=23 in_progress=5 aeons=2 fayths=[builder ops ]
+2026-09-06T16:44:28Z spira: state: open=12 plan_ready=23 in_progress=5 aeons=2 fayths=[builder ops ]
 2026-09-06T16:45:04Z spira: governor [measure]: WOULD withhold — cpu 12% idle, floor 25% (not enforcing)
 2026-09-06T16:45:05Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:45:05Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:45:05Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:46:30Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:46:30Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:47:08Z spira: governor [measure]: WOULD withhold — cpu 12% idle, floor 25% (not enforcing)
 2026-09-06T16:47:09Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:47:09Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:47:09Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:48:40Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:48:40Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:49:41Z spira: governor [measure]: WOULD withhold — cpu 4% idle, floor 25% (not enforcing)
 2026-09-06T16:49:43Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:49:43Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:49:43Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:51:00Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:51:00Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:51:39Z spira: governor [measure]: WOULD withhold — a CI runner is busy (not enforcing)
 2026-09-06T16:51:40Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:51:40Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:51:40Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:53:01Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:53:01Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:54:32Z spira: governor [measure]: WOULD withhold — a CI runner is busy (not enforcing)
 2026-09-06T16:54:34Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:54:35Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:54:35Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:55:04Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:55:04Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:56:16Z spira: governor [measure]: WOULD withhold — cpu 7% idle, floor 25% (not enforcing)
 2026-09-06T16:56:17Z spira: CHECK7 builder: 26 ready, at concurrency cap
 2026-09-06T16:56:17Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:56:17Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:57:03Z spira: state: goal=sp-spira open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:57:03Z spira: state: open=12 plan_ready=26 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:58:15Z spira: governor [measure]: WOULD withhold — cpu 23% idle, floor 25% (not enforcing)
 2026-09-06T16:58:17Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T16:58:18Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:58:18Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T16:59:02Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T16:59:02Z spira: state: open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T16:59:38Z spira: governor [measure]: WOULD withhold — a CI runner is busy (not enforcing)
 2026-09-06T16:59:40Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T16:59:40Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T16:59:40Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:01:08Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:01:08Z spira: state: open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:01:47Z spira: governor [measure]: WOULD withhold — cpu 6% idle, floor 25% (not enforcing)
 2026-09-06T17:01:48Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T17:01:49Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:01:49Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:03:10Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:03:10Z spira: state: open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:03:51Z spira: governor [measure]: WOULD withhold — cpu 14% idle, floor 25% (not enforcing)
 2026-09-06T17:03:52Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T17:03:52Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:03:52Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:05:09Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:05:09Z spira: state: open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:05:45Z spira: governor [measure]: WOULD withhold — cpu 10% idle, floor 25% (not enforcing)
 2026-09-06T17:05:46Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T17:05:46Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:05:46Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:07:10Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T17:07:10Z spira: state: open=12 plan_ready=27 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T17:08:09Z spira: governor [measure]: WOULD withhold — a CI runner is busy (not enforcing)
 2026-09-06T17:08:10Z spira: CHECK7 builder: 27 ready, 1 free — summoning
 2026-09-06T17:08:10Z spira: ACT summoned a builder aeon
 2026-09-06T17:08:11Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:08:11Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T17:09:12Z spira: state: goal=sp-spira open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:09:12Z spira: state: open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:10:23Z spira: CHECK7 builder: 25 ready, at concurrency cap
 2026-09-06T17:10:24Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:10:24Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:11:13Z spira: state: goal=sp-spira open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:11:13Z spira: state: open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:11:52Z spira: governor [measure]: WOULD withhold — cpu 3% idle, floor 25% (not enforcing)
 2026-09-06T17:11:53Z spira: CHECK7 builder: 25 ready, at concurrency cap
 2026-09-06T17:11:53Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:11:53Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:13:15Z spira: state: goal=sp-spira open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:13:15Z spira: state: open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:14:01Z spira: governor [measure]: WOULD withhold — cpu 19% idle, floor 25% (not enforcing)
 2026-09-06T17:14:02Z spira: CHECK7 builder: 25 ready, at concurrency cap
 2026-09-06T17:14:03Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:14:03Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:15:33Z spira: state: goal=sp-spira open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:15:33Z spira: state: open=11 plan_ready=25 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:16:44Z spira: CHECK7 builder: 25 ready, at concurrency cap
 2026-09-06T17:16:44Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:16:44Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:17:31Z spira: state: goal=sp-spira open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:17:31Z spira: state: open=12 plan_ready=27 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:17:42Z spira: ACT reopened sp-2tv — failed the gate
 2026-09-06T17:17:42Z spira: ACT reopened sp-pd-grepq — does not rebase onto origin/master
 2026-09-06T17:18:08Z spira: governor [measure]: WOULD withhold — cpu 15% idle, floor 25% (not enforcing)
 2026-09-06T17:18:08Z spira: CHECK7 builder: 27 ready, at concurrency cap
 2026-09-06T17:18:09Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:18:09Z spira: pass complete — 2 action(s), 2 progress
-2026-09-06T17:19:32Z spira: state: goal=sp-spira open=11 plan_ready=28 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:19:32Z spira: state: open=11 plan_ready=28 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:20:05Z spira: governor [measure]: WOULD withhold — cpu 22% idle, floor 25% (not enforcing)
 2026-09-06T17:20:06Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:20:07Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:20:07Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:21:33Z spira: state: goal=sp-spira open=12 plan_ready=30 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:21:33Z spira: state: open=12 plan_ready=30 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:21:43Z spira: ACT reopened sp-pd-grepq — does not rebase onto origin/master
 2026-09-06T17:22:07Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:22:08Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:22:08Z spira: pass complete — 1 action(s), 1 progress
-2026-09-06T17:23:39Z spira: state: goal=sp-spira open=11 plan_ready=29 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T17:23:39Z spira: state: open=11 plan_ready=29 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T17:24:16Z spira: CHECK7 builder: 29 ready, 1 free — summoning
 2026-09-06T17:24:16Z spira: ACT summoned a builder aeon
 2026-09-06T17:24:17Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:24:17Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T17:25:41Z spira: state: goal=sp-spira open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:25:41Z spira: state: open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:26:13Z spira: CHECK7 builder: 28 ready, at concurrency cap
 2026-09-06T17:26:13Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:26:13Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:27:44Z spira: state: goal=sp-spira open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:27:44Z spira: state: open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:28:16Z spira: CHECK7 builder: 28 ready, at concurrency cap
 2026-09-06T17:28:16Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:28:16Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:29:46Z spira: state: goal=sp-spira open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:29:46Z spira: state: open=11 plan_ready=28 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:29:55Z spira: ACT landed spira/sp-mdm
 2026-09-06T17:30:17Z spira: ACT reaped 1 landed branch(es)
 2026-09-06T17:30:22Z spira: governor [measure]: WOULD withhold — cpu 23% idle, floor 25% (not enforcing)
 2026-09-06T17:30:23Z spira: CHECK7 builder: 28 ready, at concurrency cap
 2026-09-06T17:30:23Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:30:23Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T17:32:08Z spira: state: goal=sp-spira open=11 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:32:08Z spira: state: open=11 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:32:42Z spira: CHECK7 builder: 29 ready, at concurrency cap
 2026-09-06T17:32:43Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:32:43Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:34:12Z spira: state: goal=sp-spira open=11 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:34:12Z spira: state: open=11 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:34:45Z spira: CHECK7 builder: 30 ready, 1 free — summoning
 2026-09-06T17:34:45Z spira: ACT summoned a builder aeon
 2026-09-06T17:34:45Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:34:45Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T17:36:14Z spira: state: goal=sp-spira open=10 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:36:14Z spira: state: open=10 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:36:48Z spira: ACT reaped 1 landed branch(es)
 2026-09-06T17:36:55Z spira: CHECK7 builder: 29 ready, at concurrency cap
 2026-09-06T17:36:55Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:36:55Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T17:38:37Z spira: state: goal=sp-spira open=10 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:38:37Z spira: state: open=10 plan_ready=29 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:38:48Z spira: ACT landed spira/sp-gatecost
 2026-09-06T17:39:13Z spira: governor [measure]: WOULD withhold — cpu 20% idle, floor 25% (not enforcing)
 2026-09-06T17:39:14Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:39:14Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:39:14Z spira: pass complete — 1 action(s), 1 progress
-2026-09-06T17:40:38Z spira: state: goal=sp-spira open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:40:38Z spira: state: open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:41:20Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:41:20Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:41:20Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:42:38Z spira: state: goal=sp-spira open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:42:38Z spira: state: open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:43:22Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:43:22Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:43:22Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:44:39Z spira: state: goal=sp-spira open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:44:39Z spira: state: open=10 plan_ready=30 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:45:13Z spira: CHECK7 builder: 30 ready, at concurrency cap
 2026-09-06T17:45:14Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:45:14Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:46:39Z spira: state: goal=sp-spira open=10 plan_ready=31 in_progress=1 aeons=2 fayths=[builder ops ]
+2026-09-06T17:46:39Z spira: state: open=10 plan_ready=31 in_progress=1 aeons=2 fayths=[builder ops ]
 2026-09-06T17:47:13Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T17:47:13Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:47:13Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:48:39Z spira: state: goal=sp-spira open=10 plan_ready=33 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T17:48:39Z spira: state: open=10 plan_ready=33 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T17:49:15Z spira: CHECK7 builder: 35 ready, 2 free — summoning
 2026-09-06T17:49:15Z spira: ACT summoned a builder aeon
 2026-09-06T17:49:16Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:49:16Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T17:50:44Z spira: state: goal=sp-spira open=10 plan_ready=34 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T17:50:44Z spira: state: open=10 plan_ready=34 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T17:50:54Z spira: ACT reopened sp-repo-move — does not rebase onto origin/main
 2026-09-06T17:51:19Z spira: CHECK7 builder: 34 ready, 1 free — summoning
 2026-09-06T17:51:19Z spira: ACT summoned a builder aeon
 2026-09-06T17:51:20Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:51:20Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T17:52:49Z spira: state: goal=sp-spira open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:52:49Z spira: state: open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:53:26Z spira: governor [measure]: WOULD withhold — cpu 8% idle, floor 25% (not enforcing)
 2026-09-06T17:53:26Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T17:53:27Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:53:27Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:54:49Z spira: state: goal=sp-spira open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:54:49Z spira: state: open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:54:58Z spira: ACT landed spira/sp-a9g
 2026-09-06T17:55:24Z spira: ACT reaped 1 landed branch(es)
 2026-09-06T17:55:30Z spira: CHECK7 builder: 32 ready, at concurrency cap
 2026-09-06T17:55:31Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:55:31Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T17:56:59Z spira: state: goal=sp-spira open=10 plan_ready=32 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:56:59Z spira: state: open=10 plan_ready=32 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:57:32Z spira: CHECK7 builder: 32 ready, at concurrency cap
 2026-09-06T17:57:33Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:57:33Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T17:59:09Z spira: state: goal=sp-spira open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T17:59:09Z spira: state: open=10 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T17:59:43Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T17:59:44Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T17:59:44Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:01:19Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T18:01:19Z spira: state: open=9 plan_ready=33 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T18:01:54Z spira: CHECK7 builder: 33 ready, 1 free — summoning
 2026-09-06T18:01:54Z spira: ACT summoned a builder aeon
 2026-09-06T18:01:55Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:01:55Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T18:03:20Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:03:20Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:04:01Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:04:02Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:04:02Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:05:26Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:05:26Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:05:59Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:05:59Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:05:59Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:07:27Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:07:27Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:08:05Z spira: ACT reaped 1 landed branch(es)
 2026-09-06T18:08:11Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:08:12Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:08:12Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T18:09:28Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:09:28Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:09:37Z spira: ACT landed spira/sp-pane-input
 2026-09-06T18:10:05Z spira: governor [measure]: WOULD withhold — cpu 13% idle, floor 25% (not enforcing)
 2026-09-06T18:10:06Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:10:07Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:10:07Z spira: pass complete — 1 action(s), 1 progress
-2026-09-06T18:11:29Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:11:29Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:12:00Z spira: governor [measure]: WOULD withhold — cpu 19% idle, floor 25% (not enforcing)
 2026-09-06T18:12:01Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:12:01Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:12:01Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:13:31Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:13:31Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:14:11Z spira: governor [measure]: WOULD withhold — cpu 21% idle, floor 25% (not enforcing)
 2026-09-06T18:14:12Z spira: CHECK7 builder: 33 ready, at concurrency cap
 2026-09-06T18:14:13Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:14:13Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:15:39Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:15:39Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:16:12Z spira: CHECK7 builder: 35 ready, at concurrency cap
 2026-09-06T18:16:12Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:16:12Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:17:46Z spira: state: goal=sp-spira open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:17:46Z spira: state: open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:18:31Z spira: governor [measure]: WOULD withhold — cpu 24% idle, floor 25% (not enforcing)
 2026-09-06T18:18:32Z spira: CHECK7 builder: 35 ready, at concurrency cap
 2026-09-06T18:18:32Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:18:32Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:19:48Z spira: state: goal=sp-spira open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:19:48Z spira: state: open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:20:22Z spira: governor [measure]: WOULD withhold — cpu 15% idle, floor 25% (not enforcing)
 2026-09-06T18:20:23Z spira: CHECK7 builder: 35 ready, at concurrency cap
 2026-09-06T18:20:24Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:20:24Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:21:56Z spira: state: goal=sp-spira open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:21:56Z spira: state: open=9 plan_ready=35 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:22:28Z spira: CHECK7 builder: 35 ready, at concurrency cap
 2026-09-06T18:22:28Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:22:28Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:23:57Z spira: state: goal=sp-spira open=9 plan_ready=35 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T18:23:57Z spira: state: open=9 plan_ready=35 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T18:24:33Z spira: governor [measure]: WOULD withhold — cpu 14% idle, floor 25% (not enforcing)
 2026-09-06T18:24:35Z spira: CHECK7 builder: 35 ready, 1 free — summoning
 2026-09-06T18:24:35Z spira: ACT summoned a builder aeon
 2026-09-06T18:24:35Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:24:35Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T18:25:57Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:25:57Z spira: state: open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:26:32Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:26:32Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:26:32Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:28:17Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=1 aeons=1 fayths=[builder ops ]
+2026-09-06T18:28:17Z spira: state: open=9 plan_ready=34 in_progress=1 aeons=1 fayths=[builder ops ]
 2026-09-06T18:28:51Z spira: CHECK7 builder: 34 ready, 1 free — summoning
 2026-09-06T18:28:51Z spira: ACT summoned a builder aeon
 2026-09-06T18:28:51Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:28:51Z spira: pass complete — 1 action(s), 0 progress
-2026-09-06T18:30:18Z spira: state: goal=sp-spira open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:30:18Z spira: state: open=9 plan_ready=33 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:30:27Z spira: ACT landed spira/sp-37q
 2026-09-06T18:30:59Z spira: ACT reaped 1 landed branch(es)
 2026-09-06T18:31:05Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:31:05Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:31:05Z spira: pass complete — 2 action(s), 1 progress
-2026-09-06T18:32:18Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:32:18Z spira: state: open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:32:28Z spira: ACT reopened sp-purge-collector — failed the gate
 2026-09-06T18:32:51Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:32:51Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:32:51Z spira: pass complete — 1 action(s), 1 progress
-2026-09-06T18:34:35Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:34:35Z spira: state: open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:35:07Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:35:07Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:35:07Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:36:39Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:36:39Z spira: state: open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:37:10Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:37:10Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:37:10Z spira: pass complete — 0 action(s), 0 progress
-2026-09-06T18:38:59Z spira: state: goal=sp-spira open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
+2026-09-06T18:38:59Z spira: state: open=9 plan_ready=34 in_progress=2 aeons=2 fayths=[builder ops ]
 2026-09-06T18:39:29Z spira: CHECK7 builder: 34 ready, at concurrency cap
 2026-09-06T18:39:29Z spira: CHECK7 ops: nothing ready in its partition
 2026-09-06T18:39:29Z spira: pass complete — 0 action(s), 0 progress

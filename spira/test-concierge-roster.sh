@@ -151,6 +151,7 @@ HOOK="$HERE/hooks/session.sh"
 # in-force guard passes; everything else is moved to non-defaults.
 HOOK_CONF="$SID_HOOK_DIR/spira.conf"
 cat > "$HOOK_CONF" <<EOF
+SPIRA_ID_PREFIX = sp
 SPIRA_PROD = $HERE
 SPIRA_RUN = $SID_HOOK_DIR/run
 SPIRA_WATCHERS = $SID_HOOK_DIR/no-watchers
@@ -215,6 +216,7 @@ SID_LINK_DIR="$TMP/hookrun_link"; mkdir -p "$SID_LINK_DIR/run"
 ln -sfn "$HERE" "$SID_LINK_DIR/spira-link"
 HOOK_CONF_LINK="$SID_LINK_DIR/spira.conf"
 cat > "$HOOK_CONF_LINK" <<EOF
+SPIRA_ID_PREFIX = sp
 SPIRA_PROD = $SID_LINK_DIR/spira-link
 SPIRA_RUN = $SID_LINK_DIR/run
 SPIRA_WATCHERS = $SID_LINK_DIR/no-watchers

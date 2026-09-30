@@ -72,7 +72,7 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/launch"; chmod +x "$TMP/launch"
 sentinel() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
+    SPIRA_FAYTHS="t" SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no.conf" PATH="$SH:$PATH" \
@@ -98,9 +98,9 @@ echo "SCENARIO 1: EJECTED-NOT-REQUEUED — CHECK6 reopens a closed+EJECTED bead:
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-ej","title":"ejected closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-ej","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-open","title":"open with ejected landstate","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
+{"id":"sp-ej","title":"ejected closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-ej","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-open","title":"open with ejected landstate","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-ej.log" "$RUN/sp-open.log"
 
@@ -138,9 +138,9 @@ echo "SCENARIO 2: LANDSTATE PRUNE — orphaned landstate file removed each pass:
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-pruned","title":"no branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-pruned","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-kept","title":"has branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-kept","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
+{"id":"sp-pruned","title":"no branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-pruned","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-kept","title":"has branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-kept","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-pruned.log" "$RUN/sp-kept.log"
 
@@ -211,7 +211,7 @@ else
 
     testdb_reset
     testdb_seed <<JSONL2
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["$SCOPE"],"updated_at":"$PAST"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["$SCOPE"],"updated_at":"$PAST"}
 {"id":"sp-old","title":"stranded","status":"closed","priority":1,"closed_at":"$AGO200","labels":["$SCOPE","plan","repo:alpha"]}
 {"id":"sp-new","title":"awaiting","status":"closed","priority":1,"closed_at":"$AGO5","labels":["$SCOPE","plan","repo:alpha"]}
 JSONL2
@@ -222,7 +222,7 @@ JSONL2
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" \
         SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
         cockpit.sh once 2>/dev/null)"
 

@@ -47,7 +47,7 @@ print(" ".join(d[0].get("labels") or []) if d else "")'
 }
 
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 
 echo "test-express-lane.sh"
@@ -59,7 +59,7 @@ echo "bead.sh file --express — express label on filed bead"
 # POSITIVE CONTROL: filing without --express produces no express label.
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "express test bead" \
@@ -73,7 +73,7 @@ fi
 # FILING WITH --express: label must appear.
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "express test bead" \
@@ -92,7 +92,7 @@ echo "P0 does not imply express — priority is not a designation"
 # ======================================================================================
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "P0 blocker" \
@@ -108,7 +108,7 @@ fi
 # Pair: P0 + --express still gets the label, explicitly.
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "P0 blocker, express" \
@@ -124,7 +124,7 @@ fi
 # Pair: P1 does NOT get express automatically.
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "P1 no express" \
@@ -141,7 +141,7 @@ echo "bead.sh amend --express — express label added to existing bead"
 # ======================================================================================
 testdb_reset
 testdb_seed <<'SEED'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 SEED
 out="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
     bash "$SH/bead.sh" file "amend target" \

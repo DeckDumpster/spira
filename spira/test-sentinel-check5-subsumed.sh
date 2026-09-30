@@ -82,7 +82,7 @@ printf '%s | %s | pr | main | |\n' "$HOME_REPO" "$REPO" > "$TMP/repo-map"
 run_sentinel() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$HOME_REPO" \
-    SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t SPIRA_INFERENCE_EVERY=999999 \
+    SPIRA_FAYTHS=t SPIRA_INFERENCE_EVERY=999999 \
     SPIRA_NOTIFY="$SH/ask.sh" SPIRA_REPO_MAP="$TMP/repo-map" \
     SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
     SPIRA_CONF="$TMP/no-such-conf" \
@@ -105,8 +105,8 @@ echo "harness can detect a filing at all — law-absence-needs-a-positive-contro
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-bare","title":"bare closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-bare","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-bare","title":"bare closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-bare","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-bare.log"
 rm -f "$RUN/landstate/sp-bare"
@@ -123,8 +123,8 @@ echo "(modelled on sp-9geby). EXPECTED TO FAIL on unpatched sentinel.sh (sp-9mcl
 # ======================================================================================
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-subs","title":"subsumed bead","status":"closed","issue_type":"task","close_reason":"Swept 2026-09-26 by the Concierge: SUBSUMED by epic sp-pswer (bead lifecycle rewrite).","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-subs","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-subs","title":"subsumed bead","status":"closed","issue_type":"task","close_reason":"Swept 2026-09-26 by the Concierge: SUBSUMED by epic sp-pswer (bead lifecycle rewrite).","labels":["spira","plan","repo:$HOME_REPO"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-subs","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 touch "$RUN/sp-subs.log"
 rm -f "$RUN/landstate/sp-subs"

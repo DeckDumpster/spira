@@ -49,7 +49,7 @@ run_repo_labels() {    # run_repo_labels <fixture-file> [KEY=val ...]
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BDJSON_FIXTURE="$fixture" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_ASK_LABEL=needs-ryan \
         "$@" \
         cockpit.sh repo_labels 2>/dev/null

@@ -103,10 +103,10 @@ chmod +x "$B_SH/forge-fixture.sh"
 printf '%s | %s | queue | origin/master | | |\n' "$B_REPONAME" "$B_REPO" > "$B_SH/repo-map"
 
 testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 # A batch member is open and submitted (sp-1346p): a closed bead's CERTIFIED record is stale.
-printf '{"id":"sp-mbase","title":"master-base fix","status":"open","issue_type":"task","labels":["express","spira-submitted"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+printf '{"id":"sp-mbase","title":"master-base fix","status":"open","issue_type":"task","labels":["express","spira-submitted"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-mbase","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
     | testdb_seed
 
 git -C "$B_REPO" worktree add -q -b spira/sp-mbase "$B_RUN/worktree/sp-mbase" master
@@ -233,9 +233,9 @@ printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/con
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/skew.sh"; chmod +x "$L_SH/skew.sh"
 
 testdb_seed <<'JSONL'
-{"id":"sp-goal2","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic2","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
-printf '{"id":"sp-lbase","title":"landing master-base","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lbase","depends_on_id":"sp-goal2","type":"parent-child"}]}\n' \
+printf '{"id":"sp-lbase","title":"landing master-base","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-lbase","depends_on_id":"sp-epic2","type":"parent-child"}]}\n' \
     | testdb_seed
 
 git -C "$L_REPO" worktree add -q -b spira/sp-lbase "$L_RUN/worktree/sp-lbase" master

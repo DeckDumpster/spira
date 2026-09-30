@@ -60,7 +60,7 @@ echo "clean pass produces no stderr:"
 
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira","plan"]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 JSONL
 
 clean_err="$(SPIRA_HOME="$SH" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \

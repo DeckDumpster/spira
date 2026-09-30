@@ -5,6 +5,8 @@
 [spira]
 home_repo = "home"
 db = "~/.local/share/spira/db"
+# Required: the prefix of this installation's own bead ids, without the hyphen.
+id_prefix = "sp"
 operator = "the operator"
 # literal-ok: the shipped example demonstrates the schema's own default label names
 ask_label = "needs-operator"

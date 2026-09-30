@@ -415,7 +415,7 @@ WARN does not.
 | 1 | the sentinel timer is active | fails |
 | 2 | the world is not halted | fails |
 | 3 | the database is readable and shipped statutes are in force | fails |
-| 4 | `sentinel.sh --report` names an open bead under `SPIRA_GOAL` | WARN if none |
+| 4 | `sentinel --report` names an open plan bead | WARN if none |
 | 5 | Loom answers 200 at `/api/beads` inside its budget | fails |
 | 6 | the configured agent binary is present | WARN by design — an ephemeral install is valid without a credentialled agent |
 | 7 | the two tagged tmux panes are present | WARN by design — the loop runs without a terminal surface |
@@ -583,7 +583,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `rule.sh` | enacting a statute writes the beads KV store, which is the harness's substrate |
 | `spira/archive.sh` | keeps every session transcript and indexes it by time range and by the lineage id that survives a clear. The mechanism ships; the transcripts and the store they land in are the operator's own and stay out of every repository |
 | `beads-push.sh` | pushes the beads database to its configured Dolt remote. The mechanism ships; the remote it is pointed at is the operator's own and is private |
-| `spira.conf.example` | the annotated template an operator copies to spira.conf. Every key optional, every default derived from where the harness is installed |
+| `spira.conf.example` | the annotated template an operator copies to spira.conf. Every key but SPIRA_ID_PREFIX optional, every other default derived from where the harness is installed |
 | `README.md` | the harness's own entry point, carrying this table |
 | `AGENTS.md`, `CLAUDE.md` | how an agent works ON the harness. Distinct from the wiki repository's own agent instructions, which are how an overseer works WITH it |
 

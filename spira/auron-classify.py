@@ -45,8 +45,9 @@ import sys
 LINE = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)Z spira: (.*)$")
 # `plan_ready` today; `ready` in the passes written before the plan's count was named
 # apart from every fayth's own. Accepting both costs one `(?:plan_)?` and is the
-# difference between reading a rotated-in older tail and misreading it.
-STATE = re.compile(r"^state: goal=\S+ open=(\d+) (?:plan_)?ready=(\d+) in_progress=(\d+) aeons=(\d+)")
+# difference between reading a rotated-in older tail and misreading it. The same holds for
+# the one leading `<field>=<value>` older passes carried before `open=` (sp-k6m1m dropped it).
+STATE = re.compile(r"^state: (?:\w+=\S+ )?open=(\d+) (?:plan_)?ready=(\d+) in_progress=(\d+) aeons=(\d+)")
 
 # The three things a pass can say about summoning, and only the first is a summon.
 # CHECK 7 logs exactly one line per fayth per pass, so their ABSENCE means the pass

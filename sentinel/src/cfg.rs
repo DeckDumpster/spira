@@ -209,7 +209,6 @@ pub struct Cfg {
     pub home: PathBuf,
     pub run: PathBuf,
     pub db: String,
-    pub goal: String,
     pub bd: String,
     pub bd_timeout: u64,
     pub bd_tries: u32,
@@ -324,7 +323,6 @@ impl Cfg {
         Cfg {
             run: run.clone(),
             db: s("SPIRA_DB"),
-            goal: s("SPIRA_GOAL"),
             bd: or("SPIRA_BD", "bd"),
             bd_timeout: num("BD_TIMEOUT", 180).max(0) as u64,
             bd_tries: num("SPIRA_BDQ_CONN_RETRIES", 2).max(1) as u32,

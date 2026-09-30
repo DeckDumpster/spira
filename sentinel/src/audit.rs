@@ -6,6 +6,11 @@ use crate::host::{Io, Spec};
 use crate::pass::Sentinel;
 use crate::seams;
 
+/// How many open plan beads judgement is shown. reflect.sh reads each one with its own
+/// `bd show`, and the backlog is the whole open plan (hundreds), not one epic's handful of
+/// children (sp-k6m1m) — so it gets a bounded sample, and the STARVED line carries the total.
+pub const REFLECT_IDS: usize = 25;
+
 /// Judgement's pure predicate (lib.sh `check8_should_judge`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Judge {
@@ -213,7 +218,7 @@ impl<'a> Sentinel<'a> {
         plan_ready: Option<usize>,
         plan_inprog: usize,
         n_open: usize,
-        open_children: &[String],
+        open_plan: &[String],
     ) {
         let now = self.h.now();
         let cd = self.cfg.run.join("inference.cooldown");
@@ -245,7 +250,7 @@ impl<'a> Sentinel<'a> {
                 self.h.run(
                     Spec::args_owned(
                         self.script("reflect.sh").to_string_lossy().into_owned(),
-                        vec![open_children.join("\n")],
+                        vec![open_plan[..open_plan.len().min(REFLECT_IDS)].join("\n")],
                     )
                     .out(Io::Append(log.clone()))
                     .err(Io::Append(log)),

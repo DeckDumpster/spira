@@ -179,11 +179,15 @@ impl Snapshot {
         self.index.get(id).map(|&i| &self.list[i])
     }
 
-    /// goal_open_children: the goal epic's direct children that are not closed.
-    pub fn goal_open_children(&self, goal: &str) -> Vec<String> {
+    /// The open plan backlog: every bead carrying `<scope,>plan` that is not closed and is
+    /// work (not an epic or event). Spira works this whole backlog continuously — there is
+    /// no goal epic whose children stand for "the work" (sp-k6m1m) — so this is what the
+    /// pass reports as `open` and what CHECK 3 and CHECK 8 reason about.
+    pub fn plan_open(&self, cfg: &Cfg) -> Vec<String> {
+        let need = cfg.plan_labels();
         self.list
             .iter()
-            .filter(|b| b.parent.as_deref() == Some(goal) && b.id != goal && b.status != "closed")
+            .filter(|b| b.status != "closed" && !matches!(b.typ(), "epic" | "event") && has_all(b, &need))
             .map(|b| b.id.clone())
             .collect()
     }
@@ -410,7 +414,15 @@ mod tests {
     #[test]
     fn state_comes_from_the_snapshot() {
         let s = snap();
-        assert_eq!(s.goal_open_children("g"), vec!["a"]);
+        assert_eq!(
+            s.plan_open(&cfg("spira")),
+            vec!["a", "c", "d"],
+            "open and in-progress plan work, poisoned included; closed rows, epics and unlabelled rows are not the backlog"
+        );
+        assert!(
+            s.plan_open(&cfg("other")).is_empty(),
+            "another scope's plan beads are not this backlog"
+        );
         assert_eq!(
             s.plan_ready(&cfg("spira")),
             Some(1),

@@ -31,7 +31,7 @@ run_cockpit() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         "$@" \
         cockpit.sh once 2>/dev/null
 }
@@ -83,7 +83,7 @@ rm -f "$RUN/cockpit.env"
 env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
     cockpit.sh once >/dev/null 2>&1
 if [ -f "$RUN/cockpit.env" ]; then
@@ -131,7 +131,7 @@ may_write() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" COCKPIT="$HERE/cockpit.sh" \
         "$@" \
         bash -c '. "$COCKPIT"; cockpit_may_write && echo 1 || echo 0' "$HERE/test-cockpit.sh" 2>/dev/null
@@ -142,7 +142,7 @@ run_loop_guard() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" COCKPIT="$HERE/cockpit.sh" \
         "$@" \
         bash -c '. "$COCKPIT"; _loop_guard' "$HERE/test-cockpit.sh"
@@ -180,7 +180,7 @@ TRACE
 rl_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     cockpit.sh ratelim 2>/dev/null)"
 
 want  "five_hour utilisation present"        "SP_RATELIM_5H="     "$rl_out"
@@ -202,7 +202,7 @@ EMPTY_RUN="$TMP/empty-run"; mkdir -p "$EMPTY_RUN"
 rl_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$EMPTY_RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     cockpit.sh ratelim 2>/dev/null)"
 
 want "SP_RATELIM_5H is '?'" "SP_RATELIM_5H=?" "$rl_empty"

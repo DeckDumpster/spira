@@ -137,7 +137,7 @@ the base in a throwaway tree, run the red suite, and eject the one that fails.
 **Case 11 — Starved partition** (czar-trigger cause: `starved`): strand found ready
 work in a partition with no serving aeons for longer than `${SPIRA_STRAND_GRACE:-900}`
 seconds. Read the last sentinel pass in `{{RUN}}/sentinel.log` (the lines from the most
-recent `state: goal=` entry onward) to find CHECK7's stated reason, then act:
+recent `state: open=` entry onward) to find CHECK7's stated reason, then act:
 
 - **throttle** (`queue-throttled` stamp present): the admission throttle is holding
   builders at zero. The queue is not advancing — also check for DEADLOCK or LOOP-STALLED.

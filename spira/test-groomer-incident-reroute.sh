@@ -58,7 +58,6 @@ run_sweep() {
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
@@ -94,10 +93,10 @@ git -C "$REPO" worktree remove --force "$TMP/wt-code"
 git -C "$REPO" branch -q sp-ir-empty-branch "$BASE_SHA"
 
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"]}
-{"id":"sp-ir-code","title":"incident with a real fix already committed","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME","branch:sp-ir-code-branch"],"dependencies":[{"issue_id":"sp-ir-code","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-ir-nocommit","title":"incident claimed but nothing written yet","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME","branch:sp-ir-empty-branch"],"dependencies":[{"issue_id":"sp-ir-nocommit","depends_on_id":"sp-goal","type":"parent-child"}]}
-{"id":"sp-ir-nobranch","title":"incident never claimed, no branch label","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-ir-nobranch","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"]}
+{"id":"sp-ir-code","title":"incident with a real fix already committed","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME","branch:sp-ir-code-branch"],"dependencies":[{"issue_id":"sp-ir-code","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-ir-nocommit","title":"incident claimed but nothing written yet","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME","branch:sp-ir-empty-branch"],"dependencies":[{"issue_id":"sp-ir-nocommit","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-ir-nobranch","title":"incident never claimed, no branch label","status":"open","issue_type":"task","labels":["spira","incident","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-ir-nobranch","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 
 # ==========================================================================================

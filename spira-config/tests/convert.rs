@@ -216,12 +216,12 @@ fn run_convert(args: &[&str]) -> std::process::Output {
 }
 
 const EXISTING_TWO_REPOS_TWO_FAYTHS: &str = "\
-[spira]\nfayths = [\"a\", \"b\"]\n\n\
+[spira]\nid_prefix = \"sp\"\nfayths = [\"a\", \"b\"]\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n\n\
 [repo.beta]\npath = \"/tmp/beta\"\nmode = \"push\"\n";
 
 const EXISTING_ONE_REPO_TWO_FAYTHS: &str = "\
-[spira]\nfayths = [\"a\", \"b\"]\n\n\
+[spira]\nid_prefix = \"sp\"\nfayths = [\"a\", \"b\"]\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
 
 const ONE_ROW_REPO_MAP: &str = "alpha | /tmp/alpha | push | origin/main | | true | plan\n";
@@ -234,7 +234,7 @@ fn convert_over_an_equal_document_still_writes() {
     let dir = scratch_dir("equal");
     let out = dir.join("spira.toml");
     let conf = dir.join("spira.conf");
-    fs::write(&conf, "SPIRA_FAYTHS = a b\n").unwrap();
+    fs::write(&conf, "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n").unwrap();
     fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
 
     let result = run_convert(&[
@@ -268,7 +268,7 @@ fn convert_refuses_to_shrink_repo_tables() {
     let dir = scratch_dir("shrink-repos");
     let out = dir.join("spira.toml");
     fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a b\n");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -295,7 +295,7 @@ fn convert_refuses_to_shrink_fayths() {
     let dir = scratch_dir("shrink-fayths");
     let out = dir.join("spira.toml");
     fs::write(&out, EXISTING_ONE_REPO_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a\n");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -323,7 +323,7 @@ fn convert_force_shrink_overrides_the_refusal() {
     let dir = scratch_dir("force-shrink");
     let out = dir.join("spira.toml");
     fs::write(&out, EXISTING_TWO_REPOS_TWO_FAYTHS).unwrap();
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a b\n");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a b\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -351,7 +351,7 @@ fn convert_force_shrink_overrides_the_refusal() {
 fn convert_write_is_atomic_no_leftover_temp_file() {
     let dir = scratch_dir("atomic");
     let out = dir.join("spira.toml");
-    let conf = write_tmp(&dir, "spira.conf", "SPIRA_FAYTHS = a\n");
+    let conf = write_tmp(&dir, "spira.conf", "SPIRA_ID_PREFIX = sp\nSPIRA_FAYTHS = a\n");
     let repo_map = write_tmp(&dir, "repo-map", ONE_ROW_REPO_MAP);
 
     let result = run_convert(&[
@@ -385,7 +385,7 @@ fn convert_write_is_atomic_no_leftover_temp_file() {
 // ----------------------------------------------------------------------------------------
 
 const EXISTING_SPIRA_SCALAR_AND_REPO: &str = "\
-[spira]\nfayths = [\"builder\"]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n\n\
+[spira]\nid_prefix = \"sp\"\nfayths = [\"builder\"]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n\n\
 [repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"push\"\n";
 
 // No [repo.*] table and an empty `fayths` list, so shrink_reason's two counters (the only
@@ -395,7 +395,7 @@ const EXISTING_SPIRA_SCALAR_AND_REPO: &str = "\
 // hit: SPIRA_BATCH_MEM_PER_SUITE_MIB and SPIRA_BD reverted to "unset"/PATH default with the
 // convert call reporting no error at all.
 const EXISTING_SPIRA_SCALAR_ONLY: &str =
-    "[spira]\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n";
+    "[spira]\nid_prefix = \"sp\"\nbatch_mem_per_suite_mib = 256\nbd = \"/custom/bd\"\n";
 
 #[test]
 fn fayth_only_convert_preserves_existing_spira_scalars_and_repo_tables() {
@@ -509,7 +509,7 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
 // SPIRA_BATCHER_BIN keeps the cuts off as batcher_enable = "0".
 #[test]
 fn retired_tool_path_keys_convert_with_a_warning() {
-    let (doc, warnings) = convert("SPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
         .expect("retired keys never refuse the convert");
     assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
     assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
@@ -520,7 +520,7 @@ fn retired_tool_path_keys_convert_with_a_warning() {
 // unset conf carries no mail_mute at all, matching "default off, mail flows normally".
 #[test]
 fn legacy_mail_mute_converts_to_the_typed_key() {
-    let (doc, warnings) = convert("SPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=1\n", "/opt/fixture-home", "", &[])
         .expect("a known key must not refuse the convert");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
     assert_eq!(doc.spira.as_ref().unwrap().mail_mute, Some(true));
@@ -529,14 +529,14 @@ fn legacy_mail_mute_converts_to_the_typed_key() {
 #[test]
 fn mail_mute_absent_by_default() {
     let (doc, warnings) =
-        convert("SPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
+        convert("SPIRA_ID_PREFIX = sp\nSPIRA_HOME_REPO=home\n", "/opt/fixture-home", "", &[]).expect("converts");
     assert!(warnings.0.is_empty(), "{:?}", warnings.0);
     assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
 }
 
 #[test]
 fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
-    let (doc, warnings) = convert("SPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_MAIL_MUTE=maybe\n", "/opt/fixture-home", "", &[])
         .expect("a bad value warns, it does not refuse the whole convert");
     assert_eq!(doc.spira.as_ref().unwrap().mail_mute, None);
     assert!(
@@ -544,4 +544,30 @@ fn mail_mute_bad_value_warns_not_a_spelling_the_key_accepts() {
         "{:?}",
         warnings.0
     );
+}
+
+// sp-k6m1m: the goal is retired — a legacy SPIRA_GOAL converts with a warning and lands
+// nowhere — and the id prefix it used to imply must now be written in: a conf that sets
+// anything without SPIRA_ID_PREFIX is refused rather than converted into a document every
+// reader would refuse.
+#[test]
+fn a_legacy_goal_is_retired_with_a_warning() {
+    let (doc, warnings) = convert("SPIRA_ID_PREFIX = sp\nSPIRA_GOAL = sp-spira\n", "/opt/fixture-home", "", &[])
+        .expect("a retired key never refuses the convert");
+    assert!(warnings.0.iter().any(|w| w.contains("SPIRA_GOAL is retired (sp-k6m1m")), "{:?}", warnings.0);
+    let rendered = toml::to_string_pretty(&doc).unwrap();
+    assert!(!rendered.contains("goal"), "{rendered}");
+    assert_eq!(doc.spira.as_ref().unwrap().id_prefix.as_deref(), Some("sp"));
+}
+
+#[test]
+fn a_conf_without_an_id_prefix_converts_and_strict_validation_refuses_it() {
+    let (doc, _) = convert("SPIRA_HOME_REPO = home\nSPIRA_GOAL = sp-spira\n", "/opt/fixture-home", "", &[])
+        .expect("converts; the refusal is validate's");
+    let text = toml::to_string_pretty(&doc).unwrap();
+    let err = spira_config::validate_strict(&text).unwrap_err();
+    assert!(err.starts_with("spira.id_prefix: required"), "{err}");
+    // Positive control: the same conf with the prefix passes strict validation.
+    let (doc, _) = convert("SPIRA_HOME_REPO = home\nSPIRA_ID_PREFIX = sp\n", "/opt/fixture-home", "", &[]).expect("converts");
+    spira_config::validate_strict(&toml::to_string_pretty(&doc).unwrap()).expect("valid");
 }

@@ -149,7 +149,7 @@ printf 'CERTIFIED none %s' "$NOW" > "$LANDSTATE/sp-contradiction"
 # ── repo configuration: spira.conf + repo-map, AND a spira.toml sibling ──────────────
 CONF_HOME="$TMP/home-conf"
 mkdir -p "$CONF_HOME"
-printf 'SPIRA_HOME_REPO=demo\n' > "$CONF_HOME/spira.conf"
+printf 'SPIRA_ID_PREFIX=sp\nSPIRA_HOME_REPO=demo\n' > "$CONF_HOME/spira.conf"
 printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CONF_HOME/repo-map"
 
 TOML_HOME="$TMP/home-toml"

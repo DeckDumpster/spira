@@ -61,7 +61,7 @@ SPIRA_CONF_LOADED=1
 # judged, and pass. The environment may still override both: that is the seam every suite
 # drives a fixture through, and it is explicit rather than ambient.
 SPIRA_CONF_KEYS="
-SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN SPIRA_GOAL
+SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN
 SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS SPIRA_WATCHERS_OVERLAY SPIRA_OVERRIDES
 SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_NOTIFY_AGE SPIRA_WAKE
 SPIRA_CLIENT_SETTINGS SPIRA_CTRL
@@ -222,7 +222,6 @@ SPIRA_GH_INTAKE_REPO
 SPIRA_GH_REPO
 SPIRA_GIT_EMAIL
 SPIRA_GIT_NAME
-SPIRA_GOAL
 SPIRA_GROOM_ASK_LABEL
 SPIRA_GROOMER_LABEL
 SPIRA_GROOM_THRESHOLD
@@ -846,7 +845,6 @@ spira_conf_defaults() {
     # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.
     : "${SPIRA_CONCIERGE_INBOX_STALL:=600}"
     : "${SPIRA_CONCIERGE_INBOX_BACKOFF:=3600}"
-    : "${SPIRA_GOAL:=sp-spira}"
     : "${SPIRA_PATH:=}"
     # Git checkout: workspaces is the parent of SPIRA_REPO. Artifact deployment: SPIRA_REPO
     # is a release dir inside the releases directory, so workspaces is two levels up — one
@@ -919,9 +917,11 @@ spira_conf_defaults() {
     # once at 145 of 1825 rows carrying the local prefix. What proves the wrong database is
     # that NOT ONE local id appears. This generalises the guard the mirror exporter carries.
     #
-    # Derived from the goal epic rather than written in, because the goal is a bead in this
-    # database and therefore already answers the question.
-    : "${SPIRA_ID_PREFIX:=${SPIRA_GOAL%%-*}}"
+    # WRITTEN IN, NEVER DERIVED (sp-k6m1m). It used to be cut from the goal epic's id; the
+    # goal is retired (Spira works the whole backlog), and `spira-config validate` (doctor,
+    # the release's pre-activate) refuses a [spira] table without `id_prefix`. Unset here
+    # means no config file named one.
+    : "${SPIRA_ID_PREFIX:=}"
     # HOW LONG A HEALTH COMMAND MAY RUN, in seconds. A probe is an operator-supplied command
     # run by `watchd.sh status`, and `status` is what a session hook runs at every start — so
     # an unbounded one hangs the opening of a context window rather than merely being slow.
@@ -2409,7 +2409,6 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_GH_INTAKE_BEAD_REPO \
     SPIRA_GH_INTAKE_PRIORITY \
     SPIRA_GH_INTAKE_REPO \
-    SPIRA_GOAL \
     SPIRA_GROOM_ASK_LABEL \
     SPIRA_INCIDENT_LABEL \
     SPIRA_INCIDENT_PRIORITY \

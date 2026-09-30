@@ -127,6 +127,7 @@ echo "CONFLICT 4a: instance argument disagrees with config SPIRA_INSTANCE"
 # ===========================================================================
 CONF4="$TMP/spira.conf"
 cat > "$CONF4" <<EOF
+SPIRA_ID_PREFIX = sp
 SPIRA_INSTANCE = prod
 EOF
 

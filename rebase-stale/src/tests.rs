@@ -677,9 +677,9 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     // thread forks makes the exec fail with ETXTBSY (testkit/DESIGN.md).
     testkit::write_exe(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
     let bd = fx.root.join("bd");
-    testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-goal) echo '[{\"status\":\"open\"}]';; sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
+    testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
 
-    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into(), "sp-goal".into());
+    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into());
     s.queue_bin = queue;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
@@ -697,6 +697,6 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
 
     assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("in_progress".into()));
     assert_eq!(s.bead_status("sp-unknown"), BeadStatus::Known(String::new()));
-    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into(), "sp-goal".into());
+    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into());
     assert_eq!(dead.bead_status("sp-ip"), BeadStatus::Unreachable, "no positive control, no absence");
 }

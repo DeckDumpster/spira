@@ -53,7 +53,7 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 # configuration (law-gates-run-in-a-clean-environment).
 CONF="$TMP/spira.conf"
 RUN="$TMP/run"
-printf 'SPIRA_RUN = %s\n' "$RUN" > "$CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\n' "$RUN" > "$CONF"
 # REPO_MAP PINNED (empty for now) BEFORE THE FIRST SOURCE BELOW: an unset SPIRA_REPO_MAP
 # falls back to this checkout's own real repo-map, auto-converting it into this fixture's
 # spira.toml — and every later, smaller fixture conversion then trips spira-config convert's
