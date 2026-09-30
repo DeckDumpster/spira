@@ -74,9 +74,15 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
+# sp-g9mhe: bead.sh is now a shim onto the Rust `bead` binary, and sources conf.sh (which may
+# shell out to `spira-config`) before it even gets there — so the narrowed PATH below needs
+# spira-config's (and bead's own) directory the same way test-bead-contract.sh's fixture
+# already does, not just $HERE/usr/bin/bin.
+TOOLS="$(command -v spira-config)" && TOOLS="$(dirname "$TOOLS")"
+
 run_bead() {
     : > "$BD_LOG"
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${TOOLS:+$TOOLS:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
