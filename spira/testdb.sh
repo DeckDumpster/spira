@@ -73,6 +73,9 @@ _testdb_kv() { printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -1; }
 # The check itself is slow (it runs bd init), so the result is memoised for the session.
 _TESTDB_EMBEDDED_RESULT=""
 
+# The probe itself (a throwaway `bd init`) is testenv's `embedded-check` (DESIGN-testdb.md
+# §6, sp-k2oyn); this function only memoises the boolean for the session, since the probe
+# is slow enough that every testdb_up call must not re-pay it.
 _testdb_embedded_check() {   # 0 if bd-embedded works on this box
     if [ "$_TESTDB_EMBEDDED_RESULT" = yes ]; then return 0; fi
     if [ "$_TESTDB_EMBEDDED_RESULT" = no  ]; then return 1; fi
@@ -81,15 +84,9 @@ _testdb_embedded_check() {   # 0 if bd-embedded works on this box
        [ -d "${TESTDB_DIR:-}" ]; then
         _TESTDB_EMBEDDED_RESULT=yes; return 0
     fi
-    if command -v "$TESTDB_BD" >/dev/null 2>&1; then
-        local tmp; tmp="$(mktemp -d)"
-        if ( cd "$tmp" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb BD_NON_INTERACTIVE=1 \
-            "$TESTDB_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks -q \
-            2>/dev/null ); then
-            rm -rf "$tmp"
-            _TESTDB_EMBEDDED_RESULT=yes; return 0
-        fi
-        rm -rf "$tmp"
+    local _te
+    if _te="$(_testdb_testenv)" && "$_te" testdb embedded-check --bd "$TESTDB_BD" >/dev/null 2>&1; then
+        _TESTDB_EMBEDDED_RESULT=yes; return 0
     fi
     _TESTDB_EMBEDDED_RESULT=no; return 1
 }
@@ -153,15 +150,23 @@ testdb_up() {            # testdb_up <tag>
     if [ "${TESTDB_SHARED:-0}" = 1 ] && [ -n "${TESTDB_NAME:-}" ] && \
        [ -n "${TESTDB_BASELINE:-}" ] && [ "${TESTDB_MODE:-}" != server ] && \
        [ "${SPIRA_TESTDB_MODE:-}" != server ]; then
-        TESTDB_PRIVATE_DIR="$(mktemp -d)"
-        cp -rp "$TESTDB_BASELINE/.beads" "$TESTDB_PRIVATE_DIR/.beads" 2>/dev/null || {
-            rm -rf "$TESTDB_PRIVATE_DIR"; TESTDB_PRIVATE_DIR=""
-            printf 'testdb: could not copy baseline for shared fixture %s\n' "$TESTDB_NAME" >&2
+        local _te _out
+        _te="$(_testdb_testenv)" || {
+            printf 'testdb: no testenv binary for a shared fixture\n' >&2
             exit "${TESTDB_FAULT_EXIT:-75}"
         }
-        [ -d "$TESTDB_PRIVATE_DIR/.beads" ] || {
-            rm -rf "$TESTDB_PRIVATE_DIR"; TESTDB_PRIVATE_DIR=""
-            printf 'testdb: shared fixture baseline is empty — fixture collapsed\n' >&2
+        # The copy-and-validate logic lives in testenv now (DESIGN-testdb.md §6,
+        # sp-k2oyn); any failure — gone baseline, empty baseline — is a fixture fault.
+        _out="$("$_te" testdb embedded-borrow --baseline "$TESTDB_BASELINE" 2>/dev/null)" || {
+            TESTDB_PRIVATE_DIR=""
+            printf 'testdb: could not build shared fixture %s from %s\n' \
+                "$TESTDB_NAME" "$TESTDB_BASELINE" >&2
+            exit "${TESTDB_FAULT_EXIT:-75}"
+        }
+        TESTDB_PRIVATE_DIR="$(_testdb_kv TESTDB_PRIVATE_DIR "$_out")"
+        [ -n "$TESTDB_PRIVATE_DIR" ] && [ -d "$TESTDB_PRIVATE_DIR" ] || {
+            TESTDB_PRIVATE_DIR=""
+            printf 'testdb: embedded-borrow reported no fixture for %s\n' "$TESTDB_NAME" >&2
             exit "${TESTDB_FAULT_EXIT:-75}"
         }
         printf 'testdb: baseline copy from %s\n' "$TESTDB_BASELINE" >&2
@@ -192,63 +197,52 @@ testdb_up() {            # testdb_up <tag>
     if [ "${SPIRA_TESTDB_MODE:-}" = server ]; then
         :
     elif _testdb_embedded_check; then
-        # EMBEDDED MODE: private tmpdir, cleanup is rm -rf.
+        # EMBEDDED MODE: private tmpdir, cleanup is rm -rf. The init (env -i, so a gate or
+        # test never inherits BEADS_ACTOR and friends — law-gates-run-in-a-clean-environment),
+        # the baseline snapshot, and the bd PATH shim are all testenv's now
+        # (DESIGN-testdb.md §6, sp-k2oyn); this call site only marshals args and exports
+        # the report, exactly as the server-mode branch below already did.
         TESTDB_MODE=embedded
-        TESTDB_NAME="sptest_${tag}_$(date +%s)_$$"
-        TESTDB_DIR="$(mktemp -d)"
-        # env -i is deliberate. A gate, a check or a test invoked by automation runs in an
-        # explicit minimal environment, never the caller's: BEADS_ACTOR and friends leak into
-        # `created_by` and `owner`, and ambient configuration silently deciding a verdict is
-        # exactly law-gates-run-in-a-clean-environment.
-        # THE FAILURE MUST CARRY ITS REASON. Errors go to stderr, where a gate capturing
-        # output can still see them.
-        local init_out init_rc
-        init_out="$( cd "$TESTDB_DIR" && env -i PATH="$PATH" HOME="$HOME" TERM=dumb \
-            BD_NON_INTERACTIVE=1 \
-            "$TESTDB_BD" init --non-interactive --prefix sp --skip-agents --skip-hooks \
-            -q 2>&1 )"
-        init_rc=$?
-        [ $init_rc -eq 0 ] || {
-            printf 'testdb: bd init failed (rc=%s) for %s in %s\n' \
-                "$init_rc" "$TESTDB_NAME" "$TESTDB_DIR" >&2
-            printf '%s\n' "$init_out" | sed 's/^/testdb:   /' >&2
-            rm -rf "$TESTDB_DIR"; TESTDB_DIR=""; TESTDB_NAME=""; return 1
+        local _te _out
+        _te="$(_testdb_testenv)" || {
+            printf 'testdb: no testenv binary for an embedded fixture\n' >&2; return 1; }
+        _out="$("$_te" testdb embedded-up --tag "$tag" --bd "$TESTDB_BD")" || {
+            printf 'testdb: embedded fixture failed for %s\n' "$tag" >&2
+            TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
+            return 1
         }
-
-        # THE BASELINE IS A SNAPSHOT OF .beads AT INIT TIME. Reset replaces .beads with
-        # this copy, so every reset is identical to a fresh init without the 6s cost.
-        TESTDB_BASELINE="$(mktemp -d)"
-        cp -rp "$TESTDB_DIR/.beads" "$TESTDB_BASELINE/.beads"
-        [ -d "$TESTDB_BASELINE/.beads" ] || {
-            printf 'testdb: baseline snapshot failed for %s\n' "$TESTDB_NAME" >&2
-            rm -rf "$TESTDB_DIR" "$TESTDB_BASELINE"
-            TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_NAME=""
+        TESTDB_NAME="$(_testdb_kv TESTDB_NAME "$_out")"
+        TESTDB_DIR="$(_testdb_kv TESTDB_DIR "$_out")"
+        TESTDB_BASELINE="$(_testdb_kv TESTDB_BASELINE "$_out")"
+        TESTDB_BIN="$(_testdb_kv TESTDB_BIN "$_out")"
+        local _bd_abs; _bd_abs="$(_testdb_kv TESTDB_BD "$_out")"
+        [ -n "$TESTDB_NAME" ] && [ -d "$TESTDB_DIR" ] || {
+            printf 'testdb: embedded-up reported no fixture:\n%s\n' "$_out" >&2
+            TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
             return 1
         }
 
         # MAKE `bd` RESOLVE TO THE EMBEDDED BINARY IN THIS PROCESS TREE. Test suites call
         # `bd` directly (not through bdq) for helper functions; without this, those calls
         # hit the production binary (CGO_ENABLED=0) which cannot open the embedded store.
-        # A symlink in a private tempdir prepended to PATH intercepts all bare `bd`
-        # invocations for the life of the test while leaving every other command untouched.
+        # testenv already built TESTDB_BIN (a private dir with a `bd` symlink); prepending
+        # it to PATH intercepts every bare `bd` invocation for the life of the test while
+        # leaving every other command untouched.
         #
-        # SPIRA_PATH AS WELL AS PATH. conf.sh line 700 rebuilds PATH from scratch:
+        # SPIRA_PATH AS WELL AS PATH. conf.sh rebuilds PATH from scratch:
         #   export PATH="${SPIRA_PATH:+$SPIRA_PATH:}$HOME/.local/bin:..."
         # Any child process that sources conf.sh (including aeon.sh when it runs as a
         # subprocess of a test suite) loses a bare PATH modification. conf.sh honors
         # SPIRA_PATH from the environment (env-first `:=` pattern), so prepending
         # TESTDB_BIN there makes the shim survive conf.sh resets in every child.
-        local _bd_real; _bd_real="$(command -v "$TESTDB_BD" 2>/dev/null)"
-        if [ -n "$_bd_real" ]; then
-            TESTDB_BIN="$(mktemp -d)"
-            ln -sf "$_bd_real" "$TESTDB_BIN/bd"
+        if [ -n "$TESTDB_BIN" ]; then
             export PATH="$TESTDB_BIN:$PATH"
             export SPIRA_PATH="$TESTDB_BIN${SPIRA_PATH:+:$SPIRA_PATH}"
         fi
 
         # Full path: conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin; a bare name
         # unreachable after that rebuild (e.g. private HOME in a parallel gate suite) fails.
-        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="${_bd_real:-$TESTDB_BD}"
+        export SPIRA_DB="$TESTDB_DIR" SPIRA_BD="${_bd_abs:-$TESTDB_BD}"
         return 0
     fi
 
@@ -294,31 +288,16 @@ testdb_reset() {
             printf 'testdb: server reset failed for %s\n' "$TESTDB_NAME" >&2; return 1; }
         return 0
     fi
-    # Embedded mode: directory swap using rename rather than rm-then-cp.
-    #
-    # WHY NOT rm -rf THEN cp -rp. Two hazards in sequence:
-    #   1. rm -rf can fail with ENOTEMPTY on overlay2 filesystems (a known Docker
-    #      kernel bug where the rename-based unlink of a whiteout entry conflicts
-    #      with a concurrent readdir). The failure is non-fatal to rm itself but
-    #      leaves the directory partially populated.
-    #   2. cp -rp into an EXISTING directory copies the source AS A SUBDIRECTORY,
-    #      not over it. If step 1 left .beads alive, step 2 creates .beads/.beads,
-    #      and the next reset then fails to remove the nested copy — compounding
-    #      the damage across every subsequent call (sp-i0vz5).
-    #
-    # mv (rename(2)) is atomic, does not recurse, and has no overlay2 edge case.
-    # The strategy: copy baseline to a fresh sibling name, rename old out of the
-    # way, rename new into place. Only the final cleanup rm can still fail, and
-    # by that point the live database is already in the correct state.
-    [ -d "$TESTDB_BASELINE/.beads" ] || return 1
+    # Embedded mode: testenv does the directory swap (DESIGN-testdb.md §6, sp-k2oyn) —
+    # copy baseline to a fresh sibling, rename the old .beads aside, rename the new one
+    # into place. rename(2) is atomic and does not recurse, unlike rm-then-cp: rm -rf can
+    # leave .beads partially removed on an overlay2 whiteout race, and a cp into a
+    # directory that survived that copies AS a subdirectory, nesting .beads/.beads and
+    # compounding on every later reset (sp-i0vz5).
     local _td; _td="${TESTDB_PRIVATE_DIR:-$TESTDB_DIR}"
-    local _new; _new="$_td/.beads.new"
-    local _old; _old="$_td/.beads.old"
-    rm -rf "$_new" "$_old"   # clean up any leftovers from a previous interrupted reset
-    cp -rp "$TESTDB_BASELINE/.beads" "$_new" || { rm -rf "$_new"; return 1; }
-    mv "$_td/.beads" "$_old" 2>/dev/null || true   # no-op when .beads absent
-    mv "$_new" "$_td/.beads"                       || return 1
-    rm -rf "$_old" 2>/dev/null || true
+    local _te
+    _te="$(_testdb_testenv)" || return 1
+    "$_te" testdb embedded-reset --dir "$_td" --baseline "$TESTDB_BASELINE" || return 1
 }
 
 testdb_seed() {          # testdb_seed  < JSONL on stdin
@@ -353,18 +332,15 @@ testdb_drop() {
         fi
         TESTDB_DIR=""
     fi
-    # Rename first; rm -rf on overlay2 whiteouts blocks ~19s and pushes past Podman's exec timeout.
-    local _d _gone
-    for _d in "${TESTDB_DIR:-}" "${TESTDB_BASELINE:-}" "${TESTDB_BIN:-}"; do
-        [ -n "$_d" ] || continue
-        [ -e "$_d" ]  || continue
-        _gone="${_d}.del-$$"
-        if mv "$_d" "$_gone" 2>/dev/null; then
-            rm -rf "$_gone" &
-        else
-            rm -rf "$_d" &
-        fi
-    done
+    # Embedded leftovers: testenv renames each path aside and removes it in a detached
+    # child (DESIGN-testdb.md §6, sp-k2oyn), so a slow overlay2 rm -rf never blocks this
+    # call past Podman's exec timeout — this shell used to background a bare `mv ... &&
+    # rm -rf ... &`; testenv now owns the detach the same way it already does for reap.
+    local _te
+    if _te="$(_testdb_testenv 2>/dev/null)"; then
+        "$_te" testdb embedded-down --dir "${TESTDB_DIR:-}" \
+            --baseline "${TESTDB_BASELINE:-}" --bin "${TESTDB_BIN:-}" 2>/dev/null || true
+    fi
     TESTDB_NAME=""; TESTDB_DIR=""; TESTDB_BASELINE=""; TESTDB_BIN=""
     TESTDB_MODE=""; TESTDB_PRIVATE_DIR=""; TESTDB_OWNS_SERVER_FIXTURE=0; TESTDB_FIXTURE=""
     return 0
