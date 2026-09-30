@@ -17,7 +17,7 @@
 # The fences ported to spira-lint (binary-path-fence, payload-argv-lint, config-fence,
 # fence-scripts, testdb-mode-lint, bd-stdin-lint, incident-cause-lint, and — sp-ekkak —
 # inventory, literal-lint, scratch-fence, wiki-add-fence, tmux-scope-fence, gh-intake-lint)
-# are no longer files here: gate-spira.sh runs "$SPIRA_LINT_BIN" --only <rule> for each, and
+# are no longer files here: gate-spira.sh runs spira-lint --only <rule> for each, and
 # refuses to land when the binary is not built.
 #
 # Sourced, never executed.

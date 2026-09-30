@@ -30,7 +30,7 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up strandreclaimn || { echo "test-strand-reclaim-n: could not build fixture database"; exit 1; }
 
 mkdir -p "$TMP/run" "$TMP/home"
-# THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does.
+# THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH.
 
 # mail.sh stub — the two rows below never reach escalation (RECLAIM_AT defaults to 5, well
 # above the single reclaim each row here earns), but a stub is cheap insurance against a

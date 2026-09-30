@@ -58,7 +58,7 @@ printf 'starved\t-\tescalate\t0 ready beads, 0 live aeons — nothing can move\t
 
 echo "sentinel ok" > "$TMP/run/sentinel.log"
 
-# THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does.
+# THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH.
 
 # COUNT_FILE: each call to our mail.sh stub atomically increments it.
 COUNT_FILE="$TMP/count"

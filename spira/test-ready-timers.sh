@@ -85,7 +85,7 @@ exit 0
 MOCK
 chmod +x "$FAKE_SPIRA_HOME/seed.sh"
 
-# The sentinel is a binary now: ready.sh runs "$SPIRA_SENTINEL_BIN" --report.
+# The sentinel is a binary now: ready.sh runs `sentinel --report` by name.
 cat > "$BIN/sentinel" <<'MOCK'
 #!/usr/bin/env bash
 if [ "${1:-}" = "--report" ]; then

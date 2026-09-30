@@ -41,7 +41,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run" "$TMP/home"
-# THE STRAND IS A BINARY (strand.sh is gone), resolved as conf.sh's spira_bin does. Its roster
+# THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH. Its roster
 # probe sources lib.sh from SPIRA_HOME, so the stub home carries the real lib.sh.
 for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -s "$HERE/$_s" "$TMP/home/$_s"; done
 

@@ -43,7 +43,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/run"
 
 # THE STRAND AND SENTINEL ARE BINARIES (strand.sh, sentinel.sh are gone), resolved as conf.sh's
-# spira_bin resolves them for this tree. Both source lib.sh from SPIRA_HOME, so each stub
+# the tree's build on PATH provides them. Both source lib.sh from SPIRA_HOME, so each stub
 # home carries the real lib.sh and what it sources.
 _libs() { local _s; for _s in lib.sh conf.sh lc.sh suite-covers.sh lifecycle-cert.sh; do ln -sf "$HERE/$_s" "$1/$_s"; done; }
 

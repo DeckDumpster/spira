@@ -251,7 +251,7 @@ testdb_reset
 } | testdb_seed
 MOCK_SC="$TMP/mock-systemctl"
 printf '#!/bin/sh\necho inactive\n' > "$MOCK_SC"; chmod +x "$MOCK_SC"
-# strand.sh is gone (the Rust cutover): the strand binary, resolved as conf.sh's spira_bin does.
+# strand.sh is gone (the Rust cutover): the strand binary, invoked by name from the tree's build on PATH.
 reset_calls
 export SPIRA_LABELS=""   # every partition, as the sentinel's own call leaves it
 out_nosnap="$(SPIRA_BD="$BD_STUB" SPIRA_SYSTEMCTL="$MOCK_SC" strand report 2>/dev/null)"

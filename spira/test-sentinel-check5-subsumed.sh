@@ -50,7 +50,7 @@ git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
 cp "$HERE/lib.sh" "$HERE/lc.sh" "$HERE/lifecycle-cert.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
-# THE RUST SENTINEL (sentinel.sh is gone): the binaries are resolved as conf.sh's spira_bin
+# THE RUST SENTINEL (sentinel.sh is gone): the binaries are invoked by name from the tree's build on PATH
 # resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
 # not the tree that built them.
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }

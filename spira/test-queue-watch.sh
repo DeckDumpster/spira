@@ -19,7 +19,7 @@
 #   4b. An idle watcher re-reads its config every tick rather than latching idle forever: a
 #       config gutted down to no queue-mode repo, then restored, is noticed and watching
 #       resumes with no restart.
-#   5. The watchd manifest row expands, and conf.sh resolves SPIRA_QUEUE_WATCH_BIN.
+#   5. The watchd manifest row expands, and names queue-watch bare.
 #
 # QUEUE_WATCH_BIN may point at another binary; pointing it at a stub that prints nothing is
 # how every assertion below was seen to fail first.

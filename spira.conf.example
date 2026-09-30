@@ -330,7 +330,6 @@
 
 # The compiled Loom binary. The default is `bin/loom` beside the installed release;
 # set this if you install it elsewhere.
-# SPIRA_LOOM_BIN = $HOME/.local/bin/loom
 
 # THE SPIKE PARTITION. A spike is a persona that researches one question to a costed document
 # and carries no conversation; these three keys are what the harness reads to find its beads,
