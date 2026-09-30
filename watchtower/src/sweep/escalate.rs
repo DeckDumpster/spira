@@ -356,7 +356,7 @@ mod tests {
             lib_sh_dir: String::new(),
             db: "db".into(),
             home_repo: "spira".into(),
-            ask_label: "needs-operator".into(),
+            ask_label: "needs-operator".into(), // literal-ok: test fixture
             snap_stale_s: 60,
             gate_window_s: 21600,
             gate_log: None,

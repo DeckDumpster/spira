@@ -88,7 +88,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         lib_sh_dir: lib_sh_dir(),
         db: getenv("SPIRA_DB").unwrap_or_default(),
         home_repo: getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
-        ask_label: getenv("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()),
+        ask_label: getenv("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()), // literal-ok: mirrors conf.sh's own derived default (this binary cannot source schema.sh)
         snap_stale_s: getenv_i64("SPIRA_SNAP_STALE_S", 60),
         gate_window_s: getenv_i64("SPIRA_WATCH_GATE_WINDOW", 21600),
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),

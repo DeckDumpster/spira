@@ -117,7 +117,7 @@ impl SweepData {
             snap_age_disp_raw: "5".to_string(),
             snap_age: Some(5),
             lapsed_count_disp: "0".to_string(),
-            ask_label: "needs-operator".to_string(),
+            ask_label: "needs-operator".to_string(), // literal-ok: test fixture
             idle_while_ready: Vec::new(),
             release_status: None,
         }
