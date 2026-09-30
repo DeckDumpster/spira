@@ -87,9 +87,18 @@ impl Run<'_> {
 
     /// `release install-tarball <tb>` by this binary (DESIGN.md Decision 1), with a run dir of
     /// its own as a sibling of the releases dir.
+    ///
+    /// `--skip-restart` (sp-r15cf): every call here is immediately followed by `install_sh()`
+    /// below, which re-renders and restarts whatever unit's `Exec*` actually changed — the
+    /// restart that matters, since `install-tarball`'s own restart happens before any
+    /// re-templating and just bounces a unit back onto the release it was already running
+    /// (release/DESIGN.md "Render"). Doing both raced a unit's own teardown on phase D's
+    /// aged install, over real surviving state where units are already active, and failed
+    /// the second restart deterministically enough under host load to make install.sh refuse.
     fn install_tarball(&self, tb: &Path) -> i32 {
         let c = Cmd::new(Self::s(&self.o.release_bin))
             .arg("install-tarball")
+            .arg("--skip-restart")
             .arg(Self::s(tb))
             .env("SPIRA_CONF", Self::s(&self.o.conf()))
             .env("SPIRA_RELEASES", Self::s(&self.o.releases()))
