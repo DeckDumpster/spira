@@ -19,13 +19,11 @@
 
 bin SPIRA_LINT_BIN spira-lint
 
-step bash spira/inventory.sh
-step bash spira/literal-lint.sh
-step bash spira/scratch-fence.sh
+# inventory, literal-lint, scratch-fence, gh-intake-lint, tmux-scope-fence and wiki-add-fence
+# (sp-ekkak), and testdb-mode-lint, bd-stdin-lint and incident-cause-lint, moved to
+# spira-lint rules of the same name; the bash scripts are deleted and their checks now run
+# as part of the "$SPIRA_LINT_BIN" step below.
 step "$SPIRA_LINT_BIN"
-step bash spira/gh-intake-lint.sh
-step bash spira/tmux-scope-fence.sh
-step bash spira/wiki-add-fence.sh
 step bash spira/build-fence.sh
 
 # The suite selector and the budgeted suite run; `|| exit 1` refuses a selector that failed

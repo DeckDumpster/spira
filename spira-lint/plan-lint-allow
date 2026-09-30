@@ -123,7 +123,6 @@ spira/test-testdb-failsafe.sh
 spira/test-testenv-image-heartbeat.sh
 spira/test-testenv-owner-guard.sh
 spira/test-testlib.sh
-spira/test-tmux-scope-fence.sh
 spira/test-tsd-ingest.sh
 spira/test-tsd.sh
 spira/test-verdict-action.sh

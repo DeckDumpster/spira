@@ -15,9 +15,10 @@
 # circularity; here the list is the source and the gate reads it.
 #
 # The fences ported to spira-lint (binary-path-fence, payload-argv-lint, config-fence,
-# testdb-mode-lint, bd-stdin-lint, incident-cause-lint) are no longer files here:
-# gate-spira.sh runs "$SPIRA_LINT_BIN" --only <rule> for each, and refuses to land when the
-# binary is not built.
+# fence-scripts, testdb-mode-lint, bd-stdin-lint, incident-cause-lint, and — sp-ekkak —
+# inventory, literal-lint, scratch-fence, wiki-add-fence, tmux-scope-fence, gh-intake-lint)
+# are no longer files here: gate-spira.sh runs "$SPIRA_LINT_BIN" --only <rule> for each, and
+# refuses to land when the binary is not built.
 #
 # Sourced, never executed.
 #
@@ -28,13 +29,7 @@ gate_fence_list() {    # gate_fence_list -> one repo-relative fence path per lin
                         # order gate-spira.sh runs them
     printf '%s\n' \
         spira/exclude.sh \
-        spira/inventory.sh \
-        spira/scratch-fence.sh \
-        spira/wiki-add-fence.sh \
         spira/sop.sh \
-        spira/literal-lint.sh \
-        spira/gh-intake-lint.sh \
         spira/suite-state-fence.sh \
-        spira/orphan-test.sh \
-        spira/tmux-scope-fence.sh
+        spira/orphan-test.sh
 }

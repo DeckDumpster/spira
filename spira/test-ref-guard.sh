@@ -2,8 +2,8 @@
 #
 # test-ref-guard.sh — the reference-transaction hook refuses to delete a bead branch
 # outside the chokepoint, and refuses nothing else. Also: worktree-hooks.sh install
-# composes a worktree's pre-commit from the canonical fences (exclude.sh, scratch-fence.sh,
-# branch-guard.sh staged) followed by pre-commit-guard.sh, and each stage is seen to refuse,
+# composes a worktree's pre-commit from the canonical fences (exclude.sh, spira-lint's
+# scratch-fence rule, branch-guard.sh staged) followed by pre-commit-guard.sh, and each stage is seen to refuse,
 # in that order, through the installed hook.
 #
 # WHAT THIS IS FOR. On 2026-09-18 an Ops aeon deleted 24 peers' unlanded branches from
@@ -158,7 +158,7 @@ git -C "$TR/wt" restore --staged export.jsonl >/dev/null 2>&1
 rm -f "$TR/wt/export.jsonl"
 
 echo
-echo "CASE 11: scratch-fence.sh, through the installed worktree hook, refuses a root-level sp-* file:"
+echo "CASE 11: spira-lint's scratch-fence rule, through the installed worktree hook, refuses a root-level sp-* file:"
 printf 'notes\n' > "$TR/wt/sp-xxxx-notes.md"
 git -C "$TR/wt" add sp-xxxx-notes.md >/dev/null 2>&1
 out="$(commit_in_wt 'sp-test: stage scratch note')"; rc=$?

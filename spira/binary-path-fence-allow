@@ -34,6 +34,7 @@ systemd/spira-lc.service
 spira/test-acceptance-lib.sh
 spira/test-acceptance-run.sh
 spira/test-artifact-install.sh
+spira/test-branch-guard.sh
 spira/test-broker.sh
 spira/test-concierge.sh
 spira/test-conf-toml.sh
