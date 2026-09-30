@@ -75,7 +75,6 @@ spira/test-aeon-worktree-collision.sh
 spira/test-aeon-world-stop.sh
 spira/test-auron.sh
 spira/test-batcher-cut.sh
-spira/test-batch-red-main.sh
 spira/test-bd-resolve.sh
 spira/test-bead-contract.sh
 spira/test-bead-file.sh
