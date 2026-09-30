@@ -450,7 +450,7 @@ start)
 # TO FORGET, and it was forgotten: an Ops sweep applying sop-harness-checkout-behind drained
 # at 18:02:03 on 2026-09-09, finished its SOP at 18:04:29, and exited without resuming. The
 # world stayed gated for 59 minutes with 25 beads ready and zero aeons, and every pass
-# reported "pass complete — goal reached" while doing so. The sentinel was behaving correctly
+# reported "pass complete" with nothing summoned while doing so. The sentinel was behaving correctly
 # — a drain is a mode, not a fault — so nothing anywhere treated it as one.
 #
 # SO THE DRAIN EXPIRES. It carries a deadline and the gate lifts it when that passes, loudly.

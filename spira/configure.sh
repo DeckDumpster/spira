@@ -210,6 +210,15 @@ mkdir -p "$(dirname "$_out")"
 
 HEADER
 
+    # SPIRA_ID_PREFIX
+    cat <<PREFIX_COMMENT
+# SPIRA_ID_PREFIX: REQUIRED — the prefix of this installation's own bead ids,
+# without the hyphen. Nothing derives it; spira-config refuses a config that
+# omits it (doctor, pre-activate). install.sh initialises the bead database
+# with prefix sp.
+PREFIX_COMMENT
+    printf 'SPIRA_ID_PREFIX = sp\n\n'
+
     # SPIRA_PROD
     cat <<PROD_COMMENT
 # SPIRA_PROD: the activated release directory. systemd executes every unit's
@@ -260,7 +269,7 @@ DOLT_COMMENT
 DERIVABLE
 
     # Trap keys are already written above; skip them in the comment section.
-    _trap_keys=" SPIRA_PROD SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LOOM_ADDR SPIRA_DOLT_DATA "
+    _trap_keys=" SPIRA_ID_PREFIX SPIRA_PROD SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LOOM_ADDR SPIRA_DOLT_DATA "
     while IFS= read -r _kv; do
         [ -z "$_kv" ] && continue
         _k="${_kv%%=*}"

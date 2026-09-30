@@ -129,7 +129,8 @@ impl Harness {
     }
 
     /// SPIRA_TESTENV_HARNESS, else the nearest ancestor of the executable that holds
-    /// `spira/testenv.sh` (a checkout's `target/<p>/testenv`, a release's `bin/testenv`).
+    /// [`crate::container::HARNESS_MARKER`] (a checkout's `target/<p>/testenv`, a release's
+    /// `bin/testenv`).
     pub fn locate(env: &dyn Fn(&str) -> Option<String>) -> Option<Harness> {
         if let Some(r) = env("SPIRA_TESTENV_HARNESS").filter(|v| !v.is_empty()) {
             return Some(Harness {
@@ -140,7 +141,7 @@ impl Harness {
         let exe = fs::canonicalize(&exe).unwrap_or(exe);
         exe.ancestors()
             .skip(1)
-            .find(|d| d.join("spira/testenv.sh").is_file())
+            .find(|d| d.join(crate::container::HARNESS_MARKER).is_file())
             .map(|d| Harness {
                 root: d.to_path_buf(),
             })
@@ -156,7 +157,7 @@ pub struct Deps<'a> {
     pub stdin: &'a dyn Fn() -> String,
     /// Every stdout line (logs, per-suite lines, helper output, the VERDICT).
     pub out: &'a (dyn Fn(&str) + Sync),
-    /// Where owner files live: /tmp, shared with testenv.sh.
+    /// Where owner files live: /tmp, shared with `testenv container` (§12).
     pub owner_dir: PathBuf,
     pub cwd: PathBuf,
     /// Bytes that identify this runner for the batch key (the executable in production).
@@ -1869,6 +1870,10 @@ fn build(
                 p.display()
             ));
             return Some(Finish::fault(3, "artifacts-missing", 0));
+        }
+        Err(BuildError::NoCache(e)) => {
+            stderr(&format!("batch: {e} — harness fault"));
+            return Some(Finish::fault(3, "no-build-cache", 0));
         }
         Err(BuildError::Deadline) => {
             stderr("batch: cargo was still building at the trial's setup cutoff — killed; this is not the candidate's build failure");

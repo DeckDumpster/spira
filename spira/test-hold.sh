@@ -30,7 +30,6 @@ testdb_up hold || { echo "test-hold: could not build a fixture database"; exit 1
 
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such-conf"
-export SPIRA_GOAL=sp-goal
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf '# fixture — empty\n' > "$TMP/repo-map"
 export SPIRA_HOLD_HEARTBEAT=3600
@@ -56,7 +55,7 @@ seed() {
     [ -n "$as" ] && line="$line,\"assignee\":\"$as\""
     line="$line,\"updated_at\":\"2026-09-06T00:00:00Z\"}"
     testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"2026-09-06T00:00:00Z"}
 $line
 JSONL
 }

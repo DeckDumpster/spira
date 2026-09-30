@@ -107,7 +107,7 @@ landing() {
 seed() {
     testdb_reset
     testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 }
 
@@ -117,7 +117,7 @@ branch() {
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id sp-1fm88 — work"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
 }
 
@@ -281,8 +281,8 @@ RMAP
 
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-push-a","title":"push-a","status":"closed","issue_type":"task","labels":["repo:push-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-push-a","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-push-a","title":"push-a","status":"closed","issue_type":"task","labels":["repo:push-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-push-a","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 
 push_before="$(git -C "$PUSHREMOTE" rev-parse main 2>/dev/null)"
@@ -310,8 +310,8 @@ git -C "$LOCALREPO" branch local/main trunk
 
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-qlocal-cert","title":"qlocal","status":"closed","issue_type":"task","labels":["repo:local-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qlocal-cert","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-qlocal-cert","title":"qlocal","status":"closed","issue_type":"task","labels":["repo:local-fixture"],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-qlocal-cert","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 
 mkdir -p "$RUN/worktree-local"

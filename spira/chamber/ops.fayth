@@ -102,7 +102,7 @@ FAYTH_SOP_REQUIRED=0
 # resolved by lib.sh's persona_model — this line only seeds that table on first
 # convert and is no longer read at launch.
 FAYTH_MODEL=claude-sonnet-5-5
-FAYTH_MAX_CONCURRENT=1
+FAYTH_MAX_CONCURRENT=2
 
 # THE OPS LANE — the declared configuration for what FAYTH_ROLE=party expressed implicitly.
 # Ops is in the ops lane, which means it draws from its own FAYTH_MAX_CONCURRENT rather

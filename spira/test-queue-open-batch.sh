@@ -3,12 +3,14 @@
 #   the open record in one hand-invoked command (sp-214zs).
 #
 # Exercises real git merges and conflicts against a fixture repo/remote, a real bd store
-# (testdb.sh) and forge/gate fixtures that log every call — the same shape
-# test-batch-conflict.sh uses for batch.sh, since open-batch reuses its assembly
-# primitives (_base_conflict, format_batch, _batch_open_file) by sourcing batch.sh.
+# (testdb.sh) and forge/gate fixtures that log every call. open-batch's assembly primitives
+# (base_conflict, format_batch, pf_gate) are the same bash bodies batch.sh's own
+# _base_conflict/format_batch/_pf_gate once were — inlined straight into queue/src/seam.rs
+# (sp-uwhx0, batch.sh deleted) rather than sourced from it; this suite is unchanged by that,
+# since it only ever called `queue open-batch`, never batch.sh itself.
 #
 # tier: T1
-# covers: queue/src/* spira/batch.sh spira/lib.sh
+# covers: queue/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -93,13 +95,13 @@ openbatch() {
 seed() {
     testdb_reset
     testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 }
 
 plant_bead() {   # plant_bead <id> [<title>]
     printf \
-        '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+        '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$1" "${2:-$1}" "$1" | testdb_seed
 }
 

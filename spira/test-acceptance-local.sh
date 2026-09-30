@@ -6,12 +6,13 @@
 #   test-testenv-batch-branch.sh's own declaration for the same reason.
 #
 # WHAT THIS TESTS. Not the real toolchain build or a real release — those are
-# acceptance-local.sh's own dependencies (build-tarball.sh, acceptance-run.sh),
-# each covered by their own suite. This suite drives acceptance-local.sh against
-# a fake tree whose spira/build-tarball.sh and spira/acceptance-run.sh are stubs,
+# acceptance-local.sh's own dependencies (build-tarball.sh, and `release acceptance`,
+# unit-tested in its crate). This suite drives acceptance-local.sh against a fake tree
+# whose spira/build-tarball.sh is a stub packing a stub bin/release into the tarball,
 # so the fast, deterministic thing under test is acceptance-local.sh's OWN
-# plumbing: it builds (stub), stands up a REAL container, copies the tarball in,
-# wires the scratch repo and the --tarball/--agent arguments, propagates the
+# plumbing: it builds (stub), stands up a REAL container, copies the tarball and the
+# tarball's own bin/release in, wires the scratch repo and the --tarball/--agent
+# arguments, propagates the
 # real exit code, and copies forensics out on FAIL only.
 #
 # SKIP CONDITION: no podman on PATH.
@@ -36,7 +37,7 @@ fi
 
 SCRATCH="$(mktemp -d)"
 CNAME="acc-local-test-$$"
-trap 'testenv.sh down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
+trap 'testenv container down --name "$CNAME" >/dev/null 2>&1; rm -rf "$SCRATCH"' EXIT INT TERM
 
 # ===========================================================================
 echo
@@ -60,11 +61,11 @@ podman container exists "$CNAME" 2>/dev/null \
 
 # ===========================================================================
 echo
-echo "3. Fixture: a fake tree whose build-tarball.sh and acceptance-run.sh are stubs"
+echo "3. Fixture: a fake tree whose build-tarball.sh packs a stub bin/release"
 # ===========================================================================
-# build-tarball.sh and acceptance-run.sh are each covered by their own suite
-# (test-tarball-bins.sh / test-workspace-dist.sh, test-acceptance-run.sh and
-# test-acceptance-lib.sh's #10). Standing those up for real here would make
+# build-tarball.sh and `release acceptance` are each covered on their own
+# (test-tarball-bins.sh / test-workspace-dist.sh, and release/src/acceptance/tests.rs).
+# Standing those up for real here would make
 # this suite re-verify someone else's mechanism instead of acceptance-local.sh's
 # own — the fixture stands in for both, deterministically and fast.
 
@@ -76,26 +77,13 @@ build:
 	@true
 EOF
 
-cat > "$FT/spira/build-tarball.sh" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-_out="."
-while [ $# -gt 0 ]; do
-    if [ "$1" = "--output" ]; then _out="$2"; shift 2; continue; fi
-    shift
-done
-mkdir -p "$_out"
-printf 'fake tarball\n' > "$_out/spira-fake.tar.gz"
-printf '%s/spira-fake.tar.gz\n' "$_out"
-EOF
-chmod +x "$FT/spira/build-tarball.sh"
-
-# The stub `acceptance-run.sh` runs INSIDE the container (mounted at /workspace):
-# records its argv, mirrors SPIRA_ACCEPTANCE_FORENSICS the way the real script
-# does (a marker file, proving the copy-out step moves real data, not an empty
-# directory), and exits with whatever /workspace/.stub-rc says (default 0) — the
-# host writes that file before each invocation to control PASS vs FAIL.
-cat > "$FT/spira/acceptance-run.sh" <<'EOF'
+# The stub `release` runs INSIDE the container, taken out of the tarball exactly as the
+# real bin/release is: records its argv, mirrors SPIRA_ACCEPTANCE_FORENSICS the way the
+# real run does (a marker file, proving the copy-out step moves real data, not an empty
+# directory), and exits with whatever /workspace/.stub-rc says (default 0) — the host
+# writes that file before each invocation to control PASS vs FAIL.
+mkdir -p "$SCRATCH/stub-release/spira-fake/bin"
+cat > "$SCRATCH/stub-release/spira-fake/bin/release" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
 printf '%s\n' "$*" > /workspace/.stub-args
@@ -107,7 +95,22 @@ _rc=0
 [ -f /workspace/.stub-rc ] && _rc="$(cat /workspace/.stub-rc)"
 exit "$_rc"
 EOF
-chmod +x "$FT/spira/acceptance-run.sh"
+chmod +x "$SCRATCH/stub-release/spira-fake/bin/release"
+tar -czf "$SCRATCH/spira-fake.tar.gz" -C "$SCRATCH/stub-release" spira-fake
+
+cat > "$FT/spira/build-tarball.sh" <<EOF
+#!/usr/bin/env bash
+set -uo pipefail
+_out="."
+while [ \$# -gt 0 ]; do
+    if [ "\$1" = "--output" ]; then _out="\$2"; shift 2; continue; fi
+    shift
+done
+mkdir -p "\$_out"
+cp "$SCRATCH/spira-fake.tar.gz" "\$_out/spira-fake.tar.gz"
+printf '%s/spira-fake.tar.gz\n' "\$_out"
+EOF
+chmod +x "$FT/spira/build-tarball.sh"
 
 printf '#!/usr/bin/env bash\nexit 0\n' > "$FT/spira/acceptance-agent.sh"
 chmod +x "$FT/spira/acceptance-agent.sh"
@@ -154,6 +157,7 @@ echo "6. Argument wiring: --tarball, --agent, --scratch-repo present; no --prev-
 # Without --predecessor: phase A only.
 
 _stub_args="$(cat "$FT/.stub-args" 2>/dev/null || true)"
+want "the run is the tarball's own release acceptance" "acceptance " "$_stub_args"
 want "stub received --tarball (download skipped)" "--tarball" "$_stub_args"
 want "stub received --agent pointing at the mounted tree" \
     "--agent /workspace/spira/acceptance-agent.sh" "$_stub_args"
@@ -166,7 +170,7 @@ echo "6b. --predecessor: phases B-D wired with a local predecessor tarball (sp-o
 # ===========================================================================
 # The fake tree is not a git checkout, so it is mounted as-is; the predecessor comes from
 # --predecessor-tarball, so nothing is downloaded. What is asserted is the wiring: the tag
-# under test becomes spira-release-<stem> (deploy.sh needs that form) and acceptance-run.sh
+# under test becomes spira-release-<stem> (deploy.sh needs that form) and release acceptance
 # gets --prev-tag and a --prev-tarball path inside the container.
 printf 'fake predecessor\n' > "$SCRATCH/spira-20990101T000000Z.tar.gz"
 rm -f "$FT/.stub-rc" "$FT/.stub-args"; printf '0\n' > "$FT/.stub-rc"

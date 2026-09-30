@@ -134,11 +134,14 @@ for a in "$@"; do
     case "$a" in
         -C)          skip_next=1 ;;
         --json)      ;;
-        show|label)  cmd="$a" ;;
+        show|label|list)  cmd="$a" ;;
         *)           argv+=("$a") ;;
     esac
 done
 case "$cmd" in
+    list)   # the positive control (spira_db_reachable): the store lists at least one bead
+        printf '[{"id":"sp-any"}]\n'
+        ;;
     show)
         f="$dir/${argv[0]:-}.json"
         if [ -f "$f" ]; then printf '['; cat "$f"; printf ']\n'; else printf '[]\n'; fi

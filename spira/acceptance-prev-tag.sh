@@ -10,7 +10,7 @@
 #
 # Prints the derived tag on stdout, or nothing if no published predecessor
 # exists (or gh is unreachable — silence is the safe default: an empty
-# prev-tag makes acceptance-run.sh skip phases B/C/D rather than test a
+# prev-tag makes `release acceptance` skip phases B/C/D rather than test a
 # predecessor that was never accepted).
 set -uo pipefail
 

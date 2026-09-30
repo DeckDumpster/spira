@@ -65,7 +65,7 @@ state; see §4 R7).
 | aeons per partition / fleet | `systemctl --user list-units 'spira-aeon-<fayth>-*' --no-legend` (and `'spira-aeon-*'`) when `SPIRA_SUMMON` is `systemd-run` (default); else live pidfiles | read-only: dead pidfiles are no longer deleted here |
 | capacity pause | first field of `$SPIRA_CAPACITY_PAUSE` (default `$SPIRA_RUN/capacity-pause`), an epoch | read-only: the probe/lift side effects of `capacity_paused` belong to the summon path |
 | admission throttle | `$SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`) | exists+readable+non-empty ⇒ shut (`depth=N` parsed); exists but unreadable/empty ⇒ unreadable; absent ⇒ open |
-| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: goal=` line, a `CHECK7 <fayth>: not evaluated` for a fayth of the partition | |
+| pass truncation | `$SPIRA_RUN/sentinel.log`: after the last `: state: open=` line (the sentinel's pass-start marker), a `CHECK7 <fayth>: not evaluated` for a fayth of the partition | |
 | harness pulse (report header) | `systemctl --user is-active <unit>` for `spira-sentinel[-<instance>].timer`; mtime of sentinel.log | `?` unit ⇒ `unknown` |
 | episode state | `$SPIRA_RUN/strands.json` | §3.3 |
 

@@ -6,7 +6,7 @@
 #   (a) batch of 4 members + 2 certified → pane shows batch #N with 4 members and
 #       next with 2, in batcher order
 #   (c) an open bead that is batched still appears under its batch
-#   (d) the next-list order equals batch.sh's selection order (suite-trans, prio, epoch)
+#   (d) the next-list order equals the batcher's selection order (suite-trans, prio, epoch)
 #   (e) 32 CERTIFIED records, no open batch → header count is the whole 32, row count
 #       is capped (sp-hpeft: the header was reading the row-capped loop counter, so it
 #       could never show more than the cap regardless of how many records existed)
@@ -21,7 +21,7 @@
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
-# covers: spira/cockpit.sh spira/batch.sh spira/lib.sh cockpit/health.sh
+# covers: spira/cockpit.sh spira/lib.sh cockpit/health.sh
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #
@@ -117,7 +117,7 @@ queue() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$TMP/queue" \
         SPIRA_SUITE_STATE_FILE="spira/suite-state-test" \
         SPIRA_BDJSON_FIXTURE="$TMP/beads.json" \
@@ -226,7 +226,7 @@ out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP2/no.conf" SPIRA_HOME="$HERE" \
     SPIRA_REPO="$REPO2" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN2" SPIRA_DB="$TMP2/nodb" \
-    SPIRA_REPO_MAP="$MAP2" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
     cockpit.sh queue 2>/dev/null)"

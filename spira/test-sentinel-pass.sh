@@ -4,7 +4,7 @@
 #   CHECK 4/5/6b/7c/7d inline any more (sp-994y9) — it dispatches them as `sentinel.sh
 #   --audit` and moves straight to summon; `--audit` is where those checks actually run,
 #   and it never lands or summons. Also covers the base-unchanged stamp and a database
-#   sentinel that cannot reach exits 1 without ever reporting 'goal reached'.
+#   sentinel that cannot reach exits 1 without ever reporting a state or a completed pass.
 #
 #   ./test-sentinel-pass.sh
 #
@@ -86,7 +86,6 @@ out_unreadable="$(env -i \
     SPIRA_RUN="$_run_unreadable" \
     SPIRA_DB="$TMP/irrelevant-db" \
     SPIRA_BD="$FAILING_BD" \
-    SPIRA_GOAL="sp-goal1" \
     SPIRA_FAYTHS="" \
     SPIRA_LAND_STALE=999999 \
     SPIRA_AUDIT_STALE=999999 \
@@ -98,7 +97,8 @@ out_unreadable="$(env -i \
 rc=$?
 is   "exits 1 when bd cannot reach the database"  "1" "$rc"
 want "reports DATABASE UNREADABLE"                 "DATABASE UNREADABLE" "$out_unreadable"
-lack "does NOT report 'goal reached'"              "goal reached" "$out_unreadable"
+lack "does NOT report a state line"               "state: " "$out_unreadable"
+lack "does NOT report a completed pass"            "pass complete" "$out_unreadable"
 
 # ======================================================================================
 echo
@@ -110,7 +110,7 @@ testdb_require test-sentinel-pass
 testdb_up sentinel_pass || { echo "test-sentinel-pass: could not build fixture"; exit 1; }
 testdb_reset
 testdb_seed <<'JSONL'
-{"id":"sp-goal1","title":"goal","status":"open","issue_type":"epic","labels":["plan"]}
+{"id":"sp-epic1","title":"epic","status":"open","issue_type":"epic","labels":["plan"]}
 {"id":"sp-b1","title":"bead 1","status":"open","issue_type":"task","labels":["plan"]}
 {"id":"sp-b2","title":"bead 2","status":"open","issue_type":"task","labels":["plan"]}
 {"id":"sp-b3","title":"bead 3","status":"open","issue_type":"task","labels":["plan"]}
@@ -144,7 +144,6 @@ run_pass() {
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="$SPIRA_PATH" \
-        SPIRA_GOAL="sp-goal1" \
         SPIRA_SKIP_RECLAIM=1 \
         SPIRA_LAND_STALE=999999 \
         SPIRA_AUDIT_STALE=999999 \

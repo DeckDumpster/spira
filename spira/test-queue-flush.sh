@@ -6,7 +6,7 @@
 # batch before building the next, and landing's queue pass goes through it — a batch builder
 # with no verdict after it opens one pull request and never lands it.
 #
-# covers: queue/src/* spira/batch.sh landing-pass/src/*
+# covers: queue/src/* landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -16,22 +16,27 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-queue-flush.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
-# A copy of the harness with the batch builder replaced by one that reports how it was called.
+# A copy of the harness with the round cutter replaced by one that reports how it was
+# called. batch.sh's own pre-cut sweep is retired (sp-uwhx0, queue.forge has no live repo)
+# — queue's flush/step call the batcher directly now, by name on PATH (real.rs's
+# RealLib::context always resolves batcher_bin to the bare name "batcher").
 cp -r "$HERE" "$TMP/spira"
 # The verdict runs inside `queue step` now (queue/DESIGN-verdict.md); its first act on an
-# open batch is the forge's check-status, so a forge that logs that call is what shows it ran.
+# open batch is the forge's check-status, so a forge that logs that call — and the batcher
+# logging its own — is what shows the real order the subprocess calls happened in.
 ORDER="$TMP/order"
-cat > "$TMP/spira/batch.sh" <<FAKE
+cat > "$TMP/spira/batcher" <<FAKE
 #!/usr/bin/env bash
-printf 'batch-called repo=%s wait=%s\n' "\${1:-}" "\${SPIRA_QUEUE_BATCH_WAIT:-unset}"
-printf 'batch-called\n' >> "$ORDER"
+printf 'batcher-called verb=%s repo=%s wait=%s\n' "\${1:-}" "\${2:-}" "\${SPIRA_QUEUE_BATCH_WAIT:-unset}"
+printf 'batcher-called\n' >> "$ORDER"
 FAKE
+chmod +x "$TMP/spira/batcher"
 cat > "$TMP/spira/forge-fake.sh" <<FAKE
 #!/usr/bin/env bash
 [ "\${1:-}" = check-status ] && printf 'verdict-called\n' >> "$ORDER"
 printf 'pending\n'
 FAKE
-chmod +x "$TMP/spira/batch.sh" "$TMP/spira/forge-fake.sh"
+chmod +x "$TMP/spira/forge-fake.sh"
 mkdir -p "$TMP/bin" "$TMP/run"
 git init -q -b main "$TMP/repo"
 git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m base
@@ -45,40 +50,41 @@ run() {
 }
 
 echo
-echo "positive control — the fake builder is reachable and sees the configured wait:"
+echo "positive control — the fake batcher is reachable and sees the configured wait:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
-out="$(env -i PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 bash "$TMP/spira/batch.sh" fixq)"
-want "fake builder reports the inherited wait" "wait=1800" "$out"
+out="$(env -i PATH=/usr/bin:/bin SPIRA_QUEUE_BATCH_WAIT=1800 "$TMP/spira/batcher" cut fixq)"
+want "fake batcher reports the inherited wait" "wait=1800" "$out"
 
 echo
-echo "flush on a queue-mode repo runs the builder with no wait:"
+echo "flush on a queue-mode repo cuts with no wait, no batch.sh sweep first:"
 out="$(run flush fixq)"
-want "builder called for the repo" "batch-called repo=fixq" "$out"
-want "wait threshold is zero"      "wait=0" "$out"
+want   "batcher called for the repo" "batcher-called verb=cut repo=fixq" "$out"
+want   "wait threshold is zero"      "wait=0" "$out"
+nowant "no separate sweep step"      "batch-called" "$out"
 
 echo
 echo "flush refuses a push-mode repo:"
 printf 'fixp | %s | push | main | | |\n' "$TMP/repo" > "$RMAP"
 out="$(run flush fixp)"; rc=$?
 want   "names queue mode"      "not in queue mode" "$out"
-nowant "builder not called"    "batch-called" "$out"
+nowant "batcher not called"    "batcher-called" "$out"
 
 echo
 echo "flush refuses an unknown repo:"
 out="$(run flush nosuch)"
 want   "names the repo"        "no such repo" "$out"
-nowant "builder not called"    "batch-called" "$out"
+nowant "batcher not called"    "batcher-called" "$out"
 
 echo
-echo "step settles the open batch, then builds the next:"
+echo "step settles the open batch, then cuts the next — verdict before the batcher:"
 printf 'fixq | %s | queue | main | | |\n' "$TMP/repo" > "$RMAP"
 mkdir -p "$TMP/run/queue/fixq"
 printf 'pr=1\nhead=h\nbase=b\nmembers=\nopened=1\nbranch=spira/queue/x\n' > "$TMP/run/queue/fixq/open"
 : > "$ORDER"
 out="$(run step fixq)"
 want "verdict settled the open batch (pending)" "verdict fixq: PR 1 pending" "$out"
-want "batch called for the repo"   "batch-called repo=fixq" "$out"
-is "verdict runs before batch"     "verdict-called batch-called" "$(tr '\n' ' ' < "$ORDER" | sed 's/ $//')"
+want "batcher called for the repo" "batcher-called verb=cut repo=fixq" "$out"
+is "verdict runs before the batcher" "verdict-called batcher-called" "$(tr '\n' ' ' < "$ORDER" | sed 's/ $//')"
 
 # RETIRED with landing.sh: the landing pass's queue step is landing-pass's Tools::queue_step
 # (`queue step <repo>`), pinned by cargo test -p landing-pass

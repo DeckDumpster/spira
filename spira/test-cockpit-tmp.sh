@@ -60,7 +60,7 @@ spawn() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" \
         SPIRA_COCKPIT_FORCE=1 SPIRA_COCKPIT_TEST_SLEEP=1 \
         python3 -c '
@@ -125,7 +125,7 @@ touch "$RUN/.cockpit.99999" "$RUN/.cockpit.orphan"
 env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
     "$COCKPIT" sweep-temps >/dev/null 2>&1
 rc=$?

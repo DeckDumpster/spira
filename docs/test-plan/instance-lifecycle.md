@@ -113,8 +113,8 @@ Where they run: **cert** = certification (every commit, local and gate), **batch
 ### Acceptance runner (release gate)
 | ID | Requirement | Dims | Tier / where |
 |---|---|---|---|
-| UC-instance-lifecycle-46 | `acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `acceptance-run.sh`'s exit code. | CON | T2 / cert |
-| UC-instance-lifecycle-47 | `acceptance-run.sh` runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` (not masked by `\|\| true`), extracts bead ids robustly (GH#2950), proves landing by ancestry, and records a git note. It emits a single PASS/FAIL line. | CON, TI | T1 (extracted functions) cert + T4 accept |
+| UC-instance-lifecycle-46 | `acceptance-ci.sh` builds a scratch repo on `main` with a git identity and a repo-map, puts `~/.local/bin` on PATH, passes `XDG_RUNTIME_DIR`, and propagates `release acceptance`'s exit code. | CON | T2 / cert |
+| UC-instance-lifecycle-47 | `release acceptance` (was `acceptance-run.sh`, sp-ak7qm) runs install with `SPIRA_OPERATED=0`, runs the clone's own `ready.sh` (not masked by `\|\| true`), extracts bead ids robustly (GH#2950), proves landing by ancestry, and records a git note. It emits a single PASS/FAIL line. | CON, TI | T1 (extracted functions) cert + T4 accept |
 
 ---
 
@@ -319,3 +319,7 @@ Out of the corpus container: the loom cargo-build + live-serve leg stays in acce
 **Excluding the 5 misfiled files:** now 1,034 s → projected 221 s.
 
 Largest single lever: extracting a sourceable `systemd/install.sh` library (`_unit_action`, `_check_path_collisions`, `_seed_instance_conf`, `_execstart_ok`) plus one cached render fixture. Together they remove about 330 s across 10 suites. Second: `world.sh start` reading ctrl state once, which removes about 85 s in CI and a per-timer conf.sh + python start-up on every production `world.sh start`.
+
+## Deleted suites
+
+- **test-install-exec.sh** — deleted by sp-uy2gd (2026-09-30): flipped on an unchanged tree (render-fallback cases read a malformed watcher manifest, then passed alone). Coverage lost: install.sh's ExecStart executability fence (missing / non-executable target refused, clean pass), conf.sh's empty-SPIRA_PROD preservation, and the --render fallback. sp-osl2c finds the root cause and re-adds it.

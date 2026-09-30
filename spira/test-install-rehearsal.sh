@@ -31,7 +31,7 @@
 # SKIP CONDITION: no podman on PATH, or user systemd not available in the container.
 #
 # runtime: ~3m
-# covers: systemd/install.sh spira/uninstall.sh spira/configure.sh spira/testenv.sh spira/testenv/Containerfile
+# covers: systemd/install.sh spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -49,14 +49,14 @@ CNAME="spira-testenv-reh-$$"
 STUBS_CTR="/tmp/spira-stubs"
 
 cleanup() {
-    testenv.sh down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-testenv.sh up --name "$CNAME" >&2
+testenv container up --name "$CNAME" >&2
 iszero "up exits 0" "$?"
 
-if ! testenv.sh probe --name "$CNAME"; then
+if ! testenv container probe --name "$CNAME"; then
     printf 'SKIP test-install-rehearsal.sh: user systemd not available in container\n' >&2
     exit 77
 fi

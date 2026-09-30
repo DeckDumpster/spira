@@ -2,7 +2,6 @@
 home_repo = "home"
 db = "/opt/fixture-home/.local/share/spira/db"
 run = "/opt/fixture-home/.local/state/spira"
-goal = "sp-goal"
 path = "/opt/spira/bin"
 workspaces = "/srv/checkouts"
 prod = "/srv/checkouts/harness-prod/spira"
@@ -38,6 +37,7 @@ gh_intake_repo = "example-org/example-repo"
 cockpit_bottom_pct = 40
 cockpit_right_pct = 45
 czar_stage_deadlock = "shadow"
+id_prefix = "sp"
 
 [repo.home]
 path = "/srv/checkouts/home"

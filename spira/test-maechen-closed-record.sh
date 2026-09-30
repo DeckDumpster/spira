@@ -85,7 +85,7 @@ run_livelock() {
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
         SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
@@ -128,7 +128,7 @@ run_livelock_uf() {
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
         SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-        SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
+        SPIRA_REPO_MAP="$SELFMAP" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
@@ -373,7 +373,7 @@ e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_PATH="${SPIRA_PATH:-}" \
     SPIRA_CONF="$T/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$T" \
     SPIRA_RUN="$RUNDIR" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$SELFMAP" SPIRA_GOAL=sp-goal \
+    SPIRA_REPO_MAP="$SELFMAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \

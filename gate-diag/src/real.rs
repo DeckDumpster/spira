@@ -1,10 +1,9 @@
-//! The production [`crate::ports::World`]: the filesystem, the environment, `tap-jsonl.sh`.
+//! The production [`crate::ports::World`]: the filesystem and the environment.
 
 use crate::ports::{ResultFile, World};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 
 pub struct Real;
 
@@ -82,27 +81,6 @@ impl World for Real {
             }
         }
         None
-    }
-
-    fn tap_jsonl_rows(&self, home: &Path, suite: &str, src: &Path, out: &Path, fallback: &str, secs: &str) -> String {
-        const BODY: &str = r#"set -uo pipefail
-. "$1/tap-jsonl.sh" || exit 0
-tap_jsonl_rows "$2" "$3" "$4" "$5" "$6"
-"#;
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(BODY)
-            .arg("gate-diag-tap")
-            .arg(home)
-            .arg(suite)
-            .arg(src)
-            .arg(out)
-            .arg(fallback)
-            .arg(secs)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        o.ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default()
     }
 
     fn write(&self, p: &Path, content: &str) {

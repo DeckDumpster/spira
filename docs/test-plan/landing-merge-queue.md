@@ -148,7 +148,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 | 22 | test-landing::bulk scan, ghost branch, no repo label, reopened during gate ×2 | integration / (249) | KEEP; bulk scan could be a T1 stub-count test |
 | 23 | test-landing::verdict TTL prune, reused verdict | integration / (249) | DEMOTE-TO-T1 (prune); keep the reused-verdict line |
 | 24 | test-landing-halt::(all) | component / 11 | KEEP; DELETE the vacuous "positive control" (a string that greps itself) |
-| 25 | test-landing-build::(all) | component / 2 | KEEP |
+| 25 | test-landing-build::(all) | component / 2 | RETIRED (sp-z61hj): its subject, `land-build-ensure.sh`, is deleted — a landing publishes a release from tested binaries; the pass's slot now runs `target-reap` (`cargo test -p testenv reap::`) |
 | 26 | test-landing-mode-map::(all); test-landing-race::fence rebase, fence fetch; test-landing-rebase::fence arms | static / 6, (21), (129) | move to T0 lint stage; mode-map's per-mode check is unscoped (any `pr)` arm in 2,138 lines passes) and must be scoped to `land_repo` |
 | 27 | test-queue-submit::(all 7); test-submit::(all 6) | component / 10; integration / 5 | MERGE test-submit INTO test-queue-submit; table-drive the three copy-pasted transition blocks; drop the testdb (bead-less path) |
 | 28 | test-queue-flush::(all) | component / 5 | KEEP as T1; SOURCE-GREP the `grep -A3` landing wiring check (replace it with a landing pass using a stub queue.sh that records `step`); assert the rc of the push-mode refusal |
@@ -236,7 +236,7 @@ The **ci_secs** column is per file, from signals.tsv. Where one file covers seve
 - **G7. `queue.sh abandon` bead side effects.** The testdb is seeded but no bead state is read back, so whatever abandon does to beads is unverified. *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G8. A bd failure while batching is invisible.** At batch.sh:422, `prio_json="$(bdjson show …)" || prio_json="[]"` means a bd outage silently disables express and priority ordering. test-queue-sort-large covers the sort's own fail-open, but not batch.sh logging it (observability dimension). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G9. Real container teardown in `landing.sh halt`.** Teardown is asserted only in the dry-run listing, because the registry is emptied before the real halt (test-landing-halt note). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
-- **G10. The source-changed trigger in `land-build-ensure.sh`** (reflog `@{1}`) is deliberately neutralised and untested.
+- **G10. ~~The source-changed trigger in `land-build-ensure.sh`~~** — closed by deletion (sp-z61hj): the script and its post-landing rebuild are gone.
 - **G11. The Rust crates `broker`, `czar-pass` and `supervise` have zero `#[test]`**, and no workflow runs `cargo test`. The broker's refusal of czar-only verbs is a security fence tested only through a bash suite that contains a tautology ("FAILS OPEN"). *(Deferred — see the follow-up beads filed by sp-ulr4e.)*
 - **G12. The queue-mode repo map is missing in test-landing-race's early cases.** They never write `$SH/repo-map`, so they pass through the `SPIRA_REPO` fallback. The explicit-map path of push-mode races is untested.
 - **G13. Concurrency between landing and a queue operation on one repo.** Each lock is tested alone (batch, verdict, eject, abandon). Nothing runs a landing pass's `queue.sh step` against an operator `eject` at the same moment to show that exactly one wins with a consistent landstate. Propose one T3 nightly row.
@@ -389,3 +389,38 @@ mechanism may re-add a T1 suite once the subject and its assertions read the sam
 - sp-s088v.18 — open: verdict-timer dedup, remaining gaps G3/G4/G9/G10/G12/G13/G14
 - sp-lxoyd — landed: re-triage above (KEEP test-batch-stuck.sh, KEEP test-landing-gate-wait.sh)
 - sp-tey33 — landed: test-landing-gate-fits.sh deleted (law-a-test-that-flips-is-deleted)
+
+**sp-htrqk (2026-09-30):** `test-batch-red-main.sh` **DELETE.** It was red on local/main
+itself (both full-corpus runs of 09-30, tree f2b16e4e7; sp-s0e1k parity evidence), not from a
+branch — it drove `verdict.sh`, which the queue crate's landing cutover (sp-flj4a, sp-vsob2)
+had already removed, so every case failed on `bash: … verdict.sh: No such file or directory`
+rather than on the property it meant to test.
+
+That property — **main's own push-gate state is never consulted before the merge queue's
+fast-forward, and the forge is never asked about it** (sp-x54re, superseding sp-221n8/
+sp-wmn0w) — is now structurally true of the current landing path (`queue land-local`,
+`queue/src/ops/land.rs`), not merely untested:
+
+- The `main-gate-status` forge verb the old suite stubbed does not exist anywhere in the
+  tree any more (`forge::Forge`'s trait in `queue/src/ports.rs` has no such method, and
+  `grep -r main-gate-status` outside this suite and `test-queue-step-eject-race.sh`'s inert
+  fixture stub turns up nothing) — there is no call a regression could add back.
+- `land-local`'s only forge-derived check is the cached-ref divergence alarm (`land.rs` row
+  4), which is documented and unit-tested to **never refuse**:
+  `queue/src/tests.rs::land_local_lands_marks_and_archives` asserts
+  `t.lib.has("divergence f0 b0")` and `!t.git.calls...fetch` — the cached forge ref is read,
+  never fetched, and never blocks the fast-forward.
+  `land-local`'s only actual landing gate is the head **tree's own** certificate (a gate PASS
+  or round GREEN for that tree — §8 D12), covered by
+  `land_local_refuses_a_tree_no_gate_or_round_certified`,
+  `land_local_accepts_a_gate_pass_for_the_head_tree`,
+  `land_local_accepts_a_round_green_for_the_head_tree`, and
+  `land_local_ignores_a_pass_for_another_tree_or_repo` — a different property (self-
+  certification) from the one this suite tested (no back pressure from a stale reading of
+  *main's* state), and one the old suite never exercised.
+
+Deleted alongside it (both are shrink-only lists of files that exist, so a deleted file's
+line is dead weight): its `spira/config-fence-allow` line and its `spira/tier-budget-
+allowlist` line (T1, 16.0 s). No caller outside the suite corpus referenced it (no systemd
+unit, `.github/workflows`, `spira.toml` gate string, or chamber brief named it; gate.steps
+selects suites dynamically by `suite-select`/`covers:`, not by a fixed list).

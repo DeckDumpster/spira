@@ -41,6 +41,7 @@ mkdir -p "$FIXHOME/.config/spira"
 REAL_TOML="$FIXHOME/.config/spira/spira.toml"
 cat > "$REAL_TOML" <<'EOF'
 [spira]
+id_prefix = "sp"
 fayths = ["builder", "ops"]
 
 [repo.home]

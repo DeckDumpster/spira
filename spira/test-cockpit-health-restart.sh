@@ -56,7 +56,7 @@ SESS=$(tmux list-panes -t "$WIN" -F '#{pane_id}')
 # line — the fixture must not depend on whatever environment happened to start the tmux
 # server.
 HEALTH_CMD="SPIRA_CONF='$CONF' SPIRA_HOME='$HERE' SPIRA_REPO='$TMP' SPIRA_RUN='$TMP/.runtime' \
-SPIRA_DB='$TMP/nodb' SPIRA_REPO_MAP='$TMP/no-map' SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+SPIRA_DB='$TMP/nodb' SPIRA_REPO_MAP='$TMP/no-map' SPIRA_FAYTHS=t \
 SPIRA_SYSTEMCTL='$MOCK_SYSTEMCTL' SPIRA_HEALTH_TICK=$TICK bash '$HEALTH' loop"
 HP=$(tmux split-window -P -F '#{pane_id}' -d -h -t "$SESS" "$HEALTH_CMD")
 tmux set-option -p -t "$HP" @cockpit health

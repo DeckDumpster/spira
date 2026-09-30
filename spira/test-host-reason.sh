@@ -7,7 +7,7 @@
 # WHAT THIS SUITE IS FOR
 # ----------------------
 # host-check.sh refuses a suite that runs on the host without explaining
-# why: either it calls testenv.sh (up/exec) so its assertions run in a container, or
+# why: either it calls `testenv container` (up/exec) so its assertions run in a container, or
 # it carries a non-empty `# host-reason: <text>` annotation.  This suite proves the
 # fence can go red (positive control first), that the escape works, and that the count
 # host-check.sh --count-undeclared prints is what suites.sh status renders.
@@ -124,7 +124,7 @@ isz "host-reason anywhere in the file header passes" "$rc"
 
 # ==========================================================================
 # CONTAINER USAGE PASSES WITHOUT A DECLARATION.
-# A suite that calls testenv.sh up or exec in a non-comment line is a container suite;
+# A suite that calls the testenv driver's up or exec in a non-comment line is a container suite;
 # no # host-reason: annotation is required.
 # ==========================================================================
 printf '#!/usr/bin/env bash\nTESTENV="$HERE/testenv.sh"\nbash "$TESTENV" up --name my-test\necho done\n' \
@@ -136,6 +136,12 @@ printf '#!/usr/bin/env bash\nTESTENV="$HERE/testenv.sh"\nbash "$TESTENV" exec --
     > "$PLANTED"
 out="$(fence)"; rc=$?
 isz "testenv exec in code passes without # host-reason:" "$rc"
+
+# The driver by name (`testenv container`, sp-s0e1k) is the same signal.
+printf '#!/usr/bin/env bash\ntestenv container up --name my-test\ntestenv container exec --name my-test -- true\n' \
+    > "$PLANTED"
+out="$(fence)"; rc=$?
+isz "testenv container up/exec in code passes without # host-reason:" "$rc"
 
 # A testenv call in a COMMENT does not count — the suite itself is not a container suite.
 printf '#!/usr/bin/env bash\n# calls: bash "$TESTENV" up (for reference)\necho hello\n' \

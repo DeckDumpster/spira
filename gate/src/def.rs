@@ -136,7 +136,7 @@ impl Def {
             return None;
         }
         let pkgs = self.bins.iter().fold(String::new(), |acc, b| acc + " -p " + &b.package);
-        let mut c = format!("cargo build --profile aeon -j {jobs}{pkgs}");
+        let mut c = format!("cargo build --profile aeon {} -j {jobs}{pkgs}", spira_config::build::one_shot_words("aeon"));
         for b in &self.bins {
             c.push_str(&format!(
                 // path-ok: the gate builds this binary into the gate tree and names where it lands.
@@ -242,7 +242,7 @@ mod tests {
     fn tools_command_builds_each_bin_and_proves_it() {
         let d = parse("bin SPIRA_LINT_BIN spira-lint\nstep a\n").unwrap();
         let c = d.tools_command(4).unwrap();
-        assert!(c.starts_with("cargo build --profile aeon -j 4 -p spira-lint && "), "{c}");
+        assert!(c.starts_with("cargo build --profile aeon --config profile.aeon.incremental=false -j 4 -p spira-lint && "), "{c}");
         // path-ok: asserting the tools phase's own proof of the binary it built.
         assert!(c.contains("[ -x target/aeon/spira-lint ]"), "{c}");
         assert_eq!(parse("step a\n").unwrap().tools_command(4), None);

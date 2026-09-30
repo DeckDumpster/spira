@@ -25,6 +25,7 @@ const USAGE: &str = "usage:
   release stage down <ROOT>
   release canary [--stage ROOT] [--deadline SECS]
   release canary-worker
+  release acceptance <tag> --scratch-repo <path> [...]   (release acceptance --help)
 every subcommand also takes --releases D and --run D";
 
 struct Args {
@@ -230,6 +231,11 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // acceptance has its own flags (DESIGN.md "acceptance") and, on a clean machine, no
+    // config document to resolve — it never reaches the shared parser or Config.
+    if argv.first().map(String::as_str) == Some("acceptance") {
+        return ExitCode::from(release::acceptance::main(&argv[1..]));
+    }
     match run(&argv) {
         Ok(()) => ExitCode::SUCCESS,
         Err((code, msg)) => {

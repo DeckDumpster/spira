@@ -89,6 +89,13 @@ struct Fake {
     /// Every install_tools call: (dir, tree id). An Err to return instead, when set.
     installs: RefCell<Vec<(PathBuf, String)>>,
     install_err: RefCell<Option<String>>,
+    // ---- build IO (sp-z61hj)
+    /// What build_wrapper answers; the (path, setting) it was asked with.
+    wrapper: RefCell<Result<spira_config::build::Wrapper, String>>,
+    wrapper_asked: RefCell<Vec<(String, String)>>,
+    /// What target_on_tmpfs answers; the trees it was asked for.
+    target_err: RefCell<Option<String>>,
+    targets: RefCell<Vec<PathBuf>>,
 }
 
 fn ctx() -> Ctx {
@@ -178,6 +185,10 @@ impl Fake {
             drift_after_checkouts: Cell::new(0),
             installs: RefCell::new(Vec::new()),
             install_err: RefCell::new(None),
+            wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
+            wrapper_asked: RefCell::new(Vec::new()),
+            target_err: RefCell::new(None),
+            targets: RefCell::new(Vec::new()),
         }
     }
     fn set_var(&self, k: &str, v: &str) {
@@ -189,12 +200,16 @@ impl Fake {
             .insert(k.into(), v.into());
     }
     fn run(&self) -> i32 {
+        self.run_with(false)
+    }
+    fn run_with(&self, release_bins: bool) -> i32 {
         Trial::new(
             self,
             Args {
                 home: PathBuf::from("/h"),
                 branch: BR.into(),
                 repo: Some("spira".into()),
+                release_bins,
             },
         )
         .run()
@@ -352,6 +367,17 @@ impl World for Fake {
     fn checkout(&self, _: &Path, _: &Path, rev: &str, _: &str) -> Result<(), String> {
         self.checkouts.borrow_mut().push(rev.to_string());
         Ok(())
+    }
+    fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String> {
+        self.wrapper_asked.borrow_mut().push((path.to_string(), setting.to_string()));
+        self.wrapper.borrow().clone()
+    }
+    fn target_on_tmpfs(&self, tree: &Path, _: &str, _: &str, _: &crate::target::Limits) -> Result<String, String> {
+        self.targets.borrow_mut().push(tree.to_path_buf());
+        match self.target_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(format!("gate: build on tmpfs at /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
+        }
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
         if let Some(e) = self.install_err.borrow().clone() {
@@ -1334,11 +1360,11 @@ fn unit_mode_rust_only_runs_fences_then_the_touched_crates_tests_and_no_suite() 
     // host 8 cores / SPIRA_CERTIFY_PAR 2 = 4 jobs; spira-config brings its dependent queue
     assert_eq!(
         cmds[1],
-        "cargo build --profile aeon -j 4 --all-targets -p queue -p spira-config"
+        "cargo build --profile aeon --config profile.aeon.incremental=false -j 4 --all-targets -p queue -p spira-config"
     );
     assert_eq!(
         cmds[2],
-        "cargo test --profile aeon -j 4 -p queue -p spira-config -- --test-threads=4"
+        "cargo test --profile aeon --config profile.aeon.incremental=false -j 4 -p queue -p spira-config -- --test-threads=4"
     );
     assert!(f.stderr().contains(
         "gate: composition=unit — fences (suites off, no build fence: the build phase is the compile check), then cargo build and test on the host for: queue spira-config (touched: spira-config)"
@@ -2342,4 +2368,137 @@ fn tools_stamped_for_the_same_tree_are_reused() {
     f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/TREE")), format!("tree-of-{MERGE_SHA}\n"));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(f.cmds.borrow()[0].starts_with("cargo build"), "{:?}", f.cmds.borrow());
+}
+
+// ----------------------------------------------------------------- build IO (sp-z61hj)
+
+/// Every gate-string run gets the build cache's wrapper, resolved on the PATH the command
+/// gets (the release's plus the box tail), and the switch reaches testenv.
+#[test]
+fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let asked = f.wrapper_asked.borrow().clone();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].0.ends_with(":/box/.cargo/bin"), "{asked:?}");
+    assert_eq!(f.env_of(0, "RUSTC_WRAPPER"), "/box/.cargo/bin/sccache");
+    assert_eq!(f.env_of(0, "SCCACHE_IGNORE_SERVER_IO_ERROR"), "1");
+    // No CARGO_* variable: sccache hashes those into every key (DESIGN-build-cache.md §2.2).
+    for e in f.ran.borrow().iter() {
+        assert!(e.iter().all(|(k, _)| !k.starts_with("CARGO_")), "{e:?}");
+    }
+}
+
+/// No sccache: a trial that builds in the tree (here, the definition's tools) refuses before
+/// any build — never a cold build of every dependency. A trial that builds nothing (a
+/// column-gated repository) does not need the cache and is judged.
+#[test]
+fn an_absent_build_cache_refuses_a_building_trial_before_anything_builds() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    *f.wrapper.borrow_mut() = Err("sccache is not on the build's PATH (/x)".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=no-build-cache"), "{}", f.verdict_line());
+    assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+
+    let f = Fake::new();
+    *f.wrapper.borrow_mut() = Err("sccache is not on the build's PATH (/x)".into());
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.targets.borrow().is_empty(), "no build, no tmpfs target");
+    assert!(f.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "RUSTC_WRAPPER")));
+}
+
+/// SPIRA_BUILD_CACHE=off is honoured and said out loud; the switch is passed on.
+#[test]
+fn the_opt_out_is_loud_and_reaches_the_command() {
+    let f = Fake::new();
+    f.set_var("SPIRA_BUILD_CACHE", "off");
+    *f.wrapper.borrow_mut() = Ok(spira_config::build::Wrapper::Off);
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.wrapper_asked.borrow()[0].1, "off");
+    assert!(f.stderr().contains("build cache: OFF"), "{}", f.stderr());
+    assert_eq!(f.env_of(0, "RUSTC_WRAPPER"), "");
+    assert_eq!(f.env_of(0, "SPIRA_BUILD_CACHE"), "off");
+}
+
+/// The gate tree's build goes to tmpfs before anything builds; short of room is a refusal.
+#[test]
+fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.targets.borrow().as_slice(), &[PathBuf::from(GATE_TREE)]);
+    assert!(f.stderr().contains("gate: build on tmpfs at"), "{}", f.stderr());
+
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    *f.target_err.borrow_mut() = Some("gate: MemAvailable is 12 MiB, below the 4096 MiB".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
+    assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// The tools phase and the unit phases are one-shot builds: no incremental cache, by a
+/// command-line switch (a CARGO_INCREMENTAL variable would split the cache).
+#[test]
+fn tree_builds_are_one_shot() {
+    let d = crate::def::parse("bin SPIRA_LINT_BIN spira-lint\nstep \"$SPIRA_LINT_BIN\"\n").unwrap();
+    assert!(d.tools_command(4).unwrap().contains("--config profile.aeon.incremental=false"));
+    for (_, c) in crate::compose::unit_commands(&["tsd".to_string()], 4) {
+        assert!(c.contains("--config profile.aeon.incremental=false"), "{c}");
+    }
+}
+
+/// A tree-built testenv is told its harness is the gate tree: its own executable now
+/// resolves into the tmpfs build root, above which no harness marker lies (sp-z61hj). A
+/// definition that builds no testenv sets nothing (the release's testenv finds its own).
+#[test]
+fn a_tree_built_testenv_is_given_the_gate_tree_as_its_harness() {
+    let steps = "bin SPIRA_LINT_BIN spira-lint\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/a-fence.sh\n";
+    let f = tree_owned(Some(steps), Some(steps));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    let ran = f.ran.borrow();
+    let e = ran.last().unwrap();
+    let get = |k: &str| e.iter().find(|(x, _)| x == k).map(|(_, v)| v.clone());
+    assert_eq!(get("SPIRA_TESTENV_HARNESS").as_deref(), Some(GATE_TREE));
+    assert!(get("SPIRA_TESTENV_BIN").unwrap().starts_with(&format!("{GATE_TREE}/target/gate-tools/")));
+    drop(ran);
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(f.ran.borrow().iter().all(|e| e.iter().all(|(k, _)| k != "SPIRA_TESTENV_HARNESS")));
+}
+
+/// `--release-bins` on a PASS: the judged tree's release profile is built in the gate tree
+/// (tmpfs) through the build cache, one-shot, and the landing is told where it is.
+#[test]
+fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
+    let f = Fake::new();
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    let last = cmds.last().unwrap();
+    assert_eq!(last, &crate::engine::release_bins_command());
+    assert!(last.starts_with("cargo build --release --workspace --locked --config profile.release.incremental=false"), "{last}");
+    assert!(last.contains("find target/release -mindepth 1 -delete"), "a failed build leaves nothing to land: {last}");
+    let env = f.ran.borrow().last().unwrap().clone();
+    assert!(env.contains(&("RUSTC_WRAPPER".to_string(), "/box/.cargo/bin/sccache".to_string())), "{env:?}");
+    assert!(env.iter().any(|(k, v)| k == "PATH" && v.ends_with(":/box/.cargo/bin")), "{env:?}");
+    assert_eq!(f.trees.borrow().last().map(PathBuf::as_path), Some(Path::new(GATE_TREE)));
+    assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
+    // Without the flag nothing extra is built.
+    let g = Fake::new();
+    assert_eq!(g.run(), PASS);
+    assert!(!g.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", g.cmds.borrow());
+}
+
+/// No PASS, no release build; a failed release build is said out loud and the verdict stands.
+#[test]
+fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-b.sh FAIL".into()));
+    f.run_with(true);
+    assert!(!f.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", f.cmds.borrow());
+
+    let f = Fake::new();
+    for at in [MERGE_SHA, BR, BASE] {
+        f.unit_runs.borrow_mut().insert((at.to_string(), "build"), (101, "error: could not compile `x`".into()));
+    }
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
 }

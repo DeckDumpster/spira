@@ -3,7 +3,7 @@
 # Set SPIRA_AGENT to this path. Replaces claude in aeon.sh: drains stdin
 # (the aeon prompt), commits acceptance-probe-<bead-id>.txt, closes the bead, and
 # prints the minimal JSON result aeon.sh expects.
-# covers: spira/acceptance-run.sh spira/aeon.sh
+# covers: spira/aeon.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 

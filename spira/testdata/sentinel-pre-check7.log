@@ -1,110 +1,110 @@
-2026-09-05T06:09:08Z spira: state: goal=sp-spira open=9 ready=5 in_progress=0 aeons=0
+2026-09-05T06:09:08Z spira: state: open=9 ready=5 in_progress=0 aeons=0
 2026-09-05T06:09:09Z spira: ACT reclaimed stale leases
 2026-09-05T06:09:14Z spira: ACT landed spira/sp-epic-complete
 2026-09-05T06:09:14Z spira: ACT summoned a builder aeon
-2026-09-05T06:11:09Z spira: state: goal=sp-spira open=9 ready=5 in_progress=0 aeons=0
+2026-09-05T06:11:09Z spira: state: open=9 ready=5 in_progress=0 aeons=0
 2026-09-05T06:11:11Z spira: ACT reclaimed stale leases
 2026-09-05T06:11:16Z spira: ACT summoned a builder aeon
-2026-09-05T06:12:12Z spira: state: goal=sp-spira open=9 ready=5 in_progress=0 aeons=0
+2026-09-05T06:12:12Z spira: state: open=9 ready=5 in_progress=0 aeons=0
 2026-09-05T06:12:19Z spira: ACT summoned a builder aeon
-2026-09-05T06:14:12Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T06:16:19Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T06:18:38Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T06:20:40Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T06:22:58Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T06:25:00Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T06:27:01Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T06:29:28Z spira: state: goal=sp-spira open=10 ready=5 in_progress=0 aeons=0
+2026-09-05T06:14:12Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T06:16:19Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T06:18:38Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T06:20:40Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T06:22:58Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T06:25:00Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T06:27:01Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T06:29:28Z spira: state: open=10 ready=5 in_progress=0 aeons=0
 2026-09-05T06:29:33Z spira: ACT landed spira/sp-stranded
 2026-09-05T06:29:33Z spira: ACT summoned a builder aeon
-2026-09-05T06:31:29Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:31:29Z spira: state: open=10 ready=4 in_progress=1 aeons=1
 2026-09-05T06:31:35Z spira: ACT landed spira/sp-stranded
-2026-09-05T06:33:39Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:35:39Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:37:49Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:40:09Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:42:09Z spira: state: goal=sp-spira open=11 ready=4 in_progress=1 aeons=1
-2026-09-05T06:44:19Z spira: state: goal=sp-spira open=10 ready=5 in_progress=0 aeons=0
+2026-09-05T06:33:39Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:35:39Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:37:49Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:40:09Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:42:09Z spira: state: open=11 ready=4 in_progress=1 aeons=1
+2026-09-05T06:44:19Z spira: state: open=10 ready=5 in_progress=0 aeons=0
 2026-09-05T06:44:32Z spira: ACT landed spira/sp-branch-cleanup
 2026-09-05T06:44:32Z spira: ACT summoned a builder aeon
-2026-09-05T06:44:58Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:44:58Z spira: state: open=10 ready=4 in_progress=1 aeons=1
 2026-09-05T06:45:05Z spira: ACT landed spira/sp-branch-cleanup
 2026-09-05T06:45:06Z spira: ACT reaped 1 landed branch(es)
-2026-09-05T06:46:59Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:49:29Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:51:38Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:53:57Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:55:58Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T06:57:58Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T07:00:19Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T07:02:20Z spira: state: goal=sp-spira open=10 ready=4 in_progress=1 aeons=1
-2026-09-05T07:04:19Z spira: state: goal=sp-spira open=9 ready=4 in_progress=0 aeons=0
+2026-09-05T06:46:59Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:49:29Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:51:38Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:53:57Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:55:58Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T06:57:58Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T07:00:19Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T07:02:20Z spira: state: open=10 ready=4 in_progress=1 aeons=1
+2026-09-05T07:04:19Z spira: state: open=9 ready=4 in_progress=0 aeons=0
 2026-09-05T07:04:35Z spira: ACT reopened sp-poison-retry — branch conflicts with main
 2026-09-05T07:04:37Z spira: ACT summoned a builder aeon
-2026-09-05T07:06:28Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:08:29Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:10:39Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:12:39Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:15:09Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:17:12Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:19:28Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:21:39Z spira: state: goal=sp-spira open=11 ready=6 in_progress=0 aeons=0
+2026-09-05T07:06:28Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:08:29Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:10:39Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:12:39Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:15:09Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:17:12Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:19:28Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:21:39Z spira: state: open=11 ready=6 in_progress=0 aeons=0
 2026-09-05T07:22:08Z spira: ACT landed spira/sp-ops-sop
 2026-09-05T07:22:09Z spira: ACT reaped 1 landed branch(es)
 2026-09-05T07:22:09Z spira: ACT summoned a builder aeon
-2026-09-05T07:23:49Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:26:09Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:28:09Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:30:23Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:32:39Z spira: state: goal=sp-spira open=12 ready=6 in_progress=1 aeons=1
-2026-09-05T07:34:49Z spira: state: goal=sp-spira open=11 ready=6 in_progress=0 aeons=0
+2026-09-05T07:23:49Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:26:09Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:28:09Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:30:23Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:32:39Z spira: state: open=12 ready=6 in_progress=1 aeons=1
+2026-09-05T07:34:49Z spira: state: open=11 ready=6 in_progress=0 aeons=0
 2026-09-05T07:35:20Z spira: ACT landed spira/sp-stale-base
 2026-09-05T07:35:21Z spira: ACT reaped 1 landed branch(es)
 2026-09-05T07:35:21Z spira: ACT summoned a builder aeon
-2026-09-05T07:36:58Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:38:59Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:41:29Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:43:39Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:45:49Z spira: state: goal=sp-spira open=10 ready=5 in_progress=0 aeons=0
+2026-09-05T07:36:58Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:38:59Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:41:29Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:43:39Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:45:49Z spira: state: open=10 ready=5 in_progress=0 aeons=0
 2026-09-05T07:45:55Z spira: ACT reopened sp-acted-conflation — does not rebase onto origin/main
 2026-09-05T07:45:57Z spira: ACT summoned a builder aeon
-2026-09-05T07:48:08Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:50:10Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:52:29Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:54:29Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:56:38Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T07:58:59Z spira: state: goal=sp-spira open=10 ready=5 in_progress=0 aeons=0
+2026-09-05T07:48:08Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:50:10Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:52:29Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:54:29Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:56:38Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T07:58:59Z spira: state: open=10 ready=5 in_progress=0 aeons=0
 2026-09-05T07:59:10Z spira: ACT reopened sp-fayth-predicate — failed the gate
 2026-09-05T07:59:12Z spira: ACT summoned a builder aeon
-2026-09-05T08:01:00Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:03:19Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:05:19Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:07:38Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:09:59Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:11:59Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:14:18Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:16:19Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:18:39Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:20:38Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:22:58Z spira: state: goal=sp-spira open=10 ready=6 in_progress=0 aeons=0
+2026-09-05T08:01:00Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:03:19Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:05:19Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:07:38Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:09:59Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:11:59Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:14:18Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:16:19Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:18:39Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:20:38Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:22:58Z spira: state: open=10 ready=6 in_progress=0 aeons=0
 2026-09-05T08:23:42Z spira: ACT reopened sp-reimport — branch conflicts with main
 2026-09-05T08:23:44Z spira: ACT summoned a builder aeon
-2026-09-05T08:24:51Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:26:52Z spira: state: goal=sp-spira open=11 ready=5 in_progress=1 aeons=1
-2026-09-05T08:27:12Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:24:51Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:26:52Z spira: state: open=11 ready=5 in_progress=1 aeons=1
+2026-09-05T08:27:12Z spira: state: open=9 ready=4 in_progress=1 aeons=1
 2026-09-05T08:27:44Z spira: ACT landed spira/sp-fayth-predicate
 2026-09-05T08:28:25Z spira: ACT landed spira/sp-reimport
 2026-09-05T08:28:27Z spira: ACT reaped 2 landed branch(es)
-2026-09-05T08:29:19Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:31:18Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:33:24Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:35:39Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:37:40Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:39:58Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:42:09Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:44:19Z spira: state: goal=sp-spira open=9 ready=4 in_progress=1 aeons=1
-2026-09-05T08:46:39Z spira: state: goal=sp-spira open=8 ready=4 in_progress=0 aeons=0
+2026-09-05T08:29:19Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:31:18Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:33:24Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:35:39Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:37:40Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:39:58Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:42:09Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:44:19Z spira: state: open=9 ready=4 in_progress=1 aeons=1
+2026-09-05T08:46:39Z spira: state: open=8 ready=4 in_progress=0 aeons=0
 2026-09-05T08:47:29Z spira: ACT landed spira/sp-cockpit-spira
 2026-09-05T08:47:31Z spira: ACT reaped 1 landed branch(es)
 2026-09-05T08:47:32Z spira: ACT summoned a builder aeon
-2026-09-05T08:48:41Z spira: state: goal=sp-spira open=8 plan_ready=3 in_progress=1 aeons=1 fayths=[builder]
+2026-09-05T08:48:41Z spira: state: open=8 plan_ready=3 in_progress=1 aeons=1 fayths=[builder]

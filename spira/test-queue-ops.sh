@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# test-queue-ops.sh — queue.sh eject and abandon, plus batch.sh's automatic DIRTY-PR
-# abandon path. Merged from test-queue-eject.sh, test-queue-abandon.sh, and the
-# DIRTY-abandon case of test-batch-conflicting-pr.sh (duplicate cluster #6): all three
-# built the same REPO/RUN/SH/forge-fake/repo-map scaffolding independently.
+# test-queue-ops.sh — queue.sh eject and abandon. Merged from test-queue-eject.sh and
+# test-queue-abandon.sh: both built the same REPO/RUN/SH/forge-fake/repo-map scaffolding
+# independently. (batch.sh's own automatic DIRTY-PR abandon path — the trigger this suite
+# once also carried, folded in from test-batch-conflicting-pr.sh — is retired with
+# batch.sh, sp-uwhx0: no repo runs in `land=queue` mode, and batcher-cut owns the round.)
 #
 # MOST CASES USE A RECORDING BD STUB, not a fixture database: eject and abandon's own
 # code paths call bd only to comment/assign, plus reopen for the CERTIFIED-but-unbatched
@@ -15,7 +16,7 @@
 # abandon's bead side effects were previously unread and unverified; nothing here would
 # have caught an accidental bdq call added to that path).
 #
-# covers: queue/src/* spira/batch.sh forge/src/* spira/conf.sh
+# covers: queue/src/* forge/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -511,69 +512,6 @@ printf 'BATCHED %s %s\n' "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
 run abandon $REPONAME --reason 'checking archive name format' >/dev/null 2>&1 || true
 archive="$(ls "$QUEUEDIR/$REPONAME/closed-pr58-"* 2>/dev/null | tail -1)"
 [[ "$archive" == *Z ]] && ok "consistent archive name ends with Z" || bad "archive Z suffix" "got $archive"
-rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
-
-# =============================================================================
-# DIRTY-PR ABANDON — batch.sh's own abandonment path (_abandon_open_batch), folded
-# in from test-batch-conflicting-pr.sh. This is a *different* trigger (an unmergeable
-# PR discovered during a batch pass, not an operator command) reaching the same
-# abandon mechanics; the mergeability predicate itself (DIRTY vs CLEAN) stays in
-# test-batch-conflicting-pr.sh, which is what test-batch-trigger.sh's neighbours cover.
-# =============================================================================
-
-echo
-echo "DIRTY PR: batch.sh detects an unmergeable open batch and abandons it automatically:"
-DIRTY_MERGE_LOG="$TMP/dirty-merge.log"
-DIRTY_MAIL_LOG="$TMP/dirty-mail.log"
-cat > "$SH/forge-dirty.sh" <<ENDDIRTY
-#!/usr/bin/env bash
-cmd="\${1:-}"; shift; repo="\${1:-}"; shift
-printf '%s\n' "\$cmd \$repo \$*" >> "\$FORGE_LOG"
-case "\$cmd" in
-    pr-mergeability) printf '%s\n' "\$*" >> "\$DIRTY_MERGE_LOG"; printf 'DIRTY\n' ;;
-    runs-for-branch) [ -f "\$RUNS_FILE" ] && cat "\$RUNS_FILE"; exit 0 ;;
-    run-cancel)      exit 0 ;;
-    pr-close|pr-comment) exit 0 ;;
-    *) exit 0 ;;
-esac
-ENDDIRTY
-chmod +x "$SH/forge-dirty.sh"
-# batch.sh's DIRTY path calls "$HERE/mail.sh" directly (not through an env seam), so the
-# stub must replace the real copy under $SH, not sit beside it under a different name.
-cat > "$SH/mail.sh" <<'ENDMAIL'
-#!/usr/bin/env bash
-printf '%s\n' "$*" >> "${DIRTY_MAIL_LOG:?}"
-ENDMAIL
-chmod +x "$SH/mail.sh"
-
-write_abandon_batch
-printf 'BATCHED %s %s\n' "$TIP01" "$(date +%s)" > "$LANDSTATE/sp-ab01"
-printf 'BATCHED %s %s\n' "$TIP02" "$(date +%s)" > "$LANDSTATE/sp-ab02"
-printf 'RED %s %s\n'     "$TIP03" "$(date +%s)" > "$LANDSTATE/sp-ab03"
-> "$FORGE_LOG"; : > "$DIRTY_MERGE_LOG"; : > "$DIRTY_MAIL_LOG"
-printf '66601 in_progress\n' > "$RUNS_FILE"
-
-dirty_out="$(env -i PATH="$SH:$STUBBIN:$PATH" HOME="$TMP" \
-    SPIRA_CONF=/nonexistent SPIRA_HOME="$SH" SPIRA_RUN="$RUN" \
-    SPIRA_DB="${SPIRA_DB:-/nonexistent}" SPIRA_BD="$SH/bd-stub.sh" BD_LOG="$BD_LOG" \
-    SPIRA_HOME_REPO="$REPONAME" SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_DIR="$QUEUEDIR" \
-    SPIRA_FORGE="$SH/forge-dirty.sh" \
-    FORGE_LOG="$FORGE_LOG" DIRTY_MERGE_LOG="$DIRTY_MERGE_LOG" DIRTY_MAIL_LOG="$DIRTY_MAIL_LOG" \
-    RUNS_FILE="$RUNS_FILE" SPIRA_QUEUE_BATCH_MAX=8 SPIRA_QUEUE_BATCH_WAIT=0 \
-    bash "$SH/batch.sh" "$REPONAME" 2>&1)"; rc=$?
-[ "$rc" -eq 0 ] && ok "DIRTY: batch exits 0" || bad "DIRTY: batch exits 0" "rc=$rc out=$dirty_out"
-want "DIRTY: batch logs the DIRTY detection" "DIRTY" "$dirty_out"
-want "DIRTY: batch logs abandoning" "abandoning" "$dirty_out"
-st01="$(awk '{print $1}' "$LANDSTATE/sp-ab01" 2>/dev/null || true)"
-[ "$st01" = "CERTIFIED" ] && ok "DIRTY: innocent member returned to CERTIFIED" \
-    || bad "DIRTY: sp-ab01 CERTIFIED" "got $st01"
-st03="$(awk '{print $1}' "$LANDSTATE/sp-ab03" 2>/dev/null || true)"
-[ "$st03" = "RED" ] && ok "DIRTY: already-RED member stays RED" || bad "DIRTY: sp-ab03 RED" "got $st03"
-want "DIRTY: forge pr-close called" "pr-close" "$(cat "$FORGE_LOG")"
-want "DIRTY: gate run cancelled before close" "run-cancel" "$(cat "$FORGE_LOG")"
-want "DIRTY: operator mailed" "batch PR abandoned" "$(cat "$DIRTY_MAIL_LOG")"
-[ ! -f "$OPEN_FILE" ] && ok "DIRTY: open batch file removed" || bad "DIRTY: open file removed" "still exists"
-rm -f "$RUNS_FILE"
 rm -f "$QUEUEDIR/$REPONAME/closed-pr58-"*
 
 # =============================================================================

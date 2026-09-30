@@ -124,6 +124,12 @@ pub trait World {
     /// other entry of `dir`'s parent. Err(why) when any step fails; nothing half-installed
     /// is left at `dir`.
     fn install_tools(&self, tree: &Path, pkgs: &[String], dir: &Path, tree_id: &str) -> Result<(), String>;
+    /// The compiler wrapper the trial's builds run through (sp-z61hj): sccache resolved on
+    /// `path`, or the refusal (spira_config::build::wrapper). `setting` is SPIRA_BUILD_CACHE.
+    fn build_wrapper(&self, path: &str, setting: &str) -> Result<spira_config::build::Wrapper, String>;
+    /// Put the gate tree's build directories on tmpfs (sp-z61hj, target.rs): Ok(a line for the
+    /// trial's stderr), Err(the refusal — short of room; never a fall back to the disk).
+    fn target_on_tmpfs(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<String, String>;
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).

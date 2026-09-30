@@ -74,8 +74,8 @@ seed() {
     testdb_reset
     rm -rf "$RUN/tip-at-gate"
     testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
-{"id":"sp-succ","title":"successor","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-succ","depends_on_id":"sp-goal","type":"parent-child"}]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-succ","title":"successor","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-succ","depends_on_id":"sp-epic","type":"parent-child"}]}
 JSONL
 }
 
@@ -85,7 +85,7 @@ branch() {               # branch <id> [file] [content] — a closed bead with a
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
 }
 
@@ -95,7 +95,7 @@ superseded_branch() {    # superseded_branch <id> [file] [content] — like bran
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"%s","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"%s","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
         "$id" "$id" "$id" "$id" | testdb_seed
 }
 
@@ -190,7 +190,7 @@ git -C "$RUN/worktree/sp-unique" add -A
 git -C "$RUN/worktree/sp-unique" commit -q -m "feat: sp-unique — add file not in base"
 # Mark it superseded (same structure as superseded_branch, but the base is NOT advanced
 # with conflicting content — so merge-tree will exit 0 for this branch).
-printf '{"id":"sp-unique","title":"sp-unique","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unique","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-unique","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
+printf '{"id":"sp-unique","title":"sp-unique","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-unique","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-unique","depends_on_id":"sp-succ","type":"supersedes"}]}\n' \
     | testdb_seed
 git -C "$REPO" fetch -q origin
 out="$(sending)"
@@ -259,7 +259,7 @@ git -C "$REPO" worktree add -q -b "spira/sp-anc" "$RUN/worktree/sp-anc" main
 printf 'anc\n' > "$RUN/worktree/sp-anc/anc.txt"
 git -C "$RUN/worktree/sp-anc" add -A
 git -C "$RUN/worktree/sp-anc" commit -q -m "feat: sp-anc"
-printf '{"id":"sp-anc","title":"sp-anc","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-anc","depends_on_id":"sp-goal","type":"parent-child"},{"issue_id":"sp-anc","depends_on_id":"sp-succ","type":"supersedes"}]}' \
+printf '{"id":"sp-anc","title":"sp-anc","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-anc","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-anc","depends_on_id":"sp-succ","type":"supersedes"}]}' \
     | testdb_seed
 # Fast-forward origin/main past sp-anc by pushing sp-anc's commit there, then adding more.
 git -C "$REPO" push -q origin "spira/sp-anc:main"

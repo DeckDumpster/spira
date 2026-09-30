@@ -285,7 +285,7 @@ impl Run<'_> {
                 // ran and read as OK. It runs here exactly when bash's would (DESIGN.md §8).
                 let r = match self.d.env.original.get("DB") {
                     Some(db) => {
-                        let wf = self.conf.or("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-run.sh spira/acceptance-agent.sh spira/build-tarball.sh");
+                        let wf = self.conf.or("SPIRA_WORKFLOW_ONLY_PATHS", "spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh");
                         let a = s(&[
                             &format!("BEAD_ID={id}"),
                             &format!("SPIRA_BD={}", self.conf.or("SPIRA_BD", "bd")),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# acceptance-local.sh — the pre-release gate: run acceptance-run.sh phase A
+# acceptance-local.sh — the pre-release gate: run `release acceptance` phase A
 # against a tarball built from a working tree, inside a real testenv
 # container, before any release is cut (or to reproduce one that failed).
 #
@@ -15,8 +15,8 @@
 #
 #   <tree>  a working tree of this repository (a worktree, a plain checkout,
 #           or the harness itself) to build the tarball from and mount at
-#           /workspace, so acceptance-run.sh and acceptance-agent.sh run from
-#           the tree under test.
+#           /workspace, so acceptance-agent.sh runs from the tree under test; the
+#           run itself is the built tarball's own bin/release (sp-ak7qm).
 #
 #   start <round> <tree> [...]  runs this build+run exactly as the plain form does, but
 #           detached inside a named systemd --user transient unit (spira-acc-<round>-<ts>),
@@ -33,7 +33,7 @@
 # 2. Bring up a testenv container: a real systemd user session, the same
 #    image CI's suites run against.
 # 3. Set up a scratch repo the same way acceptance-ci.sh does for the forge
-#    run, then run acceptance-run.sh phase A inside the container against the
+#    run, then run the tarball's own `release acceptance` phase A inside the container against the
 #    built tarball (--tarball, so nothing is downloaded) with --agent
 #    acceptance-agent.sh, so no model credential is needed. Without
 #    --predecessor only phase A runs.
@@ -52,7 +52,7 @@
 #     the container, so mounting <tree> itself would leave skew with no tags.
 #   Refused when <tree> has uncommitted changes: the tarball and the mounted
 #   scripts must be the same commit.
-# 4. Report the same PASS/FAIL lines and exit code acceptance-run.sh always
+# 4. Report the same PASS/FAIL lines and exit code `release acceptance` always
 #    prints; on a phase A FAIL, copy its forensics snapshot out to the host.
 #
 # EXIT
@@ -131,7 +131,7 @@ FORENSICS_OUT="${SPIRA_ACCEPTANCE_LOCAL_FORENSICS:-$SPIRA_RUN/acceptance-local-f
 
 _wd="$(mktemp -d)"
 _al_cleanup() {
-    testenv.sh down --name "$CNAME" >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" >/dev/null 2>&1 || true
     rm -rf "$_wd"
 }
 trap _al_cleanup EXIT INT TERM
@@ -174,11 +174,10 @@ log "acceptance-local: tarball built: $(basename "$_al_tarball")"
 
 # ---------------------------------------------------------------------------
 # 2. CONTAINER — a real systemd user session, the same image CI's suites run
-# against. <tree> is mounted at /workspace so acceptance-run.sh and
-# acceptance-agent.sh run from the source tree under test, exactly as
-# acceptance.yml's own checkout drives a tarball downloaded separately.
+# against. <tree> is mounted at /workspace so acceptance-agent.sh runs from the
+# source tree under test, exactly as acceptance.yml's own checkout does.
 # ---------------------------------------------------------------------------
-testenv.sh down --name "$CNAME" >/dev/null 2>&1 || true
+testenv container down --name "$CNAME" >/dev/null 2>&1 || true
 log "acceptance-local: starting container $CNAME"
 # WHAT /workspace IS, AND THE PREDECESSOR (phases B-D only).
 _al_mount="$TREE"
@@ -216,7 +215,7 @@ if [ -n "$PRED" ]; then
     fi
 fi
 
-testenv.sh up --name "$CNAME" --checkout "$_al_mount" >&2 || {
+testenv container up --name "$CNAME" --checkout "$_al_mount" >&2 || {
     printf 'acceptance-local: container did not come up\n' >&2
     exit 2
 }
@@ -224,6 +223,13 @@ testenv.sh up --name "$CNAME" --checkout "$_al_mount" >&2 || {
 _al_ctar="/tmp/$(basename "$_al_tarball")"
 podman cp "$_al_tarball" "$CNAME:$_al_ctar" || {
     printf 'acceptance-local: could not copy the tarball into the container\n' >&2
+    exit 2
+}
+# THE RUN IS THE CANDIDATE'S OWN `release acceptance` (sp-ak7qm), taken from the tarball just
+# built — the same binary acceptance.yml takes from the release asset.
+tar -xzOf "$_al_tarball" --wildcards '*/bin/release' > "$_wd/release" 2>/dev/null \
+    && chmod +x "$_wd/release" && podman cp "$_wd/release" "$CNAME:/tmp/release" || {
+    printf 'acceptance-local: could not stage bin/release from %s in the container\n' "$(basename "$_al_tarball")" >&2
     exit 2
 }
 
@@ -242,9 +248,9 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. RUN — the same scratch-repo shape acceptance-ci.sh builds for the forge
-# run, then acceptance-run.sh phase A against the tarball.
+# run, then `release acceptance` phase A against the tarball.
 # ---------------------------------------------------------------------------
-testenv.sh exec --name "$CNAME" --user spirauser bash -c '
+testenv container exec --name "$CNAME" --user spirauser bash -c '
 set -uo pipefail
 git init --bare --initial-branch=main "$HOME/scratch-repo.git" >/dev/null
 git clone "$HOME/scratch-repo.git" "$HOME/scratch-repo" >/dev/null
@@ -261,15 +267,15 @@ printf "scratch-repo | %s | push | origin/main | |\n" "$HOME/scratch-repo" \
 }
 
 # THE INSTALLED INSTANCE'S OWN DATABASE, exactly as acceptance-ci.sh passes it: the probe
-# bead must be filed where the installed sentinel and aeons read. acceptance-run.sh's own
+# bead must be filed where the installed sentinel and aeons read. `release acceptance`'s own
 # default (~/spira-acceptance-test-db) is a path no install creates, so the first local run
 # failed at "bead filed" before reaching anything the release does.
-log "acceptance-local: running acceptance-run.sh $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
-testenv.sh exec --name "$CNAME" --user spirauser bash -c "
+log "acceptance-local: running release acceptance $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
+testenv container exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
 mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
-exec bash /workspace/spira/acceptance-run.sh '$_al_tag' \
+exec /tmp/release acceptance '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
     --agent /workspace/spira/acceptance-agent.sh \
@@ -284,7 +290,7 @@ _al_rc=$?
 if [ "$_al_rc" -eq 1 ]; then
     rm -rf "$FORENSICS_OUT"
     mkdir -p "$(dirname "$FORENSICS_OUT")"
-    _al_home="$(testenv.sh exec --name "$CNAME" --user spirauser \
+    _al_home="$(testenv container exec --name "$CNAME" --user spirauser \
         bash -c 'printf %s "$HOME"' 2>/dev/null)"
     if [ -n "$_al_home" ] \
         && podman cp "$CNAME:$_al_home/acceptance-forensics" "$FORENSICS_OUT" 2>/dev/null; then

@@ -94,7 +94,6 @@ run_doctor() {
         SPIRA_BD_PIN="$TMP/run/bd-pin" \
         SPIRA_NOTIFY="$TMP/bin/fake-notify" \
         SPIRA_SYSTEMCTL="$TMP/bin/systemctl" \
-        SPIRA_GOAL=sp-test \
         SPIRA_COCKPIT="$TMP/run" \
         SPIRA_SNAP_STALE_S=60 \
         doctor.sh 2>/dev/null || true

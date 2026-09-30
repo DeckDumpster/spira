@@ -131,7 +131,6 @@ run_review() {
         SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ID_PREFIX=sp \
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
@@ -149,7 +148,6 @@ run_release() {
         SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_REPO="$SH" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ID_PREFIX=sp \
         bash "$SH/release.sh" "$@" 2>&1
 }

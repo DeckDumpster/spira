@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-// Baked into the image; must agree with the Containerfile (and testenv.sh).
+// Baked into the image; must agree with the Containerfile (and container.rs).
 /// Units suspended (ctrl.sh) before install, each with the reason it cannot run in the
 /// container. Loom and the cockpit collector need a rustc the image does not have
 /// (sp-fud1). The queue-watch watcher execs `/workspace/bin/queue-watch`, which the
@@ -262,7 +262,7 @@ pub struct Session<'a> {
     pub liveness_retries: u32,
     pub liveness_sleep: Duration,
     /// The trial's setup cutoff (`--deadline`, DESIGN.md D9): every setup exec and
-    /// testenv.sh call carries it. None = unbounded, as before.
+    /// `testenv container` call carries it. None = unbounded, as before.
     pub setup_deadline: Option<Instant>,
 }
 
@@ -339,6 +339,9 @@ impl<'a> Session<'a> {
             ),
             kv("CARGO_HOME", CONTAINER_CARGO),
             kv("CARGO_TARGET_DIR", CONTAINER_CARGO_TARGET),
+            // The container has no sccache (sp-z61hj): a suite that drives a Spira build tool
+            // in here builds uncached on purpose, never refused for the host's cache.
+            kv(spira_config::build::CACHE_ENV, "off"),
         ]
     }
 
@@ -355,7 +358,7 @@ impl<'a> Session<'a> {
         r
     }
 
-    /// `testenv.sh up --name <n> --checkout <worktree>`, then `testenv.sh probe`.
+    /// `testenv container up --name <n> --checkout <worktree>`, then `probe`.
     pub fn up(&self, checkout: &Path) -> Result<(), Fault> {
         let up = self.rt.testenv(
             &[
@@ -379,7 +382,7 @@ impl<'a> Session<'a> {
         self.probe()
     }
 
-    /// `testenv.sh probe`: user systemd reachable in the container.
+    /// `testenv container probe`: user systemd reachable in the container.
     pub fn probe(&self) -> Result<(), Fault> {
         let probe = self.rt.testenv(
             &["probe".into(), "--name".into(), self.name.clone()],
@@ -852,7 +855,7 @@ pub mod fake {
         pub testenv_rc: Mutex<std::collections::HashMap<String, i32>>,
         pub containers: Mutex<Vec<String>>,
         pub inspect_extra: Mutex<std::collections::HashMap<String, String>>,
-        /// testenv.sh subcommand → how long it takes (for the setup-cutoff tests).
+        /// `testenv container` subcommand → how long it takes (for the setup-cutoff tests).
         pub testenv_delay: Mutex<std::collections::HashMap<String, Duration>>,
         /// Plan execs seen ([`crate::plan`]): what really crosses podman, once per setup.
         pub plans: Mutex<usize>,

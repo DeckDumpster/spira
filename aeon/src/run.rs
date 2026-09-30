@@ -924,9 +924,25 @@ impl<'a> Run<'a> {
         env.set("GH_CONFIG_DIR", &gh.display().to_string());
         env.unset("GH_TOKEN");
         env.unset("GITHUB_TOKEN");
-        env.set("GIT_SSH_COMMAND", "echo 'aeon: no SSH credentials — landing.sh and batch.sh handle forge writes' >&2; exit 1");
+        env.set("GIT_SSH_COMMAND", "echo 'aeon: no SSH credentials — landing.sh and the batcher handle forge writes' >&2; exit 1");
         env.set("GIT_TERMINAL_PROMPT", "0");
         env.set("GIT_ASKPASS", "/bin/false");
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): the agent's cargo
+        // compiles through the box's one sccache, so a worktree never builds its dependencies
+        // cold. A session is not a build: absent sccache falls back — loudly — to uncached.
+        let path = env.child().get("PATH").cloned().unwrap_or_default();
+        let setting = env.child().get(spira_config::build::CACHE_ENV).cloned();
+        match spira_config::build::wrapper(&path, setting.as_deref()) {
+            Ok(w) => {
+                for (k, v) in w.env() {
+                    env.set(&k, &v);
+                }
+                if w == spira_config::build::Wrapper::Off {
+                    self.log(&format!("{}: {}", self.f(), w.describe()));
+                }
+            }
+            Err(e) => self.log(&format!("{}: {e} — this session's builds are UNCACHED", self.f())),
+        }
         let sys_file = self.run_dir().join(format!("{bead}.system.md"));
         let task_file = self.run_dir().join(format!("{bead}.task.md"));
         let argv = self.claude_argv(&sys_file);

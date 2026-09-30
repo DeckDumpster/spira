@@ -45,7 +45,6 @@ run_sweep() {
         SPIRA_DB="$SPIRA_DB" \
         SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$MAP" \
-        SPIRA_GOAL=sp-goal \
         SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
@@ -157,7 +156,7 @@ echo "AFTER REAL RUN — detector returns only unclaimable and described unmappe
 after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-goal \
+    SPIRA_REPO_MAP="$MAP" \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$SCOPE" \

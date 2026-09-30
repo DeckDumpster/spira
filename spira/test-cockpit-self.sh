@@ -87,11 +87,11 @@ echo "ACCEPTANCE 1: burst 6h ago and nothing since → SP_SELF_REPEATING_N=0"
 # THE POSITIVE CONTROL: same fixture structure but within the window, to prove the
 # parser can find repeating acts when they exist.
 REPEAT_IN_WINDOW="
-${TS_10M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_10M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_10M} spira: ACT handled 1 stranded item(s)
-${TS_8M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_8M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_8M} spira: ACT handled 1 stranded item(s)
-${TS_6M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6M} spira: ACT handled 1 stranded item(s)
 "
 out_pos="$(run_metrics "$REPEAT_IN_WINDOW" "$EMPTY_LEDGER")"
@@ -104,11 +104,11 @@ want "positive control: repeating string contains count"        "3 passes"      
 
 # THE BURST 6H AGO: same act text but all passes outside the 90-min window.
 BURST_6H_AGO="
-${TS_6H} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6H} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6H} spira: ACT handled 1 stranded item(s)
-${TS_6H2} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6H2} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6H2} spira: ACT handled 1 stranded item(s)
-${TS_6H3} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6H3} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6H3} spira: ACT handled 1 stranded item(s)
 "
 out_6h="$(run_metrics "$BURST_6H_AGO" "$EMPTY_LEDGER")"
@@ -123,11 +123,11 @@ echo "ACCEPTANCE 2: three consecutive in last 10 min → SP_SELF_REPEATING_N=1"
 # The fixture has three consecutive passes each with the same ACT. The last pass is the
 # most recent, so the run extends to the end of the window — it is "repeating now".
 THREE_CONSEC="
-${TS_10M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_10M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_10M} spira: ACT handled 1 stranded item(s)
-${TS_8M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_8M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_8M} spira: ACT handled 1 stranded item(s)
-${TS_6M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6M} spira: ACT handled 1 stranded item(s)
 "
 out_3="$(run_metrics "$THREE_CONSEC" "$EMPTY_LEDGER")"
@@ -140,13 +140,13 @@ want "three consecutive: SP_SELF_REPEATING0 contains act text" "handled 1 strand
 
 # Verify a stopped repetition does NOT show: add a clean pass after the burst.
 THREE_THEN_CLEAN="
-${TS_10M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_10M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_10M} spira: ACT handled 1 stranded item(s)
-${TS_8M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_8M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_8M} spira: ACT handled 1 stranded item(s)
-${TS_6M} spira: state: goal=sp-foo open=1 plan_ready=1 in_progress=0
+${TS_6M} spira: state: open=1 plan_ready=1 in_progress=0
 ${TS_6M} spira: ACT handled 1 stranded item(s)
-${TS_2M} spira: state: goal=sp-foo open=0 plan_ready=0 in_progress=0
+${TS_2M} spira: state: open=0 plan_ready=0 in_progress=0
 "
 out_stopped="$(run_metrics "$THREE_THEN_CLEAN" "$EMPTY_LEDGER")"
 is "stopped burst: SP_SELF_REPEATING_N is 0 after clean pass" "SP_SELF_REPEATING_N=0" \
@@ -202,7 +202,7 @@ run_health() {   # run_health: sources cockpit.env and renders once at 80 cols
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 TERM=dumb \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         bash "$HEALTH" once 0 80 2>/dev/null
 }
 

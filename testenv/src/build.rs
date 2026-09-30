@@ -31,6 +31,9 @@ pub enum BuildError {
     /// cargo was killed at the trial's setup cutoff (DESIGN.md D9): rc 2, never the
     /// candidate's rc 4 — nothing about the branch was judged.
     Deadline,
+    /// The box's compilation cache (sccache) is required and absent (sp-z61hj): rc 3, the
+    /// runner's environment — never a cold build of every dependency.
+    NoCache(String),
 }
 
 pub trait Builder: Sync {
@@ -53,6 +56,12 @@ impl Builder for Cargo {
         deadline: Option<Instant>,
     ) -> Result<Duration, BuildError> {
         let t0 = Instant::now();
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every dependency
+        // is a cache read after its first build on this box; absent sccache refuses.
+        let wrapper = spira_config::build::wrapper_from_env().map_err(BuildError::NoCache)?;
+        if wrapper == spira_config::build::Wrapper::Off {
+            eprintln!("testenv: {}", wrapper.describe());
+        }
         let stdout_to_stderr = {
             use std::os::fd::AsFd;
             std::io::stderr()
@@ -63,10 +72,17 @@ impl Builder for Cargo {
         };
         let child = Command::new("cargo")
             .args(["build", "--profile", profile, "--workspace"])
+            // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
+            // split the compilation cache's keys).
+            .args(spira_config::build::one_shot(profile))
+            .envs(wrapper.env())
             .current_dir(worktree)
             // cargo's DEFAULT target dir, always: the stable path is what makes it incremental,
             // and <worktree>/target/<p> is the one place SPIRA_ARTIFACTS may point.
             .env_remove("CARGO_TARGET_DIR")
+            // A caller's CARGO_INCREMENTAL would split the compilation cache (sccache hashes
+            // every CARGO_* variable); the one-shot switch above says the same thing.
+            .env_remove("CARGO_INCREMENTAL")
             .env_remove("CARGO_BUILD_TARGET_DIR")
             .env_remove("SPIRA_ARTIFACTS")
             .stdin(Stdio::null())

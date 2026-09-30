@@ -251,7 +251,7 @@ real red (measured on sp-vd9dn: 5 `reopened`, 7 `reopen` rows).
 
 | test-poison.sh case | becomes |
 |---|---|
-| valve covers the dispatchable set (goal_open_children vs dispatchable_open) | **stays end-to-end** — it is a property of `dispatchable_open`'s bd predicate, not arithmetic |
+| valve covers the dispatchable set (one epic's children vs dispatchable_open) | **stays end-to-end** — it is a property of `dispatchable_open`'s bd predicate, not arithmetic |
 | bead at threshold is poisoned; below is left alone | unit: `decide_poison_at_threshold`, `decide_below_threshold_none` |
 | ask mail title/BRANCH/Default/log excerpt, events.log record | **stays end-to-end** (sentinel.sh's mail rendering, not this program) |
 | already-poisoned emits nothing new | unit: `decide_already_poisoned_no_poison_token` |

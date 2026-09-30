@@ -18,7 +18,7 @@
 # A queue-mode branch is certified instantly (no local gate — law-a-round-takes-
 # certified-tips), so ordering is read off the pass's own log rather than a gate delay:
 # the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
-# this branch. the queue step and batch.sh are stubbed to control what the forge reports.
+# this branch. The queue step is stubbed to control what the forge reports.
 #
 # covers: landing-pass/*
 # timeout: 120
@@ -72,8 +72,7 @@ stub gh         'exit 1'
 
 # VERDICT STUB: stateful — outputs a landing line exactly once (simulates a batch file that
 # disappears after a fast-forward). After the first call the batch is gone; subsequent calls
-# are silent. batch.sh is a no-op (no new batch to open in this fixture).
-stub batch.sh 'exit 0'
+# are silent.
 # THE QUEUE STEP IS `queue step <repo>` now (landing-pass/DESIGN.md §8 D5): the
 # stub stands in for the queue binary and runs verdict-fixture (the verdict runs in process
 # inside `queue step` now, queue/DESIGN-verdict.md), which is all this suite's ordering
@@ -93,7 +92,7 @@ landing() {
 seed() {
     testdb_reset
     testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 }
 
@@ -103,7 +102,7 @@ branch() {
     printf '%s\n' "$id" > "$RUN/worktree/$id/$id.txt"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
 }
 

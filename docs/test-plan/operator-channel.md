@@ -252,3 +252,8 @@ schema; a covering suite's own `# tier:` need not match exactly. Text is
 abridged from section 2's full requirement — section 2 is authoritative.
 
 Machine-readable declarations live in `docs/test-plan/operator-channel.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
+
+
+## Deleted suites
+
+- **test-watch-notify.sh** — deleted by sp-herv0 (2026-09-30): flipped on an unchanged tree (the two-escalation case collapsed to fewer asks, then passed alone). Coverage lost: rows 28, 29, 31 and D6/D8 above (notify first-sighting and suppression stamps, health-half escalation, malformed-input refusals, rendered-unit shape). sp-eywse finds the root cause and re-adds it.

@@ -1,8 +1,8 @@
 [Unit]
-# The outer harness for Spira: compare current state to goal state and close the gap.
+# The outer harness for Spira: compare current state to desired state and close the gap.
 # It is deliberately a oneshot on a timer rather than a daemon — a loop hung off a session
 # cannot repair the case where the session died, which is the scar behind cockpit-ensure.
-Description=Spira sentinel — reconcile the work graph toward its goal
+Description=Spira sentinel — reconcile the work graph toward its desired state
 Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md
 After=default.target
 

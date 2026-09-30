@@ -93,7 +93,7 @@ LEGACY_DIR="$T/legacy"
 mkdir -p "$LEGACY_DIR"
 CONF_FILE="$LEGACY_DIR/spira.conf"
 conf_prod="$T/legacy-chosen/spira"
-printf 'SPIRA_PROD = %s\nSPIRA_MAX_AEONS = 7\n' "$conf_prod" > "$CONF_FILE"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\nSPIRA_MAX_AEONS = 7\n' "$conf_prod" > "$CONF_FILE"
 
 # SPIRA_CONFIG_WRITE=1 bypasses spira_config_writeback's redirect (sp-q5hzx): this
 # fixture is not the installed release, so without it every write here would land
@@ -117,7 +117,7 @@ fi
 # whatever the .toml alone has gained since (the "gutted spira.toml" failure this bead
 # retires).
 sleep 1.1
-printf 'SPIRA_PROD = %s/v2\n' "$T" > "$CONF_FILE"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s/v2\n' "$T" > "$CONF_FILE"
 got_prod2="$(conf_val SPIRA_PROD SPIRA_CONF="$CONF_FILE" SPIRA_CONFIG_WRITE=1)"
 is "editing spira.conf again does NOT regenerate the existing spira.toml" "$conf_prod" "$got_prod2"
 
@@ -136,7 +136,7 @@ cp "$CRATE/tests/fixtures/repo-map" "$FULL_DIR/repo-map"
 cp "$CRATE/tests/fixtures/chamber/builder.fayth" "$CRATE/tests/fixtures/chamber/ops.fayth" \
     "$HARNESS/spira/chamber/"
 FULL_CONF="$FULL_DIR/spira.conf"
-printf 'SPIRA_PROD = %s\n' "$T/full-chosen/spira" > "$FULL_CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$T/full-chosen/spira" > "$FULL_CONF"
 
 conf_val SPIRA_PROD SPIRA_CONF="$FULL_CONF" SPIRA_CONFIG_WRITE=1 >/dev/null
 GENERATED="$FULL_DIR/spira.toml"
@@ -162,7 +162,7 @@ echo "convert refuses to replace a larger spira.toml with a smaller one:"
 SHRINK_DIR="$T/shrink"; mkdir -p "$SHRINK_DIR"
 SHRINK_TOML="$SHRINK_DIR/spira.toml"
 SHRINK_CONF="$SHRINK_DIR/spira.conf"
-printf 'SPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$SHRINK_DIR/prod" > "$SHRINK_CONF"
 
 spira-config convert --conf "$SHRINK_CONF" \
     --repo-map "$CRATE/tests/fixtures/repo-map" \
@@ -199,7 +199,7 @@ RO_DIR="$T/readonly-legacy"
 mkdir -p "$RO_DIR"
 RO_CONF="$RO_DIR/spira.conf"
 ro_prod="$T/readonly-chosen/spira"
-printf 'SPIRA_PROD = %s\n' "$ro_prod" > "$RO_CONF"
+printf 'SPIRA_ID_PREFIX = sp\nSPIRA_PROD = %s\n' "$ro_prod" > "$RO_CONF"
 chmod a-w "$HARNESS"
 got_ro_prod="$(conf_val SPIRA_PROD SPIRA_CONF="$RO_CONF")"
 chmod u+w "$HARNESS"

@@ -24,11 +24,10 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
-# lifecycle-cert.sh into spira-lc's caller verbs). These two names remain ONLY for batch.sh's
-# stale-certification sweep, whose own port (wave 2b) calls the verbs directly; each is the
-# call itself, with the actor the calling script's own name as lifecycle-cert.sh had it.
-lc_certify()  { spira-lc certify "$1" "$2" "$3" "${4:-}" "$(basename "${0:-lifecycle-cert}")"; }
-lc_resubmit() { spira-lc resubmit "$1" "$2" "$(basename "${0:-lifecycle-cert}")"; }
+# lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
+# functions that once stood in for those two calls are retired too (sp-uwhx0): their only
+# caller was batch.sh's stale-certification sweep, itself retired with batch.sh — nothing
+# else called them (grepped). Call `spira-lc certify`/`spira-lc resubmit` directly.
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"
@@ -1105,8 +1104,8 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # installation that imported a predecessor's beads sorts thousands of them above every native
 # plan bead — the plan read as having no workable step at all until this was found.
 #
-# `--exclude-type epic` is not optional. The goal epic has no blockers, so it reads as ready
-# and would be claimed and "implemented", which is not a thing an epic means.
+# `--exclude-type epic` is not optional. An epic with no blockers reads as ready and would be
+# claimed and "implemented", which is not a thing an epic means.
 #
 # `-u` is not optional, and it is the hardest of the three to see. `bd ready` counts a bead
 # by status and blockers; `bd ready --claim` refuses one already carrying another actor's
@@ -2436,8 +2435,8 @@ fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partitio
 # minutes an operation needs, never for an hour. Whoever sets one can die before lifting it
 # — 2026-09-09, an Ops sweep drained at 18:02:03, finished its SOP at 18:04:29, exited
 # without resuming, and the world sat gated for 59 minutes with 25 beads ready and no aeons,
-# every pass logging "pass complete — goal reached" because a drain is a MODE and nothing
-# treated the mode as a fault.
+# every pass logging "pass complete" with nothing summoned, because a drain is a MODE and
+# nothing treated the mode as a fault.
 #
 # LIFTING IT HERE IS LOUD, NEVER SILENT — a quiet lift would hide the forgotten resume,
 # which is the defect worth seeing. A STAMP WITH NO `expires` LINE expires at stamp-mtime +
@@ -5506,29 +5505,12 @@ before you edit — two branches converging on the same lines cannot both rebase
     }
 }
 
-# THE GOAL EPIC IS ONE PILGRIMAGE, NOT "THE WORK". This answers "is the pilgrimage under
-# $SPIRA_GOAL finished", which is what CHECK 1, CHECK 3 and CHECK 8 reason about. It is the
-# wrong question for anything that must cover what the harness DISPATCHES: a bead carrying a
-# fayth's labels but parented elsewhere — or parented nowhere — is summoned every pass and
-# does not appear here at all. Use dispatchable_open for that.
-goal_open_children() {   # beads under the goal epic that are not closed
-    bdjson children "$SPIRA_GOAL" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-for i in d:
-    if i.get("id") != "'"$SPIRA_GOAL"'" and i.get("status") != "closed":
-        print(i["id"])
-' 2>/dev/null
-}
-
 # dispatchable_open -> every non-closed bead the summoner can reach, one id a line.
 #
 # THE SET ANY CHECK ABOUT "THE WORK" MUST ITERATE. Two predicates for "which beads are ours"
 # is the defect: summoning goes through fayth_ready, which asks each persona its own
-# FAYTH_LABELS, while the poison valve iterated the goal epic's children — so a bead labelled
-# for a partition and parented outside the goal was dispatchable and unpoisonable. It could
+# FAYTH_LABELS, while the poison valve iterated one epic's children — so a bead labelled
+# for a partition and parented outside that epic was dispatchable and unpoisonable. It could
 # be summoned every pass, fail every time, and never trip the valve that exists to stop
 # exactly that; one measured 9 attempts against a threshold of 3, and the 8 children examined
 # stood for 66 beads dispatched. The fix is the one fayth_ready already made one check along:
@@ -7512,14 +7494,15 @@ print(d[0].get("status", "") if d else "")' 2>/dev/null
 
 # THE POSITIVE CONTROL for the status witness. An empty answer means "this bead is not in
 # progress" only if the probe could have said otherwise; from a database that is down, every
-# bead reads as free. Proved once per process against a bead known to exist — the goal bead,
-# which is the one row this harness cannot run without — and cached, because it gates a loop
-# that runs every two minutes over seven repositories.
+# bead reads as free. Proved once per process by the store listing at least one bead — any
+# row proves it can answer, as rebase-stale's own control does (sp-k6m1m: it used to show a
+# configured goal bead, and `bd show` of a missing id prints `[]`, so it proved nothing) —
+# and cached, because it gates a loop that runs every two minutes over seven repositories.
 SPIRA_DB_OK=""
 spira_db_reachable() {
     [ "$SPIRA_STATUS_SEAM" = 1 ] && return 0
     if [ -z "$SPIRA_DB_OK" ]; then
-        if [ -n "$(bdjson show "$SPIRA_GOAL" 2>/dev/null | json_only | head -c 1)" ]; then
+        if [ -n "$(bdjson list --all --limit 1 2>/dev/null | tr -d '[:space:]' | sed -n '/^\[{/p')" ]; then
             SPIRA_DB_OK=1
         else
             SPIRA_DB_OK=0

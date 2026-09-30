@@ -34,9 +34,8 @@ PROMPT="You are the Spira sentinel's judgement tier. Every deterministic check h
 and the work graph is still not moving: beads remain open, none are ready, none are
 running, and nothing was reclaimed, poisoned, reopened or landed this pass.
 
-Goal epic: $SPIRA_GOAL${SPIRA_DESIGN:+
-Design: $SPIRA_DESIGN}
-
+${SPIRA_DESIGN:+Design: $SPIRA_DESIGN
+}
 ## Open beads
 
 $STATE

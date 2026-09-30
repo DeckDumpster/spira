@@ -63,7 +63,7 @@ echo "stuck gate is reported separately:"
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira","plan"]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 {"id":"sp-work","title":"task","status":"open","issue_type":"task","labels":["spira","plan"]}
 JSONL
 
@@ -91,7 +91,7 @@ echo "gate with await_id is not reported as stuck:"
 
 testdb_reset
 testdb_seed <<JSONL
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":["spira","plan"]}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira","plan"]}
 {"id":"sp-work2","title":"task2","status":"open","issue_type":"task","labels":["spira","plan"]}
 JSONL
 

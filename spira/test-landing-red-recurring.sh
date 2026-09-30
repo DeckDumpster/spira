@@ -86,7 +86,7 @@ seed() {
     testdb_reset
     rm -rf "$RUN/tip-at-gate" "$RUN/landstate"
     testdb_seed <<'JSONL'
-{"id":"sp-goal","title":"goal","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 }
 
@@ -96,7 +96,7 @@ branch() {
     printf '%s\n' "$c" > "$RUN/worktree/$id/$f"
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "feat: $id — work"
-    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-goal","type":"parent-child"}]}\n' \
+    printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-04T00:00:00Z","closed_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"%s","depends_on_id":"sp-epic","type":"parent-child"}]}\n' \
         "$id" "$id" "$id" | testdb_seed
 }
 

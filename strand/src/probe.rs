@@ -367,10 +367,14 @@ pub fn throttle_line(t: &Throttle) -> String {
     }
 }
 
+/// The sentinel's pass-start marker: its `state: open=<n> …` line (sp-k6m1m dropped the
+/// `goal=` field that used to lead it).
+pub const PASS_MARKER: &str = ": state: open=";
+
 /// Did the last sentinel pass skip this partition's personas ("pass budget exhausted")?
 pub fn pass_truncated(log_text: &str, fayths: &[String]) -> bool {
     let lines: Vec<&str> = log_text.lines().collect();
-    let Some(start) = lines.iter().rposition(|l| l.contains(": state: goal=")) else {
+    let Some(start) = lines.iter().rposition(|l| l.contains(PASS_MARKER)) else {
         return false;
     };
     fayths.iter().any(|f| {
@@ -449,7 +453,7 @@ mod tests {
 
     #[test]
     fn truncation_reads_only_the_last_pass() {
-        let log = "a: state: goal=x\nCHECK7 builder: not evaluated (pass budget exhausted)\nb: state: goal=y\nCHECK7 ops: ok\n";
+        let log = "a: state: open=1\nCHECK7 builder: not evaluated (pass budget exhausted)\nb: state: open=2\nCHECK7 ops: ok\n";
         assert!(!pass_truncated(log, &["builder".into()]));
         let log2 = format!("{log}CHECK7 builder: not evaluated (pass budget exhausted)\n");
         assert!(pass_truncated(&log2, &["builder".into()]));

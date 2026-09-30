@@ -91,7 +91,7 @@ pub struct Settings {
     pub lc_bin: Option<PathBuf>,
     pub halt_grace: u64,
     /// conf.sh's PATH (`SPIRA_PATH` prepended to the box's tail) — what every command
-    /// landing.sh ran was looked up in. `halt` runs podman and testenv.sh under it.
+    /// landing.sh ran was looked up in. `halt` runs podman and testenv under it.
     pub path: Option<String>,
     pub bdjson_fixture: Option<PathBuf>,
     /// `SPIRA_PR_REFRESH_MAX` (default 5): how many times the pr pass rebases and re-pushes

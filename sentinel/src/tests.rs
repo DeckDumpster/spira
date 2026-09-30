@@ -139,7 +139,6 @@ impl World {
             ("SPIRA_RUN", &run),
             ("SPIRA_HOME", &home),
             ("SPIRA_DB", "/db"),
-            ("SPIRA_GOAL", "sp-goal"),
             ("SPIRA_SCOPE_LABEL", "spira"),
             ("SPIRA_ASK_LABEL", "needs-operator"), // literal-ok: test fixture
             ("SPIRA_NO_LOOP_LABEL", "no-loop"), // literal-ok: test fixture
@@ -183,9 +182,9 @@ pub fn exe(p: &Path) {
 pub const NOW: i64 = 1_790_000_000;
 
 pub const LIST: &str = r#"[
-  {"id":"sp-goal","status":"open","issue_type":"epic"},
-  {"id":"sp-a","status":"open","parent":"sp-goal","labels":["spira","plan"],"issue_type":"task"},
-  {"id":"sp-b","status":"in_progress","parent":"sp-goal","labels":["spira","plan"],"issue_type":"task"}
+  {"id":"sp-epic","status":"open","issue_type":"epic"},
+  {"id":"sp-a","status":"open","parent":"sp-epic","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-b","status":"in_progress","parent":"sp-epic","labels":["spira","plan"],"issue_type":"task"}
 ]"#;
 pub const READY: &str = r#"[{"id":"sp-a","labels":["spira","plan"]}]"#;
 
@@ -288,39 +287,38 @@ fn setup(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
 // §2.1 exit codes, G2
 
 #[test]
-fn unreadable_store_is_exit_1_and_never_goal_reached() {
+fn unreadable_store_is_exit_1_and_reports_no_state() {
     let (w, r, sink, clock) = setup("dbfail");
     r.on(|s| if is_bd(s, "list") { fail(1) } else { None });
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None), 1);
     assert!(sink.has("spira: DATABASE UNREADABLE — bd cannot reach /db; state is unknown and this pass cannot close any gap"));
-    assert!(!sink.has("goal reached"));
-    assert!(!sink.has("state:"));
+    assert!(!sink.has("state:"), "a pass that cannot see the graph never reports a backlog");
+    assert!(!sink.has("pass complete"));
 }
 
+// sp-k6m1m: there is no goal. The state line counts the open plan backlog — every open or
+// in-progress `<scope,>plan` bead that is work, wherever it is parented — and the pass never
+// declares the work finished.
 #[test]
-fn a_goal_that_names_no_bead_is_never_reached_and_stops_nothing() {
-    let (w, r, sink, clock) = setup("goal");
-    assert_eq!(
-        run_mode(
-            &w,
-            &r,
-            &sink,
-            &clock,
-            Mode::Pass,
-            &[("SPIRA_GOAL", "sp-nope")],
-            None
-        ),
-        0
+fn the_backlog_is_every_open_plan_bead_not_one_epics_children() {
+    let (w, r, sink, clock) = setup("backlog");
+    store_is(
+        &r,
+        r#"[{"id":"sp-epic","status":"open","issue_type":"epic","labels":["spira","plan"]},
+            {"id":"sp-child","status":"open","parent":"sp-epic","labels":["spira","plan"],"issue_type":"task"},
+            {"id":"sp-orphan","status":"open","labels":["spira","plan"],"issue_type":"bug"},
+            {"id":"sp-run","status":"in_progress","labels":["spira","plan"],"issue_type":"task"},
+            {"id":"sp-done","status":"closed","labels":["spira","plan"],"issue_type":"task"},
+            {"id":"sp-inc","status":"open","labels":["spira","incident"],"issue_type":"task"}]"#,
     );
-    assert!(sink.has(
-        "GOAL UNRESOLVABLE — sp-nope names no bead in /db; completion is not assessed this pass, every other check runs"
-    ));
-    assert!(!sink.has("goal reached"), "a dangling goal is never reached (sp-ejf3)");
-    assert!(sink.has("state: goal=sp-nope"), "the pass continues past the goal check");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None), 0);
+    assert!(sink.has("state: open=3 plan_ready=1 in_progress=1"), "{}", sink.text());
+    assert!(!sink.has("goal"), "no goal concept survives in the pass's output: {}", sink.text());
+    assert!(sink.has("pass complete — "), "{}", sink.text());
 }
 
 #[test]
-fn skip_reclaim_skips_the_db_and_goal_checks() {
+fn skip_reclaim_skips_the_db_check() {
     let (w, r, sink, clock) = setup("skip");
     r.on(|s| if is_bd(s, "list") { fail(1) } else { None });
     assert_eq!(
@@ -330,13 +328,14 @@ fn skip_reclaim_skips_the_db_and_goal_checks() {
             &sink,
             &clock,
             Mode::Pass,
-            &[("SPIRA_SKIP_RECLAIM", "1"), ("SPIRA_GOAL", "nope")],
+            &[("SPIRA_SKIP_RECLAIM", "1")],
             None
         ),
         0
     );
-    assert!(sink.has("state: goal=nope open=0 plan_ready=0 in_progress=0"));
-    assert!(sink.has("pass complete — 0 action(s), 0 progress, goal reached"));
+    assert!(sink.has("state: open=0 plan_ready=0 in_progress=0"));
+    assert!(sink.has("pass complete — 0 action(s), 0 progress"));
+    assert!(!sink.has("goal"));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -349,7 +348,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
         if s.prog == "strand" {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
-                .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-goal")));
+                .is_some_and(|p| std::fs::read_to_string(p).unwrap().contains("sp-epic")));
             assert!(env_of(s, "SPIRA_READY_SNAPSHOT").is_some());
             let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
             assert_eq!(cache, "builder 1\nops 0\n");
@@ -370,7 +369,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     // lifecycle_enforce OFF (the default here): no lifecycle read at all — run_mode asserts
     // that for every OFF test. ON's one read is pinned in on_check2_reaps_….
     assert_eq!(r.count(|s| s.prog == "spira-lc"), 0);
-    assert!(sink.has("spira: state: goal=sp-goal open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
+    assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
     assert!(sink.has("ACT escalated 1 stranded item(s)"));
@@ -517,13 +516,33 @@ fn mailboxes_count_as_progress_and_status_files_are_read() {
 // ---------------------------------------------------------------------------------------
 // CHECK 3 and CHECK 8
 
+// sp-k6m1m: the backlog is the whole open plan, so judgement gets a bounded sample (reflect.sh
+// runs one `bd show` per id) while the STARVED line carries the full count.
+#[test]
+fn judgement_sees_a_bounded_sample_of_a_large_backlog() {
+    let (w, r, sink, clock) = setup("starved-big");
+    r.on(|s| if is_bd(s, "ready") { ok("[]") } else { None });
+    let rows: Vec<String> = (0..40)
+        .map(|i| format!(r#"{{"id":"sp-b{i:02}","status":"open","labels":["spira","plan"],"issue_type":"task"}}"#))
+        .collect();
+    let list: &'static str = Box::leak(format!("[{}]", rows.join(",")).into_boxed_str());
+    r.on(move |s| if is_bd(s, "list") { ok(list) } else { None });
+    exe(&w.home.join("reflect.sh"));
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
+    assert!(sink.has("STARVED — 40 open, 0 ready, 0 running. Dropping to inference."), "{}", sink.text());
+    let refl = r.find(|s| s.prog.ends_with("/reflect.sh")).unwrap();
+    let ids: Vec<&str> = refl.args[0].lines().collect();
+    assert_eq!(ids.len(), crate::audit::REFLECT_IDS);
+    assert_eq!(ids[0], "sp-b00");
+}
+
 #[test]
 fn starved_plan_recomputes_then_judges_once_an_hour() {
     let (w, r, sink, clock) = setup("starved");
     r.on(|s| if is_bd(s, "ready") { ok("[]") } else { None });
     r.on(|s| {
         if is_bd(s, "list") {
-            return ok(r#"[{"id":"sp-goal","status":"open"},{"id":"sp-a","status":"open","parent":"sp-goal","labels":["spira","plan"]}]"#);
+            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"sp-a","status":"open","parent":"sp-epic","labels":["spira","plan"]}]"#);
         }
         None
     });
@@ -560,12 +579,12 @@ fn starved_plan_recomputes_then_judges_once_an_hour() {
 }
 
 #[test]
-fn report_lists_open_children_and_nothing_when_empty() {
+fn report_lists_the_open_plan_beads_and_nothing_when_empty() {
     let (w, r, sink, clock) = setup("report");
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Report, &[], None), 0);
     let t = sink.text();
     assert!(
-        t.contains("\nOpen beads under sp-goal:\n  sp-a\n  sp-b"),
+        t.contains("\nOpen plan beads:\n  sp-a\n  sp-b"),
         "{t}"
     );
     assert_eq!(
@@ -576,7 +595,7 @@ fn report_lists_open_children_and_nothing_when_empty() {
     let (w, r, sink, clock) = setup("report2");
     r.on(|s| {
         if is_bd(s, "list") {
-            ok(r#"[{"id":"sp-goal","status":"open"}]"#)
+            ok(r#"[{"id":"sp-epic","status":"open"}]"#)
         } else {
             None
         }
@@ -706,7 +725,7 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
 // CHECK 4 (audit)
 
 const AUDIT_LIST: &str = r#"[
-  {"id":"sp-goal","status":"open","issue_type":"epic"},
+  {"id":"sp-epic","status":"open","issue_type":"epic"},
   {"id":"sp-p","status":"open","labels":["spira","plan","repo:spira"],"issue_type":"task","title":"Poison me","created_at":"2026-09-20T00:00:00Z"},
   {"id":"sp-q","status":"open","labels":["spira","plan"],"issue_type":"task"},
   {"id":"sp-h","status":"open","labels":["spira","plan"],"issue_type":"task"}
@@ -977,7 +996,7 @@ fn check5_resolves_proven_landings_and_files_the_rest() {
     let (w, r, sink, clock) = setup("c5");
     let hash = crate::check5::ref_hash("sp-l");
     let list = format!(
-        r#"[{{"id":"sp-goal","status":"open"}},
+        r#"[{{"id":"sp-epic","status":"open"}},
             {{"id":"sp-l","status":"closed","issue_type":"task","labels":["spira","plan"]}},
             {{"id":"sp-n","status":"closed","issue_type":"task","labels":["spira","plan"]}},
             {{"id":"sp-s","status":"closed","issue_type":"task","labels":["spira","plan"],"close_reason":"Duplicate of x"}},
@@ -1060,7 +1079,7 @@ fn check5_cap_bounds_filing() {
     let (w, r, sink, clock) = setup("c5cap");
     r.on(|s| {
         if is_bd(s, "list") {
-            return ok(r#"[{"id":"sp-goal","status":"open"},{"id":"a1","status":"closed","issue_type":"bug","labels":["spira","plan"]},{"id":"a2","status":"closed","issue_type":"bug","labels":["spira","plan"]}]"#);
+            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"a1","status":"closed","issue_type":"bug","labels":["spira","plan"]},{"id":"a2","status":"closed","issue_type":"bug","labels":["spira","plan"]}]"#);
         }
         None
     });
@@ -1189,7 +1208,6 @@ fn roster_warnings_name_each_left_out_persona_once() {
         &[
             ("SPIRA_RUN", &run),
             ("SPIRA_DB", "/db"),
-            ("SPIRA_GOAL", "sp-goal"),
             ("SPIRA_FAYTHS", "builder"),
         ],
         &[],
@@ -1276,8 +1294,8 @@ fn phases_are_tsd_rows_for_the_full_pass_only() {
 
 const LEGACY_LIST: &str = concat!(
     r#"[
-  {"id":"sp-goal","status":"open","issue_type":"epic"},
-  {"id":"w1","status":"in_progress","parent":"sp-goal","labels":["spira","plan"],"dependency_count":1,"dependencies":[{"depends_on_id":"q1","type":"blocks"}]},
+  {"id":"sp-epic","status":"open","issue_type":"epic"},
+  {"id":"w1","status":"in_progress","parent":"sp-epic","labels":["spira","plan"],"dependency_count":1,"dependencies":[{"depends_on_id":"q1","type":"blocks"}]},
   {"id":"w2","status":"in_progress","labels":["spira","plan","spira-waiting-operator"],"dependency_count":0},
 "#,
     // literal-ok: test fixture — the decision bead carries the fixture's ask label
@@ -1372,7 +1390,7 @@ fn off_check4_poisons_and_clears_by_label() {
     let (w, r, sink, clock) = audit_world("off4");
     store_is(
         &r,
-        r#"[{"id":"sp-goal","status":"open"},
+        r#"[{"id":"sp-epic","status":"open"},
               {"id":"sp-p","status":"open","labels":["spira","plan"],"issue_type":"task"},
               {"id":"sp-h","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"},
               {"id":"sp-x","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#,
@@ -1559,8 +1577,8 @@ fn the_switch_reaches_every_child_and_both_workers() {
 // CHECK 3c (sp-du8bv): open children decided from the snapshot, never `bd children`.
 
 const OC_LIST: &str = r#"[
-  {"id":"sp-goal","status":"open","issue_type":"epic"},
-  {"id":"sp-a","status":"open","parent":"sp-goal","labels":["spira","plan"],"issue_type":"task"},
+  {"id":"sp-epic","status":"open","issue_type":"epic"},
+  {"id":"sp-a","status":"open","parent":"sp-epic","labels":["spira","plan"],"issue_type":"task"},
   {"id":"sp-k","status":"open","labels":["spira"],"dependencies":[{"depends_on_id":"sp-a","type":"parent-child"}]},
   {"id":"sp-done","status":"open","labels":["spira","plan","spira-open-children"],"issue_type":"task"},
   {"id":"sp-dk","status":"closed","parent":"sp-done"}
@@ -1640,10 +1658,10 @@ fn open_children_mode_fails_loudly_on_an_unreadable_store() {
 // snapshot is not written. Scar: passes ran 2-6 minutes, so a snapshot decision could be
 // minutes old by the time its write went out.
 
-const OFF4_SNAP: &str = r#"[{"id":"sp-goal","status":"open"},
+const OFF4_SNAP: &str = r#"[{"id":"sp-epic","status":"open"},
   {"id":"sp-p","status":"open","labels":["spira","plan"],"issue_type":"task"},
   {"id":"sp-h","status":"open","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#;
-const OFF4_NOW: &str = r#"[{"id":"sp-goal","status":"open"},
+const OFF4_NOW: &str = r#"[{"id":"sp-epic","status":"open"},
   {"id":"sp-p","status":"in_progress","labels":["spira","plan"],"issue_type":"task"},
   {"id":"sp-h","status":"closed","labels":["spira","plan","spira-poison"],"issue_type":"task"}]"#;
 

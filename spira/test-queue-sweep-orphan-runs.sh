@@ -9,7 +9,7 @@
 # main's push gate — is covered by the forge crate's own unit tests; this suite is the
 # sweep's own decision once handed a list of candidate runs.
 #
-# covers: spira/lib.sh forge/src/cmds.rs spira/batch.sh
+# covers: spira/lib.sh forge/src/cmds.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

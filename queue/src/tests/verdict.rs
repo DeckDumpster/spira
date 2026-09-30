@@ -110,19 +110,19 @@ fn publish_pending_or_faulted_waits_and_changes_nothing() {
 }
 
 #[test]
-fn publish_red_attributes_files_one_fix_forward_and_marks_the_head() {
+fn publish_red_files_one_fix_forward_and_marks_the_head() {
+    // Local attribution (attribute.sh) is retired, sp-uwhx0 — the fix-forward bead now
+    // names red suites and members only, no local reproduction.
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);
     t.forge.status.borrow_mut().push(Some("red\nred-suite: test-b.sh\nred-suite: test-a.sh test-b.sh\nrun-url: http://r/9\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
     // one check-status call: the red half reads the answer the locked half judged
     assert_eq!(count(&t.forge.calls, "check-status"), 1);
-    assert!(has_call(&t.scripts.calls, "attribute spira/publish/X f0 test-b.sh,test-a.sh sp-a,sp-b"), "{:?}", t.scripts.calls.borrow());
     assert!(has_call(&t.forge.calls, "pr-close 77"));
     let bug = t.lib.calls.borrow().iter().find(|c| c.starts_with("create_bug")).cloned().unwrap();
     assert!(bug.starts_with("create_bug queue.sh 1 spira,plan,repo:spira publish PR 77 red for spira: test-b.sh,test-a.sh\n"), "{bug}");
     assert!(bug.contains("Publish PR 77 red for spira (http://r/9).\n\nPublished range: f0..m3\nRed suites: test-b.sh,test-a.sh\n\nMembers in this publish: sp-a,sp-b\n\n"));
-    assert!(bug.contains("Local attribution (attribute.sh):\nATTR suite-a owner=sp-a method=single\nEJECT sp-a suite-a\n\n"));
     assert!(bug.ends_with("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
     assert!(!t.qfile("publish").exists());
     assert_eq!(fs::read_to_string(t.qfile("publish-red")).unwrap(), "head=m3\nfix_forward=sp-fix1\n");
@@ -135,14 +135,12 @@ fn publish_red_attributes_files_one_fix_forward_and_marks_the_head() {
 }
 
 #[test]
-fn publish_red_naming_no_suite_files_one_bead_without_attribution_and_frees_the_lock() {
+fn publish_red_naming_no_suite_still_files_one_bead_and_frees_the_lock() {
     let t = T::new(LandMode::QueueLocal);
     publish_record(&t);
     t.var("SPIRA_QUEUE_ACTOR", "concierge");
     t.forge.status.borrow_mut().push(Some("red\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0);
-    // no suites named: no attribution, still one bead
-    assert!(!has_call(&t.scripts.calls, "attribute"));
     let bug = t.lib.calls.borrow().iter().find(|c| c.starts_with("create_bug")).cloned().unwrap();
     assert!(bug.starts_with("create_bug concierge 1 spira,plan,repo:spira publish PR 77 red for spira\n"), "{bug}");
     assert!(bug.contains("Red suites: <none named>"));

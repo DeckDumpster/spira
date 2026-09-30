@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-watchd-health-ids.sh — health-ids reads the prefix from the database, not the goal bead.
+# test-watchd-health-ids.sh — health-ids reads the prefix from the database, not the config.
 #
 # THE BUG. watchd.sh health-ids proved a watcher could see *our* beads by grepping its
-# state file for an id carrying SPIRA_ID_PREFIX. That variable was derived from the goal
-# bead (SPIRA_GOAL%%-*), not from the database. On any installation where the two differ —
+# state file for an id carrying SPIRA_ID_PREFIX. That variable was derived from a configured
+# bead id (since sp-k6m1m it is written in as spira.id_prefix), not from the database. On any
+# installation where the two differ —
 # because the database was initialised in a directory whose name is not the bead prefix —
 # the assertion was permanently DEGRADED for an unrelated reason, masking real failures as
 # indistinguishable noise (law-alerts-must-be-actionable).
@@ -12,7 +13,7 @@
 # WHAT THIS HOLDS:
 #   1. POSITIVE CONTROL: a file with no database-prefix ids FAILS first. This proves the
 #      check is not trivially satisfied, so the passing case below is evidence.
-#   2. GOAL-DRIFT CASE: SPIRA_GOAL carries a different prefix than the database. health-ids
+#   2. CONFIG-DRIFT CASE: SPIRA_ID_PREFIX differs from the database's prefix. health-ids
 #      should read the prefix from the database and PASS on a file that contains the
 #      database's own ids — the exact case that was permanently DEGRADED before the fix.
 #   3. FILE MISSING: DEGRADED (exit 1), named so the fault is actionable.
@@ -49,7 +50,7 @@ STUB
 chmod +x "$STUB_BD"
 
 DB_PREFIX="sptest"
-GOAL_PREFIX="notthedb"
+CONF_PREFIX="notthedb"
 
 # A state file with ids under the stub database's own prefix: what a healthy watcher produces.
 STATE_GOOD="$TMP/state-good.json"
@@ -62,7 +63,7 @@ printf '{"seen":["other-abc1","other-xyz2"]}\n' > "$STATE_NONE"
 run_ids() {   # run_ids <file> [extra env vars...]
     local f="$1"; shift
     local out rc
-    out="$(SPIRA_GOAL="${GOAL_PREFIX}-goal" SPIRA_BD="$STUB_BD" SPIRA_DB="$TMP/db" \
+    out="$(SPIRA_ID_PREFIX="$CONF_PREFIX" SPIRA_BD="$STUB_BD" SPIRA_DB="$TMP/db" \
         STUB_ISSUE_PREFIX="$DB_PREFIX" SPIRA_CONF=/nonexistent "$@" bash "$WATCHD" health-ids "$f" 2>&1)"
     rc=$?
     printf '%s\n%s' "$out" "$rc"
@@ -74,7 +75,7 @@ rc="${result##*$'\n'}"; msg="${result%$'\n'*}"
 is "no-match file exits 1" 1 "$rc"
 want "no-match message names the db prefix" "${DB_PREFIX}-" "$msg"
 
-echo "goal-drift: SPIRA_GOAL prefix differs from database prefix"
+echo "config-drift: SPIRA_ID_PREFIX differs from database prefix"
 result="$(run_ids "$STATE_GOOD")"
 rc="${result##*$'\n'}"
 is "correct-prefix file exits 0" 0 "$rc"
@@ -91,19 +92,15 @@ out="$(SPIRA_ID_PREFIX="$DB_PREFIX" SPIRA_BD="" SPIRA_DB="" SPIRA_CONF=/nonexist
 is "fallback with correct prefix exits 0" 0 "$rc"
 
 echo "no database: fallback to SPIRA_ID_PREFIX when it is wrong"
-out="$(SPIRA_GOAL="${GOAL_PREFIX}-goal" SPIRA_BD="" SPIRA_DB="" SPIRA_CONF=/nonexistent \
+out="$(SPIRA_ID_PREFIX="$CONF_PREFIX" SPIRA_BD="" SPIRA_DB="" SPIRA_CONF=/nonexistent \
     bash "$WATCHD" health-ids "$STATE_GOOD" 2>&1)"; rc=$?
 is "fallback with wrong prefix exits 1" 1 "$rc"
-want "wrong prefix message identifies the prefix" "${GOAL_PREFIX}-" "$out"
+want "wrong prefix message identifies the prefix" "${CONF_PREFIX}-" "$out"
 
 echo "gap G-09 / UC-operator-channel-34: unusable prefix exits 2, not 1 and not 0"
-# SPIRA_GOAL must derive an empty prefix too, not merely be unset or empty:
-# conf.sh defaults SPIRA_GOAL itself to sp-spira with the same := form, so an
-# empty SPIRA_GOAL would silently re-derive the ambient "sp" prefix and hide
-# this case. A value with no text before its first hyphen (${GOAL%%-*}, the
-# same derivation cmd_health_ids's caller relies on) is non-empty and so
-# skips that default, while still deriving an empty prefix.
-out="$(SPIRA_BD="" SPIRA_DB="" SPIRA_ID_PREFIX="" SPIRA_GOAL="-nogoal" SPIRA_CONF=/nonexistent \
+# conf.sh derives no prefix (sp-k6m1m): with no database and no configured
+# SPIRA_ID_PREFIX there is nothing to check against, and health-ids must say so.
+out="$(SPIRA_BD="" SPIRA_DB="" SPIRA_ID_PREFIX="" SPIRA_CONF=/nonexistent \
     bash "$WATCHD" health-ids "$STATE_GOOD" 2>&1)"; rc=$?
 is "no prefix anywhere exits 2" 2 "$rc"
 want "no-prefix message says how to fix it" "SPIRA_ID_PREFIX" "$out"

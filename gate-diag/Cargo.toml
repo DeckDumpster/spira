@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1"
+testenv = { path = "../testenv" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

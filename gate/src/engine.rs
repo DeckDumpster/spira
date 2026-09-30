@@ -54,6 +54,10 @@ pub struct Args {
     pub home: PathBuf,
     pub branch: String,
     pub repo: Option<String>,
+    /// `--release-bins` (sp-z61hj): on a PASS, build the release profile of the judged tree
+    /// in the gate tree (tmpfs, through the build cache), so a hand landing ships it with
+    /// `queue land-local --worktree <gate tree>` instead of rebuilding in a worktree on disk.
+    pub release_bins: bool,
 }
 
 /// What the finish needs to know about how far the trial got.
@@ -93,6 +97,14 @@ struct State {
     /// The gate command's PATH, set outright: the launcher's release PATH, then cargo for the
     /// tree builds (sp-31gtu). Empty until SPIRA_RELEASE has been read.
     path: String,
+    /// The compiler wrapper's environment for every build the trial runs (sp-z61hj).
+    build_env: Vec<(String, String)>,
+    /// Why the build cache cannot be used; refused only by a trial that builds (sp-z61hj).
+    cache_refusal: Option<String>,
+    /// What `--release-bins` builds with: HOME, SPIRA_RELEASE and the trial's timeout.
+    home_dir: String,
+    release: String,
+    timeout: String,
 }
 
 pub struct Trial<'w, W: World> {
@@ -164,6 +176,24 @@ impl<'w, W: World> Trial<'w, W> {
             Ok(p) => self.s.path = p,
             Err(e) => return v(NOVERDICT, "release-unset", format!("gate: {e} — refusing to judge")),
         }
+        // THE BUILD CACHE (sp-z61hj; spira-config/DESIGN-build-cache.md): every cargo build the
+        // trial runs — the tools, the unit phases, the build fence, testenv's — compiles
+        // through the box's one sccache, resolved on the PATH the command gets. Resolved here,
+        // required where the trial builds in the tree (below: absent is a refusal, never a cold
+        // build of every dependency); a definition that builds nothing never needs it.
+        // SPIRA_BUILD_CACHE=off opts out, loudly.
+        match w.build_wrapper(&self.s.path, ctx.var(spira_config::build::CACHE_ENV)) {
+            Ok(wr) => {
+                if wr == spira_config::build::Wrapper::Off {
+                    w.eprint(&format!("gate: {}", wr.describe()));
+                }
+                self.s.build_env = wr.env();
+            }
+            Err(e) => self.s.cache_refusal = Some(e),
+        }
+        self.s.home_dir = ctx.var("HOME").to_string();
+        self.s.release = ctx.var(spira_config::RELEASE_ENV).to_string();
+        self.s.timeout = ctx.var_or("SPIRA_GATE_TIMEOUT", "2700").to_string();
         let repo = PathBuf::from(repo);
         self.s.repo = repo.clone();
         self.s.run = ctx.var("SPIRA_RUN").to_string();
@@ -567,7 +597,12 @@ impl<'w, W: World> Trial<'w, W> {
                 // operator's knobs reach the trial they tune; unset = the runner's defaults.
                 e("SPIRA_TESTENV_SETUP_SHARE", ctx.var("SPIRA_TESTENV_SETUP_SHARE")),
                 e("SPIRA_TESTENV_WARM_SLOTS", ctx.var("SPIRA_TESTENV_WARM_SLOTS")),
+                // The build cache's switch reaches testenv, which resolves its own wrapper.
+                e(spira_config::build::CACHE_ENV, ctx.var(spira_config::build::CACHE_ENV)),
             ]
+            .into_iter()
+            .chain(self.s.build_env.iter().cloned())
+            .collect()
         };
 
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
@@ -579,6 +614,30 @@ impl<'w, W: World> Trial<'w, W> {
                 return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
             }
         };
+        // A TRIAL THAT BUILDS IN THE TREE (the tools phase, the unit phases, --release-bins)
+        // needs the build cache — absent, it refuses before any build (sp-z61hj) — and builds
+        // on tmpfs.
+        let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
+            || matches!(comp, Composition::Unit { .. })
+            || self.a.release_bins;
+        if builds {
+            if let Some(e) = &self.s.cache_refusal {
+                return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge"));
+            }
+            // THE BUILD IS ON TMPFS (sp-z61hj): the tree's build directories are links into a
+            // RAM-backed root; short of room is a refusal, never the disk.
+            let lim = crate::target::Limits::from_vars(
+                ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
+                ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
+                ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+            );
+            match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+                Ok(line) => w.eprint(&line),
+                Err(e) => {
+                    return v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."));
+                }
+            }
+        }
         let (rc, out, ph) = run_composed(
             w,
             &tree,
@@ -1002,6 +1061,43 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The one way out: meters, records, certifies and cleans up.
+    /// `--release-bins` after a PASS (sp-z61hj): `cargo build --release --workspace` of the
+    /// judged tree in the gate tree — its build directories are on tmpfs and it compiles
+    /// through the build cache, so a hand landing writes nothing to the disk for it. A failed
+    /// build empties `target/release`, so `queue land-local --worktree` can never ship an
+    /// older tree's binaries from it (fail closed). The verdict is unchanged: it judged the
+    /// tree; the binaries are the landing's.
+    fn release_bins(&mut self) {
+        let w = self.w;
+        let Some(tree) = self.s.tree.clone() else { return };
+        let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let mut env = vec![
+            e("PATH", &self.s.path),
+            e(spira_config::RELEASE_ENV, &self.s.release),
+            e("HOME", &self.s.home_dir),
+            e("TERM", "dumb"),
+        ];
+        env.extend(self.s.build_env.iter().cloned());
+        let cmd = release_bins_command();
+        let t0 = w.now();
+        let (rc, out) = w.run_gate(&tree, &env, &self.s.timeout, &cmd);
+        self.s.phases.push(("release-bins".into(), w.now().saturating_sub(t0)));
+        if rc == 0 {
+            w.eprint(&format!(
+                "gate: --release-bins: the release binaries of tree {} are in {}/target/release — land with: queue land-local <repo> --head <sha> --members <…> --worktree {}",
+                self.s.merged_tree,
+                tree.display(),
+                tree.display()
+            ));
+        } else {
+            let tail: Vec<&str> = out.lines().rev().take(20).collect();
+            w.eprint(&format!(
+                "{}\ngate: --release-bins: the release build FAILED (exit {rc}) — target/release emptied; there are no binaries to land",
+                tail.into_iter().rev().collect::<Vec<_>>().join("\n")
+            ));
+        }
+    }
+
     fn finish(&mut self, vd: Verdict) -> i32 {
         let mut vd = vd;
         let w = self.w;
@@ -1024,6 +1120,9 @@ impl<'w, W: World> Trial<'w, W> {
         ));
         if vd.status == PASS {
             self.certify();
+            if self.a.release_bins {
+                self.release_bins();
+            }
         }
         if let Some(f) = self.s.filelist.take() {
             w.remove(&f);
@@ -1262,6 +1361,15 @@ fn tools_proved<W: World>(w: &W, dir: &Path, id: &str, pkgs: &[String]) -> Resul
     }
 }
 
+/// The `--release-bins` command (sp-z61hj): the release profile of the whole workspace,
+/// one-shot, locked; on failure `target/release` is emptied so nothing stale can be landed.
+pub fn release_bins_command() -> String {
+    format!(
+        "cargo build --release --workspace --locked {} || {{ _r=$?; find target/release -mindepth 1 -delete 2>/dev/null; exit $_r; }}",
+        spira_config::build::one_shot_words("release")
+    )
+}
+
 pub fn with_bins(
     mut env: Vec<(String, String)>,
     d: Option<&def::Def>,
@@ -1272,6 +1380,13 @@ pub fn with_bins(
         let p = t.dir.join(&b.package).to_string_lossy().into_owned();
         env.retain(|(k, _)| k != &b.var);
         env.push((b.var.clone(), p));
+        // A tree-built testenv drives the tree's own harness (sp-isom7). It used to find it
+        // by walking up from its own executable, which now resolves into the tmpfs build root
+        // (sp-z61hj) — so the gate names it: the harness of the tree's testenv is the tree.
+        if b.package == "testenv" {
+            env.retain(|(k, _)| k != "SPIRA_TESTENV_HARNESS");
+            env.push(("SPIRA_TESTENV_HARNESS".into(), t.tree.to_string_lossy().into_owned()));
+        }
     }
     env
 }

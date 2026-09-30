@@ -104,7 +104,7 @@ pub trait Tools {
     /// `queue step <repo>` → its output lines; Err when there is no queue binary to run.
     fn queue_step(&self, repo: &str) -> Result<Vec<String>, String>;
     fn skew_refresh(&self, repo: &Path) -> String;
-    /// An ensure script (unit-ensure.sh / land-build-ensure.sh), when executable → its lines.
+    /// An ensure script (unit-ensure.sh) or program (target-reap, by name), when executable → its lines.
     fn ensure(&self, script: &Path) -> Vec<String>;
     /// `rebase-stale <id> <repo>` for a branch the gate found no longer merges (gate
     /// NO_VERDICT reason=conflict, gate/DESIGN.md) → its exit: 0 rebased and certified, 1

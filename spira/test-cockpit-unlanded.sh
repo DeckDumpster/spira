@@ -101,7 +101,7 @@ unlanded() {    # unlanded <fixture-file>
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_BDJSON_FIXTURE="$1" \
         cockpit.sh unsent 2>/dev/null
 }

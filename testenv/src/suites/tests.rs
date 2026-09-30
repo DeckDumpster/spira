@@ -661,6 +661,104 @@ fn hygiene_leaves_no_flag_when_the_mail_fails() {
     assert!(t.read_state("test-old.sh.maxage-mailed").is_none());
 }
 
+// ------------------------------------------------------------------------------- lint
+
+#[test]
+fn lint_is_clean_and_prints_every_non_default_row_tab_separated() {
+    let t = T::new("lint-clean");
+    t.suite("test-a.sh", "");
+    t.suite("test-b.sh", "");
+    t.lifecycle(
+        "# header\n\
+         test-a.sh | quarantined | 2026-09-28T12:35:54Z | sp-ytbma | slow # trailing note\n\
+         test-b.sh | disabled | 2026-09-01T00:00:00Z | | gone\n",
+    );
+    assert_eq!(t.run(&["lint"]), 0, "{}", t.err());
+    assert_eq!(
+        t.out(),
+        vec![
+            "test-a.sh\tquarantined\t2026-09-28T12:35:54Z\tsp-ytbma\tslow",
+            "test-b.sh\tdisabled\t2026-09-01T00:00:00Z\t\tgone",
+        ]
+    );
+}
+
+#[test]
+fn lint_is_a_no_op_when_the_file_is_absent() {
+    let t = T::new("lint-absent");
+    // no t.lifecycle(...) call: the file under root/spira/suite-state does not exist.
+    assert_eq!(t.run(&["lint"]), 0);
+    assert!(t.out().is_empty());
+    assert!(t.err().is_empty());
+}
+
+#[test]
+fn lint_refuses_a_suite_that_does_not_exist() {
+    let t = T::new("lint-missing-suite");
+    t.lifecycle("test-ghost.sh | disabled | 2026-09-01T00:00:00Z | | gone\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(t.err().contains("suite-state:1: suite does not exist: test-ghost.sh"), "{}", t.err());
+}
+
+#[test]
+fn lint_refuses_an_unparseable_line() {
+    let t = T::new("lint-unparseable");
+    t.lifecycle("this line has no pipes at all\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(
+        t.err().contains("suite-state:1: not parseable (expected suite|state|since|bead|reason): this line has no pipes at all"),
+        "{}",
+        t.err()
+    );
+    assert!(t.out().is_empty(), "an unparseable line is never a row: {:?}", t.out());
+}
+
+#[test]
+fn lint_refuses_an_unknown_state() {
+    let t = T::new("lint-unknown-state");
+    t.suite("test-a.sh", "");
+    t.lifecycle("test-a.sh | weird | 2026-09-01T00:00:00Z | | why\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(t.err().contains("suite-state:1: unknown state weird (valid: active quarantined disabled)"), "{}", t.err());
+    // an unknown state is not one of the three known ones, so it is never a stdout row either.
+    assert!(t.out().is_empty());
+}
+
+#[test]
+fn lint_refuses_a_missing_reason() {
+    let t = T::new("lint-missing-reason");
+    t.suite("test-a.sh", "");
+    t.lifecycle("test-a.sh | disabled | 2026-09-01T00:00:00Z | |\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(t.err().contains("suite-state:1: missing reason for test-a.sh"), "{}", t.err());
+}
+
+#[test]
+fn lint_refuses_a_quarantine_with_no_bead() {
+    let t = T::new("lint-quarantine-no-bead");
+    t.suite("test-a.sh", "");
+    t.lifecycle("test-a.sh | quarantined | 2026-09-01T00:00:00Z | | flaky\n");
+    assert_eq!(t.run(&["lint"]), 1);
+    assert!(t.err().contains("suite-state:1: quarantined suite test-a.sh has no bead id"), "{}", t.err());
+}
+
+#[test]
+fn lint_counts_every_violation_on_one_line_and_still_reports_the_others() {
+    let t = T::new("lint-multi");
+    t.suite("test-a.sh", "");
+    t.lifecycle(
+        "test-ghost.sh | weird | x | |\n\
+         test-a.sh | quarantined | 2026-09-01T00:00:00Z | sp-1 | ok\n",
+    );
+    assert_eq!(t.run(&["lint"]), 1);
+    let err = t.err();
+    assert!(err.contains("suite-state:1: suite does not exist: test-ghost.sh"), "{err}");
+    assert!(err.contains("suite-state:1: unknown state weird"), "{err}");
+    assert!(err.contains("suite-state:1: missing reason for test-ghost.sh"), "{err}");
+    // line 2 is clean and still becomes a row even though line 1 failed.
+    assert_eq!(t.out(), vec!["test-a.sh\tquarantined\t2026-09-01T00:00:00Z\tsp-1\tok"]);
+}
+
 // ------------------------------------------------------------------- lifecycle_enforce
 
 /// The operator's switch (lifecycle_enforce, 2026-09-28) decides whether spira-lc may be

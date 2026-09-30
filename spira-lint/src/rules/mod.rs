@@ -1,5 +1,4 @@
 //! One module per rule. Each rule's intent, contract and allow-list schema: DESIGN.md.
-pub mod acceptance_run;
 pub mod bd_stdin_lint;
 pub mod conf_key_registry;
 pub mod config_fence;

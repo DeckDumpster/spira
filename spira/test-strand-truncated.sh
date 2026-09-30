@@ -79,10 +79,10 @@ esac
 MOCKBD
 chmod +x "$TMP/mock-bd"
 
-# Sentinel log: one completed pass (state: goal= line) followed by a "not evaluated"
+# Sentinel log: one completed pass (state: open= line) followed by a "not evaluated"
 # line for test-watcher in that same pass.
 cat > "$TMP/run/sentinel.log" <<'LOG'
-2026-01-01T00:00:00Z spira: state: goal=sp-goal open=1 plan_ready=1 in_progress=0 aeons=0
+2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 aeons=0
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: not evaluated (pass budget exhausted)
 LOG
 
@@ -104,7 +104,7 @@ echo "case 3 — no truncation in log: strand still reports starved:"
 # ======================================================================================
 # Same setup but sentinel log has no "not evaluated" line for test-watcher.
 cat > "$TMP/run/sentinel.log" <<'LOG'
-2026-01-01T00:00:00Z spira: state: goal=sp-goal open=1 plan_ready=1 in_progress=0 aeons=0
+2026-01-01T00:00:00Z spira: state: open=1 plan_ready=1 in_progress=0 aeons=0
 2026-01-01T00:00:01Z spira: CHECK7 test-watcher: nothing ready in its partition
 LOG
 
@@ -156,7 +156,6 @@ out="$(env -i \
     SPIRA_RUN="$_run2" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_BD="$TMP/mock-bd" \
-    SPIRA_GOAL="sp-goal" \
     SPIRA_FAYTHS="alpha beta" \
     SPIRA_SKIP_RECLAIM=1 \
     SPIRA_SKIP_CLOSED_CHECK=1 \

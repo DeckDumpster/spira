@@ -172,18 +172,12 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     let db = get("SPIRA_DB");
     let bd = if get("SPIRA_BD").is_empty() { "bd".to_string() } else { get("SPIRA_BD") };
 
-    // Goal epic + plan bead in the STAGE database.
-    let goal_out = run(Command::new(&bd).arg("-C").arg(&db).args(["create", "canary: pipeline goal", "--type", "epic", "--silent"]), "bd create (goal)")?;
-    let goal_id = String::from_utf8_lossy(&goal_out.stdout).trim().to_string();
-    if goal_id.is_empty() {
-        return Err("could not create goal epic in stage db".into());
-    }
-    log(&format!("goal: {goal_id}"));
-
+    // One plan bead in the STAGE database. Unparented: Spira works the whole plan backlog,
+    // there is no goal epic to hang it under (sp-k6m1m).
     let scope = get("SPIRA_SCOPE_LABEL");
     let labels = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let bead_out = run(
-        Command::new(&bd).arg("-C").arg(&db).args(["create", "canary: synthetic pipeline test", "--type", "task", "--parent", &goal_id, "--labels", &labels, "--silent"]),
+        Command::new(&bd).arg("-C").arg(&db).args(["create", "canary: synthetic pipeline test", "--type", "task", "--labels", &labels, "--silent"]),
         "bd create (bead)",
     )?;
     let bead_id = String::from_utf8_lossy(&bead_out.stdout).trim().to_string();
@@ -199,7 +193,6 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     for (k, v) in env {
         sentinel_cmd.env(k, v);
     }
-    sentinel_cmd.env("SPIRA_GOAL", &goal_id);
     let _ = sentinel_cmd.status();
 
     let bead_status = bd_status(&bd, &db, &bead_id);
