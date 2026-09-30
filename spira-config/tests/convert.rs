@@ -504,3 +504,13 @@ fn retired_cpu_quota_keys_convert_with_a_warning() {
     let sh = spira_config::export_sh(&doc);
     assert!(!sh.contains("CPU_QUOTA"), "a retired key leaked into export --sh: {sh}");
 }
+
+// sp-gypjk: a legacy SPIRA_*_BIN converts with a warning, never refused; a non-batcher
+// SPIRA_BATCHER_BIN keeps the cuts off as batcher_enable = "0".
+#[test]
+fn retired_tool_path_keys_convert_with_a_warning() {
+    let (doc, warnings) = convert("SPIRA_BATCHER_BIN = /bin/true\nSPIRA_LC_BIN = /x/spira-lc\n", "/opt/fixture-home", "", &[])
+        .expect("retired keys never refuse the convert");
+    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
+    assert!(warnings.0.iter().any(|w| w.contains("SPIRA_LC_BIN is retired (sp-gypjk")), "{:?}", warnings.0);
+}

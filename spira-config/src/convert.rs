@@ -198,7 +198,6 @@ pub fn spira_section(
             }
             "SPIRA_MAIL_SETTLE" => s.mail_settle = parse_u64(warnings, "mail_settle", val),
             "COCKPIT_CLIPBOARD" => s.cockpit_clipboard = Some(val.clone()),
-            "SPIRA_LC_BIN" => s.lc_bin = Some(val.clone()),
             "SPIRA_LIFECYCLE_ENFORCE" => {
                 s.lifecycle_enforce = parse_bool01(warnings, "lifecycle_enforce", val)
             }
@@ -225,7 +224,6 @@ pub fn spira_section(
             "SPIRA_COCKPIT_TRACE_LINES" => s.cockpit_trace_lines = Some(val.clone()),
             "SPIRA_SNAP_STALE_S" => s.snap_stale_s = Some(val.clone()),
             "SPIRA_NOTIFY" => s.notify = Some(val.clone()),
-            "SPIRA_PANEL" => s.panel = Some(val.clone()),
             "SPIRA_VERIFY_TIMEOUT" => s.verify_timeout = Some(val.clone()),
             "SPIRA_RECLAIM_GRACE_SECS" => s.reclaim_grace_secs = Some(val.clone()),
             "SPIRA_OPERATED" => s.operated = Some(val.clone()),
@@ -243,21 +241,10 @@ pub fn spira_section(
             "SPIRA_REMEDY_WINDOW" => s.remedy_window = Some(val.clone()),
             "SPIRA_PR_STALL_MINS" => s.pr_stall_mins = Some(val.clone()),
             "SPIRA_DEFERRAL_ESCALATE_AT" => s.deferral_escalate_at = Some(val.clone()),
-            "SPIRA_BROKER_BIN" => s.broker_bin = Some(val.clone()),
             "SPIRA_BROKER_ENABLE" => s.broker_enable = Some(val.clone()),
             "SPIRA_BROKER_GH_CONFIG_DIR" => s.broker_gh_config_dir = Some(val.clone()),
             "SPIRA_BROKER_GH_TOKEN" => s.broker_gh_token = Some(val.clone()),
-            "SPIRA_CZAR_PASS_BIN" => s.czar_pass_bin = Some(val.clone()),
-            "SPIRA_QUEUE_WATCH_BIN" => s.queue_watch_bin = Some(val.clone()),
-            "SPIRA_SUPERVISE_BIN" => s.supervise_bin = Some(val.clone()),
-            "SPIRA_LANDING_PASS_BIN" => s.landing_pass_bin = Some(val.clone()),
-            "SPIRA_TSD_BIN" => s.tsd_bin = Some(val.clone()),
-            "SPIRA_TSD_LIFECYCLE_EXPORT_BIN" => s.tsd_lifecycle_export_bin = Some(val.clone()),
-            "SPIRA_RECONCILER_BIN" => s.reconciler_bin = Some(val.clone()),
-            "SPIRA_TEST_PLAN_BIN" => s.test_plan_bin = Some(val.clone()),
-            "SPIRA_RECONCILER_FLOW_BIN" => s.reconciler_flow_bin = Some(val.clone()),
             "SPIRA_LOOM_CACHE_S" => s.loom_cache_s = Some(val.clone()),
-            "SPIRA_LOOM_BIN" => s.loom_bin = Some(val.clone()),
             "SPIRA_LOOM_READY_GRACE" => s.loom_ready_grace = Some(val.clone()),
             "SPIRA_FLOW_WINDOW_HOURS" => s.flow_window_hours = Some(val.clone()),
             "SPIRA_FLOW_BASELINE_HOURS" => s.flow_baseline_hours = Some(val.clone()),
@@ -401,7 +388,24 @@ pub fn spira_section(
             "SPIRA_QUEUE_WAIT_LABEL" => s.queue_wait_label = Some(val.clone()),
             "SPIRA_QUEUE_ACTIONS_APP_ID" => s.queue_actions_app_id = Some(val.clone()),
             "SPIRA_QUEUE_BATCHER" => s.queue_batcher = Some(val.clone()),
-            "SPIRA_BATCHER_BIN" => s.batcher_bin = Some(val.clone()),
+            "SPIRA_BATCHER_ENABLE" => s.batcher_enable = Some(val.clone()),
+            // RETIRED (sp-gypjk): tools are invoked by bare name on the launcher's PATH, so a
+            // key carrying a tool's path has no consumer — converted with a warning, never
+            // refused. A SPIRA_BATCHER_BIN that is not the batcher ("/bin/true") switched
+            // the cuts off, so it becomes batcher_enable = "0".
+            "SPIRA_BATCHER_BIN" => {
+                if crate::batcher_bin_means_off(val) && !raw.contains_key("SPIRA_BATCHER_ENABLE") {
+                    s.batcher_enable = Some("0".into());
+                    warnings.push(format!("spira.conf: {key} is retired (sp-gypjk); its non-batcher value is read as batcher_enable = \"0\""));
+                } else {
+                    warnings.push(format!("spira.conf: {key} is retired (sp-gypjk: tools are invoked by name) and ignored — remove it"));
+                }
+            }
+            "SPIRA_LC_BIN" | "SPIRA_PANEL" | "SPIRA_BROKER_BIN" | "SPIRA_CZAR_PASS_BIN" | "SPIRA_QUEUE_WATCH_BIN"
+            | "SPIRA_SUPERVISE_BIN" | "SPIRA_LANDING_PASS_BIN" | "SPIRA_TSD_BIN" | "SPIRA_TSD_LIFECYCLE_EXPORT_BIN"
+            | "SPIRA_RECONCILER_BIN" | "SPIRA_TEST_PLAN_BIN" | "SPIRA_RECONCILER_FLOW_BIN" | "SPIRA_LOOM_BIN" => warnings.push(format!(
+                "spira.conf: {key} is retired (sp-gypjk: tools are invoked by name) and ignored — remove it"
+            )),
             "SPIRA_BATCH_JUDGEMENT_LABEL" => s.batch_judgement_label = Some(val.clone()),
             "SPIRA_QUEUE_LOCK_WAIT" => s.queue_lock_wait = Some(val.clone()),
             "SPIRA_QUEUE_LOCK_STARVE_MAX" => s.queue_lock_starve_max = Some(val.clone()),

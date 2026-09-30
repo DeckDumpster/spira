@@ -386,7 +386,8 @@
             "null"
           ]
         },
-        "batcher_bin": {
+        "batcher_enable": {
+          "description": "The batcher's cut on or off (`SPIRA_BATCHER_ENABLE`, \"1\"/\"0\", default \"1\" in conf.sh). \"0\": queue cuts no rounds — the operator does (sp-gypjk; replaces the retired `batcher_bin = \"/bin/true\"` idiom).",
           "type": [
             "string",
             "null"
@@ -423,12 +424,6 @@
           ]
         },
         "brief_notes_max_chars": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "broker_bin": {
           "type": [
             "string",
             "null"
@@ -715,12 +710,6 @@
           ]
         },
         "czar_label": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "czar_pass_bin": {
           "type": [
             "string",
             "null"
@@ -1085,12 +1074,6 @@
             "null"
           ]
         },
-        "landing_pass_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "lanes": {
           "type": [
             "string",
@@ -1105,14 +1088,8 @@
           "format": "uint32",
           "minimum": 0.0
         },
-        "lc_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "lifecycle_enforce": {
-          "description": "Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — conf.sh still resolves lc_bin/work_bin wherever they exist, but aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.",
+          "description": "Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.",
           "type": [
             "boolean",
             "null"
@@ -1141,12 +1118,6 @@
           "minimum": 0.0
         },
         "loom_addr": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "loom_bin": {
           "type": [
             "string",
             "null"
@@ -1343,12 +1314,6 @@
           ]
         },
         "overrides": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "panel": {
           "type": [
             "string",
             "null"
@@ -1558,12 +1523,6 @@
             "null"
           ]
         },
-        "queue_watch_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "rapid_recur_threshold": {
           "type": [
             "string",
@@ -1583,18 +1542,6 @@
           ]
         },
         "reclaim_grace_secs": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reconciler_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "reconciler_flow_bin": {
           "type": [
             "string",
             "null"
@@ -1878,18 +1825,6 @@
           "format": "uint32",
           "minimum": 0.0
         },
-        "supervise_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "test_plan_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
         "testdb_bd": {
           "type": [
             "string",
@@ -2013,18 +1948,6 @@
           ]
         },
         "town": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tsd_bin": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "tsd_lifecycle_export_bin": {
           "type": [
             "string",
             "null"

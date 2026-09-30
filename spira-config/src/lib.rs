@@ -199,12 +199,10 @@ pub struct SpiraSection {
     pub concierge_inbox_backoff: Option<u32>,
     pub mail_settle: Option<u64>,
     pub cockpit_clipboard: Option<String>,
-    pub lc_bin: Option<String>,
     /// Switches an aeon onto the lifecycle semantic layer (work-env.sh, no bd, lc_claim_bead
     /// CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by
-    /// binary presence alone (sp-74gzo) — conf.sh still resolves lc_bin/work_bin wherever
-    /// they exist, but aeon.sh only takes the restricted path when this is set, and refuses
-    /// rather than falling back when set with either binary missing.
+    /// binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is
+    /// set, and refuses rather than falling back when set with either binary missing.
     pub lifecycle_enforce: Option<bool>,
     pub mail_settle_event: Option<String>,
     pub queue_throttle_override: Option<String>,
@@ -229,7 +227,6 @@ pub struct SpiraSection {
     pub cockpit_trace_lines: Option<String>,
     pub snap_stale_s: Option<String>,
     pub notify: Option<String>,
-    pub panel: Option<String>,
     pub verify_timeout: Option<String>,
     pub reclaim_grace_secs: Option<String>,
     pub operated: Option<String>,
@@ -247,21 +244,10 @@ pub struct SpiraSection {
     pub remedy_window: Option<String>,
     pub pr_stall_mins: Option<String>,
     pub deferral_escalate_at: Option<String>,
-    pub broker_bin: Option<String>,
     pub broker_enable: Option<String>,
     pub broker_gh_config_dir: Option<String>,
     pub broker_gh_token: Option<String>,
-    pub czar_pass_bin: Option<String>,
-    pub queue_watch_bin: Option<String>,
-    pub supervise_bin: Option<String>,
-    pub landing_pass_bin: Option<String>,
-    pub tsd_bin: Option<String>,
-    pub tsd_lifecycle_export_bin: Option<String>,
-    pub reconciler_bin: Option<String>,
-    pub test_plan_bin: Option<String>,
-    pub reconciler_flow_bin: Option<String>,
     pub loom_cache_s: Option<String>,
-    pub loom_bin: Option<String>,
     pub loom_ready_grace: Option<String>,
     pub flow_window_hours: Option<String>,
     pub flow_baseline_hours: Option<String>,
@@ -399,7 +385,10 @@ pub struct SpiraSection {
     pub queue_wait_label: Option<String>,
     pub queue_actions_app_id: Option<String>,
     pub queue_batcher: Option<String>,
-    pub batcher_bin: Option<String>,
+    /// The batcher's cut on or off (`SPIRA_BATCHER_ENABLE`, "1"/"0", default "1" in
+    /// conf.sh). "0": queue cuts no rounds — the operator does (sp-gypjk; replaces the
+    /// retired `batcher_bin = "/bin/true"` idiom).
+    pub batcher_enable: Option<String>,
     pub batch_judgement_label: Option<String>,
     pub queue_lock_wait: Option<String>,
     pub queue_lock_starve_max: Option<String>,
@@ -635,7 +624,32 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     // sentinel's landing dispatch no longer pass CPUQuota, so these keys have no consumer.
     RetiredKey { key: "aeon_cpu_quota", bead: "sp-b4oct" },
     RetiredKey { key: "land_cpu_quota", bead: "sp-b4oct" },
+    // Every Spira tool is invoked by bare name on the launcher's PATH (sp-gypjk, design
+    // runtime-is-a-release): a key naming a tool's path has no consumer. `batcher_bin` is
+    // retired too, but a value that is not the batcher (prod's "/bin/true") is honoured as
+    // `batcher_enable = "0"` by [`validate_with_warnings`], so the batcher stays off.
+    RetiredKey { key: "lc_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "panel", bead: "sp-gypjk" },
+    RetiredKey { key: "broker_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "czar_pass_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "queue_watch_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "supervise_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "landing_pass_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "tsd_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "tsd_lifecycle_export_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "reconciler_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "test_plan_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "reconciler_flow_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "loom_bin", bead: "sp-gypjk" },
+    RetiredKey { key: "batcher_bin", bead: "sp-gypjk" },
 ];
+
+/// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
+/// way to switch automatic cuts off) — read as `batcher_enable = "0"`.
+pub fn batcher_bin_means_off(val: &str) -> bool {
+    let v = val.trim();
+    !v.is_empty() && std::path::Path::new(v).file_name().and_then(|n| n.to_str()) != Some("batcher")
+}
 
 /// A `[repo.<name>]` key dropped from `RepoSection`, accepted from a live config with a
 /// warning instead of the hard "unknown field" error, exactly as [`RETIRED_SPIRA_KEYS`] is.
@@ -678,6 +692,15 @@ pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), St
     let mut root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let mut warnings = Vec::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
+        // BEFORE the generic strip: a batcher_bin that is not the batcher switched the cuts
+        // off, and dropping it silently would switch them back on (sp-gypjk).
+        let off = spira.get("batcher_bin").and_then(|v| v.as_str()).map(batcher_bin_means_off).unwrap_or(false);
+        if off && !spira.contains_key("batcher_enable") {
+            spira.insert("batcher_enable".into(), toml::Value::String("0".into()));
+            warnings.push(
+                "batcher_bin is retired (sp-gypjk); its non-batcher value is read as batcher_enable = \"0\" — replace it with that".into(),
+            );
+        }
         for retired in RETIRED_SPIRA_KEYS {
             if spira.remove(retired.key).is_some() {
                 warnings.push(format!(

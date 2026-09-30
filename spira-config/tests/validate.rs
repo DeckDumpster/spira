@@ -238,3 +238,18 @@ mod persona_section {
         assert!(err.starts_with("persona.builder"), "{err}");
     }
 }
+
+// sp-gypjk: tool-path keys are retired, but prod's `batcher_bin = "/bin/true"` switched the
+// batcher's cuts off, and dropping it silently would switch them back on.
+#[test]
+fn a_non_batcher_batcher_bin_is_read_as_batcher_enable_0() {
+    let (doc, w) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/bin/true\"\nlc_bin = \"/x/spira-lc\"\n").unwrap();
+    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("0"));
+    assert!(w.iter().any(|m| m.contains("batcher_enable = \"0\"")), "{w:?}");
+    assert!(w.iter().any(|m| m.starts_with("lc_bin is retired (sp-gypjk)")), "{w:?}");
+    // The batcher itself is not an off switch, and an explicit batcher_enable wins.
+    let (doc, _) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/r/bin/batcher\"\n").unwrap();
+    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable, None);
+    let (doc, _) = spira_config::validate_with_warnings("[spira]\nbatcher_bin = \"/bin/true\"\nbatcher_enable = \"1\"\n").unwrap();
+    assert_eq!(doc.spira.as_ref().unwrap().batcher_enable.as_deref(), Some("1"));
+}
