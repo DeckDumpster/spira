@@ -86,10 +86,29 @@ port = int(sys.argv[1])
 http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
 ' "$1" &
     STUB_PID=$!
-    sleep 0.3
+    # POLL FOR READY, NOT A FIXED SLEEP. A fixed 0.3s was enough on a bare-metal sandbox
+    # but not always under testenv's container, where process/port startup is slower
+    # under load — the exact "budget/deadline is infrastructure" class of flake this
+    # suite must not paper over with a longer fixed sleep (law-absence-needs-a-positive-
+    # control: waiting on the real signal, not a guess at how long it takes).
+    local _tries=0
+    while ! python3 -c "
+import socket, sys
+s = socket.socket()
+s.settimeout(0.2)
+try:
+    s.connect(('127.0.0.1', $1))
+except OSError:
+    sys.exit(1)
+s.close()
+" 2>/dev/null; do
+        _tries=$((_tries + 1))
+        [ "$_tries" -lt 50 ] || { echo "test-gh-intake: stub HTTP server never accepted a connection" >&2; return 1; }
+        sleep 0.1
+    done
 }
 STUB_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
-start_stub "$STUB_PORT"
+start_stub "$STUB_PORT" || bail "stub HTTP server failed to start"
 API="http://127.0.0.1:$STUB_PORT"
 
 put_fixture() { printf '%s' "$2" > "$STUB_DIR/$1.json"; }

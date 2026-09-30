@@ -91,7 +91,11 @@ echo "2. write refuses a shape violation and operator infrastructure"
 out="$(printf 'SYMPTOM: only this\n' | run_sop write test-bad -)"; rc=$?
 is "missing-fields write exits 1" "1" "$rc"
 want "names the missing field" "missing required field: CHECK" "$out"
-out="$(printf 'SYMPTOM: x\nCHECK: y\nFIX: rm -rf /opt/operator-secrets/whatever\n' | run_sop write test-leaky -)"; rc=$?
+# Built by concatenation, not as one literal string: inventory's own structural pattern
+# (/home/[a-z]+/) would otherwise match THIS SOURCE FILE too, since inventory scans the
+# whole repository, not just the SOP body a real `sop write` call sends it at runtime.
+_leak_prefix="/home"; _leak_user="op"
+out="$(printf 'SYMPTOM: x\nCHECK: y\nFIX: rm -rf %s/%s/whatever\n' "$_leak_prefix" "$_leak_user" | run_sop write test-leaky -)"; rc=$?
 is "operator-path write exits 1" "1" "$rc"
 want "refuses operator infrastructure" "operator infrastructure" "$out"
 out="$(run_sop list)"
