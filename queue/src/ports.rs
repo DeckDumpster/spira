@@ -19,7 +19,13 @@ pub struct Settings {
     pub releases: Option<PathBuf>,
     pub forge: PathBuf,
     pub repo_map: Option<PathBuf>,
+    /// The batcher program: `batcher` by name on the launcher's PATH (sp-gypjk); a field only
+    /// so a unit test can hand in a stub (None: no batcher program at all).
     pub batcher_bin: Option<PathBuf>,
+    /// `SPIRA_BATCHER_ENABLE=0`: the operator cuts rounds by hand, so queue cuts none (the
+    /// switch that replaced `batcher_bin = "/bin/true"`).
+    pub batcher_off: bool,
+    /// The spira-lc program: `spira-lc` by name on the launcher's PATH.
     pub lc_bin: Option<PathBuf>,
     pub submitted_label: String,
     pub home_repo: String,
@@ -166,7 +172,7 @@ pub trait Scripts {
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
     /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
-    /// `SPIRA_LC_BIN` to [`crate::real::LC_OFF_BIN`] and `SPIRA_LIFECYCLE_ENFORCE=0`).
+    /// `SPIRA_LIFECYCLE_ENFORCE=0`, the one switch every child reads).
     fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn verdict(&self, repo: &str, lc_off: bool) -> i32;
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;

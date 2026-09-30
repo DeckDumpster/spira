@@ -260,17 +260,12 @@ pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
     Ok(items.into_iter().filter_map(|i| serde_json::from_value(i).ok()).collect())
 }
 
-/// What `SPIRA_LC_BIN` is pinned to in a step's children while lifecycle_enforce is OFF: a
-/// path that can never be executed (a file "inside" /dev/null). lc.sh gates every spira-lc
-/// call on `[ -x "$SPIRA_LC_BIN" ]` and conf.sh's `:=` keeps a non-empty value, so verdict.sh
-/// and batch.sh never reach the lifecycle machine; batcher-cut's attempt fails to spawn and
-/// takes its land_mark path. Binary presence is never the switch.
-pub const LC_OFF_BIN: &str = "/dev/null/spira-lc-lifecycle-enforce-off";
-
-/// Pin the lifecycle switch into a step child's environment (queue-step-all.md).
+/// Pin the lifecycle switch into a step child's environment (queue-step-all.md). OFF is
+/// `SPIRA_LIFECYCLE_ENFORCE=0` and nothing else: spira-lc is invoked by name (sp-gypjk), so
+/// there is no path to poison, and binary presence is never the switch.
 fn lifecycle_env(c: &mut Command, lc_off: bool) {
     if lc_off {
-        c.env("SPIRA_LIFECYCLE_ENFORCE", "0").env("SPIRA_LC_BIN", LC_OFF_BIN);
+        c.env("SPIRA_LIFECYCLE_ENFORCE", "0");
     } else {
         c.env("SPIRA_LIFECYCLE_ENFORCE", "1");
     }
@@ -344,8 +339,10 @@ impl Lib for RealLib {
             releases: pb(&g("releases")),
             forge: PathBuf::from(g("forge")),
             repo_map: pb(&g("repo_map")),
-            batcher_bin: pb(&g("batcher_bin")),
-            lc_bin: pb(&g("lc_bin")),
+            // Every harness tool by name, on the launcher's PATH (sp-gypjk).
+            batcher_bin: Some(PathBuf::from("batcher")),
+            batcher_off: g("batcher_enable").trim() == "0",
+            lc_bin: Some(PathBuf::from("spira-lc")),
             submitted_label: g("submitted_label"),
             home_repo: g("home_repo"),
             db: g("db"),
@@ -492,8 +489,7 @@ pub struct RealScripts {
 impl Scripts for RealScripts {
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String) {
         run_combined(
-            Command::new("bash")
-                .arg(self.home.join("gate.sh"))
+            Command::new("gate.sh")
                 .arg(branch)
                 .arg(repo)
                 .env("SPIRA_GATE_BEAD", bead)
@@ -501,8 +497,8 @@ impl Scripts for RealScripts {
         )
     }
     fn batch_sweep(&self, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
-        let mut c = Command::new("bash");
-        c.arg(self.home.join("batch.sh")).arg(repo);
+        let mut c = Command::new("batch.sh");
+        c.arg(repo);
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
@@ -510,8 +506,8 @@ impl Scripts for RealScripts {
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
     fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
-        let mut c = Command::new("bash");
-        c.arg(self.home.join("verdict.sh")).arg(repo);
+        let mut c = Command::new("verdict.sh");
+        c.arg(repo);
         lifecycle_env(&mut c, lc_off);
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
@@ -525,7 +521,7 @@ impl Scripts for RealScripts {
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
     fn czar_fence(&self, class: &str) -> bool {
-        ok(Command::new("bash").arg(self.home.join("czar-fence.sh")).arg(class))
+        ok(Command::new("czar-fence.sh").arg(class))
     }
     fn build_tarball(&self, bins: &Path, repo_name: &str, name: &str, out: &Path, head: &str, repo: &Path) -> Option<PathBuf> {
         let o = Command::new("bash")
@@ -603,12 +599,12 @@ pub struct RealLc {
 
 impl RealLc {
     fn run(&self, args: &[&str]) -> (i32, String) {
-        let Some(bin) = &self.bin else { return (2, "SPIRA_LC_BIN not available".into()) };
+        let Some(bin) = &self.bin else { return (2, "no spira-lc program".into()) };
         let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
         run_combined(Command::new("timeout").arg(timeout).arg(bin).args(args))
     }
     fn stdout(&self, args: &[&str]) -> Result<String, String> {
-        let bin = self.bin.as_ref().ok_or("SPIRA_LC_BIN not available")?;
+        let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
         let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
         let o = Command::new("timeout").arg(timeout).arg(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| e.to_string())?;
         if !o.status.success() {
@@ -628,7 +624,8 @@ fn json_str(v: &serde_json::Value, k: &str) -> Option<String> {
 
 impl Lc for RealLc {
     fn available(&self) -> bool {
-        self.bin.as_deref().map(crate::ops::simple::is_executable).unwrap_or(false)
+        // A program by name: whether it answers is the probe's question, not a file test.
+        self.bin.is_some()
     }
     fn batch_state(&self, batch_id: &str) -> Option<(String, String)> {
         let out = self.stdout(&["show-batch", batch_id]).ok()?;
@@ -862,24 +859,28 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let _serial = crate::testutil::serial();
         let d = crate::testutil::tmpdir("lc-env");
         let rec = d.join("seen");
+        // verdict.sh and batch.sh are run by name: this test puts its own first on PATH.
+        let bindir = d.join("bin");
+        fs::create_dir_all(&bindir).unwrap();
         for s in ["verdict.sh", "batch.sh"] {
-            fs::write(d.join(s), format!("printf '%s %s %s|%s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display())).unwrap();
+            testkit::write_exe(&bindir.join(s), &format!("#!/bin/sh\nprintf '%s %s %s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
         }
         let bin = d.join("batcher");
-        testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s|%s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" \"${{SPIRA_LC_BIN:-unset}}\" >> {}\n", rec.display()));
+        testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut p = std::ffi::OsString::from(&bindir);
+        p.push(":");
+        p.push(&old_path);
+        std::env::set_var("PATH", &p);
         let s = RealScripts { home: d.to_path_buf() };
         s.verdict("spira", true);
         s.batch_sweep("spira", false, true);
         s.batcher_cut(&bin, "spira", false, true);
         s.verdict("svc", false);
+        std::env::set_var("PATH", &old_path);
         let seen = fs::read_to_string(&rec).unwrap();
-        let off = format!("0|{LC_OFF_BIN}");
         let lines: Vec<&str> = seen.lines().collect();
-        assert_eq!(lines[0], format!("verdict.sh spira {off}"));
-        assert_eq!(lines[1], format!("batch.sh spira {off}"));
-        assert_eq!(lines[2], format!("batcher spira {off}"));
-        assert!(lines[3].starts_with("verdict.sh svc 1|"), "{}", lines[3]);
-        assert!(!Path::new(LC_OFF_BIN).exists(), "the OFF pin can never be executed");
+        assert_eq!(lines, ["verdict.sh spira 0", "batch.sh spira 0", "batcher spira 0", "verdict.sh svc 1"]);
     }
 
     #[test]

@@ -515,6 +515,7 @@ impl T {
             forge: dir.join("home/forge.sh"),
             repo_map: None,
             batcher_bin: None,
+            batcher_off: false,
             lc_bin: None,
             submitted_label: "spira-submitted".into(), // literal-ok: fixture vocabulary
             home_repo: "spira".into(),
@@ -713,13 +714,23 @@ fn protect_writes_the_receipt_only_for_queue_forge() {
 fn flush_refuses_without_a_batcher_and_forces_wait_zero_with_one() {
     let mut t = T::new(LandMode::Queue);
     assert_eq!(t.run(&["flush"]), 1);
-    assert!(t.err().contains("SPIRA_BATCHER_BIN not available"));
+    assert!(t.err().contains("no batcher program"));
     let bin = t.dir.join("batcher");
     testkit::write_exe(&bin, "#!/bin/sh\n");
     t.lib.s.batcher_bin = Some(bin);
     assert_eq!(t.run(&["flush"]), 0);
     let calls = t.scripts.calls.borrow().clone();
     assert!(calls.contains(&"sweep spira wait0=true".to_string()) && calls.contains(&"cut spira wait0=true".to_string()));
+}
+
+#[test]
+fn flush_with_the_batcher_switched_off_cuts_nothing_and_succeeds() {
+    let mut t = T::new(LandMode::Queue);
+    t.lib.s.batcher_off = true;
+    assert_eq!(t.run(&["flush"]), 0);
+    assert!(t.out().contains("SPIRA_BATCHER_ENABLE=0"), "{}", t.out());
+    let calls = t.scripts.calls.borrow().clone();
+    assert!(!calls.iter().any(|c| c.starts_with("cut ")), "{calls:?}");
 }
 
 #[test]
@@ -731,7 +742,7 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     assert_eq!(rc, 0);
     assert_eq!(t.scripts.calls.borrow()[0], "verdict spira");
     // the missing batcher's refusal is on stderr (it is _batch_cut's own), the publish's on stdout
-    assert!(t.err().contains("SPIRA_BATCHER_BIN not available"));
+    assert!(t.err().contains("no batcher program"));
     assert!(t.out().contains("nothing to publish for spira"));
 }
 
@@ -1043,7 +1054,7 @@ fn lifecycle_on_with_spira_lc_unreachable_refuses_loudly_and_changes_nothing() {
     t.config.lifecycle.set(true);
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-a"]), 1);
-    assert!(t.err().contains("SPIRA_LC_BIN is not an executable"));
+    assert!(t.err().contains("no spira-lc program"));
 }
 
 #[test]

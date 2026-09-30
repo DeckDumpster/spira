@@ -16,7 +16,7 @@ where
     F: FnOnce(&str, &str) -> Result<(), (i32, String)>,
 {
     if !w.lc.available() {
-        return Err((2, "SPIRA_LC_BIN not available".into()));
+        return Err((2, "no spira-lc program".into()));
     }
     match w.lc.batch_state(batch_id) {
         Some((state, version)) if !state.is_empty() => f(&state, &version),
