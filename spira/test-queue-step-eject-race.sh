@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-queue-step-eject-race.sh — gap G13 (docs/test-plan/landing-merge-queue.md
-# section 6): a landing pass's `queue.sh step` (verdict.sh, then batch.sh) racing a
+# section 6): a landing pass's `queue step` (its in-process verdict, then batch.sh) racing a
 # concurrent operator `queue.sh eject`, on the SAME repo. Every existing lock case
 # (test-queue-ops.sh) holds the flock itself, in the SAME process, before calling
 # the command under test — it proves the refusal message, never a real race between
@@ -10,7 +10,7 @@
 # actually holds the per-repo lock, then launches a real `eject` while it is held.
 #
 # tier: T3
-# covers: queue/src/* spira/verdict.sh spira/batch.sh UC-landing-merge-queue-30
+# covers: queue/src/* spira/batch.sh UC-landing-merge-queue-30
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -37,9 +37,9 @@ git -C "$REPO" commit -q --allow-empty -m init
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 
-# The forge fixture sleeps on check-status — the FIRST call verdict.sh makes after
-# taking the per-repo lock (verdict.sh:923 flocks, :930 calls _verdict_process, which
-# reads check-status) — so `step`'s hold on the lock has a wide, deterministic window
+# The forge fixture sleeps on check-status — the FIRST call the verdict makes after
+# taking the per-repo lock (queue/src/ops/verdict.rs forge_pass locks, then process reads
+# check-status) — so `step`'s hold on the lock has a wide, deterministic window
 # for the probe below to observe, rather than a race decided by scheduler luck.
 cat > "$SH/forge-fake.sh" <<ENDFAKE
 #!/usr/bin/env bash
@@ -65,7 +65,7 @@ BDSTUB
 chmod +x "$SH/bd-stub.sh"
 
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
-# verdict.sh's observe-flake goes to `testenv suites` now (testenv/DESIGN-suites.md §9).
+# the verdict's observe-flake goes to `testenv suites` now (testenv/DESIGN-suites.md §9).
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/testenv-stub.sh"; chmod +x "$SH/testenv-stub.sh"
 
 # _batch_cut (the queue binary) unconditionally invokes the batcher binary after batch.sh's
@@ -147,7 +147,7 @@ want "eject names the lock as the reason" "holds the lock" "$EJECT_OUT"
 is   "step itself completes (its own lock take succeeded)" "0" "$STEP_RC"
 
 # CONSISTENT LANDSTATE: exactly one actor could have changed sp-race's landstate —
-# step's verdict.sh saw "pending" and made no state change, and eject never got the
+# step's verdict saw "pending" and made no state change, and eject never got the
 # lock — so it must still read BATCHED, not RED (eject's own write), not corrupted
 # (e.g. truncated by two writers), and not silently doubled.
 st="$(awk '{print $1}' "$LANDSTATE/sp-race" 2>/dev/null || true)"

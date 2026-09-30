@@ -71,7 +71,7 @@ pub fn read_kv(path: &Path) -> Result<Option<Kv>, String> {
 }
 
 /// Write `contents` to `path` atomically: a sibling temp file renamed into place, so no
-/// reader (verdict.sh, batcher-cut, queue-watch, cockpit) ever sees a half-written record.
+/// reader (queue verdict, batcher-cut, queue-watch, cockpit) ever sees a half-written record.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
     let dir = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;

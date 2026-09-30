@@ -12,6 +12,8 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::testutil::tmpdir;
 
+mod verdict;
+
 // ------------------------------------------------------------------------------- fakes
 
 #[derive(Default)]
@@ -93,6 +95,10 @@ impl Git for FGit {
         self.calls.borrow_mut().push(format!("branch -D {name}"));
         self.refs.borrow_mut().remove(&format!("refs/heads/{name}")).is_some()
     }
+    fn branch_delete_sanctioned(&self, _: &Path, name: &str) -> bool {
+        self.calls.borrow_mut().push(format!("branch -D sanctioned {name}"));
+        self.refs.borrow_mut().remove(&format!("refs/heads/{name}")).is_some()
+    }
     fn branches(&self, _: &Path, _prefix: &str) -> Vec<(String, String)> {
         self.branches.borrow().clone()
     }
@@ -140,8 +146,8 @@ struct FLib {
     readback: RefCell<(String, String)>,
     diverged: Cell<bool>,
     push_ok: Cell<bool>,
-    /// settle_publish answers, in order; the file is removed on a 0 answer marked "green".
-    settle: RefCell<Vec<(i32, bool)>>,
+    /// What `create_bug` answers (None: bd created nothing).
+    bug_id: RefCell<Option<String>>,
     pf_rc: Cell<i32>,
     conflict_with_base: RefCell<BTreeSet<String>>,
     /// R22's answer (step --all).
@@ -241,13 +247,9 @@ impl Lib for FLib {
         self.log(format!("pf_gate {br} {wall}"));
         (self.pf_rc.get(), "pf output".into())
     }
-    fn settle_publish(&self, name: &str, _: &Path) -> i32 {
-        self.log(format!("settle {name}"));
-        let (rc, green) = if self.settle.borrow().is_empty() { (0, false) } else { self.settle.borrow_mut().remove(0) };
-        if green {
-            let _ = fs::remove_file(self.s.queue_dir.join(name).join("publish"));
-        }
-        rc
+    fn create_bug(&self, actor: &str, title: &str, prio: &str, labels: &str, body: &str) -> Option<String> {
+        self.log(format!("create_bug {actor} {prio} {labels} {title}\n{body}"));
+        self.bug_id.borrow().clone()
     }
 }
 
@@ -264,6 +266,8 @@ struct FScripts {
     calls: RefCell<Vec<String>>,
     /// The lc_off each step child was run with.
     lc_off: RefCell<Vec<bool>>,
+    /// What `batcher judgement-ci` answers.
+    judgement: RefCell<RunOut>,
 }
 
 impl Scripts for FScripts {
@@ -276,10 +280,19 @@ impl Scripts for FScripts {
         self.lc_off.borrow_mut().push(lc_off);
         0
     }
-    fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
-        self.calls.borrow_mut().push(format!("verdict {repo}"));
-        self.lc_off.borrow_mut().push(lc_off);
-        0
+    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
+        self.calls.borrow_mut().push(format!("judgement-ci {} {repo} {suites} {members} {evidence} home={}", bin.display(), s.home.display()));
+        self.judgement.borrow().clone()
+    }
+    fn observe_flake(&self, suite: &str, sha: &str) {
+        self.calls.borrow_mut().push(format!("observe-flake {suite} {sha}"));
+    }
+    fn attribute(&self, round: &str, base: &str, suites: &str, members: &str, _: &Path) -> String {
+        self.calls.borrow_mut().push(format!("attribute {round} {base} {suites} {members}"));
+        "ATTR suite-a owner=sp-a method=single\nEJECT sp-a suite-a".into()
+    }
+    fn mail_operator(&self, subject: &str, body: &str) {
+        self.calls.borrow_mut().push(format!("mail-operator {subject}\n{body}"));
     }
     fn batcher_cut(&self, _: &Path, repo: &str, wz: bool, lc_off: bool) -> i32 {
         self.calls.borrow_mut().push(format!("cut {repo} wait0={wz}"));
@@ -303,6 +316,11 @@ impl Scripts for FScripts {
 struct FForge {
     pr: RefCell<Option<String>>,
     calls: RefCell<Vec<String>>,
+    /// check-status answers in order; when none is left the answer is `pending`. A `None`
+    /// entry is a failed call.
+    status: RefCell<Vec<Option<String>>>,
+    run: RefCell<Option<String>>,
+    meta: RefCell<String>,
 }
 
 impl Forge for FForge {
@@ -319,6 +337,29 @@ impl Forge for FForge {
     fn branch_protect(&self, _: &Path, _: &Path, b: &str) -> bool {
         self.calls.borrow_mut().push(format!("protect {b}"));
         true
+    }
+    fn check_status(&self, _: &Path, _: &Path, pr: &str, branch: &str) -> Option<String> {
+        self.calls.borrow_mut().push(format!("check-status {pr} {branch}"));
+        let mut q = self.status.borrow_mut();
+        if q.is_empty() {
+            Some("pending\n".into())
+        } else {
+            q.remove(0)
+        }
+    }
+    fn run_id(&self, _: &Path, _: &Path, branch: &str) -> Option<String> {
+        self.calls.borrow_mut().push(format!("run-id {branch}"));
+        self.run.borrow().clone()
+    }
+    fn run_metadata(&self, _: &Path, _: &Path, run: &str) -> String {
+        self.calls.borrow_mut().push(format!("run-metadata {run}"));
+        self.meta.borrow().clone()
+    }
+    fn run_cancel(&self, _: &Path, _: &Path, run: &str) {
+        self.calls.borrow_mut().push(format!("run-cancel {run}"));
+    }
+    fn workflow_rerun(&self, _: &Path, _: &Path, run: &str) {
+        self.calls.borrow_mut().push(format!("workflow-rerun {run}"));
     }
 }
 
@@ -360,6 +401,14 @@ impl Lc for FLc {
     }
     fn eject_member(&self, id: &str, bead: &str, s: &str, v: &str, _: &str, r: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("eject-member {id} {bead} {s} {v} {r}"));
+        Ok(())
+    }
+    fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
+        Ok(())
+    }
+    fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("land {id} {v} {sha}"));
         Ok(())
     }
     fn in_delivery(&self) -> Result<Vec<LcBeadRow>, String> {
@@ -490,6 +539,7 @@ impl T {
             transition_pollsec: 5,
             transition_maxsec: 30,
             preflight_wall_secs: 240,
+            verdict: VerdictSettings::default(),
         };
         fs::create_dir_all(&s.landstate).unwrap();
         fs::create_dir_all(s.queue_dir.join("spira")).unwrap();
@@ -517,7 +567,7 @@ impl T {
             readback: RefCell::default(),
             diverged: Cell::new(false),
             push_ok: Cell::new(true),
-            settle: RefCell::default(),
+            bug_id: RefCell::new(Some("sp-fix1".into())),
             pf_rc: Cell::new(0),
             conflict_with_base: RefCell::default(),
             repos: RefCell::new(Ok(vec!["spira".into()])),
@@ -705,7 +755,8 @@ fn step_queue_local_publishes_with_stderr_folded_into_stdout() {
     t.git.set("refs/heads/local/main", "f0");
     let rc = t.run(&["step", "spira"]);
     assert_eq!(rc, 0);
-    assert_eq!(t.scripts.calls.borrow()[0], "verdict spira");
+    // the verdict runs in process first (nothing to settle), then the sweep and the cut
+    assert_eq!(t.scripts.calls.borrow()[0], "sweep spira wait0=false");
     // the missing batcher's refusal is on stderr (it is _batch_cut's own), the publish's on stdout
     assert!(t.err().contains("no batcher program"));
     assert!(t.out().contains("nothing to publish for spira"));
@@ -729,10 +780,18 @@ impl T {
             r.landref = Some("local/main".into());
             r.map_base = "local/main".into();
         }
+        // A queue.forge repository gets an open batch named after it, so the in-process
+        // verdict's check-status call shows which repositories a step reached.
+        if mode == LandMode::Queue {
+            let d = self.lib.s.queue_dir.join(name);
+            fs::create_dir_all(&d).unwrap();
+            fs::write(d.join("open"), format!("pr={name}\nhead=h\nbase=b\nmembers=\nopened=1000\nbranch=spira/queue/{name}\n")).unwrap();
+        }
         self.lib.by_name.borrow_mut().insert(name.into(), Ok(r));
     }
+    /// The queue.forge repositories whose verdict ran (see `repo`).
     fn verdicts(&self) -> Vec<String> {
-        self.scripts.calls.borrow().iter().filter(|c| c.starts_with("verdict ")).cloned().collect()
+        self.forge.calls.borrow().iter().filter_map(|c| c.strip_prefix("check-status ")).map(|c| format!("verdict {}", c.split(' ').next().unwrap_or(""))).collect()
     }
 }
 
@@ -759,7 +818,9 @@ fn step_all_steps_every_queue_mode_repo_in_order_and_skips_the_rest() {
     t.git.set("refs/remotes/origin/main", "f0");
     t.git.set("refs/heads/local/main", "f0");
     assert_eq!(t.run(&["step", "--all"]), 0);
-    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
+    // svc's open batch was judged (pending); spira (queue.local) had no publish record
+    assert_eq!(t.verdicts(), vec!["verdict svc"]);
+    assert!(t.out().contains("verdict svc: PR svc pending (run age 0s)"), "{}", t.out());
     let out = t.out();
     assert!(out.contains("queue.sh step --all: spira\n") && out.contains("queue.sh step --all: svc\n"));
     assert!(!out.contains("step --all: pushy") && !out.contains("step --all: held"));
@@ -781,7 +842,7 @@ fn step_all_does_not_propagate_one_repos_failed_step() {
     c.repo("spira", LandMode::QueueLocal);
     assert_ne!(c.run(&["step", "spira"]), 0);
     assert_eq!(t.run(&["step", "--all"]), 0);
-    assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"]);
+    assert_eq!(t.verdicts(), vec!["verdict svc"]);
 }
 
 #[test]
@@ -806,7 +867,7 @@ fn step_all_skips_a_repo_another_stepper_holds_and_steps_the_others() {
     assert!(t.err().contains("queue.sh step: another step holds the step lock for svc — skipped"));
     assert!(t.out().ends_with("stepped=1 busy=1 unresolved=0 stepped:spira busy:svc\n"));
     drop(held);
-    t.scripts.calls.borrow_mut().clear();
+    t.forge.calls.borrow_mut().clear();
     assert_eq!(t.run(&["step", "--all"]), 0);
     assert_eq!(t.verdicts(), vec!["verdict spira", "verdict svc"], "{}", t.err());
 }
@@ -873,9 +934,15 @@ fn step_all_with_lifecycle_on_runs_children_on_and_refuses_loudly_when_unreachab
 #[test]
 fn a_step_never_holds_the_queue_lock_verdict_and_batch_take() {
     let t = T::new(LandMode::Queue);
-    // verdict.sh/batch.sh take <repo>/lock themselves; the step must leave it free
+    t.repo("spira", LandMode::Queue);
+    // the verdict and batch.sh take <repo>/lock themselves; the step must leave it free
     let _q = crate::lock::try_lock(&t.lib.s.queue_dir, "spira");
     assert!(matches!(_q, crate::lock::Acquire::Held(_)));
+    assert_eq!(t.run(&["step", "spira"]), 0);
+    // the verdict waited SPIRA_QUEUE_LOCK_WAIT for the lock, then skipped its turn
+    assert!(t.out().contains("verdict spira: another queue operation holds the lock"), "{}", t.out());
+    assert!(t.verdicts().is_empty());
+    drop(_q);
     assert_eq!(t.run(&["step", "spira"]), 0);
     assert_eq!(t.verdicts(), vec!["verdict spira"]);
 }
@@ -1711,14 +1778,15 @@ fn forgeable(t: &mut T) {
 fn to_forge_waits_for_the_final_publish_then_refuses_if_the_forge_did_not_catch_up() {
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
-    // pending, then green (the fake settle removes the publish record)...
-    t.lib.settle.borrow_mut().extend([(0, false), (0, true)]);
+    // pending, then green (the in-process settle fast-forwards and removes the record)...
+    t.forge.status.borrow_mut().extend([Some("pending\n".into()), Some("green\n".into())]);
     // ...but the forge ref this fake fetches never moved to local/main's m3.
     assert_eq!(t.run(&["to-forge"]), 1);
     assert!(t.out().contains("running the final publish for spira"));
     assert!(t.out().contains("queue.sh publish: PR 77 opened"), "the final publish's output is on stdout");
     assert!(t.out().contains("waiting for publish PR 77 to settle green"));
-    assert_eq!(t.lib.calls.borrow().iter().filter(|c| c.starts_with("settle")).count(), 2);
+    assert_eq!(t.forge.calls.borrow().iter().filter(|c| c.starts_with("check-status")).count(), 2);
+    assert!(t.out().contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"), "{}", t.out());
     assert!(t.err().contains("origin/main (f0) and local/main (m3) differ — refused, nothing changed"));
     assert!(t.config.legacy.borrow().is_empty());
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
@@ -1743,8 +1811,10 @@ fn to_forge_happy_path_flips_archives_and_deletes_the_local_branch() {
 fn to_forge_refuses_on_a_red_final_publish() {
     let mut t = T::new(LandMode::QueueLocal);
     forgeable(&mut t);
-    t.lib.settle.borrow_mut().push((3, false));
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
     assert_eq!(t.run(&["to-forge"]), 1);
+    // red is refused, not settled: the record stays for the normal fix-forward recovery
+    assert!(t.qfile("publish").exists());
     assert!(t.err().contains("the final publish (PR 77) is red — refused, nothing changed"));
     assert_eq!(t.config.rows.borrow()["spira"].0, "queue.local");
 }

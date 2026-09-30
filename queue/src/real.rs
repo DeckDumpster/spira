@@ -102,6 +102,9 @@ impl Git for RealGit {
     fn branch_delete(&self, repo: &Path, name: &str) -> bool {
         ok(git(repo).args(["branch", "-D", name]).stdout(Stdio::null()).stderr(Stdio::null()))
     }
+    fn branch_delete_sanctioned(&self, repo: &Path, name: &str) -> bool {
+        ok(git(repo).args(["branch", "-D", name]).env("SPIRA_REF_SANCTIONED", "1").stdout(Stdio::null()).stderr(Stdio::null()))
+    }
     fn branches(&self, repo: &Path, prefix: &str) -> Vec<(String, String)> {
         stdout_of(git(repo).args(["for-each-ref", "--format=%(refname:short) %(objectname)", prefix]))
             .unwrap_or_default()
@@ -285,6 +288,14 @@ impl Lib for RealLib {
             transition_pollsec: n("pollsec", 5),
             transition_maxsec: n("maxsec", 1800),
             preflight_wall_secs: n("preflight", 240),
+            verdict: VerdictSettings {
+                ci_maxsec: n("ci_maxsec", 3600),
+                ci_idle_sec: n("ci_idle", 600),
+                infra_retries: n("infra_retries", 2),
+                lock_wait: n("lock_wait", 90),
+                lock_starve_max: n("starve_max", 5),
+                incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
+            },
         };
         let publish = g("publish");
         let publish = publish.trim().split_once(' ').map(|(a, b)| (a.to_string(), b.trim().to_string()));
@@ -395,8 +406,9 @@ impl Lib for RealLib {
     fn pf_gate(&self, branch: &str, name: &str, stamp: &str, wall_secs: u64) -> (i32, String) {
         self.answer(Op::PfGate, &[branch, name, stamp, &wall_secs.to_string()])
     }
-    fn settle_publish(&self, name: &str, path: &Path) -> i32 {
-        self.call(Op::SettlePublish, &[name, &path.display().to_string()], false).0
+    fn create_bug(&self, actor: &str, title: &str, priority: &str, labels: &str, body: &str) -> Option<String> {
+        let (_, ans) = self.answer(Op::CreateBug, &[actor, title, priority, labels, body]);
+        Some(ans.trim().to_string()).filter(|id| !id.is_empty())
     }
 }
 
@@ -425,11 +437,41 @@ impl Scripts for RealScripts {
         lifecycle_env(&mut c, lc_off);
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
-    fn verdict(&self, repo: &str, lc_off: bool) -> i32 {
-        let mut c = Command::new("verdict.sh");
-        c.arg(repo);
-        lifecycle_env(&mut c, lc_off);
-        c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
+    fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut {
+        let (rc, out) = run_combined(
+            Command::new(bin)
+                .arg("judgement-ci")
+                .arg(repo)
+                .args(["--suites", suites, "--members", members, "--evidence", evidence])
+                .arg("--home")
+                .arg(&s.home)
+                .arg("--run")
+                .arg(&s.run)
+                .arg("--db")
+                .arg(&s.db),
+        );
+        RunOut { rc, out, err: String::new() }
+    }
+    fn observe_flake(&self, suite: &str, sha: &str) {
+        let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
+    }
+    fn attribute(&self, round: &str, base: &str, suites: &str, members: &str, repo: &Path) -> String {
+        run_combined(Command::new("attribute.sh").args(["--round", round, "--base", base, "--suites", suites, "--members", members, "--repo"]).arg(repo)).1
+    }
+    fn mail_operator(&self, subject: &str, body: &str) {
+        let Ok(mut child) = Command::new("mail.sh")
+            .args(["send", "operator", "--from", "Spira Queue <queue@spira>", "--subject", subject])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        else {
+            return;
+        };
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(body.as_bytes());
+        }
+        let _ = child.wait();
     }
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
         let mut c = Command::new(bin);
@@ -489,6 +531,21 @@ impl Forge for RealForge {
     }
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool {
         ok(Command::new(forge).arg("branch-protect").arg(repo).arg(branch))
+    }
+    fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String> {
+        stdout_of(Command::new(forge).arg("check-status").arg(repo).arg(pr).arg(branch))
+    }
+    fn run_id(&self, forge: &Path, repo: &Path, branch: &str) -> Option<String> {
+        stdout_of(Command::new(forge).arg("run-id").arg(repo).arg(branch)).map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    }
+    fn run_metadata(&self, forge: &Path, repo: &Path, run: &str) -> String {
+        stdout_of(Command::new(forge).arg("run-metadata").arg(repo).arg(run)).unwrap_or_default()
+    }
+    fn run_cancel(&self, forge: &Path, repo: &Path, run: &str) {
+        let _ = ok(Command::new(forge).arg("run-cancel").arg(repo).arg(run).stderr(Stdio::null()));
+    }
+    fn workflow_rerun(&self, forge: &Path, repo: &Path, run: &str) {
+        let _ = ok(Command::new(forge).arg("workflow-rerun").arg(repo).arg(run));
     }
 }
 
@@ -554,6 +611,22 @@ impl Lc for RealLc {
     }
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["eject-member", batch_id, "--bead-id", bead, "--expect", state, "--version", version, "--actor", actor, "--reason", reason]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
+    fn batch_event(&self, batch_id: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["event", "batch", batch_id, "--expect", state, "--version", version, "--actor", actor, "--kind", kind]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
+    fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["land", batch_id, "--expect", "GREEN", "--version", version, "--actor", actor, "--sha", sha]);
         if rc == 0 {
             Ok(())
         } else {
@@ -722,6 +795,53 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
     }
 
     #[test]
+    fn context_seam_carries_the_verdict_thresholds_with_the_per_repo_override() {
+        let _serial = crate::testutil::serial();
+        let home = stub_home();
+        let lib_sh = fs::read_to_string(home.join("lib.sh")).unwrap();
+        fs::write(
+            home.join("lib.sh"),
+            format!("{lib_sh}SPIRA_QUEUE_CI_MAXSEC=100; SPIRA_QUEUE_CI_MAXSEC_SPIRA=77; SPIRA_QUEUE_CI_IDLE_SEC=12; SPIRA_QUEUE_INFRA_RETRIES=4; SPIRA_QUEUE_LOCK_WAIT=9; SPIRA_QUEUE_LOCK_STARVE_MAX=3; SPIRA_INCIDENT_PRIORITY=3\n"),
+        )
+        .unwrap();
+        let lib = RealLib { home: home.to_path_buf() };
+        let (s, _) = lib.context(Some("spira")).unwrap();
+        assert_eq!(
+            s.verdict,
+            VerdictSettings { ci_maxsec: 77, ci_idle_sec: 12, infra_retries: 4, lock_wait: 9, lock_starve_max: 3, incident_priority: "3".into() }
+        );
+        // another repository gets the global value; a name that is not an identifier none
+        let (s, _) = lib.context(Some("svc")).unwrap();
+        assert_eq!(s.verdict.ci_maxsec, 100);
+        let (s, _) = lib.context(Some("we.ird")).unwrap();
+        assert_eq!(s.verdict.ci_maxsec, 100);
+    }
+
+    #[test]
+    fn create_bug_seam_files_through_bdq_with_the_body_in_a_file() {
+        let _serial = crate::testutil::serial();
+        let home = stub_home();
+        let rec = home.join("bdq-args");
+        let lib_sh = fs::read_to_string(home.join("lib.sh")).unwrap();
+        fs::write(
+            home.join("lib.sh"),
+            format!(
+                "{lib_sh}bdq() {{ {{ printf '%s|' \"$BEADS_ACTOR\" \"$@\"; echo; while [ $# -gt 0 ]; do [ \"$1\" = --body-file ] && cat \"$2\"; shift; done; }} > {}; printf ' sp-new9 \\n'; }}\n",
+                rec.display()
+            ),
+        )
+        .unwrap();
+        let lib = RealLib { home: home.to_path_buf() };
+        let id = lib.create_bug("queue.sh", "publish PR 7 red for spira: a.sh", "3", "spira,plan,repo:spira", "line one\n$(two) `x`");
+        assert_eq!(id.as_deref(), Some("sp-new9"));
+        let seen = fs::read_to_string(&rec).unwrap();
+        assert!(seen.starts_with("queue.sh|create|publish PR 7 red for spira: a.sh|--type|bug|--priority|3|--labels|spira,plan,repo:spira|--body-file|"), "{seen}");
+        assert!(seen.ends_with("|--silent|\nline one\n$(two) `x`"), "{seen}");
+        fs::write(home.join("lib.sh"), format!("{lib_sh}bdq() {{ return 1; }}\n")).unwrap();
+        assert_eq!(lib.create_bug("a", "t", "1", "l", "b"), None);
+    }
+
+    #[test]
     fn context_seam_round_trips_through_bash() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
@@ -758,12 +878,12 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let _serial = crate::testutil::serial();
         let d = crate::testutil::tmpdir("lc-env");
         let rec = d.join("seen");
-        // verdict.sh and batch.sh are run by name: this test puts its own first on PATH.
+        // batch.sh is run by name: this test puts its own first on PATH. (The verdict runs in
+        // process now — DESIGN-verdict.md — so it has no child to pin.)
         let bindir = d.join("bin");
         fs::create_dir_all(&bindir).unwrap();
-        for s in ["verdict.sh", "batch.sh"] {
-            testkit::write_exe(&bindir.join(s), &format!("#!/bin/sh\nprintf '%s %s %s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
-        }
+        let s = "batch.sh";
+        testkit::write_exe(bindir.join(s), &format!("#!/bin/sh\nprintf '%s %s %s\\n' {s} \"$1\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
         let bin = d.join("batcher");
         testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
         let old_path = std::env::var_os("PATH").unwrap_or_default();
@@ -772,14 +892,13 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         p.push(&old_path);
         std::env::set_var("PATH", &p);
         let s = RealScripts { home: d.to_path_buf() };
-        s.verdict("spira", true);
         s.batch_sweep("spira", false, true);
         s.batcher_cut(&bin, "spira", false, true);
-        s.verdict("svc", false);
+        s.batch_sweep("svc", false, false);
         std::env::set_var("PATH", &old_path);
         let seen = fs::read_to_string(&rec).unwrap();
         let lines: Vec<&str> = seen.lines().collect();
-        assert_eq!(lines, ["verdict.sh spira 0", "batch.sh spira 0", "batcher spira 0", "verdict.sh svc 1"]);
+        assert_eq!(lines, ["batch.sh spira 0", "batcher spira 0", "batch.sh svc 1"]);
     }
 
     #[test]

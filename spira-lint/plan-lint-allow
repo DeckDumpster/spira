@@ -56,7 +56,6 @@ spira/test-conf-writeback.sh
 spira/test-desired-state.sh
 spira/test-destroy-branch.sh
 spira/test-dummy.sh
-spira/test-eject-unattributed.sh
 spira/test-epic-claim-order.sh
 spira/test-express-lane.sh
 spira/test-fayth-project-instructions.sh
@@ -90,9 +89,7 @@ spira/test-now.sh
 spira/test-ops-closing.sh
 spira/test-overrides.sh
 spira/test-persona-model.sh
-spira/test-queue-eject-mail.sh
 spira/test-queue-flush.sh
-spira/test-queue-lock-wait.sh
 spira/test-queue-ops.sh
 spira/test-queue-owner-mail.sh
 spira/test-queue-owner-refuse.sh
@@ -121,9 +118,6 @@ spira/test-testenv-owner-guard.sh
 spira/test-testlib.sh
 spira/test-tsd-ingest.sh
 spira/test-tsd.sh
-spira/test-verdict-action.sh
-spira/test-verdict-replay.sh
-spira/test-verdict.sh
 spira/test-watchtower-unit-extraction-sp-ezeiy.sh
 spira/test-workflow-run-check.sh
 spira/test-workspace-dist.sh

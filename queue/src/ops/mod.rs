@@ -7,6 +7,7 @@ pub mod land;
 pub mod publish;
 pub mod simple;
 pub mod transition;
+pub mod verdict;
 
 use std::path::{Path, PathBuf};
 

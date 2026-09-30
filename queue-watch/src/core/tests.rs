@@ -202,7 +202,7 @@ fn pub_(pr: &str, head: &str) -> Publish {
 
 // POSITIVE CONTROL: queue.local's publish PR is a wholly separate pipeline from the batch
 // above (sp-xe12f) — before this, Snapshot carried no `publish` field at all and this
-// sequence produced zero events, silently. Green settles the same way verdict.sh settles a
+// sequence produced zero events, silently. Green settles the same way queue verdict settles a
 // queue-mode batch: fast-forward, reported here as "landed", never "ejected"/"repushed"/
 // "forced-cut" (batch-only concepts that do not apply to a memberless publish).
 #[test]

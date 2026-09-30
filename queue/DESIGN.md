@@ -10,7 +10,7 @@ by porting it line by line.
 The merge queue moves certified branches onto a repository's landing ref without ever
 landing something no gate judged, and without two writers racing one batch. `queue` is its
 **hand-operated and terminal-step half**: the automatic cut belongs to the batcher crate,
-the CI settle to `verdict.sh`, the periodic pass to `landing.sh`/`spira-verdict.sh`. It
+the CI settle to `queue verdict` (DESIGN-verdict.md), the periodic pass to `landing.sh`/`spira-verdict.sh`. It
 answers six needs:
 
 1. **Certify** a branch (`submit`): run the repository's gate, and record the result where
@@ -34,8 +34,9 @@ answers six needs:
 
 - **Not the batcher.** Round membership, trigger and local proving belong to `batcher`/
   `batcher-cut`; `flush`/`step` only invoke them.
-- **Not the verdict.** Settling a batch or publish PR from CI is `verdict.sh`'s;
-  `to-forge` calls its publish settle, it does not reimplement it.
+- **The verdict is a separate contract.** Settling a batch or publish PR from CI is
+  `queue verdict`, specified in DESIGN-verdict.md (it replaced verdict.sh, sp-flj4a);
+  `to-forge` calls its publish settle in process.
 - **Not lib.sh.** Landstate writes (with their TSD dual-write), bead reopen/close, claim
   release, the events log, concierge mail, forge run cancelling, the rebase machinery and
   the repo map/landref resolution stay in lib.sh and are called through one documented
@@ -104,7 +105,7 @@ nothing changed), then effects in order.
 | `protect [repo]` | queue | none | `forge branch-protect <path> <base-branch>`; receipt `$SPIRA_RUN/queue-protected-<repo>` = `<base-branch>\n`; five fixed stdout lines. |
 | `stats` | — | none | reads `$SPIRA_RUN/landing.log`; five fixed lines (§3.5). |
 | `flush [repo]` | queue | none | `batch.sh <repo>` sweep, then `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). |
-| `step <repo>` | any queued | none | `verdict.sh <repo>`; the flush pair; under queue.local then `publish <repo>` (its stderr folded into stdout, as `2>&1` did). Exit is the last step's. |
+| `step <repo>` | any queued | none | the verdict pass in process (DESIGN-verdict.md); the flush pair; under queue.local then `publish <repo>` (its stderr folded into stdout, as `2>&1` did). Exit is the last step's. |
 | `eject <id>` | any | queue lock (non-blocking) | member of the open batch: owner check; `land_mark RED <tip> <reason|ejected>`; then **switch OFF**: `bead_reopen <id> <cause> "" <suites>`; **switch ON**: cause event (§8 D1), `lc_returned`, `release_claim`, spira-lc `eject-member` when the record has `batch_id` (§10); bead comment; survivors `land_mark CERTIFIED`; `forge pr-close`; remove `open`; concierge mail. Not a member but CERTIFIED: `bead_reopen <id> <cause> "" <suites>` (WITHDRAWN) + comment. Otherwise refuse, naming the members. `--dry-run` prints the plan, checks the bead resolves. |
 | `abandon` | any | queue lock | `--reason` required (exit 2). No open batch: refuse. Owner check. spira-lc `abandon-batch` when `batch_id` **and the switch is ON** (§10); cancel branch runs; PR comment + close; members not RED/EJECTED → `land_mark CERTIFIED`; append `reason=`/`actor=` to the record, rename it `closed-pr<n>-<stamp>`; `QUEUE ABANDON` line; `queue.abandoned` event; mail. |
 | `open-batch` | queue | queue lock | refuse if a batch is open. Candidates from `--members` or ranked CERTIFIED (`queue_sort_rows`); admission (closed or submitted); assemble in `$SPIRA_RUN/worktree/.open-batch-<repo>-<pid>` with `land_subject` merges; `format_batch`; branch `spira/queue/<stamp>`; pre-flight gate unless `--skip-pregate` (wall 124 → open anyway); push; `pr-create` (body on stdin); open record; **switch ON only**: spira-lc cut → `batch_id`/`version` (§10); members `BATCHED`; clear `queue-stuck-<repo>`; `QUEUE BATCH … source=open-batch`. |
@@ -112,7 +113,7 @@ nothing changed), then effects in order.
 | `release` | any | queue lock | open batch, owned by concierge, else refuse. `owner=<pre_claim_owner>`, drop claim keys. |
 | `land-local` | queue.local | queue lock unless LOCK_HELD | base must be a local branch; resolve head; divergence alarm (cached forge ref, never refuses); `base` ancestor of head, else refuse; **the head's tree carries a gate PASS or round GREEN certificate, else refuse (§8 D12; `SPIRA_LAND_UNGATED=<reason>` overrides, logged)**; the round's binaries when `--worktree` is named (§8 D2); for the harness repository while a release is in force, `--worktree` required (§8 D13); CAS `update-ref`; round-seq+1, `refs/archive/rounds/<n>`; per member `land_mark LANDED`, `gh_issue_closeout`, `bead_close_on_land`, a line; then the release (§8 D13): `release build <head> --bin-dir` → `release verify` → `release activate`, a failure a loud deploy fault (exit 1) that reverts nothing; mail; summary line. |
 | `publish` | queue.local | queue lock unless LOCK_HELD | local base; forge target; refuse if a `publish` record exists; fetch; divergence check refuses; equal → "nothing to publish", exit 0; members from land commits (§8 D4), none → refuse; push `spira/publish/<stamp>`; pr-create; `publish` record; `QUEUE PUBLISH` line. |
-| `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll `_verdict_settle_publish` until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
+| `to-forge` | queue.local | queue lock, whole move | agreement check (§6 R1); **in-delivery refusal** (§8 D5); local base exists, not checked out; re-read mode under lock; final publish (lock held); poll the verdict's publish settle (in process) until the record is gone (3 → refuse; deadline → refuse); fetch, forge tip == local tip; write mode `queue.forge`, base `<remote>/<branch>` (§8 D6); verify; archive `refs/archive/<local-base>`, delete local branch; mail. |
 | `to-local` | queue (forge) | queue lock | agreement check; in-delivery refusal; base remote-tracking; `local/<branch>` absent and not checked out; re-read mode; fetch; an archived `refs/archive/local/<branch>` must be an ancestor of the forge tip; create `local/<branch>` at the forge tip; write mode `queue.local`, base `local/<branch>` (branch deleted if that fails); verify; mail. |
 | `rollback-local` | queue.local | queue lock unless LOCK_HELD | round-seq ≥ 2; `refs/archive/rounds/<n-1>`; a release in force and `$SPIRA_RELEASES/<prev>` present; `release verify <prev>` → `release activate <prev>` (never rebuilt, §8 D13); CAS the ref back; mail. Bead state untouched. |
 
@@ -153,9 +154,9 @@ Tests (retired or repointed in §7): `test-queue-submit`, `test-withdrawn-suites
 `test-git-push-app:177`, `test-queue-flush:77`.
 
 **Readers of what queue writes** (the formats are unchanged, §3): the `open` record is read
-by verdict.sh, batch.sh, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, batcher-cut,
+by queue verdict, batch.sh, lib.sh `queue_batch_owner`, landing.sh, cockpit.sh, batcher-cut,
 queue-watch, czar-pass, spira-lc `legacy_files`, and the operator's round/watch scripts; the
-`publish` record by verdict.sh and queue-watch; the lock by batch.sh, verdict.sh,
+`publish` record by queue verdict and queue-watch; the lock by batch.sh, queue verdict,
 batcher-cut and the reconciler's stale-lock probe. `round-seq`, `refs/archive/rounds/*`,
 the `$SPIRA_QUEUE_DIR/<id>` entry and `queue-protected-<repo>` have no reader
 outside queue itself and the tests; landing.log's ABANDON/PUBLISH lines have none outside
@@ -295,7 +296,7 @@ cost / members; percentage integer.
 
 One mechanism: `bash` reading a **fixed script from stdin**, compiled into the binary per
 operation, followed by that operation's NUL-terminated values. The script reads its values
-with `read -r -d ''`, then sources `lib.sh` (and `batch.sh` or `verdict.sh`
+with `read -r -d ''`, then sources `lib.sh` (and `batch.sh`
 where named) with stdin redirected from `/dev/null`, calls exactly one function, and exits
 with its status. Nothing is passed in argv or the environment. The script text is fixed per
 operation (the function name is part of the text, never data).
@@ -320,7 +321,8 @@ operation (the function name is part of the text, never data).
 | R16 `cancel_runs` | `queue_cancel_branch_runs <forge> <path> <branch> QUEUE` | RUN_CANCEL log lines |
 | R17 `lc_returned` | not a seam since sp-arpjt: `spira-lc returned <id> <reason>` run directly (switch ON only) | the Returned event CAS |
 | R18 `batch_fns` (sources batch.sh) | `format_batch`, `_base_conflict`, `_pf_gate` (with `_PF_DEADLINE`) | open-batch only; the queue.forge assembly primitives |
-| R19 `settle_publish` (sources verdict.sh) | `_verdict_settle_publish <repo> <path>` | to-forge's wait; return 3 = red |
+| ~~R19 `settle_publish`~~ | retired: the settle is Rust (DESIGN-verdict.md) | — |
+| R23 `create_bug` | `BEADS_ACTOR=<a> bdq create <title> --type bug … --body-file <tmp> --silent` (body read from stdin into the temp file inside the script) | the verdict's fix-forward bead; bdq's retry and fixture logic |
 | R20 `readback` | `repo_land`, `spira_landref` after a transition's write | the post-write verification reads what every other component will read |
 | R21 `toml_path` | `spira_toml_resolve` (transitions only, as before) | conf.sh's own resolution of which document is in force |
 
@@ -656,7 +658,7 @@ on stderr, the queue-side action proceeds (the machine's own state is the record
 | `to-forge`, `to-local` (D5) | in delivery = open batch record or BATCHED landstate of this repo; spira-lc never asked | probe; also every IN_DELIVERY row of this repo; a failed read refuses |
 | `submit`, `protect`, `stats`, `flush`, `step`, `claim`, `release`, `land-local`, `publish`, `rollback-local` | no lifecycle call in any era | same — none. queue emits no `stack`, `land` or `settle` events: those belong to batcher-cut (`stack`/`land` of a round) and verdict.sh (`settle`), which read the same switch in their own rewrites |
 
-`flush`/`step` run `batch.sh`, the batcher and `verdict.sh`, which make their own lifecycle
+`flush`/`step` run `batch.sh` and the batcher, which make their own lifecycle
 calls: those components must honour the same switch (their own cutovers), and pass
 `SPIRA_LIFECYCLE_ENFORCE` through the unit environment unchanged — queue does not set it.
 

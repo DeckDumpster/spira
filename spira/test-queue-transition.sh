@@ -23,7 +23,7 @@
 #      flipping back.
 #
 # tier: T1
-# covers: queue/src/* spira/verdict.sh spira/lib.sh spira/conf.sh
+# covers: queue/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -106,7 +106,7 @@ queue() {
 }
 verdict() {
     FIXTURE_CHECK_STATUS="${CHECK_STATUS:-green}" \
-        bash "$SH/verdict.sh" "$REPONAME" 2>&1
+        SPIRA_HOME="$SH" command queue verdict "$REPONAME" 2>&1
 }
 # mk_bins <head> — land-local refuses without a --with-bins corpus for the tree it is
 # landing (sp-sf60f); every head this suite lands needs one.

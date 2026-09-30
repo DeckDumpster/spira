@@ -11,9 +11,9 @@
 //!
 //!   batcher judgement-ci <repo> --suites CSV --members CSV --evidence TEXT
 //!
-//! judgement-ci is the CI-only producer sp-lomk3 adds: verdict.sh calls it, instead of its
+//! judgement-ci is the CI-only producer sp-lomk3 adds: queue verdict calls it, instead of its
 //! own attribution, on a red CI check for a PR its own open-batch record marks owner=batcher
-//! — the suites CSV and a CI run link/evidence line come straight off verdict.sh's own read
+//! — the suites CSV and a CI run link/evidence line come straight off queue verdict's own read
 //! of the forge's check-status.
 //!
 //! NOT COVERED (left to later beads): a main-red trigger has no producer wired here yet
@@ -559,7 +559,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     // _lc_cut_batch for batch.sh), only when lifecycle_enforce is on — off returns None
     // without running anything, the pre-sp-o7nbr.4 record. Best-effort and additive,
     // never blocking the PR or the land_mark loop below. A refusal leaves batch_id/version unset on the record,
-    // so verdict.sh's own land/settle wiring finds nothing to CAS against later.
+    // so queue verdict's own land/settle wiring finds nothing to CAS against later.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, &batch_head, &base_sha, &member_pairs);
 
@@ -609,7 +609,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason, ob: &io::OpenBatch) -> Result<(), String> {
     // ONE WRITER PER OPEN BATCH (sp-91hb5): owner=concierge means a hand edit to this
     // round's branch is in flight — force-pushing a stack onto it would race that edit
-    // exactly like verdict.sh's own guard exists to prevent. SPIRA_QUEUE_OWNER_OVERRIDE=1
+    // exactly like queue verdict's own guard exists to prevent. SPIRA_QUEUE_OWNER_OVERRIDE=1
     // breaks the glass, same override every other mutator honors.
     if ob.owner == "concierge" && env::var("SPIRA_QUEUE_OWNER_OVERRIDE").as_deref() != Ok("1") {
         println!("batcher {}: refused — PR {} is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1", repo.name, ob.pr);
@@ -741,13 +741,13 @@ fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason,
     Ok(())
 }
 
-/// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). verdict.sh calls
+/// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). queue verdict calls
 /// this in place of its own attribution when a red batch PR's open-batch record names
-/// `owner=batcher`: the suites CSV and evidence line are read straight off verdict.sh's own
+/// `owner=batcher`: the suites CSV and evidence line are read straight off queue verdict's own
 /// forge check-status call, since this crate has no CI-watching loop of its own. Prints
 /// `id=<bead-id>` on success so the caller can record it without scraping human-facing text
 /// (law-never-derive-an-id-from-output); prints nothing to stdout on failure, the error goes
-/// to stderr, and the exit code alone tells verdict.sh whether to log it as unfiled.
+/// to stderr, and the exit code alone tells queue verdict whether to log it as unfiled.
 fn judgement_ci(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;

@@ -118,7 +118,7 @@ if hit(cmd): print("1")
 
 reason=""
 
-for _script in landing.sh batch.sh verdict.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
+for _script in landing.sh batch.sh slay.sh world.sh deploy.sh activate.sh promote.sh; do
     case "$cmd" in
         *"$_script"*)
             [ "$(_exec_ctx "$_script" "$cmd")" = "1" ] && { reason="aeons may not call $_script (sp-kz8ob: landing and batch handle forge writes; use SPIRA_AEON_OVERRIDE=1 for Ops incidents)"; break; } ;;
