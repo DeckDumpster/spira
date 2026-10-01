@@ -28,14 +28,14 @@ ingest() {
     # now folded into spira-config's own resolve() and fires on every conf.sh sourcing, not
     # only lib.sh's (wave4-decomposition.md (c) #5 — deliberate, so a confined instance can no
     # longer dodge it by sourcing conf.sh alone, which is exactly what this script does). Left
-    # unpinned, resolve() falls through to whatever real repo-map the box/container has
-    # configured, and this fixture's confined, non-prod SPIRA_INSTANCE then fails closed
+    # unpinned, resolve() falls through to whatever real repo registry map the box/container
+    # has configured, and this fixture's confined, non-prod SPIRA_INSTANCE then fails closed
     # against every real checkout the map names as "outside" its workspace. A path that does
-    # not exist reads as "no map to check" (containment.rs's own `read_repo_map` -> None),
+    # not exist reads as "no map to check" (containment.rs's own read_repo_map -> None),
     # which is not a violation.
     SPIRA_HOME="$HERE" SPIRA_REPO="$HERE/.." SPIRA_RUN="$T/run" SPIRA_DB="$T/db" \
         PATH="$T/sbin:$PATH" SPIRA_PATH="$T/sbin" SPIRA_CONF="$T/no.conf" \
-        SPIRA_REPO_MAP="$T/no-repo-map" \
+        SPIRA_REPO_MAP="$T/no-such-map" \
         tsd-ingest.sh "$@"
 }
 
