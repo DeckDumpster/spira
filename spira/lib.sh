@@ -23,6 +23,20 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 }
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
+# FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
+# one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
+# binary's own subprocess, which inherits only the real process environment — not this
+# shell's unexported variables, the way the old in-shell `( subshell )` did. conf.sh
+# deliberately leaves most of its ~264 keys unexported (its own comment above the export
+# list); these are the ones every shipped `.fayth`'s FAYTH_LABELS line actually references
+# (grepped: spira/chamber/*.fayth) that are not already on that list. Exported here, once,
+# the same narrow way spira/bead.sh:49 already does for the bead binary — not a blanket
+# export, which would leak the per-copy facts conf.sh's own fence exists to keep out of
+# every child process (SPIRA_HOME, SPIRA_REPO, the maps, SPIRA_FAYTHS, SPIRA_MAX_AEONS —
+# law-gates-run-in-a-clean-environment). A custom operator fayth referencing some OTHER
+# unexported key is the same trap bead.sh's own narrow list already carries; widen this
+# list (and bead.sh's) together if one shows up.
+export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
 # lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
 # functions that once stood in for those two calls are retired too (sp-uwhx0): their only
