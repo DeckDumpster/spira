@@ -78,14 +78,25 @@ impl Real {
     }
 
     /// Source conf.sh and lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures
-    /// stdout only, trimmed of a trailing newline. The same one-shot seam `skew` uses.
+    /// stdout only, trimmed of a trailing newline.
+    ///
+    /// THE "--" IS NOT DECORATION. `bash -c script arg0 arg1 arg2` assigns the FIRST
+    /// argument after the script string to `$0` (bash's own command-name slot), and only
+    /// the REST become `$1`, `$2`, ... Without a placeholder there, `args[0]` silently
+    /// lands in `$0` and every real argument shifts down by one — `body`'s own `"$1"`
+    /// reads what should have been `$2`, and the true `$1` is simply gone. `skew`'s own
+    /// seam avoids this by spending the `$0` slot on `lib.sh`'s own path (its `. "$0"`
+    /// sourcing trick); `--` is the same fix without that trick. Caught live by the
+    /// identical bug in census's `seam`/`seam_full` (sp-yyk47) — ported the fix here too,
+    /// since this `seam` has the exact same shape and every two-argument caller
+    /// (`counter_events_query`, `spira_unit`) was silently reading `$2` as empty.
     fn seam(&self, body: &str, args: &[&str]) -> String {
         let script = format!(
             "export SPIRA_DOCTOR=1; . \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
             self.home.display(),
             self.home.display()
         );
-        let out = Command::new("bash").arg("-c").arg(script).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 }

@@ -25,27 +25,38 @@ impl Real {
     }
 
     /// Source conf.sh + lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures
-    /// stdout, trimmed of a trailing newline; stderr discarded. The same seam `skew` and
-    /// `doctor` use.
+    /// stdout, trimmed of a trailing newline; stderr discarded.
+    ///
+    /// THE "--" IS NOT DECORATION. `bash -c script arg0 arg1 arg2` assigns the FIRST
+    /// argument after the script string to `$0` (bash's own command-name slot), and only
+    /// the REST become `$1`, `$2`, ... Without a placeholder there, `args[0]` silently
+    /// lands in `$0` and every real argument shifts down by one — `body`'s own `"$1"`
+    /// reads what should have been `$2`, and the true `$1` is simply gone. Caught live by
+    /// testenv's test-census.sh: the since-watermark argument landed in `$0`, so
+    /// `census_events_run_sql "$1"` always ran unfiltered regardless of the real
+    /// watermark (sp-yyk47). `skew`'s own seam avoids this by spending the `$0` slot on
+    /// `lib.sh`'s own path (its `. "$0"` sourcing trick); `--` is the same fix without
+    /// that trick.
     fn seam(&self, body: &str, args: &[&str]) -> String {
         let script = format!(
             ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
             self.home.display(),
             self.home.display()
         );
-        let out = Command::new("bash").arg("-c").arg(script).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
     /// Like `seam`, but returns (success, stdout, stderr) — for callers that need the exit
     /// status or the error text (the retry-aware SQL runners; `landed`'s own exit code).
+    /// See `seam`'s own comment for why the `--` is load-bearing, not decoration.
     fn seam_full(&self, body: &str, args: &[&str]) -> (bool, String, String) {
         let script = format!(
             ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
             self.home.display(),
             self.home.display()
         );
-        let out = Command::new("bash").arg("-c").arg(script).args(args).stdin(Stdio::null()).output();
+        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).output();
         match out {
             Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned()),
             Err(e) => (false, String::new(), e.to_string()),
