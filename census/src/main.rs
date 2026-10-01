@@ -39,16 +39,36 @@ fn resolve_home() -> PathBuf {
     std::env::var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
 }
 
-/// `argv[0]`, absolute (joined onto the current directory if it wasn't already) but with
-/// every symlink component left exactly as invoked — see `resolve_home`'s own comment.
+/// `argv[0]`, resolved to where it actually sits, with every symlink component left
+/// exactly as invoked — see `resolve_home`'s own comment.
+///
+/// A bare name (no `/`) is NOT already the resolved path the way it is when a shell execs
+/// a PATH-found command: bash rewrites its own `$0` to the full path PATH search landed on
+/// before exec, but a non-shell caller — `env PATH=... census`, `posix_spawnp`, a test
+/// harness's own `env -i PATH="$STUBBIN:$PATH" ...` — calls `execvp` directly, which
+/// resolves the PATH search internally but passes argv[0] through unchanged: still the
+/// bare string "census". Joining that onto the current directory (as if shell-relative)
+/// lands on nothing real. Caught live by testenv's test-skew-local-release.sh exercising
+/// the identical pattern in `skew` (sp-yyk47) — ported here for the same reason.
 fn argv0_path() -> Option<PathBuf> {
     let arg0 = std::env::args_os().next()?;
-    let p = PathBuf::from(arg0);
-    if p.is_absolute() {
-        Some(p)
-    } else {
-        Some(std::env::current_dir().ok()?.join(p))
+    let p = PathBuf::from(&arg0);
+    if p.components().count() > 1 {
+        return if p.is_absolute() { Some(p) } else { Some(std::env::current_dir().ok()?.join(p)) };
     }
+    let path_var = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path_var) {
+        let candidate = dir.join(&arg0);
+        if is_exec(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn is_exec(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
 fn main() -> ExitCode {
