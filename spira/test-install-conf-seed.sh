@@ -7,7 +7,9 @@
 # _seed_prod_instance writes SPIRA_INSTANCE=<instance> into a separate $SPIRA_PROD
 # checkout's config so a non-prod sentinel's containment fence fires (see install.sh's own
 # comment at the call site). Until sp-usxfl it hand-appended `SPIRA_INSTANCE=<inst>` lines to
-# spira.conf; now it goes through conf.sh's spira_config_set_at, which always writes
+# spira.conf; now it goes through install::seed_instance::write_target_for (conf.sh's own
+# matching bash helper, spira_toml_write_target_for, was retired rather than ported at
+# wave 4.7, sp-ksrss — this Rust copy was already its only live caller), which always writes
 # spira.toml — creating it first, via a full auto-convert, when the target root has only a
 # legacy spira.conf or neither file yet. This suite's own PROPERTY 4 is the regression case:
 # a root with only spira.conf must gain a spira.toml, not another line in the .conf.

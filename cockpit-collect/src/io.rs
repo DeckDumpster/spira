@@ -115,7 +115,14 @@ pub fn bootstrap_config() {
             (!p.is_empty()).then(|| p.to_string())
         })
         .and_then(|p| std::fs::read_to_string(p).ok());
-    let max_aeons = resolved.as_ref().map(|r| r.get("SPIRA_MAX_AEONS").to_string()).unwrap_or_default();
+    // SPIRA_MAX_AEONS is never a key `resolve()` itself computes (unlike SPIRA_REPO_MAP,
+    // which IS one of its hand-written keys, just withheld from EXPORT_KEYS) — it is host
+    // policy read in-process, straight off this process's own environment, exactly like
+    // `home_repo_default`/`repo` above. `resolved.get("SPIRA_MAX_AEONS")` always answered
+    // "" (the key is simply absent from `values`), so the task-pool ceiling this cached for
+    // [`max_aeons`] — and therefore `slots_keys`' `SP_SLOTS_CEILING` — was silently 0
+    // whenever `bootstrap_config` ran, regardless of what the operator actually set.
+    let max_aeons = env_map.get("SPIRA_MAX_AEONS").cloned().unwrap_or_default();
     if let Some(r) = &resolved {
         repo_registry_env.insert("SPIRA_HOME_REPO".into(), r.get("SPIRA_HOME_REPO").to_string());
         repo_registry_env.insert("SPIRA_REPO_MAP".into(), r.get("SPIRA_REPO_MAP").to_string());

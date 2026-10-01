@@ -48,11 +48,9 @@ spira/test-conf-toml.sh
 spira/test-conf-writeback.sh
 spira/test-desired-state.sh
 spira/test-destroy-branch.sh
-spira/test-dummy.sh
 spira/test-epic-claim-order.sh
 spira/test-express-lane.sh
 spira/test-fayth-project-instructions.sh
-spira/test-fayth-ready-error.sh
 spira/test-git-push-app.sh
 spira/test-groom-escalation-check.sh
 spira/test-install-dolt-ready.sh

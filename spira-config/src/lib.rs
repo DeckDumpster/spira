@@ -23,6 +23,7 @@ pub mod build;
 pub mod chamber;
 pub mod containment;
 pub mod convert;
+pub mod deps;
 pub mod env_bootstrap;
 pub mod eval;
 pub mod legacy_map;
@@ -30,6 +31,8 @@ pub mod locate;
 pub mod registry;
 pub mod repos;
 pub mod resolve;
+pub mod unit;
+pub mod writeback;
 
 pub use locate::LocateOutcome;
 

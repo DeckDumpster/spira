@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use bead::{
@@ -36,6 +36,7 @@ fn main() {
         "amend" => cmd_amend(&home, &rest),
         "contract" => cmd_contract(&home),
         "lint" => cmd_lint(&home, &rest),
+        "event" => cmd_event(&rest),
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             _ => {
@@ -45,7 +46,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -118,38 +119,85 @@ fn s(strs: &[&str]) -> Vec<String> {
     strs.iter().map(|s| s.to_string()).collect()
 }
 
+/// `spira_config::resolve::resolve_for_process`, called in-process (wave 4.9, sp-k80sa:
+/// this replaces `bead.sh`'s own narrow `export SPIRA_HOME SPIRA_REPO_MAP
+/// SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_CZAR_LABEL`, which only existed to carry
+/// those across the `exec` boundary into this binary). `home` is this process's own
+/// `--home` argument, never read back out of `$SPIRA_HOME` — that var is a per-copy fact
+/// `spira_config::resolve` deliberately never derives, so it must be the caller's own
+/// input, not something this resolves. A failure (no config document resolves, or a parse
+/// error) yields an empty `Resolved`, matching this crate's existing "missing config
+/// degrades to the caller's own default" behaviour everywhere else.
+fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
+    let home_path = Path::new(home);
+    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+    let repo = spira_config::resolve::derive_home_repo(home_path, &env_map);
+    spira_config::resolve::resolve_for_process(home_path, &repo, &env_map).unwrap_or_default()
+}
+
 /// `fayth_get`'s own subshell: `. "<fayth-file>" 2>/dev/null; eval "printf '%s' \"\${$var:-$def}\""`.
 /// A `.fayth` file is an arbitrary shell fragment (the fixtures use `${SPIRA_SCOPE_LABEL:+...}`
 /// parameter expansion); this bridges to the same mechanism `fayth_get` uses rather than
 /// writing a second, partial shell-fragment parser (DESIGN.md).
-fn fayth_get(fayth_file: &str, var: &str, default: &str) -> String {
+///
+/// `home` resolves `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL` (wave 4.9,
+/// sp-k80sa) and sets them explicitly on this subshell's own `Command`: `czar.fayth`/
+/// `groomer.fayth`/`maechen.fayth` each reference one by parameter expansion in
+/// `FAYTH_LABELS`, and an unset expansion there is silently empty, not an error — the
+/// SAME fix `spira-config`'s own `chamber::fayth_get` carries, and for the same scar
+/// (round 151: an unexported label read back empty and the persona roster went empty
+/// with it).
+fn fayth_get(home: &str, fayth_file: &str, var: &str, default: &str) -> String {
     if !Path::new(fayth_file).is_file() {
         return default.to_string();
     }
     let script =
         r#"f="$1"; var="$2"; def="$3"; . "$f" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"""#;
-    let out = Command::new("bash")
-        .arg("-c")
+    let resolved = resolved_config(home);
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c")
         .arg(script)
         .arg("fayth_get")
         .arg(fayth_file)
         .arg(var)
-        .arg(default)
-        .output();
+        .arg(default);
+    for k in ["SPIRA_CZAR_LABEL", "SPIRA_GROOMER_LABEL", "SPIRA_MAECHEN_LABEL"] {
+        if let Some(v) = resolved.values.get(k) {
+            cmd.env(k, v);
+        }
+    }
+    let out = cmd.output();
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => default.to_string(),
     }
 }
 
-fn chamber_dir() -> String {
-    format!("{}/chamber", env::var("SPIRA_HOME").unwrap_or_default())
+/// `SPIRA_HOME`, preferring an explicit override from THIS process's own environment over
+/// the `--home` argument (`dirname "$0"`, `bead.sh`'s own location). This is the one place
+/// `chamber_dir` ever differed from `home`: several suites (`test-bead-contract.sh`,
+/// notably) pin a scratch chamber by exporting `SPIRA_HOME` themselves, distinct from
+/// wherever the real `bead.sh` lives on PATH — a fact that survives `exec` on its own
+/// (an already-exported var keeps its export attribute across reassignment, and across
+/// `exec`, with no help from `bead.sh`), so it needed no re-export even before wave 4.9.
+/// `home_arg` is the correct answer only for the UNEXPORTED, no-override, production case
+/// — exactly conf.sh's own `SPIRA_HOME="${SPIRA_HOME:-$_spira_conf_here}"` derived default,
+/// which is this same `--home` value.
+fn chamber_home(home_arg: &str) -> String {
+    env::var("SPIRA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| home_arg.to_string())
 }
 
-/// `fayth_names`: every `*.fayth` basename under `$SPIRA_HOME/chamber`, sorted — bash's own
+fn chamber_dir(home: &str) -> String {
+    format!("{}/chamber", chamber_home(home))
+}
+
+/// `fayth_names`: every `*.fayth` basename under `<home>/chamber`, sorted — bash's own
 /// glob expansion sorts lexicographically, so this matches it with `Vec::sort`.
-fn fayth_names() -> Vec<String> {
-    let mut names = match std::fs::read_dir(chamber_dir()) {
+fn fayth_names(home: &str) -> Vec<String> {
+    let mut names = match std::fs::read_dir(chamber_dir(home)) {
         Ok(rd) => rd
             .filter_map(|e| e.ok())
             .filter_map(|e| {
@@ -208,25 +256,11 @@ fn schema_name(home: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `aeon_alive <pidfile>`: ordinary Rust, no shell needed — `/proc/<pid>/cmdline` against
-/// the `(^|/)aeon( |$)|aeon\.sh` pattern, matching `lib.sh`'s own liveness check.
+/// `aeon_alive <pidfile>`: the one canonical implementation (`strand::probe::aeon_alive`,
+/// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies") rather than this
+/// crate's own duplicate of the same /proc check.
 fn aeon_alive(pidfile: &str) -> bool {
-    let pid = match std::fs::read_to_string(pidfile) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => return false,
-    };
-    if pid.is_empty() || !Path::new(&format!("/proc/{pid}")).is_dir() {
-        return false;
-    }
-    let cmdline = std::fs::read_to_string(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    let cmd = cmdline.replace('\0', " ");
-    if cmd.contains("aeon.sh") {
-        return true;
-    }
-    cmd.split_whitespace().any(|tok| {
-        let base = tok.rsplit('/').next().unwrap_or(tok);
-        base == "aeon"
-    })
+    strand::probe::aeon_alive(Path::new(pidfile))
 }
 
 fn mail_send(aeon_id: &str, body: &str) {
@@ -259,9 +293,12 @@ fn mail_send(aeon_id: &str, body: &str) {
 // Repository map / env helpers
 // =========================================================================================
 
-fn load_repos() -> std::collections::BTreeMap<String, spira_config::RepoSection> {
-    let path = match env::var("SPIRA_REPO_MAP") {
-        Ok(p) if !p.is_empty() => p,
+/// `SPIRA_REPO_MAP`, resolved in-process (wave 4.9, sp-k80sa) rather than read back out of
+/// this binary's own environment — `bead.sh` no longer re-exports it across the `exec`
+/// boundary (see `resolved_config`'s own doc).
+fn load_repos(home: &str) -> std::collections::BTreeMap<String, spira_config::RepoSection> {
+    let path = match resolved_config(home).values.get("SPIRA_REPO_MAP") {
+        Some(p) if !p.is_empty() => p.clone(),
         _ => return std::collections::BTreeMap::new(),
     };
     match std::fs::read_to_string(&path) {
@@ -334,7 +371,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
-    let repos = load_repos();
+    let repos = load_repos(home);
     if let Some(r) = &repo {
         if !repos.contains_key(r) {
             let valid = repos.keys().cloned().collect::<Vec<_>>().join(" ");
@@ -383,12 +420,12 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 return 2;
             }
         };
-        let fpath = format!("{}/{}.fayth", chamber_dir(), for_fayth);
+        let fpath = format!("{}/{}.fayth", chamber_dir(home), for_fayth);
         if !Path::new(&fpath).is_file() {
             eprintln!("bead: no such persona: {for_fayth}");
             return 2;
         }
-        let fayth_labels = fayth_get(&fpath, "FAYTH_LABELS", "");
+        let fayth_labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
         if fayth_labels.is_empty() {
             eprintln!("bead: persona {for_fayth} has no partition labels");
             return 2;
@@ -591,9 +628,9 @@ fn notify_live_aeon(id: &str, changed: &str) {
 
 fn cmd_contract(home: &str) -> i32 {
     println!("PERSONAS");
-    for f in fayth_names() {
-        let fpath = format!("{}/{}.fayth", chamber_dir(), f);
-        let labels = fayth_get(&fpath, "FAYTH_LABELS", "");
+    for f in fayth_names(home) {
+        let fpath = format!("{}/{}.fayth", chamber_dir(home), f);
+        let labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
         println!("{}", persona_line(&f, &labels));
     }
     println!();
@@ -601,8 +638,49 @@ fn cmd_contract(home: &str) -> i32 {
     print!("{}", schema_kinds_passthrough(home));
     println!();
     println!("REPOS");
-    print!("{}", repos_section(&load_repos()));
+    print!("{}", repos_section(&load_repos(home)));
     0
+}
+
+// =========================================================================================
+// event — sp-ogu8x, wave 4.24, family Z. `spira/lib.sh`'s `spira_event` is now a one-line
+// shim onto this subcommand (see DESIGN.md "event"); every other caller (the aeon/gate-check/
+// landing-pass/queue/sentinel seams) still types the bash function name unchanged.
+// =========================================================================================
+
+fn cmd_event(args: &[String]) -> i32 {
+    // Mirrors the bash's own positional defaults: `target="${2:--}"`, so a caller that
+    // omits it gets "-" (a plan-level event), not an empty string.
+    let kind = args.first().cloned().unwrap_or_default();
+    let target = args.get(1).cloned().unwrap_or_else(|| "-".to_string());
+    let title = args.get(2).cloned().unwrap_or_default();
+    let detail = args.get(3).cloned().unwrap_or_default();
+
+    // `dir="$SPIRA_RUN/events"` in the bash: an unset SPIRA_RUN concatenates to a literal
+    // leading slash, which every real caller's conf.sh-derived environment avoids by
+    // always setting SPIRA_RUN. Matched here as a plain string join, not `Path::join` on an
+    // empty base (which would silently go relative instead) — see DESIGN.md "event".
+    // Unset or empty SPIRA_RUN is refused by name (sp-0c1wz): the old join made a relative
+    // path and the event vanished with rc 0. Every real caller's conf.sh environment sets it.
+    let run_dir = match env::var("SPIRA_RUN") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => {
+            eprintln!("spira_event: SPIRA_RUN is unset — refusing rather than drop the event");
+            return 2;
+        }
+    };
+    let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
+    let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    });
+
+    match bead::event::emit(&run_dir, cooldown, now, &kind, &target, &title, &detail) {
+        Ok(()) => 0,
+        Err(()) => 1,
+    }
 }
 
 // =========================================================================================
@@ -617,11 +695,11 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         args.to_vec()
     };
 
-    let personas: Vec<(String, String)> = fayth_names()
+    let personas: Vec<(String, String)> = fayth_names(home)
         .into_iter()
         .map(|f| {
-            let fpath = format!("{}/{}.fayth", chamber_dir(), f);
-            let labels = fayth_get(&fpath, "FAYTH_LABELS", "");
+            let fpath = format!("{}/{}.fayth", chamber_dir(home), f);
+            let labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
             (f, labels)
         })
         .collect();

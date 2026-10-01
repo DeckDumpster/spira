@@ -20,7 +20,7 @@
 # the output identical.
 #
 # defect: sp-bo67y
-# covers: spira/lib.sh strand/src/* sentinel/src/*
+# covers: spira/lib.sh strand/src/* sentinel/src/* spira-claim/*
 # hermetic-ok: uses a fixture database; bd calls counted through a logging SPIRA_BD shim;
 #              the real chamber (spira/chamber/*.fayth) supplies more than one partition so
 #              the per-partition fan-out this bead removes is genuinely exercised
@@ -231,9 +231,22 @@ echo
 echo "case 8 — the sentinel's full pass populates both snapshots once and cleans them up"
 # ==========================================================================================
 STUBS="$TMP/stubs"; mkdir -p "$STUBS"
-for _s in pilgrimage.sh strand reflect.sh sending; do
+for _s in pilgrimage.sh reflect.sh sending; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
+# strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims
+# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(aeon_count ...)` inside
+# lib.sh's pass-start summary print nothing, not "0", and blow up the arithmetic that adds
+# it. A plain no-op is still correct for strand's OWN verbs (report/check/throttle-state),
+# which is all this suite needs from it.
+cat > "$STUBS/strand" <<'STRANDSTUB'
+#!/bin/sh
+case "$1" in
+    aeon-alive) exit 1 ;;
+    aeon-count|aeons-live-total|aeons-live-lanes) printf '0' ;;
+esac
+STRANDSTUB
+chmod +x "$STUBS/strand"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$STUBS/$_s"; done
 ln -sf "$HERE/chamber" "$STUBS/chamber" 2>/dev/null || true

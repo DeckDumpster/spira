@@ -8,11 +8,12 @@ use super::{push, Kv};
 use crate::io;
 use crate::quoting::epoch_to_age;
 use serde_json::Value;
+use spira_claim::READY_ARGS_BASE as READY_ARGS;
 use std::collections::HashSet;
 
-/// The one definition of "a bead an aeon can take" (`lib.sh` `READY_ARGS`) — mirrored here
-/// only for the express-lane count, which asked exactly this query in the bash.
-const READY_ARGS: &[&str] = &["ready", "--limit", "0", "--exclude-type", "epic,event", "-u"];
+// The one definition of "a bead an aeon can take" (`lib.sh` `READY_ARGS`) now lives in
+// `spira-claim` (wave 4.25, sp-obhv6) — this probe used to keep its own byte-identical
+// copy of the same five tokens, only for the express-lane count below.
 
 struct Landstate {
     status: String,

@@ -16,7 +16,7 @@
 # reaching for a fixture that cannot inject a lock error deterministically.
 #
 # defect: sp-3ntca
-# covers: spira/lib.sh aeon/src/*
+# covers: spira/lib.sh aeon/src/* spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 

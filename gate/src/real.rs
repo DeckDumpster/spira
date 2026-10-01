@@ -89,19 +89,22 @@ pub const RETIRED_VARS: &[&str] = &[
 
 /// Wave 4.8: merges `spira_config::resolve()`'s in-process answer into `kv` after the
 /// `CONTEXT` bash call returns, for every [`RETIRED_VARS`] name — `entry().or_insert()` so
-/// nothing the bash dump itself still supplies is ever overridden. Best-effort: a
-/// containment refusal or an unreadable registry leaves `kv` exactly as `CONTEXT` alone
-/// produced it.
-fn merge_resolved_config(kv: &mut HashMap<String, String>, home: &Path) {
+/// nothing the bash dump itself still supplies is ever overridden.
+///
+/// NOT BEST-EFFORT ANY MORE (sp-1cdgq round 3): a containment refusal or an unreadable
+/// registry used to leave `kv` exactly as `CONTEXT` alone produced it, silently — which is
+/// what let a `--home` with no `conf.d` (production never has one) resolve every
+/// `RETIRED_VARS` name to nothing with no error anywhere. Surfaced to the caller instead.
+fn merge_resolved_config(kv: &mut HashMap<String, String>, home: &Path) -> Result<(), String> {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
-        for name in RETIRED_VARS {
-            if let Some(v) = resolved.values.get(*name) {
-                kv.entry((*name).to_string()).or_insert_with(|| v.clone());
-            }
+    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map)?;
+    for name in RETIRED_VARS {
+        if let Some(v) = resolved.values.get(*name) {
+            kv.entry((*name).to_string()).or_insert_with(|| v.clone());
         }
     }
+    Ok(())
 }
 
 const CONTEXT: &str = r#"set -uo pipefail
@@ -199,7 +202,7 @@ impl World for Real {
                 kv.insert(k.to_string(), v.to_string());
             }
         }
-        merge_resolved_config(&mut kv, &self.home);
+        merge_resolved_config(&mut kv, &self.home)?;
         let mut take = |k: &str| kv.remove(k);
         let raw_repo_name = take("repo_name").unwrap_or_default();
         let host_cores = take("host_cores").unwrap_or_else(|| "1".into());
@@ -929,7 +932,7 @@ mod tests {
 
         let mut kv = std::collections::HashMap::new();
         kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
-        super::merge_resolved_config(&mut kv, &home);
+        super::merge_resolved_config(&mut kv, &home).unwrap();
 
         match saved {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
@@ -938,6 +941,30 @@ mod tests {
 
         assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
         assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key resolve() covers must reach kv in-process");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-1cdgq round 3: a `--home` with no `conf.d` at all is now a named error this
+    /// function surfaces, not a silently-partial merge. `registry::load` is where the fix
+    /// actually lives (spira-config); this proves `merge_resolved_config` no longer
+    /// swallows it with `if let Ok(...)`.
+    #[test]
+    fn merge_resolved_config_surfaces_a_missing_registry_instead_of_merging_nothing() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("SPIRA_TOML").ok();
+        let dir = testkit::TempDir::new("gate-real-merge-missing");
+        let home = dir.join("spira-no-conf-d"); // never created
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+
+        let mut kv = std::collections::HashMap::new();
+        let err = super::merge_resolved_config(&mut kv, &home);
+
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+
+        assert_eq!(err, Err(format!("no config registry at {}", home.join("conf.d").display())));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

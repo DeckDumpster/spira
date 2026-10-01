@@ -24,20 +24,55 @@ fn raw_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|v| !v.is_empty())
 }
 
+/// Set once, at the very top of `main`, from the `--home` argument `maechen-trigger.sh`
+/// now passes (wave 4.9, sp-k80sa — this replaces the shim's own `export
+/// SPIRA_HOME="$HERE"`). `SPIRA_HOME` is a per-copy fact `spira_config::resolve`
+/// deliberately never derives (it is the input that LOCATES config, not a value config
+/// produces), so it has to be told explicitly rather than read back out of a resolution
+/// that depends on it. Left unset, [`home_dir`] falls back to [`raw_env`]`("SPIRA_HOME")`
+/// exactly as before this bead — the one test that exercises this path
+/// (`env_u64_falls_back_to_the_registry_then_the_callers_default`) never calls `main` and
+/// so never sets this, and is deliberately left alone.
+static HOME_OVERRIDE: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// `--home <path>` from argv, if this invocation carries one. `maechen-trigger.sh` always
+/// passes it now; a direct invocation (a test, an operator debugging by hand) without the
+/// flag falls back to [`raw_env`] inside [`home_dir`], unchanged from before this bead.
+fn parse_home_flag() -> Option<PathBuf> {
+    let mut it = env::args();
+    while let Some(a) = it.next() {
+        if a == "--home" {
+            return it.next().map(PathBuf::from);
+        }
+    }
+    None
+}
+
+/// `SPIRA_HOME`: [`HOME_OVERRIDE`] (the `--home` flag) if `main` set one, else
+/// [`raw_env`]`("SPIRA_HOME")` — the same precedence [`resolved_config`] always used, kept
+/// as the fallback rather than removed so the crate's own unit test (which sets
+/// `SPIRA_HOME` via `std::env::set_var` and never calls `main`) still exercises this
+/// unchanged.
+fn home_dir() -> PathBuf {
+    HOME_OVERRIDE
+        .get()
+        .cloned()
+        .unwrap_or_else(|| PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(|| ".".to_string())))
+}
+
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
 /// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
 /// the config document load at all (wave4-decomposition.md row (b) names maechen-trigger by
 /// file, "beyond its shim": SPIRA_MAECHEN_*). Resolved once, lazily, and cached:
-/// `spira_config::resolve_for_process`, using `SPIRA_HOME` (raw — the same precedence
-/// `main`'s own `spira_home` local already uses) and
-/// `spira_config::resolve::derive_home_repo`. A resolution failure yields an empty
-/// [`spira_config::resolve::Resolved`] — [`env_or`]/[`env_u64`]'s own callers see exactly
-/// the behaviour this crate had before this bead, never a panic.
+/// `spira_config::resolve_for_process`, using [`home_dir`] (wave 4.9, sp-k80sa: formerly
+/// raw `SPIRA_HOME` directly) and `spira_config::resolve::derive_home_repo`. A resolution
+/// failure yields an empty [`spira_config::resolve::Resolved`] — [`env_or`]/[`env_u64`]'s
+/// own callers see exactly the behaviour this crate had before this bead, never a panic.
 fn resolved_config() -> &'static spira_config::resolve::Resolved {
     static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
     RESOLVED.get_or_init(|| {
         let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        let home = PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(|| ".".to_string()));
+        let home = home_dir();
         let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
         spira_config::resolve::resolve_for_process(&home, &repo, &env_map).unwrap_or_default()
     })
@@ -61,8 +96,11 @@ fn env_u64(key: &str, default: u64) -> u64 {
 }
 
 fn main() {
+    if let Some(h) = parse_home_flag() {
+        let _ = HOME_OVERRIDE.set(h);
+    }
     let spira_run = PathBuf::from(env_or("SPIRA_RUN", "."));
-    let spira_home = PathBuf::from(env_or("SPIRA_HOME", "."));
+    let spira_home = home_dir();
     let db = env_or("SPIRA_DB", ".");
     let bd = env_or("SPIRA_BD", "bd");
     let repo_map = env::var("SPIRA_REPO_MAP").ok().filter(|v| !v.is_empty()).map(PathBuf::from);

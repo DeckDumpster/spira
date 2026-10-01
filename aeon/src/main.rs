@@ -90,7 +90,9 @@ fn run_capacity(args: &[String]) -> i32 {
         fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
     };
     let mut snap = seam::Snapshot::default();
-    conf::merge_resolved_config(&mut snap, &home, &original);
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("config resolution: {e}"));
+    }
     conf::merge_capacity_env(&mut snap, &original);
     let conf = Conf::new(&snap, &home);
     let env = Env::new(original.clone(), snap.env.clone());
@@ -101,6 +103,17 @@ fn run_capacity(args: &[String]) -> i32 {
 fn main() {
     let t0 = util::now_epoch();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `aeon aeon-named <pidfile>` (wave 4.23, sp-0ffox): lib.sh's own one-line shim target
+    // for `aeon_named` — the only caller left after aeon_name_take's in-process switch is
+    // cockpit-collect, across the crate boundary, so this stays a real subcommand rather
+    // than an in-process call. Stateless: no --home/conf resolution needed.
+    if args.first().map(String::as_str) == Some("aeon-named") {
+        let Some(pf) = args.get(1) else {
+            fatal("usage: aeon aeon-named <pidfile>");
+        };
+        print!("{}", aeon::naming::aeon_named(Path::new(pf)));
+        std::process::exit(0);
+    }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));
     }
@@ -136,7 +149,9 @@ fn main() {
         Ok(s) => s,
         Err(e) => fatal(&format!("{}: {e}: {}", cli.fayth, raw.stderr.lines().next().unwrap_or(""))),
     };
-    conf::merge_resolved_config(&mut snap, &home, &original);
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("{}: config resolution: {e}", cli.fayth));
+    }
     conf::merge_capacity_env(&mut snap, &original);
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);

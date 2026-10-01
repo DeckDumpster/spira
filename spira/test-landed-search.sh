@@ -16,7 +16,7 @@
 #
 # defect: sp-d9x93 sp-796o sp-m0s7 sp-a9g sp-37q sp-dgaig
 # tier: T2
-# covers: spira/lib.sh UC-landed-audit-reaping-01 UC-landed-audit-reaping-02 UC-landed-audit-reaping-03
+# covers: spira/lib.sh landing-pass/src/* UC-landed-audit-reaping-01 UC-landed-audit-reaping-02 UC-landed-audit-reaping-03
 # hermetic-ok: no database, no systemd, no gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

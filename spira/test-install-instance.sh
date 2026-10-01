@@ -210,7 +210,9 @@ printf '# empty\n' > "$WATCHERS"
 
 # SPIRA_INSTALL_FORCE=1 (used in all inst() calls to bypass the landref check in the
 # container) also bypasses the live-aeons guard. The guard's instance-scoping is verified
-# through lib.sh:spira_live_aeons, which uses "spira-aeon-*-${SPIRA_INSTANCE}.service".
+# through install/src/checks.rs's live_aeons, which uses "spira-aeon-*-${SPIRA_INSTANCE}.service"
+# (lib.sh's own spira_live_aeons retired alongside it, wave 4.23 sp-0ffox — install.sh and
+# promote.sh, its only callers, are both gone).
 # The key assertion here is exit 0: a 'test' install does not fail because 'prod' services
 # happen to be running.
 aeon_out="$(SPIRA_WATCHERS="$WATCHERS" inst)"

@@ -280,15 +280,20 @@ _spira_fayth_paths() {
 # _spira_toml_convert_from_conf <conf> <target> -> writes <target> exactly (no writeback
 # redirect — the caller has already decided this IS the right place) from <conf> plus this
 # box's repo-map and every fayth, via a full `spira-config convert`, and prints <target> — or
-# prints nothing and reports the failure on stderr. Factored out of spira_toml_resolve so any
-# writer that must create ANOTHER root's spira.toml directly (install.sh seeding a separate
-# SPIRA_PROD checkout's instance) shares the exact same conversion, never a narrower one that
-# drops the repo-map or a fayth and so, per `spira-config convert`'s own refusal, fails closed
-# against a target that already has more (sp-zs04v.2) rather than by construction here.
-# spira_toml_resolve, the one caller resolving an AMBIENT (not explicitly-given) target,
-# applies spira_config_writeback itself before calling in — the redirect guards against a
-# worktree regenerating some ambiguous default path, which does not apply to a target a
-# caller (install.sh, deploy.sh) already named on purpose.
+# prints nothing and reports the failure on stderr. Factored out of spira_toml_resolve so its
+# two call sites (the conf-pinned case and the ambient one, below) share the exact same
+# conversion, never a narrower one that drops the repo-map or a fayth and so, per
+# `spira-config convert`'s own refusal, fails closed against a target that already has more
+# (sp-zs04v.2) rather than by construction here.
+#
+# ONLY spira_toml_resolve CALLS THIS NOW (wave 4.7, sp-ksrss retired the other caller): a
+# writer that must create ANOTHER root's spira.toml directly — install.sh's cross-checkout
+# instance seed, historically — is `install::seed_instance` now, which calls
+# `spira-config convert` itself and never sourced conf.sh's bash helpers to begin with (see
+# that crate's own `write_target_for`). spira_toml_resolve, the one remaining caller,
+# resolves an AMBIENT (not explicitly-given) target and applies spira_config_writeback
+# itself before calling in — the redirect guards against a worktree regenerating some
+# ambiguous default path.
 _spira_toml_convert_from_conf() {
     local conf="$1" target="$2" out rmap f
     local -a conv_args
@@ -319,13 +324,20 @@ _spira_toml_convert_from_conf() {
 # do with the pinned conf (sp-zs04v.2: a test fixture's spira.conf gutted an unrelated, real
 # spira.toml this way).
 #
-# ALSO regenerates [persona.*] from chamber/*.fayth (sp-zs04v.4), on top of whatever toml was
-# just resolved, whenever a fayth is newer than it or it has no [persona.*] table yet — a box
-# whose only record of a persona's model is FAYTH_MODEL must not silently lose it the moment
-# fayth_get stops reading that field at launch (persona_model, lib.sh). This is narrower than
-# the full spira.conf conversion above: it passes only --fayth, never --conf/--repo-map, so it
-# must never run in place of that conversion — only after a toml already exists, or when there
-# is no spira.conf to convert from at all.
+# NO LONGER REGENERATES [persona.*] FROM A FRESHER FAYTH (sp-35ru0, wave 4.7: stopped here,
+# not ported). Until this bead, a fayth file newer than $toml made this function — called
+# merely to find out WHICH file to read, at the top of every `conf.sh` source — rewrite the
+# operator's real spira.toml in place. Every release touches chamber/*.fayth, so every
+# activation or landing rewrote it: content preserved, but the mtime churn alone caused
+# test-literal-lint nondeterminism (sp-g9f3t) and this function's own comments already
+# recorded a case that gutted a spira.toml from the read-side twin of this hazard. Runtime
+# must never write operator config merely because it was asked to READ it — persona models
+# live in spira.toml as the operator sets them (`spira-config set`), and
+# `spira-config::chamber::persona_model` has read the toml table directly, with no fayth
+# fallback, since wave 4.22 (sp-r5zd2), so nothing here depends on this file staying in sync
+# with FAYTH_MODEL at launch. A fayth/toml disagreement is now silent rather than
+# auto-resolved by rewriting — reporting it is doctor's job, not conf.sh's, and is not yet
+# built (left for a follow-up: doctor has no check for it today).
 spira_toml_resolve() {
     local toml conf conf_pinned=0
     conf="$(spira_conf_file)"
@@ -353,50 +365,13 @@ spira_toml_resolve() {
         return 0
     fi
 
-    local fayth_dir f stale=0
-    local -a fayth_files=()
-    fayth_dir="${SPIRA_CHAMBER:-$SPIRA_HOME/chamber}"
-    if [ -d "$fayth_dir" ]; then
-        for f in "$fayth_dir"/*.fayth; do
-            [ -f "$f" ] && fayth_files+=("$f")
-        done
-    fi
-    if [ "${#fayth_files[@]}" -eq 0 ]; then
-        [ -n "$toml" ] && printf '%s' "$toml"
-        return 0
-    fi
-    if [ -z "$toml" ]; then
-        stale=1
-    else
-        grep -q '^\[persona\.' "$toml" 2>/dev/null || stale=1
-        for f in "${fayth_files[@]}"; do
-            [ "$f" -nt "$toml" ] && stale=1
-        done
-    fi
-    [ "$stale" -eq 0 ] && { printf '%s' "$toml"; return 0; }
-
-    local target out
-    if [ -n "${SPIRA_TOML+set}" ]; then
-        # SPIRA_TOML NAMES ITS OWN WRITE TARGET, same as the pinned-SPIRA_CONF case above:
-        # a caller (deploy.sh, a test fixture) that pinned this path on purpose must have the
-        # regenerated [persona.*] table land there, not redirected by spira_config_writeback's
-        # SPIRA_REPO fallback (the write-side twin of the pinned-conf fix, sp-zs04v.4).
-        target="$SPIRA_TOML"
-    else
-        # spira_config_writeback: $toml may resolve to the operator's real spira.toml
-        # (spira_toml_file checks $HOME before regenerating anything from this worktree's own
-        # fayths).
-        target="$(spira_config_writeback "${toml:-$SPIRA_REPO/spira.toml}")"
-    fi
-    local -a args=(--home "$HOME" --out "$target")
-    for f in "${fayth_files[@]}"; do args+=(--fayth "$f"); done
-    if out="$(spira-config convert "${args[@]}" 2>&1)"; then
-        [ -n "$out" ] && printf '%s\n' "$out" >&2
-        printf '%s' "$target"
-    else
-        printf '%s\n' "$out" >&2
-        [ -n "$toml" ] && printf '%s' "$toml"
-    fi
+    # A toml that already exists wins unconditionally, exactly as the comment above this
+    # function's definition says (sp-usxfl) — no mtime comparison against the chamber, no
+    # regenerate, whether or not a fayth is newer. Nothing to read yet is reported as
+    # nothing, same as always; the caller's own fail-closed guard (conf.sh's "DERIVED
+    # DEFAULTS" block, further down this file) is what notices.
+    [ -n "$toml" ] && printf '%s' "$toml"
+    return 0
 }
 
 # spira_toml_read AND spira_conf_defaults ARE RETIRED (sp-ubcgo, "wave 4.5: conf.sh becomes
@@ -408,98 +383,35 @@ spira_toml_resolve() {
 # function and nothing else used it.
 
 # --------------------------------------------------------------------------------------
-# CHECKOUT MODE. SPIRA_PROD is the tree systemd executes; SPIRA_REPO is the tree being
-# developed. Their relation decides what several programs may assume, and they must all
-# decide it the same way — doctor and the unit manifest disagreeing about this is how a
-# box ends up reporting a fatal for a unit that is correctly absent.
+# CONFIG WRITES (wave 4.7, sp-ksrss). Everything below writes the operator's spira.toml —
+# never spira.conf — and resolves what it is actually about to write through
+# `spira-config set`/`unset` (atomic temp-file-plus-rename, same as `convert`'s own writer).
 #
-#   split-checkout   SPIRA_PROD outside SPIRA_REPO. promote.sh carries commits from one
-#                    to the other, so a dirty or mid-landing dev tree never executes.
-#   single-checkout  SPIRA_PROD inside SPIRA_REPO. One tree, developed and executed.
-#                    Supported, and the only sane shape on a box whose production lives
-#                    on another machine and is reached through a tagged release. It costs
-#                    what it obviously costs: an edit is live the moment it is saved.
-#
-# Returns 0 for single-checkout, 1 for split-checkout AND for an empty SPIRA_PROD — an
-# unset production directory is its own error, reported where it is diagnosed rather than
-# folded into this answer.
-spira_single_checkout() {
-    [ -n "${SPIRA_PROD:-}" ] || return 1
-    local _p _r
-    _p="$(cd "$SPIRA_PROD" 2>/dev/null && pwd -P)" || _p=""
-    [ -n "$_p" ] || _p="$SPIRA_PROD"
-    _r="$(cd "${SPIRA_REPO:-}" 2>/dev/null && pwd -P)" || _r=""
-    [ -n "$_r" ] || _r="${SPIRA_REPO:-}"
-    [ -n "$_r" ] || return 1
-    # Strip the trailing slash before interpolating: when _r is "/" the unstripped form
-    # produces "//*", which a case statement never matches.
-    case "$_p/" in "${_r%/}/"*) return 0 ;; *) return 1 ;; esac
-}
+# RETIRED RATHER THAN PORTED: `spira_single_checkout` (split- vs. single-checkout, once used
+# only through doctor's promote section) and the cross-root pair `spira_toml_write_target_for`
+# / `spira_config_set_at` (install.sh's cross-checkout instance seed) have zero remaining
+# bash callers — grepped across the whole tree twice. doctor's own checkout-mode logic and
+# the instance seed are both native Rust now (`install::seed_instance::write_target_for`),
+# and neither ever called back into conf.sh's bash helpers to begin with.
 
 # spira_config_writeback <candidate> — the ONE path any code that would REGENERATE a
 # config file (spira.toml, a converted spira.conf, ...) resolves its write target through.
-# <candidate> is returned unchanged only when this checkout IS the installed release
-# (SPIRA_HOME resolves to the same directory as SPIRA_PROD) or SPIRA_CONFIG_WRITE=1 is set
-# explicitly; otherwise the write is redirected to $SPIRA_REPO, then further to
-# XDG_CONFIG_HOME, then to a private scratch file, at the first of those that is actually
-# writable.
+# The decision itself — same-checkout vs. this worktree's own SPIRA_REPO vs.
+# XDG_CONFIG_HOME vs. a scratch file — now lives in `spira_config::writeback::writeback`;
+# this is a one-line shim passing the ambient facts a subprocess cannot see for itself
+# (SPIRA_HOME/SPIRA_PROD/SPIRA_REPO are deliberately unexported, like every other per-copy
+# fact this file derives, so a subprocess sees none of them unless named on the call).
 #
 # scar: three cutover branches, each sourcing their own conf.sh with the operator's real
 # HOME, regenerated the operator's real spira.toml from worktree state — three times in one
 # day, each time blinding queue-watch until the file was restored by hand. A worktree has no
-# business writing outside itself, however it got HOME; an unresolved SPIRA_PROD (default
-# not yet derived) compares unequal to SPIRA_HOME and so fails closed into the redirect,
-# which is the safe side of this check.
-#
-# $SPIRA_REPO IS CHECKED, NOT ASSUMED, WRITABLE (sp-jv49c): a testenv container bind-mounts
-# it read-write for its host owner but read-only (or foreign-UID-owned) for the user conf.sh
-# runs as, so a redirect that lands there unconditionally hands `spira-config convert` a
-# target it cannot write and the whole auto-convert fails — silently reverting every
-# SPIRA_* key to its computed default instead of what spira.conf actually says. The final
-# fallback, a private scratch file, is chosen precisely because `mktemp` always succeeds:
-# the auto-convert this run's values depend on must not fail for want of a place to land.
+# business writing outside itself, however it got HOME. Full rationale — the single-checkout
+# exemption, the sp-jv49c unwritable-SPIRA_REPO case, and why the scratch-file fallback must
+# always succeed — is on the Rust side now; see that module's own comment.
 spira_config_writeback() {
-    local candidate="$1"
-    if [ "${SPIRA_CONFIG_WRITE:-0}" = "1" ]; then
-        printf '%s' "$candidate"
-        return 0
-    fi
-    local home_p prod_p
-    home_p="$(cd "${SPIRA_HOME:-}" 2>/dev/null && pwd -P)" || home_p="${SPIRA_HOME:-}"
-    prod_p="$(cd "${SPIRA_PROD:-}" 2>/dev/null && pwd -P)" || prod_p="${SPIRA_PROD:-}"
-    if [ -n "$prod_p" ] && [ "$home_p" = "$prod_p" ]; then
-        printf '%s' "$candidate"
-        return 0
-    fi
-    if [ -w "$SPIRA_REPO" ]; then
-        printf '%s/%s' "$SPIRA_REPO" "$(basename "$candidate")"
-        return 0
-    fi
-    local xdg_dir="${XDG_CONFIG_HOME:-$HOME/.config}/spira"
-    if mkdir -p "$xdg_dir" 2>/dev/null && [ -w "$xdg_dir" ]; then
-        printf '%s/%s' "$xdg_dir" "$(basename "$candidate")"
-        return 0
-    fi
-    mktemp "${TMPDIR:-/tmp}/spira-toml.XXXXXX"
-}
-
-# spira_toml_write_target_for <conf> <toml> -> the spira.toml path a writer targeting a
-# GIVEN root (not the ambient one this process itself runs under) should write to, creating
-# it from <conf> first via _spira_toml_convert_from_conf if <toml> does not exist yet.
-# install.sh's cross-checkout instance seed is the caller this exists for: it already knows
-# both candidate paths beside a separate $SPIRA_PROD checkout, so it has no ambient
-# SPIRA_CONF/SPIRA_TOML env pin of its own to resolve through.
-spira_toml_write_target_for() {
-    local conf="$1" toml="$2"
-    if [ -f "$toml" ]; then
-        printf '%s' "$toml"
-        return 0
-    fi
-    if [ -f "$conf" ]; then
-        _spira_toml_convert_from_conf "$conf" "$toml"
-    else
-        printf '%s' "$toml"
-    fi
+    SPIRA_CONFIG_WRITE="${SPIRA_CONFIG_WRITE:-0}" SPIRA_HOME="${SPIRA_HOME:-}" \
+        SPIRA_PROD="${SPIRA_PROD:-}" SPIRA_REPO="${SPIRA_REPO:-}" HOME="$HOME" \
+        XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-}" spira-config writeback "$1"
 }
 
 # spira_toml_write_target -> the spira.toml path any WRITER of THIS process's own config
@@ -523,6 +435,7 @@ spira_toml_write_target() {
 # _spira_config_write set <target> <SPIRA_KEY> <value> | unset <target> <SPIRA_KEY> — the one
 # place a [spira] key's dotted path is derived and `spira-config <verb>` is invoked, shared by
 # every writer below so the SPIRA_KEY -> dotted-path mapping cannot drift between them.
+# `spira-config set`/`unset` are where the actual file mutation happens, atomically.
 _spira_config_write() {
     local verb="$1" target="$2" key="$3" dotted
     [ -n "$target" ] || { printf 'spira_config_%s: no config path resolved for %s\n' "$verb" "$key" >&2; return 1; }
@@ -534,30 +447,22 @@ _spira_config_write() {
     esac
 }
 
-# spira_config_set_at <conf> <toml> <SPIRA_KEY> <value> — write one [spira] key into the
-# config file at a GIVEN root; install.sh's cross-checkout instance seed uses this directly.
-# ALWAYS spira.toml, THROUGH `spira-config set`, NEVER a hand-rolled writer of either format —
-# see spira_toml_write_target_for above for why the target is resolved (and, if needed,
-# created) before anything is written.
-spira_config_set_at() {
-    local conf="$1" toml="$2" key="$3" val="$4"
-    _spira_config_write set "$(spira_toml_write_target_for "$conf" "$toml")" "$key" "$val"
-}
-
 # spira_config_set <SPIRA_KEY> <value> — write one key into THIS process's own config file in
-# force. The ONE way any harness tool changes a persisted [spira] setting on its own root:
-# aeons.sh's fleet-ceiling writer and deploy.sh's SPIRA_PROD writer used to hand-edit
-# spira.conf directly, which is exactly the write spira_toml_resolve's auto-convert used to
-# exist to survive. A spira.conf deleted out from under one of those one-key rewrites created
-# a fresh, one-key spira.conf that the next read converted over a richer spira.toml — the
-# "gutted spira.toml" failure this bead (sp-usxfl) retires.
+# force. deploy.sh's SPIRA_PROD writer is the live bash caller (aeons.sh's fleet-ceiling
+# writer used to be the other one; the native `aeons` binary now calls `spira_config::set_path`
+# directly and never sources conf.sh for this). Both used to hand-edit spira.conf directly,
+# which is exactly the write spira_toml_resolve's auto-convert used to exist to survive. A
+# spira.conf deleted out from under one of those one-key rewrites created a fresh, one-key
+# spira.conf that the next read converted over a richer spira.toml — the "gutted spira.toml"
+# failure this bead (sp-usxfl) retires.
 spira_config_set() {
     _spira_config_write set "$(spira_toml_write_target)" "$1" "$2"
 }
 
 # spira_config_unset <SPIRA_KEY> — remove one key from THIS process's own config file in
-# force, so it stops appearing rather than being left behind as an empty string (aeons.sh's
-# `unset` command: the fleet ceiling reverts to "no cap" only when the key is truly gone).
+# force, so it stops appearing rather than being left behind as an empty string. Symmetric
+# with spira_config_set above; kept as the generic primitive even though its own original
+# caller (aeons.sh's `unset` command) has since moved to the native `aeons` binary too.
 spira_config_unset() {
     _spira_config_write unset "$(spira_toml_write_target)" "$1"
 }
@@ -715,66 +620,19 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # defaults it was written to check.
 
 # --------------------------------------------------------------------------------------
-# THE EXIT STATUS THAT MEANS "NO VERDICT", as opposed to "failed". The landing gate withholds
-# a verdict when it cannot obtain the tree it judges in, and a caller that reads that as a red
-# gate charges a queue to the branch — reopening a finished bead as having "failed the landing
-# gate", three of which poison it and escalate to the operator over a lock it never contended
-# for. It is a shared constant rather than a literal in the gate and again in its caller,
-# because two programs that disagree about this number fail in exactly that direction.
+# THE GATE OUTCOME PROTOCOL (wave4-decomposition.md row C5; bead sp-wqj3o, "wave 4.10: small
+# conf.sh families") — SPIRA_GATE_NOVERDICT/SPIRA_GATE_BASEFAIL now come from the DERIVED
+# DEFAULTS eval below (`spira_config::resolve()`, which computes them as FIXED values —
+# never settable, by the same rule this comment used to state here: a configurable
+# NO_VERDICT could be set to 0, turning every withheld verdict into a pass). See that
+# module's doc for the four outcomes and why BASE_FAIL/NO_VERDICT may never reopen a bead or
+# charge an attempt (sp-p4rl, sp-d21, sp-io5j, sp-snyj, sp-1aex).
 #
-# DELIBERATELY NOT SETTABLE, and so not in SPIRA_CONF_KEYS: it is the protocol between the
-# gate and whoever runs it, not a fact about a host. A configurable one could be set to 0,
-# which would turn every withheld verdict into a pass. 75 is EX_TEMPFAIL — "try again" —
-# and is outside the range a gate command of its own would return.
-SPIRA_GATE_NOVERDICT=75
-
-# FOUR OUTCOMES, AND WHOSE FAULT EACH ONE IS. Every judgement in this harness returns exactly
-# one of these, and the caller's whole decision follows from which. Before this there were
-# two — 0 and "non-zero" — so a gate that timed out, a gate that could not find its own
-# worktree, and a repository whose suites fail on its own base were all delivered to the
-# landing pass as "this branch is broken". Each was then fixed by adding one more special
-# case at the caller, and the shape recurred five times in two days (sp-p4rl, sp-d21,
-# sp-io5j, sp-snyj, sp-1aex).
-#
-#   PASS       0   judged, and good                     -> land it
-#   FAIL       1   judged, and bad                      -> the BRANCH is at fault
-#   BASE_FAIL 76   the same suites fail on the base     -> the BASE is at fault
-#   NO_VERDICT 75  not judged at all                    -> the MACHINERY is at fault
-#
-# THE RULE THAT MATTERS: BASE_FAIL and NO_VERDICT may never reopen a bead and never charge an
-# attempt. Three charged attempts poison a bead and escalate to the operator, so a lock, a
-# timeout or somebody else's red main could — and repeatedly did — walk finished work to
-# poison and then report it as the branch's failure.
-#
-# A JUDGEMENT WITH NO EVIDENCE IS NO_VERDICT BY CONSTRUCTION. A gate killed at its deadline
-# printed an empty `tail -20`, which arrived as a bare "failed" with nothing in it to act on
-# (sp-p4rl); the one refusal path that printed nothing at all did the same (sp-io5j). FAIL
-# has to be able to show its work or it is not a FAIL.
-#
-# 76 is EX_UNAVAILABLE — "the service is not available" — which is precisely the claim: the
-# base this branch must merge into is not in a fit state to judge against.
-SPIRA_GATE_BASEFAIL=76
-
-# The names, for logs and for the bead notes a human reads. Keyed by status so that a caller
-# that has a number can always render the word, and one place decides the wording.
-spira_gate_outcome() {   # spira_gate_outcome <status> -> PASS|FAIL|BASE_FAIL|NO_VERDICT
-    case "${1:-}" in
-        0)  echo PASS ;;
-        75) echo NO_VERDICT ;;
-        76) echo BASE_FAIL ;;
-        *)  echo FAIL ;;
-    esac
-}
-
-# Does this outcome say the BRANCH is at fault? The one question every caller actually asks,
-# in one place, so that "may I reopen the bead and charge an attempt?" cannot drift between
-# the landing pass, the sentinel and any future caller.
-spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the branch is at fault
-    case "${1:-}" in
-        0|75|76) return 1 ;;
-        *)       return 0 ;;
-    esac
-}
+# spira_gate_outcome/spira_gate_blames_branch ARE RETIRED, NOT PORTED: yield.sh was their
+# only remaining bash caller (grepped across the whole tree twice) — every other caller
+# ported its own copy of this same logic to Rust already (gate::engine::outcome,
+# landing-pass::model::GateOutcome, queue::ops::simple::gate_outcome). yield.sh now carries
+# these two functions itself.
 
 # --------------------------------------------------------------------------------------
 # SPIRA_ID_PREFIX and every SPIRA_MAIL* key joined this list for sp-ooh1k: `mail` is a
@@ -876,81 +734,47 @@ export COCKPIT_BOTTOM_PCT \
 #
 # `spira_require` is cheap enough to call at the top of anything — it is a `command -v` —
 # and it is the only reason a fresh box gets a sentence instead of a shell error.
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config deps require`, which does the
+# `command -v` search and prints the same diagnostic itself, in-process. SPIRA_HOME and
+# SPIRA_CONF_FILE are passed on THIS ONE CALL'S OWN ENVIRONMENT, not by exporting them first
+# — same reasoning as every other `spira-config` call this file already makes.
 # --------------------------------------------------------------------------------------
 spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having named each one
-    local b missing=""
-    for b in "$@"; do command -v "$b" >/dev/null 2>&1 || missing="$missing $b"; done
-    [ -z "$missing" ] && return 0
-    for b in $missing; do
-        printf 'spira: required program not found on PATH: %s — %s\n' \
-            "$b" "$(spira_bin_purpose "$b")" >&2
-    done
-    printf 'spira: PATH is %s\n' "$PATH" >&2
-    printf 'spira: if it is installed elsewhere, set SPIRA_PATH in %s\n' \
-        "${SPIRA_CONF_FILE:-spira.conf}" >&2
-    return 1
+    SPIRA_HOME="$SPIRA_HOME" SPIRA_CONF_FILE="${SPIRA_CONF_FILE:-spira.conf}" \
+        spira-config deps require "$@"
 }
 
 # --------------------------------------------------------------------------------------
-# THE DEPENDENCY MANIFEST — three functions backed by deps.toml.
+# THE DEPENDENCY MANIFEST — four functions, now one-line shims onto `spira-config deps`
+# (wave4-decomposition.md row C7; bead sp-wqj3o, "wave 4.10: small conf.sh families").
 #
 #   spira_bin_purpose <bin>   what it is for
 #   spira_bin_tier    <bin>   runtime | optional | dev | operator
 #   spira_bin_absent  <bin>   what actually happens on a box without it
 #   spira_deps_list [tier]    emit all known program names, optionally filtered
 #
-# The data lives in deps.toml (same directory as this file), loaded once at
-# source time into per-program shell variables. doctor reads from these
-# rather than carrying its own hardcoded lists.
+# RETIRED RATHER THAN PORTED: the `python3 -c 'import tomllib'` subshell that used to parse
+# deps.toml into `_spira_dep_*` shell variables at EVERY source of this file, guarded by
+# `command -v python3` — a box without python3 silently lost this whole family. `spira-
+# config deps` (`spira-config/src/deps.rs`) parses deps.toml itself (the `toml` crate,
+# already a dependency of this binary) and reads it lazily, only when one of these four is
+# actually called, so nothing here depends on python3 at all now.
 # --------------------------------------------------------------------------------------
-
-_SPIRA_DEPS="$SPIRA_HOME/deps.toml"
-_spira_dep_names=""
-
-# Load all dep fields from deps.toml with one python3 call.
-if [ -f "$_SPIRA_DEPS" ] && command -v python3 >/dev/null 2>&1; then
-    _spira_deps_raw="$(python3 - "$_SPIRA_DEPS" 2>/dev/null <<'_DEPS_PY'
-import sys, tomllib, shlex
-with open(sys.argv[1], "rb") as f:
-    data = tomllib.load(f)
-names = []
-for d in data.get("dep", []):
-    n = d["name"].replace("-", "_")
-    names.append(d["name"])
-    print(f"_spira_dep_tier_{n}={shlex.quote(d.get('tier', 'optional'))}")
-    print(f"_spira_dep_purpose_{n}={shlex.quote(d.get('purpose', 'required by the harness'))}")
-    print(f"_spira_dep_absent_{n}={shlex.quote(d.get('absent', ''))}")
-print(f"_spira_dep_names={shlex.quote(' '.join(names))}")
-_DEPS_PY
-)"
-    while IFS= read -r _spira_deps_line; do
-        eval "$_spira_deps_line"
-    done <<< "$_spira_deps_raw"
-    unset _spira_deps_raw _spira_deps_line
-fi
-
-spira_deps_list() {
-    local _tier="${1:-}" _b
-    for _b in $_spira_dep_names; do
-        if [ -z "$_tier" ]; then
-            printf '%s\n' "$_b"
-        else
-            local _k="_spira_dep_tier_${_b//-/_}"
-            [ "${!_k:-optional}" = "$_tier" ] && printf '%s\n' "$_b"
-        fi
-    done
+spira_deps_list() {      # spira_deps_list [tier] -> every declared program, optionally filtered
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps list "$@"
 }
 
-spira_bin_tier() {
-    local _k="_spira_dep_tier_${1//-/_}"; echo "${!_k:-optional}"
+spira_bin_tier() {        # spira_bin_tier <bin> -> its deps.toml tier, or 'optional'
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps tier "$1"
 }
 
-spira_bin_purpose() {
-    local _k="_spira_dep_purpose_${1//-/_}"; echo "${!_k:-required by the harness}"
+spira_bin_purpose() {     # spira_bin_purpose <bin> -> its deps.toml purpose, or the fallback sentence
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps purpose "$1"
 }
 
-spira_bin_absent() {
-    local _k="_spira_dep_absent_${1//-/_}"; echo "${!_k:-}"
+spira_bin_absent() {      # spira_bin_absent <bin> -> what happens on a box without it, or empty
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps absent "$1"
 }
 
 # watch_unit_name <watcher-name> -> the installed systemd unit name for a daemon watcher.
@@ -961,7 +785,10 @@ spira_bin_absent() {
 # returns 'inactive', so a stopped watcher and a running watcher are indistinguishable.
 # Every caller that queries or restarts a watcher unit goes through this function so the two
 # cannot drift.
-watch_unit_name() { printf 'spira-watch-%s-%s.service' "$1" "${SPIRA_INSTANCE:-prod}"; }
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config unit --watch` (pure string
+# formatting in Rust now; see spira-config/src/unit.rs — no systemctl call either side).
+watch_unit_name() { SPIRA_INSTANCE="${SPIRA_INSTANCE:-}" spira-config unit --watch "$1"; }
 
 # spira_unit <base> [service|timer] -> the unit name for this installation.
 # Tries the instance-qualified form first (spira-<base>-<instance>.<type>); if that
@@ -972,20 +799,14 @@ watch_unit_name() { printf 'spira-watch-%s-%s.service' "$1" "${SPIRA_INSTANCE:-p
 #
 # This is the same resolution the TIMER_BASES loop in world.sh uses, extracted so that
 # every caller agrees on which name to address rather than each hard-coding one form.
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config unit`, which runs the same
+# `systemctl --user is-enabled|is-active` queries in-process (spira-config/src/unit.rs).
+# cockpit-collect, the one in-process Rust caller, calls that module directly rather than
+# through this shim or a bash bridge (its own `unit_active_key`).
 spira_unit() {
-    local base="$1" t="${2:-service}"
-    local SC="${SPIRA_SYSTEMCTL:-systemctl}"
-    local inst="spira-${base}${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.${t}"
-    local plain="spira-${base}.${t}"
-    if "$SC" --user is-enabled "$inst" >/dev/null 2>&1 ||
-       "$SC" --user is-active  "$inst" >/dev/null 2>&1; then
-        printf '%s' "$inst"
-    elif "$SC" --user is-enabled "$plain" >/dev/null 2>&1 ||
-         "$SC" --user is-active  "$plain" >/dev/null 2>&1; then
-        printf '%s' "$plain"
-    else
-        printf '?'
-    fi
+    SPIRA_INSTANCE="${SPIRA_INSTANCE:-}" SPIRA_SYSTEMCTL="${SPIRA_SYSTEMCTL:-}" \
+        spira-config unit "$1" "${2:-service}"
 }
 
 # conf_changed <path> <mtime0> -> 0 if <path>'s mtime now differs from <mtime0>, 1 otherwise.

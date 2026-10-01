@@ -442,6 +442,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v rule)\""
 
 [[dep]]
+name = "sending"
+tier = "release"
+purpose = "Spira's sending binary, from the release's bin/ — the destruction chokepoint (worktree/branch reap); landing-pass calls `sending reap-landed-branch` directly (sp-81t4d)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v sending)\""
+
+[[dep]]
 name = "sentinel"
 tier = "release"
 purpose = "Spira's sentinel binary, from the release's bin/"

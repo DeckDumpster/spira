@@ -23,19 +23,19 @@
 # base-red pass, or a rerun) — a class this script would otherwise have to fabricate by
 # re-running the suite itself, which is the caller's job, not the classifier's.
 #
-# covers: spira/escape-classify.sh
+# covers: spira/escape-classify.sh suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/lib.sh"
-. "$HERE/suite-covers.sh"
 
 # escape_covers_touched <repo> <base> <tip> <suite-file> -> 0 iff the suite's own
 # # covers: globs match at least one path changed between <base> and <tip>. An
-# undeclared covers: line (suite_covers_of returns empty) means "covers everything" per
-# suite-covers.sh's own rule, so an undeclared suite is never a mapping gap by omission.
+# undeclared covers: line (`suite-select header covers` returns empty) means "covers
+# everything" per suite-select/src/header.rs's own rule, so an undeclared suite is never a
+# mapping gap by omission.
 escape_covers_touched() {
     local repo="$1" base="$2" tip="$3" suite_file="$4"
-    local globs; globs="$(suite_covers_of "$suite_file")"
+    local globs; globs="$(suite-select header covers "$suite_file")"
     [ -n "$globs" ] || return 0
     local changed; changed="$(git -C "$repo" diff --name-only "$base...$tip" 2>/dev/null)"
     [ -n "$changed" ] || return 1

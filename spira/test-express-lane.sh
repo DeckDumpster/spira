@@ -177,29 +177,10 @@ export SPIRA_CONF="$TMP/no-such.conf"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-ready_count() {
-    case "$1" in *",express"*) printf '1' ;;
-                 *) printf '0' ;; esac
-}
-
-# POSITIVE CONTROL: throttle stamp present + express bead ready → returns 0.
-THROTTLE_STAMP="$RUN/queue-throttled"
-printf 'since=2026-09-21T00:00:00Z depth=20 since_land=60m\n' > "$THROTTLE_STAMP"
-express_ready_in_task_pool "builder" "express" \
-    && ok "throttle+express: express_ready_in_task_pool returns 0 (express ready)" \
-    || bad "throttle+express: express_ready_in_task_pool returns 0 (express ready)" "returned 1"
-
-# Pair: no express bead → returns 1.
-express_ready_in_task_pool "builder" "no-such-label" \
-    && bad "throttle+no-express: express_ready_in_task_pool returns 1 (not ready)" "returned 0" \
-    || ok "throttle+no-express: express_ready_in_task_pool returns 1 (not ready)"
-rm -f "$THROTTLE_STAMP"
-
-# Pair: express bead outside this fayth's partition does not grant a slot.
-# (fayth file absent → express_ready_in_task_pool skips it and returns 1)
-express_ready_in_task_pool "nonexistent-fayth" "express" \
-    && bad "express outside partition: absent fayth grants no slot" "returned 0" \
-    || ok "express outside partition: absent fayth grants no slot"
+# `express_ready_in_task_pool` is deleted outright (wave 4.25, sp-obhv6): sentinel.sh — the
+# only thing that ever called it — was retired for the Rust sentinel crate well before this
+# bead, and nothing else called it; grepping the whole tree for live callers found none.
+# This row goes with it.
 
 # ======================================================================================
 echo
