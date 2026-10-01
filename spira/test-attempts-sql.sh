@@ -135,9 +135,14 @@ is "CONTROL b8: two unjudged + one real failure = 1 attempt"       "1" "$(num "$
 is "b9: one reopened event = 0 attempts"                           "0" "$(num "$(attempts_of b9)")"
 is "b10: a reclaim alone is not an attempt"                        "0" "$(num "$(attempts_of b10)")"
 
+# _attempts_sql_query was PORTED to spira-claim's events::fold at wave 4.18 (sp-sn1re);
+# attempts_of is now a one-line shim onto `spira-claim attempts` and has no SQL-builder
+# name left in its body to grep for. b1..b8/c1..c4 above and sp-ev1/sp-ev2 below are that
+# delegation's own behavioural proof — every one of them calls attempts_of and nothing
+# else, so a shim that silently stopped delegating would fail them, not just this check.
 body_attempts="$(sed -n '/^attempts_of()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
-is "attempts_of delegates to the SQL builder" "1" \
-   "$(grep -c '_attempts_sql_query' <<<"$body_attempts" || true)"
+is "attempts_of delegates to spira-claim" "1" \
+   "$(grep -c 'spira-claim attempts' <<<"$body_attempts" || true)"
 
 echo
 echo "poison.cleared: attempts_of counts only what happened after it (sp-qd2ul):"
