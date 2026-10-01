@@ -172,8 +172,25 @@ fn fayth_get(home: &str, fayth_file: &str, var: &str, default: &str) -> String {
     }
 }
 
+/// `SPIRA_HOME`, preferring an explicit override from THIS process's own environment over
+/// the `--home` argument (`dirname "$0"`, `bead.sh`'s own location). This is the one place
+/// `chamber_dir` ever differed from `home`: several suites (`test-bead-contract.sh`,
+/// notably) pin a scratch chamber by exporting `SPIRA_HOME` themselves, distinct from
+/// wherever the real `bead.sh` lives on PATH — a fact that survives `exec` on its own
+/// (an already-exported var keeps its export attribute across reassignment, and across
+/// `exec`, with no help from `bead.sh`), so it needed no re-export even before wave 4.9.
+/// `home_arg` is the correct answer only for the UNEXPORTED, no-override, production case
+/// — exactly conf.sh's own `SPIRA_HOME="${SPIRA_HOME:-$_spira_conf_here}"` derived default,
+/// which is this same `--home` value.
+fn chamber_home(home_arg: &str) -> String {
+    env::var("SPIRA_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| home_arg.to_string())
+}
+
 fn chamber_dir(home: &str) -> String {
-    format!("{home}/chamber")
+    format!("{}/chamber", chamber_home(home))
 }
 
 /// `fayth_names`: every `*.fayth` basename under `<home>/chamber`, sorted — bash's own
