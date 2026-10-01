@@ -10,6 +10,22 @@
 //! no fayth of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
 //! aeon's, for the same reason: a bead body can be arbitrarily long and an argv has a
 //! kernel ceiling (law-payloads-go-on-stdin).
+//!
+//! NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+//! rejected, not overlooked). `_auron_bdq` has no Rust-side logic of its own to retire: it
+//! sources `lib.sh`, whose own `bdq`/`_bdq_check_*`/`json_only` are already one-line shims
+//! onto `bead::bdq` (sp-w3h16, wave 4.14), so every call through this seam already reaches
+//! the one real implementation. What the bash hop still buys, and a direct
+//! `Command::new("bdq")` would not, is a FRESH `conf.sh` resolution every call:
+//! `spira-auron.service` sets only `SPIRA_RELEASE`/`PATH` (deliberately — "nothing inherited
+//! from the user manager"), so `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED`/
+//! `SPIRA_ASK_LABEL`/`SPIRA_DB` exist in auron's own process only via this seam's bash
+//! re-deriving them from `conf.sh` each time. Bypassing it would need those resolved
+//! in-process first (wave4-decomposition.md rows 4–6, "spira-config resolve" and friends,
+//! not yet landed) — exactly the exec-boundary trap this wave's own rules warn about.
+//! `bdops::create`'s own labels never carry a `repo:` token today, which is why this has not
+//! bitten in practice, but that is a property of the caller, not a guarantee the seam
+//! enforces.
 
 use std::path::PathBuf;
 
