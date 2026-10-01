@@ -431,34 +431,56 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-# Moved to spira-claim (wave 4.25, sp-obhv6): READY_ARGS as one const (the cockpit-collect
-# probe that used to mirror it now links the crate in-process instead); `ready-args`/
-# `ready-args --raw`/`ready-count` back the two functions below. `_spira_claim` (defined
-# here, early, because READY_ARGS itself runs at SOURCE time — every later shim in this
-# family is a function body and could have used a helper defined anywhere in this file, but
-# a top-level call cannot forward-reference one) threads `$SPIRA_HOME`/`$SPIRA_FAYTHS`
-# through the exec boundary, the same pattern `_spira_config_fayth`/`_spira_config_repo`
-# use. `SPIRA_QUEUE_WAIT_LABEL`/`SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_CLAIM_RETRIES`/
-# `SPIRA_CLAIM_RETRY_DELAY_S` are resolved by spira-claim itself, in-process, from
-# spira.toml (none of the four is exported by conf.sh — the exec-boundary trap — so that is
-# the only correct source for a separate process); `SPIRA_SCOPE_LABEL`/
-# `SPIRA_NO_LOOP_LABEL`/`SPIRA_SUBMITTED_LABEL` ARE exported and spira-claim reads them as a
-# fallback when spira.toml carries no value, so none of the three needs threading either.
+# READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
+# three is named in this bead's scope, each still has live bash callers outside family F
+# (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
+# fleet-status.sh calls ready_count; detect_unclaimable_ready — family T, a later bead —
+# calls ready_raw_args), and routing them through a `spira-claim` subprocess at lib.sh
+# SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
+# `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
+# call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
+# satisfied on the Rust side alone — `spira_claim::READY_ARGS_BASE`, which cockpit-collect
+# now links in-process instead of keeping its own copy (`probes/queue.rs`). `fayth_ready`/
+# `fayth_exclude`/`bulk_ready_by_fayth`'s OWN Rust ports (below) build their own ready
+# query independently, in spira-claim/src/ready.rs — a second, Rust-only copy of this
+# predicate's SHAPE, not a bash caller asking two different functions the same question.
+ready_raw_args() {
+    local args=(ready --limit 0 --exclude-type epic,event -u)
+    [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+    printf '%s\n' "${args[@]}"
+}
+READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
+[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
+[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+
+ready_count() {
+    local out rc _errtmp
+    _errtmp="$(mktemp)"
+    out="$(bdq "${READY_ARGS[@]}" --label "$1" --exclude-label "$2" --json 2>"$_errtmp")"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        printf 'ready_count: query failed: %s\n' "$(head -1 "$_errtmp" 2>/dev/null)" >&2
+        rm -f "$_errtmp"
+        printf '0'
+        return 1
+    fi
+    rm -f "$_errtmp"
+    printf '%s' "$out" | json_only | json_count
+}
+
+# `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
+# through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
+# `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
+# `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
+# (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
+# defence in depth. `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/`SPIRA_SCOPE_LABEL`/
+# `SPIRA_SUBMITTED_LABEL` need no entry here: the first two are resolved by spira-claim
+# itself from spira.toml, and the last two ARE exported.
 _spira_claim() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
     SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
         spira-claim "$@"
-}
-
-mapfile -t READY_ARGS < <(_spira_claim ready-args)
-
-ready_raw_args() {
-    _spira_claim ready-args --raw
-}
-
-ready_count() {
-    _spira_claim ready-count "$1" "${2:-}"
 }
 
 # epic_parent_lookup, epic_rank_rows -> moved to spira-claim's `epics`/`select` verbs
