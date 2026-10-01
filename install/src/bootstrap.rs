@@ -106,8 +106,26 @@ pub fn unit_dir() -> PathBuf {
 }
 
 pub fn templates_dir() -> PathBuf {
-    let d = nonempty_env("SPIRA_HOME").map(|h| PathBuf::from(h).join("../systemd")).or_else(|| nonempty_env("SPIRA_REPO").map(|r| PathBuf::from(r).join("systemd"))).unwrap_or_else(|| PathBuf::from("systemd"));
+    let exe = env::current_exe().ok();
+    templates_dir_from(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), exe.as_deref())
+}
+
+/// `SPIRA_HOME/../systemd`, else `SPIRA_REPO/systemd`, else the nearest `systemd/` holding unit
+/// templates above this binary (a release's `bin/../systemd`), else a cwd-relative `systemd`.
+/// The binary's own location is what the retired systemd/install.sh used (its own dirname);
+/// without it, pre-activate — which sets neither variable — looked in its cwd and every
+/// release from sp-31dm0 on failed verify (sp-w1r4f).
+pub fn templates_dir_from(home: Option<String>, repo: Option<String>, exe: Option<&Path>) -> PathBuf {
+    let d = home
+        .map(|h| PathBuf::from(h).join("../systemd"))
+        .or_else(|| repo.map(|r| PathBuf::from(r).join("systemd")))
+        .or_else(|| exe.and_then(systemd_above))
+        .unwrap_or_else(|| PathBuf::from("systemd"));
     d.canonicalize().unwrap_or(d)
+}
+
+fn systemd_above(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-sentinel.service").is_file())
 }
 
 /// Build this box's manifest from the environment, printing units.sh's own informational
@@ -130,4 +148,27 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
 
 pub fn world_halted() -> bool {
     nonempty_env("SPIRA_RUN").map(|r| Path::new(&r).join("world.halted").exists()).unwrap_or(false)
+}
+
+#[cfg(test)]
+mod templates_dir_tests {
+    use super::*;
+
+    #[test]
+    fn with_no_env_the_templates_are_found_beside_the_binarys_release() {
+        let t = testkit::TempDir::new("tpl-dir");
+        let rel = t.path().join("rel");
+        std::fs::create_dir_all(rel.join("bin")).unwrap();
+        std::fs::create_dir_all(rel.join("systemd")).unwrap();
+        std::fs::write(rel.join("systemd/spira-sentinel.service"), "[Unit]\n").unwrap();
+        let got = templates_dir_from(None, None, Some(&rel.join("bin/units-install")));
+        assert_eq!(got, rel.join("systemd").canonicalize().unwrap());
+    }
+
+    #[test]
+    fn the_environment_still_wins_over_the_binarys_location() {
+        let t = testkit::TempDir::new("tpl-dir-env");
+        let got = templates_dir_from(None, Some(t.path().display().to_string()), Some(Path::new("/nonexistent/bin/x")));
+        assert_eq!(got, t.path().join("systemd"));
+    }
 }
