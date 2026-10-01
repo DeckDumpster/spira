@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-aeon-wiki-dirty.sh — wiki_commit_paths (lib.sh) selects which of this session's OWN
-#   wiki writes (wiki_write_paths, read from the transcript) an aeon may commit at exit:
-#   only those still dirty now, and never wiki/tasks.md.
+# test-aeon-wiki-dirty.sh — wiki_commit_paths selects which of this session's OWN wiki
+#   writes (wiki_write_paths, read from the transcript) an aeon may commit at exit: only
+#   those still dirty now, and never wiki/tasks.md.
 #
 # THE DEFECT. An aeon that calls `sop synth` or writes any wiki page and exits without
 # committing leaves brain's shared checkout dirty. The next session to touch brain is
@@ -16,8 +16,17 @@
 # transcript (wiki_write_paths) can. wiki_commit_paths is the intersection of what the
 # transcript claims with what is actually dirty now, minus the generated view.
 #
+# RETIRED (wave 4.34, sp-27d3d): wiki_write_paths/wiki_commit_paths were lib.sh; both are
+# ported to aeon::trace, called in-process from Run::wiki_commit (aeon/src/verdict.rs). The
+# T1 table that used to call wiki_commit_paths through a bash sourcing shim (the positive
+# control, the pre-existing-dirty-file case, the no-longer-dirty case, wiki/tasks.md alone
+# and mixed, the concurrent-actor case, multiple own writes, and no writes at all) moved to
+# wiki_commit_paths_selects_own_dirty_writes_never_tasks_md (aeon/src/trace.rs). T3 (below)
+# is unaffected — it drives the real `aeon` binary end to end and does not care whether the
+# family lives in bash or Rust.
+#
 # defect: sp-4fl2e
-# covers: aeon/src/* spira/lib.sh
+# covers: aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -25,55 +34,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-aeon-wiki-dirty.sh"
-
-wcp() {   # wcp <write-paths> <dirty-paths> -> wiki_commit_paths's own output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; wiki_commit_paths "$2" "$3"' _ "$HERE" "$1" "$2" 2>/dev/null
-}
-
-# ===========================================================================================
-echo
-echo "T1: wiki_commit_paths <write-paths> <dirty-paths> — no aeon run, no bd"
-# ===========================================================================================
-out="$(wcp "$(printf 'wiki/notes/new.md')" "$(printf 'wiki/notes/new.md')")"
-is "positive control: an own write that is still dirty is selected" "wiki/notes/new.md" "$out"
-
-# CASE 2: pre-existing dirty file not among this session's own writes — never selected,
-# regardless of it being dirty; only entries that are BOTH an own write AND dirty qualify.
-out="$(wcp "$(printf 'wiki/notes/new.md')" "$(printf 'wiki/notes/preexist.md\nwiki/notes/new.md')")"
-is "an own write among several dirty files: only the own write is selected" "wiki/notes/new.md" "$out"
-nowant "a pre-existing dirty file the session never wrote is not selected" \
-    "preexist.md" "$out"
-
-# An own write that is NO LONGER dirty (reverted, or already committed by someone else)
-# has nothing left to stage.
-out="$(wcp "$(printf 'wiki/notes/reverted.md')" "$(printf 'wiki/notes/other.md')")"
-is "an own write that is not currently dirty is not selected" "" "$out"
-
-# CASE 4: wiki/tasks.md is excluded even when it IS this session's own write and dirty —
-# the generated view is never authored by an aeon.
-out="$(wcp "$(printf 'wiki/tasks.md')" "$(printf 'wiki/tasks.md')")"
-is "wiki/tasks.md is never selected, even as an own dirty write" "" "$out"
-
-out="$(wcp "$(printf 'wiki/tasks.md\nwiki/notes/new.md')" "$(printf 'wiki/tasks.md\nwiki/notes/new.md')")"
-is "wiki/tasks.md is excluded from a mixed list; the real write still is not" \
-   "wiki/notes/new.md" "$out"
-
-# CASE 5: a concurrent actor's write — dirty, but never named by this session's own
-# transcript — is never selected, no matter how it is ordered in the dirty list.
-out="$(wcp "$(printf 'wiki/notes/mine.md')" "$(printf 'wiki/notes/concurrent-other.md\nwiki/notes/mine.md')")"
-is "own write selected" "wiki/notes/mine.md" "$out"
-nowant "a concurrent actor's write is never selected" "concurrent-other.md" "$out"
-
-# Multiple own writes, all dirty: every one is selected, order preserved from write-paths.
-out="$(wcp "$(printf 'wiki/a.md\nwiki/b.md\nwiki/c.md')" "$(printf 'wiki/c.md\nwiki/a.md\nwiki/b.md')")"
-is "multiple own writes are all selected, in write-paths order" \
-   "$(printf 'wiki/a.md\nwiki/b.md\nwiki/c.md')" "$out"
-
-# No writes at all: nothing selected.
-out="$(wcp "" "$(printf 'wiki/notes/concurrent-other.md')")"
-is "no own writes at all: nothing selected" "" "$out"
 
 # ===========================================================================================
 echo

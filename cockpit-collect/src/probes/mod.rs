@@ -162,36 +162,39 @@ pub fn now_keys() -> Kv {
             push(&mut out, &format!("SP_AEON{i}_BEAD"), bead);
             push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());
 
-            let fuse = io::lib_call(
-                &home,
-                "aeon_fuse_minutes",
-                &[bead, run.join("worktree").join(bead).to_str().unwrap_or(""), &repo_name],
-            )
-            .unwrap_or_else(|| "?".to_string());
+            // aeon_fuse_minutes (wave 4.34, sp-27d3d): ported to aeon::trace, called
+            // in-process. `base` (family W, base refs — not yet ported) still reaches
+            // lib.sh's spira_landref through the generic bridge; the commit-ahead
+            // timestamp and everything else is native.
+            let wt = run.join("worktree").join(bead);
+            let commit_ahead_ts = io::lib_call(&home, "spira_landref", &[&repo_name])
+                .filter(|b| !b.is_empty())
+                .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
+                .and_then(|t| t.trim().parse::<i64>().ok());
+            let fuse = aeon::trace::aeon_fuse_minutes(bead, &wt, &run, commit_ahead_ts, io::now());
             push(&mut out, &format!("SP_AEON{i}_FUSE"), fuse);
             push(&mut out, &format!("SP_AEON{i}_WALL"), (secs / 60).to_string());
 
-            let lease = io::lib_call(&home, "aeon_lease_minutes", &[bead]).unwrap_or_else(|| "?".to_string());
+            let lease = aeon::trace::aeon_lease_minutes(bead, &run, io::now());
             push(&mut out, &format!("SP_AEON{i}_LEASE"), lease);
 
+            let mark = std::env::var("SPIRA_TRACE_MARK").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "=== spira attempt".to_string());
             let log_path = run.join(format!("{bead}.log"));
-            if let Some(stats) = io::lib_call(&home, "trace_stats", &[log_path.to_str().unwrap_or("")]) {
-                for line in stats.lines() {
-                    if let Some((k, v)) = line.split_once('=') {
-                        push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
-                    }
+            let stats = aeon::trace::trace_stats(&log_path, &mark, io::now());
+            for line in stats.lines() {
+                if let Some((k, v)) = line.split_once('=') {
+                    push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
                 }
             }
             let tl: i64 = std::env::var("SPIRA_COCKPIT_TRACE_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
             if tl > 0 {
-                if let Some(tail) = io::lib_call(&home, "trace_tail", &[log_path.to_str().unwrap_or(""), &tl.to_string()]) {
-                    let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();
-                    let lines: Vec<&str> = lines.into_iter().filter(|l| !l.is_empty()).collect();
-                    let n = lines.len();
-                    let start_n = n.saturating_sub(tl as usize);
-                    for (j, l) in lines[start_n..].iter().enumerate() {
-                        push(&mut out, &format!("SP_AEON{i}_ACT{j}"), l.to_string());
-                    }
+                let tail = aeon::trace::trace_tail(&log_path, &mark, tl as usize);
+                let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();
+                let lines: Vec<&str> = lines.into_iter().filter(|l| !l.is_empty()).collect();
+                let n = lines.len();
+                let start_n = n.saturating_sub(tl as usize);
+                for (j, l) in lines[start_n..].iter().enumerate() {
+                    push(&mut out, &format!("SP_AEON{i}_ACT{j}"), l.to_string());
                 }
             }
             i += 1;

@@ -8,6 +8,14 @@ pub enum Cmd {
     Land,
     Halt { reason: Reason, dry_run: bool },
     SweepRed,
+    /// `noverdict <id> <branch> <repo> <reason> <outcome>`: `spira_land_noverdict` alone,
+    /// stdin = the gate output (sp-31hjr) — the real-sender suites' way to drive the
+    /// native counting/escalation without a whole pass, the same shape as sentinel's
+    /// `--land-escalate`.
+    Noverdict { id: String, branch: String, repo: String, reason: String, outcome: String },
+    /// `ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<repo-dir> <base>]`:
+    /// `spira_ask_rebase_loop` alone (sp-31hjr).
+    AskRebaseLoop(Vec<String>),
     Help,
 }
 
@@ -19,7 +27,7 @@ pub enum Reason {
     File(String),
 }
 
-pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red";
+pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red | noverdict <id> <branch> <repo> <reason> <outcome>";
 
 /// Err((exit code, message for stderr)).
 pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
@@ -29,6 +37,14 @@ pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
         Some("sweep-red") if args.len() == 1 => Ok(Cmd::SweepRed),
         Some("-h") | Some("--help") => Ok(Cmd::Help),
         Some("halt") => parse_halt(&args[1..]),
+        Some("noverdict") if args.len() == 6 => Ok(Cmd::Noverdict {
+            id: args[1].clone(),
+            branch: args[2].clone(),
+            repo: args[3].clone(),
+            reason: args[4].clone(),
+            outcome: args[5].clone(),
+        }),
+        Some("ask-rebase-loop") if args.len() == 7 || args.len() == 9 => Ok(Cmd::AskRebaseLoop(args[1..].to_vec())),
         _ => Err((2, USAGE.to_string())),
     }
 }
@@ -90,5 +106,21 @@ mod tests {
         assert_eq!(parse(&v(&["halt", "x"])).unwrap_err().1, "landing halt: unexpected argument: x");
         assert_eq!(parse(&v(&[])).unwrap_err().0, 2);
         assert_eq!(parse(&v(&["land", "extra"])).unwrap_err().0, 2);
+        assert_eq!(
+            parse(&v(&["noverdict", "sp-a", "spira/sp-a", "spira", "lock", "NO_VERDICT"])),
+            Ok(Cmd::Noverdict {
+                id: "sp-a".into(),
+                branch: "spira/sp-a".into(),
+                repo: "spira".into(),
+                reason: "lock".into(),
+                outcome: "NO_VERDICT".into(),
+            })
+        );
+        assert_eq!(parse(&v(&["noverdict", "sp-a"])).unwrap_err().0, 2);
+        assert_eq!(
+            parse(&v(&["ask-rebase-loop", "sp-a", "spira/sp-a", "spira", "3", "foo.sh", ""])),
+            Ok(Cmd::AskRebaseLoop(v(&["sp-a", "spira/sp-a", "spira", "3", "foo.sh", ""])))
+        );
+        assert_eq!(parse(&v(&["ask-rebase-loop", "sp-a"])).unwrap_err().0, 2);
     }
 }

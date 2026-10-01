@@ -26,11 +26,17 @@
 # assertion exercises the actual mechanism that would file one (mail's own kind==question
 # tracking-bead logic), rather than a hand-written model of it.
 #
-# covers: spira/lib.sh landing-pass/src/* mail/src/*
+# sp-31hjr: spira_ask_rebase_loop is native in landing-pass now (was lib.sh) — driven
+# through `landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others>`
+# against the real compiled binary, same real-sender contract as before.
+#
+# covers: landing-pass/src/* mail/src/*
 # hermetic-ok: uses a fixture database and a fixture SPIRA_MAIL dir, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+
+command -v landing-pass >/dev/null 2>&1 || bail "landing-pass is not on PATH"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
@@ -47,8 +53,9 @@ export SPIRA_ASK_LABEL="needs-operator"
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
+ask_rebase_loop() {   # ask_rebase_loop <id> <branch> <repo> <n> <conflicts> <others>
+    landing-pass ask-rebase-loop "$1" "$2" "$3" "$4" "$5" "$6"
+}
 
 body_of() {
     local mailbox="$1" f
@@ -59,7 +66,8 @@ body_of() {
 count_new() { ls "$SPIRA_MAIL/$1/new" 2>/dev/null | wc -l | tr -d ' '; }
 
 needs_ryan_count() {
-    bdjson list --status open --label "${SPIRA_ASK_LABEL}" --limit 0 2>/dev/null \
+    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --status open --label "${SPIRA_ASK_LABEL}" --limit 0 --json 2>/dev/null \
+        | sed -n '/^[[{]/,$p' \
         | python3 -c '
 import sys, json
 try: d = json.load(sys.stdin)
@@ -81,7 +89,7 @@ printf '{"id":"sp-t001","title":"express lane: exempts critical beads","status":
     | testdb_seed
 reset_mail
 before="$(needs_ryan_count)"
-spira_ask_rebase_loop "sp-t001" "spira/sp-t001" "spira" "3" "foo.sh" ""
+ask_rebase_loop "sp-t001" "spira/sp-t001" "spira" "3" "foo.sh" ""
 after="$(needs_ryan_count)"
 
 is   "event lands in the concierge mailbox" 1 "$(count_new concierge)"
@@ -116,7 +124,7 @@ testdb_reset
 printf '{"id":"sp-t002g","title":"some open task","status":"in_progress","issue_type":"task","labels":["plan"],"updated_at":"2026-09-01T00:00:00Z"}\n' \
     | testdb_seed
 reset_mail
-spira_ask_rebase_loop "sp-t002g" "spira/sp-t002g" "spira" "3" "docs/test-plan/coverage.json bar.sh" ""
+ask_rebase_loop "sp-t002g" "spira/sp-t002g" "spira" "3" "docs/test-plan/coverage.json bar.sh" ""
 body="$(body_of concierge)"
 want   "GENERATED file is named" "docs/test-plan/coverage.json" "$body"
 want   "GENERATED file is flagged to regenerate, not merge" "docs/test-plan/coverage.json (GENERATED — regenerate it, do not merge it by hand)" "$body"
@@ -131,7 +139,7 @@ testdb_reset
 printf '{"id":"sp-t002","title":"some open task","status":"in_progress","issue_type":"task","labels":["plan"],"updated_at":"2026-09-01T00:00:00Z"}\n' \
     | testdb_seed
 reset_mail
-spira_ask_rebase_loop "sp-t002" "spira/sp-t002" "spira" "4" "bar.sh" "sp-other1 sp-other2"
+ask_rebase_loop "sp-t002" "spira/sp-t002" "spira" "4" "bar.sh" "sp-other1 sp-other2"
 
 body="$(body_of concierge)"
 want "names first other bead"  "sp-other1" "$body"
@@ -146,7 +154,7 @@ testdb_reset
 printf '{"id":"sp-t003","title":"a closed task","status":"closed","issue_type":"task","labels":["plan"],"updated_at":"2026-09-01T00:00:00Z"}\n' \
     | testdb_seed
 reset_mail
-spira_ask_rebase_loop "sp-t003" "spira/sp-t003" "spira" "5" "baz.sh" ""
+ask_rebase_loop "sp-t003" "spira/sp-t003" "spira" "5" "baz.sh" ""
 
 body="$(body_of concierge)"
 want "closed status in body" "Status: closed" "$body"

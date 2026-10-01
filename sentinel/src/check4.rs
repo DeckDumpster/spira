@@ -446,17 +446,11 @@ impl<'a> Sentinel<'a> {
                 }
             }
         }
+        // trace_tail (wave 4.34, sp-27d3d): ported to aeon::trace, called in-process —
+        // no more bash seam (S6) for it.
         let log = self.cfg.run.join(format!("{id}.log"));
-        let tail = self
-            .seam(
-                "trace-tail",
-                seams::TRACE_TAIL,
-                Some(format!("{}\n25\n", log.display()).into_bytes()),
-                Io::Capture,
-                Io::Null,
-                false,
-            )
-            .stdout;
+        let trace_mark = self.ctx.vars.get("SPIRA_TRACE_MARK").cloned().unwrap_or_else(|| "=== spira attempt".to_string());
+        let tail = aeon::trace::trace_tail(&log, &trace_mark, 25);
         ev.push_str(&format!(
             "\n\nREPO      {r_name}{}\nATTEMPTS  {n} (poison threshold {}) — each in_progress transition from the events trail\nBRANCH    {branch_info}\n\n--- last session log (tail) ---\n{}",
             r_path.as_ref().map(|p| format!(" ({p})")).unwrap_or_default(),

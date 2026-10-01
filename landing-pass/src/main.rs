@@ -4,11 +4,17 @@
 //!   landing-pass land        push, hold, queue, queue.local (CHECK 6's worker)
 //!   landing-pass halt [--reason T | --reason-file F|-] [--dry-run]
 //!   landing-pass sweep-red
+//!   landing-pass noverdict <id> <branch> <repo> <reason> <outcome>
+//!                            `spira_land_noverdict` alone, gate output on stdin (sp-31hjr;
+//!                            the real-sender suites' way in, no whole pass)
+//!   landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<dir> <base>]
+//!                            `spira_ask_rebase_loop` alone (sp-31hjr)
 
 use landing_pass::cli::{self, Cmd, Reason};
 use landing_pass::halt::{self, HaltArgs, HaltCtx, RealHalt};
 use landing_pass::model::{RunRecord, StatusFile};
 use landing_pass::pass::Pass;
+use landing_pass::ports::Lib;
 use landing_pass::pr::{PrPass, RealPrTools};
 use landing_pass::real::{load_context, RealBeads, RealClock, RealGit, RealLib, RealProcs, RealTools, SeamRunner};
 use landing_pass::records::Files;
@@ -40,6 +46,8 @@ fn main() -> ExitCode {
         Cmd::Land => land(),
         Cmd::Halt { reason, dry_run } => halt_cmd(reason, dry_run),
         Cmd::SweepRed => sweep_red(),
+        Cmd::Noverdict { id, branch, repo, reason, outcome } => noverdict_cmd(&id, &branch, &repo, &reason, &outcome),
+        Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
     };
     ExitCode::from(code as u8)
 }
@@ -106,7 +114,7 @@ fn pr() -> i32 {
     let tools = RealPrTools { s: &s, out: &out };
     let procs = RealProcs { run: s.run.clone() };
     let files = Files::new(&s.run);
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone() };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
     let land_tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), None, None);
     let p = PrPass {
         s: &s,
@@ -177,7 +185,7 @@ fn land() -> i32 {
         submitted_label: s.submitted_label.clone(),
         fixture: s.bdjson_fixture.clone(),
     };
-    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone() };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
     let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), Some(files.containers()), Some(s.run.join("gate-admission")));
     let procs = RealProcs { run: s.run.clone() };
     let lc = RealLc { bin: s.lc_bin.clone() };
@@ -255,6 +263,69 @@ fn halt_cmd(reason: Reason, dry_run: bool) -> i32 {
         eprintln!("{l}");
     }
     rc
+}
+
+/// `landing-pass noverdict <id> <branch> <repo> <reason> <outcome>`, gate output on
+/// stdin: `Lib::noverdict` alone (sp-31hjr), for the real-sender suites that used to
+/// source lib.sh directly and call `spira_land_noverdict`.
+fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str) -> i32 {
+    let Some(home) = home() else {
+        eprintln!("landing-pass: SPIRA_HOME is unset");
+        return 1;
+    };
+    let out = Reporter::stdout(None);
+    let (s, _repos) = match load_context(&home, &out) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
+    let beads = RealBeads {
+        home: s.home.clone(),
+        db: s.db.clone(),
+        bd: s.bd.clone(),
+        timeout: s.bd_timeout,
+        home_repo: s.home_repo.clone(),
+        submitted_label: s.submitted_label.clone(),
+        fixture: s.bdjson_fixture.clone(),
+    };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
+    let mut gate_out = String::new();
+    let _ = std::io::stdin().read_to_string(&mut gate_out);
+    lib.noverdict(id, branch, repo, reason, outcome, &gate_out);
+    0
+}
+
+/// `landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<repo-dir>
+/// <base>]`: `Lib::ask_rebase_loop` alone (sp-31hjr), for the real-sender suites that used
+/// to source lib.sh directly and call `spira_ask_rebase_loop`.
+fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
+    let Some(home) = home() else {
+        eprintln!("landing-pass: SPIRA_HOME is unset");
+        return 1;
+    };
+    let out = Reporter::stdout(None);
+    let (s, _repos) = match load_context(&home, &out) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
+    let beads = RealBeads {
+        home: s.home.clone(),
+        db: s.db.clone(),
+        bd: s.bd.clone(),
+        timeout: s.bd_timeout,
+        home_repo: s.home_repo.clone(),
+        submitted_label: s.submitted_label.clone(),
+        fixture: s.bdjson_fixture.clone(),
+    };
+    let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    lib.ask_rebase_loop(&refs);
+    0
 }
 
 fn sweep_red() -> i32 {

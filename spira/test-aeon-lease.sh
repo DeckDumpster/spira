@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 #
-# test-aeon-lease.sh — liveness lease: aeon_lease_minutes (lib.sh) renders the pane
-#   countdown from the deadline file, and fayth_get proves the shipped chamber fayths
-#   declare the lease minutes they actually mean.
+# test-aeon-lease.sh — liveness lease: aeon_lease_minutes was lib.sh; RETIRED (wave 4.34,
+#   sp-27d3d), ported to aeon::trace::aeon_lease_minutes, whose own unit test
+#   (aeon_lease_minutes_table, aeon/src/trace.rs) now drives this suite's six cases (no
+#   lease file, a future deadline, a past deadline, an empty file, a non-numeric file, an
+#   empty bead id) directly against the function rather than through a bash sourcing shim.
+#   fayth_get (below) is unrelated to that family and is unaffected.
 #
 #   ./test-aeon-lease.sh
 #
@@ -14,7 +17,7 @@
 # zero live callers — the renew/lapse/thrash decision is now aeon::decide::hb_tick
 # (aeon/src/decide.rs), exercised by its own `hb_tick_table` unit test (whose comment names
 # this file and test-thrash.sh as the bash rows it replaces). The trip decision's T1 table
-# is deleted with them; aeon_lease_minutes and fayth_get below are unaffected and stay.
+# is deleted with them; fayth_get below is unaffected and stays.
 # UC-aeon-execution-08's statement (the lease renew/lapse/kill table) has no remaining bash
 # suite and is marked [use_case.uncovered] in docs/test-plan/aeon-execution.toml (see §13
 # there); UC-aeon-execution-09 (the thrash wall) stays covered by test-thrash.sh.
@@ -23,62 +26,13 @@
 #
 # defect: sp-9ix, sp-sv34w
 # tier: T1
-# covers: spira/lib.sh aeon/src/* cockpit-collect/src/* cockpit/ops/src/health.rs
+# covers: aeon/src/trace.rs cockpit-collect/src/* cockpit/ops/src/health.rs
 # scar: the STALL_BEATS/model_idle apparatus was replaced by a liveness lease on trace growth; suites covering the old mechanism were testing code that no longer ran.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-
-# Helper: run aeon_lease_minutes in a clean environment.
-# Optional third arg: a pinned unix timestamp passed as SPIRA_NOW to fix the clock.
-alm() {
-    local bead="$1" run_dir="$2" now_arg="${3:-}"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$run_dir" \
-        ${now_arg:+SPIRA_NOW="$now_arg"} \
-        bash -c '. "$1"/lib.sh; aeon_lease_minutes "$2"' _ "$HERE" "$bead" 2>/dev/null
-}
-
-echo "aeon_lease_minutes — deadline file is the single source for the pane"
-
-RUN="$TMP/run"
-mkdir -p "$RUN/aeon"
-BEAD="sp-test01"
-
-# Case 1: no lease file → renders ?
-result="$(alm "$BEAD" "$RUN")"
-is "no lease file renders ?" "?" "$result"
-
-# Case 2: a future deadline → positive countdown
-# Pin now so deadline - now = 600 exactly, regardless of subshell timing.
-pinned_now=$(date +%s)
-future=$(( pinned_now + 600 ))
-printf '%s' "$future" > "$RUN/aeon/$BEAD.lease"
-result="$(alm "$BEAD" "$RUN" "$pinned_now")"
-is "a 600s future deadline renders ~10m" "10" "$result"
-
-# Case 3: a past deadline → negative (expired)
-past=$(( $(date +%s) - 120 ))
-printf '%s' "$past" > "$RUN/aeon/$BEAD.lease"
-result="$(alm "$BEAD" "$RUN")"
-# -2 (120 seconds past / 60 = 2 minutes expired)
-is "a past deadline renders negative minutes" "-2" "$result"
-
-# Case 4: an empty file → renders ?
-: > "$RUN/aeon/$BEAD.lease"
-result="$(alm "$BEAD" "$RUN")"
-is "an empty lease file renders ?" "?" "$result"
-
-# Case 5: a non-numeric file → renders ?
-printf 'not-a-number' > "$RUN/aeon/$BEAD.lease"
-result="$(alm "$BEAD" "$RUN")"
-is "a non-numeric lease file renders ?" "?" "$result"
-
-# Case 6: empty bead id → renders ?
-result="$(alm "" "$RUN")"
-is "an empty bead id renders ?" "?" "$result"
 
 echo
 echo "the shipped chamber fayths declare what the aeon actually enforces"
