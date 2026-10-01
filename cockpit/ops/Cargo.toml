@@ -31,6 +31,7 @@ path = "src/reply_main.rs"
 [dependencies]
 regex = "1"
 libc = "0.2"
+spira-config = { path = "../../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

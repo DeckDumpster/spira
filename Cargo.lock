@@ -204,6 +204,7 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "regex",
+ "spira-config",
  "testkit",
 ]
 
