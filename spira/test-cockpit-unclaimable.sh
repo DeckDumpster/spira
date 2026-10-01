@@ -17,7 +17,7 @@
 #
 # defect: sp-f8vry
 # tier: T1
-# covers: spira/cockpit.sh spira/unclaimable.py UC-dispatch-17
+# covers: cockpit-collect/src/* spira/unclaimable.py UC-dispatch-17
 # hermetic-ok: mock bd binary, no systemd or database
 # scar: a bead carrying fayth:ops on spira,plan labels appeared in builder's partition query; the panel said "builder" for fifteen hours while the bead was unclaimable by any persona.
 set -uo pipefail
@@ -36,7 +36,7 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 : "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
-# run_core <bd-binary> -> stdout of cockpit.sh core (SP_NEXT* and SP_READY keys)
+# run_core <bd-binary> -> stdout of cockpit-collect probe core (SP_NEXT* and SP_READY keys)
 # SPIRA_SCOPE_LABEL is passed explicitly so the cockpit's partition queries use the
 # same value as the bead fixture labels below.
 run_core() {
@@ -48,7 +48,7 @@ run_core() {
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" \
-        cockpit.sh core 2>/dev/null
+        cockpit-collect probe core 2>/dev/null
 }
 
 # Build a mock bd that returns a given JSON array when queried for the plan partition

@@ -27,7 +27,7 @@
 # check is live. Bead ids are pinned to non-default strings; allowlist state
 # is reset between sections.
 #
-# covers: spira/maechen-trigger.sh spira/lib.sh spira/cockpit.sh maechen-trigger/*
+# covers: spira/maechen-trigger.sh spira/lib.sh cockpit-collect/src/* maechen-trigger/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1090
@@ -94,7 +94,7 @@ run_livelock() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
-        cockpit.sh livelock 2>/dev/null
+        cockpit-collect probe livelock 2>/dev/null
 }
 
 # Without allowlist: INVALID-CLOSED row expected.
@@ -137,7 +137,7 @@ run_livelock_uf() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="$ALLW_SCOPE" \
-        cockpit.sh livelock 2>/dev/null
+        cockpit-collect probe livelock 2>/dev/null
 }
 
 out="$(run_livelock_uf)"
@@ -382,7 +382,7 @@ e2e_final="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$E2E_SCOPE" \
-    cockpit.sh livelock 2>/dev/null)"
+    cockpit-collect probe livelock 2>/dev/null)"
 
 is "e2e: SP_INVALID_CLOSED=0 after pass" "0" \
    "$(printf '%s\n' "$e2e_final" | sed -n 's/^SP_INVALID_CLOSED=//p' | head -1)"

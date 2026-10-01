@@ -27,17 +27,17 @@
 #                        (every phrase, every tracking-reference exemption) by
 #                        test-close-reason-flags.sh against close-reason-flags.py directly,
 #                        no database. This suite keeps ONE row of each proving
-#                        detect_invalid_closed's output actually reaches cockpit.sh
+#                        detect_invalid_closed's output actually reaches cockpit-collect
 #                        livelock's report — the integration, not the classification.
 #
 # EVERY CATEGORY IS A PAIR (law-absence-needs-a-positive-control): a true positive and a
-# true negative coexist in ONE seed and ONE `cockpit.sh livelock` run, so a detector that
+# true negative coexist in ONE seed and ONE `cockpit-collect probe livelock` run, so a detector that
 # flagged everything (or nothing) could not pass by accident. Reusing one seed across every
 # category — rather than resetting the database once per case — is the same property proven
 # with the database built once.
 #
 # tier: T2
-# covers: spira/lib.sh spira/cockpit.sh spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth
+# covers: spira/lib.sh cockpit-collect/src/* spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -68,7 +68,7 @@ run_ll() {    # run_ll [KEY=val ...]  — extra args override env vars
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         "$@" \
-        cockpit.sh livelock 2>/dev/null
+        cockpit-collect probe livelock 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

@@ -16,7 +16,7 @@
 # turn boundary from a terminal state.
 #
 # defect: sp-yhue
-# covers: spira/cockpit.sh cockpit/ops/src/health.rs spira/lib.sh
+# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -33,7 +33,7 @@ kill_all() { [ "${#PIDS[@]}" -gt 0 ] && kill "${PIDS[@]}" 2>/dev/null; wait 2>/d
 field() { sed -n "s/^$2=//p" <<< "$1" | head -1; }
 
 # ---- cockpit now seam: the function the suite tests directly -------------------------
-# `cockpit.sh now` runs now_keys() and prints the keys to stdout. No write is needed here
+# `cockpit-collect probe now` runs now_keys() and prints the keys to stdout. No write is needed here
 # because the writer fence requires the systemd invocation id, which the test does not have.
 # SPIRA_COCKPIT_FORCE is not needed for the `now` subcommand — it bypasses cockpit_may_write.
 run_now() {
@@ -47,7 +47,7 @@ run_now() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" BD_TIMEOUT=1 \
         "$@" \
-        cockpit.sh now 2>/dev/null
+        cockpit-collect probe now 2>/dev/null
 }
 
 # make_aeon <bead> -> start a fake aeon process and write its pid file.
