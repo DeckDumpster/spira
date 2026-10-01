@@ -124,14 +124,15 @@ pub struct RealRepo {
 
 impl Repo for RealRepo {
     /// `repo_root <name>` (family U) in-process now (sp-k6lku, "wave 4.13") through
-    /// `spira_config::repos`, built from this process's own environment — a single
-    /// `SPIRA_REPO_MAP` file read in place of the `bash -c '. lib.sh; repo_root ...'`
-    /// subprocess this used to shell out to, once per invocation (gh-intake is a one-shot
+    /// `spira_config::repos::Registry::from_env` — the one production door onto a
+    /// registry (following the structural fix for sp-z3eyk): building one from a bare
+    /// `std::env::vars()` directly, with no resolution, found no map at all in production,
+    /// since conf.sh exports none of `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/
+    /// `SPIRA_REPO_DERIVED`; `from_env` resolves them in-process instead. No
+    /// `bash -c '. lib.sh; repo_root ...'` subprocess at all (gh-intake is a one-shot
     /// binary, so there is no loop to amortise a cached Registry over).
     fn root_with_git(&self, name: &str) -> Option<String> {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-        let reg = spira_config::repos::Registry::new(map_text.as_deref(), &env_map, std::path::Path::new(&self.spira_home));
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
         let root = reg.root(name)?;
         if std::path::Path::new(&root).join(".git").exists() {
             Some(root)

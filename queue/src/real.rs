@@ -222,14 +222,13 @@ impl RealLib {
 
     /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
     /// `spira_publish_forge` — joins the family-U lookups `context()`/`readback()` no
-    /// longer wait on a bash+spira-config round trip for). Built from THIS process's own
-    /// environment, exactly as `conf.sh`/lib.sh's own shims read `SPIRA_REPO_MAP`/
-    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` — same inputs `aeon::conf::Conf`
-    /// and `cockpit_collect::io::repo_registry` already use.
+    /// longer wait on a bash+spira-config round trip for). `Registry::from_env` (sp-k6lku,
+    /// following through on sp-z3eyk's `registry_env`) is the one production door onto a
+    /// registry: it resolves `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/
+    /// `SPIRA_REPO_DERIVED` in-process when this process's own (bare, unit-launched)
+    /// environment lacks them, which it always does — conf.sh exports none of them.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map = spira_config::repos::registry_env(std::env::vars().collect(), &self.home);
-        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
-        spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
+        spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
     }
 
     /// Run one seam op. `capture`: stdout is returned (logs before the answer mark are

@@ -21,28 +21,16 @@ impl Real {
         Real { home, run, db, bd, repo_map, registry: OnceCell::new() }
     }
 
-    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"): `spira_home_repo`/
-    /// `repo_root`/`spira_landref` were already a bash subprocess sourcing lib.sh THEN
-    /// shelling to the `spira-config` binary a second time (lib.sh's own shim, sp-37rmg) —
-    /// two processes per lookup. This reads the same `SPIRA_HOME_REPO`/`SPIRA_REPO`/
-    /// `SPIRA_REPO_DERIVED` straight from this process's own environment (never exported by
-    /// conf.sh, so absent unless a caller set them — [`spira_config::repos::home_repo`]'s own
-    /// fallback to `self.home`'s basename covers that case, matching the bash original) and
-    /// [`World::repo_map_text`]'s already-direct file read for the map itself.
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"): `spira_home_repo`/`repo_root`/`spira_landref` were already a bash
+    /// subprocess sourcing lib.sh THEN shelling to the `spira-config` binary a second time
+    /// (lib.sh's own shim, sp-37rmg) — two processes per lookup. `from_env` resolves
+    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` in-process
+    /// instead, the same way conf.sh does, when this (bare, unit-launched) process's own
+    /// environment lacks them (sp-z3eyk) — reading the bare three and the map text by hand,
+    /// as this used to, found nothing in production, since conf.sh exports none of them.
     fn registry(&self) -> &spira_config::repos::Registry {
-        self.registry.get_or_init(|| {
-            let mut env: BTreeMap<String, String> = BTreeMap::new();
-            for k in ["SPIRA_HOME_REPO", "SPIRA_REPO", "SPIRA_REPO_DERIVED"] {
-                if let Ok(v) = std::env::var(k) {
-                    if !v.is_empty() {
-                        env.insert(k.to_string(), v);
-                    }
-                }
-            }
-            let text = self.repo_map_text_inner();
-            let map_text = (!text.is_empty()).then_some(text.as_str());
-            spira_config::repos::Registry::new(map_text, &env, &self.home)
-        })
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
     }
 
     fn repo_map_text_inner(&self) -> String {

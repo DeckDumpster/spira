@@ -6,7 +6,6 @@
 //! logic. Production shells out for real; tests use a recording fake.
 
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -55,36 +54,17 @@ impl LibSeam {
         LibSeam { lib_sh, registry: OnceCell::new() }
     }
 
-    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), built once per
-    /// process from a single snapshot of the vars [`spira_config::repos::Registry::new`]
-    /// needs, instead of a fresh `bash -c '. lib.sh; repo_root ...'`/`spira_landrefs`
-    /// subprocess per call — [`Seam::repo_root`] and [`Seam::land_base`] both read it.
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"), built once per process, in-process — no `bash -c '. lib.sh; ...'`
+    /// subprocess at all: conf.sh resolves `SPIRA_HOME_REPO`/`SPIRA_REPO`/
+    /// `SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` but exports none of them, and `from_env`
+    /// resolves them the same way in-process when this (bare, unit-launched) process's
+    /// environment lacks them (sp-z3eyk) — [`Seam::repo_root`] and [`Seam::land_base`]
+    /// both read the result.
     fn registry(&self) -> &spira_config::repos::Registry {
         self.registry.get_or_init(|| {
-            let script = ". \"$0\" >/dev/null 2>&1 || exit 97\n\
-                for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
-                printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
-            let out = Command::new("bash")
-                .arg("-c")
-                .arg(script)
-                .arg(&self.lib_sh)
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output();
-            let mut env: BTreeMap<String, String> = BTreeMap::new();
-            if let Ok(o) = out {
-                for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
-                    if let Some((k, v)) = rec.split_once('=') {
-                        env.insert(k.to_string(), v.to_string());
-                    }
-                }
-            }
-            let map_text = env
-                .get("SPIRA_REPO_MAP")
-                .filter(|p| !p.is_empty())
-                .and_then(|p| std::fs::read_to_string(p).ok());
             let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
-            spira_config::repos::Registry::new(map_text.as_deref(), &env, &home)
+            spira_config::repos::Registry::from_env(std::env::vars().collect(), &home)
         })
     }
 

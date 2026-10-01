@@ -6,29 +6,17 @@
 //! (family U) is no longer one of these seams (sp-k6lku, "wave 4.13") — [`registry`] reads
 //! it in-process through `spira_config::repos`.
 
-use std::collections::BTreeMap;
 use std::process::Command;
 
-/// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), resolved once from a
-/// single snapshot of `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` —
-/// in place of a fresh `bash -c '. lib.sh; repo_root ...'` subprocess per call. `spira_home`
-/// is `lib_sh_dir()`'s own output (the directory holding lib.sh), matching every other
-/// caller here.
+/// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
+/// resolved once, in-process — no `bash -c '. lib.sh; repo_root ...'` subprocess, and no
+/// one-shot snapshot subprocess either: `from_env` resolves
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
+/// conf.sh does, in-process, when this (bare, unit-launched) process's own environment
+/// lacks them (sp-z3eyk). `spira_home` is `lib_sh_dir()`'s own output (the directory
+/// holding lib.sh), matching every other caller here.
 pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
-    let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
-        for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
-        printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
-    let out = Command::new("bash").arg("-c").arg(script).arg(format!("{spira_home}/lib.sh")).output();
-    let mut env: BTreeMap<String, String> = BTreeMap::new();
-    if let Ok(o) = out {
-        for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
-            if let Some((k, v)) = rec.split_once('=') {
-                env.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
-    let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-    spira_config::repos::Registry::new(map_text.as_deref(), &env, std::path::Path::new(spira_home))
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(spira_home))
 }
 
 pub struct Timers {
@@ -146,8 +134,19 @@ pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<Pip
 mod tests {
     use super::*;
 
+    /// `registry()` now resolves for real when the environment lacks the four registry
+    /// keys (`Registry::from_env`, sp-k6lku). Pinning `SPIRA_TOML` alone is not enough:
+    /// `SPIRA_REPO_MAP`'s own default (`repo_map_candidate`, spira-config/src/resolve.rs)
+    /// checks a LEGACY `spira.conf`'s directory too, found through `HOME`/
+    /// `XDG_CONFIG_HOME` independent of the `SPIRA_TOML` pin — so both legacy-search
+    /// inputs are pinned at a fixture directory that holds neither, to never resolve the
+    /// real operator's repo-map on the machine running the suite.
     #[test]
     fn repo_root_is_none_when_lib_sh_is_missing() {
+        let d = testkit::TempDir::new("watchtower-repo-root-missing");
+        std::env::set_var("SPIRA_TOML", d.join("no-such-spira.toml"));
+        std::env::set_var("HOME", d.path());
+        std::env::set_var("XDG_CONFIG_HOME", d.join("no-such-xdg"));
         assert_eq!(registry("/does/not/exist").root("spira"), None);
     }
 

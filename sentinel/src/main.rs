@@ -75,20 +75,53 @@ pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String
         ));
     }
     let mut ctx = Context::parse(o.stdout.as_bytes())?;
+    merge_resolved_config(&mut ctx, home);
     if repos {
         ctx.repos = resolve_repos(&ctx.vars, home);
     }
     Ok(ctx)
 }
 
+/// Wave 4.8 ("retire conf re-import seams in Rust"): `seams::PROBE`'s `@vars` section used
+/// to be a `compgen -v SPIRA_` dump of the bash subprocess that had just sourced
+/// `lib.sh`/`conf.sh` — a second, bash-shaped derivation of values
+/// `spira_config::resolve()` already computes in-process. This merges that in-process
+/// answer into `ctx.vars` instead: `entry().or_insert()` so anything the probe script
+/// ITSELF still supplies (`SPIRA_HOME_REPO_RESOLVED`, `SPIRA_TOML_FILE` — both lib.sh's own,
+/// not conf.sh's) is never overwritten, matching conf.sh's own `${VAR:=default}` rule.
+/// Best-effort, same as every other config read in this binary: a containment refusal or
+/// an unreadable registry leaves `ctx.vars` exactly as the probe script alone produced it,
+/// rather than failing the whole pass over a secondary derivation. This also means
+/// `ctx.vars` carries SPIRA_REPO_MAP/SPIRA_HOME_REPO/SPIRA_REPO/SPIRA_REPO_DERIVED
+/// correctly resolved by the time [`resolve_repos`] reads it below — one resolution, not
+/// two.
+fn merge_resolved_config(ctx: &mut Context, home: &Path) {
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
+    // SPIRA_HOME/SPIRA_REPO are deliberately NEVER in resolve()'s own output (per-copy
+    // facts — see spira_config::resolve::ResolveInput's doc), but the OLD compgen dump did
+    // carry them (conf.sh sets both, unexported, in that bash process) and `Cfg::raw`
+    // (cfg.rs) reads both back out of `ctx.vars` to pass on, verbatim, to every aeon
+    // sentinel summons (dispatch.rs's own `setenv`) — an empty `--setenv=SPIRA_HOME=` would
+    // leave a summoned aeon unable to resolve its own harness. Insert them explicitly
+    // before anything resolve() itself produces.
+    ctx.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
+    ctx.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
+    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
+        for (k, v) in resolved.values {
+            ctx.vars.entry(k).or_insert(v);
+        }
+    }
+}
+
 /// `spira_repos` (every mapped repository, home first), then per repository `repo_root`/
 /// `spira_landrefs`/`repo_land_queued` — in-process via `spira_config::repos` instead of
-/// the bash `@repos` block this replaced (sp-k6lku, "wave 4.13"). `vars` is the probe's own
-/// `@vars` section: `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`
-/// travel through it already, so this needs no seam call of its own.
+/// the bash `@repos` block this replaced (sp-k6lku, "wave 4.13"). `vars` is `ctx.vars`
+/// AFTER [`merge_resolved_config`] has run, so `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/
+/// `SPIRA_REPO`/`SPIRA_REPO_DERIVED` are already correctly resolved — this needs no seam
+/// call, and no second resolve, of its own.
 fn resolve_repos(vars: &std::collections::BTreeMap<String, String>, home: &Path) -> Vec<Repo> {
-    let map_text = vars.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-    let reg = spira_config::repos::Registry::new(map_text.as_deref(), vars, home);
+    let reg = spira_config::repos::Registry::from_env(vars.clone(), home);
     reg.all()
         .into_iter()
         .map(|name| {

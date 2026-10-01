@@ -69,13 +69,14 @@ pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRo
 
 /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
 /// `ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_publish_forge` — the CONTEXT seam's
-/// per-repo loop used to shell into, once per function per repository). Built from THIS
-/// process's own environment, same inputs `aeon::conf::Conf` and
-/// `cockpit_collect::io::repo_registry` already read.
+/// per-repo loop used to shell into, once per function per repository). `Registry::from_env`
+/// (sp-k6lku, following the structural fix for sp-z3eyk) is the one production door onto
+/// a registry: building one from a bare `std::env::vars()` directly, with no resolution,
+/// found NO map and NO landref in production (conf.sh exports none of `SPIRA_REPO_MAP`/
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them
+/// in-process instead.
 fn repo_registry(home: &Path) -> spira_config::repos::Registry {
-    let env_map: BTreeMap<String, String> = std::env::vars().collect();
-    let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
-    spira_config::repos::Registry::new(map_text.as_deref(), &env_map, home)
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), home)
 }
 
 /// The base-ref columns (family W) for one already-resolved `(name, path, mode)` — ported

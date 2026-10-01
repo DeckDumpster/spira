@@ -23,32 +23,15 @@ impl Real {
         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gate-run"))
     }
 
-    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), built once per
-    /// process from a single `. lib.sh` snapshot — replaces the two separate `REPO_CONTEXT`/
-    /// `LANDREF_SNIPPET` bash subprocesses `resolve_repo`/`landref` used to shell out to.
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"), built once per process, in-process — replaces the two separate
+    /// `REPO_CONTEXT`/`LANDREF_SNIPPET` bash subprocesses `resolve_repo`/`landref` used to
+    /// shell out to, and the one-shot snapshot subprocess that replaced them: `from_env`
+    /// resolves `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the
+    /// same way conf.sh does, in-process, when this (bare, unit-launched) process's own
+    /// environment lacks them (sp-z3eyk).
     fn registry(&self) -> &spira_config::repos::Registry {
-        self.registry.get_or_init(|| {
-            let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
-                for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
-                printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
-            let out = Command::new("bash")
-                .arg("-c")
-                .arg(script)
-                .arg(self.home.join("lib.sh"))
-                .stdin(Stdio::null())
-                .stderr(Stdio::null())
-                .output();
-            let mut env: BTreeMap<String, String> = BTreeMap::new();
-            if let Ok(o) = out {
-                for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
-                    if let Some((k, v)) = rec.split_once('=') {
-                        env.insert(k.to_string(), v.to_string());
-                    }
-                }
-            }
-            let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-            spira_config::repos::Registry::new(map_text.as_deref(), &env, &self.home)
-        })
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
     }
 }
 

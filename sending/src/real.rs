@@ -73,12 +73,13 @@ impl Real {
 
     /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
     /// `spira_landrefs`/`ref_remote` — the `Op::Base` seam used to shell into, one bash
-    /// subprocess per checkout). Built from THIS process's own environment, exactly as
-    /// `aeon::conf::Conf` and `cockpit_collect::io::repo_registry` already read it.
+    /// subprocess per checkout). `Registry::from_env` (sp-k6lku, following the structural
+    /// fix for sp-z3eyk) is the one production door onto a registry — building one from
+    /// a bare `std::env::vars()` directly, with no resolution, found NO map and NO
+    /// landref in production (conf.sh exports none of `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/
+    /// `SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them in-process instead.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map: BTreeMap<String, String> = std::env::vars().collect();
-        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-        spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
+        spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
     }
 
     /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's

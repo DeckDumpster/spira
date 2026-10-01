@@ -103,25 +103,16 @@ fn run_status(cmd: &mut Command) -> bool {
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
-/// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), resolved once from a
-/// single `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` snapshot —
-/// in place of the three separate `repo_land`/`repo_root`/`spira_landref` bash subprocesses
-/// `find_repo` used to shell out to, one per lookup.
+/// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
+/// resolved once, in-process — no `bash -c '. lib.sh; ...'` subprocess at all now: the
+/// three separate `repo_land`/`repo_root`/`spira_landref` bash subprocesses `find_repo`
+/// used to shell out to, one per lookup, are gone, and so is the one-shot snapshot
+/// subprocess that replaced them, since `from_env` resolves
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
+/// conf.sh does when this (bare, unit-launched) process's own environment lacks them
+/// (sp-z3eyk).
 pub fn registry(env: &Env) -> spira_config::repos::Registry {
-    let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
-        for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
-        printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
-    let out = Command::new("bash").arg("-c").arg(script).arg(env.home.join("lib.sh")).output();
-    let mut snap: BTreeMap<String, String> = BTreeMap::new();
-    if let Ok(o) = out {
-        for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
-            if let Some((k, v)) = rec.split_once('=') {
-                snap.insert(k.to_string(), v.to_string());
-            }
-        }
-    }
-    let map_text = snap.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
-    spira_config::repos::Registry::new(map_text.as_deref(), &snap, &env.home)
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), &env.home)
 }
 
 // ---------------------------------------------------------------------------------------

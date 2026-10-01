@@ -31,26 +31,32 @@ pub fn install_signal_handlers() {
     }
 }
 
-/// The variables read after `. lib.sh` (DESIGN.md "Environment it reads").
+/// The variables read after `. lib.sh` (DESIGN.md "Environment it reads"). Every name here
+/// has NO `spira/conf.d/<KEY>` entry — a per-invocation value the gate's own caller sets
+/// (SPIRA_GATE_BEAD, SPIRA_GATE_CALLER, ...), a lib.sh-derived one (LANDSTATE), or an
+/// ambient launcher var (SPIRA_RELEASE, HOME) — so these stay read straight out of the
+/// `CONTEXT` bash subprocess's own environment.
+///
+/// UNTIL WAVE 4.8 ("retire conf re-import seams in Rust") this list also carried every
+/// `conf.d`-registry-backed name (SPIRA_REPO_MAP, SPIRA_RUN, SPIRA_VERDICT_TTL,
+/// SPIRA_GATE_TIMEOUT, SPIRA_GATE_LOCK_WAIT, SPIRA_CERTIFY_PAR, SPIRA_GATE_SUITES,
+/// SPIRA_GATE_BUDGET, SPIRA_CERTIFY_ALWAYS_COVERS, SPIRA_BATCH_MAXPAR, SPIRA_PATH — kept as
+/// [`RETIRED_VARS`] for a parity diff): `Real::context` read each one back out of the bash
+/// process that had just sourced `lib.sh`/conf.sh, a second, bash-shaped derivation of
+/// values `spira_config::resolve()` already computes in-process. `. "$HERE/lib.sh"` still
+/// runs (the fixed VARS list below and `host_cores` are all this script still echoes back),
+/// but the retired names are no longer echoed through the NUL-framed dump;
+/// `merge_resolved_config` (below) computes them afterward and merges them into the same
+/// `kv` map. `repo_root`/`spira_landref`/`repo_gate`/`spira_home_repo` are ALSO no longer
+/// this script's job (sp-k6lku, "wave 4.13", family U/W): `Real::context` resolves them
+/// in-process through `spira_config::repos::Registry::from_env`, built from this same
+/// `kv`/`merge_resolved_config` snapshot.
 const VARS: &[&str] = &[
-    "SPIRA_REPO_MAP",
-    "SPIRA_HOME_REPO",
-    "SPIRA_REPO",
-    "SPIRA_REPO_DERIVED",
-    "SPIRA_RUN",
     "SPIRA_GATE_LOG",
     "SPIRA_VERDICTS",
-    "SPIRA_VERDICT_TTL",
-    "SPIRA_GATE_TIMEOUT",
-    "SPIRA_GATE_LOCK_WAIT",
-    "SPIRA_CERTIFY_PAR",
-    "SPIRA_GATE_SUITES",
     "SPIRA_GATE_BEAD",
     "SPIRA_GATE_CALLER",
-    "SPIRA_GATE_BUDGET",
     "SPIRA_GATE_ALL",
-    "SPIRA_CERTIFY_ALWAYS_COVERS",
-    "SPIRA_BATCH_MAXPAR",
     "SPIRA_VERDICT_REPEAT_CONSIDERED",
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
@@ -61,9 +67,42 @@ const VARS: &[&str] = &[
     "SPIRA_GATE_TARGET_MIN_FREE_MIB",
     "SPIRA_GATE_TARGET_MIN_MEM_MIB",
     "SPIRA_RELEASE",
-    "SPIRA_PATH",
     "HOME",
 ];
+
+/// Every `VARS` name wave 4.8 retired from the bash dump, resolved in-process instead
+/// (`merge_resolved_config`) — kept as its own list so a parity check can diff this
+/// crate's old and new answers key by key.
+pub const RETIRED_VARS: &[&str] = &[
+    "SPIRA_REPO_MAP",
+    "SPIRA_RUN",
+    "SPIRA_VERDICT_TTL",
+    "SPIRA_GATE_TIMEOUT",
+    "SPIRA_GATE_LOCK_WAIT",
+    "SPIRA_CERTIFY_PAR",
+    "SPIRA_GATE_SUITES",
+    "SPIRA_GATE_BUDGET",
+    "SPIRA_CERTIFY_ALWAYS_COVERS",
+    "SPIRA_BATCH_MAXPAR",
+    "SPIRA_PATH",
+];
+
+/// Wave 4.8: merges `spira_config::resolve()`'s in-process answer into `kv` after the
+/// `CONTEXT` bash call returns, for every [`RETIRED_VARS`] name — `entry().or_insert()` so
+/// nothing the bash dump itself still supplies is ever overridden. Best-effort: a
+/// containment refusal or an unreadable registry leaves `kv` exactly as `CONTEXT` alone
+/// produced it.
+fn merge_resolved_config(kv: &mut HashMap<String, String>, home: &Path) {
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let repo = spira_config::resolve::derive_home_repo(home, &env_map);
+    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
+        for name in RETIRED_VARS {
+            if let Some(v) = resolved.values.get(*name) {
+                kv.entry((*name).to_string()).or_insert_with(|| v.clone());
+            }
+        }
+    }
+}
 
 const CONTEXT: &str = r#"set -uo pipefail
 HERE="$1"; RN="$2"; shift 2
@@ -154,21 +193,26 @@ impl World for Real {
                 o.status.code().unwrap_or(-1)
             ));
         }
-        let mut snap: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+        let mut kv: HashMap<String, String> = HashMap::new();
         for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
             if let Some((k, v)) = rec.split_once('=') {
-                snap.insert(k.to_string(), v.to_string());
+                kv.insert(k.to_string(), v.to_string());
             }
         }
-        let mut take = |k: &str| snap.remove(k);
+        merge_resolved_config(&mut kv, &self.home);
+        let mut take = |k: &str| kv.remove(k);
         let raw_repo_name = take("repo_name").unwrap_or_default();
         let host_cores = take("host_cores").unwrap_or_else(|| "1".into());
 
         // spira_config::repos (sp-37rmg/sp-o88bx, in-process here since sp-k6lku, "wave
         // 4.13"): repo_root/spira_landref/repo_gate/spira_home_repo no longer a bash seam
         // call — the CONTEXT script above only sources lib.sh now for VARS and host_cores.
-        let map_text = snap.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
-        let reg = spira_config::repos::Registry::new(map_text.as_deref(), &snap, &self.home);
+        // Registry::from_env (sp-k6lku, following the Concierge's structural directive)
+        // is the one door onto a registry built from a bare env map — `kv` already carries
+        // SPIRA_REPO_MAP if `merge_resolved_config` just resolved it, and `from_env` fills
+        // whatever it did not.
+        let snap: std::collections::BTreeMap<String, String> = kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let reg = spira_config::repos::Registry::from_env(snap, &self.home);
         let repo_name = if raw_repo_name.is_empty() { reg.home_repo().to_string() } else { raw_repo_name };
         let (repo_root, landref, gate_cmd) = match reg.root(&repo_name) {
             Some(root) => {
@@ -178,7 +222,6 @@ impl World for Real {
             None => (None, None, String::new()),
         };
 
-        let kv: HashMap<String, String> = snap.into_iter().collect();
         Ok(Ctx {
             repo_name,
             vars: kv,
@@ -862,5 +905,39 @@ mod tests {
         assert_eq!(super::utc_of(0), "1970-01-01T00:00:00Z");
         assert_eq!(super::utc_of(1790700000), "2026-09-29T16:40:00Z");
         assert_eq!(super::utc_of(951782400), "2000-02-29T00:00:00Z");
+    }
+
+    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
+    // hazard): this test takes a lock and pins SPIRA_TOML to a nonexistent path — locate()'s
+    // own exclusive-pin rule — so it never depends on a real operator config document on
+    // the machine running this suite.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn merge_resolved_config_fills_retired_vars_without_overriding_the_bash_dump() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("SPIRA_TOML").ok();
+        let dir = testkit::TempDir::new("gate-real-merge");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_GATE_TIMEOUT"),
+            "TYPE=u32\nGROUP=gate\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_GATE_TIMEOUT:=1234}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+
+        let mut kv = std::collections::HashMap::new();
+        kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());
+        super::merge_resolved_config(&mut kv, &home);
+
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+
+        assert_eq!(kv.get("SPIRA_GATE_BEAD").map(String::as_str), Some("sp-xyz"), "the bash dump's own value must survive the merge");
+        assert_eq!(kv.get("SPIRA_GATE_TIMEOUT").map(String::as_str), Some("1234"), "a RETIRED_VARS key resolve() covers must reach kv in-process");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
