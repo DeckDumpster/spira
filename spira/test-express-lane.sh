@@ -162,50 +162,17 @@ else
 fi
 
 # ======================================================================================
-echo
-echo "sentinel CHECK7 express bypass — express_ready_in_task_pool"
+# sentinel CHECK7 express bypass — both `express_ready_in_task_pool` (deleted outright,
+# wave 4.25/sp-obhv6: sentinel.sh, its only caller, was retired for the Rust sentinel
+# crate well before this bead, and nothing else called it) and `check7_pool_decision`
+# (the throttle-leak fix, sp-zcvh1 — retired outright, wave 4.27/sp-gzmd2:
+# `_ck7_summon_body`, its only remaining caller, is now a one-line shim onto the sentinel
+# crate's own in-process `ck7_summon_body`, which calls the SAME function ported to Rust)
+# are gone, with nothing left in this suite's scope to set a chamber fixture up for. The
+# four throttle-leak cases (throttled+no-express holds at 0; throttled+express grants
+# exactly 1, not the stale `free`; unthrottled passes `free` through either way) are
+# `summon::tests::check7_pool_decision_matches_the_throttle_leak_fix` in
+# sentinel/src/summon.rs.
 # ======================================================================================
-# Override ready_count after sourcing lib.sh: returns non-zero when express label is
-# in the labels arg (simulates a ready express bead without a full testdb query).
-T_FAYTH="$TMP/chamber"; mkdir -p "$T_FAYTH"
-cat > "$T_FAYTH/builder.fayth" <<'FAYTH'
-FAYTH_LABELS="spira,plan"
-FAYTH_EXCLUDE_LABELS=""
-FAYTH
-export SPIRA_HOME="$TMP"
-export SPIRA_CONF="$TMP/no-such.conf"
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
 
-# `express_ready_in_task_pool` is deleted outright (wave 4.25, sp-obhv6): sentinel.sh — the
-# only thing that ever called it — was retired for the Rust sentinel crate well before this
-# bead, and nothing else called it; grepping the whole tree for live callers found none.
-# This row goes with it.
-
-# ======================================================================================
-echo
-echo "check7_pool_decision — the throttle leak (sp-zcvh1)"
-# ======================================================================================
-# THE DEFECT. sentinel.sh CHECK 7 raised a throttled pool toward 1 but never capped it:
-# `[ "${pool:-0}" -lt 1 ] && pool=1` left a free value already >= 1 (e.g. 5, the free slot
-# count with no builders live) untouched, so one ready express bead switched the throttle
-# off for the whole pass instead of admitting the one express bead it was meant for.
-#
-# throttled + 0 express beads → 0 (the ordinary hold).
-is "throttled, no express: pool held at 0" "0" \
-   "$(check7_pool_decision 1 5 0)"
-
-# throttled + 1 express bead ready + 5 free → 1, NOT 5. This is the positive control for
-# the fix: the old inline form returns free (5) here, which is the leak itself.
-is "throttled, express ready, 5 free: pool granted exactly 1" "1" \
-   "$(check7_pool_decision 1 5 1)"
-
-# unthrottled → free, unchanged. The function must not touch a pool the throttle never
-# engaged.
-is "unthrottled: pool passes through as free" "5" \
-   "$(check7_pool_decision 0 5 0)"
-is "unthrottled: pool passes through as free even with an express bead ready" "5" \
-   "$(check7_pool_decision 0 5 1)"
-
-# ======================================================================================
 tl_summary

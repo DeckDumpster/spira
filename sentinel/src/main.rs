@@ -156,9 +156,8 @@ fn fatal(msg: &str) -> i32 {
 
 fn main() {
     temps::install_handlers();
-    let first = std::env::args().nth(1);
-    let second = std::env::args().nth(2);
-    let mode = Mode::from_args(first.as_deref(), second.as_deref());
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mode = Mode::from_argv(&argv);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sentinel"));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         std::process::exit(fatal("cannot find lib.sh (set SPIRA_HOME)"));

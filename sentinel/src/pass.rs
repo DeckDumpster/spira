@@ -11,7 +11,7 @@ use crate::seams;
 use crate::store::{self, Bd, Snapshot};
 use crate::temps;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Pass,
     Report,
@@ -22,6 +22,18 @@ pub enum Mode {
     /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
     /// suites' way to drive the native escalation without a whole pass.
     LandEscalate,
+    /// `summon_fayth` alone (wave 4.27, family G): lib.sh's own shim target, and
+    /// czar-pass's direct call — no lib.sh sourcing at all any more.
+    Summon { fayth: String, pool: Option<i64>, require_label: String },
+    /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
+    SummonArgv { fayth: String },
+    /// `world_gate` alone: ditto.
+    WorldGate { fayth: String, prefix: String },
+    /// `named_unit_stop` alone: `acceptance-local.sh`'s own shim target.
+    NamedUnitStop { glob: String },
+    /// `ck7_summon_pass` alone, under its own flock — lib.sh's shim target, and the way a
+    /// bash fixture now proves the lock serializes two real contenders without a database.
+    SummonPass,
 }
 
 impl Mode {
@@ -42,6 +54,29 @@ impl Mode {
         match (Mode::from_first(a), b) {
             (Mode::OpenChildren { .. }, Some("--dry-run")) => Mode::OpenChildren { dry: true },
             (m, _) => m,
+        }
+    }
+
+    /// The full argv (sans argv[0]) — the only modes that take more than a flag and an
+    /// optional `--dry-run` (`--summon`, `--summon-argv`, `--world-gate`,
+    /// `--named-unit-stop`) are parsed here; everything else falls back to
+    /// [`Mode::from_args`] unchanged.
+    pub fn from_argv(args: &[String]) -> Mode {
+        let a0 = args.first().map(String::as_str);
+        match a0 {
+            Some("--summon") => Mode::Summon {
+                fayth: args.get(1).cloned().unwrap_or_default(),
+                pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
+                require_label: args.get(3).cloned().unwrap_or_default(),
+            },
+            Some("--summon-argv") => Mode::SummonArgv { fayth: args.get(1).cloned().unwrap_or_default() },
+            Some("--world-gate") => Mode::WorldGate {
+                fayth: args.get(1).cloned().unwrap_or_default(),
+                prefix: args.get(2).cloned().unwrap_or_default(),
+            },
+            Some("--named-unit-stop") => Mode::NamedUnitStop { glob: args.get(1).cloned().unwrap_or_default() },
+            Some("--summon-pass") => Mode::SummonPass,
+            _ => Mode::from_args(a0, args.get(1).map(String::as_str)),
         }
     }
 }
@@ -309,10 +344,15 @@ impl<'a> Sentinel<'a> {
     // The entry points.
 
     pub fn run(&self) -> i32 {
-        match self.mode {
+        match &self.mode {
             Mode::SummonOnly => self.summon_only(),
-            Mode::OpenChildren { dry } => self.open_children_only(dry),
+            Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
+            Mode::Summon { fayth, pool, require_label } => self.summon_cmd(fayth, *pool, require_label),
+            Mode::SummonArgv { fayth } => self.summon_argv_cmd(fayth),
+            Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
+            Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
+            Mode::SummonPass => self.ck7_summon_pass(),
             _ => self.full(),
         }
     }
@@ -480,7 +520,7 @@ impl<'a> Sentinel<'a> {
         self.phase("CHECK3c");
         self.mark_open_children(&snap, false);
         self.phase("CHECK7");
-        self.seam("ck7", seams::CK7, None, Io::Inherit, Io::Inherit, true);
+        self.ck7_summon_pass();
 
         self.phase("CHECK8");
         self.check8(plan_ready, plan_inprog, n_open, &open_plan);

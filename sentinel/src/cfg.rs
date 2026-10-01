@@ -269,6 +269,33 @@ pub struct Cfg {
     /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
     /// read, never a probe: `aeon::capacity::pause_state`).
     pub capacity_pause: PathBuf,
+    /// `SPIRA_DRAIN_TTL` (default 1800s): how long a drain stamp with no `expires` line of
+    /// its own is honoured before `world_gate` lifts it unasked (family G, wave 4.27).
+    pub drain_ttl: i64,
+    /// `SPIRA_MAX_AEONS`: the task pool's ceiling. `None` (unset/empty) means no pool at
+    /// all — every persona's own concurrency cap applies unchanged.
+    pub max_aeons: Option<i64>,
+    /// `SPIRA_MAX_LIVE_AEONS`: the whole-fleet ceiling `summon_fayth` enforces above every
+    /// per-persona cap and above the pool. `None` means no ceiling (today's behaviour).
+    /// `ck7_fill_cap`'s own per-persona-per-pass cap defaults this to 4 when unset.
+    pub max_live_aeons: Option<i64>,
+    /// `SPIRA_LANES_MAX_LIVE`: the collective cap on lane aeons. `None` means no cap.
+    pub lanes_max_live: Option<i64>,
+    /// `SPIRA_QUEUE_THROTTLE_OVERRIDE`: "off" pins the task pool unthrottled regardless of
+    /// the admission-throttle stamp.
+    pub queue_throttle_override: String,
+    /// `SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`).
+    pub throttle_stamp: PathBuf,
+    /// `SPIRA_SENTINEL_PASS_BUDGET_SECS` (default 90s): CHECK 7's own per-partition budget,
+    /// distinct from `pass_target`, the whole pass's budget.
+    pub pass_budget_secs: i64,
+    /// `SPIRA_SUMMON_LOCK_WAIT` (default 30s): how long `ck7_summon_pass` waits on
+    /// `summon.lock` before giving up this pass to whoever already holds it.
+    pub summon_lock_wait: u64,
+    /// `$SPIRA_RUN/lane-round-robin`: the lane fayth summoned last pass.
+    pub lane_round_robin: PathBuf,
+    /// `$SPIRA_RUN/summon.lock`: the one lock every `ck7_summon_pass` caller serializes on.
+    pub summon_lock: PathBuf,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
 }
@@ -279,6 +306,8 @@ impl Cfg {
         // `${X:-d}`: empty means default.
         let or = |k: &str, d: &str| c.get(k).filter(|v| !v.is_empty()).unwrap_or(d).to_string();
         let num = |k: &str, d: i64| c.get(k).and_then(|v| v.trim().parse().ok()).unwrap_or(d);
+        // `[ -n "${X:-}" ]`: empty or unset is None, never a parsed zero.
+        let opt_num = |k: &str| c.get(k).filter(|v| !v.is_empty()).and_then(|v| v.trim().parse::<i64>().ok());
         let run = PathBuf::from(or("SPIRA_RUN", "/tmp"));
         let home = c
             .get("SPIRA_HOME")
@@ -396,6 +425,20 @@ impl Cfg {
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             reclaim_skip_label: or("SPIRA_RECLAIM_SKIP_LABEL", "spira-waiting-operator"),
             capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
+            drain_ttl: num("SPIRA_DRAIN_TTL", 1800),
+            max_aeons: opt_num("SPIRA_MAX_AEONS"),
+            max_live_aeons: opt_num("SPIRA_MAX_LIVE_AEONS"),
+            lanes_max_live: opt_num("SPIRA_LANES_MAX_LIVE"),
+            queue_throttle_override: s("SPIRA_QUEUE_THROTTLE_OVERRIDE"),
+            throttle_stamp: c
+                .get("SPIRA_THROTTLE_STAMP")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| run.join("queue-throttled")),
+            pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
+            summon_lock_wait: num("SPIRA_SUMMON_LOCK_WAIT", 30).max(0) as u64,
+            lane_round_robin: run.join("lane-round-robin"),
+            summon_lock: run.join("summon.lock"),
             raw,
             home,
         }

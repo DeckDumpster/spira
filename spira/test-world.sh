@@ -254,15 +254,18 @@ if [ -d "$HARNESS/systemd" ]; then
     grep -q 'world.draining' "$HARNESS/aeon/src/run.rs" \
         && ok "the aeon binary itself carries the drain gate" \
         || bad "the aeon binary carries the drain gate" "no world.draining check in aeon/src/run.rs"
-    grep -q 'world.draining' "$HARNESS/spira/lib.sh" \
+    # world_gate is in-process in the sentinel crate now (wave 4.27, family G, sp-gzmd2);
+    # lib.sh's own copy is a one-line shim onto it, so the literal check lives in
+    # sentinel/src/summon.rs, not in lib.sh's own text any more.
+    grep -q 'world.draining' "$HARNESS/sentinel/src/summon.rs" \
         && ok "summon_fayth also carries it (cheaper: never starts the unit)" \
-        || bad "summon_fayth carries the drain gate" "no world.draining check in lib.sh"
+        || bad "summon_fayth carries the drain gate" "no world.draining check in sentinel/src/summon.rs"
     grep -q 'world.halted' "$HARNESS/aeon/src/run.rs" \
         && ok "the aeon binary carries the halt gate" \
         || bad "the aeon binary carries the halt gate" "no world.halted check in aeon/src/run.rs"
-    grep -q 'world.halted' "$HARNESS/spira/lib.sh" \
+    grep -q 'world.halted' "$HARNESS/sentinel/src/summon.rs" \
         && ok "summon_fayth carries the halt gate" \
-        || bad "summon_fayth carries the halt gate" "no world.halted check in lib.sh"
+        || bad "summon_fayth carries the halt gate" "no world.halted check in sentinel/src/summon.rs"
 fi
 
 # --------------------------------------------------------------------------------------
