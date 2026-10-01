@@ -1887,14 +1887,18 @@ conflict_reopen_note() {
 # PORTED (wave 4.35, sp-kelr2, row Q): the tiering/cache/seam logic above lives in `rule`
 # now (`rule/src/memories.rs` for the pure render, `rule/src/main.rs` for the cache and the
 # SPIRA_MEMORIES_CMD/bdq read) — this is the one-line shim onto its `render-memories` CLI
-# door, concierge.sh's own call site unchanged. SPIRA_HOME is threaded explicitly — conf.sh
-# deliberately never exports it (the EXEC-BOUNDARY TRAP comment at the top of this file);
-# SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE/SPIRA_MEMORIES_CACHE_AGE/SPIRA_MEMORIES_CMD need no
-# re-threading — test-render-memories.sh's own fixture calls already export them (bash prefix
-# assignment exports for that command's whole subtree), and production always passes core_csv
-# as $3 rather than relying on the env fallback.
+# door, concierge.sh's own call site unchanged. SPIRA_HOME and SPIRA_REPO are threaded
+# explicitly — conf.sh deliberately never exports either (the EXEC-BOUNDARY TRAP comment at
+# the top of this file) — SPIRA_REPO is the harness path the index tier's own "rule.sh show"
+# hint names, caught red by test-render-memories.sh's "rule.sh path is executable" the one
+# time this shim left it unthreaded. SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE/
+# SPIRA_MEMORIES_CACHE_AGE/SPIRA_MEMORIES_CMD need no re-threading — test-render-memories.sh's
+# own fixture calls already export them (bash prefix assignment exports for that command's
+# whole subtree), and production always passes core_csv as $3 rather than relying on the
+# env fallback.
 render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
-    SPIRA_HOME="${SPIRA_HOME:-}" rule --home "${SPIRA_HOME:-}" render-memories "$@"
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+        rule --home "${SPIRA_HOME:-}" render-memories "$@"
 }
 
 # Split a rendered persona prompt on <!-- task --> and write system.md / task.md.
