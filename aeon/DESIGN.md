@@ -458,7 +458,6 @@ is reimplemented in Rust, §6):
 
 | function | used for |
 |---|---|
-| `aeon_name_take` | the instance name (cursor file, live-name scan) |
 | `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
 | `release_own_claim` | every release (lifecycle Release + bd unassign) |
@@ -506,7 +505,10 @@ fence and create-time checks do not apply to any call the aeon makes itself); `a
 `aeon_claude_argv` (`persona_model` through the spira-config library on conf.sh's resolved
 `SPIRA_TOML_FILE`); `render_resume_brief`; `render_slain_brief`; `render_deadline_brief`;
 `render_holds_brief`; `bound_bead_notes`; the band/rank python (now `spira-claim`); the
-chamber overlay; placeholder substitution.
+chamber overlay; placeholder substitution; `aeon_name_take`/`aeon_named` (`aeon/src/naming.rs`,
+wave 4.23 sp-0ffox — this crate was `aeon_name_take`'s only caller, so it dropped off the
+seam entirely rather than keeping a lib.sh shim; `aeon_named` keeps an `aeon aeon-named
+<pidfile>` subcommand for cockpit-collect, the one caller left outside this crate).
 
 `lifecycle_enforce` is read as conf.sh reads it: the unit's environment wins
 (`SPIRA_LIFECYCLE_ENFORCE`, how fixtures pin it); otherwise `spira.lifecycle_enforce` from

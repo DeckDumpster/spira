@@ -134,9 +134,22 @@ JSONL
 
 SP_STUBS="$T/sp-stubs"
 mkdir -p "$SP_STUBS"
-for _s in pilgrimage.sh strand reflect.sh; do
+for _s in pilgrimage.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$SP_STUBS/$_s"; chmod +x "$SP_STUBS/$_s"
 done
+# strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims
+# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(aeon_count ...)` inside
+# lib.sh's pass-start summary print nothing, not "0", and blow up the arithmetic that adds
+# it. A plain no-op is still correct for strand's OWN verbs (report/check/throttle-state),
+# which is all this suite needs from it.
+cat > "$SP_STUBS/strand" <<'STRANDSTUB'
+#!/bin/sh
+case "$1" in
+    aeon-alive) exit 1 ;;
+    aeon-count|aeons-live-total|aeons-live-lanes) printf '0' ;;
+esac
+STRANDSTUB
+chmod +x "$SP_STUBS/strand"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
 printf '#!/bin/sh\necho inactive\n' > "$SP_STUBS/mock-systemctl"; chmod +x "$SP_STUBS/mock-systemctl"
