@@ -270,8 +270,10 @@ correct").
   inventory" row — gate-spira.sh:126 already runs `bash spira/inventory.sh` against the
   shipped tree on every landing; the mirrored re-run asserted nothing new, twice, on
   every branch.
-- **UC-safety-fences-16:** already covered by `test-aeon-settings-guard-allowlist.sh`
-  (added by sp-fjsxb); retrofitted its `# tier:`/`# covers:` header.
+- **UC-safety-fences-16:** was covered by `test-aeon-settings-guard-allowlist.sh`
+  (added by sp-fjsxb); retrofitted its `# tier:`/`# covers:` header. RETIRED by sp-j89pd
+  (2026-09-30, wave 4.2) along with `aeon_settings` itself — see the note at the end of
+  this file.
 - **UC-safety-fences-23, gap 4:** new `spira/test-exclude.sh` (T2). Fail-closed rows
   first (no harness signature in the path list), then the positive control (every
   forbidden shape flagged), clean paths, and `in_scope` narrowing. Writing it surfaced a
@@ -368,3 +370,23 @@ verdict on UC-32's partition rows — see below.
   placed and needed nothing.
 - **Gap 10** (test-aeon-dirty-commit CI-dead fix) was never this bead's — the filing
   above already moved it to sp-pohf2 before this bead ran.
+
+## Wave 4.2: `aeon_settings` retired dead (sp-j89pd, 2026-09-30)
+
+`aeon_settings` (lib.sh) has zero live callers — `aeon/src/run.rs::aeon_settings` is the
+Rust port, a pure function with a fixed two-entry `PreToolUse` allow-list
+(`aeon-fence.sh`, `bd-close-unacked-guard.sh`) built with no subprocess at all. Deleted
+with it: `test-aeon-settings-guard-allowlist.sh` (UC-safety-fences-16's gap 1, the
+allow-list itself) and `test-guards.sh`'s "Gap 2" (the `aeon_settings` python3-failure
+fallback) — that failure mode cannot occur in the Rust port, since nothing shells out to
+python3 to build the settings JSON any more. `test-guards.sh` keeps every other row
+(UC-safety-fences-01–05, 15) and drops UC-safety-fences-16 from its `# covers:` line.
+UC-safety-fences-16 is marked `[use_case.uncovered]` in the TOML catalogue, citing
+`aeon::run::tests::settings_json_matches_python_dumps`.
+
+Also retired dead in the same bead, outside this area's own catalogue: `aeon_claude_argv`
+(table moved to `aeon/src/run.rs`, already exercised end to end by
+`test-aeon-prompt-layers.sh`'s T3 and `test-persona-model.sh`'s real-binary rows) and
+`fayth_fenced` (now `aeon/src/conf.rs` and `release/src/stage.rs`; `test-scope-label.sh`
+and `test-aeon-elastic-concurrency.sh` keep their still-live `fayth_get`/elastic-pool rows
+and lose only the direct `fayth_fenced` calls, neither of which carried a UC id here).

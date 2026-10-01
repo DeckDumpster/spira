@@ -81,6 +81,11 @@ id = "UC-safety-fences-16"
 tier = "T1"
 statement = "`aeon_settings` registers every guard meant for aeons, identically for the sweep and the claimed launch; a guard that is missing or not executable is reported, never silently dropped"
 
+[use_case.uncovered]
+reason = "aeon_settings (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — test-aeon-settings-guard-allowlist.sh deleted and test-guards.sh's Gap 2 (aeon_settings' python3-failure fallback) removed with it: aeon::run::aeon_settings is pure Rust with a fixed two-entry allow-list and no python3 subprocess, so that failure mode is structurally gone, not merely moved. Covered by aeon/src/run.rs::tests::settings_json_matches_python_dumps (missing-hook-excluded / present-hook-named)"
+date = "2026-09-30"
+bead = "sp-j89pd"
+
 [[use_case]]
 id = "UC-safety-fences-17"
 tier = "T2"

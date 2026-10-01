@@ -814,17 +814,6 @@ aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a li
     return 0
 }
 
-# aeon_own_unit -> this process's own spira-aeon-*.service unit name, or empty when not
-# running under one (a suite, a hand-run session, the pid-file fallback path).
-#
-# READ FROM /proc/self/cgroup, not passed down as an argument: systemd-run picks the unit
-# name (aeon.sh:2299, "spira-aeon-$f-$(date +%s)") before exec'ing this script, so nothing
-# in the aeon's own argv or environment carries it back. The cgroup path systemd places the
-# process in names the unit as its last non-empty segment, on both v1 and v2 hierarchies.
-aeon_own_unit() {
-    grep -oE 'spira-aeon-[^/[:space:]]+\.service' /proc/self/cgroup 2>/dev/null | tail -n1
-}
-
 # aeon_count <fayth> [exclude-unit] -> how many aeons of that fayth are genuinely running.
 #
 # THE UNIT LIST, NOT THE PID FILE, for the same reason aeons_live_total reads units: aeon.sh
@@ -3599,24 +3588,6 @@ session_outcome() {      # session_outcome <trace-file> -> unlanded|refused|kill
     if [ "$acted" = 0 ]; then printf 'unlanded'; else printf 'refused'; fi
 }
 
-# Does this outcome say something about the WORK? Exactly one does. Kept as a function rather
-# than an inline test so that adding an outcome forces a decision here instead of silently
-# inheriting whichever default the call site happens to have.
-outcome_charges() {      # outcome_charges <outcome> -> rc 0 when it may charge an attempt
-    case "${1:-}" in unlanded) return 0 ;; *) return 1 ;; esac
-}
-
-# bead_has_label <bd-show-json> <label> -> rc 0 if the label is present on the first row.
-# Pulled out of the read-after-claim poison check so it is a table row, not a grep.
-bead_has_label() {
-    python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)' "${2:-}" <<<"${1:-}"
-}
-
 # open_ask_blocker <bd-show-json> <bead-id> -> rc 0 if the bead carries an open,
 # ask-labelled `blocks` dependency (feeds aeon_disposition's decision_blocked input).
 # Pulled out of aeon.sh cleanup() (sp-eq8a4.2.1 precedent) so it is testable with crafted
@@ -3648,89 +3619,6 @@ open_ask = [x for x in deps
                      and "Close GitHub issue " in (x.get("title") or "")
                      and close_sfx in (x.get("title") or ""))]
 sys.exit(0 if open_ask else 1)' "${2:-}" <<<"${1:-}"
-}
-
-# aeon_disposition — the teardown decision for an OPEN bead at the end of one aeon.sh run,
-# pulled out of cleanup() so the precedence between its branches is a table, not read order
-# in a 300-line if-chain. cleanup() gathers every input below (each one is either a file the
-# heartbeat/harness left behind, or one more read of state cleanup() already needed) and
-# performs the side effects the returned verdict names; this function decides only.
-#
-# CHARGING IS DEFAULT-DENY: an attempt counts toward poison only when the trace can say the
-# WORK failed. Capacity loss, a thrash, an unfinished gate, a decision/operator wait, a
-# lane-cap timeout and a harness requeue are all evidence about something other than the
-# work, so they are exempted (free). A free disposition whose note tells the bead no attempt
-# was charged must read a real `unjudged-<cause>` for requeue-cause, never `-`: the claim
-# event is already on record, and `-` means aeon.sh's case block has nothing to pass
-# bump_requeue, so no net-zero event is ever written and the claim charges anyway. Only
-# `unlanded` (ran to its own end, left the bead open) and a lease lapse charge.
-#
-# Inputs, in precedence order (each yes/no unless noted, `-` standing in for "empty" so a
-# fixed-width read never loses a field to word-splitting):
-#   status            the bd-show status of the still-open bead (used only by the fallthrough)
-#   capacity_rc       0 if capacity_reset_at succeeded against this session's trace
-#   slain             .slain marker present
-#   thrash            .thrash marker present
-#   thrash_charged    the same branch's tip has now thrashed SPIRA_THRASH_STREAK_CAP times
-#   lapsed            .lapsed marker present
-#   gate_unfinished   gate_unfinished succeeded (a gate for this branch is still deciding)
-#   decision_blocked  the bead carries an open ask-labelled `blocks` dependency
-#   session_rc        SESSION_RC (claude CLI's own exit code)
-#   committed         "yes" if the verdict block found a commit naming this bead
-#   requeue_cause     REQUEUE_CAUSE if the harness itself reopened this bead, else `-`
-#   operator_wait     .operator-wait marker present
-#   yield_headless    session_yield_headless on this session's trace
-#   session_started   0 if the aeon died before the claude session ever ran
-#   outcome           session_outcome on this session's trace, else `-` when never started
-#   submitted         (optional, default no) the open bead carries SPIRA_SUBMITTED_LABEL —
-#                     its work bead's close was converted to submitted (sp-qsona); free,
-#                     ranked just below operator_wait
-#
-# Output: one line, "<ledger-status> <charge|free> <requeue-cause> <note-key>".
-aeon_disposition() {
-    local status="$1" capacity_rc="$2" slain="$3" thrash="$4" thrash_charged="$5" \
-        lapsed="$6" gate_unfinished="$7" decision_blocked="$8" session_rc="$9" \
-        committed="${10}" requeue_cause="${11}" operator_wait="${12}" \
-        yield_headless="${13}" session_started="${14}" outcome="${15}" submitted="${16:-no}"
-    [ "$requeue_cause" = "-" ] && requeue_cause=""
-    [ "$outcome" = "-" ] && outcome=""
-
-    if [ "$capacity_rc" = 0 ]; then printf 'capacity free unjudged-capacity capacity\n'; return 0; fi
-    if [ "$slain" = yes ]; then printf 'slain free unjudged-slain slain\n'; return 0; fi
-    if [ "$thrash" = yes ]; then
-        if [ "$thrash_charged" = yes ]; then
-            printf 'requeue-thrash-charged charge thrash-stale thrash-charged\n'
-        else
-            printf 'requeue-thrash free thrash thrash\n'
-        fi
-        return 0
-    fi
-    # LEASE LAPSE IS A VERDICT — the one marker-driven branch that charges. See aeon.sh cleanup().
-    if [ "$lapsed" = yes ]; then printf 'lapsed charge - lapsed\n'; return 0; fi
-    if [ "$gate_unfinished" = yes ]; then
-        printf 'gate-unfinished free unjudged-gate-unfinished gate-unfinished\n'; return 0
-    fi
-    if [ "$decision_blocked" = yes ]; then
-        printf 'decision-blocked free unjudged-decision-blocked decision-blocked\n'; return 0
-    fi
-    if [ "$session_rc" = 124 ] && [ "$committed" != yes ]; then
-        printf 'timeout free unjudged-timeout timeout\n'; return 0
-    fi
-    if [ -n "$requeue_cause" ]; then
-        printf 'requeue-%s free %s requeue\n' "$requeue_cause" "$requeue_cause"; return 0
-    fi
-    if [ "$operator_wait" = yes ]; then
-        printf 'operator-wait free unjudged-operator-wait operator-wait\n'; return 0
-    fi
-    # SUBMITTED IS NOT UNLANDED: the work is done and waits on the landing pass to close it.
-    if [ "$submitted" = yes ]; then printf 'submitted free - submitted\n'; return 0; fi
-    if [ "$yield_headless" = yes ]; then printf 'yield-headless charge - yield-headless\n'; return 0; fi
-    if [ "$session_started" = 0 ]; then printf 'pre-session charge - pre-session\n'; return 0; fi
-    if outcome_charges "$outcome"; then
-        printf '%s charge - unlanded\n' "${status:-?}"
-    else
-        printf '%s free unjudged-%s not-judged\n' "${status:-?}" "$outcome"
-    fi
 }
 
 # session_yield_headless <logfile> -> 0 if the session's last turn ended waiting for a
@@ -3843,148 +3731,6 @@ rapid_recur_check() {
         >/dev/null 2>&1 || true
     spira_event aeon.rapid "$BEAD_ID" \
         "Rapid-recur: $BEAD_ID — $_count consecutive sub-10s aeon summons (setup loop) — parked" || true
-}
-
-# --------------------------------------------------------------------------------------
-# session_result_fields <trace-file> -> one line of `key=value` pairs saying what the
-# attempt COST, ready to append to a ledger line:
-#
-#   wall_s          seconds the session ran, wall clock
-#   api_s           seconds of that spent inside the API
-#   turns           num_turns, the client's own count
-#   in_tok          fresh input tokens
-#   cache_read_tok  prompt cache re-reads — two orders of magnitude larger, and the figure
-#                   that predicts a rate limit
-#   out_tok         output tokens
-#   think_tok       of those, thinking
-#   cost_usd        total_cost_usd, four decimals
-#
-# WHY IT IS KEPT AT ALL. Every one of these is already computed by the client and written to
-# the terminal `result` record of every session, and nothing kept any of it — so the first
-# time anyone asked where an aeon's hours went it took a purpose-built script over tens of
-# megabytes of traces to answer, once, by hand. On the ledger line it is an awk one-liner
-# over one small file, and cost per landed bead becomes a number a panel can read.
-#
-# ALL `result` RECORDS OF THE LAST ATTEMPT, through attempt_trace and never the raw file.
-# The trace is appended to across attempts, so a session that was refused before it could
-# speak would otherwise be billed the previous attempt's tokens — the same boundary error
-# that charges a refusal as a verdict about the work, arriving as a cost figure instead of a
-# poison count. Several `result` records in one segment is not a malformed trace: a session
-# woken by a task notification emits a second record for the notification turn only, so the
-# last record alone would mix scopes — its per-turn metrics describe the wake-up while its
-# total_cost_usd is the session cumulative. Per-turn fields are SUMMED across all records
-# so the session total is reported. Cumulative fields (duration_api_ms, total_cost_usd) are
-# taken from the last record, where the client has fully accumulated them.
-#
-# EVERY FIELD IS INDEPENDENTLY `?`, AND NEVER 0. A record with no `duration_ms` has been
-# observed in the wild beside one carrying it, so "the trace had no result at all" and "this
-# client did not report that figure" have to be distinguishable from "the session spent
-# nothing" — a refused session really did cost nearly nothing, and averaging the unreadable
-# in with it is how a cost-per-bead figure comes out reassuring exactly when the harness is
-# failing (law-absence-needs-a-positive-control).
-#
-# The program arrives on FD 3 because stdin is the trace; `python3 - <<PY` reads the heredoc
-# as the data and discards the pipe unread.
-# --------------------------------------------------------------------------------------
-session_result_fields() {
-    local f="${1:-}" out
-    # PIPED, NEVER THROUGH A VARIABLE. A segment can be tens of megabytes, and this runs in a
-    # teardown that must not be the reason an aeon fails to record what it did. An absent or
-    # unreadable file feeds the same program an empty stream, so the "no result record" line
-    # below is rendered by one code path rather than by a second copy of the key names.
-    out="$( { [ -n "$f" ] && [ -r "$f" ] && attempt_trace "$f" 0 2>/dev/null; true; } \
-            | python3 /dev/fd/3 3<<'PY' 2>/dev/null
-import json, sys
-
-def obj(parent, key):
-    v = parent.get(key)
-    return v if isinstance(v, dict) else {}
-
-def num(v, div=1):
-    # bool IS AN int IN PYTHON, and a JSON `true` rendered as 1 would be a token count that
-    # was never a token count. Anything that is not a real number is unknown, which includes
-    # the JSON null this client writes for fields it did not fill in.
-    if isinstance(v, bool) or not isinstance(v, (int, float)):
-        return "?"
-    return "%d" % round(v / div)
-
-def money(v):
-    if isinstance(v, bool) or not isinstance(v, (int, float)):
-        return "?"
-    return "%.4f" % v
-
-# A CHEAP PREFILTER FIRST. Nearly every line of a trace is an assistant or tool event and
-# parsing all of them to find result records is the difference between a millisecond and a
-# second on a large segment. The parse below is still the test — the substring only
-# decides what is worth parsing.
-records = []
-for line in sys.stdin:
-    if '"type":"result"' not in line:
-        continue
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        d = json.loads(line)
-    except ValueError:
-        continue          # a partial last line is normal on a killed session
-    if isinstance(d, dict) and d.get("type") == "result":
-        records.append(d)
-
-def sumf(field_fn):
-    """Sum field_fn(d) across all records; None if the field never appeared."""
-    total = None
-    for d in records:
-        v = field_fn(d)
-        if isinstance(v, bool) or not isinstance(v, (int, float)):
-            continue
-        total = (total or 0) + v
-    return total
-
-def lastf(field_fn):
-    """Last non-None numeric value of field_fn across all records."""
-    result = None
-    for d in records:
-        v = field_fn(d)
-        if not isinstance(v, bool) and isinstance(v, (int, float)):
-            result = v
-    return result
-
-# PER-TURN FIELDS: summed across all result records so the session total is
-# reported even when a notification wake-up adds a second result record. Taking
-# only the last record would report only that turn, while total_cost_usd is
-# already the session cumulative — producing the impossible wall_s < api_s.
-wall_ms   = sumf(lambda d: d.get("duration_ms"))
-turns     = sumf(lambda d: d.get("num_turns"))
-in_tok    = sumf(lambda d: obj(d, "usage").get("input_tokens"))
-cache_tok = sumf(lambda d: obj(d, "usage").get("cache_read_input_tokens"))
-out_tok   = sumf(lambda d: obj(d, "usage").get("output_tokens"))
-think_tok = sumf(lambda d: obj(obj(d, "usage"), "output_tokens_details").get("thinking_tokens"))
-
-# CUMULATIVE FIELDS: the client accumulates these across all turns and writes the
-# running session total into each result record, so the last record holds the
-# session total. api_s > wall_s is structurally impossible once wall_s is also
-# the session total, and any trace that produced it is self-evidently broken.
-api_ms = lastf(lambda d: d.get("duration_api_ms"))
-cost   = lastf(lambda d: d.get("total_cost_usd"))
-
-sys.stdout.write("wall_s=%s api_s=%s turns=%s in_tok=%s cache_read_tok=%s out_tok=%s think_tok=%s cost_usd=%s" % (
-    num(wall_ms, 1000),
-    num(api_ms, 1000),
-    num(turns),
-    num(in_tok),
-    num(cache_tok),
-    num(out_tok),
-    num(think_tok),
-    money(cost),
-))
-PY
-    )"
-    # THE ONE CASE THE PROGRAM ABOVE CANNOT RENDER: no python3 to run it. Nothing else in
-    # this library works without one, so this is insurance rather than a path — but a ledger
-    # line silently missing its fields would read as an older line rather than as a broken
-    # one, and every key here has to exist for a reader to be able to tell.
-    printf '%s' "${out:-wall_s=? api_s=? turns=? in_tok=? cache_read_tok=? out_tok=? think_tok=? cost_usd=?}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -4168,34 +3914,6 @@ aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, i
 # --------------------------------------------------------------------------------------
 SPIRA_TRACE_MARK='=== spira attempt'
 
-# spira_trace_mark <logfile> <aeon> -> the separator line that opens a new attempt.
-#
-# THE ORDINAL COUNTS MARKS ALREADY IN THE FILE, not the bead's `sp-attempt-N` labels. An
-# attempt is only CHARGED when a session fails, and a session refused by the account is
-# deliberately charged nothing — so the label count answers "how many failures were blamed on
-# this work", which is a different question from "which session am I reading" and was off by
-# every successful and every refused run. Here the file is its own authority.
-#
-# `kept=` IS THE METER, and it is here because nothing prunes these logs. Appending trades
-# bounded disk for a complete history, and the quantity given away is exactly the bytes
-# already retained for this bead — so it is recorded at the head of every attempt rather than
-# left to be discovered when a volume fills (law-take-the-simple-fix-with-a-meter). A bead
-# whose mark lines show `kept=` climbing into the hundreds of megabytes is the signal that
-# this simple choice has stopped being adequate.
-spira_trace_mark() {
-    local f="${1:-}" who="${2:-?}" kept n
-    kept="$(stat -c %s "$f" 2>/dev/null || echo 0)"
-    # BOTH READS ARE ALLOWED TO FAIL, and both say so. The first attempt on a bead finds no
-    # file at all and a fresh one finds no mark, so `stat` exits 1 and `grep -c` exits 1
-    # having printed `0` — ordinary answers, not errors. Under a caller running `set -e` a
-    # bare assignment from either would abort the shell at the exact line that opens the
-    # log, which is the one place a failure costs the whole attempt.
-    n="$(grep -c "^$SPIRA_TRACE_MARK " "$f" 2>/dev/null || true)"
-    printf '%s %s aeon=%s at=%s kept=%s\n' \
-        "$SPIRA_TRACE_MARK" "$(( ${n:-0} + 1 ))" "$who" \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${kept:-0}"
-}
-
 # attempt_trace <logfile> [cap] -> the LAST attempt's segment, at most <cap> trailing bytes
 # (0 or absent means all of it). A log with no mark in it is emitted whole, because that is
 # what every log written before this change looks like and one attempt is all it ever held.
@@ -4234,43 +3952,6 @@ with fh:
         carry = buf[:keep]
     fh.seek(max(start, size - cap) if cap > 0 else start)
     sys.stdout.buffer.write(fh.read())
-PY
-}
-
-# trace_segment <logfile> <attempt> -> that attempt's own bytes, 1-indexed by
-# SPIRA_TRACE_MARK count (a log with no mark in it IS attempt 1, whole — same legacy
-# fallback as attempt_trace). Unlike attempt_trace, this reads the whole file and scans
-# forward: it exists for tests and small tools that want a NAMED past attempt, never for
-# the per-heartbeat path attempt_trace guards against a full read of a growing trace.
-trace_segment() {
-    local f="${1:-}" n="${2:-1}"
-    [ -r "$f" ] || return 0
-    python3 - "$f" "$n" "$SPIRA_TRACE_MARK" <<'PY'
-import sys
-
-path, n, mark = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
-try:
-    data = open(path, "rb").read()
-except OSError:
-    raise SystemExit(0)
-nl_mark = b"\n" + mark
-starts = []
-if data.startswith(mark):
-    starts.append(0)
-i = 0
-while True:
-    j = data.find(nl_mark, i)
-    if j < 0:
-        break
-    starts.append(j + 1)
-    i = j + 1
-if not starts:
-    if n == 1:
-        sys.stdout.buffer.write(data)
-    raise SystemExit(0)
-bounds = starts + [len(data)]
-if 1 <= n <= len(starts):
-    sys.stdout.buffer.write(data[bounds[n - 1]:bounds[n]])
 PY
 }
 
@@ -4498,40 +4179,6 @@ else:
 }
 
 # --------------------------------------------------------------------------------------
-# still_waiting <logfile> -> 0 if the silence is a legitimate wait, 1 if it is a stall.
-#
-# (the operator, verbatim: "before you kill an aeon for being idle ... do a quick inference
-# check to see whether the last log message indicates that it's WAITING for something that
-# might take longer than 10 minutes and extend the deadline accordingly".)
-#
-# Two tiers, cheapest first — the same rule the sentinel follows. A session blocked on
-# `gh run watch` emits no trace for the whole of a CI run and is the likeliest long silence
-# here; recognising that by pattern costs nothing. Inference is reached only when the last
-# action is not a known wait, which is precisely the case where there is no rule to apply.
-# --------------------------------------------------------------------------------------
-still_waiting() {
-    local f="$1" last verdict
-    last="$(trace_last "$f")"
-    [ -n "$last" ] || return 1          # nothing to judge: treat as stalled
-
-    # TIER 1 — known long waits, by pattern. No model, no cost, no latency.
-    case "$last" in
-        *"gh run watch"*|*"gh pr checks"*|*"gh run view"*|*"--watch"*) return 0 ;;
-        *"cargo build"*|*"cargo test"*|*"npm test"*|*"npm run build"*|*"make "*) return 0 ;;
-        *"sleep "*|*"until "*|*"while "*|*"docker build"*|*"podman build"*) return 0 ;;
-        *"git clone"*|*"git fetch"*|*"bd import"*|*"dolt "*) return 0 ;;
-    esac
-
-    # TIER 2 — judgement, only because tier 1 had no answer. Small model, tight question,
-    # short ceiling: this runs while a lease is on the line and must not itself hang.
-    command -v claude >/dev/null 2>&1 || return 1
-    verdict="$(printf 'A background agent has produced no output for several minutes. Its last action was:\n\n%s\n\nIs it plausibly WAITING on something that legitimately takes more than ten minutes (a CI run, a build, a large clone, a long test suite, a rate limit), or is it STUCK? Answer with exactly one word: WAITING or STUCK.' "$last" \
-        | timeout 90 claude -p --model "${SPIRA_LIVENESS_MODEL:-claude-haiku-4-5-20251001}" 2>/dev/null | tr -d "[:space:]" | tr "[:lower:]" "[:upper:]")"
-    case "$verdict" in *WAITING*) return 0 ;; esac
-    return 1
-}
-
-# --------------------------------------------------------------------------------------
 # aeon_fuse_minutes <bead-id> <worktree> <repo-name> -> minutes since the deliverable
 # last moved, "gate" if a live gate is running, or "?" if the probe failed.
 #
@@ -4618,59 +4265,6 @@ aeon_lease_minutes() {
     fi
     now="${SPIRA_NOW:-$(date +%s)}"
     printf '%d' "$(( (deadline - now) / 60 ))"
-}
-
-# fayth_lease_seconds [minutes] -> the liveness lease duration in seconds. THE ONE PLACE
-# FAYTH_LEASE_MINUTES IS READ. Every fayth declares it in minutes because that is the unit an
-# operator reasons in; the heartbeat wants seconds, and this is the only arithmetic that may
-# convert between them, so a fayth's declared value and the duration actually enforced cannot
-# drift apart the way FAYTH_LEASE_MINUTES and the old hardcoded FAYTH_LEASE_SECONDS did.
-fayth_lease_seconds() {
-    printf '%d' $(( ${1:-10} * 60 ))
-}
-
-# hb_wait_outcome <wait-exit-status> -> shutdown | ok | retry
-#
-# Classifies why `wait` on the heartbeat's own sleep child returned. A signal-caused exit
-# (128+n) means something deliberately killed that child — cleanup() kills the heartbeat's
-# sleep before it signals the heartbeat subshell itself, so this is the ordinary shutdown
-# path. Anything else (the child could not be forked under load, or was reaped before the
-# wait ever ran) is NOT a shutdown, and treating it as one leaves the aeon running with its
-# lease unenforced for the rest of the session — silently, since nothing else notices.
-hb_wait_outcome() {
-    local rc="${1:-0}"
-    if   [ "$rc" -eq 0 ] 2>/dev/null; then printf 'ok'
-    elif [ "$rc" -gt 128 ] 2>/dev/null; then printf 'shutdown'
-    else printf 'retry'
-    fi
-}
-
-# --------------------------------------------------------------------------------------
-# hb_tick <prev_mtime> <cur_mtime> <now> <deadline> <fuse> <wall> <session_start>
-#   -> ok | renew | lapse | thrash
-#
-# THE HEARTBEAT'S DECISION, EXTRACTED. aeon.sh's heartbeat subshell used to make this call
-# inline, so the only way to test it was a copy of the same three `if`s rewritten inside the
-# test — which proves the copy self-consistent, not the aeon. One function, called from both.
-#
-# ORDER MATTERS AND MIRRORS THE ORIGINAL INLINE CODE: trace growth renews unconditionally
-# (the caller's new deadline is always in the future, so a tick that grew never also lapses);
-# only a still trace can lapse; only a trace that neither grew nor lapsed can thrash. A fuse
-# of anything but a plain non-negative integer (including "?", a probe failure) never trips.
-# --------------------------------------------------------------------------------------
-hb_tick() {
-    local prev_mtime="$1" cur_mtime="$2" now="$3" deadline="$4" fuse="$5" wall="$6" session_start="$7"
-    if [ "$cur_mtime" != "$prev_mtime" ]; then
-        printf 'renew'; return 0
-    fi
-    if [ "$now" -ge "$deadline" ]; then
-        printf 'lapse'; return 0
-    fi
-    local dsess=$(( (now - session_start) / 60 ))
-    if [[ "${fuse:-?}" =~ ^[0-9]+$ ]] && [ "$fuse" -ge "$wall" ] && [ "$dsess" -ge "$wall" ]; then
-        printf 'thrash'; return 0
-    fi
-    printf 'ok'
 }
 
 # --------------------------------------------------------------------------------------
@@ -5135,81 +4729,8 @@ system_prompt_split() {
     esac
 }
 
-# bead_has_label <json> <label> -> rc 0 if <label> is among the bead's labels. <json> is a
-# `bd show --json` (or `bd ready --claim` payload) blob. Unreadable or empty JSON is rc 1
-# (fail OPEN to "absent"): both call sites treat "could not tell" the same as "not carrying
-# the label" and proceed rather than block on a read that could not complete.
-bead_has_label() {
-    local json="${1:-}" label="${2:-}"
-    [ -n "$json" ] || return 1
-    python3 -c '
-import sys, json
-try: d = json.loads(sys.argv[2])
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-sys.exit(0 if d and sys.argv[1] in (d[0].get("labels") or []) else 1)
-' "$label" "$json" 2>/dev/null
-}
 
-# world_stop_decide <has-label:0|1> <live-aeon-list> <skip:0|1> -> none|refuse|stop
-#
-# A bead labelled SPIRA_WORLD_STOP_LABEL declares it needs the world halted while it runs.
-# <has-label> is the caller's own bead_has_label check; <live-aeon-list> is a comma-joined
-# list of other live aeon pidfile names (empty when none); <skip> is whether
-# SPIRA_WORLD_STOP_SKIP was set to anything non-empty (the operator's override).
-#
-#   none   — no halting label; proceed exactly as any other bead
-#   refuse — the label is present, live aeons are running, and no override: release the
-#            claim rather than stop the world under them
-#   stop   — the label is present and either no live aeons or the operator overrode it: the
-#            caller runs `world.sh stop` before the session and `world.sh start` after
-world_stop_decide() {
-    local has_label="${1:-0}" live="${2:-}" skip="${3:-0}"
-    [ "$has_label" = 1 ] || { printf 'none'; return 0; }
-    if [ -n "$live" ] && [ "$skip" != 1 ]; then
-        printf 'refuse'; return 0
-    fi
-    printf 'stop'
-}
 
-# sop_rule_verdict <before-ok:0|1> <shelf-before> <after-ok:0|1> <shelf-after> <applied-rc>
-#   -> "<wrote> <verdict>", wrote is yes|no|unreadable, verdict is satisfied|decline|poison
-#
-# The closing rule (FAYTH_SOP_REQUIRED): an incident closed with no runbook behind it has
-# its close undone. <shelf-before>/<shelf-after> are `sop digest` lines taken either side
-# of the session; a line present after and absent before is a write or an amendment. A
-# retirement (shelf shrinks, no new line) does not discharge the rule — curation is not the
-# thing the incident was supposed to leave behind. <applied-rc> is `sop log --bead <id>
-# --check pass --since <session-epoch>`'s own exit code: 0 recorded, 1 read and no such
-# record, anything else unreadable.
-#
-#   satisfied — a write/amendment was seen, or an application was recorded (either honest
-#               ending is enough; `--held no` still counts, `--check fail` alone does not)
-#   decline   — the shelf or the ledger could not be read either side: absence is not
-#               proven, so nothing is poisoned (law-absence-needs-a-positive-control)
-#   poison    — neither: the session closed the incident and left nothing behind
-sop_rule_verdict() {
-    local before_ok="$1" before="$2" after_ok="$3" after="$4" applied="$5"
-    local wrote=no
-    if [ "$before_ok" = 1 ] && [ "$after_ok" = 1 ]; then
-        local l
-        while IFS= read -r l; do
-            [ -n "$l" ] || continue
-            grep -qxF -- "$l" <<< "$before" || { wrote=yes; break; }
-        done <<< "$after"
-    else
-        wrote=unreadable
-    fi
-    local verdict
-    if [ "$wrote" = yes ] || [ "$applied" = 0 ]; then
-        verdict=satisfied
-    elif [ "$wrote" = unreadable ] || [ "$applied" != 1 ]; then
-        verdict=decline
-    else
-        verdict=poison
-    fi
-    printf '%s %s' "$wrote" "$verdict"
-}
 
 # groom_claims_verified <new-log-lines> <ask-json> <epoch> -> "" (nothing claimed, or every
 # claim verified) | comma-space-separated ids claimed but unproven
@@ -5270,130 +4791,10 @@ print(", ".join(unproven))
     return $_rc
 }
 
-# aeon_settings -> the --settings JSON that wires aeon-fence.sh and the mail/unacked-comment
-# delivery hooks into a claude session. Reads only $SPIRA_HOME (which hooks exist and are
-# executable), so both the sweep and the claimed-bead launch call the one function and carry
-# the same guards (law-guard-binds-the-caller).
-#
-# THE env BLOCK KEEPS COMMANDS IN THE FOREGROUND. A headless session has no channel for the
-# "moved to the background" notification the Bash tool sends past its default 120s: the
-# session ends the turn waiting for a wakeup that never comes, and the bead is left
-# in_progress with nothing having failed (sp-47d49). Raising the timeouts and disabling
-# auto-backgrounding outright is cheaper than teaching every aeon prompt to avoid the trap.
-aeon_settings() {
-    python3 -c "
-import json, os
-spira_home = '$SPIRA_HOME'
-hooks = {}
-mail    = os.path.join(spira_home, 'hooks', 'aeon-mail-deliver.sh')
-deliver = os.path.join(spira_home, 'bd-unacked-comment-deliver.sh')
-post_hooks = [{'type': 'command', 'command': mail, 'timeout': 5}]
-if os.access(deliver, os.X_OK):
-    post_hooks.append({'type': 'command', 'command': deliver, 'timeout': 5})
-hooks['PostToolUse'] = [{'hooks': post_hooks}]
-pre_hooks = []
-fence = os.path.join(spira_home, 'hooks', 'aeon-fence.sh')
-if os.access(fence, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': fence, 'timeout': 5})
-guard = os.path.join(spira_home, 'bd-close-unacked-guard.sh')
-if os.access(guard, os.X_OK):
-    pre_hooks.append({'type': 'command', 'command': guard, 'timeout': 5})
-if pre_hooks:
-    hooks['PreToolUse'] = [{'hooks': pre_hooks}]
-env = {
-    'BASH_DEFAULT_TIMEOUT_MS': '1800000',
-    'BASH_MAX_TIMEOUT_MS': '3600000',
-    'CLAUDE_CODE_DISABLE_BACKGROUND_TASKS': '1',
-    }
-print(json.dumps({'hooks': hooks, 'env': env}))
-" 2>/dev/null
-}
 
-# aeon_claude_argv <system-prompt-flag> <system-prompt-file> -> the claude CLI argv (minus
-# the binary itself and the task piped on stdin), one token per line so a caller builds the
-# array with `mapfile -t argv < <(aeon_claude_argv ...)`. Both the sweep and the bead call
-# site in aeon.sh used to carry their own copy of the --setting-sources/--settings assembly
-# (gap G12: only the sweep copy had a direct test); this is the one function both now call.
-#
-# A PURE FUNCTION OF THE FAYTH. FAYTH_PROJECT_INSTRUCTIONS=none gives --setting-sources user
-# in EITHER mode — the caller distinguishes sweep from bead only by which system-prompt file
-# it passes in, never by a second copy of this logic. --settings is omitted outright, not
-# passed empty, when aeon_settings() has nothing to say (no aeon-fence.sh, no delivery hook).
-aeon_claude_argv() {
-    local sys_flag="$1" sys_file="$2"
-    printf -- '-p\n--output-format\nstream-json\n--verbose\n--include-partial-messages\n--system-prompt-snapshot\non\n'
-    printf '%s\n%s\n' "$sys_flag" "$sys_file"
-    printf -- '--model\n%s\n' "$(persona_model "${FAYTH:-}")"
-    printf -- '--allowedTools\n%s\n' "${FAYTH_TOOLS:-Bash,Read,Edit,Write,Glob,Grep}"
-    printf -- '--dangerously-skip-permissions\n'
-    [ "${FAYTH_PROJECT_INSTRUCTIONS:-}" = "none" ] && printf -- '--setting-sources\nuser\n'
-    local settings
-    settings="$(aeon_settings)" || settings=""
-    [ -n "$settings" ] && printf -- '--settings\n%s\n' "$settings"
-}
 
-# render_resume_brief <branch> <work> <count> <log> -> the RESUME_BRIEF text telling the
-# model a prior session already committed on this branch, or empty when <count> is 0 or
-# unreadable ('?', a failed `rev-list --count`) — "resume rather than restart" is noise on a
-# branch the harness just cut from the base. <log> is the last few commits (caller's own
-# `git log -n 5` or similar), shown verbatim.
-render_resume_brief() {
-    local branch="$1" work="$2" n="$3" log="$4"
-    case "${n:-0}" in
-        0|'?') return 0 ;;
-    esac
-    printf '%s' "## Prior work on this branch
 
-\`$branch\` carries **$n** commit(s) from a previous session:
 
-\`\`\`
-$log
-\`\`\`
-
-Run \`git -C $work log --oneline\` and read the bead's notes (shown in \"The bead\" above)
-before doing any work. The notes record why the previous session did not land. Fix that
-specific problem — do not redo work that is already committed."
-}
-
-# render_slain_brief <last-subject> <count> <base> <slay-when> <diffstat> <logf> -> the
-# SLAIN_BRIEF text, or empty unless <last-subject> is a slay.sh wip-salvage commit (the shape
-# "...: wip — salvaged at slay (<reason>)"). Tells the next aeon to review the salvaged commit
-# before building on it, rather than assuming a prior session finished cleanly.
-render_slain_brief() {
-    local last_subject="$1" n="$2" base="$3" slay_when="$4" diffstat="$5" logf="$6"
-    case "$last_subject" in
-        *": wip — salvaged at slay ("*) ;;
-        *) return 0 ;;
-    esac
-    local why="${last_subject##*salvaged at slay (}"
-    why="${why%)}"
-    printf '%s' "## A previous attempt was slain
-
-A prior session was slain at ${slay_when:-unknown time} (${why:-unknown reason}). The branch carries **$n** commit(s) beyond \`$base\`${diffstat:+ ($diffstat)}; the last is a salvaged wip commit — review it before building on it.
-
-Prior transcript (do not inline; read only if needed): \`$logf\`"
-}
-
-# render_deadline_brief <at> <now> -> the DEADLINE_BRIEF text: the wall-clock kill time and
-# remaining seconds when <at> (an epoch) is given, or "no wall-clock deadline" when <at> is
-# empty (FAYTH_TIMEOUT_SECONDS unset for this fayth).
-render_deadline_brief() {
-    local at="${1:-}" now="${2:-}"
-    if [ -n "$at" ]; then
-        local left=$(( at - now ))
-        printf '%s' "**This session is killed at $(date -d "@$at" +'%H:%M:%S %Z' 2>/dev/null || printf 'epoch %s' "$at") — $left seconds from now.**
-The kill comes from outside the session, on a clock, and it is a wall rather than a request:
-work in progress is discarded and anything you learned that is not written down goes with it.
-Do not estimate what is left — read it, as often as you need to:
-
-    echo \$(( $at - \$(date +%s) ))"
-    else
-        printf '%s' "**This session has no wall-clock deadline.** It runs until its work is
-done. What ends a session that is not moving is the heartbeat: it stops when nothing has
-observably changed for several checks, the lease then expires, and the bead returns to the
-queue. So a long session is fine and a silent one is not."
-    fi
-}
 
 # bead_named_paths <text> <repo> -> path tokens in <text> that exist as tracked files in
 # <repo>, one per line, deduplicated. A bead usually names the files it is about in prose —
@@ -5424,86 +4825,7 @@ bead_named_paths() {
     done
 }
 
-# bound_bead_notes <keep-recurrences> <max-chars> <<< bead-show-text -> stdout
-#
-# A recurring incident (incident.sh) appends one "Recurrence N at <timestamp>." note per
-# recurrence and never trims: sp-kogm reached 404 of them, ~216k tokens, over the context
-# window of every aeon summoned to work it (sp-n3m6k). Keeps the newest <keep-recurrences>
-# such notes verbatim and folds everything older into one count line; a notes blob with no
-# recurrence markers at all (an ordinary bead) instead falls straight to the <max-chars>
-# tail-truncation below, since there is nothing to fold.
-#
-# THE NOTES SECTION IS FOUND BY THE HEADERS AROUND IT, not by byte offset: `bd show`'s NOTES
-# block runs from its own "NOTES" heading to whichever of LABELS/CHILDREN/BLOCKS/RELATED/
-# COMMENTS comes first, or end of text when a bead carries none of those (a bare, unlabelled
-# bead's NOTES is the last thing printed).
-bound_bead_notes() {
-    local keep="${1:-5}" max="${2:-8000}"
-    python3 -c '
-import re, sys
-keep = int(sys.argv[1])
-max_chars = int(sys.argv[2])
-text = sys.stdin.read()
 
-m = re.search(r"(?m)^NOTES$", text)
-if not m:
-    sys.stdout.write(text)
-    sys.exit(0)
-start = m.end()
-tail_m = re.search(r"(?m)^(LABELS:|CHILDREN$|BLOCKS$|RELATED$|COMMENTS$)", text[start:])
-end = start + tail_m.start() if tail_m else len(text)
-head, notes, tail = text[:start], text[start:end], text[end:]
-
-lines = notes.split("\n")
-marker = re.compile(r"^\s*Recurrence (\d+) at \S+\.\s*$")
-starts = [i for i, l in enumerate(lines) if marker.match(l)]
-if len(starts) > keep:
-    cut = len(starts) - keep
-    nums = [marker.match(lines[i]).group(1) for i in starts]
-    preamble = "\n".join(lines[:starts[0]])
-    banner = "\n  [%s earlier recurrence notes omitted — recurrences %s..%s]\n" % (
-        cut, nums[0], nums[cut - 1])
-    kept = "\n".join(lines[starts[cut]:])
-    notes = preamble + banner + kept
-
-if len(notes) > max_chars:
-    notes = ("\n  [notes truncated to the last %d characters]\n" % max_chars) + notes[-max_chars:]
-
-sys.stdout.write(head + notes + tail)
-' "$keep" "$max"
-}
-
-# render_holds_brief <bead-id> <holds-rc> <holds-output> -> the HOLDS_BRIEF text: which open
-# beads already have a branch touching a path this bead names, or empty when the check ran
-# clean and found none. <holds-output> is holds.sh's own stdout (tab-separated
-# bead-id/path lines); a line naming <bead-id> itself is filtered here — a resumed session's
-# own branch already touches its own paths, and that is not another holder.
-#
-# A NONZERO <holds-rc> RENDERS A VISIBLE MARKER, NEVER SILENCE. A check that could not run is
-# not the same fact as a check that ran and found nothing
-# (law-a-control-that-cannot-check-must-refuse).
-render_holds_brief() {
-    local bead_id="$1" rc="$2" out="$3" lines
-    if [ "$rc" != 0 ]; then
-        printf '%s' "## Files already in flight — COULD NOT CHECK
-
-holds.sh could not complete the check (see its stderr). Treat this as unknown, not as clear —
-grep for other branches touching the same files yourself before you edit."
-        return 0
-    fi
-    lines="$(printf '%s\n' "$out" | grep -v '^$' | awk -F'\t' -v me="$bead_id" '$1 != me')"
-    [ -n "$lines" ] || return 0
-    {
-        printf '%s\n' "## Files already in flight
-
-Another open bead already has a branch touching one of the files this bead names. Read it
-before you edit — two branches converging on the same lines cannot both rebase to land.
-"
-        printf '%s\n' "$lines" | while IFS="$(printf '\t')" read -r bid path; do
-            printf '  %s  %s\n' "$bid" "$path"
-        done
-    }
-}
 
 # dispatchable_open -> every non-closed bead the summoner can reach, one id a line.
 #
@@ -7784,71 +7106,6 @@ spira_reap_landed_branch() {
     return 0
 }
 
-# --------------------------------------------------------------------------------------
-# worktree_evict_foreign <work> <repo> — move a worktree aside unless it demonstrably belongs
-# to <repo>: another repository's, or one whose `.git` resolves to nothing. Prints the path it
-# was moved to. rc 0 = moved, 1 = nothing to do, 2 = refused.
-#
-# A WORKTREE PATH IS KEYED ON THE BEAD, AND A BEAD'S REPOSITORY CAN CHANGE. `repo:` is a
-# label, and correcting one is a deliberate mechanism — the landing gate refuses a branch cut
-# in the wrong repository, and the answer is to repoint the bead so the next aeon works it in
-# the right checkout. But the worktree path is derived from the bead id alone, so it is the
-# same path before and after, and a caller that reuses whatever it finds there makes the
-# correction unenforceable: one repointed bead kept the OLD repository's worktree, and every
-# summon after it attached to that tree, rebased the old repository's branch onto the old
-# repository's base, and handed the aeon a checkout in which the files the bead names do not
-# exist. Nothing failed and nothing said so, because `git worktree add` was never reached.
-#
-# MOVED ASIDE, NEVER REMOVED. The tree may hold uncommitted work from an aeon that died, and
-# a harness that deletes a tree to unblock itself is one that can destroy the only copy of
-# something. `git worktree move` keeps both registrations honest; a plain mv followed by
-# `worktree repair` is the fallback for a git that refuses the move.
-#
-# THE COMPARISON IS THE COMMON GIT DIR, resolved absolute, not the path or the remote. Two
-# checkouts of the same repository are legitimately different directories, and a worktree
-# always shares its parent's object store — so the common dir is the one identity that
-# answers "is this tree part of that repository" without a guess.
-# worktree_move_aside <path> <suffix> -> move a worktree directory aside, never delete it,
-# printing the new path. rc 0 = moved, 2 = refused (both move and mv failed).
-#
-# The one mechanism every eviction in this file uses, factored out so a second caller with a
-# different reason to evict (law-one-aeon-one-worktree: a bead's own branch found at a path
-# that isn't its canonical one) reuses it rather than growing its own copy.
-#
-# `worktree move` keeps the OWNING repository's registration pointing at the tree, which a
-# prune of the wanted repository cannot do. `repair` is the same job after a plain mv, and it
-# is BEST EFFORT: once the directory has moved the eviction has happened, and reporting
-# "refused" for a failed re-registration would make the caller die over a tree already out of
-# the way.
-worktree_move_aside() {
-    local work="$1" suffix="$2" aside
-    aside="$work.${suffix:-aside}"
-    [ -e "$aside" ] && aside="$aside.$(date +%s)"
-    if ! git -C "$work" worktree move "$work" "$aside" >/dev/null 2>&1; then
-        mv "$work" "$aside" 2>/dev/null || return 2
-        git -C "$aside" worktree repair "$aside" >/dev/null 2>&1 || true
-    fi
-    printf '%s' "$aside"
-    return 0
-}
-
-worktree_evict_foreign() {
-    local work="$1" repo="$2" have want other
-    [ -e "$work/.git" ] || return 1
-    want="$(git -C "$repo" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
-    [ -n "$want" ] || return 1
-
-    # AN UNREADABLE TREE IS EVICTED TOO, and it is the case that most needs it. A `.git` that
-    # resolves to nothing still satisfies the caller's existence check, so leaving it in place
-    # hands the aeon a broken checkout by the same silent route a foreign one does — and
-    # `git worktree add` is never reached, so again nothing fails. "Not demonstrably ours" is
-    # the test, not "demonstrably another's".
-    have="$(git -C "$work" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || have=""
-    [ "$have" != "$want" ] || return 1
-
-    other="$(basename "$(dirname "$have")")"
-    worktree_move_aside "$work" "${other:-foreign}"
-}
 
 # spira_prune_worktrees <repo> — `git worktree prune`, with the one case it gets wrong.
 #
@@ -8173,42 +7430,6 @@ recut_onto() {
     return $rc
 }
 
-# --------------------------------------------------------------------------------------
-# THE OWNERSHIP FENCE. An installation that imported a predecessor's databases holds
-# thousands of beads that predecessor is still writing to. An aeon that claims one of them is
-# racing a live worker, and both of them will do the work.
-#
-# `spira` is the ownership marker: measured, every native bead carried it and no imported one
-# did. That makes it the one label a predicate can be
-# REQUIRED to have — where `plan` or `incident` are each one persona's partition, `spira`
-# is the boundary of the whole system. Until now the boundary held only because two config
-# strings happened to be right, and a new fayth written without `spira` in FAYTH_LABELS
-# would consume the replica with nothing objecting. Refuse instead.
-#
-# This is not an embargo that expires at cutover. After cutover an imported bead becomes
-# Spira's by being LABELLED `spira`, one bead or one batch at a time and deliberately, so
-# the fence goes on meaning "Spira owns this" rather than "not yet".
-#
-# The herestring is not a pipe: `grep -q` closing it early cannot SIGPIPE a writer, which
-# is the trap law-no-grep-q-under-pipefail names.
-# --------------------------------------------------------------------------------------
-fayth_fenced() {         # fayth_fenced <name> <FAYTH_LABELS> -> 0 if safe to claim
-    local name="$1" labels="${2:-}"
-    if [ -z "$labels" ]; then
-        log "FENCE $name: FAYTH_LABELS is empty — that predicate selects the whole database."
-        return 1
-    fi
-    # When SPIRA_SCOPE_LABEL is empty the operator has explicitly disabled scope restriction;
-    # any non-empty predicate is intentional. When it is non-empty it must appear in the
-    # predicate, so a misconfigured fayth cannot see beads this fleet does not own.
-    if [ -z "${SPIRA_SCOPE_LABEL:-}" ]; then
-        return 0
-    fi
-    grep -qx "$SPIRA_SCOPE_LABEL" <<< "${labels//,/$'\n'}" && return 0
-    log "FENCE $name: FAYTH_LABELS='$labels' does not require '$SPIRA_SCOPE_LABEL' (SPIRA_SCOPE_LABEL)."
-    log "FENCE $name: Add '$SPIRA_SCOPE_LABEL' to it, or set SPIRA_SCOPE_LABEL= to allow unrestricted scope."
-    return 1
-}
 
 # --------------------------------------------------------------------------------------
 # LIVE-AEON CHECK. promote.sh and systemd/install.sh both reset the production checkout,
@@ -8369,41 +7590,6 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
     tr -d '\n' < "$f" 2>/dev/null
 }
 
-# queue_certified_list <repo-path>
-# Print "<id> <tip> <epoch>" for each CERTIFIED branch with a live ref.
-# Reads $SPIRA_RUN/landstate/<id>.
-# eviction_reopen <land-state-string> <cur-tip> <recent-eviction-requeues>
-#   -> reopen | stale | cap | none
-#
-# <land-state-string> is land_state's own output: "<state> <tip> <at> [reason]". Decides
-# whether a closed, committed bead was actually evicted mid-session (aeon.sh's caller gates
-# on st=closed/committed=yes first): EJECTED is always a batch eviction; RED counts only for
-# LAND_EVICTION_REASONS, so a gate-red or no-rebase@ close is not one. A stale recorded tip
-# (the session pushed past the eviction) leaves the close standing. At
-# SPIRA_EVICTION_ESCALATE_AT prior eviction-race requeues the caller escalates instead of
-# reopening again, so this never loops unbounded.
-eviction_reopen() {
-    local ls="$1" cur_tip="$2" recent="${3:-0}"
-    local state tip at reason
-    read -r state tip at reason <<< "$ls"
-    local is_eviction=0
-    if [ "${state:-}" = "EJECTED" ]; then
-        is_eviction=1
-    elif [ "${state:-}" = "RED" ]; then
-        local er
-        for er in $LAND_EVICTION_REASONS; do
-            [ "${reason:-}" = "$er" ] && { is_eviction=1; break; }
-        done
-    fi
-    [ "$is_eviction" = 1 ] || { printf 'none'; return 0; }
-    if [ -n "${tip:-}" ] && [ "$tip" != "none" ] && [ -n "$cur_tip" ] && [ "$tip" != "$cur_tip" ]; then
-        printf 'stale'; return 0
-    fi
-    if printf '%d' "$recent" >/dev/null 2>&1 && [ "$recent" -ge "${SPIRA_EVICTION_ESCALATE_AT:-3}" ]; then
-        printf 'cap'; return 0
-    fi
-    printf 'reopen'
-}
 
 queue_certified_list() {
     local br id f st tip epoch
