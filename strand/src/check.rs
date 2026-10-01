@@ -401,8 +401,20 @@ fn attempts_of(cfg: &Config, id: &str) -> Option<i64> {
     probe::sql_count(cfg, &q)
 }
 
-/// lib.sh spira_event: one line in `$SPIRA_RUN/events.log`, with a per-key cooldown kept in
-/// `$SPIRA_RUN/events/<key>` ("<last> <suppressed>").
+/// lib.sh `spira_event`: one line in `$SPIRA_RUN/events.log`, with a per-key cooldown kept in
+/// `$SPIRA_RUN/events/<key>` ("<last> <suppressed>"). `bead::event::emit`
+/// (`bead/src/event.rs`, sp-ogu8x, wave 4.24, family Z) is the same algorithm's owning-crate
+/// home now, but THIS copy is not delegated to it: `bead` depends on `strand` already (for
+/// `strand::probe::aeon_alive`), and a `strand` -> `bead` dependency the other way would be a
+/// cycle Cargo refuses to build. See `bead/DESIGN.md` "event" — "strand's own duplicate" for
+/// the full account and the follow-up this leaves (break the cycle with a third, lower crate
+/// before actually collapsing this copy).
+///
+/// One behavioural fix carried here independently of that consolidation: the LOGGED
+/// timestamp is the real wall clock (`wall_clock_now`), not `timefmt::now()` (which honours
+/// `$SPIRA_NOW`) — matching the bash's own fresh `date -u` call, which never read
+/// `$SPIRA_NOW` either. The cooldown *decision* and the cooldown file still use the
+/// (possibly injected) `now` the caller passes, exactly as the bash's own `now` variable did.
 pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: &str) {
     let Some(run_dir) = cfg.run.as_ref() else { return };
     let dir = run_dir.join("events");
@@ -416,7 +428,7 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
         .collect();
     let now = timefmt::now();
     let cooldown = cfg.event_cooldown;
-    // Prune cooldown files well past their window.
+    // Prune cooldown files well past their window — real wall-clock age, not `now`.
     let max_age = std::time::Duration::from_secs((((cooldown * 2) / 60 + 1) * 60).max(60) as u64);
     if let Ok(rd) = fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -454,7 +466,7 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
     let _ = fs::write(&f, format!("{now} 0\n"));
     let mut line = format!(
         "{}\tkind: {}\ttarget: {}\t{}",
-        timefmt::utc_stamp(now),
+        timefmt::utc_stamp(wall_clock_now()),
         kind,
         if target.is_empty() { "-" } else { target },
         title
@@ -467,6 +479,14 @@ pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: 
     if let Ok(mut fh) = fs::OpenOptions::new().create(true).append(true).open(run_dir.join("events.log")) {
         let _ = fh.write_all(line.as_bytes());
     }
+}
+
+/// The real wall clock, never `$SPIRA_NOW` — see `spira_event`'s doc comment.
+fn wall_clock_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 pub fn title_for(part: &str, kind: &str, id: &str) -> String {

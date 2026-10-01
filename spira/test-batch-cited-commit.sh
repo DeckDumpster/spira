@@ -30,7 +30,7 @@
 #      → no match; the ancestry check applies to explicit declarations too.
 #
 # defect: sp-c9d41
-# covers: spira/lib.sh
+# covers: spira/lib.sh landing-pass/src/*
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

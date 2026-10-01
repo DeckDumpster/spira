@@ -602,6 +602,7 @@ name = "landing-pass"
 version = "2.0.0"
 dependencies = [
  "libc",
+ "regex",
  "sending",
  "serde",
  "serde_json",

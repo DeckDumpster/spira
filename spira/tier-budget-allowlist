@@ -178,7 +178,6 @@ test-deploy.sh	T1	17.5
 test-destroy-branch.sh	T2	18.5
 test-destructive-bead.sh	T1	8.0
 test-drain-banner.sh	T1	2.5
-test-event.sh	T1	10.5
 test-express-lane.sh	T1	25.5
 test-fayth-project-instructions.sh	T1	4.5
 test-fayth-ready-error.sh	T1	15.0
