@@ -310,9 +310,7 @@ fn resolve_all_tags(w: &dyn World, repo: &Path) -> Result<Vec<String>, i32> {
                 ));
                 return Err(EXIT_CANNOT_CHECK);
             }
-            all_tags = w.tags_matching(&dir_path, "*.tag-sidecar");
-            all_tags.sort();
-            all_tags.dedup();
+            all_tags = w.local_tag_sidecars(&dir_path);
         } else if let Some(slug) = &rel_repo {
             match w.gh_release_list(slug) {
                 Ok(json) => {
@@ -409,7 +407,12 @@ pub fn check_local(w: &dyn World, activated_name: &str, manifest_commit: &str, e
         w.err(&format!("skew: cannot check — repo:{home} has no resolvable git checkout"));
         return EXIT_CANNOT_CHECK;
     }
-    let Some(base) = w.landref(&repo) else {
+    // BY NAME, NOT BY PATH. `landref` given a path re-derives the name via repo_name_at,
+    // which prefers SPIRA_HOME_REPO for a path matching SPIRA_REPO — `home` above is
+    // already the one true name for this checkout; re-deriving it a second, weaker way
+    // here would only be able to get it wrong (skew.sh's own `spira_landref "$home"`, not
+    // `spira_landref "$repo"`).
+    let Some(base) = w.landref(Path::new(&home)) else {
         w.err(&format!("skew: cannot check — cannot resolve the ref repo:{home} lands on"));
         return EXIT_CANNOT_CHECK;
     };
@@ -702,7 +705,10 @@ fn repo_name_for_path(w: &dyn World, path: &Path) -> Option<String> {
 }
 
 fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
-    let Some(base) = w.landref(repo) else {
+    // BY NAME, NOT BY PATH — see check_local's identical note. `name` is the one true name
+    // for this path, already resolved by the caller; `landref(repo)` would re-derive a
+    // weaker guess and can disagree with it (skew.sh's own `spira_landref "$name"`).
+    let Some(base) = w.landref(Path::new(name)) else {
         w.out(&format!("skew: refresh: queue.local — cannot resolve the ref {} lands on", repo.display()));
         return 1;
     };
@@ -744,7 +750,6 @@ fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
         w.rev_parse(repo, "HEAD", false).unwrap_or_default()
     };
 
-    let _ = name; // kept for symmetry with bash's signature; not otherwise needed here
 
     if running == base_sha {
         w.out(&format!("skew: refresh: queue.local — running ({running}) matches {base}; nothing to deploy"));

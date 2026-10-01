@@ -28,6 +28,13 @@ impl Real {
         Real { home, env }
     }
 
+    /// `argv[0]`'s directory, never `current_exe()`'s. `current_exe()` canonicalizes every
+    /// symlink; testenv's own release staging (and the gate's fixture release) link
+    /// `bin/<tool>` to wherever cargo actually built it and `spira/` to the real checkout —
+    /// two unrelated directories once resolved, so `current_exe()`-based release-relative
+    /// resolution always missed silently there (empty output, exit code standing in for a
+    /// verdict). `argv[0]` is exactly the path PATH search resolved to, unresolved further
+    /// — bash's own `$0`/`${BASH_SOURCE[0]}` never re-resolved it either.
     fn resolve_home() -> PathBuf {
         if let Ok(h) = std::env::var("SPIRA_HOME") {
             if !h.is_empty() {
@@ -37,7 +44,7 @@ impl Real {
                 }
             }
         }
-        if let Ok(exe) = std::env::current_exe() {
+        if let Some(exe) = argv0_path() {
             if let Some(bin_dir) = exe.parent() {
                 if let Some(release_dir) = bin_dir.parent() {
                     let candidate = release_dir.join("spira");
@@ -353,6 +360,18 @@ impl World for Real {
 fn is_exec(p: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
+}
+
+/// `argv[0]`, absolute (joined onto the current directory if it wasn't already) but with
+/// every symlink component left exactly as invoked — see `Real::resolve_home`'s comment.
+fn argv0_path() -> Option<PathBuf> {
+    let arg0 = std::env::args_os().next()?;
+    let p = PathBuf::from(arg0);
+    if p.is_absolute() {
+        Some(p)
+    } else {
+        Some(std::env::current_dir().ok()?.join(p))
+    }
 }
 
 fn has_file_within(path: &Path, name: &str, max_depth: u32) -> bool {

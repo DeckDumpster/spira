@@ -135,6 +135,30 @@ impl World for Real {
         v.sort();
         v
     }
+    fn local_tag_sidecars(&self, dir: &Path) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return out,
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("tag") {
+                continue;
+            }
+            if let Ok(text) = std::fs::read_to_string(&path) {
+                for line in text.lines() {
+                    let tag: String = line.chars().filter(|c| *c != ' ' && *c != '\t').collect();
+                    if tag.starts_with("spira-release-") {
+                        out.push(tag);
+                    }
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
     fn rev_parse(&self, repo: &Path, rev: &str, _peel: bool) -> Option<String> {
         let (ok, out) = self.git(repo, &["rev-parse", "-q", "--verify", rev]);
         if ok { Some(out.trim().to_string()) } else { None }

@@ -20,6 +20,7 @@ pub struct Fake {
     pub ref_remotes: RefCell<BTreeMap<String, String>>,
     pub git_repos: RefCell<Vec<PathBuf>>,
     pub tags: RefCell<BTreeMap<String, Vec<String>>>, // keyed by repo path string
+    pub local_tag_sidecars: RefCell<BTreeMap<String, Vec<String>>>, // keyed by dir path string
     pub rev_parse: RefCell<BTreeMap<String, String>>, // key "<repo>|<rev>"
     pub rev_parse_short: RefCell<BTreeMap<String, String>>,
     pub ancestors: RefCell<Vec<(String, String)>>, // (ancestor, descendant) pairs that ARE ancestors
@@ -110,6 +111,9 @@ impl World for Fake {
     }
     fn tags_matching(&self, repo: &Path, _pattern: &str) -> Vec<String> {
         self.tags.borrow().get(&repo.to_string_lossy().into_owned()).cloned().unwrap_or_default()
+    }
+    fn local_tag_sidecars(&self, dir: &Path) -> Vec<String> {
+        self.local_tag_sidecars.borrow().get(&dir.to_string_lossy().into_owned()).cloned().unwrap_or_default()
     }
     fn rev_parse(&self, repo: &Path, rev: &str, _peel: bool) -> Option<String> {
         self.rev_parse.borrow().get(&format!("{}|{rev}", repo.to_string_lossy())).cloned()
@@ -279,6 +283,26 @@ fn check_clean_when_tag_matches_and_is_latest() {
     assert!(f.stdout_joined().contains("in effect"));
 }
 
+/// LOCAL RELEASE SOURCE: `SPIRA_RELEASE_REPO` names a plain directory of tarballs with
+/// `.tag` sidecars (not a git repo) — `resolve_all_tags` must read those sidecar files
+/// directly, never dial `git tag -l` against the directory (which returns nothing and was
+/// read as "no release tags found", caught live by testenv's "local-dir" cases, sp-yyk47).
+#[test]
+fn resolve_all_tags_reads_local_tag_sidecars_not_git_tag() {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASE_REPO", "/release-source");
+    f.existing.borrow_mut().push(PathBuf::from("/release-source"));
+    f.local_tag_sidecars
+        .borrow_mut()
+        .insert("/release-source".into(), vec!["spira-release-spira-20260912T120000Z".into()]);
+    // A decoy under `tags_matching` (the git-tag seam) that must never be consulted here —
+    // if it were, this test would see the decoy instead of the sidecar-derived tag.
+    f.tags.borrow_mut().insert("/repo".into(), vec![]);
+
+    let tags = resolve_all_tags(&f, Path::new("/repo")).expect("local-dir tags resolve");
+    assert_eq!(tags, vec!["spira-release-spira-20260912T120000Z".to_string()]);
+}
+
 #[test]
 fn check_cannot_verify_alone_is_exit_3_not_1() {
     let f = Fake::default();
@@ -324,7 +348,7 @@ fn check_local_tampered_and_behind_both_fire() {
     *f.home_repo.borrow_mut() = "home".into();
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = false;
     *f.release_verify_out.borrow_mut() = "hash mismatch".into();
@@ -338,13 +362,33 @@ fn check_local_tampered_and_behind_both_fire() {
     assert!(out.contains("LOCAL-BEHIND"), "{out}");
 }
 
+/// BY NAME, NOT BY PATH — same scar as `refresh_queue_local_resolves_landref_by_name_never_by_path`,
+/// for `check_local`'s own call site.
+#[test]
+fn check_local_resolves_landref_by_name_never_by_path() {
+    let f = Fake::default();
+    *f.home_repo.borrow_mut() = "home".into();
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
+    // Decoy under the path key — must never be consulted.
+    f.landrefs.borrow_mut().insert("/repo".into(), "origin/decoy".into());
+    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
+    f.rev_parse.borrow_mut().insert("/repo|origin/decoy".into(), "wrong-tip".into());
+    *f.release_verify_ok.borrow_mut() = true;
+
+    let rc = check_local(&f, "rel-1", "tip123", false);
+    assert_eq!(rc, EXIT_OK);
+    assert!(f.stdout_joined().contains("in effect"));
+}
+
 #[test]
 fn check_local_hotfix_is_clean() {
     let f = Fake::default();
     *f.home_repo.borrow_mut() = "home".into();
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = true;
     *f.release_status.borrow_mut() = "RUNNING UNLANDED hot999: the operator's own stop-the-world fix\n".into();
@@ -360,7 +404,7 @@ fn check_local_unresolvable_divergence_is_cannot_verify() {
     *f.home_repo.borrow_mut() = "home".into();
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip123".into());
     *f.release_verify_ok.borrow_mut() = true;
     // manifest_commit is neither the tip nor a recorded hotfix, and not an ancestor either.
@@ -538,12 +582,39 @@ fn refresh_queue_local_match_is_clean() {
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
     f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "tip".into());
 
     assert_eq!(refresh(&f, None), 0);
     assert!(f.stdout_joined().contains("nothing to deploy"));
+}
+
+/// BY NAME, NOT BY PATH (skew.sh's own `spira_landref "$name"`, not `"$repo"`): a decoy
+/// landref registered under the PATH key, disagreeing with the real one under the NAME
+/// key, must never be consulted. Caught live by testenv against sp-yyk47's merged tree —
+/// the first port used `w.landref(repo)` here and silently resolved the wrong ref whenever
+/// a caller's path-derived guess disagreed with the name already in hand.
+#[test]
+fn refresh_queue_local_resolves_landref_by_name_never_by_path() {
+    let f = Fake::default();
+    f.set_env("SPIRA_REPO", "/repo");
+    *f.home_repo.borrow_mut() = "home".into();
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
+    // Decoy: a DIFFERENT ref under the path key. If the implementation ever regresses to
+    // `landref(repo)`, this is what it would pick up instead, resolving to "wrong-tip"
+    // rather than "tip" and turning a clean match into a false LOCAL-SKEW.
+    f.landrefs.borrow_mut().insert("/repo".into(), "origin/decoy".into());
+    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("/repo|origin/decoy".into(), "wrong-tip".into());
+    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "tip".into());
+
+    assert_eq!(refresh(&f, None), 0);
+    assert!(f.stdout_joined().contains("nothing to deploy"));
+    assert!(f.mail_calls.borrow().is_empty());
 }
 
 #[test]
@@ -554,7 +625,7 @@ fn refresh_queue_local_mismatch_escalates_local_skew() {
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
     f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
 
@@ -572,7 +643,7 @@ fn refresh_queue_local_hotfix_never_resets() {
     f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
     f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
     f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
-    f.landrefs.borrow_mut().insert("/repo".into(), "local/main".into());
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
     f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
     f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
     *f.release_status.borrow_mut() = "RUNNING UNLANDED stale: deliberate\n".into();

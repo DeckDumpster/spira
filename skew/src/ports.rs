@@ -32,6 +32,12 @@ pub trait World {
     fn changed_files(&self, repo: &Path, base: &str, ref_: &str) -> Vec<String>;
     /// `git tag -l '<pattern>'`, sorted.
     fn tags_matching(&self, repo: &Path, pattern: &str) -> Vec<String>;
+    /// LOCAL RELEASE SOURCE: `cat <dir>/*.tag 2>/dev/null | tr -d ' \t' | grep '^spira-release-' |
+    /// sort -u` — every `.tag` sidecar beside the release tarballs in `dir`, read as plain
+    /// files (never `git tag -l`; `dir` is not a git repository, and `tags_matching` dialing
+    /// out to git against it returns nothing — the bug `resolve_all_tags` hit before this
+    /// method existed, caught live by testenv's "local-dir" cases, sp-yyk47).
+    fn local_tag_sidecars(&self, dir: &Path) -> Vec<String>;
     /// `git rev-parse -q --verify <rev>^{commit}` (or plain rev-parse when `peel` is false).
     fn rev_parse(&self, repo: &Path, rev: &str, peel: bool) -> Option<String>;
     fn rev_parse_short(&self, repo: &Path, rev: &str) -> Option<String>;
