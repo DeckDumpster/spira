@@ -150,6 +150,11 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-loom.service", true));
 
+    // sccache-dav (sp-xjnzl): the box's shared compilation cache over WebDAV. Its own
+    // address and storage root are the unit's Environment= lines (systemd/sccache-dav.service),
+    // not something this manifest or conf.sh resolves — see that unit's own comment for why.
+    m.units.push(t("sccache-dav.service", true));
+
     m.units.push(t("spira-broker.service", false));
     m.units.push(t("spira-broker.timer", inputs.broker_enable));
 
