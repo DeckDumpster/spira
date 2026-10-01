@@ -95,7 +95,7 @@ MAIL=mail.sh
 
 # FIRE THE ARCHIVIST ON CLEAR. A clear starts a new session while the previous transcript is
 # still on disk. The turns between the last drift sweep and now are uncovered; this catches
-# them. `archivist.sh now` without an argument picks the most recently written non-empty
+# them. `archivist now` without an argument picks the most recently written non-empty
 # transcript, which at the instant of a clear is the one being discarded — the new session has
 # not yet written anything. Fire and forget: the state file is where the result is read, and
 # the new session must not wait on the old one's archive.
@@ -103,7 +103,7 @@ source="$(printf '%s' "$payload" | python3 -c 'import json,sys
 try: print(json.load(sys.stdin).get("source",""))
 except Exception: print("")' 2>/dev/null)"
 if [ "$source" = "clear" ]; then
-    archivist.sh now </dev/null >/dev/null 2>&1 &
+    archivist now </dev/null >/dev/null 2>&1 &
 fi
 
 # RECORD THE CONCIERGE'S OWN SESSION ID. The launcher sets SPIRA_CONCIERGE=1 so that no other

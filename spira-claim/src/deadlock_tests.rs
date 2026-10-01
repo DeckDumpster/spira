@@ -1,5 +1,5 @@
 //! `deadlocked` against an in-memory world. No store, no git — the merge-status a real
-//! `groomer.sh deadlocked` would compute is simply asserted as input (`Candidate.ok`).
+//! `groomer deadlocked` would compute is simply asserted as input (`Candidate.ok`).
 
 use super::*;
 use crate::unpoison::BeadRecord;

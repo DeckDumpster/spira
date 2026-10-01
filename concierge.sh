@@ -203,7 +203,7 @@ concierge_resume_id() {
 
 # concierge_transcript_path <session-id> -> path to that session's transcript, or empty.
 # Searched by id across every project directory rather than composed from BRAIN's own slug:
-# the client's slugging rule already lives in one place (archivist.sh's `slug`), and matching
+# the client's slugging rule already lives in one place (archivist's `slug`, src/transcripts.rs), and matching
 # by id instead of reproducing that rule here cannot drift from it.
 concierge_transcript_path() {
     find "$SPIRA_TOKEN_PROJECTS" -name "$1.jsonl" -print -quit 2>/dev/null

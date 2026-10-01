@@ -4,7 +4,7 @@
 # the live sessions and rescues their unfinished business into beads, asks and notes, reading
 # the transcript rather than the conversation so it costs the session it rescues nothing.
 Description=Spira archivist — persist a full session's unfinished business before it is cleared
-Documentation=file://@SPIRA_HOME@/archivist.sh
+Documentation=file://@SPIRA_PROD_ROOT@/archivist/DESIGN.md
 After=default.target
 
 [Service]
@@ -15,14 +15,14 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/archivist.sh sweep
-# THE CONCURRENCY CAP IS THIS LINE PLUS Type=oneshot, and it is why archivist.sh spawns
+ExecStart=@SPIRA_PROD_ROOT@/bin/archivist sweep
+# THE CONCURRENCY CAP IS THIS LINE PLUS Type=oneshot, and it is why archivist spawns
 # nothing: a oneshot service that is still active is not started again by its timer, so a
 # sweep that is in the middle of an archive simply skips its next tick. A lock file would be
 # a second mechanism for a guarantee the service manager already makes.
 #
 # LONGER THAN SPIRA_ARCHIVIST_TIMEOUT, so the timeout that fires first is the one that knows
-# what it is bounding: archivist.sh's own kills a single wedged archive and records it as a
+# what it is bounding: archivist's own kills a single wedged archive and records it as a
 # failed archive in the state file the operator is already reading, whereas this one kills
 # the sweep mid-write and reports only a red unit.
 TimeoutStartSec=1800
