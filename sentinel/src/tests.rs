@@ -1232,6 +1232,45 @@ fn probe_failure_is_reported() {
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
 }
 
+// ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
+// hazard): the one test below that resolves config takes this lock, and pins SPIRA_TOML to
+// a nonexistent path — locate()'s own exclusive-pin rule ("not a file" means "no config",
+// never "keep looking") — so it never depends on, or interferes with, a real operator
+// spira.toml on the machine running this suite.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[test]
+fn probe_merges_resolved_config_into_vars_without_shelling_a_second_time() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let saved = std::env::var("SPIRA_TOML").ok();
+    let w = World::new("probe-merge");
+    std::fs::create_dir_all(w.home.join("conf.d")).unwrap();
+    std::fs::write(
+        w.home.join("conf.d/SPIRA_CI_PARK_MAX"),
+        "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+    )
+    .unwrap();
+    std::env::set_var("SPIRA_TOML", w.dir.join("no-such-spira.toml"));
+
+    // @vars already carries SPIRA_HOME_REPO_RESOLVED from the (fixed) script itself —
+    // merge_resolved_config must never override it — and nothing else, matching the
+    // post-wave-4.8 PROBE script's own shape.
+    let raw = "@vars\0SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE=\0@fayths\0@partitions\0@chamber\0@end\0";
+    let r = FakeRunner::new();
+    r.on(move |_| ok(raw));
+    let ctx = crate::probe(&r, &w.home, false);
+
+    match saved {
+        Some(v) => std::env::set_var("SPIRA_TOML", v),
+        None => std::env::remove_var("SPIRA_TOML"),
+    }
+
+    let ctx = ctx.unwrap();
+    assert_eq!(ctx.get("SPIRA_HOME_REPO_RESOLVED"), Some("spira"), "the script's own value must survive the merge");
+    assert_eq!(ctx.get("SPIRA_HOME"), Some(w.home.to_str().unwrap()));
+    assert_eq!(ctx.get("SPIRA_CI_PARK_MAX"), Some("9"), "a registry key resolve() covers must reach ctx.vars in-process");
+}
+
 #[test]
 fn roster_warnings_name_each_left_out_persona_once() {
     let (w, r, sink, clock) = setup("roster");

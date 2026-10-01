@@ -6,6 +6,7 @@ description = "spira-supervise — main-PID supervisor for the cockpit collector
 
 [dependencies]
 libc = "0.2"
+spira-config = { path = "../spira-config" }
 
 [profile.release]
 opt-level = "z"
