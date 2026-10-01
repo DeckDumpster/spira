@@ -31,6 +31,11 @@ struct Fake {
     /// What `symlinked_targets` answers, by the `dir` it is asked about; absent = none (an
     /// ordinary, non-symlinked `target/`).
     symlinked_targets: RefCell<BTreeMap<PathBuf, Vec<PathBuf>>>,
+    /// What `current_exe()` answers; `None` (the default) is the "cannot resolve" case.
+    current_exe: RefCell<Option<PathBuf>>,
+    /// Every `copy_file(from, to)` call, in order — so a test can see staging happened
+    /// without inferring it from file presence alone (which `remove` would later erase).
+    copies: RefCell<Vec<(PathBuf, PathBuf)>>,
 }
 
 struct FakeBuild<'a>(&'a Fake);
@@ -94,6 +99,13 @@ impl Fake {
     fn errs(&self) -> String {
         self.err.borrow().join("\n")
     }
+    /// Simulates a build's own binary at `exe`, with a working `spira-config` already
+    /// sitting next to it (sp-xjnzl) — the common case: the workspace was built first.
+    fn with_spira_config_sibling(&self, exe: &str) {
+        *self.current_exe.borrow_mut() = Some(PathBuf::from(exe));
+        let sibling = Path::new(exe).parent().unwrap().join("spira-config");
+        self.file(&sibling.display().to_string(), "#!/bin/sh\n");
+    }
 }
 
 impl Host for Fake {
@@ -131,6 +143,17 @@ impl Host for Fake {
     }
     fn remove(&self, p: &Path) {
         self.files.borrow_mut().remove(p);
+    }
+    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+        let Some(data) = self.files.borrow().get(from).cloned() else {
+            return false;
+        };
+        self.files.borrow_mut().insert(to.to_path_buf(), data);
+        self.copies.borrow_mut().push((from.to_path_buf(), to.to_path_buf()));
+        true
+    }
+    fn current_exe(&self) -> Option<PathBuf> {
+        self.current_exe.borrow().clone()
     }
     fn temp_log(&self) -> PathBuf {
         PathBuf::from("/t/build.log")
@@ -587,6 +610,50 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
     let e = f.errs();
     assert!(e.contains("check Containerfile in /h/spira/testenv"));
     assert!(e.contains("line 49") && e.contains("line 10") && !e.contains("line 9\n"));
+}
+
+// ---- sp-xjnzl: staging spira-config into the build context for doctor-check -------------
+
+#[test]
+fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
+    let dest = PathBuf::from("/h/spira/testenv/.doctor-check-spira-config");
+
+    // Present: staged for the build, then cleaned up on a GREEN build.
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    assert_eq!(
+        *f.copies.borrow(),
+        vec![(PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone())]
+    );
+    assert!(!f.is_file(&dest), "left behind in the checkout after a green build");
+    assert!(!f.errs().contains("no spira-config next to this binary"));
+
+    // Present: also cleaned up on a RED build — staging must not leak on the failure path.
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.build_rc.set(1);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
+    assert_eq!(f.copies.borrow().len(), 1);
+    assert!(!f.is_file(&dest), "left behind in the checkout after a red build");
+}
+
+#[test]
+fn a_cold_build_with_no_sibling_spira_config_still_builds_but_warns() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    // No with_spira_config_sibling: current_exe() answers None, as it would for a test
+    // binary or any process that cannot resolve its own path.
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0, "a missing stage must not fail the build it would otherwise doom inside the container");
+    assert!(f.copies.borrow().is_empty());
+    assert!(f.errs().contains("cannot resolve this process's own path"));
 }
 
 // ---- boot failure diagnosis and admission (was test-testenv-resource-diagnosis.sh) -------

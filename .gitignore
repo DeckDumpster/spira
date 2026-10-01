@@ -14,6 +14,12 @@ target/
 # is content.
 .runtime/
 
+# sp-xjnzl: testenv's own driver stages a sibling `spira-config` binary here so a cold
+# testenv container image build's doctor-check step has one on PATH (container.rs's
+# stage_spira_config, Containerfile). Removed right after the build either way it went —
+# this entry is only insurance against a crash leaving it behind.
+/spira/testenv/.doctor-check-spira-config
+
 # Python bytecode.
 __pycache__/
 *.pyc
