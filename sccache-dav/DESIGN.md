@@ -20,8 +20,8 @@ identical. **One store both sides read and write makes a round warm from the fir
 sccache 0.18.0 ships a `webdav` cache backend (`src/cache/webdav.rs`, via `opendal`'s
 `services::Webdav`) that needs nothing more than an HTTP endpoint speaking a small slice of
 RFC4918 — no NFS/9p plumbing across the Proxmox guest-agent boundary a shared mount would
-need, and no in-RAM service competing with the agents already running on this box (per Ryan:
-Redis was rejected for exactly that reason). Nothing already on this box serves WebDAV
+need, and no in-RAM service competing with the agents already running on this box (Redis
+was considered and rejected for exactly that reason). Nothing already on this box serves WebDAV
 (checked: no `wsgidav`, no `rclone`, no system package), and `law-new-subsystems-are-rust`
 (round-vm's own DESIGN.md cites it) rules out reaching for a quick Python one. The actual
 wire surface sccache issues is small enough that writing it is the cheap option, not the

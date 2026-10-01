@@ -1,7 +1,7 @@
 [Unit]
 # sccache-dav (sp-xjnzl): the box's shared compilation cache, over WebDAV, reachable from
 # this host's own builds AND every ephemeral round-vm — not a VM-local cache, not Redis
-# (per Ryan: disk-backed, and it must not compete with the agents' own RAM).
+# (disk-backed, and it must not compete with the agents' own RAM).
 Description=sccache-dav — the box's shared compilation cache, reachable from every round-vm
 Documentation=file://@SPIRA_HOME@/sccache-dav/DESIGN.md
 After=default.target

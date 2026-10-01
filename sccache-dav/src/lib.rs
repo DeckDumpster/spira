@@ -19,7 +19,7 @@
 //! WHY WEBDAV AND NOT A FILESYSTEM MOUNT OR REDIS. sccache 0.18.0 ships a WebDAV backend
 //! that needs nothing more than an HTTP endpoint (no NFS/9p guest-agent plumbing across the
 //! Proxmox boundary); a disk-backed store, not an in-RAM one, so it survives a restart and
-//! does not compete with the agents already running on this box's RAM (per Ryan, 2026-10-01).
+//! does not compete with the agents already running on this box's RAM.
 
 use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
