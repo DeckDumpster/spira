@@ -329,6 +329,7 @@
           ]
         },
         "batch_maxpar": {
+          "description": "testenv's own suite concurrency cap (testenv/DESIGN.md §4.3, `schedule::maxpar`). Unset derives a quarter of the CPU ceiling, clamped to [2, 16] — never the hardware bound. 0 and anything that doesn't parse are refused outright, not read as \"unlimited\" (sp-tj8k3: a batch_maxpar of 0 in production put 61 containers and load 90 on one host).",
           "type": [
             "integer",
             "null"
@@ -1646,6 +1647,13 @@
           ]
         },
         "reviewer_verdicts": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "round_vm_cache_home": {
+          "description": "sp-xjnzl-2: the VM-side `CARGO_HOME` every round-vm round and template build points `sccache` at — read once here (never the caller's ambient `CARGO_HOME`, `law-a-binary-resolves-the-config-it-reads`) so an operator sets it once in `spira.toml` rather than exporting it into every systemd unit that calls `round-vm`.",
           "type": [
             "string",
             "null"

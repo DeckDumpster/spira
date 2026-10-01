@@ -74,7 +74,8 @@ impl Builder for Cargo {
                 .map(Stdio::from)
                 .unwrap_or_else(|_| Stdio::null())
         };
-        let child = Command::new("cargo")
+        let mut cargo_cmd = Command::new("cargo");
+        cargo_cmd
             .args(["build", "--profile", profile, "--workspace"])
             // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
             // split the compilation cache's keys).
@@ -92,8 +93,12 @@ impl Builder for Cargo {
             .stdin(Stdio::null())
             .stdout(stdout_to_stderr)
             // Its own process group, so a kill at the cutoff takes rustc with it.
-            .process_group(0)
-            .spawn();
+            .process_group(0);
+        // rustc's RUSTC_WRAPPER=sccache auto-starts sccache's own server on first use, a
+        // long-lived daemon that outlives this build; it must never inherit a caller's lock
+        // fd this process did not open itself (sp-ohwg7).
+        crate::util::close_inherited_fds(&mut cargo_cmd);
+        let child = cargo_cmd.spawn();
         let mut child = match child {
             Ok(c) => c,
             Err(_) => return Err(BuildError::NoCargo),

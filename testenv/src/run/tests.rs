@@ -575,6 +575,40 @@ fn a_cached_red_is_refused_until_a_reason_is_given() {
     assert!(v.contains("override_reason=the runner VM was destroyed mid-run"));
 }
 
+/// sp-tj8k3: a *given* SPIRA_BATCH_MAXPAR of 0 or garbage refuses by name before any
+/// container work starts; removing the key entirely (unset) is never refused — it gets the
+/// scheduler's own bounded default and runs normally.
+#[test]
+fn an_unusable_maxpar_refuses_before_any_container_work() {
+    let mut w = World::new("maxpar-refused");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+
+    w.env.insert("SPIRA_BATCH_MAXPAR".into(), "0".into());
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=maxpar-refused");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+    assert!(rt.testenv_calls.lock().unwrap().is_empty());
+
+    w.env.insert("SPIRA_BATCH_MAXPAR".into(), "lots".into());
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        2
+    );
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=maxpar-refused");
+    assert_eq!(b.calls.load(Ordering::SeqCst), 0);
+
+    // Removing the key outright (unset) is not a refusal — the run proceeds.
+    w.env.remove("SPIRA_BATCH_MAXPAR");
+    assert_eq!(
+        w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root),
+        0
+    );
+}
+
 #[test]
 fn a_build_failure_is_the_candidates_fault_and_touches_no_container() {
     let w = World::new("build");

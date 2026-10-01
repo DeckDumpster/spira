@@ -214,6 +214,21 @@ pub fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
             let mut set: libc::sigset_t = std::mem::zeroed();
             libc::sigemptyset(&mut set);
             libc::pthread_sigmask(libc::SIG_SETMASK, &set, std::ptr::null_mut());
+            // Close every fd >= 3 before exec. This process's own fds are already
+            // close-on-exec (Rust's std opens them that way), but a caller's lock fd this
+            // process never opened itself — e.g. a bash caller's `exec 9>…` with no
+            // O_CLOEXEC, surviving the fork+exec that started this binary — carries none of
+            // that protection. Every child this function starts (gate.sh above all, which
+            // runs testenv, which runs podman — conmon daemonizes and outlives the trial)
+            // must not inherit it (sp-ohwg7). close_range is the fast path; a kernel too
+            // old for it (< 5.9) falls back to fcntl(F_SETFD) per fd.
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+            let r = libc::syscall(libc::SYS_close_range, 3u32, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC);
+            if r != 0 {
+                for fd in 3..4096 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+            }
             Ok(())
         });
     }
