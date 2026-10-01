@@ -206,6 +206,60 @@ pub fn sweep(
     }
 }
 
+/// Reduce the COUNT of warm slots when the scratch root is short of real free space —
+/// never throttle the job itself (law-reduce-the-count-never-throttle-the-job). With
+/// `free_mib(root)` below `floor_mib`, drop recorded spares oldest-booted-first, each
+/// under its own slot lock so a spare a trial is using right now (its lock held, or its
+/// record already gone) is never touched; re-probes real free space after each drop,
+/// since that is what dropping an idle container actually buys back, and stops as soon
+/// as the floor is cleared or there is nothing idle left. Returns how many were dropped.
+#[allow(clippy::too_many_arguments)]
+pub fn shed(
+    rt: &dyn ContainerRuntime,
+    owner_dir: &Path,
+    run: &Path,
+    slots: usize,
+    floor_mib: u64,
+    root: &Path,
+    free_mib: &dyn Fn(&Path) -> Option<u64>,
+    log: &dyn Fn(&str),
+) -> usize {
+    let Some(mut free) = free_mib(root) else {
+        return 0;
+    };
+    if free >= floor_mib {
+        return 0;
+    }
+    let mut oldest: Vec<(usize, Spare)> = (0..slots)
+        .filter_map(|i| read_spare(&paths(run, i).2).map(|sp| (i, sp)))
+        .collect();
+    oldest.sort_by_key(|(_, sp)| sp.booted);
+    let mut dropped = 0;
+    for (i, spare) in oldest {
+        if free >= floor_mib {
+            break;
+        }
+        let (_, lock_path, record) = paths(run, i);
+        let Some(_lock) = crate::worktree::try_lock(&lock_path) else {
+            continue; // busy: a trial (or a refill) holds this slot right now — never dropped
+        };
+        // Re-read under the lock: a refill may have replaced or cleared the record between
+        // our scan and this lock, and we must discard only the spare we actually recorded.
+        if read_spare(&record).as_ref().map(|sp| &sp.name) != Some(&spare.name) {
+            continue;
+        }
+        let _ = fs::remove_file(&record);
+        discard(rt, owner_dir, &spare.name);
+        log(&format!(
+            "shed idle warm slot {i} ({}): free space below the {floor_mib} MiB floor (SPIRA_TMPFS_SHED_FREE_MIB)",
+            spare.name
+        ));
+        dropped += 1;
+        free = free_mib(root).unwrap_or(free);
+    }
+    dropped
+}
+
 /// Boot slot `i`'s spare (the refill; the caller holds the slot lock). Does nothing when a
 /// live, current spare is already recorded. `Err` names why no spare was recorded.
 pub fn boot(
@@ -397,5 +451,81 @@ mod tests {
         assert!(purged.contains(&"spira-warm-6-1-1".to_string()));
         assert!(purged.contains(&"spira-warm-7-1-1".to_string()));
         assert_eq!(logs.lock().unwrap().len(), 2);
+    }
+
+    /// sp-s8v5r, positive control: a fake free-space reading below the floor drops the
+    /// oldest-booted idle spare, and stops as soon as the (fake) drop clears the floor.
+    #[test]
+    fn shed_drops_the_oldest_idle_spare_first_until_the_floor_clears() {
+        let (_root, run, owner) = world("shed");
+        let base = crate::worktree::scratch_root(&run);
+        fs::create_dir_all(&base).unwrap();
+        let rt = FakeRuntime::new();
+        for (i, booted) in [(0usize, 100u64), (1, 200), (2, 300)] {
+            let name = format!("spira-warm-{i}-x");
+            rt.containers.lock().unwrap().push(name.clone());
+            write_spare(&paths(&run, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
+        }
+        // Below the 15 MiB floor until the first drop frees real space, as a real
+        // container's teardown would — then above it, so exactly one spare goes.
+        let calls = std::cell::Cell::new(0u64);
+        let free = |_: &Path| {
+            let n = calls.get();
+            calls.set(n + 1);
+            Some(if n == 0 { 10 } else { 20 })
+        };
+        let logs = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let l2 = logs.clone();
+        let dropped = shed(&rt, &owner, &run, 3, 15, &base, &free, &move |m| {
+            l2.lock().unwrap().push(m.into())
+        });
+        assert_eq!(dropped, 1);
+        assert!(
+            rt.purged.lock().unwrap().contains(&"spira-warm-0-x".to_string()),
+            "the oldest-booted spare goes first"
+        );
+        assert!(read_spare(&paths(&run, 0).2).is_none());
+        assert!(read_spare(&paths(&run, 1).2).is_some(), "slot 1 untouched");
+        assert!(read_spare(&paths(&run, 2).2).is_some(), "slot 2 untouched");
+        assert_eq!(logs.lock().unwrap().len(), 1);
+    }
+
+    /// sp-s8v5r, positive control: a busy slot (its flock held) is never dropped, even
+    /// though it is the oldest and free space stays short the whole time.
+    #[test]
+    fn shed_never_drops_a_slot_whose_lock_is_held() {
+        let (_root, run, owner) = world("shed-busy");
+        let base = crate::worktree::scratch_root(&run);
+        fs::create_dir_all(&base).unwrap();
+        let rt = FakeRuntime::new();
+        for (i, booted) in [(0usize, 100u64), (1, 200)] {
+            let name = format!("spira-warm-{i}-x");
+            rt.containers.lock().unwrap().push(name.clone());
+            write_spare(&paths(&run, i).2, &Spare { name, tag: "t".into(), booted }).unwrap();
+        }
+        let (_, lock0, _) = paths(&run, 0);
+        let _held = crate::worktree::try_lock(&lock0).unwrap();
+        let dropped = shed(&rt, &owner, &run, 2, 1_000_000, &base, &|_| Some(0), &|_| {});
+        assert_eq!(dropped, 1, "slot 0 is skipped; the idle slot 1 goes instead");
+        assert!(!rt.purged.lock().unwrap().contains(&"spira-warm-0-x".to_string()), "never a slot in use");
+        assert!(read_spare(&paths(&run, 0).2).is_some(), "the busy slot's record is untouched");
+        assert!(rt.purged.lock().unwrap().contains(&"spira-warm-1-x".to_string()));
+    }
+
+    #[test]
+    fn shed_does_nothing_when_free_space_already_clears_the_floor() {
+        let (_root, run, owner) = world("shed-ok");
+        let base = crate::worktree::scratch_root(&run);
+        fs::create_dir_all(&base).unwrap();
+        let rt = FakeRuntime::new();
+        rt.containers.lock().unwrap().push("spira-warm-0-x".into());
+        write_spare(
+            &paths(&run, 0).2,
+            &Spare { name: "spira-warm-0-x".into(), tag: "t".into(), booted: 1 },
+        )
+        .unwrap();
+        let dropped = shed(&rt, &owner, &run, 1, 10, &base, &|_| Some(50), &|_| {});
+        assert_eq!(dropped, 0);
+        assert!(read_spare(&paths(&run, 0).2).is_some());
     }
 }

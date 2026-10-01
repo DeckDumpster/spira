@@ -82,6 +82,10 @@ pub struct Settings {
     pub setup_share: u64,
     /// DESIGN.md §11.2: how long a refill may wait for its slot and boot its spare.
     pub warm_boot_timeout: u64,
+    /// sp-s8v5r: below this much free on the scratch root, drop idle warm slots
+    /// oldest-first (law-reduce-the-count-never-throttle-the-job) — the same floor gate's
+    /// LRU eviction of its tmpfs build targets reads, since both share the /tmp tmpfs.
+    pub warm_shed_free_mib: u64,
     pub landing_containers: Option<PathBuf>,
     pub spira_db: Option<String>,
 }
@@ -258,6 +262,7 @@ impl Settings {
                 .num("SPIRA_TESTENV_WARM_BOOT_TIMEOUT", None)
                 .unwrap_or(600u64)
                 .max(1),
+            warm_shed_free_mib: src.num("SPIRA_TMPFS_SHED_FREE_MIB", None).unwrap_or(6144),
             landing_containers: path("SPIRA_LANDING_CONTAINERS"),
             spira_db: src.get("SPIRA_DB", Some("spira.db")),
             run,
@@ -303,6 +308,16 @@ mod tests {
             (s.warm_slots, s.setup_share, s.warm_boot_timeout),
             (3, 50, 600)
         );
+        assert_eq!(s.warm_shed_free_mib, 6144);
+    }
+
+    #[test]
+    fn warm_shed_free_mib_is_overridable() {
+        let s = load(
+            &[("SPIRA_RUN", "/r"), ("SPIRA_TMPFS_SHED_FREE_MIB", "9000")],
+            None,
+        );
+        assert_eq!(s.warm_shed_free_mib, 9000);
     }
 
     #[test]

@@ -1866,6 +1866,19 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
         },
         &|m| deps.log(m),
     );
+    // sp-s8v5r: before adding another ~4.5 GB spare to the scratch root, shed whatever
+    // idle warm slots real free space there can no longer afford (never this slot — its
+    // own lock is held above). Reduce the COUNT, never throttle the job.
+    warm::shed(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.warm_shed_free_mib,
+        &worktree::scratch_root(&s.run),
+        &worktree::free_mib,
+        &|m| deps.log(m),
+    );
     let tag = deps.rt.testenv(&["tag".into()], Some(end));
     let tag = tag.output.trim().to_string();
     if tag.is_empty() {
@@ -1914,6 +1927,20 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
                 .inspect(n, "{{.State.StartedAt}}")
                 .and_then(|t| parse_started_at(&t))
         },
+        &|m| deps.log(m),
+    );
+    // sp-s8v5r: the scratch root's real free space, not its byte usage, is what paged
+    // "Disk quota exceeded" — reduce the COUNT of warm slots when it runs short, rather
+    // than throttle a trial (law-reduce-the-count-never-throttle-the-job).
+    let root = worktree::scratch_root(&s.run);
+    warm::shed(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.warm_shed_free_mib,
+        &root,
+        &worktree::free_mib,
         &|m| deps.log(m),
     );
     0
