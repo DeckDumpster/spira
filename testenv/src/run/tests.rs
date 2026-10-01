@@ -1476,15 +1476,19 @@ fn an_agents_trial_builds_on_a_compile_slot_then_tests_on_a_test_slot() {
 }
 
 #[test]
-fn under_a_gate_the_trial_runs_on_the_gates_slot_and_takes_none() {
+fn under_a_gate_the_build_holds_a_compile_lease_and_the_test_phase_rides_the_gate_slot() {
     let mut w = World::new("admit-gate");
     w.env.insert("SPIRA_ADMISSION".into(), "gate".into());
     sh(&w.repo, "git checkout -q topic");
     let rt = runtime();
     let b = FakeBuilder { watch: Some(w.root.join("run/compile-admission")), ..FakeBuilder::new(None) };
     assert_eq!(w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.repo.join("spira")), 0);
-    assert!(b.seen.lock().unwrap().is_empty());
-    assert!(admission_rows(&w).is_empty());
+    let seen = b.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(seen[0].starts_with(&format!("slot.1 pid={} ", std::process::id())) && seen[0].contains("who=gate:"), "{seen:?}");
+    let rows = admission_rows(&w);
+    let pools: Vec<(&str, &str)> = rows.iter().map(|r| (r["pool"].as_str().unwrap(), r["end"].as_str().unwrap())).collect();
+    assert_eq!(pools, [("compile", "released")], "the build's lease, released; no test slot under the gate");
     assert!(!w.root.join("run/test-admission").exists());
 }
 
@@ -1515,9 +1519,11 @@ fn a_full_test_pool_is_waited_for_visibly_and_never_failed() {
     assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
 }
 
-/// sp-f4ig1-fix: a gate whose build would have to wait for compile slots still gets a verdict.
-/// Both pools are full (size 1, held by a live process that is not ours); under the gate's
-/// token the trial builds and tests at once, inside its --deadline, and says no waiting line.
+/// sp-f4ig1-fix (D11): a gate whose build would have to wait for compile slots still gets a
+/// verdict. Both pools are full (size 1, held by a live process that is not ours); under the
+/// gate's token the build takes a compile lease AT ONCE (oversubscribing, logged), the test
+/// phase rides the gate's slot, the trial judges inside its --deadline, and the lease is
+/// released after the build.
 #[test]
 fn a_gate_trial_with_every_pool_full_still_gets_its_verdict() {
     let mut w = World::new("admit-gate-full");
@@ -1531,13 +1537,21 @@ fn a_gate_trial_with_every_pool_full_still_gets_its_verdict() {
         fs::write(dir.join("slot.1"), format!("pid=1 start={start} who=agent-build since={} waited=0 last=0 weight=4\n", spira_config::admission::now_epoch())).unwrap();
     }
     let rt = runtime();
-    let b = FakeBuilder::new(None);
+    let b = FakeBuilder { watch: Some(w.root.join("run/compile-admission")), ..FakeBuilder::new(None) };
     let t0 = std::time::Instant::now();
     assert_eq!(w.run(&rt, &b, &["--deadline", "300", "--suites", "test-a.sh", "topic"], "", &w.root), 0);
     assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=0 (deadline 300s)");
     assert!(t0.elapsed() < Duration::from_secs(5), "no wait: {:?}", t0.elapsed());
     assert!(!w.has_line(|l| l.contains("waiting for a")), "{:?}", w.lines.lock().unwrap());
     assert_eq!(b.calls.load(Ordering::SeqCst), 1, "it built");
+    let seen = b.seen.lock().unwrap().clone();
+    assert!(
+        seen.iter().any(|l| l.starts_with(&format!("slot.2 pid={} ", std::process::id())) && l.contains("who=gate:")),
+        "the build held a compile lease of its own beside the agent's: {seen:?}"
+    );
+    assert!(w.has_line(|l| l.contains("gate build took compile slot 2 (weight 1) without waiting — oversubscribed: 5 of 1 held")), "{:?}", w.lines.lock().unwrap());
+    assert!(!w.root.join("run/compile-admission/slot.2").exists(), "released after the build");
+    assert!(!w.root.join("run/test-admission/slot.2").exists(), "the test phase took no slot under the gate");
     // POSITIVE CONTROL: without the gate's token the same trial queues (and would wait for
     // the holder; here it is freed after a moment so the test ends).
     w.env.remove("SPIRA_ADMISSION");

@@ -2867,3 +2867,20 @@ fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
     // POSITIVE CONTROL: the release-bins command is the one that used to lack it.
     assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
 }
+
+/// D11 (option 2): with spira-admit on the PATH, every cargo the gate runs compiles through it
+/// with the gate's token, so each takes a compile lease for its cargo WITHOUT WAITING and agent
+/// builds queue behind it; sccache stays the inner compiler, and the lease names the branch.
+#[test]
+fn the_gates_cargo_takes_compile_leases_through_spira_admit_with_the_gate_token() {
+    let f = Fake::new();
+    f.files.borrow_mut().insert(PathBuf::from("/h/spira-admit"), String::new());
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    for (i, env) in f.ran.borrow().iter().enumerate() {
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("RUSTC_WRAPPER"), Some("/h/spira-admit"), "command {i}: {env:?}");
+        assert_eq!(get("SPIRA_ADMIT_INNER"), Some("/box/.cargo/bin/sccache"), "command {i}");
+        assert_eq!(get("SPIRA_ADMIT_WHO"), Some(format!("gate:{BR}").as_str()), "command {i}");
+        assert_eq!(get("SPIRA_ADMISSION"), Some("gate"), "command {i}");
+    }
+}

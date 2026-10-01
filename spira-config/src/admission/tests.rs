@@ -479,13 +479,48 @@ fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
 }
 
 #[test]
-fn a_gates_compile_never_queues_in_the_wrapper() {
+fn the_wrapper_queues_agents_takes_now_for_gates_and_execs_probes() {
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let compile = v(&["--crate-name", "gate", "-C", "opt-level=2"]);
-    assert!(!wrapper_waits(Some("gate"), &compile), "a gate's build rides its slot");
-    assert!(!wrapper_waits(Some("test:1"), &compile));
-    // POSITIVE CONTROL: the same compile outside an admitted job queues; probes never do.
-    assert!(wrapper_waits(None, &compile));
-    assert!(wrapper_waits(Some(" "), &compile), "an empty token is not an admission");
-    assert!(!wrapper_waits(None, &v(&["-vV"])));
+    assert_eq!(wrapper_action(None, &compile), WrapperAction::Wait, "an agent's build queues");
+    assert_eq!(wrapper_action(Some(" "), &compile), WrapperAction::Wait, "an empty token is not an admission");
+    assert_eq!(wrapper_action(Some("gate"), &compile), WrapperAction::TakeNow);
+    assert_eq!(wrapper_action(Some("gate:2"), &compile), WrapperAction::TakeNow);
+    assert_eq!(wrapper_action(Some("test:1"), &compile), WrapperAction::Exec, "admitted elsewhere");
+    assert_eq!(wrapper_action(None, &v(&["-vV"])), WrapperAction::Exec, "probes never queue");
+    assert_eq!(wrapper_action(Some("gate"), &v(&["-vV"])), WrapperAction::Exec);
+}
+
+/// D11: with the pool full of agent leases, a gate build starts at once (oversubscribing), and a
+/// new agent build waits until the gate build releases — even after an agent build finishes.
+#[test]
+fn a_gate_build_starts_at_once_on_a_full_pool_and_new_agent_builds_queue_behind_it() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (11, 2, 1), (12, 3, 1), (50, 5, 1), (60, 6, 1)]);
+    for (pid, st, who) in [(10, 1, "agent-a"), (11, 2, "agent-b"), (12, 3, "agent-c")] {
+        let (t, _) = try_take(&d, Pool::Compile, 3, &h(pid, st, who), 0, 100, &p).unwrap();
+        assert!(matches!(t, Take::Admitted { .. }));
+    }
+    let gate = h(50, 5, "gate:concierge/sp-x");
+    let (n, _) = take_now(&d, Pool::Compile, 3, &gate, 101, &p).unwrap();
+    assert_eq!(n, Now::Took { slot: 4, held_before: 3, fresh: true }, "no wait, slot 4 of a pool of 3");
+    assert_eq!(take_now_line(Pool::Compile, 3, 4, 1, 3), "gate build took compile slot 4 (weight 1) without waiting — oversubscribed: 4 of 3 held; new agent builds queue behind it");
+    // An agent build finishes; the newcomer still waits: the gate's unit fills the freed room.
+    p.kill(10);
+    let (t, _) = try_take(&d, Pool::Compile, 3, &h(60, 6, "agent-new"), 0, 110, &p).unwrap();
+    let Take::Busy { holders } = t else { panic!("{t:?}") };
+    assert!(holders.iter().any(|l| l.who == "gate:concierge/sp-x"), "{holders:?}");
+    // The gate build releases: now the newcomer is admitted.
+    let e = release(&d, Pool::Compile, 3, 4, &gate, 130).unwrap();
+    assert_eq!((e.held, e.end), (29, "released"));
+    let (t, _) = try_take(&d, Pool::Compile, 3, &h(60, 6, "agent-new"), 0, 131, &p).unwrap();
+    assert!(matches!(t, Take::Admitted { fresh: true, .. }), "{t:?}");
+    // The same gate cargo asking again (its next rustc) keeps its lease; a gate build on an
+    // empty pool is an ordinary lease, not an oversubscription.
+    let d2 = run_dir();
+    let (n, _) = take_now(&d2, Pool::Compile, 3, &gate, 200, &p).unwrap();
+    assert_eq!(n, Now::Took { slot: 1, held_before: 0, fresh: true });
+    let (n, _) = take_now(&d2, Pool::Compile, 3, &gate, 201, &p).unwrap();
+    assert_eq!(n, Now::Took { slot: 1, held_before: 0, fresh: false });
+    assert_eq!(take_now_line(Pool::Compile, 3, 1, 1, 0), "gate build took compile slot 1 (weight 1) without waiting; new agent builds queue behind it");
 }
