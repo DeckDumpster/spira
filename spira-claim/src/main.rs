@@ -49,7 +49,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
-       spira-claim ready-args [--raw] [--scope-label L] [--no-loop-label L]   (READY_ARGS/ready_raw_args, one token a line)
+       spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
@@ -630,7 +630,7 @@ fn resolved_label(flag: Option<&str>, toml: Option<&str>, env_key: &str, default
 }
 
 fn no_loop_label(a: &Args, env: &Env) -> String {
-    resolved_label(a.get("--no-loop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "no-loop")
+    resolved_label(a.get("--noloop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "no-loop") // literal-ok: the conf.d-documented fallback default
 }
 
 fn scope_label(a: &Args, env: &Env) -> String {
@@ -659,7 +659,7 @@ fn first_line(s: &str) -> &str {
 }
 
 fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--raw", "--scope-label", "--no-loop-label"]) {
+    if let Err(e) = a.check_known(&["--raw", "--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
     }
     let args =
@@ -675,7 +675,7 @@ fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
 /// still prints '0' to stdout (the historic contract — every existing caller reads only
 /// stdout), rc 1, the failure on stderr.
 fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--no-loop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
     }
     let (labels, exclude) = match a.pos.as_slice() {
@@ -810,7 +810,7 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
 /// logic) is kept; it is read straight from the environment because it is a per-pass
 /// signal file path, not a config key, and sentinel genuinely exports it.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--no-loop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -859,7 +859,7 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
 /// environment for the same reason as `SPIRA_READY_CACHE` (a per-pass signal, not config),
 /// replaces the live fetch when it names a readable file.
 fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--no-loop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
     }
     let home = match fayth_home() {

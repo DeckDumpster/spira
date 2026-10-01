@@ -646,10 +646,11 @@ fn chamber_home(fayths: &[(&str, &str, &str)]) -> Tmp {
 
 #[test]
 fn ready_args_cli_prints_one_token_a_line_in_order() {
-    let o = run(&["ready-args", "--scope-label", "plan", "--no-loop-label", "no-loop"], "");
-    assert_eq!(o.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n--label\nplan\n--exclude-label\nno-loop\n");
-    let raw = run(&["ready-args", "--raw", "--scope-label", "plan", "--no-loop-label", "no-loop"], "");
-    assert_eq!(raw.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n--exclude-label\nno-loop\n", "--raw never carries the scope label");
+    // literal-ok: fixture values below — "no-loop" is SPIRA_NO_LOOP_LABEL's own default
+    let o = run(&["ready-args", "--scope-label", "plan", "--noloop-label", "no-loop"], ""); // literal-ok
+    assert_eq!(o.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n--label\nplan\n--exclude-label\nno-loop\n"); // literal-ok
+    let raw = run(&["ready-args", "--raw", "--scope-label", "plan", "--noloop-label", "no-loop"], ""); // literal-ok
+    assert_eq!(raw.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n--exclude-label\nno-loop\n", "--raw never carries the scope label"); // literal-ok
 }
 
 #[test]
@@ -659,7 +660,7 @@ fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
     let saved = save_env(&["SPIRA_BD", "SPIRA_DB"]);
     std::env::set_var("SPIRA_BD", &*bd);
     std::env::remove_var("SPIRA_DB");
-    let o = run(&["ready-count", "plan", "spira-poison", "--no-loop-label", "no-loop"], "");
+    let o = run(&["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], ""); // literal-ok: fixture value
     restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "a failed query is not a clean zero (sp-3ntca)");
     assert!(o.err.contains("connection refused"), "{}", o.err);

@@ -143,8 +143,8 @@ mod tests {
     #[test]
     fn ready_args_appends_label_then_exclude_label_in_order() {
         assert_eq!(
-            ready_args("plan", "no-loop"),
-            vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--label", "plan", "--exclude-label", "no-loop"]
+            ready_args("plan", "no-loop"), // literal-ok: fixture value, SPIRA_NO_LOOP_LABEL's own default
+            vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--label", "plan", "--exclude-label", "no-loop"] // literal-ok: ditto
         );
         assert_eq!(ready_args("", ""), vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u"]);
     }
@@ -152,8 +152,8 @@ mod tests {
     #[test]
     fn ready_raw_args_never_carries_the_scope_label() {
         assert_eq!(
-            ready_raw_args("no-loop"),
-            vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--exclude-label", "no-loop"]
+            ready_raw_args("no-loop"), // literal-ok: fixture value, SPIRA_NO_LOOP_LABEL's own default
+            vec!["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--exclude-label", "no-loop"] // literal-ok: ditto
         );
     }
 
