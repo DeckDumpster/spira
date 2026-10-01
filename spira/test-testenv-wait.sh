@@ -88,8 +88,14 @@ chmod +x "$REPO/spira/test-a.sh"
 
 OUT2="$TMP/out2"
 mkdir -p "$TMP/home" "$TMP/run" "$TMP/verdicts"
+# `cd` is its own statement, not chained with `&&` onto the backgrounded command: an
+# AND-OR list backgrounded as one job (`a && b &`) can leave an extra wrapper shell
+# between $! and the real process, so a signal to $! would hit the wrapper and orphan
+# testenv underneath it, still running, unsignalled. A single simple command in `&` has
+# no such layer — `env` execs directly into testenv, keeping the same pid.
 (
-    cd "$REPO" && env \
+    cd "$REPO"
+    env \
         SPIRA_TESTENV_HARNESS="$ROOT" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_VERDICTS="$TMP/verdicts" \
