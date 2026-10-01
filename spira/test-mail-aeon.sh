@@ -136,6 +136,7 @@ id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
       print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
 [ -n "$id" ] || exit 1
+{ echo "DEBUG id=$id SPIRA_MAIL=[$SPIRA_MAIL]"; ls -la "$SPIRA_MAIL" 2>&1; ls -la "$SPIRA_MAIL/aeon-$id" 2>&1; } >> "${DEBUG_LOG:-/dev/null}" 2>&1
 # POSITIVE CONTROL (row 12): the mailbox must exist WHILE the aeon runs, before it is
 # checked for absence after — otherwise "gone" is indistinguishable from "never made".
 [ -d "$SPIRA_MAIL/aeon-$id" ] && touch "${MAILBOX_SEEN_MARKER:-/dev/null}"
@@ -151,11 +152,15 @@ BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_
 [ -n "$BID4" ] || { bad "(d): could not file test bead" ""; tl_summary; exit 1; }
 
 aeon_rc=0
+DEBUG_LOG="$TMP/debug.log"
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
 SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
-SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
+SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" DEBUG_LOG="$DEBUG_LOG" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-    aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
+    aeon --home "$SPIRA_HOME" builder >"$TMP/aeon.out" 2>"$TMP/aeon.err" || aeon_rc=$?
+echo "=== DEBUG aeon.out ===" >&2; cat "$TMP/aeon.out" >&2
+echo "=== DEBUG aeon.err ===" >&2; cat "$TMP/aeon.err" >&2
+echo "=== DEBUG debug.log ===" >&2; cat "$DEBUG_LOG" >&2 2>/dev/null
 
 status="$(bdq show "$BID4" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(d.get("status",""))' 2>/dev/null)"
