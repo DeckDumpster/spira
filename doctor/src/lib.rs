@@ -489,7 +489,7 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
         vec![make(
             format!("sccache server is NOT on the shared store — {loc}"),
             format!(
-                "spira.conf/spira.toml names a shared store ({addr}) but the running sccache \
+                "the operator's own config names a shared store ({addr}) but the running sccache \
                  server was started on a different backend — a build that restarted it since \
                  (or one that never has) silently lands on the local-disk cache instead. \
                  `spira_config::build::Wrapper` stops a wrong-backend server itself the next \

@@ -109,7 +109,7 @@ pub const RETIRED_VARS: &[&str] = &[
     "SPIRA_CERTIFY_ALWAYS_COVERS",
     "SPIRA_BATCH_MAXPAR",
     "SPIRA_PATH",
-    // sp-xtdqi: the shared compilation cache's own address — a `spira.toml`-only setting
+    // sp-xtdqi: the shared compilation cache's own address — a config-file-only setting
     // (no default) must reach the gate's build the same way `SPIRA_RUN` etc. do, never only
     // when an operator's shell happened to export it first.
     "SPIRA_SCCACHE_DAV_ADDR",

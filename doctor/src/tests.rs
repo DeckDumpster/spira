@@ -618,7 +618,7 @@ fn backend_check_is_a_no_op_when_no_store_is_configured() {
 fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
     let f = Fake::default();
     f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
-    *f.sccache_show_stats.borrow_mut() = Some("Compile requests                      0\nCache location                  Local disk: \"/home/x/.cache/sccache\"\nVersion (client)                0.18.0\n".into());
+    *f.sccache_show_stats.borrow_mut() = Some("Compile requests                      0\nCache location                  Local disk: \"/var/cache/sccache\"\nVersion (client)                0.18.0\n".into());
     let lines = check_sccache_backend(&f);
     assert_eq!(levels(&lines), vec![Level::Fail]);
     assert!(lines[0].msg.contains("NOT on the shared store"), "{:?}", lines[0].msg);

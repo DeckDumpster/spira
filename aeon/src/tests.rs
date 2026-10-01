@@ -870,7 +870,7 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
 }
 
 /// THE POSITIVE CONTROL (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
-/// `self.conf` exactly like every other `spira.toml`-only key (`merge_resolved_config`),
+/// `self.conf` exactly like every other config-file-only key (`merge_resolved_config`),
 /// reaches an agent's own build as the two `SCCACHE_WEBDAV_*` vars — the fix for "a server
 /// restarted by a gate silently comes back on the local-disk cache" named in the bead.
 #[test]

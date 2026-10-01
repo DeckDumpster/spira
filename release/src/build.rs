@@ -27,7 +27,7 @@ impl Cargo for RealCargo {
             eprintln!("release: {}", wrapper.describe());
         }
         // THE SHARED STORE (sp-xtdqi): resolved in-process from this binary's own
-        // environment and spira.toml, exactly like `wrapper_from_env` itself — never a bare
+        // environment and the operator's own config, exactly like `wrapper_from_env` itself — never a bare
         // `~/.cargo/config.toml` dependency, which only ever reached a build that happened to
         // run under a shell that had sourced it.
         let store = spira_config::build::Store::from_env();
