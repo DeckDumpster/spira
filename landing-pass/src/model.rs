@@ -184,6 +184,31 @@ pub struct BeadRow {
     pub external_ref: Option<String>,
     /// The bead's title — `land_pr`'s PR title (`"<id>: <title>"`, `"Spira"` when empty).
     pub title: String,
+    /// The bead's notes, one entry per note (family R, sp-81t4d —
+    /// `bead_cited_commit_on_base`'s own scan). `#[serde(default)]`: a fixture or an older
+    /// snapshot with no `notes` key deserializes to an empty list, not a parse error.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+/// `bd show`'s `notes` field, normalized to one string per note: a plain string splits on
+/// `\n` (blank lines dropped), a list takes each element's `text` (an object) or itself (a
+/// string), anything else is empty — the same shape `ask::bead_context`'s own inline match
+/// uses, kept here as its own small duplicate rather than widening that function's
+/// signature for one more caller.
+fn normalize_notes(v: Option<&serde_json::Value>) -> Vec<String> {
+    match v {
+        Some(serde_json::Value::String(s)) => s.split('\n').filter(|n| !n.trim().is_empty()).map(str::to_string).collect(),
+        Some(serde_json::Value::Array(a)) => a
+            .iter()
+            .map(|n| match n {
+                serde_json::Value::Object(m) => m.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                x => x.to_string(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 impl BeadRow {
@@ -227,7 +252,8 @@ impl BeadRow {
             .filter(|s| !s.is_empty() && *s != "-")
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        Some(BeadRow { id, status, raw_status, repo, labels, superseded, closed_at, priority, external_ref, title })
+        let notes = normalize_notes(v.get("notes"));
+        Some(BeadRow { id, status, raw_status, repo, labels, superseded, closed_at, priority, external_ref, title, notes })
     }
 
     pub fn has_label(&self, l: &str) -> bool {

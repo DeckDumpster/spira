@@ -7,14 +7,15 @@
 //!   strand check --dry-run      classify and print, change nothing
 //!   strand check --from <f>     classify a saved TSV instead of the live graph
 //!   strand throttle-state       print "open|shut|unreadable<TAB>detail"
+//!
+//! lib.sh family E (wave 4.23, sp-0ffox) — the fleet-liveness verbs its now-shimmed
+//! functions call, plus the direct target for any other caller (`bead`, `cockpit-collect`
+//! use this crate in-process instead):
+//!
+//!   strand aeon-alive <pidfile>            strand aeons-live-total
+//!   strand aeon-count <fayth> [exclude]     strand aeons-live-lanes
 
-mod check;
-mod classify;
-mod config;
-mod model;
-mod probe;
-mod state;
-mod timefmt;
+use strand::{check, config, probe};
 
 use std::io::Read;
 
@@ -77,8 +78,70 @@ fn parse(argv: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
+fn die(usage: &str) -> i32 {
+    eprintln!("strand: usage: strand {usage}");
+    2
+}
+
+/// `aeon_alive <pidfile>` (lib.sh, wave 4.23 sp-0ffox): the one canonical implementation —
+/// `bead` and `cockpit-collect` call this crate in-process instead of keeping their own
+/// copy; lib.sh's bash callers (`hold.sh`) get a one-line shim onto this verb.
+fn cmd_aeon_alive(args: Vec<String>) -> i32 {
+    if args.len() != 1 {
+        return die("aeon-alive <pidfile>");
+    }
+    i32::from(!probe::aeon_alive(std::path::Path::new(&args[0])))
+}
+
+/// `aeon_count <fayth> [exclude-unit]` (lib.sh): live aeons of one persona. `exclude-unit`
+/// is the caller's own transient unit (sp-0hnm6's fix), matched only in the systemd-run
+/// branch, exactly as the bash original.
+fn cmd_aeon_count(args: Vec<String>) -> i32 {
+    if args.is_empty() || args.len() > 2 {
+        return die("aeon-count <fayth> [exclude-unit]");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    let exclude = args.get(1).filter(|s| !s.is_empty()).map(String::as_str);
+    print!("{}", probe::aeon_count(&cfg, &args[0], exclude));
+    0
+}
+
+/// `aeons_live_total` (lib.sh): every aeon, across every persona and lane.
+fn cmd_aeons_live_total(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("aeons-live-total");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print!("{}", probe::aeons_live_total(&cfg));
+    0
+}
+
+/// `aeons_live_lanes` (lib.sh): every lane aeon, across all lane fayths.
+fn cmd_aeons_live_lanes(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("aeons-live-lanes");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print!("{}", probe::aeons_live_lanes(&cfg));
+    0
+}
+
 fn main() {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(verb) = argv.first().cloned() {
+        let mut rest = || argv.split_off(1);
+        let rc = match verb.as_str() {
+            "aeon-alive" => Some(cmd_aeon_alive(rest())),
+            "aeon-count" => Some(cmd_aeon_count(rest())),
+            "aeons-live-total" => Some(cmd_aeons_live_total(rest())),
+            "aeons-live-lanes" => Some(cmd_aeons_live_lanes(rest())),
+            _ => None,
+        };
+        if let Some(rc) = rc {
+            std::process::exit(rc);
+        }
+    }
+    let argv = argv;
     let args = match parse(&argv) {
         Ok(a) => a,
         Err(e) => {

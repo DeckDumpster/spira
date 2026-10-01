@@ -14,6 +14,14 @@
 # hatches (SPIRA_CONFIG_WRITE=1, and running as the installed release itself) return the
 # candidate unchanged, so the redirect case below is not "this function always redirects."
 #
+# A SECOND INCIDENT, same root cause (sp-35ru0, wave 4.7): even with the guard above in
+# place, spira_toml_resolve kept regenerating [persona.*] from a fresher chamber/*.fayth on
+# every mere SOURCE of conf.sh — on the installed release, where the guard's own escape
+# hatch means "this IS the right place," that write landed on the operator's real
+# spira.toml every time a release touched a fayth's mtime, i.e. every release. The fix
+# (last section below) is not a safer redirect; it is removing the regenerate-on-read
+# entirely.
+#
 # covers: spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -121,12 +129,17 @@ is "the operator's real spira.toml is byte-identical after the redirected write"
 
 # ==========================================================================
 echo
-echo "spira_toml_resolve itself routes its own auto-convert target through the guard —"
-echo "THE ACTUAL INCIDENT, not just the helper it should have called:"
+echo "spira_toml_resolve NEVER regenerates on a mere read, even with a fresher fayth —"
+echo "THE ACTUAL INCIDENT (sp-35ru0, wave 4.7): the write-on-read path is gone, not just"
+echo "guarded:"
 # ==========================================================================
-# A chamber holding one fayth newer than $REAL_TOML makes spira_toml_resolve consider
-# $REAL_TOML stale and attempt to regenerate it — exactly the sequence that clobbered the
-# operator's real file before spira_config_writeback existed.
+# Before sp-35ru0, a chamber holding one fayth newer than $REAL_TOML made spira_toml_resolve
+# consider $REAL_TOML stale and regenerate it — exactly the sequence that clobbered the
+# operator's real file before spira_config_writeback existed, and which kept clobbering it
+# afterwards (just into a safe redirect instead) every time a release touched a fayth's
+# mtime. Sourcing conf.sh to find out which file is in force must never write anything, so
+# this now asserts NO conversion is attempted at all: spira_toml_resolve returns the real
+# path unchanged, byte-identical, fayth mtime ignored.
 CHAMBER="$TMP/chamber"; mkdir -p "$CHAMBER"
 cat > "$CHAMBER/builder.fayth" <<'EOF'
 FAYTH_NAME=builder
@@ -135,14 +148,14 @@ touch -d '+1 minute' "$CHAMBER/builder.fayth"
 
 resolved="$(env -i PATH="$PATH" HOME="$FIXHOME" \
     SPIRA_CONF=/nonexistent \
+    SPIRA_TOML="$REAL_TOML" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_CHAMBER="$CHAMBER" \
     bash -c ". '$HARNESS/spira/conf.sh'; spira_toml_resolve" 2>/dev/null)"
-isne "spira_toml_resolve's own auto-convert does not target the real spira.toml" \
-     "$REAL_TOML" "$resolved"
-want "the redirect lives under the harness root" "$HARNESS" "$resolved"
+is "spira_toml_resolve returns the real spira.toml unchanged — no regenerate-on-read" \
+   "$REAL_TOML" "$resolved"
 after_sum="$(sha256sum "$REAL_TOML" | awk '{print $1}')"
-is "the operator's real spira.toml survives spira_toml_resolve's own auto-convert" \
+is "the operator's real spira.toml is byte-identical — a fresher fayth never rewrites it" \
    "$ORIG_SUM" "$after_sum"
 
 tl_summary

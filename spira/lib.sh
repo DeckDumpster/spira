@@ -171,104 +171,35 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # it, including the caller's own, so a `pgrep -f 'aeon.sh builder'` inside a script named
 # in that pattern reports itself alive. pgrep may nominate; /proc decides, on the actual
 # argv of the recorded pid.
+#
+# aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
+# / aeon-count / aeons-live-total / aeons-live-lanes` (wave 4.23, sp-0ffox: lib.sh family E
+# -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
+# this same implementation). The logic — including the exclude-unit threading through
+# aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
+# strand/src/probe.rs now; this file keeps the names so bash sourcers (fleet-status.sh,
+# hold.sh) need no change.
+#
+# aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
+# deliberately never exports either (a fact about this one copy of the harness, not
+# configuration — see _spira_config_fayth's own comment), so a bare exec would see neither
+# and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
+# three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
 aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a live aeon
-    local pf="$1" pid
-    [ -f "$pf" ] || return 1
-    pid="$(cat "$pf" 2>/dev/null)"
-    [ -n "${pid:-}" ] || return 1
-    [ -d "/proc/$pid" ] || return 1
-    # argv[0..] must actually be our runner, not a recycled pid. Capture, THEN match:
-    # `tr ... | grep -q` under pipefail returns 141 when grep closes the pipe on the first
-    # match, so the live case is exactly the one that could read as dead — and a liveness
-    # test that false-negatives lets the reaper rob an aeon that is still working
-    # (law-no-grep-q-under-pipefail).
-    local cmd; cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
-    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1
-    return 0
+    strand aeon-alive "$1"
 }
 
-# aeon_count <fayth> [exclude-unit] -> how many aeons of that fayth are genuinely running.
-#
-# THE UNIT LIST, NOT THE PID FILE, for the same reason aeons_live_total reads units: aeon.sh
-# writes its pidfile only after it claims a bead, so a fast re-summon landing in that gap
-# counted the slot as free a second time (sp-0y2av). ${SPIRA_SYSTEMCTL:-systemctl}, not bare
-# systemctl, so a suite can stub the fleet without a real user session.
-#
-# EXCLUDE-UNIT IS THE CALLER'S OWN UNIT, when the caller is itself a live aeon of this
-# fayth. systemd-run's transient unit exists before aeon.sh's capacity check ever runs, so a
-# sweep or a claim counting units of its own fayth was counting itself — "1/1 at capacity"
-# on the very first aeon, respawning forever without ever seeing a free slot (sp-0hnm6).
-# Callers outside an aeon's own unit (the sentinel's CHECK 7, watchtower's fleet total) pass
-# nothing and get the old, unfiltered count.
-#
-# THE PID FALLBACK IS FOR SUITES, not for production, exactly as aeons_live_total's own. It
-# never sees this bug: aeon.sh writes its own pidfile only after this check has already run.
-aeon_count() {
-    local fayth="$1" exclude="${2:-}" n=0 pf
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        n="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "spira-aeon-${fayth}-*" --no-legend 2>/dev/null \
-            | awk -v ex="$exclude" '$1 != ex' | wc -l)"
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for pf in "$SPIRA_RUN"/aeon-"$fayth"-*.pid; do
-        [ -e "$pf" ] || continue
-        if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-    done
-    printf '%d' "$n"
+aeon_count() {           # aeon_count <fayth> [exclude-unit] -> live aeons of that persona
+    strand aeon-count "$@"
 }
 
-# aeons_live_total -> how many aeons exist right now, across every persona and every lane.
-#
-# THE UNIT LIST, NOT THE PID FILES, and that difference is the whole point of this function.
-# aeon.sh writes its pidfile only after it has claimed a bead (aeon.sh:509), while
-# systemd-run returns the moment the transient unit exists — so within a single sentinel
-# pass an aeon summoned one second ago is invisible to any pid-file count. A ceiling built
-# on that count does not clamp the second summon of the same pass, which is precisely the
-# lag that let a pool of one run a builder and an ops aeon in the same second on
-# 2026-09-09 21:46:47. The unit is authoritative the instant it is asked for.
-#
-# THE PID FALLBACK IS FOR SUITES, not for production: a test overrides SPIRA_SUMMON with a
-# stub, no unit is ever created, and a systemd count would be 0 forever — a ceiling that
-# never binds and never says so. Counting pid files there keeps the ceiling testable, and
-# the lag does not apply because a stub does not race.
-aeons_live_total() {
-    local n=0 pf
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        # `| wc -l` and never `grep -c`: grep exits 1 on no matches, which under pipefail
-        # turns an idle fleet into a failed read (law-no-grep-q-under-pipefail, same shape).
-        n="$(systemctl --user list-units 'spira-aeon-*' --no-legend 2>/dev/null | wc -l)"
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for pf in "$SPIRA_RUN"/aeon-*.pid; do
-        [ -e "$pf" ] || continue
-        if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-    done
-    printf '%d' "$n"
+aeons_live_total() {     # how many aeons exist right now, across every persona and lane
+    strand aeons-live-total
 }
 
-# aeons_live_lanes -> how many lane aeons exist right now, across all lane fayths.
-aeons_live_lanes() {
-    local n=0 f fn
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        for f in $(spira_lane_fayths); do
-            fn="$(fayth_get "$f" FAYTH_NAME "$f")"
-            n=$(( n + $(systemctl --user list-units "spira-aeon-${fn}-*" --no-legend 2>/dev/null | wc -l) ))
-        done
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for f in $(spira_lane_fayths); do
-        fn="$(fayth_get "$f" FAYTH_NAME "$f")"
-        local pf
-        for pf in "$SPIRA_RUN"/aeon-"$fn"-*.pid; do
-            [ -e "$pf" ] || continue
-            if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-        done
-    done
-    printf '%d' "$n"
+aeons_live_lanes() {     # how many lane aeons exist right now, across all lane fayths
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" strand aeons-live-lanes
 }
 
 # --------------------------------------------------------------------------------------
@@ -1012,6 +943,18 @@ park_unmapped() {
 # has no arithmetic to get wrong: a role that never competes cannot be starved.
 # THE POOL IS A CEILING, NOT A FLOOR. It only ever lowers what a persona may start, so a
 # host that sets nothing behaves exactly as before.
+#
+# DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike aeon_count/aeons_live_total above.
+# strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
+# in-process Rust caller, but THIS body stays bash: it calls fayth_get/aeon_count BY NAME,
+# and six suites (test-summon-fayth.sh, test-aeon-elastic-concurrency.sh, test-fayth.sh,
+# test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
+# bash functions after sourcing this file, to control fayth_free's inputs without a real
+# process table. Reducing fayth_free itself to a one-line exec shim would move that
+# arithmetic into a separate process where a bash-level override of aeon_count can never
+# reach it again (the EXEC-BOUNDARY TRAP) — breaking every one of those suites for no
+# behavior change in production (aeon_count below is itself already a shim, so fayth_free
+# calling it by name already reaches strand exactly as a one-line shim would).
 fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
     local f="$1" pool="${2:-}" exclude="${3:-}" max have free
     max="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; max="${max:-1}"
@@ -1646,60 +1589,15 @@ capacity_withdrawn_mark() {
 # the events trail, and a wrong value refused at write time is better than a truthful
 # empty result at read time.
 #
-# Query path: bd sql (server mode only).
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): the SQL that used to live in
+# _attempts_sql_query (the thrash/unjudged exemption, the created_at poison.cleared floor,
+# the three sp-lzt/sp-rp4g4/sp-418h5 constraints its own comment used to carry) is now
+# `events::fold` (spira-claim/src/events.rs, DESIGN.md §3), unit-tested by
+# `cargo test -p spira-claim events::tests` and proven against the identical b1..b8 fixture
+# this file's own test-attempts-sql.sh still seeds. attempts_of is a one-line shim so every
+# existing caller (capacity.sh, the Rust seams in aeon/landing-pass/rebase-stale/etc. that
+# still call it by name) keeps working unchanged.
 #
-# THREE CONSTRAINTS, VERIFIED IN sp-lzt AND RECORDED HERE SO NO ONE REDISCOVERS THEM:
-#   1. bd query cannot express it — no events field. bd sql is the right tool.
-#   2. json_extract on new_value returns empty in Dolt even with a cast. LIKE works.
-#   3. Filter on event_type, or a label_added row whose comment mentions 'in_progress'
-#      would be counted. The filter is a whitelist of the two event types that mean an
-#      attempt, never a bare LIKE over every row.
-# --------------------------------------------------------------------------------------
-_attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts attempts
-    # AN ATTEMPT IS A CLAIM THAT DID NOT SUCCEED — claims minus successful closes.
-    #
-    # Counting raw claims makes a HARNESS REQUEUE indistinguishable from an aeon failure,
-    # and the poison threshold then fires on work that succeeded. sp-7tj was claimed three
-    # times and CLOSED SUCCESSFULLY three times: CHECK 5 reopened it on each pass because its
-    # work reached the base by content before the Sending applied `content-landed`, and the
-    # bead was poisoned for it. Three completed groom passes, one poisoned bead, nothing
-    # wrong with the work.
-    #
-    # The old label counters exempted thrash requeues; sp-lzt deleted them; the exemption is
-    # restored here: requeued/thrash events are subtracted so a thrash claim is net-zero.
-    # A worker that died before judging the bead writes requeued/unjudged-<cause> and is
-    # net-zero too: aeon.sh tells the bead no attempt was charged, and this is where that
-    # promise is kept (sp-8fgmw).
-    #
-    # GREATEST(...,0) because a bead can carry more closes than claims — an operator closing
-    # a bead by hand adds one with no claim behind it.
-    #
-    # THE created_at FLOOR. A cleared poison must stay cleared: `spira-claim unpoison` (or
-    # `groomer.sh deadlocked`) records a poison.cleared event and this excludes everything at
-    # or before it, so a bead an operator judged worth retrying starts that retry at 0 rather
-    # than at the count that poisoned it.
-    # Without the floor, clearing the label alone changes nothing this query reads, and CHECK 4
-    # reads the same old count against a bare label on its very next pass (sp-qd2ul). COALESCE
-    # to the epoch when no poison.cleared event exists, so an uncleared bead's count is
-    # untouched.
-    # THE FLOOR IS A SCALAR SUBQUERY, NOT A CORRELATED ONE. `pc.issue_id=events.issue_id`
-    # against an outer query already filtered to `issue_id='%s'` still asks Dolt to
-    # re-evaluate the inner subquery once per matched row rather than once per query — cheap
-    # for one bead's own handful of events, but the same shape that made the bulk form
-    # (_check4_bulk_sql) unusable at more than a few ids (sp-rp4g4). Filtering the inner
-    # subquery on the same literal id removes the correlation outright: it is now
-    # independent of the outer row and evaluated once.
-    #
-    # EACH sum() IS COALESCEd BEFORE THE ARITHMETIC. The outer WHERE can leave zero rows —
-    # every event at or before a just-written poison.cleared floor, the exact state right
-    # after a clear — and sum() over zero rows is NULL, not 0. NULL minus NULL is NULL, and
-    # greatest(NULL,0) is NULL too: the query printed "<nil>" instead of "0", and
-    # attempts_of's own fail-closed check (sp-418h5) correctly refused to parse it, reading
-    # as a query failure a caller right after unpoison.sh could not tell from a real one.
-    printf "select greatest(coalesce(sum(case when event_type='claimed' or (event_type='status_changed' and new_value like '%%in_progress%%') then 1 else 0 end),0) - coalesce(sum(case when event_type='closed' then 1 else 0 end),0) - coalesce(sum(case when event_type='requeued' and (new_value='thrash' or new_value like 'unjudged%%') then 1 else 0 end),0), 0) from events where issue_id='%s' and created_at > coalesce((select max(created_at) from events where issue_id='%s' and event_type='poison.cleared'), '1970-01-01')" "$1" "$1"
-}
-
-# attempts_of <id> -> count of in_progress status-change events
 # FAIL CLOSED, NOT OPEN. A query failure used to fall through to `printf '0'` with a 0 exit —
 # indistinguishable from a bead that genuinely never failed, so a poisoned bead's per-bead
 # re-check (sentinel.sh's stale-poison-clear scan) read a false zero as "below threshold" and
@@ -1707,14 +1605,11 @@ _attempts_sql_query() {   # _attempts_sql_query <id> -> the SQL that counts atte
 # back (law-a-control-that-cannot-check-must-refuse). Prints nothing and returns 1 on error;
 # callers must treat that as "cannot tell", never default it to 0.
 attempts_of() {
-    local id="$1" q result=""
-    q="$(_attempts_sql_query "$id")"
-    if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
-                  | tr -d ' ')" && [ -n "$result" ] \
-       && printf '%d' "$result" >/dev/null 2>&1; then
-        printf '%d' "$result"; return 0
-    fi
-    return 1
+    local id="${1:-}" out
+    [ -n "$id" ] || return 1
+    out="$(command spira-claim attempts "$id" --db "$SPIRA_DB" 2>/dev/null)" || return 1
+    [ -n "$out" ] || return 1
+    printf '%d' "$out"
 }
 
 # BUMP FUNCTIONS. bump_requeue writes a typed event row so that census can aggregate
@@ -1723,30 +1618,29 @@ attempts_of() {
 #
 # Failure is silent — a missed counter is acceptable; a crash in a caller is not.
 #
-# _bump_write_event_try — the real write, reporting whether bd sql accepted it.
+# _bump_write_event_try — the real write, reporting whether it was accepted. PORTED TO
+# spira-claim (wave 4.18, sp-sn1re): `spira-claim write-event` is the same INSERT (now
+# properly quoted through store::sql_quote rather than interpolated raw), reached by name
+# so doctor's events-substrate probe and every test fixture that calls this directly with
+# an arbitrary event_type (census's recurred/reclaimed local wrappers) keep working.
 # _bump_write_event must keep returning 0: aeon.sh runs under `set -e` and calls
 # bump_requeue bare, so a failing return would kill a live aeon mid-requeue.
 _bump_write_event_try() {
     local id="${1:-}" etype="${2:-}" cause="${3:-unrecorded}"
     [ -n "$id" ] && [ -n "$etype" ] || return 0
-    local actor="${BEADS_ACTOR:-harness}"
-    local uuid q
-    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 1
-    q="INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', '$etype', '$actor', '$cause', UTC_TIMESTAMP())"
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" >/dev/null 2>&1 && return 0
-    return 1
+    command spira-claim write-event "$id" "$etype" "$cause" --db "$SPIRA_DB"
 }
 
 _bump_write_event() { _bump_write_event_try "$@" >/dev/null 2>&1; return 0; }
 bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
-write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip> -> $SPIRA_RUN/lapsed/<bead>-<ts>
-    local bead="$1" quiet="$2" last="$3" tip="$4"
-    mkdir -p "$SPIRA_RUN/lapsed" 2>/dev/null || return 0
-    printf 'bead: %s\nquiet: %ss\nlast: %s\nbranch: spira/%s\ntip: %s\n' \
-        "$bead" "$quiet" "$last" "$bead" "$tip" \
-        > "$SPIRA_RUN/lapsed/$bead-$(date -u +%Y%m%dT%H%M%SZ)"
+# write_lapse_record <bead> <quiet_s> <last_action> <tip> -> $SPIRA_RUN/lapsed/<bead>-<ts>
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): same record format (test-watchtower.sh's
+# gap G8 lifts this function out of lib.sh and runs it standalone to prove the real
+# writer's output still matches the hand-written fixtures the rest of that suite plants).
+write_lapse_record() {
+    command spira-claim lapse-record "${1:-}" "${2:-}" "${3:-}" "${4:-}"
 }
 
 # bump_poison_cleared <id> <cause> — the event _attempts_sql_query/_check4_bulk_sql floor on
@@ -1757,17 +1651,10 @@ write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip
 bump_poison_cleared() { _bump_write_event "${1:-}" 'poison.cleared' "${2:-unrecorded}"; }
 
 # bead_metadata <id> <key> -> the value bd update --set-metadata wrote, or empty when unset.
-# --long is required: bd show --json omits metadata by default (sp-4rzlw).
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): --long is still required there too (bd show
+# --json omits metadata by default, sp-4rzlw) — see counters::bead_metadata.
 bead_metadata() {
-    local id="${1:-}" key="${2:-}"
-    [ -n "$id" ] && [ -n "$key" ] || { printf ''; return 0; }
-    bdjson show "$id" --long 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: d = []
-d = d if isinstance(d, list) else [d]
-m = (d[0].get("metadata") or {}) if d else {}
-print(m.get(sys.argv[1], ""))' "$key" 2>/dev/null
+    command spira-claim bead-metadata "${1:-}" "${2:-}" --db "$SPIRA_DB" 2>/dev/null
 }
 
 # THRASH STREAK — how many consecutive thrash requeues have landed on this bead with its
@@ -1787,35 +1674,20 @@ print(m.get(sys.argv[1], ""))' "$key" 2>/dev/null
 # Same tip as last time bumps the streak; any other tip (including the first thrash ever, or
 # one that moved) resets it to 1. The caller decides what a streak at or over the configured
 # cap means — see aeon.sh's .thrash handler.
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): same metadata keys, same note truncation
+# (tr '\n\r' '  ' | cut -c1-300) — see counters::{next_streak,truncate_note,thrash_streak_bump}.
 thrash_streak_bump() {
-    local id="${1:-}" tip="${2:-?}" note="${3:-}" prev_tip prev_streak streak
+    local id="${1:-}"
     [ -n "$id" ] || { printf '0'; return 0; }
-    prev_tip="$(bead_metadata "$id" thrash_tip)"
-    prev_streak="$(bead_metadata "$id" thrash_streak)"
-    if [ -n "$tip" ] && [ "$tip" != "?" ] && [ "$tip" = "$prev_tip" ]; then
-        streak=$(( ${prev_streak:-0} + 1 ))
-    else
-        streak=1
-    fi
-    # printf, not a herestring: <<< appends its own trailing newline, which tr would turn
-    # into a trailing space that survives the cut below (command substitution only strips
-    # trailing NEWLINES, not spaces).
-    note="$(printf '%s' "$note" | tr '\n\r' '  ' | cut -c1-300)"
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" update "$id" \
-        --set-metadata "thrash_tip=$tip" \
-        --set-metadata "thrash_streak=$streak" \
-        --set-metadata "thrash_last=$note" \
-        >/dev/null 2>&1
-    printf '%d' "$streak"
+    command spira-claim thrash-streak-bump "$id" "${2:-?}" "${3:-}" --db "$SPIRA_DB" 2>/dev/null
 }
 
 # DIAGNOSTIC ACCESSOR — the requeue counter is read from the events table via bd sql
-# (sp-2lk).
-# --------------------------------------------------------------------------------------
-# _counter_events_sql <id> <event_type> — SQL that returns a single integer count.
-_counter_events_sql() {
-    printf "SELECT COUNT(*) FROM events WHERE issue_id='%s' AND event_type='%s'" "$1" "$2"
-}
+# (sp-2lk). PORTED TO spira-claim (wave 4.18, sp-sn1re): `count-events` is the same raw
+# COUNT(*), still generic over event_type — doctor's events-substrate probe and the
+# reclaims_of() test fixtures (test-attempts.sh, test-unpoison.sh) call this directly with
+# event types other than 'requeued'. _counter_events_sql had no caller left once this
+# shimmed directly and was retired outright.
 _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, or '?' if bd sql fails
     # '?' ON FAILURE, NOT '0'. A query that cannot reach the events table and one that
     # reached it and found nothing print the same digit if both return '0' — the reader
@@ -1823,17 +1695,23 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
     # control). recurs_of's caller (incident.sh's Sin decision, before recurs_of moved to
     # the incident crate) once folded that silence into zero recurrences and stayed
     # silent through an outage forever (sp-39yd3).
-    local id="$1" etype="$2" q result=""
-    q="$(_counter_events_sql "$id" "$etype")"
-    if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
-                  | tr -d ' ')" && [ -n "$result" ] \
-       && printf '%d' "$result" >/dev/null 2>&1; then
-        printf '%d' "$result"; return 0
+    local id="${1:-}" etype="${2:-}" out
+    if out="$(command spira-claim count-events "$id" "$etype" --db "$SPIRA_DB" 2>/dev/null)" && [ -n "$out" ]; then
+        printf '%d' "$out"
+        return 0
     fi
     printf '?'
     return 1
 }
-requeues_of() { _counter_events_query "${1:-}" requeued;  }
+# requeues_of <id> -> raw COUNT(*) of 'requeued' events, or '?' if it cannot be told.
+# NOT the judged, exemption-aware count `spira-claim requeues` answers for CHECK 4's own
+# accounting (DESIGN.md §6) — this stays the bare _counter_events_query census.sh,
+# landing-pass and aeon/teardown.rs already depend on counting EVERY requeue, including
+# a rebase-conflict one that attempts_of exempts (test-census-events.sh sp-9edq8,
+# test-landing-rebase.sh, test-aeon-teardown-e2e.sh all assert exactly that). Tried
+# shimming this onto `spira-claim requeues` first; all three suites went red on that
+# exact distinction, which is the regression this comment now guards against.
+requeues_of() { _counter_events_query "${1:-}" requeued; }
 
 # CENSUS SQL — the query and runner used by census to aggregate failure classes.
 # Kept in lib.sh so that tests can call it directly without parsing census.
@@ -1984,11 +1862,14 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
 # bead still carries, if any, read-only. bump_counter stopped writing these at sp-lzt
 # (spira-claim/DESIGN.md §9's `audit` is the going-forward tool, reading the events table
 # instead); this remains only to render whatever a caller finds on an old bead.
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): same exact-or-dash-suffixed match, now over
+# `bd show --json`'s labels array instead of `bdq label list`'s text — see
+# counters::counter_label.
 counter_label() {
-    local all hit
-    all="$(bdq label list "$1" 2>/dev/null | sed -n 's/^ *- //p')" || all=""
-    hit="$(grep -xE "$2-$3(-.*)?" <<<"$all")" || return 1
-    printf '%s' "$(sed -n 1p <<<"$hit")"
+    local out
+    out="$(command spira-claim counter-label "$1" "$2" "$3" --db "$SPIRA_DB" 2>/dev/null)" || return 1
+    [ -n "$out" ] || return 1
+    printf '%s' "$out"
 }
 
 # --------------------------------------------------------------------------------------
@@ -2009,15 +1890,24 @@ counter_label() {
 # THE MARK IS WRITTEN ONLY AFTER THE ASK WAS ACCEPTED, so an escalation path that is down does
 # not silently consume the one notification this count will ever produce.
 # --------------------------------------------------------------------------------------
-SPIRA_POISON_ASKED="${SPIRA_POISON_ASKED:-$SPIRA_RUN/poison-asked}"
 
 # poison_asked_clear <id> — drop this bead's ask history. A poison.cleared event floors
 # attempts_of back to zero (sp-qd2ul), so a genuinely new run of failures can reach the same
 # raw count (e.g. 3) the pre-clear history already has a "3" entry for, and poison_asked would
 # read that stale entry as "already asked" and suppress the new ask. The count it dedups on
 # was just reset; its history must reset with it.
+#
+# PORTED TO spira-claim (wave 4.18, sp-sn1re): `spira-claim ask-clear` IS this call —
+# `spira-claim unpoison`'s own write already performs the identical clear_ask_history step
+# as step 2 of its sequence (unpoison.rs); this is that same step exposed standalone,
+# because the one real caller left (groomer's work-fault triage, groomer/src/cmds.rs's
+# triage_poison, reached through this same lib.sh seam the way bump_poison_cleared is)
+# wants exactly this write and none of unpoison's threshold/label/lifecycle/note machinery
+# around it. SPIRA_POISON_ASKED, read by the new verb from the environment (DESIGN.md
+# §8.3), no longer needs a lib.sh-side default — conf.sh exports SPIRA_RUN, which
+# `spira-claim`'s own resolution falls back to exactly as `unpoison` already does.
 poison_asked_clear() {
-    rm -f "${SPIRA_POISON_ASKED:?}/$1" 2>/dev/null || true
+    command spira-claim ask-clear "${1:-}" --db "$SPIRA_DB" >/dev/null 2>&1 || true
 }
 
 # --------------------------------------------------------------------------------------
@@ -2043,43 +1933,18 @@ poison_asked_clear() {
 #
 # Named for the aeons of Spira, which is the whole reason the system carries that name.
 # The prefix stays `aeon-` so every existing count that greps for it still works.
+#
+# aeon_name_take is RETIRED (wave 4.23, sp-0ffox), not shimmed: its only caller, besides
+# its own definition, was this crate's own seam call from run.rs/sweep.rs — a whole-tree
+# grep found no bash caller and no other Rust seam reaching it — so `aeon` now computes it
+# in-process (aeon/src/naming.rs) with no lib.sh round trip left to shim. SPIRA_AEON_NAMES
+# moves there too (the `NAMES` constant); nothing else read it.
+#
+# aeon_named keeps a one-line shim: cockpit-collect still calls it by name, across the
+# crate boundary.
 # --------------------------------------------------------------------------------------
-SPIRA_AEON_NAMES="valefor ifrit ixion shiva bahamut yojimbo anima cindy sandy mindy"
-
-aeon_name_take() {       # aeon_name_take <fayth> -> a name not currently in use
-    local f="$1" n live
-    live=" $(for pf in "$SPIRA_RUN"/aeon-*.name; do [ -e "$pf" ] || continue
-                 p="${pf%.name}"; [ -f "$p.pid" ] && aeon_alive "$p.pid" && cat "$pf"; done | tr '\n' ' ') "
-    # DO NOT REUSE THE NAME THE LAST AEON HAD. Picking the first free name meant two
-    # consecutive sessions were both "valefor", so the pane looked like one agent switching
-    # beads when it was one dying and another starting — which hid the fact that a bead had
-    # been dropped with work in flight. A cursor makes consecutive aeons distinguishable.
-    local last cursor=0
-    last="$(cat "$SPIRA_RUN/.aeon-name-cursor" 2>/dev/null || echo 0)"
-    case "$last" in ''|*[!0-9]*) last=0 ;; esac
-    local total=0; for n in $SPIRA_AEON_NAMES; do total=$((total+1)); done
-    local tries=0
-    while [ "$tries" -lt "$total" ]; do
-        cursor=$(( (last + 1 + tries) % total ))
-        local idx=0
-        for n in $SPIRA_AEON_NAMES; do
-            if [ "$idx" -eq "$cursor" ]; then
-                case "$live" in *" $n "*) ;; *)
-                    printf '%s' "$cursor" > "$SPIRA_RUN/.aeon-name-cursor"
-                    printf '%s' "$n"; return 0 ;;
-                esac
-            fi
-            idx=$((idx+1))
-        done
-        tries=$((tries+1))
-    done
-    # More concurrent aeons than names is not an error, just unusual; fall back to a
-    # numbered one rather than reusing a name and making two of them indistinguishable.
-    printf 'aeon%s' "$(date +%s | tail -c 4)"
-}
-
 aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, if any
-    local pf="$1"; [ -f "${pf%.pid}.name" ] && cat "${pf%.pid}.name" 2>/dev/null || printf '?'
+    aeon aeon-named "$1"
 }
 
 # --------------------------------------------------------------------------------------
@@ -2129,23 +1994,10 @@ SPIRA_TRACE_MARK='=== spira attempt'
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
 # batcher-cut's Rust seam) calls this, so every reader that widens its own match to a
 # trailing title (landed()/landed_sha() below, CHECK5 in sentinel.sh, cockpit.sh,
-# overrides.sh) stays in sync with what is actually written.
+# overrides.sh) stays in sync with what is actually written. Ported to Rust (sp-81t4d,
+# "wave 4.17" — family R, landed verification); see `land_verify::land_subject`.
 land_subject() {
-    local id="$1" _t
-    _t="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-    t = str(d[0].get("title", "")) if d else ""
-except Exception:
-    t = ""
-print(" ".join(t.split())[:120])
-' 2>/dev/null)"
-    if [ -n "${_t:-}" ]; then
-        printf 'spira: land %s — %s' "$id" "$_t"
-    else
-        printf 'spira: land %s' "$id"
-    fi
+    landing-pass land-subject "$1"
 }
 
 # landed <id> <repo> -> 0 landed, 1 not landed, 2 CANNOT TELL.
@@ -2160,51 +2012,22 @@ print(" ".join(t.split())[:120])
 # closed, and this still reported "no commit on main names it" and reopened the bead four
 # times. It reached attempt 4 against a poison threshold of 3: the harness was one pass from
 # escalating a finished, merged deliverable as a failure.
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R, landed verification); see
+# `land_verify::landed`. Both shims resolve the same optional `<repo>` default (`repo_root`)
+# bash always did and hand the binary an explicit path — the one piece of its own work this
+# shim still does, since `repo_root` lives in bash (family U) either way.
 landed() {
-    local id="$1" repo="${2:-$(repo_root)}" refs _landed_subj
-    # THE REPOSITORY'S OWN LAND REF, not `main`, and its local counterpart alongside it. The
-    # sentinel lands by pushing from the .landing worktree straight to the remote, and
-    # nothing in the harness ever pulls the shared checkout, so the local ref there is
-    # however stale the last human left it. That was survivable only while a landed branch
-    # was never deleted and CHECK 5 could fall back to "the work exists on spira/<id>"; the
-    # reaper removes that branch, so this ref list is now the only thing standing between a
-    # landed bead and being reopened. spira_landrefs keeps only refs that resolve, so a
-    # repository with no local copy of its base still works.
-    refs="$(spira_landrefs "$repo")" || return 2
-    # A LANDING RECORD, NOT A MENTION. --grep over the full message treated any commit that
-    # named the id ANYWHERE — a dependency list, a "Fixes: <id> (analysis)" cross-reference, a
-    # "Filed <id>" note in an unrelated bead's own commit — as proof that id had landed. Five
-    # certified branches were reaped and their landstate written LANDED on exactly this: a
-    # commit that talked about the bead, not one that landed it (sp-dgaig). --grep is still
-    # used to narrow full history to candidates cheaply; only the SUBJECT of each candidate is
-    # then trusted, and only two shapes count: the queue's own merge subject
-    # ("spira: land <id>", optionally " — <title>", written by land_subject() and produced
-    # by batch.sh/verdict.sh/landing.sh), or an aeon's own commit for its own bead
-    # ("<id>: ..." — never a substring, the colon must follow immediately).
-    # shellcheck disable=SC2086
-    while IFS= read -r _landed_subj; do
-        case "$_landed_subj" in
-            "spira: land $id" | "spira: land $id "*) return 0 ;;
-            "$id":*) return 0 ;;
-        esac
-    done < <(git -C "$repo" log --format='%s' --grep="$id" -F $refs 2>/dev/null)
-    return 1
+    local id="$1" repo="${2:-$(repo_root)}"
+    landing-pass landed "$id" "$repo" >/dev/null
 }
 
 # landed_sha <id> <repo> -> the sha of the commit landed() would say yes about, so a
 # caller that needs to CITE the landing (a GitHub comment) gets the same commit the
-# ancestry check trusted, never a second guess at which one that was.
+# ancestry check trusted, never a second guess at which one that was. Ported to Rust
+# (sp-81t4d, "wave 4.17"); same binary as landed(), stdout kept this time.
 landed_sha() {
-    local id="$1" repo="${2:-$(repo_root)}" refs _sha _subj
-    refs="$(spira_landrefs "$repo")" || return 2
-    # shellcheck disable=SC2086
-    while IFS=$'\t' read -r _sha _subj; do
-        case "$_subj" in
-            "spira: land $id" | "spira: land $id "*) printf '%s' "$_sha"; return 0 ;;
-            "$id":*) printf '%s' "$_sha"; return 0 ;;
-        esac
-    done < <(git -C "$repo" log --format='%H%x09%s' --grep="$id" -F $refs 2>/dev/null)
-    return 1
+    local id="$1" repo="${2:-$(repo_root)}"
+    landing-pass landed "$id" "$repo"
 }
 
 # content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
@@ -2259,46 +2082,10 @@ content_landed() {
 # Accepts a sha only when the note uses an explicit hand-landed phrase
 # ("landed as <sha>" or "hand-landed <sha>") → cited-declared, or when the commit
 # message at that sha names the bead id → cited-named.  A bare sha in prose is never
-# sufficient (law-closed-is-not-landed).
+# sufficient (law-closed-is-not-landed). Ported to Rust (sp-81t4d, "wave 4.17" — family R);
+# see `land_verify::bead_cited_commit_on_base`.
 bead_cited_commit_on_base() {
-    local id="$1" repo="$2" base="$3" kind sha _lines
-    _lines="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json, re
-try:
-    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-    notes = d[0].get("notes") if d else None
-    if isinstance(notes, str): notes = [n for n in notes.split("\n") if n.strip()]
-    elif isinstance(notes, list): notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
-    else: notes = []
-    declared = re.compile(r"(?:landed\s+as|hand-landed)\s+([0-9a-f]{7,40})", re.IGNORECASE)
-    sha_pat = re.compile(r"[0-9a-f]{7,40}")
-    seen = set()
-    for n in notes:
-        for m in declared.finditer(str(n).lower()):
-            s = m.group(1)
-            if s not in seen:
-                seen.add(s); print("declared " + s)
-    for n in notes:
-        for s in sha_pat.findall(str(n).lower()):
-            if s not in seen:
-                seen.add(s); print("bare " + s)
-except Exception:
-    pass
-' 2>/dev/null)" || return 1
-    [ -n "$_lines" ] || return 1
-    while IFS=' ' read -r kind sha; do
-        [ -n "$sha" ] || continue
-        git -C "$repo" rev-parse -q --verify "${sha}^{commit}" >/dev/null 2>&1 || continue
-        git -C "$repo" merge-base --is-ancestor "$sha" "$base" 2>/dev/null || continue
-        if [ "$kind" = "declared" ]; then
-            printf '%s cited-declared\n' "$sha"; return 0
-        else
-            git -C "$repo" log -1 --format=%B "${sha}^{commit}" 2>/dev/null \
-                | grep -qE "(^|[^a-z0-9-])${id}([^a-z0-9-]|$)" \
-                && { printf '%s cited-named\n' "$sha"; return 0; }
-        fi
-    done <<< "$_lines"
-    return 1
+    landing-pass cited-commit "$1" "$2" "$3"
 }
 
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
@@ -2310,11 +2097,10 @@ except Exception:
 # THIS IS EVIDENCE FOR NOT REOPENING, NEVER EVIDENCE FOR DELETING. A merged pull request says
 # the work was accepted; it does not say the ref holds nothing else. A caller about to destroy
 # a branch must use content_landed, which is exact and local. This one reaches the network, so
-# it belongs behind a cheap check that has already failed — never on the common path.
+# it belongs behind a cheap check that has already failed — never on the common path. Ported
+# to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::pr_merged`.
 pr_merged() {
-    local repo="$1" br="$2" state
-    state="$( cd "$repo" 2>/dev/null && ghq pr view "$br" --json state -q .state 2>/dev/null )" || return 1
-    [ "$state" = "MERGED" ]
+    landing-pass pr-merged "$1" "$2"
 }
 
 # other_beads_on_conflicts <repo> <branch> <base> <conflicted-files> -> space-separated
@@ -2326,36 +2112,15 @@ pr_merged() {
 # in different words, one lands, and the other's rebase stops on exactly the files the
 # first one changed. The note "resolve the conflict" is misleading in that case — the
 # correct resolution may be to drop the branch rather than replay it. This function does
-# not decide; it names the evidence so the next aeon can judge.
-#
-# NO PIPE INTO GREP. `git log | grep` under pipefail returns 141 on a match when grep
-# closes the pipe first (law-no-grep-q-under-pipefail). Capture whole, then scan.
+# not decide; it names the evidence so the next aeon can judge. Ported to Rust (sp-81t4d,
+# "wave 4.17" — family R); see `land_verify::other_beads_on_conflicts`.
 other_beads_on_conflicts() {
-    local repo="$1" br="$2" base="$3" files="$4" own_id mb subjects ids
-    [ -n "$files" ] || return 0
-    own_id="${br#spira/}"
-    mb="$(git -C "$repo" merge-base "$base" "refs/heads/$br" 2>/dev/null)" || return 0
-    # shellcheck disable=SC2086
-    subjects="$(git -C "$repo" log --format='%s' "$mb..$base" -- $files 2>/dev/null)" || return 0
-    [ -n "$subjects" ] || return 0
-    ids="$(grep -oE "${own_id%%-*}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
-    ids="$(grep -vxF "$own_id" <<< "$ids")" || return 0
-    printf '%s' "$ids" | tr '\n' ' ' | sed 's/ $//'
+    landing-pass other-beads "$1" "$2" "$3" "$4"
 }
 
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::conflict_reopen_note`.
 conflict_reopen_note() {
-    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
-    local rn other_beads note base_display
-    base_display="${base#refs/remotes/}"
-    rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-    other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base_display in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
-    if [ -n "$other_beads" ]; then
-        note="$note Those files were changed on $base_display by $other_beads — check whether this work is already landed before resolving."
-    else
-        note="$note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
-    fi
-    printf '%s' "$note"
+    landing-pass conflict-note "$1" "$2" "$3" "$4" "$5" "$6" "${7:-1}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -3649,37 +3414,13 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
 SPIRA_EVENT_COOLDOWN="${SPIRA_EVENT_COOLDOWN:-3600}"
 
 spira_event() {          # spira_event <kind> <target|-> <title> [detail]
-    local kind="${1:-}" target="${2:--}" title="${3:-}" detail="${4:-}"
-    local dir="$SPIRA_RUN/events" key f now last=0 supp=0
-    [ -n "$kind" ] && [ -n "$title" ] || return 1
-    [ "$target" = "-" ] && target=""
-
-    mkdir -p "$dir" 2>/dev/null || return 1
-    key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
-    f="$dir/$key"
-    now="${SPIRA_NOW:-$(date -u +%s)}"
-    find "$dir" -maxdepth 1 -type f -mmin +"$(( (SPIRA_EVENT_COOLDOWN * 2) / 60 + 1 ))" -delete 2>/dev/null
-    [ -s "$f" ] && read -r last supp < "$f"
-    case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
-    case "${supp:-}" in ''|*[!0-9]*) supp=0 ;; esac
-
-    if [ "$last" -gt 0 ] && [ "$(( now - last ))" -lt "$SPIRA_EVENT_COOLDOWN" ]; then
-        printf '%s %s\n' "$last" "$(( supp + 1 ))" > "$f"
-        return 0
-    fi
-    [ "$supp" -gt 0 ] \
-        && title="$title (+$supp more since $(date -u -d "@$last" +%H:%MZ 2>/dev/null || echo 'the last one'))"
-    printf '%s 0\n' "$now" > "$f"
-
-    # Events are informational — they go to the event log, not the operator mailbox.
-    # Operator asks (question/decision mails) are sent directly by the callers that have
-    # the context to write them properly. Claims, reopens, landings, and similar transitions
-    # belong in the log; the operator's mailbox holds only decisions.
-    printf '%s\tkind: %s\ttarget: %s\t%s%s\n' \
-        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$kind" "${target:--}" "$title" \
-        "${detail:+$(printf '\t%s' "$detail")}" \
-        >> "$SPIRA_RUN/events.log" 2>/dev/null || true
-    return 0
+    # Ported to `bead event` (sp-ogu8x, wave 4.24, family Z — events are the audit trail
+    # census/tsd/cockpit read; see bead/DESIGN.md "event", including why strand's own
+    # independent copy is not also collapsed onto this one yet). SPIRA_RUN/
+    # SPIRA_EVENT_COOLDOWN/SPIRA_NOW are already in this process's environment (none of the
+    # three is an unexported conf.sh derivation), so nothing needs re-threading across this
+    # exec, unlike `bdq`'s shim.
+    command bead event "$@"
 }
 
 # The status witness, and the seam a suite drives it through. `--status-from` is the honest
@@ -3861,25 +3602,10 @@ recut_onto() {
 }
 
 
-# --------------------------------------------------------------------------------------
-# LIVE-AEON CHECK. promote.sh and systemd/install.sh both reset the production checkout,
-# which rewrites aeon.sh and lib.sh in place. Running aeons are executing those files;
-# an in-place reset disrupts them (law-replace-running-scripts-atomically). Both callers
-# share this function so the check cannot drift between them.
-#
-# Returns the list of active aeon unit names for the current instance (one per line),
-# or nothing when no aeons are running.
-#
-# Uses ${SPIRA_SYSTEMCTL:-systemctl}. Tests inject a mock via SPIRA_PATH, which conf.sh
-# prepends to PATH so bare `systemctl` resolves to the mock without a variable override.
-# --------------------------------------------------------------------------------------
-spira_live_aeons() {
-    local sc="${SPIRA_SYSTEMCTL:-systemctl}"
-    "$sc" --user list-units --state=active --no-legend \
-        "spira-aeon-*-${SPIRA_INSTANCE}.service" 2>/dev/null \
-        | tr -s ' \t' '\n\n' \
-        | grep -E "^spira-aeon-[^[:space:]]+-${SPIRA_INSTANCE}\.service$" | sort -u || true
-}
+# spira_live_aeons RETIRED (wave 4.23, sp-0ffox): its callers, promote.sh and
+# systemd/install.sh, are both gone — the install crate's own `checks::live_aeons`
+# (install/src/checks.rs, reimplemented directly against its own Systemctl port) is the
+# live-aeon guard now, independent of lib.sh. A whole-tree grep found no remaining caller.
 
 # _prune_candidates retired with activate.sh (sp-jsnbm): release install-tarball's own
 # prune (release/src/install.rs) replaces it; nothing else called this function.
@@ -4028,14 +3754,10 @@ queue_sort_rows() {
 # bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
 # feature by default) — the types a builder's own close is converted to submitted instead
 # of left closed (aeon.sh, at session teardown). Non-code types (spike, ask, insight,
-# investigation, event, chore, epic) close by the agent's own hand, unchanged.
+# investigation, event, chore, epic) close by the agent's own hand, unchanged. Ported to
+# Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::is_work_type`.
 bead_is_work_type() {
-    local t="$1"
-    [ -n "$t" ] || return 1
-    case " ${SPIRA_WORK_CLOSE_TYPES:-task bug feature} " in
-        *" $t "*) return 0 ;;
-        *) return 1 ;;
-    esac
+    landing-pass is-work-type "$1"
 }
 
 # bead_close_on_land — the only place a work bead is closed for a landed reason.
@@ -4057,49 +3779,12 @@ bead_is_work_type() {
 # own repo:/branch: labels resolve the branch, spira_destroy_branch's content fence refuses
 # if that branch's diff is somehow not on the repository's base, and either kind of miss is
 # still caught by the Sending, which remains the backstop for everything this cannot reach.
+#
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::close_on_land`. Every
+# caller already discards this function's exit code (`|| true`), so the shim's own `|| true`
+# below is belt-and-suspenders, not a behaviour change.
 bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
-    local id="$1" sha="${2:-}"
-    local st repo_label br_label
-    read -r st repo_label br_label <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-d = d if isinstance(d, list) else [d]
-if not d: raise SystemExit(0)
-row = d[0]
-labs = row.get("labels") or []
-submitted = sys.argv[1] in labs
-repo = next((l[5:] for l in labs if l.startswith("repo:")), "-")
-br = next((l[7:] for l in labs if l.startswith("branch:")), "-")
-st = row.get("status") or "-"
-if st != "closed" and submitted: st = "submitted"
-print(f"{st} {repo} {br}")
-' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null)"
-    [ -n "${st:-}" ] || return 0
-    [ "$st" = closed ] && return 0
-    [ "$st" = submitted ] || return 0
-    if bdq close "$id" --reason-file - <<REASON >/dev/null 2>&1
-OUTCOME: landed
-Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-landed).
-REASON
-    then
-        log "land-close $id: closed at ${sha:-unknown} (submitted -> landed)"
-        land_mark "$id" LANDED "$sha" "Closed by landing pass"
-    else
-        log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
-        return 0
-    fi
-    if [ "$repo_label" != "-" ] && [ "$br_label" != "-" ]; then
-        local _rp
-        if _rp="$(repo_root "$repo_label" 2>/dev/null)" \
-           && git -C "$_rp" show-ref --verify -q "refs/heads/$br_label" 2>/dev/null; then
-            if spira_reap_landed_branch "$id" "$br_label" "$_rp" "landed at ${sha:-unknown}"; then
-                log "land-close $id: reaped branch $br_label"
-            else
-                log "land-close $id: branch $br_label not reaped: ${SPIRA_REAP_ERR:-unknown} — left for the Sending"
-            fi
-        fi
-    fi
+    landing-pass close-on-land "$1" "${2:-}" || true
 }
 
 # _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan

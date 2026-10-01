@@ -10,7 +10,7 @@
 # detector fires before trusting the negative case.
 #
 # tier: T1
-# covers: spira/lib.sh
+# covers: spira/lib.sh landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

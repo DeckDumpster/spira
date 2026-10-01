@@ -428,14 +428,23 @@ impl<'a> Lib for RealLib<'a> {
     fn requeues_of(&self, id: &str) -> u32 {
         self.seam.call(Op::RequeuesOf, &[id]).1.trim().parse().unwrap_or(0)
     }
+    /// lib.sh `conflict_reopen_note` — ported natively (sp-81t4d, "wave 4.17": family R;
+    /// was the S10 seam). `args`: `<repo> <br> <base> <name> <conflicts> <actor> [rq_n]`,
+    /// exactly `push.rs`'s own call shape.
     fn conflict_note(&self, args: &[&str]) -> String {
-        self.seam.call(Op::ConflictNote, args).1
+        let get = |i: usize| args.get(i).copied().unwrap_or("");
+        let rq_n = args.get(6).copied().filter(|s| !s.is_empty()).unwrap_or("1");
+        crate::land_verify::conflict_reopen_note(&RealGit, Path::new(get(0)), get(1), get(2), get(3), get(4), get(5), rq_n)
     }
+    /// lib.sh `other_beads_on_conflicts` — ported natively (sp-81t4d, "wave 4.17": family
+    /// R; was the S10 seam).
     fn other_beads(&self, repo: &Path, branch: &str, base: &str, files: &str) -> String {
-        self.seam.call(Op::OtherBeads, &[&p(repo), branch, base, files]).1
+        crate::land_verify::other_beads_on_conflicts(&RealGit, repo, branch, base, files)
     }
+    /// lib.sh `pr_merged` — ported natively (sp-81t4d, "wave 4.17": family R; was the S11
+    /// seam). Reaches the network directly (`ghq`), the same program the seam shelled into.
     fn pr_merged(&self, repo: &Path, branch: &str) -> bool {
-        self.seam.call(Op::PrMerged, &[&p(repo), branch]).0 == 0
+        crate::land_verify::pr_merged(repo, branch)
     }
     fn note(&self, id: &str, text: &str) {
         self.seam.call(Op::Note, &[id, text]);
@@ -444,9 +453,18 @@ impl<'a> Lib for RealLib<'a> {
         let (rc, err) = self.seam.call(Op::Push, &[&p(tree), remote, refspec]);
         if rc == 0 { Ok(()) } else { Err(err) }
     }
+    /// lib.sh `land_subject` — ported natively (sp-81t4d, "wave 4.17": family R; was the
+    /// S14 seam). The bead's title comes from this crate's own bd read, not a second
+    /// subprocess.
     fn land_subject(&self, id: &str) -> String {
-        let s = self.seam.call(Op::LandSubject, &[id]).1;
-        if s.is_empty() { format!("spira: land {id}") } else { s }
+        let title = self
+            .beads
+            .show(&[id.to_string()])
+            .ok()
+            .and_then(|rows| rows.into_iter().next())
+            .map(|r| crate::land_verify::collapse_title(&r.title))
+            .unwrap_or_default();
+        crate::land_verify::land_subject(id, &title)
     }
     fn deliver_delivered(&self, id: &str, sha: &str) {
         self.seam.call(Op::DeliverDelivered, &[id, sha]);
@@ -465,8 +483,11 @@ impl<'a> Lib for RealLib<'a> {
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
         run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
+    /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
+    /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
-        self.seam.call(Op::CloseOnLand, &[id, sha]);
+        let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
+        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.run, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
     }
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
@@ -734,6 +755,36 @@ impl Git for RealGit {
         let mut c = git(repo);
         c.args(["rev-list", "--count", range]);
         git_out(c).and_then(|s| s.trim().parse().ok())
+    }
+    /// lib.sh `landed`/`landed_sha`'s one search: `--grep` only narrows to candidates; the
+    /// subject is what `land_verify::landed` trusts (law-a-matcher-reads-code-not-prose).
+    fn log_grep(&self, repo: &Path, grep: &str, refs: &[String]) -> Option<String> {
+        if refs.is_empty() {
+            return None;
+        }
+        let mut c = git(repo);
+        c.args(["log", "--format=%H%x09%s", &format!("--grep={grep}"), "-F"]);
+        c.args(refs);
+        git_out(c)
+    }
+    fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["merge-base", a, b]);
+        git_out(c).map(|s| s.trim().to_string())
+    }
+    fn log_subjects(&self, repo: &Path, range: &str, paths: &[&str]) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["log", "--format=%s", range]);
+        if !paths.is_empty() {
+            c.arg("--");
+            c.args(paths);
+        }
+        git_out(c)
+    }
+    fn commit_body(&self, repo: &Path, sha: &str) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["log", "-1", "--format=%B", &format!("{sha}^{{commit}}")]);
+        git_out(c)
     }
     fn fetch(&self, repo: &Path, remote: &str) {
         let mut c = git(repo);
@@ -1104,39 +1155,13 @@ pub fn pid_alive(pid: &str) -> bool {
 }
 
 impl Procs for RealProcs {
+    /// A thin wrapper onto `sending::reap::holder_alive` — the destruction chokepoint's own
+    /// canonical implementation (sp-9envm) — rather than this crate's own copy (wave 4.23,
+    /// sp-0ffox: "holder_alive is reached through sending's library"). ONE holder-liveness
+    /// predicate in the whole tree, not landing-pass's own second one.
     fn holder_alive(&self, id: &str) -> bool {
-        if let Ok(pid) = fs::read_to_string(self.run.join(format!("hold-{id}.pid"))) {
-            if pid_alive(&pid) {
-                return true;
-            }
-        }
-        let suffix = format!("-{id}.pid");
-        let Ok(rd) = fs::read_dir(&self.run) else { return false };
-        for e in rd.flatten() {
-            let n = e.file_name().to_string_lossy().into_owned();
-            if !(n.starts_with("aeon-") && n.ends_with(&suffix)) {
-                continue;
-            }
-            let Ok(pid) = fs::read_to_string(e.path()) else { continue };
-            if !pid_alive(&pid) {
-                continue;
-            }
-            // argv must be our runner, not a recycled pid.
-            let cmd = fs::read(format!("/proc/{}/cmdline", pid.trim())).unwrap_or_default();
-            if is_aeon_cmdline(&String::from_utf8_lossy(&cmd).replace('\0', " ")) {
-                return true;
-            }
-        }
-        false
+        sending::reap::holder_alive(&self.run, id)
     }
-}
-
-/// Whether a space-joined cmdline is an aeon: the Rust binary (argv[0] `aeon` or `…/aeon`)
-/// or the retired `aeon.sh` — the rule lib.sh aeon_alive, the sentinel, strand and
-/// rebase-stale share.
-pub fn is_aeon_cmdline(cmd: &str) -> bool {
-    let argv0 = cmd.split(' ').next().unwrap_or("");
-    cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 pub struct RealClock;
@@ -1151,12 +1176,26 @@ impl Clock for RealClock {
 }
 
 #[cfg(test)]
-mod aeon_cmdline_tests {
+mod holder_alive_tests {
+    use super::*;
+
+    // Wave 4.23 (sp-0ffox) retired this crate's own hold/aeon-argv checking — the
+    // aeon-cmdline positive/negative controls now live with the one implementation,
+    // sending::reap (see its own suite). This just confirms RealProcs reaches it.
     #[test]
-    fn the_binary_and_the_retired_script_are_both_aeons() {
-        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder "));
-        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder "));
-        assert!(!super::is_aeon_cmdline("sleep 30 "));
-        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x "));
+    fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive");
+        std::fs::write(run.join("hold-sp-h1.pid"), std::process::id().to_string()).unwrap();
+        let procs = RealProcs { run: run.to_path_buf() };
+        assert!(procs.holder_alive("sp-h1"));
+        assert!(!procs.holder_alive("sp-h2"));
+    }
+
+    #[test]
+    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
+        std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+        let procs = RealProcs { run: run.to_path_buf() };
+        assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
     }
 }

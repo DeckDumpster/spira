@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::env;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use bead::{
@@ -36,6 +36,7 @@ fn main() {
         "amend" => cmd_amend(&home, &rest),
         "contract" => cmd_contract(&home),
         "lint" => cmd_lint(&home, &rest),
+        "event" => cmd_event(&rest),
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
             _ => {
@@ -45,7 +46,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -255,25 +256,11 @@ fn schema_name(home: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `aeon_alive <pidfile>`: ordinary Rust, no shell needed — `/proc/<pid>/cmdline` against
-/// the `(^|/)aeon( |$)|aeon\.sh` pattern, matching `lib.sh`'s own liveness check.
+/// `aeon_alive <pidfile>`: the one canonical implementation (`strand::probe::aeon_alive`,
+/// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies") rather than this
+/// crate's own duplicate of the same /proc check.
 fn aeon_alive(pidfile: &str) -> bool {
-    let pid = match std::fs::read_to_string(pidfile) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => return false,
-    };
-    if pid.is_empty() || !Path::new(&format!("/proc/{pid}")).is_dir() {
-        return false;
-    }
-    let cmdline = std::fs::read_to_string(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    let cmd = cmdline.replace('\0', " ");
-    if cmd.contains("aeon.sh") {
-        return true;
-    }
-    cmd.split_whitespace().any(|tok| {
-        let base = tok.rsplit('/').next().unwrap_or(tok);
-        base == "aeon"
-    })
+    strand::probe::aeon_alive(Path::new(pidfile))
 }
 
 fn mail_send(aeon_id: &str, body: &str) {
@@ -653,6 +640,39 @@ fn cmd_contract(home: &str) -> i32 {
     println!("REPOS");
     print!("{}", repos_section(&load_repos(home)));
     0
+}
+
+// =========================================================================================
+// event — sp-ogu8x, wave 4.24, family Z. `spira/lib.sh`'s `spira_event` is now a one-line
+// shim onto this subcommand (see DESIGN.md "event"); every other caller (the aeon/gate-check/
+// landing-pass/queue/sentinel seams) still types the bash function name unchanged.
+// =========================================================================================
+
+fn cmd_event(args: &[String]) -> i32 {
+    // Mirrors the bash's own positional defaults: `target="${2:--}"`, so a caller that
+    // omits it gets "-" (a plan-level event), not an empty string.
+    let kind = args.first().cloned().unwrap_or_default();
+    let target = args.get(1).cloned().unwrap_or_else(|| "-".to_string());
+    let title = args.get(2).cloned().unwrap_or_default();
+    let detail = args.get(3).cloned().unwrap_or_default();
+
+    // `dir="$SPIRA_RUN/events"` in the bash: an unset SPIRA_RUN concatenates to a literal
+    // leading slash, which every real caller's conf.sh-derived environment avoids by
+    // always setting SPIRA_RUN. Matched here as a plain string join, not `Path::join` on an
+    // empty base (which would silently go relative instead) — see DESIGN.md "event".
+    let run_dir = PathBuf::from(env::var("SPIRA_RUN").unwrap_or_default());
+    let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
+    let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0)
+    });
+
+    match bead::event::emit(&run_dir, cooldown, now, &kind, &target, &title, &detail) {
+        Ok(()) => 0,
+        Err(()) => 1,
+    }
 }
 
 // =========================================================================================

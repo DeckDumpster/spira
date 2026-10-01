@@ -12,6 +12,14 @@
 //! `exit` inside the braces stops bash before it could read further.
 
 /// One seam operation. The first value of every call is `$SPIRA_HOME` (lib.sh's directory).
+///
+/// `ConflictNote`, `OtherBeads`, `PrMerged`, `LandSubject` and `CloseOnLand` are retired
+/// (sp-81t4d, "wave 4.17": family R, landed verification) — `conflict_reopen_note`,
+/// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and `bead_close_on_land` are all
+/// native now (`land_verify.rs`), reached through `RealLib` directly, never this seam.
+/// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
+/// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;
+/// `RealLib` shells to the compiled `gh-intake closeout`/`unlanded-scan` binary instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
@@ -22,16 +30,11 @@ pub enum Op {
     Recut,
     BumpRequeue,
     RequeuesOf,
-    ConflictNote,
-    OtherBeads,
-    PrMerged,
     Note,
     Push,
-    LandSubject,
     DeliverDelivered,
     DeliverRequeued,
     DeliverReturned,
-    CloseOnLand,
     PruneWorktrees,
     /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>` (lc-delivery.sh until sp-arpjt).
     DeliverPrMerged,
@@ -51,16 +54,11 @@ pub const ALL: &[Op] = &[
     Op::Recut,
     Op::BumpRequeue,
     Op::RequeuesOf,
-    Op::ConflictNote,
-    Op::OtherBeads,
-    Op::PrMerged,
     Op::Note,
     Op::Push,
-    Op::LandSubject,
     Op::DeliverDelivered,
     Op::DeliverRequeued,
     Op::DeliverReturned,
-    Op::CloseOnLand,
     Op::PruneWorktrees,
     Op::DeliverPrMerged,
     Op::DeliverPrClosed,
@@ -154,18 +152,13 @@ fn body(op: Op) -> &'static str {
         Op::Recut => "recut_onto \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s' \"${RECUT_APPLIED_COUNT:-0}\" \"${RECUT_CONFLICTS:-}\"\nexit $__rc\n",
         Op::BumpRequeue => "bump_requeue \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
         Op::RequeuesOf => "printf '\\036%s' \"$(requeues_of \"$1\")\"\nexit 0\n",
-        Op::ConflictNote => "printf '\\036%s' \"$(conflict_reopen_note \"$@\")\"\nexit 0\n",
-        Op::OtherBeads => "printf '\\036%s' \"$(other_beads_on_conflicts \"$1\" \"$2\" \"$3\" \"$4\")\"\nexit 0\n",
-        Op::PrMerged => "pr_merged \"$1\" \"$2\"\nexit $?\n",
         Op::Note => "bdq note \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
         Op::Push => "__e=\"$(spira_git_push \"$1\" -q \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
-        Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
         // spira-lc's caller verbs (sp-arpjt; lc-delivery.sh before): their log lines are
         // lib.sh `log` lines, passed through like any other.
         Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\" || true\nexit 0\n",
         Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\" || true\nexit 0\n",
         Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\" || true\nexit 0\n",
-        Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
         Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
         Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\" || true\nexit 0\n",

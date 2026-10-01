@@ -106,6 +106,11 @@ id = "UC-cockpit-observability-20"
 tier = "T0"
 statement = "`spira_event` records kind/target/title/detail to `events.log`, suppresses repeats per (kind, target) within a window then reports `+N more`, refuses an empty kind or title, and every emitted kind is declared, lowercase-dotted and ≤32 characters"
 
+[use_case.uncovered]
+reason = "suite test-event.sh retired at sp-ogu8x (wave 4.24, spira_event -> bead::event::emit); the rate-limit/record/refusal half is now bead/src/event.rs's unit tests (a_first_outcome_is_recorded_whole, a_repeat_inside_the_window_is_not_a_second_row, a_storm_is_one_row_but_distinct_beads_are_not_suppressed, suppressed_rides_out_on_the_next_emission_with_a_count, the_window_belongs_to_the_first_emission_not_the_last_suppression, an_empty_kind_or_title_is_refused_and_nothing_is_written), which the suite-coverage fence does not yet count as cover (sp-pype5, open). The declared-kind/taxonomy half was already covered separately by spira-lint's event-taxonomy rule (T0 lint, not suite-driven), unaffected by this retirement."
+date = "2026-10-01"
+bead = "sp-ogu8x"
+
 [[use_case]]
 id = "UC-cockpit-observability-21"
 tier = "T1"

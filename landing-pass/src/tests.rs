@@ -121,6 +121,18 @@ impl Git for FakeGit {
     fn refs_matching(&self, _: &Path, p: &str) -> Vec<String> {
         self.matching.borrow().get(p).cloned().unwrap_or_default()
     }
+    fn log_grep(&self, _: &Path, _: &str, _: &[String]) -> Option<String> {
+        None
+    }
+    fn merge_base(&self, _: &Path, _: &str, _: &str) -> Option<String> {
+        None
+    }
+    fn log_subjects(&self, _: &Path, _: &str, _: &[&str]) -> Option<String> {
+        None
+    }
+    fn commit_body(&self, _: &Path, _: &str) -> Option<String> {
+        None
+    }
 }
 
 #[derive(Default)]
@@ -484,6 +496,7 @@ impl H {
             priority: 2,
             external_ref: None,
             title: String::new(),
+            notes: Vec::new(),
         };
         self.beads.rows.borrow_mut().insert(id.into(), b.clone());
         b
@@ -847,6 +860,18 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
         }
         fn refs_matching(&self, _: &Path, _: &str) -> Vec<String> {
             vec![]
+        }
+        fn log_grep(&self, r: &Path, g: &str, refs: &[String]) -> Option<String> {
+            self.0.log_grep(r, g, refs)
+        }
+        fn merge_base(&self, r: &Path, a: &str, b: &str) -> Option<String> {
+            self.0.merge_base(r, a, b)
+        }
+        fn log_subjects(&self, r: &Path, range: &str, paths: &[&str]) -> Option<String> {
+            self.0.log_subjects(r, range, paths)
+        }
+        fn commit_body(&self, r: &Path, sha: &str) -> Option<String> {
+            self.0.commit_body(r, sha)
         }
     }
     let v = Vanishing(&h.git, Cell::new(false));
