@@ -114,6 +114,18 @@ host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6"
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
+# sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
+# conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
+# sequentially, before the suite batch starts. Every suite's own container sources
+# conf.sh (directly, or through a tool like watchd that shells into it), and conf.sh
+# regenerates these itself when they are stale or missing (conf-gen.sh) — on the HOST's
+# long-lived checkout that is already warm almost always, so the regeneration path is
+# barely exercised; on a FRESH VM clone every single one of 400+ suites hits "missing"
+# on its first conf.sh sourcing, all at once, at --maxpar. Warming it here, before any
+# suite runs, means every one of them finds it already fresh and never regenerates at
+# all — this is what test-install-migrate.sh's intermittent "the watcher manifest is
+# malformed" (watchd's own conf.sh sourcing failing) traced back to.
+bash spira/conf-gen.sh >&2 || true
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
 # box's own address, which this VM already reaches for the mirror, is reused for the cache
@@ -775,6 +787,19 @@ mod tests {
         assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
         assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
         assert!(REMOTE_SCRIPT.contains("absent — this round builds it; refresh the template with round-vm template"));
+    }
+
+    #[test]
+    fn conf_gen_is_warmed_once_before_the_workspace_build_and_the_suite_batch() {
+        // sp-xjnzl-2: a fresh clone never carries conf.sh's gitignored generated fragments,
+        // so every suite's own conf.sh sourcing would otherwise regenerate them independently
+        // the moment the batch goes parallel — warming once, here, means none of them do.
+        let clone = REMOTE_SCRIPT.find("git clone").unwrap();
+        let warm = REMOTE_SCRIPT.find("bash spira/conf-gen.sh").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
+        assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
     }
 
     #[test]
