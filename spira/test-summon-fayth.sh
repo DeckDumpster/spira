@@ -317,7 +317,7 @@ echo "lane ceiling (a2) — tasker IS summoned when the only ready lane is at it
 # raised to 2 for this one case to keep the SAME path exercised (a ready lane refused only
 # because IT ITSELF has no room, not because the collective cap already absorbed it).
 export SPIRA_LANES_MAX_LIVE=2
-set_live tasker 3
+set_live tasker 2        # total 3/4 -> exactly 1 fleet slot free, the reservation's gate
 set_live laner 1        # laner's own cap (1) is now met, AND the lane total is 1 (< 2)
 set_ready laner 1
 set_ready tasker 1
@@ -571,7 +571,13 @@ FAKEBD
 chmod +x "$T/bin/fake-bd"
 export SPIRA_BD="$T/bin/fake-bd"
 
+# `summon_fayth`'s OWN readiness, below, goes through the spira-claim stub (set_ready) —
+# $T/bin is ahead of the release's real spira-claim on PATH for every subprocess this
+# whole suite spawns, `aeon --escape` included, so fake-bd's "ready" answer (read through
+# a REAL spira-claim this stub shadows) is never reached either way; kept in sync here so
+# both readinesses agree.
 touch "$T/run/fake-ready"
+set_ready stretchy 1
 
 # POSITIVE CONTROL: normal summon with pool=0 produces nothing.
 rm -f "$SUMMONED"
@@ -588,10 +594,12 @@ want "escape.sh summons despite pool=0 not being passed" "SUMMONED:stretchy" "$(
 # summons nothing — the summon above is about the fayth having work, not the script
 # always calling the binary unconditionally.
 rm -f "$T/run/fake-ready" "$SUMMONED"
+set_ready stretchy 0
 aeon --escape stretchy 2>/dev/null || true
 is "escape.sh with nothing ready does not summon" "absent" \
    "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 touch "$T/run/fake-ready"
+set_ready stretchy 1
 
 # ======================================================================================
 echo
@@ -617,6 +625,10 @@ rm -f "$HALT_STAMP"
 echo
 echo "G6 — plain fleet-ceiling refusal, not merely the last-slot rules"
 # ======================================================================================
+# SPIRA_FAYTHS restored: the lane-ceiling section above left it at "tasker laner", and
+# live_total/aeon_count only count pidfiles tagged under the CURRENT roster — unlike the
+# old independent MOCK_LIVE, a real fleet total is the roster's own sum.
+export SPIRA_FAYTHS="anchor stretchy"
 export SPIRA_MAX_LIVE_AEONS=3
 set_ready anchor 1
 clear_live
