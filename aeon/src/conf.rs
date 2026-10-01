@@ -283,9 +283,15 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
 /// `spira_home_repo` logic needs all three to tell an explicit `SPIRA_REPO` override apart
 /// from one that merely fell out of where this copy of the harness sits.
 ///
-/// Best-effort, same as every other config read in this binary: a containment refusal or
-/// an unreadable registry leaves `snap.vars` exactly as the seam call alone produced it.
-pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) {
+/// NOT BEST-EFFORT ANY MORE (sp-1cdgq round 3): a containment refusal or an unreadable
+/// registry used to leave `snap.vars` exactly as the seam call alone produced it — silently,
+/// with no error anywhere. That "best-effort" was what let a missing `conf.d` (production
+/// never has one; only a test fixture's `--home` ever does) resolve every `RETIRED_SNAPSHOT_
+/// VARS` key to nothing while looking like a clean run (sp-8qm8g, then sp-1cdgq itself, same
+/// defect twice). `resolve_for_process`'s `Err` is now the caller's problem: surfaced here,
+/// not swallowed, so `main.rs` can refuse to start rather than run an aeon short the config
+/// it believes it has.
+pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) -> Result<(), String> {
     let repo_derived = spira_config::resolve::derive_repo_filesystem(home, env);
     let repo = env
         .get("SPIRA_REPO")
@@ -295,11 +301,11 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     snap.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO_DERIVED".into()).or_insert_with(|| repo_derived.to_string_lossy().into_owned());
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, env) {
-        for (k, v) in resolved.values {
-            snap.vars.entry(k).or_insert(v);
-        }
+    let resolved = spira_config::resolve::resolve_for_process(home, &repo, env)?;
+    for (k, v) in resolved.values {
+        snap.vars.entry(k).or_insert(v);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -396,7 +402,7 @@ mod tests {
             vars: vars(&[("LANDSTATE", "/seam/landstate")]),
             ..Default::default()
         };
-        merge_resolved_config(&mut snap, &home, &BTreeMap::new());
+        merge_resolved_config(&mut snap, &home, &BTreeMap::new()).unwrap();
 
         match saved {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
@@ -433,7 +439,7 @@ mod tests {
         std::env::set_var("SPIRA_SUMMON_JITTER", "0");
 
         let mut snap = crate::seam::Snapshot::default();
-        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]));
+        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())])).unwrap();
 
         match saved_toml {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
@@ -484,7 +490,7 @@ mod tests {
         // merge_resolved_config can ever supply it now.
         let mut snap = crate::seam::Snapshot::default();
         let env = BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]);
-        merge_resolved_config(&mut snap, &home, &env);
+        merge_resolved_config(&mut snap, &home, &env).unwrap();
         let conf = Conf::new(&snap, &home);
 
         match saved_toml {
