@@ -23,6 +23,20 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 }
 . "$_spira_lib_dir/conf.sh"
 . "$_spira_lib_dir/suite-covers.sh"
+# FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
+# one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
+# binary's own subprocess, which inherits only the real process environment — not this
+# shell's unexported variables, the way the old in-shell `( subshell )` did. conf.sh
+# deliberately leaves most of its ~264 keys unexported (its own comment above the export
+# list); these are the ones every shipped `.fayth`'s FAYTH_LABELS line actually references
+# (grepped: spira/chamber/*.fayth) that are not already on that list. Exported here, once,
+# the same narrow way spira/bead.sh:49 already does for the bead binary — not a blanket
+# export, which would leak the per-copy facts conf.sh's own fence exists to keep out of
+# every child process (SPIRA_HOME, SPIRA_REPO, the maps, SPIRA_FAYTHS, SPIRA_MAX_AEONS —
+# law-gates-run-in-a-clean-environment). A custom operator fayth referencing some OTHER
+# unexported key is the same trap bead.sh's own narrow list already carries; widen this
+# list (and bead.sh's) together if one shows up.
+export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
 # lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
 # functions that once stood in for those two calls are retired too (sp-uwhx0): their only
@@ -350,390 +364,16 @@ for i in rows:
         break' "$subject" 2>/dev/null
 }
 
-# spira_ask_machinery — escalate a judgement that repeatedly could not be made.
-#
-# THE CASE THIS EXISTS FOR. A gate that withholds its verdict is correct to let the branch
-# keep its turn, and the pass is telling the truth every time it says "the next pass takes
-# it". Said eleven times in a row it is also the exact sound of a livelock, and on
-# 2026-09-07 nothing anywhere turned that repetition into a signal: origin/main sat still for
-# fifty minutes while every log line individually read as normal operation.
-#
-# So the escalation is on the REPETITION, not on the occurrence (law-alerts-must-be-actionable
-# — a first lock-timeout is not actionable and paging on it would teach the operator to
-# ignore the channel). It is a decision request, not a problem report: it names the machinery
-# fault, what it is costing, and what to do (law-escalate-decisions-not-problems).
-#
-# Deduped through ask_already_open on the branch name, because the strongest dedupe is "is it
-# already in front of him" rather than a clock — a rate-limited version of this same alert
-# put nine identical decisions in his pane in one day.
-spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <gate output>
-    local id="$1" br="$2" repo="$3" outcome="$4" reason="$5" n="$6" out="$7"
-    ask_already_open "$br cannot be judged" && return 0
-    local _subj="$br cannot be judged: $outcome x$n in a row ($reason)"
-    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`gate.sh $br $repo\` by hand and read the whole output"
-    local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-$_ev
-MAILEOF
-}
-
-# spira_ask_machinery_class — escalate a machinery fault that belongs to no single branch.
-#
-# THE CASE THIS EXISTS FOR. A dead container is not any one branch's problem — every branch
-# gated against it fails the same way — so counting and escalating it per branch produced
-# eight separate asks for one fault, each advising a fix that could not help because the
-# reason string itself was wrong. Escalated by class (repo+reason) instead, this fires once
-# and names every branch the fault touched.
-spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count> <gate output>
-    local repo="$1" reason="$2" branches="$3" outcome="$4" n="$5" out="$6"
-    ask_already_open "$repo cannot be judged: $outcome ($reason)" && return 0
-    local _subj="$repo cannot be judged: $outcome x$n in a day ($reason) — $branches"
-    local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
-    local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-Affected branches: $branches
-
-$_ev
-MAILEOF
-}
-
-# spira_land_noverdict — record one NO_VERDICT occurrence for a branch and escalate when it
-# recurs (law-alerts-must-be-actionable at the machinery level, same as spira_ask_machinery
-# above).
-#
-# A HARNESS-FAULT REASON IS COUNTED AND ESCALATED BY CLASS (repo+reason), not by branch. A
-# dead container makes every branch's gate fail identically, so the count that decides
-# whether this has become a pattern belongs to the fault, and the ask that follows names
-# every branch it has touched instead of filing one ask per branch. Every other NO_VERDICT
-# reason (a lock wait, a missing base ref) is still genuinely per-branch and keeps the old
-# per-branch key.
-#
-# THE CLASS WINDOW RESETS. An .asked marker older than SPIRA_NOVERDICT_CLASS_WINDOW (default
-# a day) is cleared along with its count, so a fault that went away and came back on a later
-# day escalates again rather than being silenced forever by yesterday's ask.
-spira_land_noverdict() {  # <bead> <branch> <repo-name> <reason> <outcome> <gate output>
-    local id="$1" br="$2" name="$3" reason="${4:-unspecified}" outcome="$5" out="$6"
-    local nv_key nv_file nv_n
-
-    if [ "$reason" = harness-fault ]; then
-        nv_key="$(printf '%s' "$name-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-        nv_file="$SPIRA_RUN/noverdict/$nv_key"
-        mkdir -p "$SPIRA_RUN/noverdict"
-        if [ -e "$nv_file.asked" ]; then
-            local _age=$(( $(date +%s) - $(date -r "$nv_file.asked" +%s 2>/dev/null || echo 0) ))
-            if [ "$_age" -ge "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}" ]; then
-                rm -f "$nv_file" "$nv_file.asked" "$nv_file.branches"
-            fi
-        fi
-        nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\n' "$nv_n" > "$nv_file"
-        grep -qxF "$br" "$nv_file.branches" 2>/dev/null || printf '%s\n' "$br" >> "$nv_file.branches"
-        if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-            : > "$nv_file.asked"
-            local _branches; _branches="$(paste -sd, "$nv_file.branches" 2>/dev/null)"
-            spira_ask_machinery_class "$name" "$reason" "${_branches:-$br}" "$outcome" "$nv_n" "$out"
-            progress "escalated $name — $outcome x$nv_n in a day ($reason) across ${_branches:-$br}"
-        fi
-        return 0
-    fi
-
-    nv_key="$(printf '%s' "$br-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-    nv_file="$SPIRA_RUN/noverdict/$nv_key"
-    mkdir -p "$SPIRA_RUN/noverdict"
-    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-    printf '%s\n' "$nv_n" > "$nv_file"
-    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-        : > "$nv_file.asked"
-        spira_ask_machinery "$id" "$br" "$name" "$outcome" "$reason" "$nv_n" "$out"
-        progress "escalated $id — $outcome x$nv_n on $br"
-    fi
-}
-
-# spira_is_generated_file <path> -> 0 if path names a file this harness regenerates whole
-# rather than hand-merges (law-regenerate-derived-summaries). A rebase conflict on one of
-# these is resolved by rerunning its generator, never by reconciling the two hunks by hand.
-# The declared list lives in SPIRA_REBASE_GENERATED_FILES (conf.sh) — a path substring
-# match, since a generated file is named the same regardless of which directory it sits in.
-spira_is_generated_file() {
-    local path="$1" pat
-    for pat in ${SPIRA_REBASE_GENERATED_FILES:-}; do
-        case "$path" in
-            *"$pat"*) return 0 ;;
-        esac
-    done
-    return 1
-}
-
-# spira_ask_rebase_loop — tell the Concierge a bead's rebase keeps failing.
-#
-# Seven reopens on sp-dvlq, each one handing the next aeon "resolve the conflict" against a
-# branch whose correct resolution was "drop it". The repetition is the signal: a bead that
-# cannot rebase N times in a row is not learning from the reopen, and repeating it is
-# machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
-#
-# NEVER RYAN'S DECISION (law-a-rebase-loop-is-sequenced-not-split) — every one of these was
-# resolved by the Concierge with rebase guidance, never by him. So this sends a machine event
-# to the Concierge's mailbox (real time, law-machine-events-wake-in-real-time) — never a
-# --kind question/decision, which would file the same needs-ryan ask under another name.
-spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
-    local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
-    local repo_dir="${7:-}" base_ref="${8:-}"
-    # Fetch bead title and status so the event names the work and its current state.
-    local bead_title bead_status
-    bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print(""); sys.exit()
-d = d if isinstance(d, list) else [d]
-print(d[0].get("title", "") if d else "")' 2>/dev/null)"
-    bead_status="$(spira_bead_status "$id")"
-    # Commits-ahead and branch tip when repo coordinates are available.
-    local tip_short="" ahead=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        tip_short="$(git -C "$repo_dir" rev-parse --short "$br" 2>/dev/null || true)"
-        ahead="$(git -C "$repo_dir" rev-list --count "$base_ref..$br" 2>/dev/null || echo '?')"
-    fi
-    local ctx=""
-    [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
-    # File count over the branch's own diff (not just the conflicted files) — a bead whose
-    # scope spans several hot files cannot win a rebase race it re-enters every few hours;
-    # past SPIRA_REBASE_DECOMPOSE_FILES the answer is decomposition, not another hand rebase.
-    local nfiles=0 decompose_ctx=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        nfiles="$(git -C "$repo_dir" diff --name-only "${base_ref}...${br}" 2>/dev/null | grep -c .)"
-    fi
-    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
-    fi
-    # Subject: title first so the Concierge knows what the work is (law-escalations-lead-with-the-bead).
-    local _subj
-    if [ -n "$bead_title" ]; then
-        _subj="${bead_title}: $br rebase loop x$n in $name"
-    else
-        _subj="$br rebase loop x$n in $name"
-    fi
-    # Per-file listing, one line per conflicted file, flagging any that are GENERATED
-    # (regenerate, don't hand-merge) instead of leaving that judgement to the reader.
-    local _file _files_note="" _gen_note=""
-    for _file in $conflicts; do
-        if spira_is_generated_file "$_file"; then
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file (GENERATED — regenerate it, do not merge it by hand)"
-            _gen_note=1
-        else
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file"
-        fi
-    done
-    [ -n "$_files_note" ] || _files_note="  - ${conflicts:-unknown}"
-    # Suggested action: no empty slots — omit the duplicate clause when others is empty.
-    local _sugg
-    if [ -n "$_gen_note" ]; then
-        _sugg="regenerate the GENERATED file(s) named above via their own generator and rebase again — do not hand-merge them"
-    elif [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        _sugg="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
-    elif [ -n "$others" ]; then
-        _sugg="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
-    else
-        _sugg="rebase $br by hand and push, or close it if the work is already landed"
-    fi
-    # Extra lines for the body: status and branch info.
-    local _extra=""
-    [ -n "$bead_status" ] && _extra="Status: ${bead_status}."
-    if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
-        _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
-    fi
-    mail send concierge \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind note <<MAILEOF >/dev/null 2>&1
-## Note
-
-$_subj
-
-$id has been reopened for a rebase conflict $n times and the loop is not converging. This is
-machinery cycling on itself, not a decision for Ryan (law-a-rebase-loop-is-sequenced-not-split)
-— rebase with explicit guidance and fast-track the bead into a round the moment it certifies.
-
-Conflicting file(s):
-$_files_note
-$ctx$decompose_ctx
-
-Suggested action: $_sugg
-
-$_extra
-MAILEOF
-}
-
-# spira_ask_red_recurring — escalate a bead that has gone RED twice with the same reason class.
-#
-# The second RED with the same reason class means the aeon's work did not fix the root cause.
-# Each reopen costs a full session; repeating it charges work that hits the same wall.
-# Deduped on "$br red recurring $reason_class" so one open ask suppresses re-escalation.
-spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first-red-epoch>
-    local id="$1" br="$2" name="$3" reason_class="$4" first_epoch="${5:-0}"
-    ask_already_open "$br red recurring $reason_class" && return 0
-    local elapsed_h=0
-    [ "${first_epoch:-0}" -gt 0 ] && \
-        elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
-    local _subj="$br red recurring: $reason_class twice on $id in $name"
-    local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id has gone RED twice with the same reason class ($reason_class) on $br in $name. The shas changed between marks, so each reopen charged a session to work that hit the same wall. Elapsed since first RED: ${elapsed_h}h.
-MAILEOF
-}
-
-# spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
-# A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
-spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
-    local id="$1" br="$2" name="$3" reason="$4"
-    ask_already_open "$br rebase refused" && return 0
-    local _subj="$br rebase refused in $name: $reason"
-    local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id is closed; its branch $br cannot be rebased onto the base in $name.
-The failure is not a merge conflict — the work is not being reopened.
-Reason: $reason.
-MAILEOF
-}
-
-# spira_ask_budget_deferred — branch deferred by budget exhaustion N consecutive passes.
-spira_ask_budget_deferred() {  # <branch> <repo> <count>
-    local br="$1" name="$2" n="$3"
-    ask_already_open "$br budget-deferred" && return 0
-    local _subj="$br budget-deferred: $n consecutive passes in $name"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind alert <<MAILEOF >/dev/null 2>&1
-## Alert
-$_subj
-
-Branch $br has been deferred by budget exhaustion $n consecutive landing passes in $name.
-The pass runs out of gate budget before reaching this branch.
-MAILEOF
-}
-
-# spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
-# repeatedly refreshed onto the base.
-#
-# A branch that has been rebased N times and its pull request still has not merged is not
-# a slow landing — it is a stuck one. The obstacle is not staleness; the loop keeps
-# removing that and the PR stays open. An aeon must own the investigation; the bead
-# belongs back on the board at high priority so the next aeon finds it immediately rather
-# than after whatever the queue was already doing.
-#
-# Deduped on the bead id (via ask_already_open) so a stuck branch sends one alert per cap,
-# not one per pass: a monitor that fires every two minutes trains the operator to mute it,
-# which is the failure law-alerts-must-be-actionable names.
-spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" n="$6" behind
-    ask_already_open "$id refresh cap" && return 0
-    behind="$(git -C "$repo" rev-list --count "$br..$base" 2>/dev/null)" || behind="?"
-    local _subj="Spira: $id's pull request has been rebased $n time(s) and still has not merged"
-    local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
-    local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
-         "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-the bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging $br back onto $base every time the base moved, and $n rebases have not got it merged — which means the obstacle is not staleness.
-
-WHAT THIS BEAD IS FOR:
-$_ev
-MAILEOF
-}
-
-# land_escalate — ask the operator once when the landing leg is broken.
-#
-# The escalation is rate limited because a dead landing leg stays dead until someone fixes
-# it, and a check that says so every two minutes is a check the operator learns to scroll past
-# (law-alerts-must-be-actionable).
-land_escalate() {        # land_escalate <subject-tail> <evidence>
-    local why="$1" ev="$2" cd="$SPIRA_RUN/landing.escalated" now last
-    # ALREADY ON HIS SCREEN? THEN DO NOT ASK AGAIN. The clock below is a floor, not the
-    # answer: a dead landing leg stays dead until somebody fixes it, so an hourly re-ask put
-    # NINE identical "Spira is landing nothing" decisions in the operator's pane in one day.
-    # He closed eight of them and the ninth arrived anyway — "why do i keep getting this."
-    # The queue is the database, so ask the database rather than this box's memory of it.
-    ask_already_open "Spira is landing nothing" && return 0
-    now="$(date +%s)"; last=0
-    [ -f "$cd" ] && last="$(cat "$cd" 2>/dev/null || echo 0)"
-    [ $(( now - last )) -lt "${SPIRA_LAND_ESCALATE_EVERY:-3600}" ] && return 0
-    echo "$now" > "$cd"
-    local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`landing-pass land\` by hand to see the failure, then file the fix as a bead"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-every finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch
-
-$ev
-MAILEOF
-    # An escalation is a write, never a movement. Counting a report of paralysis as progress
-    # would mute the one check that notices paralysis.
-    act "escalated: the landing leg is not running"
-}
+# spira_ask_machinery, spira_ask_machinery_class, spira_land_noverdict,
+# spira_is_generated_file, spira_ask_rebase_loop, spira_ask_red_recurring,
+# spira_ask_rebase_refused, spira_ask_budget_deferred, spira_ask_refresh_loop and
+# land_escalate retired (sp-31hjr, wave 4.30, family C): ported natively into
+# landing-pass/src/real.rs + ask.rs (land_escalate into sentinel/src/dispatch.rs).
+# No caller remained in bash — landing-pass's own lib.sh seam was the only one, and
+# it calls the Rust versions in-process now. `landing-pass noverdict ...` and
+# `sentinel --land-escalate` drive the native versions standalone for the
+# real-sender suites. ask_already_open stays (the GitHub-closeout family, not yet
+# ported, still calls it directly).
 
 # How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
 # is one line, and a warning printed before it would be counted as a row.
@@ -862,31 +502,18 @@ aeons_live_lanes() {
 # meant a persona that landed was not a persona that ran, and nothing said so; enumerating
 # the chamber makes installing a fayth the whole of installing a persona.
 # --------------------------------------------------------------------------------------
+# fayth_names, spira_fayths and its task/lane splits, fayth_get, fayth_partitions,
+# fayths_for_labels and persona_model (below) are SHIMS onto `spira-config fayth ...`
+# (wave 4.22, sp-r5zd2: the chamber registry's home is spira-config now — the chamber IS
+# config). The logic, including the leading-space quirk `spira_fayths` can carry when
+# there are no fixed fayths, lives in spira-config/src/chamber.rs; this file keeps the
+# names so the ~50 bash sourcers that call them need no change.
 fayth_names() {          # every persona defined in the chamber, one per line
-    local f n
-    for f in "$SPIRA_HOME"/chamber/*.fayth; do
-        [ -e "$f" ] || continue
-        n="${f##*/}"; printf '%s\n' "${n%.fayth}"
-    done
+    _spira_config_fayth names
 }
 
 spira_fayths() {         # the personas this harness runs, space separated, IN PRIORITY ORDER
-    # SPIRA_FAYTHS still overrides, because which personas a HOST runs is deployment
-    # configuration; the default is every fayth present rather than one name.
-    if [ -n "${SPIRA_FAYTHS:-}" ]; then printf '%s' "$SPIRA_FAYTHS"; return 0; fi
-    # THE ORDER IS NOW LOAD-BEARING, so the default may not be alphabetical. The pool is
-    # drawn down in this order, and `fayth_names` returned "builder ops" — which puts the
-    # elastic persona that scales to fill the box AHEAD of the on-call one, exactly backwards.
-    # Elastic personas sort last and everything else keeps its name order, so a host that
-    # configures nothing still gets a sensible priority instead of an alphabetical accident.
-    local f fixed="" elastic=""
-    for f in $(fayth_names); do
-        if [ "$(fayth_get "$f" FAYTH_ELASTIC 0)" = 1 ]
-        then elastic="$elastic $f"
-        else fixed="$fixed $f"
-        fi
-    done
-    printf '%s' "${fixed# }${elastic:+ }${elastic# }"
+    _spira_config_fayth roster
 }
 
 # spira_task_fayths -> the personas the sentinel's pool summons: everything that is not a
@@ -902,14 +529,7 @@ spira_fayths() {         # the personas this harness runs, space separated, IN P
 # alias so an operator's custom fayth still works after upgrading. Both say the same thing:
 # this persona is not drawn from SPIRA_MAX_AEONS.
 spira_task_fayths() {
-    local f out=""
-    for f in $(spira_fayths); do
-        [ "$(fayth_get "$f" FAYTH_SUMMON auto)" = auto ] || continue
-        [ "$(fayth_get "$f" FAYTH_ROLE task)" = party ] && continue
-        [ -n "$(fayth_get "$f" FAYTH_LANE "")" ] && continue
-        out="$out $f"
-    done
-    printf '%s' "${out# }"
+    _spira_config_fayth task
 }
 
 # spira_lane_fayths -> the personas that belong to a declared lane (FAYTH_LANE set).
@@ -924,15 +544,7 @@ spira_task_fayths() {
 # functions, because the mechanism (FAYTH_LANE present → not a task fayth) does not
 # require the name to be on the list.
 spira_lane_fayths() {
-    local f out=""
-    for f in $(spira_fayths); do
-        # THE SAME EXCLUSION AS THE TASK POOL, because the sentinel summons from BOTH lists
-        # and a persona kept out of one is summoned by the other. A lane is how a persona gets
-        # capacity of its own; FAYTH_SUMMON is whether anything may summon it at all.
-        [ "$(fayth_get "$f" FAYTH_SUMMON auto)" = auto ] || continue
-        [ -n "$(fayth_get "$f" FAYTH_LANE "")" ] && out="$out $f"
-    done
-    printf '%s' "${out# }"
+    _spira_config_fayth lane
 }
 
 # persona_model <fayth> [default] -> the model this persona launches under.
@@ -951,22 +563,11 @@ spira_lane_fayths() {
 # (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
 # mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    local name="$1" def="${2:-claude-opus-5}" toml v=""
-    toml="$(spira_toml_resolve)"
-    if [ -n "$toml" ]; then
-        v="$(spira-config get "persona.$name.model" "$toml" 2>/dev/null)"
-    fi
-    printf '%s' "${v:-$def}"
+    _spira_config_fayth model "$1" "${2:-}"
 }
 
 fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a fayth
-    local f="$1" var="$2" def="${3:-}" F="$SPIRA_HOME/chamber/$1.fayth"
-    [ -f "$F" ] || { printf '%s' "$def"; return 1; }
-    # A SUBSHELL, always. Sourcing a fayth sets FAYTH_* in the caller, so reading two
-    # personas in one loop without one leaves the second wearing the first's predicate —
-    # the same defect this section exists to close, arriving by a different route.
-    # shellcheck disable=SC1090
-    ( . "$F" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"" )
+    _spira_config_fayth get "$1" "$2" "${3:-}"
 }
 
 # READY_ARGS — the ONE definition of "a bead an aeon can take". Everything that counts
@@ -1915,25 +1516,12 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
 # sweep that silently watches nothing is indistinguishable from one that found nothing
 # (law-absence-needs-a-positive-control).
 fayth_partitions() {
-    local f l seen=""
-    for f in $(spira_fayths); do
-        l="$(fayth_get "$f" FAYTH_LABELS)"
-        [ -n "$l" ] || continue
-        case "$seen" in *"|$l|"*) continue ;; esac
-        seen="$seen|$l|"
-        printf '%s\t%s\n' "$l" "$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-    done
+    _spira_config_fayth partitions
     return 0
 }
 
 fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partition IS <labels>
-    # For the question "is anything working THESE beads". Counting every live aeon would
-    # let a running Ops aeon mask a genuinely starved plan, which is the same
-    # one-predicate-for-every-persona defect seen from the other side.
-    local want="$1" f
-    for f in $(fayth_names); do
-        [ "$(fayth_get "$f" FAYTH_LABELS)" = "$want" ] && printf '%s\n' "$f"
-    done
+    _spira_config_fayth for-labels "$1"
     return 0
 }
 
@@ -3133,7 +2721,8 @@ aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, i
 #
 # It is not JSON and does not start with `{`, which is what makes it inert: every consumer of
 # this trace already skips any line that is not a JSON object, so the mark passes through
-# trace_last, trace_tail, capacity_reset_at and tokens.sh without special handling.
+# capacity_reset_at and tokens.sh without special handling here, and through aeon::trace
+# (trace_last, trace_stats, trace_tail, wiki_write_paths — wave 4.34) the same way.
 # --------------------------------------------------------------------------------------
 SPIRA_TRACE_MARK='=== spira attempt'
 
@@ -3178,408 +2767,11 @@ with fh:
 PY
 }
 
-# wiki_write_paths <logfile> <wiki-dir> -> paths under <wiki-dir>, one per line, named by
-# Edit/Write/NotebookEdit tool calls in the CURRENT attempt of <logfile>. Relative to
-# <wiki-dir>, matching `git status` output there.
-#
-# THE TRANSCRIPT, NOT A DIRTY SNAPSHOT. A snapshot taken at session start cannot tell this
-# session's own write from a concurrent actor's — both are just "dirty now, clean at the
-# watermark" (sp-4fl2e). The transcript names only what this session's own tool calls touched.
-wiki_write_paths() {
-    local f="${1:-}" wiki="${2:-}"
-    [ -n "$wiki" ] && [ -r "$f" ] || return 0
-    attempt_trace "$f" 0 2>/dev/null | python3 -c '
-import sys, json, os
 
-wiki = os.path.realpath(sys.argv[1])
-EDITS = ("Edit", "Write", "NotebookEdit")
-seen = set()
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        e = json.loads(line)
-    except Exception:
-        continue
-    if e.get("type") != "assistant":
-        continue
-    for c in (e.get("message") or {}).get("content") or []:
-        if c.get("type") != "tool_use" or c.get("name") not in EDITS:
-            continue
-        inp = c.get("input") or {}
-        fp = inp.get("file_path") or inp.get("notebook_path")
-        if not fp:
-            continue
-        rp = os.path.realpath(fp)
-        if rp != wiki and rp.startswith(wiki + os.sep):
-            seen.add(os.path.relpath(rp, wiki))
-for p in sorted(seen):
-    print(p)
-' "$wiki" 2>/dev/null
-}
-
-# wiki_commit_paths <write-paths> <dirty-paths> -> the subset of <write-paths> (newline-
-# separated, from wiki_write_paths) that this session may commit: also present in
-# <dirty-paths> (newline-separated, from a `git status` read taken AFTER the session — a
-# path the session wrote and then reverted, or that another writer already committed, has
-# nothing left to stage) and never wiki/tasks.md, the generated view regenerated by the
-# brain session's own SessionStart hook and never authored by an aeon.
-wiki_commit_paths() {
-    local writes="${1:-}" dirty="${2:-}" wp out=""
-    while IFS= read -r wp; do
-        [ -n "$wp" ] || continue
-        [ "$wp" = "wiki/tasks.md" ] && continue
-        grep -qxF -- "$wp" <<< "$dirty" 2>/dev/null || continue
-        out="${out:+$out$'\n'}$wp"
-    done <<< "$writes"
-    printf '%s' "$out"
-}
-
-# --------------------------------------------------------------------------------------
-# trace_last <logfile> -> the last thing the session actually did, one line.
-# --------------------------------------------------------------------------------------
-trace_last() {
-    local f="$1"
-    [ -r "$f" ] || { printf ''; return 0; }
-    # THE LAST ATTEMPT'S SEGMENT, not the file's tail. The log is appended to across
-    # attempts, so a fresh attempt that has not yet written an event would otherwise report
-    # the PREVIOUS session's last tool call as what this one is doing — and the heartbeat
-    # grants a stalled aeon a reprieve on exactly that answer.
-    attempt_trace "$f" 100000 2>/dev/null | python3 -c '
-import sys, json
-last = ""
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"): continue
-    try: e = json.loads(line)
-    except Exception: continue
-    if e.get("type") != "assistant": continue
-    for c in (e.get("message", {}) or {}).get("content", []) or []:
-        if c.get("type") == "tool_use":
-            inp = c.get("input", {}) or {}
-            last = "%s %s" % (c.get("name", "?"), str(inp.get("command") or inp.get("file_path") or "")[:200])
-        elif c.get("type") == "text" and c.get("text", "").strip():
-            last = c["text"].strip().replace("\n", " ")[:200]
-# SAFE FOR A KEY=value FILE, AT THE SOURCE. This is arbitrary text from an agent — a shell
-# command, a code fragment — and the cockpit snapshot is sourced by the pane. A newline in
-# it injects extra lines and an "=" makes a bogus key; the pane rendered rustfmt help text
-# where the ops summary belongs before this was clamped. An allowlist, not a blocklist:
-# guessing which characters are dangerous is how the blocklist misses one.
-import re
-sys.stdout.write(re.sub(r"\s+", " ", re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", last)).strip()[:96])
-' 2>/dev/null
-}
-
-# --------------------------------------------------------------------------------------
-# trace_stats <logfile> -> KEY=value lines describing the session that is writing it:
-#
-#   TURNS  distinct assistant message ids
-#   CTX    the LAST assistant usage: input + cache_creation + cache_read
-#   TOOLS  tool_use blocks, total
-#   FILES  distinct file_path across Edit/Write/NotebookEdit
-#   QUIET  seconds since the trace last grew
-#   ACT    the last thing it did, as trace_last reports it
-#   SAID   the last non-empty assistant TEXT block
-#
-# WHY THESE AND NOT THE PROCESS TABLE. "Is an aeon healthy" was answerable only as "it holds
-# a bead and here is the last command it ran", which says nothing about whether the session
-# is making progress, near its context ceiling, or has quietly stopped. Every figure above
-# comes from the one artifact that knows: the stream-json trace.
-#
-# THE WHOLE SEGMENT, NOT A TAIL. `attempt_trace $f 0` — a turn count taken from the last
-# hundred kilobytes is not a turn count, it is a turn count minus however much was cut, and
-# nothing on the pane would say which. The segment is bounded by the attempt, not by the
-# file, so this stays proportional to the session being described rather than to every
-# session that has ever worked the bead.
-#
-# ONE READ, ONE PASS, ONE FORK. The collector calls this once per aeon per pass and the pane
-# only reads what it wrote; anything that walked the trace per figure would multiply the one
-# genuinely unbounded read here by the number of figures.
-#
-# THREE STATES, NOT TWO. A trace that cannot be read renders `?`, a trace with no assistant
-# event yet renders `-`, and a real reading renders a number. Collapsing the first two into
-# 0 is the failure the whole panel is built against: a broken read that looks like an idle
-# session displaces the suspicion that would have prompted a look
-# (law-absence-needs-a-positive-control).
-#
-# APOSTROPHES ARE FORBIDDEN IN THE PYTHON BELOW. It lives inside python3 -c '...' — the same
-# constraint as every other analyser here, and for the same reason: one would close the quote
-# and leave the file syntactically invalid.
-# --------------------------------------------------------------------------------------
-trace_stats() {
-    local f="${1:-}" m
-    m="$(stat -c %Y "$f" 2>/dev/null)"
-    if [ ! -r "$f" ] || [ -z "$m" ]; then
-        printf 'TURNS=?\nCTX=?\nTOOLS=?\nFILES=?\nQUIET=?\nACT=?\nSAID=?\nMODEL=?\n'
-        return 0
-    fi
-    # MTIME, NOT AN EVENT TIMESTAMP. stream-json events carry no wall clock of their own, and
-    # the heartbeat in aeon.sh already treats trace growth as the liveness signal — so this is
-    # the same measure the stall detector acts on rather than a second opinion about it.
-    printf 'QUIET=%d\n' $(( $(date +%s) - m ))
-    attempt_trace "$f" 0 2>/dev/null | python3 -c '
-import sys, json, re
-
-ALLOW = re.compile(r"[^ A-Za-z0-9._/:,()#+-]")
-def clean(s, n=96):
-    # SAFE FOR A KEY=value FILE, AT THE SOURCE, by the same allowlist trace_last uses. These
-    # are arbitrary strings from an agent — a shell command, a code fragment, a sentence. A
-    # newline injects extra lines into the snapshot and an "=" makes a bogus key; the pane
-    # rendered a tools help page where the ops summary belongs before this was clamped.
-    return re.sub(r"\s+", " ", ALLOW.sub(" ", s)).strip()[:n]
-
-seen, ids, files = False, set(), set()
-tools, ctx, act, said = 0, None, "", ""
-# THE MODEL THE AEON WAS ACTUALLY SUMMONED WITH, read from its own trace rather than from
-# the fayth file. Those two disagree exactly when it matters: a fayth edited while an aeon
-# is mid-flight leaves the running session on the model it started with
-# (law-long-lived-processes-pin-their-config), and a pane that read the file would relabel
-# live work the moment the config changed, which is the one moment somebody is looking.
-model = None
-EDITS = ("Edit", "Write", "NotebookEdit")
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        e = json.loads(line)
-    except Exception:
-        continue
-    # The init event carries it once, at the top of the attempt. Both shapes are accepted
-    # because the client has emitted it at the top level and under `message`, and a reader
-    # that knew only one would report `-` for a model that is plainly there.
-    if e.get("type") == "system" and e.get("subtype") == "init":
-        model = e.get("model") or (e.get("message") or {}).get("model") or model
-    if e.get("type") != "assistant":
-        continue
-    seen = True
-    m = e.get("message") or {}
-    # DEDUPED BY message.id, because --include-partial-messages writes one row per content
-    # BLOCK and the rows of a single message share its id. Counting rows would report a turn
-    # per block, which is several per turn and climbs with how chatty the turn was. The
-    # blocks themselves are not duplicated across those rows, so tools and files are counted
-    # from every row and only the turn count is a set.
-    if m.get("id"):
-        ids.add(m["id"])
-    u = m.get("usage")
-    if isinstance(u, dict):
-        # THE CLIENTS OWN DEFINITION of total_input_tokens, so this and the status lines
-        # ctx meter are the same measurement rather than two similar ones. LAST wins: a
-        # context window is a level, not a total, and summing usages would report the sum of
-        # every prompt ever sent as the size of the current one.
-        ctx = ((u.get("input_tokens") or 0)
-               + (u.get("cache_creation_input_tokens") or 0)
-               + (u.get("cache_read_input_tokens") or 0))
-    for c in m.get("content") or []:
-        t = c.get("type")
-        if t == "tool_use":
-            tools += 1
-            inp = c.get("input") or {}
-            if c.get("name") in EDITS:
-                fp = inp.get("file_path") or inp.get("notebook_path")
-                if fp:
-                    files.add(str(fp))
-            act = "%s %s" % (c.get("name") or "?",
-                             str(inp.get("command") or inp.get("file_path") or "")[:200])
-        elif t == "text" and (c.get("text") or "").strip():
-            said = c["text"].strip().replace("\n", " ")[:200]
-            act = said
-
-sys.stdout.write("MODEL=%s\n" % (clean(model, 32) if model else "-"))
-if not seen:
-    for k in ("TURNS", "CTX", "TOOLS", "FILES", "ACT", "SAID"):
-        sys.stdout.write("%s=-\n" % k)
-else:
-    sys.stdout.write("TURNS=%d\n" % len(ids))
-    sys.stdout.write("CTX=%s\n" % ("-" if ctx is None else ctx))
-    sys.stdout.write("TOOLS=%d\n" % tools)
-    sys.stdout.write("FILES=%d\n" % len(files))
-    sys.stdout.write("ACT=%s\n" % (clean(act) or "-"))
-    sys.stdout.write("SAID=%s\n" % (clean(said) or "-"))
-' 2>/dev/null
-}
-
-# --------------------------------------------------------------------------------------
-# aeon_fuse_minutes <bead-id> <worktree> <repo-name> -> minutes since the deliverable
-# last moved, "gate" if a live gate is running, or "?" if the probe failed.
-#
-# THE DELIVERABLE MOVES when either a commit lands ahead of the base ref or a file is
-# written in the worktree. Both are repository facts, not session facts — the session can
-# grow its log indefinitely by reading the same two files and never move either of these.
-# A probe that fails renders "?", never 0 (law-absence-needs-a-positive-control): zero
-# reads as "just moved", the reassuring answer and the wrong one when the probe broke.
-#
-# THE FUSE DOES NOT BURN WHILE A GATE RUNS FOR THIS BEAD. A gate correctly writes
-# nothing and commits nothing for many minutes; a fuse that burned there would train the
-# operator to ignore it (law-alerts-must-be-actionable). A live gate is detected from
-# /proc argv, not from a directory alone — a stale pid file must not mask real silence.
-#
-# SHARED BETWEEN cockpit.sh (display) AND aeon.sh (trip). Two implementations of "has
-# the deliverable moved" is the two-lists defect applied to a probe; one implementation
-# ensures the display and the trip always agree on when the fuse is burning. (sp-cuvi)
-# --------------------------------------------------------------------------------------
-aeon_fuse_minutes() {
-    local bead="$1" wt="$2" repo_name="${3:-}"
-    local _fuse="?" _fuse_gate=""
-    for _gf in "$SPIRA_RUN/gate-run/"*"_${bead}/pid"; do
-        [ -f "$_gf" ] || continue
-        local _gp; _gp="$(cat "$_gf" 2>/dev/null)"
-        [ -n "${_gp:-}" ] && [ -d "/proc/$_gp" ] || continue
-        local _gc; { _gc="$(tr '\0' ' ' < "/proc/$_gp/cmdline")"; } 2>/dev/null
-        [[ "${_gc:-}" == *gate* ]] && { _fuse_gate=1; break; }
-    done
-    if [ "${_fuse_gate:-}" = 1 ]; then
-        _fuse=gate
-    elif [ -d "$wt" ]; then
-        local _last_t=0 _ct="" _base=""
-        if [ -n "${repo_name:-}" ]; then
-            _base="$(spira_landref "$repo_name" 2>/dev/null)" || _base=""
-            if [ -n "${_base:-}" ]; then
-                _ct="$(git -C "$wt" log --format='%ct' -1 "${_base}..HEAD" 2>/dev/null)" \
-                    || _ct=""
-                [ -n "${_ct:-}" ] && [ "${_ct:-0}" -gt "$_last_t" ] && _last_t="$_ct"
-            fi
-        fi
-        local _mt
-        _mt="$(find "$wt" -not -path '*/.git*' -printf '%T@\n' 2>/dev/null \
-               | sort -rn | head -1 | cut -d. -f1)"
-        [ -n "${_mt:-}" ] && [ "${_mt:-0}" -gt "$_last_t" ] && _last_t="$_mt"
-        # A GATE THAT JUST FINISHED IS ALSO PROGRESS, not merely one that is still
-        # running: the live-gate exemption above covers the gate's own runtime, but the
-        # moment it exits, its rc/out/started mtimes are the newest fact the session has
-        # to act on and must reset the fuse the same as a commit or a write would.
-        for _gd in "$SPIRA_RUN/gate-run/"*"_${bead}"/; do
-            [ -d "$_gd" ] || continue
-            for _gf in "$_gd/rc" "$_gd/out" "$_gd/started"; do
-                local _gt
-                _gt="$(stat -c %Y "$_gf" 2>/dev/null)" || continue
-                [ "${_gt:-0}" -gt "$_last_t" ] && _last_t="$_gt"
-            done
-        done
-        if [ "${_last_t:-0}" -gt 0 ] 2>/dev/null; then
-            _fuse=$(( ( $(date +%s) - _last_t ) / 60 ))
-        fi
-    fi
-    printf '%s' "$_fuse"
-}
-
-# --------------------------------------------------------------------------------------
-# aeon_lease_minutes <bead-id> -> minutes left in the liveness lease, or "?" if the
-# deadline file cannot be read.
-#
-# THE FILE IS THE SINGLE SOURCE, shared between the killer (aeon.sh heartbeat) and this
-# function (used by cockpit.sh). Both readers arrive at the same deadline because it comes
-# from one write, not from a formula each would hold separately.
-#
-# NEVER 0 WHEN UNREADABLE. An absent or unreadable file is not "0 minutes remaining"; it
-# is an absent reading. "?" makes the gap visible so the operator does not see an all-clear
-# where there is no signal (law-absence-needs-a-positive-control).
-# --------------------------------------------------------------------------------------
-aeon_lease_minutes() {
-    local bead="${1:-}" lease_file deadline now
-    [ -n "$bead" ] || { printf '?'; return 0; }
-    lease_file="${SPIRA_RUN}/aeon/${bead}.lease"
-    deadline="$(cat "$lease_file" 2>/dev/null)"
-    if [ -z "${deadline:-}" ] || ! printf '%d' "$deadline" >/dev/null 2>&1; then
-        printf '?'
-        return 0
-    fi
-    now="${SPIRA_NOW:-$(date +%s)}"
-    printf '%d' "$(( (deadline - now) / 60 ))"
-}
-
-# --------------------------------------------------------------------------------------
-# trace_tail <logfile> [n] -> the last n human-readable moments of a session.
-#
-# The session log is stream-json now, which is the right format for a machine watching for
-# progress and the wrong one to put in front of the operator: an escalation carrying 25 lines of
-# raw JSON satisfies law-escalations-carry-their-evidence in letter and defeats it in
-# substance. This renders the trace as what the agent SAID and DID.
-# --------------------------------------------------------------------------------------
-trace_tail() {
-    local f="$1" n="${2:-25}"
-    [ -r "$f" ] || { printf '(no session log)'; return 0; }
-    attempt_trace "$f" 200000 2>/dev/null | python3 -c '
-import sys, json
-out = []
-# A result event is a turn boundary, not a terminal state: the session continues
-# immediately and resumes the same session_id. Counting them as turns lets the reader
-# tell "turn 122 of N, still going" from "done" — which the old "session ended" label
-# could not do and caused the operator to conclude the pane was stale when it was live.
-turn_n = 0
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try: e = json.loads(line)
-    except Exception: continue
-    t = e.get("type")
-    if t == "assistant":
-        for c in (e.get("message", {}) or {}).get("content", []) or []:
-            if c.get("type") == "text" and c.get("text", "").strip():
-                out.append("  " + c["text"].strip().replace("\n", " ")[:200])
-            elif c.get("type") == "tool_use":
-                inp = c.get("input", {}) or {}
-                arg = inp.get("command") or inp.get("file_path") or inp.get("pattern") or ""
-                out.append("  $ %s %s" % (c.get("name", "?"), str(arg)[:150]))
-    elif t == "user":
-        for c in (e.get("message", {}) or {}).get("content", []) or []:
-            if c.get("type") == "tool_result":
-                body = c.get("content")
-                if isinstance(body, list):
-                    body = " ".join(x.get("text", "") for x in body if isinstance(x, dict))
-                body = str(body or "").strip().replace("\n", " ")
-                if body:
-                    out.append("    -> " + body[:160])
-    elif t == "result":
-        turn_n += 1
-        out.append("  [turn %d: %s]" % (turn_n, e.get("subtype", "?")))
-sys.stdout.write("\n".join(out[-int(sys.argv[1]):]) if out else "(trace had no readable events)")
-' "$n" 2>/dev/null || printf '(could not render the trace)'
-}
-
-bead_context() {         # bead_context <id> -> a human-readable block
-    local id="$1"
-    [ -n "$id" ] && [ "$id" != "-" ] || { printf '(no single bead — this is about the plan as a whole)'; return 0; }
-    bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json, datetime
-try:
-    d = json.load(sys.stdin)
-    i = (d if isinstance(d, list) else [d])[0]
-except Exception:
-    print("(could not read the bead — say so rather than pretend)"); raise SystemExit
-def age(ts):
-    try:
-        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-        h = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() / 3600
-        return "%dh" % h if h < 48 else "%dd" % (h / 24)
-    except Exception:
-        return "?"
-print("BEAD    %s  [%s, P%s, open %s]" % (i.get("id"), i.get("status"), i.get("priority"), age(i.get("created_at"))))
-print("TITLE   %s" % (i.get("title") or "(none)"))
-labs = ", ".join(i.get("labels") or []) or "(none)"
-print("LABELS  %s" % labs)
-print("")
-print("WHAT THIS BEAD IS FOR")
-print((i.get("description") or "(no description — that is itself the problem)").strip())
-# `notes` is a STRING on these beads, not a list — iterating it yielded one character
-# per "note" and printed "- c", "- h". Normalise before slicing anything.
-notes = i.get("notes")
-if isinstance(notes, str):
-    notes = [n for n in notes.split("\n") if n.strip()]
-elif isinstance(notes, list):
-    notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
-else:
-    notes = []
-if notes:
-    print("")
-    print("MOST RECENT NOTES")
-    for n in notes[-3:]:
-        print("  - %s" % str(n).strip()[:400])
-' 2>/dev/null || printf '(could not read %s)' "$id"
-}
+# bead_context retired (sp-31hjr, family C): ported natively into landing-pass/src/ask.rs
+# (bead_context) + real.rs (RealBeads::context). No caller remained — spira_ask_refresh_loop
+# was the only one, and it's native now too. sentinel's and strand's own `bead_context`
+# (render.rs, check.rs) are separate, pre-existing Rust copies, untouched by this bead.
 
 # land_subject <id> -> "spira: land <id>", or "spira: land <id> — <title>" when the bead
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
@@ -3952,101 +3144,6 @@ system_prompt_split() {
     esac
 }
 
-
-
-
-# groom_claims_verified <new-log-lines> <ask-json> <epoch> -> "" (nothing claimed, or every
-# claim verified) | comma-space-separated ids claimed but unproven
-#
-# A groom pass that writes ESCALATED, inquiry or flagged for bead X in its log without a
-# matching ask bead created in the same session (type=decision, SPIRA_ASK_LABEL, created at
-# or after <epoch>, with X in its title or description) has not escalated — it has claimed
-# to. <new-log-lines> is the window: lines this session itself wrote (the caller's own
-# GROOM_LOG_LINES_BEFORE slice), never the whole log.
-groom_claims_verified() {
-    local log="${1:-}" ask_json="${2:-[]}" epoch="${3:-0}"
-    [ -n "$log" ] || return 0
-    # log AND ask_json ON STDIN / A TEMP FILE, NEVER ARGV (law-payloads-go-on-stdin): a
-    # session's log slice and the open-ask set are each unbounded by anything this function
-    # controls.
-    local _ajf; _ajf="$(mktemp)" || return 1
-    printf '%s' "$ask_json" > "$_ajf"
-    printf '%s' "$log" | ASK_FILE="$_ajf" python3 -c '
-import sys, json, re, datetime, os
-log = sys.stdin.read()
-with open(os.environ["ASK_FILE"]) as f:
-    ask_json = f.read()
-epoch = int(sys.argv[1])
-ids = []
-seen = set()
-for line in log.splitlines():
-    if re.search(r"ESCALATED|inquiry|flagged", line, re.IGNORECASE):
-        for m in re.findall(r"sp-[a-z0-9-]+", line):
-            if m not in seen:
-                seen.add(m); ids.append(m)
-if not ids:
-    sys.exit(0)
-try:
-    d = json.loads(ask_json)
-except Exception:
-    d = []
-if not isinstance(d, list):
-    d = [d]
-found = set()
-for i in d:
-    ca = i.get("created_at") or ""
-    try:
-        dt = datetime.datetime.fromisoformat(ca.replace("Z", "+00:00"))
-        if int(dt.timestamp()) < epoch:
-            continue
-    except Exception:
-        continue
-    title = i.get("title") or ""
-    desc = i.get("description") or ""
-    for cid in ids:
-        if cid in title or cid in desc:
-            found.add(cid)
-unproven = [i for i in ids if i not in found]
-print(", ".join(unproven))
-' "$epoch" 2>/dev/null
-    local _rc=$?
-    rm -f "$_ajf"
-    return $_rc
-}
-
-
-
-
-
-
-# bead_named_paths <text> <repo> -> path tokens in <text> that exist as tracked files in
-# <repo>, one per line, deduplicated. A bead usually names the files it is about in prose —
-# matching a bare regex against the tracked tree, rather than trusting the regex alone, is
-# what keeps a bead id or a stray URL from being read as a path.
-bead_named_paths() {
-    local text="$1" repo="$2" tracked tok clean
-    [ -e "$repo/.git" ] || return 0
-    tracked="$(git -C "$repo" ls-files 2>/dev/null)" || return 0
-    printf '%s\n' "$text" | grep -oE '[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)+' 2>/dev/null \
-        | while IFS= read -r tok; do
-        clean="$tok"
-        while :; do
-            case "$clean" in
-                [\(\`]*) clean="${clean#?}" ;;
-                *) break ;;
-            esac
-        done
-        while :; do
-            case "$clean" in
-                *[.,\;:\)\`]) clean="${clean%?}" ;;
-                *) break ;;
-            esac
-        done
-        [ -n "$clean" ] && printf '%s\n' "$clean"
-    done | sort -u | while IFS= read -r clean; do
-        grep -qxF "$clean" <<<"$tracked" && printf '%s\n' "$clean"
-    done
-}
 
 
 
@@ -4769,6 +3866,14 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # comment on SPIRA_REPO_DERIVED says why) — a bare `spira-config repo ...` run from a
 # function below would see none of them, so every shim threads them through explicitly
 # instead of trusting export.
+# _spira_config_fayth <verb> ... -> `spira-config fayth <verb> ...` with the two values it reads
+# passed per call. conf.sh deliberately never exports SPIRA_HOME or SPIRA_FAYTHS, and a bare
+# exec saw neither: in production the roster came back EMPTY (sp-nki5w), which on world start
+# summons no one. Same shape as _spira_config_repo below.
+_spira_config_fayth() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" spira-config fayth "$@"
+}
+
 _spira_config_repo() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
     SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
@@ -5383,214 +4488,41 @@ spira_prune_worktrees() {
 }
 
 # --------------------------------------------------------------------------------------
-# format_rebased <branch> <onto> <worktree> [repo-name] -> 0 always; the rebase stands
-# whatever the formatter does.
-#
-# A REBASE PRODUCES A TREE NOBODY FORMATTED. git replays hunks; it does not re-run anyone's
-# formatter on the result, so a rebase that resolves perfectly still hands the required
-# check a tree that no human or tool ever laid out. It recurs on exactly the shape a rebase
-# is best at — two branches adding names to the same import list, struct literal or match
-# arm — where each side is individually well-formed and the union is over the line limit.
-# The branch then fails `cargo fmt --all -- --check`, a check it passed before the harness
-# touched it, and the failure is charged to the aeon that wrote correct code.
-#
-# ONLY WHAT THE BRANCH TOUCHED IS COMMITTED. The declared command is repository-wide, because
-# that is the writing form of the repository-wide check it must satisfy — but a repository
-# whose main is already unformatted would otherwise have its entire tree swept into one
-# bead's branch. Against a clean main this restriction changes nothing, since a rebase can
-# only disturb the layout of files the branch itself touched; against a dirty one it is the
-# difference between a format commit and a rewrite.
-#
-# A FORMATTER THAT FAILS CHANGES NOTHING. `cargo fmt` exits non-zero on a tree it cannot
-# parse, and it may have rewritten half of it first. Discard and let the gate render the
-# verdict — a formatter is a convenience, and it must never be able to turn a clean rebase
-# into a branch full of partial edits.
-# --------------------------------------------------------------------------------------
-format_rebased() {
-    local br="$1" onto="$2" wt="$3" name="${4:-}" cmd paths f staged=0
-
-    [ -n "$name" ] || name="$(repo_name_at "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)" || return 0
-    cmd="$(repo_format "$name" 2>/dev/null)"
-    [ -n "$cmd" ] || return 0
-
-    # The formatter sees what a gate command sees and nothing else: an ambient variable that
-    # can change a formatter's output changes what lands (law-gates-run-in-a-clean-environment).
-    # ~/.cargo/bin for the same reason gate.sh names it — lib.sh's PATH is written for
-    # systemd and carries no toolchain.
-    if ! ( cd "$wt" && env -i PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
-             timeout "${SPIRA_FORMAT_TIMEOUT:-300}" bash -c "$cmd" ) >/dev/null 2>&1; then
-        log "format: $name's formatter failed on $br — leaving the rebase unformatted"
-        git -C "$wt" checkout -q -- . 2>/dev/null
-        return 0
-    fi
-
-    # The branch's own files, read from history rather than from the dirty tree: $onto is an
-    # ancestor now, so this diff IS the branch's work. Filtered to paths that still exist,
-    # because a path the branch deleted cannot have been reformatted and `git add` on it is
-    # an error rather than a no-op.
-    paths=()
-    while IFS= read -r -d '' f; do
-        [ -f "$wt/$f" ] && paths+=("$f")
-    done < <(git -C "$wt" diff -z --name-only "$onto" HEAD 2>/dev/null)
-    [ "${#paths[@]}" -gt 0 ] && git -C "$wt" add -- "${paths[@]}" 2>/dev/null
-
-    # Everything the formatter touched outside the branch's own work goes back. Staged paths
-    # are restored from the index, so this only discards the repository-wide remainder.
-    git -C "$wt" checkout -q -- . 2>/dev/null
-    git -C "$wt" diff --cached --quiet 2>/dev/null || staged=1
-    [ "$staged" = 1 ] || return 0
-
-    # The subject names the bead, because for `spira/<id>` branches ${br##*/} IS the id and
-    # that string is the only machine-checkable link between a bead and the commit graph
-    # (law-aeon-commits-name-their-bead). Through stdin, never an argument: a formatter
-    # command containing backticks or $( ) would otherwise be executed by the very quoting
-    # that was meant to quote it (law-commit-messages-via-stdin).
-    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
-spira: re-format ${br##*/} after rebase onto $onto
-
-The rebase replayed cleanly and nothing re-ran $name's formatter on the result, so
-the tree its own check tests was machine-produced. Formatted with: $cmd
-EOF
-    log "format: re-formatted $br after its rebase onto $onto"
-    return 0
-}
-
-# --------------------------------------------------------------------------------------
 # rebase_branch <branch> <onto> [repo] [repo-name] -> 0 if <branch> now contains <onto>, 1
 # if it does not. On failure the branch ref is left EXACTLY as it was and $REBASE_CONFLICTS
-# names the paths that collided. On success, and only when commits were actually replayed,
-# the repository's own formatter runs on the result and is committed as part of the rebase —
-# see format_rebased. The branch tip therefore MOVES on success, and a caller holding a tip
-# from before the call is holding a stale one.
+# names the paths that collided ($REBASE_FAILURE says which of conflict | rebase-refused |
+# no-base | no-branch | no-worktree; $REBASE_REFUSED_REASON is set only for rebase-refused).
+# On success, and only when commits were actually replayed, the repository's own formatter
+# runs on the result and is committed as part of the rebase. The branch tip therefore MOVES
+# on success, and a caller holding a tip from before the call is holding a stale one.
 #
 # THE CALLER MUST HAVE ESTABLISHED THAT NO LIVE AEON HOLDS THE BRANCH. This rewrites
-# commits beneath a working tree; doing that under a running aeon destroys work in flight,
-# which is the one failure here that is not recoverable. `holder_alive` is the precondition.
+# commits beneath a working tree; doing that under a running aeon destroys work in flight.
+# `holder_alive` is the precondition — unchanged; this shim adds no liveness check of its
+# own, exactly as the function it replaces did not.
 #
-# WHY THE BRANCH'S OWN WORKTREE. git refuses to move a ref that a worktree has checked out
-# — `git branch -f` and `git rebase` both — so when a worktree holds the branch it is the
-# only place the rebase can happen. When nothing holds it the rebase still needs SOME
-# working tree, and that tree must never be the shared checkout, whose HEAD an interactive
-# session is using; a detached scratch worktree costs one checkout.
-#
-# A rebase is refused by tracked modifications, and those are routine rather than
-# exceptional here: wiki/tasks.md is a GENERATED file tracked in git and rewritten by a
-# timer, so it is dirty in every worktree within minutes of its creation and would
-# otherwise block every rebase for a reason that has nothing to do with the work. Tracked
-# changes are salvaged to a patch and discarded; untracked files are left alone, because
-# `git diff HEAD` cannot carry their content and discarding them would destroy the one copy.
-#
-# A FAILURE IS NAMED, BECAUSE ONLY ONE OF THEM IS THE BRANCH'S FAULT. Every way this can
-# return 1 used to look the same to a caller — one exit status and an empty $REBASE_CONFLICTS
-# — so a caller that reopens a bead on a rebase failure reopened it for a missing ref, an
-# unresolvable base and a scratch tree it could not build, all with the words "conflicts in
-# unknown". That is a lie about a bead and it costs a session:
-#
-#   21:51:17  landed spira/<id>            <- pass A lands it
-#   21:52:13  landing: starting a pass     <- pass B reads the branch list, <id> still in it
-#   21:52:36  REMOVED branch spira/<id>    <- the Sending reaps it
-#   22:00:55  reopened <id> — does not rebase onto origin/main; conflicts in unknown
-#
-# Pass B held an eight-minute-old list, reached a ref that was gone, and this function said
-# "1" about it. $REBASE_FAILURE now says which:
-#
-#   conflict      the rebase RAN and the commits disagree — the branch's own fault, and the
-#                 only value on which finished work may be put back on the board
-#   no-branch     the ref is gone: reaped, landed, or slain under a stale list
-#   no-base       the ref it lands on does not resolve
-#   no-worktree   no tree to replay in
-#
-# The last three are the pass failing to ask the question, never an answer to it.
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs` for the full
+# rationale this header used to carry (why the branch's own worktree, why failures are
+# named, why a formatter failure changes nothing, why only the branch's own paths are
+# committed). `format_rebased` folded into the port; nothing else called it. Any worktree
+# pruning or pre-reset salvage in the port goes through `sending`'s destruction chokepoint
+# in-process, never a raw git removal.
 # --------------------------------------------------------------------------------------
 REBASE_CONFLICTS=""
 REBASE_FAILURE=""
 REBASE_REFUSED_REASON=""
 rebase_branch() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" wt scratch rc=0
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" fmtcmd out rc
     REBASE_CONFLICTS=""; REBASE_FAILURE=""; REBASE_REFUSED_REASON=""
-    # The repo NAME, for the formatter that runs on the result. Derived from the path only
-    # when the caller did not supply it — both real callers hold it already, having read it
-    # off the bead, and a derived value is a convention that breaks the moment two names
-    # point at one checkout.
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { REBASE_FAILURE=no-base; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { REBASE_FAILURE=no-branch; return 1; }
-    # Already current. This is the common case once branches are cut from the base ref, and
-    # it is what makes running the rebase on every landing pass cheap.
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-
-    wt="$(worktree_of "$br" "$repo")"
-    if [ -z "$wt" ]; then
-        # PER REPOSITORY. One shared `.rebase` tree is registered against exactly one
-        # repository, so a second repo asking for it gets a checkout of somebody else's
-        # history — or, worse, a `git worktree add` that fails because the directory is
-        # already a worktree of another repo, and a rebase that silently never happens.
-        # Named for the checkout's own directory, which is unique by construction: two
-        # repositories cannot share a path.
-        scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-        if [ ! -e "$scratch/.git" ]; then
-            mkdir -p "$(dirname "$scratch")"
-            # Through the chokepoint: a bare prune here would silently unregister any tree
-            # whose `.git` link is broken, including a live aeon's, and free its branch.
-            spira_prune_worktrees "$repo" >/dev/null 2>&1
-            git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-                || { REBASE_FAILURE=no-worktree; return 1; }
-        fi
-        git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-        # A ref that vanished between the check above and here — the reaper runs on its own
-        # timer — is still `no-branch`, not a tree we could not build. The distinction is the
-        # whole point of naming these, so the narrower window gets the narrower name.
-        if ! git -C "$scratch" checkout -q -B "$br" "refs/heads/$br" >/dev/null 2>&1; then
-            git -C "$repo" show-ref --verify -q "refs/heads/$br" \
-                && REBASE_FAILURE=no-worktree || REBASE_FAILURE=no-branch
-            return 1
-        fi
-        wt="$scratch"
+    fmtcmd="$(repo_format "$name" 2>/dev/null)"
+    out="$(rebase-stale rebase-branch "$br" "$onto" "$repo" "$name" "$fmtcmd")"; rc=$?
+    if [ "$rc" != 0 ]; then
+        REBASE_FAILURE="$(sed -n 1p <<<"$out")"
+        REBASE_CONFLICTS="$(sed -n 2p <<<"$out")"
+        REBASE_REFUSED_REASON="$(sed -n 3p <<<"$out")"
     fi
-
-    if ! git -C "$wt" diff --quiet HEAD 2>/dev/null; then
-        # `reset --hard`, not `checkout -- .`: a file STAGED for addition is not restored by
-        # checkout, and `git rebase` refuses outright on "your index contains uncommitted
-        # changes". reset --hard clears index and tracked worktree together and leaves
-        # untracked files exactly where they are.
-        salvage "${br##*/}-prerebase" "$wt" >/dev/null
-        git -C "$wt" reset -q --hard HEAD 2>/dev/null
-    fi
-
-    local _rebase_err
-    _rebase_err="$(mktemp)"
-    if ! git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
-        # Name the collisions BEFORE aborting; after the abort there is nothing to read.
-        REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-        REBASE_CONFLICTS="${REBASE_CONFLICTS% }"
-        git -C "$wt" rebase --abort >/dev/null 2>&1
-        # A non-zero rebase with no unmerged files is not a content conflict — git refused
-        # outright (untracked file collision, locked index, etc.). Only a real content conflict
-        # may reopen a finished bead; a refusal is the pass failing to ask the question.
-        if [ -n "$REBASE_CONFLICTS" ]; then
-            REBASE_FAILURE=conflict
-        else
-            REBASE_FAILURE=rebase-refused
-            REBASE_REFUSED_REASON="$(head -1 "$_rebase_err" 2>/dev/null)"
-        fi
-        rc=1
-    else
-        # THE REBASE ACTUALLY REPLAYED COMMITS, so the tree is machine-produced and nobody
-        # formatted it. This is the only path that reaches here: the already-an-ancestor case
-        # returned above without touching anything, and a formatter run on a branch nothing
-        # rewrote would be a diff the harness invented.
-        format_rebased "$br" "$onto" "$wt" "$name"
-    fi
-    rm -f "$_rebase_err"
-
-    # Let go of the branch. A scratch tree still holding it is not inert: `git branch -D`
-    # refuses a branch a worktree has checked out, which is exactly the defect sending.sh
-    # exists to fix, and it would arrive here by a new route.
-    if [ "$wt" = "${SPIRA_RUN}/worktree/.rebase.$(basename "$repo")" ]; then
-        git -C "$wt" checkout -q --detach >/dev/null 2>&1
-    fi
-    return $rc
+    return "$rc"
 }
 
 # recut_onto — move a branch onto a new base by cherry-picking commits one by one.
@@ -5601,51 +4533,21 @@ rebase_branch() {
 # force-updated to that commit so the merge-base moves forward. When zero commits land
 # the branch ref is left unchanged — moving it to the new base would strip all work and
 # leave a trivially-clean branch that the next pass certifies without any content.
+# $RECUT_CONFLICTS is a real conflict's path list, a git error line, or one of the sentinel
+# words no-base | no-branch | no-worktree | no-merge-base | no-checkout on an early refusal.
 # Returns 0 if all commits applied cleanly, 1 if any conflict remains.
+#
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs`.
+RECUT_CONFLICTS=""
+RECUT_APPLIED_COUNT=0
 recut_onto() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" scratch old_base rc=0 _cp_err new_tip
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" out rc
     RECUT_CONFLICTS=""; RECUT_APPLIED_COUNT=0
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-    scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-    if [ ! -e "$scratch/.git" ]; then
-        mkdir -p "$(dirname "$scratch")"
-        spira_prune_worktrees "$repo" >/dev/null 2>&1
-        git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-            || { RECUT_CONFLICTS="no-worktree"; return 1; }
-    fi
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-base"; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { RECUT_CONFLICTS="no-branch"; return 1; }
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-    old_base="$(git -C "$repo" merge-base "$onto" "refs/heads/$br" 2>/dev/null)" || { RECUT_CONFLICTS="no-merge-base"; return 1; }
-    git -C "$scratch" checkout -q --detach "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-checkout"; return 1; }
-    _cp_err="$(mktemp)"
-    local commit count=0
-    while IFS= read -r commit; do
-        [ -n "$commit" ] || continue
-        if ! git -C "$scratch" \
-                -c "user.name=${SPIRA_GIT_NAME:-spira}" \
-                -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-                cherry-pick "$commit" 2>"$_cp_err"; then
-            RECUT_CONFLICTS="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-            RECUT_CONFLICTS="${RECUT_CONFLICTS% }"
-            [ -n "$RECUT_CONFLICTS" ] || RECUT_CONFLICTS="$(head -1 "$_cp_err" 2>/dev/null)"
-            git -C "$scratch" cherry-pick --abort >/dev/null 2>&1
-            rc=1
-            break
-        fi
-        count=$(( count + 1 ))
-    done < <(git -C "$repo" rev-list --reverse "${old_base}..${br}" 2>/dev/null)
-    rm -f "$_cp_err"
-    RECUT_APPLIED_COUNT=$count
-    new_tip="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)"
-    # Only move the branch when at least one commit landed on the new base.
-    # With zero commits the branch has no work on the new base, and updating it
-    # there strips all content — the next pass would see a trivially clean rebase
-    # and certify an empty branch.
-    [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ] && [ -n "$new_tip" ] && \
-        git -C "$repo" update-ref "refs/heads/$br" "$new_tip" >/dev/null 2>&1
-    git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-    return $rc
+    out="$(rebase-stale recut-onto "$br" "$onto" "$repo" "$name")"; rc=$?
+    RECUT_APPLIED_COUNT="$(sed -n 1p <<<"$out")"
+    RECUT_CONFLICTS="$(sed -n 2p <<<"$out")"
+    return "$rc"
 }
 
 
@@ -5703,21 +4605,6 @@ _tsd_kv_field() {
         case "$kv" in "$2="*) printf '%s' "${kv#*=}"; return 0 ;; esac
     done
     printf '?'
-}
-
-# _tsd_aeon_session <bead> <fayth> <rc> <status> <fields> — appends this session's
-# aeon-session row (run/tsd/), reusing the fields session_result_fields already computed
-# for ledger_done's own ledger line. Best-effort, like _tsd_landing_event.
-_tsd_aeon_session() {
-    local bead="$1" fayth="$2" rc="$3" status="$4" fields="$5"
-    tsd-write --family aeon-session --root "${SPIRA_RUN:-}" \
-        --field-str "bead=$bead" --field-str "fayth=$fayth" \
-        --field "rc=$rc" --field-str "status=$status" \
-        --field "wall_s=$(_tsd_kv_field "$fields" wall_s)" \
-        --field "api_s=$(_tsd_kv_field "$fields" api_s)" \
-        --field "turns=$(_tsd_kv_field "$fields" turns)" \
-        --field "cost_usd=$(_tsd_kv_field "$fields" cost_usd)" \
-        >/dev/null 2>&1 || true
 }
 
 # _tsd_slots_sample <fragment-file> — appends the slots family's row (run/tsd/) from a

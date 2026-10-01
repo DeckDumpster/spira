@@ -104,6 +104,26 @@ impl Resolved {
         }
         out
     }
+
+    /// Every resolved key, not just [`EXPORT_KEYS`] — `KEY='value'` lines in `values`'s own
+    /// (sorted) order. This is `conf.sh`'s own `eval` target (sp-ubcgo, "wave 4.5"): a bash
+    /// caller that SOURCES this process's output, rather than one that INHERITS it across an
+    /// exec boundary, is exactly the "read in-process" case `EXPORT_KEYS`'s own doc carves
+    /// out for `SPIRA_REPO_MAP`, `SPIRA_FAYTHS` and `SPIRA_MAX_AEONS` — so this method is the
+    /// one place those three (and every other registry key `to_sh(EXPORT_KEYS)` leaves out)
+    /// do reach a bash reader. `conf.sh` itself decides, separately and explicitly, which of
+    /// these it then re-exports to its OWN children — that decision is `EXPORT_KEYS`, applied
+    /// in bash after this `eval`, not here.
+    pub fn to_sh_all(&self) -> String {
+        let mut out = String::new();
+        for (key, v) in &self.values {
+            out.push_str(key);
+            out.push('=');
+            out.push_str(&crate::shell_quote(v));
+            out.push('\n');
+        }
+        out
+    }
 }
 
 /// `spira-config resolve --sh`'s typed export set — the Rust replacement for `conf.sh`'s own

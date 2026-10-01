@@ -69,11 +69,6 @@ exit 0"#;
 /// S2 — CHECK 7: the lane-then-pool summon loop under summon.lock.
 pub const CK7: &str = "ck7_summon_pass";
 
-/// S3 — land_escalate: line 1 of stdin is the subject tail, the rest the evidence.
-pub const LAND_ESCALATE: &str = r#"IFS= read -r _why
-_ev="$(cat)"
-land_escalate "$_why" "$_ev""#;
-
 /// S4 — CHECK 3b: queue-mode dependents. (CHECK 3c, open children, is Rust: open_children.rs.)
 pub const CHECK3B: &str = r#"mark_queue_waiters 2>/dev/null || true
 close_landed_queue_waiters 2>/dev/null || true"#;
@@ -81,10 +76,6 @@ close_landed_queue_waiters 2>/dev/null || true"#;
 /// S5 — spira_event: four NUL-terminated fields on stdin (kind, target, title, detail).
 pub const EVENT: &str = r#"IFS= read -r -d '' _k; IFS= read -r -d '' _t; IFS= read -r -d '' _ti; IFS= read -r -d '' _de
 spira_event "$_k" "$_t" "$_ti" "$_de" || true"#;
-
-/// S6 — trace_tail: line 1 the session log path, line 2 the line count.
-pub const TRACE_TAIL: &str = r#"IFS= read -r _f; IFS= read -r _n
-trace_tail "$_f" "$_n""#;
 
 /// S7 — CHECK 7c's detector.
 pub const DETECT_UNCLAIMABLE: &str = "detect_unclaimable_ready 2>/dev/null";
@@ -105,10 +96,8 @@ mod tests {
         for body in [
             SUMMON_GATE,
             CK7,
-            LAND_ESCALATE,
             CHECK3B,
             EVENT,
-            TRACE_TAIL,
             DETECT_UNCLAIMABLE,
             FILE_UNCLAIMABLE,
             DETECT_COLLISIONS,
@@ -121,46 +110,6 @@ mod tests {
             assert!(s.contains("act()      { printf 'act\\t%s\\n' \"$*\" >> \"$SENTINEL_TALLY\""));
         }
         assert!(PROBE.contains("printf '@end\\0'"));
-    }
-
-    /// The seams run for real against a stub lib.sh: stdin reaches the function, the tally
-    /// records act/progress, and nothing travels in argv.
-    #[test]
-    fn seam_protocol_against_a_stub_lib() {
-        let d = testkit::TempDir::new("sentinel-seam");
-        std::fs::write(
-            d.join("lib.sh"),
-            "log() { printf 'LOG %s\\n' \"$*\"; }\nland_escalate() { printf 'why=%s ev=%s\\n' \"$1\" \"$2\"; act escalated; progress moved; }\n",
-        )
-        .unwrap();
-        let tally = d.join("tally");
-        let o = std::process::Command::new("bash")
-            .args(["-c", &script(LAND_ESCALATE), "sentinel-land-escalate"])
-            .env("SENTINEL_LIB", d.join("lib.sh"))
-            .env("SENTINEL_TALLY", &tally)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .and_then(|mut c| {
-                use std::io::Write;
-                c.stdin
-                    .take()
-                    .unwrap()
-                    .write_all(b"the leg is down\nline one\nline two\n")?;
-                c.wait_with_output()
-            })
-            .unwrap();
-        let out = String::from_utf8_lossy(&o.stdout);
-        assert!(
-            out.contains("why=the leg is down ev=line one\nline two"),
-            "{out}"
-        );
-        assert!(out.contains("LOG ACT escalated"));
-        assert_eq!(
-            std::fs::read_to_string(&tally).unwrap(),
-            "act\tescalated\nprogress\tmoved\n"
-        );
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// The probe reports SPIRA_* variables lib.sh SETS BUT DOES NOT EXPORT: `env -0` alone

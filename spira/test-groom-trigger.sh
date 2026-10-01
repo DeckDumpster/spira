@@ -40,6 +40,12 @@
 # scar: groom-trigger.sh was absent, so the groomer never ran; without a trigger bead the groomer's partition was always empty.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
+# SPIRA_CONFIG_DIR: the directory holding spira-config on THIS invocation's own PATH, so
+# every stripped-down PATH built below can still find it — conf.sh now refuses outright
+# without it (sp-ubcgo: "wave 4.5: conf.sh becomes an eval of resolve"). Resolved once,
+# from testenv's/the gate's own PATH (where the staged release's spira-config lives),
+# never guessed.
+SPIRA_CONFIG_DIR="$(command -v spira-config >/dev/null 2>&1 && dirname "$(command -v spira-config)" || true)"
 . "$HERE/testlib.sh"
 
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT INT TERM
@@ -89,7 +95,7 @@ FIVE_OPEN='[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'
 # dedup list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
 run_trigger() {
     mkdir -p "$T/run"
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -155,7 +161,7 @@ esac
 STUB
 chmod +x "$FAIL_BD"
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -177,7 +183,7 @@ echo "LABELS: custom SPIRA_SCOPE_LABEL and SPIRA_GROOMER_LABEL are used"
 : > "$BD_LOG"
 BD_LIST_OUTPUT="[]"
 out="$(BD_LIST_OUTPUT="[]" \
-    env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -207,7 +213,7 @@ echo "EMPTY SCOPE: SPIRA_SCOPE_LABEL='' produces only the groomer label (no lead
 # comma in the label string would produce a malformed bd --label argument and could match
 # nothing or everything. Verify no leading comma appears in the bd create call.
 : > "$BD_LOG"
-out="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
@@ -233,7 +239,7 @@ CONSUME_MAP="$T/consume-map"
 printf 'home-tg | /tmp/home-tg | push | origin/main | | | consume\n' > "$CONSUME_MAP"
 printf 'plan-only | /tmp/plan-only | push | origin/main | | | consume\n' >> "$CONSUME_MAP"
 : > "$BD_LOG"
-out_ng="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_ng="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -249,7 +255,7 @@ want   "no-groom-map: logs skipping trigger"  "skipping trigger" "$out_ng"
 
 # POSITIVE CONTROL: develop mode admits groom — trigger must fire.
 : > "$BD_LOG"
-out_gp="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -293,7 +299,7 @@ echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 # Two open beads (score=2) with threshold=2 must fire; with threshold=3 must not.
 TWO_OPEN='[{"id":"y1"},{"id":"y2"}]'
 : > "$BD_LOG"
-out_t2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
@@ -307,7 +313,7 @@ out_t2="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
 is   "threshold=2, score=2: exits 0"        0        "$rc_t2"
 want "threshold=2, score=2: create called"  "create" "$(cat "$BD_LOG")"
 : > "$BD_LOG"
-out_t3="$(env -i HOME="$T" PATH="$HERE:/usr/bin:/bin" \
+out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \

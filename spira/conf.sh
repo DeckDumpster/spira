@@ -45,9 +45,7 @@ SPIRA_CONF_LOADED=1
 # Every key this harness honours, with the default the CODE carries. A key absent from this
 # list is refused when it appears in a config file.
 #
-# This list also records WHICH KEYS THE ENVIRONMENT ALREADY ANSWERED, before the config file
-# or `spira_conf_defaults` (which runs AFTER the file is read, so a default may refer to a key
-# the operator set) get a chance to. `spira.toml` itself refuses a misspelled key: it is typed,
+# `spira.toml` itself refuses a misspelled key: it is typed,
 # with `deny_unknown_fields`, so a typo is a parse error rather than a setting silently
 # ignored — but its `[spira]` table only covers the keys a real install actually sets, a
 # narrower set than this list, which runs past 200 (most of them derived defaults nothing
@@ -75,10 +73,11 @@ SPIRA_CONF_LOADED=1
 # renaming, or removing its file under spira/conf.d/, then let _spira_conf_gen_ensure (below)
 # or `bash spira/conf-gen.sh` regenerate it.
 #
-# SELF-CONTAINED, not a global set once and read later: this is called a second time from
-# spira_conf_defaults() (to source conf.d.defaults.generated.sh), far below and in a
-# different function's scope, so it recomputes its own directory every call rather than
-# trusting a variable some earlier, unrelated code path might have unset in between.
+# SELF-CONTAINED rather than trusting a global set once and read later, even though this is
+# now called only once (for "keys"): `spira_conf_defaults`, the other caller that used to
+# source "defaults" from here, is retired (sp-ubcgo) in favour of `spira_config::resolve()`.
+# conf-gen.sh still regenerates conf.d.defaults.generated.sh (nothing has removed that
+# generator), but conf.sh no longer sources it.
 #
 # RESOLVES THE SYMLINK, unlike SPIRA_HOME's own derivation below. Dozens of suites
 # (test-conf.sh among them) `ln -s "$HERE/conf.sh" "$FIXTURE/spira/conf.sh"` to make conf.sh
@@ -93,6 +92,11 @@ _spira_conf_gen_ensure() {   # _spira_conf_gen_ensure <keys|defaults> -> sources
     local _dir _which="${1:?_spira_conf_gen_ensure needs keys or defaults}" _gen _src _stale="" _real
     _real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)" || _real="${BASH_SOURCE[0]}"
     _dir="$(cd "$(dirname "$_real")" && pwd -P)"
+    # NOT `local`: spira_config::resolve() (the "DERIVED DEFAULTS" eval, far below) needs
+    # this SAME symlink-resolved directory to find conf.d/ — SPIRA_HOME itself stays
+    # unresolved (see this function's own comment above), so spira-config cannot derive it
+    # from SPIRA_HOME the way this function derives it from BASH_SOURCE (sp-ubcgo).
+    _spira_conf_real_dir="$_dir"
     _gen="$_dir/conf.d.$_which.generated.sh"
     [ -f "$_gen" ] || _stale=1
     if [ -z "$_stale" ]; then
@@ -120,16 +124,11 @@ _spira_conf_gen_ensure keys || return 1
 # addressing SPIRA_HOME as the caller's directory broke the moment a cockpit tool two
 # directories away sourced lib.sh.
 # --------------------------------------------------------------------------------------
-# WHICH KEYS THE ENVIRONMENT ALREADY OWNS is recorded BEFORE anything is derived. Deriving
-# first and testing "is it set?" afterwards makes every derived value indistinguishable from
-# one the caller passed in, and the config file — which only fills what is unset — would then
-# be silently overridden by defaults this file had just computed.
-_spira_conf_env=""
-for _k in $SPIRA_CONF_KEYS; do
-    [ -n "${!_k+set}" ] && _spira_conf_env="$_spira_conf_env $_k"
-done
-unset _k
-
+# WHICH KEYS THE ENVIRONMENT ALREADY OWNS no longer needs recording here (sp-ubcgo, "wave
+# 4.5"): `spira_config::resolve()` applies the env-over-toml-over-default precedence itself,
+# inside the subprocess called below, so there is nothing left in THIS file that needs to
+# ask "is it set?" before deriving. (The one thing bash still derives ahead of that call,
+# SPIRA_HOME/SPIRA_REPO, is handled by the explicit-vs-ambient distinction immediately below.)
 _spira_conf_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # Whether SPIRA_HOME was ANSWERED BY THE CALLER or derived is remembered, because it changes
 # which repo-map wins below. An explicit SPIRA_HOME is a caller saying "this tree is the
@@ -213,10 +212,11 @@ spira_toml_file() {
     return 0
 }
 
-# _spira_repo_map_candidate -> the repo-map path spira_conf_defaults would choose, or
-# empty if none of its candidates exist yet. Factored out of that function so
-# spira_toml_resolve's auto-convert — which runs before spira_conf_defaults, to build the
-# `spira-config convert` call — finds the SAME file rather than converting with no map at
+# _spira_repo_map_candidate -> the repo-map path SPIRA_REPO_MAP would default to (its own
+# fallback now lives in spira_config::resolve()'s Rust port of this same search, run below),
+# or empty if none of its candidates exist yet. Used here so spira_toml_resolve's
+# auto-convert — which runs before SPIRA_REPO_MAP is resolved, to build the `spira-config
+# convert` call — finds the SAME file rather than converting with no map at
 # all (sp-zs04v.2: an auto-convert with no --repo-map produced a spira.toml with an empty
 # [repo] table, and overwrote a real one).
 #
@@ -399,343 +399,13 @@ spira_toml_resolve() {
     fi
 }
 
-# spira_toml_read <file> — apply `spira-config export --sh` for spira.toml to any key NOT
-# already set in the environment. An invalid DOCUMENT (spira-config ran and refused the
-# content) is reported and nothing here fails the caller: every key still falls through to
-# spira_conf_defaults, because a harness that refuses to start over one bad config is one
-# that cannot be repaired from the box it is broken on.
-#
-# spira-config being UNRESOLVABLE is a different failure, and FAIL-CLOSED (sp-c7b85, a scar
-# from running by hand without the launcher PATH): exit 127 is bash's own signal for "command
-# not found", never something spira-config itself returns, so it names a PATH problem — no
-# SPIRA_RELEASE, or a launcher that never put the release on it — not a bad document. Falling
-# through from there once derived SPIRA_DB=~/.local/share/spira/db and SPIRA_RUN to match, and
-# a tool run against that address is a tool that could write to a store that is not
-# production's. A config file EXISTS here (the caller already checked); silently deriving
-# defaults around it, rather than refusing, is exactly the fail-open this closes. `exit`, not
-# `return`, because a `return 1` from the final command of the `&&` that calls this only
-# aborts a `set -e` caller — the refusal has to hold whether or not the sourcing script opted
-# into errexit.
-spira_toml_read() {
-    local file="$1" out line key val rc
-    [ -f "$file" ] || return 0
-    out="$(spira-config export --sh "$file" 2>&1)" || {
-        rc=$?
-        if [ "$rc" -eq 127 ]; then
-            printf 'spira.toml:%s: spira-config not found on PATH — SPIRA_RELEASE is unset, or the launcher PATH omits the release, so this cannot be resolved from the box'"'"'s own tools; refusing rather than deriving defaults around a config file that exists\n' "$file" >&2
-            exit 1
-        fi
-        printf 'spira.toml:%s: %s\n' "$file" "$out" >&2
-        return 0
-    }
-    while IFS= read -r line || [ -n "$line" ]; do
-        [ -n "$line" ] || continue
-        key="${line%%=*}"; val="${line#*=}"
-        # `export --sh` names each [spira] field as-is, uppercased — it does not know this
-        # file's own convention that every key it honours is SPIRA_-prefixed except the
-        # COCKPIT_* ones already spelled that way in spira.conf. Renamed here, once, rather
-        # than teach spira-config a naming exception that belongs to this file alone.
-        #
-        # MEMBERSHIP IN SPIRA_CONF_KEYS, NOT A `COCKPIT_*` WILDCARD: a prefix match would
-        # mis-restore SPIRA_COCKPIT_TRACE_LINES — a SPIRA_-prefixed key whose remainder
-        # itself starts with COCKPIT_ — to the bare COCKPIT_TRACE_LINES, a key nothing reads
-        # (law-a-pattern-match-is-not-an-identity-check).
-        case "$SPIRA_CONF_KEYS" in
-            *" SPIRA_$key "*) key="SPIRA_$key" ;;
-        esac
-        # THE ENVIRONMENT WINS — the same rule the old KEY=value reader enforced, kept because a
-        # config file that could override a test's own SPIRA_DB would point the suite at
-        # the operator's real database.
-        case " $_spira_conf_env " in *" $key "*) continue ;; esac
-        eval "$key=$val"
-    done <<< "$out"
-}
-
-# _spira_join <base> <rel> — join a base path and a relative segment without doubling
-# slashes. Strips any trailing slash from base before appending "/rel", so a base of "/"
-# (dirname of a repo at the filesystem root) produces "/rel" rather than "//rel".
-_spira_join() { local _b="${1%/}"; printf '%s/%s' "$_b" "$2"; }
-
-# spira_conf_defaults — fill in whatever is still unset. Ordered: later defaults refer to
-# earlier ones.
-spira_conf_defaults() {
-    # In a worktree, rev-parse --git-common-dir returns an absolute path to the
-    # shared .git; dirname of that is the main repo, so basename is its identity.
-    # In a plain checkout it returns a relative path — fall back to SPIRA_REPO.
-    local _spira_gcd _spira_gcd_rc
-    # `&& ... || ...`, not `; rc=$?`: conf.sh is sourced by `set -e` callers
-    # (aerc/accept-default.sh), and a bare failing assignment aborts them with git's 128.
-    _spira_gcd="$(git -C "$SPIRA_REPO" rev-parse --git-common-dir 2>/dev/null)" \
-        && _spira_gcd_rc=0 || _spira_gcd_rc=$?
-    if [ "$_spira_gcd_rc" -eq 0 ]; then
-        case "$_spira_gcd" in
-            /*)  : "${SPIRA_HOME_REPO:=$(basename "$(dirname "$_spira_gcd")")}" ;;
-            *)   : "${SPIRA_HOME_REPO:=$(basename "$SPIRA_REPO")}" ;;
-        esac
-    elif [ -z "${SPIRA_HOME_REPO:-}" ]; then
-        # SPIRA_REPO is not a git checkout at all — an installed release, unpacked from a
-        # tarball into a directory named spira-<timestamp>. That name changes on every
-        # upgrade (law-scope-is-a-runtime-key), so it cannot be the identity: build-tarball.sh
-        # stamps the real one into MANIFEST at build time, stable across every release of the
-        # same repository. Without that stamp, refuse rather than fall back to the directory
-        # name — leaving SPIRA_HOME_REPO (and the scope label derived from it) unset is a
-        # known, tested state, not a silent wrong answer.
-        # `|| true`: awk exits 2 on a missing MANIFEST, which aborts a `set -e` caller.
-        SPIRA_HOME_REPO="$(awk '$1=="repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
-        # Only a RELEASE directory's name is unusable. Any other non-git tree (a test
-        # fixture, a scratch copy) keeps the old identity, its directory name; refusing
-        # there emptied the scope label for every suite that builds one (round 24).
-        if [ -z "$SPIRA_HOME_REPO" ]; then
-            case "$(basename "$SPIRA_REPO")" in
-                *-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
-                *) SPIRA_HOME_REPO="$(basename "$SPIRA_REPO")" ;;
-            esac
-        fi
-    fi
-    # THE INSTANCE NAME. Two instances (e.g. 'prod' and 'test') may run side by side on
-    # one machine; each reads its own database and writes its own runtime tree. 'prod' is
-    # the default so every existing installation is unaffected by this key's existence.
-    # An unset SPIRA_INSTANCE is identical to SPIRA_INSTANCE=prod — the suffix below
-    # collapses to empty and every derived path resolves to the path it always had.
-    : "${SPIRA_INSTANCE:=prod}"
-    # The suffix appended to instance-specific path segments. Empty for 'prod'; the prod
-    # case must produce no suffix so a clean clone with no config sees exactly the paths
-    # every existing box already has — not a new layout that would break on upgrade.
-    local _spira_inst_sfx=""
-    [ "${SPIRA_INSTANCE}" = "prod" ] || _spira_inst_sfx="-${SPIRA_INSTANCE}"
-
-    # The database is NOT under the checkout by default. A beads database accumulates
-    # internal working notes and agent memories, so a default that puts it inside a git
-    # repository is one `git add -A` away from publishing them (law-beads-is-never-public).
-    # INSTANCE-QUALIFIED: each instance gets its own sidecar database so stopping or wiping
-    # 'test' leaves the 'prod' store untouched. For prod the suffix is empty; the path is
-    # identical to what every existing box has.
-    # NO COLON: a caller that exports SPIRA_DB="" is declaring "no database for this run",
-    # and that declaration must survive this line. `:=` treats empty the same as unset and
-    # would silently replace it with the ambient default — turning a deliberate "no
-    # database" into a real, wrong one and defeating every caller-side `-n "$SPIRA_DB"`
-    # guard downstream.
-    : "${SPIRA_DB=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/db}"
-    # INSTANCE-QUALIFIED: each instance writes its own runtime tree — pid files, the aeon
-    # ledger, the cockpit state — so a test instance cannot overwrite prod's working state.
-    # For prod the suffix is empty; the path is unchanged.
-    # NEVER UNDER SPIRA_REPO (sp-9hwim, design runtime-is-a-release #5): the checkout is
-    # the git repository landings merge into, nothing else, and at cutover it has no
-    # working tree at all — a default that wrote `$SPIRA_REPO/.runtime` would resolve to a
-    # path that no longer exists, silently, on whichever caller still took this fallback.
-    # XDG_DATA_HOME every time, writable checkout or not.
-    : "${SPIRA_RUN:=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/run}"
-    # MEMORIES CACHE. render_memories writes the memories JSON here on a live read so
-    # subsequent calls (concierge launch, aeon summon) hit local disk. rule.sh enact/retire
-    # delete it so the next render sees fresh data. Empty (not unset) disables caching,
-    # which is why this key uses `=` not `:=` — an explicitly empty value is an answer.
-    : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
-    : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
-    # Git checkout: workspaces is the parent of SPIRA_REPO. Artifact deployment: SPIRA_REPO
-    # is a release dir inside the releases directory, so workspaces is two levels up — one
-    # level would land inside the releases dir and double SPIRA_RELEASES. dirname returns "/"
-    # for a root-mounted repo; _spira_join prevents double slashes at derivation sites.
-    if [ -d "$SPIRA_REPO/.git" ] || [ -f "$SPIRA_REPO/.git" ]; then
-        : "${SPIRA_WORKSPACES:=$(dirname "$SPIRA_REPO")}"
-    else
-        : "${SPIRA_WORKSPACES:=$(dirname "$(dirname "$SPIRA_REPO")")}"
-    fi
-    # WHICH OF A WATCHER'S LINES A READER IS SHOWN BY DEFAULT — an extended regular expression
-    # matched against the whole line by `watchd.sh drain` and `watchd.sh tail`, which share it
-    # so that the command a session hook advertises and the command a session latches with
-    # cannot disagree about what matters. Everything else stays in the log, where `--all` and
-    # the file itself still reach it.
-    #
-    # ACTIONABLE means: something is stuck, something broke, something needs a human choice, or
-    # a thing being waited on finished. The default names the vocabulary this harness's own
-    # watchers emit plus the words any watcher reaches for; an operator whose watchers speak
-    # differently sets their own, which is the whole reason this is a key and not a literal —
-    # a literal in two commands is how those two commands come to disagree.
-    #
-    # `⚠ BRANCH`, NOT A BARE `⚠`. A bare marker is a plea for attention any watcher can reach
-    # for whether or not one is warranted; pr-notify.sh's green-under-`pr` line reached for one
-    # it did not need, since that PR already lands itself (law-green-prs-merge-themselves).
-    # Naming the one kind that IS a stray branch keeps the marker from granting actionability
-    # on its own.
-    #
-    # `=` AND NOT `:=`, WHICH IS THE ONE PLACE IN THIS FILE THAT DIFFERS. Every other default
-    # fills an unset OR empty key, because empty means "not answered". Here empty is an answer:
-    # an operator who blanks this key has edited it on purpose, and quietly substituting the
-    # default would ignore the edit entirely. So the empty value survives to `watchd.sh`, which
-    # refuses it and names `--all` — because as a regular expression an empty pattern matches
-    # every line, and turning the filter off is a thing to ask for rather than to fall into.
-    : "${SPIRA_ACTIONABLE=ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠ BRANCH}"
-    # The command a watcher runs to prompt the reading session; empty disables waking.
-    [ -x "$SPIRA_REPO/concierge.sh" ] && : "${SPIRA_WAKE=$SPIRA_REPO/concierge.sh wake}"
-    : "${SPIRA_WAKE:=}"
-    # A THIRD, disposable Dolt server, for spira_lifecycle's container-tier tests only —
-    # same reasoning as SPIRA_TESTDB_DATA/PORT above (its own store, its own port, never
-    # the box's real dolt-beads.service), and a distinct one from it because that fixture
-    # is bd's own database and this one needs real grants, which bd's fixture never applies.
-    : "${SPIRA_LC_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" lc-test)}"
-    : "${SPIRA_LC_TESTDB_PORT:=3309}"
-    # The Unix user and socket the spira-lc system service runs as (design §3.6.4). Not
-    # settable to a path under SPIRA_HOME/SPIRA_REPO: it must exist at the same place
-    # regardless of which checkout renders the unit, so every install agrees on where the
-    # credential-holding process listens.
-    : "${SPIRA_LC_UNIX_USER:=spira-lc}"
-    : "${SPIRA_LC_UNIX_GROUP:=spira}"
-    : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
-    # WHICH TRACKER gh-intake ingests from, as "owner/repo". Empty means there is
-    # no inbox and intake refuses to guess: a default pointing at somebody else's
-    # repository would quietly file their reports into this operator's graph.
-    #
-    # THE BRIDGE IS ONE WAY. Nothing here ever writes to that tracker, and the token
-    # it uses should be scoped so that it could not — the store holds internal notes
-    # and judgement that must not reach a public issue list (law-beads-is-never-public).
-    : "${SPIRA_GH_INTAKE_REPO:=}"
-    # WHICH GITHUB ORG/REPO publishes the releases this instance runs. On a single-repo
-    # install this equals SPIRA_GH_INTAKE_REPO; a consuming install points issue intake
-    # at its own tracker while this key names the release publisher independently.
-    : "${SPIRA_RELEASE_REPO:=${SPIRA_GH_INTAKE_REPO}}"
-    # AN INSTALLED RELEASE IS NEVER SOURCELESS. release.yml stamps the publishing repository
-    # into MANIFEST (build-tarball.sh --release-repo); with nothing else set, that is where
-    # this release's successors are published, and skew's currency check reads it.
-    if [ -z "$SPIRA_RELEASE_REPO" ] && [ -f "$SPIRA_REPO/MANIFEST" ]; then
-        SPIRA_RELEASE_REPO="$(awk '$1=="release-repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
-    fi
-    : "${SPIRA_CERTIFY_SUITES:=on}"   # off: queue-mode certification runs fences only; CI runs the suites
-    # HOW MANY FILES A REBASE-LOOP ESCALATION CALLS "SEVERAL HOT FILES" — past this, the
-    # branch is not unlucky, its scope is racing every landing that touches the same files.
-    # A re-cut that cannot clear the conflict tells the Concierge to split the bead, not
-    # to try the rebase by hand again (law-decompose-by-deliverable).
-    : "${SPIRA_REBASE_DECOMPOSE_FILES:=4}"
-    # FILES A REBASE-LOOP EVENT NAMES AS GENERATED — regenerate, never hand-merge
-    # (law-regenerate-derived-summaries). Path substrings, space-separated.
-    : "${SPIRA_REBASE_GENERATED_FILES:=coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema}"
-    # THE SCOPE LABEL prepended to every persona's partition. Every fayth predicate reads
-    # this key rather than the literal "spira", so the fleet's work scope is a runtime choice.
-    # Two values matter: a non-empty string (scope restriction; only beads carrying that label
-    # are claimed) and "" (no scope restriction; the partition is the persona label alone, e.g.
-    # "plan" for builder). An empty value must never produce a leading comma in a fayth's
-    # AND-labels, which would match nothing and look exactly like "no work ready".
-    #
-    # DEFAULT IS THE HOME REPO NAME, not a literal. A literal "spira" aimed every install at a
-    # repository it may not own. Deriving from SPIRA_HOME_REPO gives each install its own
-    # scope automatically; an install where that is "spira" is unchanged; an install with no
-    # resolvable home repo gets an empty scope (no restriction) rather than a wrong literal.
-    #
-    # NO COLON in the = form: ${var=default} assigns only when the variable is UNSET, not
-    # when it is empty. Empty is a valid and meaningful value here (no scope restriction), and
-    # the colon form would silently promote it back, defeating the feature.
-    : "${SPIRA_SCOPE_LABEL=$SPIRA_HOME_REPO}"
-    # OUTCOME WINDOW: minutes after a czar-trigger bead closes before checking if the
-    # condition that fired it has cleared. A new bead for the same class within this
-    # window means the czar's action did not hold (law-measure-the-outcome).
-    : "${SPIRA_CZAR_OUTCOME_MINS:=30}"
-    # UNCLAIMED THRESHOLD: minutes a czar-trigger bead may stay open before watchtower
-    # escalates it as unclaimed. The czar has a 5-minute summoning budget; this window
-    # is wider to allow for sentinel cadence and rate-limit pauses.
-    : "${SPIRA_CZAR_UNCLAIMED_MINS:=10}"
-    # The mail client in the cockpit's bottom-left pane; empty, or not on PATH, means no pane.
-    : "${COCKPIT_MAIL=aerc}"
-
-    # HOW LONG A CLIENT MAY BE IDLE BEFORE ensure DETACHES IT. Ghost clients — terminals
-    # whose PTY is no longer actively used but remain attached to the tmux server — drive the
-    # window-size flap: with window-size latest, a ghost becomes "latest" whenever its session
-    # is touched, shrinking the cockpit window to the ghost's small terminal height until the
-    # operator's client regains "latest". Detaching them eliminates the root cause.
-    # Default is 6 hours (21600 s); set to 0 to disable detachment.
-    : "${COCKPIT_CLIENT_IDLE_SECS:=21600}"
-    # The Dolt server's own data directory, which is NOT the beads project directory: `bd -C`
-    # is pointed at the latter, and the former is where the server keeps every database it
-    # serves. Empty means this installation does not manage the server (dolt is run another
-    # way). The default is a derived path so a fresh install gets server mode by default;
-    # set explicitly to empty only if you run dolt yourself.
-    # NO-COLON FORM: an explicit empty value from a config file or env is preserved as-is —
-    # the colon form would replace it with the derived default, defeating the opt-out.
-    : "${SPIRA_DOLT_DATA=${XDG_DATA_HOME:-$HOME/.local/share}/spira/dolt}"
-
-
-
-    # WHERE A REPOSITORY'S TEST-FIXTURE LIBRARY SITS, relative to that repository's ROOT.
-    # An aeon builds one fixture at summon for a repository that has one and exports it, so
-    # every suite the session runs resets that fixture instead of building its own — measured
-    # here at 0.2s against 55s, against ~15 single-suite runs in a session.
-    #
-    # RELATIVE, because it is resolved inside the aeon's WORKTREE: the tree whose suites will
-    # consume the fixture is the tree that should build it, which is the same reason the
-    # landing gate builds from the branch's copy and not the installed one. A repository that
-    # has no such file simply gets no fixture, and that is how "which repositories does this
-    # apply to" is answered without a list of repository names.
-    #
-    # The default is this harness's own directory name, so a clone that keeps the layout needs
-    # no configuration at all.
-    local _tdb; _tdb="$(basename "$SPIRA_HOME")"
-    : "${SPIRA_TESTDB_LIB:=$_tdb/testdb.sh}"
-
-
-    # ---- RELEASE ACTIVATION (release install-tarball) -----------------------------------------------
-    # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
-    # timestamped subdirectory here and swaps the 'current' symlink atomically. systemd units
-    # render ExecStart= paths through 'current', so a swap is a deployment. The disk holding
-    # SPIRA_WORKSPACES is the right place: it is the large, nearly-empty volume that exists
-    # specifically to avoid competing with / for rollback depth.
-    # DERIVED FROM SPIRA_WORKSPACES; _spira_join prevents double slashes when SPIRA_WORKSPACES
-    # is "/" (a container root).
-    : "${SPIRA_RELEASES:=$(_spira_join "$SPIRA_WORKSPACES" spira-releases)}"
-
-    # THE ACTIVATED RELEASE — the ONLY directory systemd executes. release install-tarball swaps
-    # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
-    # through it so a swap is a deploy. A missing symlink means no release has been
-    # activated yet; install.sh refuses until release install-tarball runs at least once.
-    # The harness lives under spira/ inside the release directory, so the executable path
-    # is current/spira/sentinel.sh, not current/sentinel.sh.
-    # NO-COLON FORM preserves SPIRA_PROD= for single-checkout mode.
-    : "${SPIRA_PROD=$(_spira_join "$SPIRA_RELEASES" current/spira)}"
-
-
-
-
-
-
-    # THE AGENT CLI BINARY. Named once so every tool that invokes it reads the same setting.
-    # The invocation shape (-p --output-format stream-json --verbose --model ...) is NOT
-    # changed by this key — pointing it at another vendor's CLI will not work; only the
-    # binary name is configurable here.
-    # SPIRA_CLAUDE is the deprecated name for this key. If the old name is set and the new
-    # one is not, honour it and warn once so an existing installation is not broken by the
-    # rename.
-    if [ -n "${SPIRA_CLAUDE:-}" ] && [ -z "${SPIRA_AGENT:-}" ]; then
-        printf 'spira: SPIRA_CLAUDE is deprecated; rename it to SPIRA_AGENT in spira.conf\n' >&2
-        SPIRA_AGENT="${SPIRA_CLAUDE}"
-    fi
-    : "${SPIRA_AGENT:=claude}"
-
-
-
-    # THE MAP FALLS BACK TO THE EXAMPLE, and that is what makes a clean clone runnable at
-    # all. The real map is one operator's inventory of checkouts and does not ship; the
-    # example does. Resolution runs beside the config file first, because that is where an
-    # operator whose harness lives in a repository they did not write can keep theirs.
-    if [ -z "${SPIRA_REPO_MAP:-}" ]; then
-        # An explicit SPIRA_HOME puts its own map first; otherwise the config-dir map leads.
-        # See _spira_repo_map_candidate for why the order matters (law-gates-run-in-a-clean-
-        # environment) — this is the same search spira_toml_resolve's auto-convert makes.
-        SPIRA_REPO_MAP="$(_spira_repo_map_candidate)"
-        : "${SPIRA_REPO_MAP:=$SPIRA_HOME/repo-map}"
-    fi
-
-    # --------------------------------------------------------------------------------
-    # GENERATED DEFAULTS (sp-g3uwp). Everything below this point used to be hundreds of
-    # individual `: "${KEY:=default}"` lines, hand-maintained beside the allowlist above
-    # and prone to exactly the drift this bead measured: duplicate statements for the same
-    # key (SPIRA_EXPRESS_LABEL, SPIRA_GH_APP_CONFIG, SPIRA_GROOM_THRESHOLD all had two),
-    # and keys with a real default that never made it into SPIRA_CONF_KEYS above. Both are
-    # now impossible by construction: spira/conf.d/ is one file per key, and conf-gen.sh
-    # regenerates this block (and the allowlist) from it. A key with ordering constraints
-    # relative to this line (a guard, a local-variable dependency, a reader elsewhere in
-    # this function) stays inline above, deliberately not migrated; its conf.d file says so.
-    #
-    # NEVER EDIT spira/conf.d.defaults.generated.sh BY HAND — fix the conf.d/<KEY> file and
-    # let _spira_conf_gen_ensure regenerate it (or run spira/conf-gen.sh yourself).
-    _spira_conf_gen_ensure defaults
-}
+# spira_toml_read AND spira_conf_defaults ARE RETIRED (sp-ubcgo, "wave 4.5: conf.sh becomes
+# an eval of resolve"), not ported: between them they read spira.toml field-by-field and then
+# hand-computed ~300 keys' worth of env-over-toml-over-default precedence, and that whole
+# pipeline is now `spira_config::resolve()`, called once as a subprocess and `eval`'d into
+# this shell below ("DERIVED DEFAULTS", past the config-write functions further down this
+# file). `_spira_join` went with them — its three call sites were all inside the retired
+# function and nothing else used it.
 
 # --------------------------------------------------------------------------------------
 # CHECKOUT MODE. SPIRA_PROD is the tree systemd executes; SPIRA_REPO is the tree being
@@ -894,10 +564,62 @@ spira_config_unset() {
 
 SPIRA_CONF_FILE="$(spira_conf_file)"
 SPIRA_TOML_FILE="$(spira_toml_resolve)"
-[ -n "$SPIRA_TOML_FILE" ] && spira_toml_read "$SPIRA_TOML_FILE"
-spira_conf_defaults
-SPIRA_TOML_FILE="$(spira_toml_resolve)"
-unset _spira_conf_here _spira_conf_env _spira_conf_home_env
+
+# --------------------------------------------------------------------------------------
+# DERIVED DEFAULTS. spira_toml_read and spira_conf_defaults are retired (see the comment
+# where they used to live, above this file's config-write functions): the whole
+# env-over-toml-over-derived-default pipeline, ~300 keys deep, is now
+# `spira_config::resolve()`, called here as a subprocess and `eval`'d into this shell
+# (sp-ubcgo, "wave 4.5: conf.sh becomes an eval of resolve").
+#
+# `--sh-all`, NOT `--sh`: this shell SOURCES the result rather than inheriting it across an
+# exec boundary, so every resolved key belongs here — including SPIRA_REPO_MAP, SPIRA_FAYTHS
+# and SPIRA_MAX_AEONS, which `--sh`'s narrower, typed export set deliberately omits because
+# those three must never reach a CHILD process (see "WHAT IS EXPORTED, AND WHAT MUST NEVER
+# BE" below, which re-exports only that narrower set to this process's own children — the
+# export list itself is unchanged by this bead).
+#
+# SPIRA_HOME/SPIRA_REPO ARE PASSED AS THIS ONE CALL'S OWN ENVIRONMENT, not by exporting them
+# from this shell — they stay unexported here for the same per-copy reason they are derived,
+# rather than configured, above. `spira-config` has no BASH_SOURCE to stand in for "where
+# conf.sh sits"; only the caller that already derived both — this file — can tell it.
+#
+# FAIL CLOSED (sp-c7b85's rule, now covering every derived default, not only the toml ones):
+# a missing or failing `spira-config` refuses outright, loudly, and this shell never ends up
+# holding some keys resolved and the rest silently empty — the one failure mode this cutover
+# must not reintroduce. `command -v` first distinguishes "not on PATH" (name SPIRA_RELEASE,
+# the usual cause) from any other refusal, which `spira-config` already explains on its own
+# stderr before exiting non-zero.
+#
+# `return`, NOT `exit` (unlike spira_toml_read's old exit-127 case this replaces): a handful
+# of callers — schema.sh, schema-apply.sh, configure.sh — source conf.sh as
+# `. conf.sh || true` ON PURPOSE, because they have their own bash-level fallback for every
+# value they read (schema_name's `${SPIRA_ASK_LABEL:-needs-operator}`, for one) and would
+# rather degrade than die when the box's spira-config cannot be resolved. `exit` kills the
+# whole process before that guard ever runs — a sourced script's `exit` is not catchable by
+# `||`, only a `return` is — so it defeated every one of those callers' own explicit choice
+# (sp-ubcgo: caught by the gate's own literal-lint step misreading schema.sh's fallback
+# names as real ones). A caller that does NOT guard the `.`/`source` with `||` still sees
+# this non-zero and, immediately after, every derived key unset — not a quieter failure,
+# a differently-shaped one: this shell never holds a PARTIALLY resolved value either way.
+if ! command -v spira-config >/dev/null 2>&1; then
+    printf 'spira: spira-config not found on PATH — SPIRA_RELEASE is unset, or the launcher PATH omits the release, so configuration cannot be resolved from this box'"'"'s own tools\n' >&2
+    return 1
+fi
+if [ -n "$SPIRA_TOML_FILE" ]; then
+    _spira_resolved="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$SPIRA_REPO" spira-config resolve --sh-all --conf-d "$_spira_conf_real_dir/conf.d" "$SPIRA_TOML_FILE")"
+else
+    _spira_resolved="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$SPIRA_REPO" spira-config resolve --sh-all --conf-d "$_spira_conf_real_dir/conf.d")"
+fi
+_spira_resolved_rc=$?
+if [ "$_spira_resolved_rc" -ne 0 ]; then
+    unset _spira_resolved _spira_resolved_rc
+    return 1
+fi
+eval "$_spira_resolved"
+unset _spira_resolved _spira_resolved_rc
+
+unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 
 # --------------------------------------------------------------------------------------
 # PATH. `bd`, `git`, `gh` and the configured agent CLI live wherever the operator put them,

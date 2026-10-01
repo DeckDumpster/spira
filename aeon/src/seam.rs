@@ -6,11 +6,12 @@
 //! not on its allowlist, and calls it. Inside bash a function's arguments are not a
 //! process argv, so no payload size can hit E2BIG (law-payloads-go-on-stdin).
 //!
-//! `_aeon_base`/`_aeon_repo_info` and `qualify_base_ref`/`spira_landrefs` dropped from the
-//! allowlist (sp-o88bx, "wave 4.12"): family W (`spira_landref`/`ref_remote`/`ref_branch`/
-//! `qualify_base_ref`/`spira_landrefs`) now resolves in-process through
-//! `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs` no longer shell into this seam
-//! for it at all — not even through a lib.sh shim.
+//! `_aeon_base`/`_aeon_repo_info`, `qualify_base_ref`/`spira_landrefs`, and the bare
+//! `spira_landref` sp-27d3d added for the heartbeat's fuse (concurrently with this bead)
+//! are all dropped from the allowlist (sp-o88bx, "wave 4.12"): family W
+//! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
+//! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
+//! no longer shell into this seam for it at all — not even through a lib.sh shim.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -32,11 +33,9 @@ case "$__aeon_fn" in
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|trace_last|\
-    aeon_fuse_minutes|land_state|\
-    land_mark|bead_is_work_type|bead_named_paths|bead_cited_commit_on_base|\
-    other_beads_on_conflicts|spira_destroy_branch|groom_claims_verified|\
-    wiki_write_paths|wiki_commit_paths|_tsd_aeon_session) ;;
+    capacity_pause_set|land_state|\
+    land_mark|bead_is_work_type|bead_cited_commit_on_base|\
+    other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac
 . "$__aeon_lib" || exit 98

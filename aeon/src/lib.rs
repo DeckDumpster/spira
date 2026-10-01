@@ -16,6 +16,7 @@ pub mod session;
 pub mod stack;
 pub mod sweep;
 pub mod teardown;
+pub mod trace;
 pub mod util;
 pub mod verdict;
 pub mod worktree;

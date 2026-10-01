@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod admission;
 pub mod build;
+pub mod chamber;
 pub mod containment;
 pub mod convert;
 pub mod eval;

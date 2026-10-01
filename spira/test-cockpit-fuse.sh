@@ -15,8 +15,16 @@
 # result event in trace_tail now reads as "turn N: success" to distinguish a
 # turn boundary from a terminal state.
 #
+# RETIRED (wave 4.34, sp-27d3d): trace_tail was lib.sh; it is ported to
+# aeon::trace::trace_tail, which cockpit-collect now calls in-process (no more
+# `io::lib_call(..., "trace_tail", ...)` and no more `bash -c '. lib.sh; trace_tail'`
+# embedded seam in sentinel). Part 4's direct bash-sourcing assertion moved to
+# trace_tail_renders_result_as_a_turn_index_not_session_ended (aeon/src/trace.rs). Parts 1-3
+# and 5 are unaffected — they drive the real `cockpit-collect probe now` binary and the
+# `health` pane and do not care whether FUSE/trace_tail live in bash or Rust.
+#
 # defect: sp-yhue
-# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* aeon/src/trace.rs cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -183,38 +191,6 @@ case "$fuse3b" in
     ?)      ok "dead gate pid: fuse reads ? (worktree check returned nothing, acceptable)" ;;
     *)      bad "dead gate pid: unexpected fuse value [$fuse3b]" ;;
 esac
-
-# ---- Part 4: trace_tail turn boundary -----------------------------------------------
-echo
-echo "trace_tail: result event renders as turn index, not 'session ended'"
-
-TD="$TMP/trace"; mkdir -p "$TD"
-cat > "$TD/sp-turn.log" <<'TRACE'
-{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}
-{"type":"result","subtype":"success","session_id":"s1","is_error":false}
-{"type":"assistant","message":{"id":"m2","content":[{"type":"tool_use","name":"Read","input":{"file_path":"/tmp/x"}}]}}
-{"type":"result","subtype":"success","session_id":"s1","is_error":false}
-TRACE
-
-tail_out="$(env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-    bash -c '. "$1"/lib.sh; trace_tail "$2" 10' _ "$HERE" "$TD/sp-turn.log" 2>/dev/null)"
-
-# A result event must render as "turn N: ..." not "session ended: ...".
-if grep -q 'session ended' <<< "$tail_out"; then
-    bad "result events must not render as 'session ended'"
-else
-    ok "result events do not render as 'session ended'"
-fi
-if grep -q 'turn 1' <<< "$tail_out"; then
-    ok "first result event renders as 'turn 1'"
-else
-    bad "first result event did not render as 'turn 1': output was [$tail_out]"
-fi
-if grep -q 'turn 2' <<< "$tail_out"; then
-    ok "second result event renders as 'turn 2'"
-else
-    bad "second result event did not render as 'turn 2': output was [$tail_out]"
-fi
 
 # ---- Part 5: rendering in health.sh -------------------------------------------------
 echo

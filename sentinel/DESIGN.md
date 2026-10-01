@@ -801,10 +801,10 @@ counter semantics lib.sh functions had when they ran in-process.
 | S0 | probe | `env -0`; then the NUL-separated sections `@vars` (fixed list: `SPIRA_POISON_ASKED SPIRA_REQUEUE_ASKED SPIRA_RECLAIM_ASKED SPIRA_POISON_LIFTED SPIRA_ROSTER_WARN_STAMP SPIRA_CAPACITY_PAUSE SPIRA_HOME_REPO_RESOLVED=$(spira_home_repo)`), `@fayths` (`spira_fayths`, each with `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` via `fayth_get`), `@partitions` (`fayth_partitions`), `@chamber` (`fayth_names`), and, when `SENTINEL_PROBE_REPOS=1`, `@repos` (`spira_repos`, each with `repo_root`, `spira_landrefs`, `repo_land_queued`) | — | parsed |
 | S1 | summon-gate | `world_gate fleet summon-only \|\| exit 1; if capacity_paused; then log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"; exit 1; fi` | — | inherited (log) |
 | S2 | ck7 | `ck7_summon_pass` | — | inherited |
-| S3 | land-escalate | `IFS= read -r why; ev="$(cat)"; land_escalate "$why" "$ev"` | line 1 = subject tail, rest = evidence | inherited |
+| S3 | ~~land-escalate~~ | **retired (sp-31hjr):** `land_escalate` (and the `ask_already_open` dedupe it leans on) is native Rust now — `dispatch.rs::land_escalate`/`pass.rs::ask_already_open`, called in-process from CHECK 6. `sentinel --land-escalate` (stdin: line 1 = why, rest = evidence) drives it alone for the real-sender suites that used to source lib.sh directly. | — | — |
 | S4 | check3b | `mark_queue_waiters 2>/dev/null \|\| true; close_landed_queue_waiters 2>/dev/null \|\| true` (`mark_open_children` is CHECK 3c, in Rust) | — | inherited |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
-| S6 | trace-tail | `IFS= read -r f; IFS= read -r n; trace_tail "$f" "$n"` | path, count | captured |
+| S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `aeon::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
 | S7 | detect-unclaimable | `detect_unclaimable_ready 2>/dev/null` | — | captured |
 | S8 | file-unclaimable | `file_unclaimable_incidents "$(cat)"` | S7's output | inherited |
 | S9 | detect-collisions | `detect_branch_collisions 2>/dev/null` | — | captured |

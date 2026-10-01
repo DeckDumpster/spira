@@ -369,4 +369,17 @@ nowant "G16: does not exclude its own fayth: label (ops)"        "fayth:ops"    
 
 unset SPIRA_QUEUE_WAIT_LABEL SPIRA_FAYTHS
 
+# ==========================================================================================
+# G17 — the roster survives conf.sh's own environment: SPIRA_HOME and SPIRA_FAYTHS set but NOT
+# exported, as production has them (sp-nki5w). The fayth shims exec spira-config; a bare exec
+# saw neither and production's roster came back empty, while this suite — which exports
+# SPIRA_HOME — stayed green.
+# ==========================================================================================
+roster="$(export -n SPIRA_HOME; SPIRA_FAYTHS="builder ops"; export -n SPIRA_FAYTHS; spira_fayths 2>&1)"
+want   "G17: roster with SPIRA_HOME unexported names builder"     "builder"  "$roster"
+want   "G17: roster honours an unexported SPIRA_FAYTHS (ops)"     "ops"      "$roster"
+nowant "G17: no SPIRA_HOME refusal under conf.sh's environment"   "SPIRA_HOME is not set" "$roster"
+names="$(export -n SPIRA_HOME; fayth_names 2>&1)"
+want   "G17: fayth_names with SPIRA_HOME unexported lists builder" "builder"  "$names"
+
 tl_summary

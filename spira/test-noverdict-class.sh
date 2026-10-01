@@ -17,11 +17,18 @@
 # addressee, not about bd's own filtering, which test-cockpit-bd-contract.sh already covers
 # against real bd (law-prefer-the-real-dependency).
 #
+# sp-31hjr: spira_land_noverdict is native in landing-pass now (was lib.sh) — driven
+# through `landing-pass noverdict <id> <branch> <repo> <reason> <outcome>` (gate output on
+# stdin), the same real-sender contract the bash function had, against the real compiled
+# binary rather than a sourced function.
+#
 # tier: T1
-# covers: spira/lib.sh landing-pass/src/*
+# covers: landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+
+command -v landing-pass >/dev/null 2>&1 || bail "landing-pass is not on PATH"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 SH="$TMP/spira"
@@ -45,13 +52,14 @@ chmod +x "$SH/mail"
 BD_FIXTURE="$TMP/bd.json"
 printf '[]\n' > "$BD_FIXTURE"
 
-# The fixture home first on PATH: lib.sh calls mail by name (sp-gypjk).
+# The fixture home first on PATH: the native port calls `mail` by name too (sp-gypjk).
 export PATH="$SH:$PATH"
 export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" \
        SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" BEADS_NO_AUTO_IMPORT=1
-progress() { :; }   # landing.sh's own progress(); a no-op log is enough for this suite
-. "$SH/lib.sh"
 
+noverdict() {   # noverdict <id> <branch> <repo> <reason> <outcome> <gate-output>
+    printf '%s' "$6" | landing-pass noverdict "$1" "$2" "$3" "$4" "$5"
+}
 sent_count() { wc -l < "$MAIL_LOG" | tr -d ' '; }
 last_subject() { tail -1 "$MAIL_LOG" 2>/dev/null; }
 
@@ -62,15 +70,15 @@ echo "test-noverdict-class.sh — a harness fault escalates by class, not by bra
 # at all rather than the absence below being a broken harness (law-absence-needs-a-positive-
 # control).
 # --------------------------------------------------------------------------------------
-spira_land_noverdict sp-b1 spira/b1 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
-spira_land_noverdict sp-b2 spira/b2 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
+noverdict sp-b1 spira/b1 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
+noverdict sp-b2 spira/b2 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
 is "two harness-fault occurrences on two branches do not yet escalate" 0 "$(sent_count)"
 
 # --------------------------------------------------------------------------------------
 # THE CLASS ESCALATES ON THE THIRD OCCURRENCE, WHICHEVER BRANCH IT LANDS ON — a third,
 # DIFFERENT branch tips it over, proving the counter is shared rather than reset per branch.
 # --------------------------------------------------------------------------------------
-spira_land_noverdict sp-b3 spira/b3 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
+noverdict sp-b3 spira/b3 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
 is "the third occurrence, on a third branch, escalates exactly once" 1 "$(sent_count)"
 want "the ask names the repository and the reason" "fixture-repo cannot be judged" "$(last_subject)"
 want "and every branch the fault touched"          "spira/b1"                     "$(last_subject)"
@@ -81,7 +89,7 @@ want "  including the third"                        "spira/b3"                  
 # A FOURTH OCCURRENCE ON THE SAME DAY DOES NOT RE-ASK. The class is deduped exactly like a
 # per-branch fault already was.
 # --------------------------------------------------------------------------------------
-spira_land_noverdict sp-b4 spira/b4 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
+noverdict sp-b4 spira/b4 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=137 OOMKilled=false)"
 is "a fourth occurrence the same day does not re-ask" 1 "$(sent_count)"
 
 # --------------------------------------------------------------------------------------
@@ -90,15 +98,15 @@ is "a fourth occurrence the same day does not re-ask" 1 "$(sent_count)"
 # scoped to harness-fault and did not quietly swallow every reason.
 # --------------------------------------------------------------------------------------
 : > "$MAIL_LOG"
-spira_land_noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
-spira_land_noverdict sp-c2 spira/c2 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
-spira_land_noverdict sp-c3 spira/c3 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
+noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
+noverdict sp-c2 spira/c2 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
+noverdict sp-c3 spira/c3 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
 is "three different branches each hitting lock-timeout once do not escalate" 0 "$(sent_count)"
 
 # THE SAME BRANCH, HIT THREE TIMES, STILL ESCALATES — the per-branch path is intact, not
 # merely disabled alongside the class path above.
-spira_land_noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
-spira_land_noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
+noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
+noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
 is "one branch hitting lock-timeout three times still escalates" 1 "$(sent_count)"
 want "and names only that branch" "spira/c1 cannot be judged" "$(last_subject)"
 
@@ -111,9 +119,9 @@ want "and names only that branch" "spira/c1 cannot be judged" "$(last_subject)"
 _asked="$SPIRA_RUN/noverdict/fixture-repo-harness-fault.asked"
 [ -e "$_asked" ] || bad "positive control: the harness-fault .asked marker exists" "not found at $_asked"
 touch -d '2 days ago' "$_asked"
-spira_land_noverdict sp-b5 spira/b5 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
-spira_land_noverdict sp-b6 spira/b6 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
-spira_land_noverdict sp-b7 spira/b7 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
+noverdict sp-b5 spira/b5 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
+noverdict sp-b6 spira/b6 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
+noverdict sp-b7 spira/b7 fixture-repo harness-fault NO_VERDICT "batch: harness fault — container died mid-batch (ExitCode=1 OOMKilled=true)"
 is "a fault recurring after the window resets escalates again" 1 "$(sent_count)"
 nowant "and the new ask does not carry yesterday's branches" "spira/b1" "$(last_subject)"
 want "and names the new branches instead" "spira/b5" "$(last_subject)"

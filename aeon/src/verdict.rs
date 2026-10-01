@@ -11,6 +11,7 @@ use crate::bd;
 use crate::decide::{self, Eviction, SopVerdict};
 use crate::ports::{s, Bd, Exec, Git};
 use crate::run::Run;
+use crate::trace;
 use crate::util;
 
 pub const EVICTION_RACE: &str = "eviction-race";
@@ -188,9 +189,10 @@ impl Run<'_> {
         let mut dirty: Vec<String> = st.stdout.lines().map(|l| l.chars().skip(3).collect::<String>()).collect();
         dirty.sort();
         dirty.dedup();
-        let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
-        let writes = self.sv("wiki_write_paths", &s(&[&logf, &wiki])).text();
-        let new = self.sv("wiki_commit_paths", &s(&[&writes, &dirty.join("\n")])).text();
+        let logf = self.s.logf.clone().unwrap_or_default();
+        let writes = trace::wiki_write_paths(&logf, Path::new(&wiki), &self.conf.trace_mark());
+        let committed = trace::wiki_commit_paths(&writes, &dirty);
+        let new = committed.join("\n");
         if new.is_empty() {
             return;
         }
@@ -393,7 +395,7 @@ impl Run<'_> {
                 let aj = self.d.bd.bd(&s(&["list", "--type", "decision", "--label", &ask, "--json"]));
                 let aj = if aj.success() { aj.text() } else { String::new() };
                 let aj = if aj.is_empty() { "[]".to_string() } else { aj };
-                let unproven = self.sv("groom_claims_verified", &s(&[&new, &aj, &self.s.session_epoch.to_string()])).text();
+                let unproven = trace::groom_claims_verified(&new, &aj, self.s.session_epoch);
                 if !unproven.is_empty() {
                     self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));

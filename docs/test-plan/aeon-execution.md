@@ -603,3 +603,68 @@ still proves what its name says. `sweep.rs`'s own call — a third seam call to
 `session_outcome` this bead's first grep pass missed, caught by a second whole-tree grep
 after the port — is native now too (`decide::session_outcome` over
 `ledger::trace_segment`).
+
+## 16. Wave 4.34: trace/heartbeat (P), groom claims and bead-named paths (Q), the
+    aeon-session tsd row (sp-27d3d)
+
+The trace/heartbeat family's live functions — `trace_last`, `trace_stats`, `trace_tail`,
+`aeon_fuse_minutes`, `aeon_lease_minutes`, `wiki_write_paths`, `wiki_commit_paths` — plus
+the brief/memories family's aeon-owned pair (`groom_claims_verified`, `bead_named_paths`)
+and the aeon half of the tsd producers (`_tsd_aeon_session`) are ported into `aeon::trace`
+and deleted from lib.sh. `attempt_trace` itself (family P) stays in lib.sh: `capacity_reset_at`
+(family K, unported) still calls it, so it is not yet dead. `_tsd_kv_field` (family AC) is
+left in place too — bead 35 ("Leftovers") owns its fate, and it is a private helper rather
+than one this bead's title named.
+
+Three of these functions have readers outside aeon: cockpit-collect called
+`aeon_fuse_minutes`, `aeon_lease_minutes` and `trace_stats`/`trace_tail` through the generic
+`io::lib_call` bash bridge, and sentinel called `trace_tail` through its own fixed S6 seam
+script. Both crates now depend on the aeon crate as a library and call `aeon::trace`
+in-process: cockpit-collect resolves the base ref for `aeon_fuse_minutes` with one
+remaining `io::lib_call(..., "spira_landref", ...)` (family W, unported) and runs the
+`git log --format=%ct` itself; sentinel reads `SPIRA_TRACE_MARK` out of its own context
+probe's `@vars` (already captured for other reasons) instead of threading it through a new
+field. `aeon::trace::aeon_fuse_minutes` and `::bead_named_paths` take their git-derived
+inputs already resolved by the caller (a commit timestamp, a `git ls-files` listing) rather
+than a `Git` port parameter, so the same function serves all three crates without each
+reimplementing a git adapter.
+
+The output contract is kept byte for byte: every `?`/`-`/`gate`/`KEY=value` sentinel the
+bash functions could render still renders identically, verified against the same fixtures
+the bash suites used (a real git worktree aged with `utime(2)`, a `bash -c 'exec -a
+gate.sh sleep 9999'` standing in for a live gate process, literal stream-json transcripts).
+
+Suites trimmed (each kept whatever didn't source lib.sh directly for the retired function;
+every removed row becomes a `aeon::trace` unit test):
+
+- `test-thrash.sh` — Parts 1-4b (`aeon_fuse_minutes` via a bash sourcing shim: no worktree,
+  a fresh write, a stale write, live/dead gate suppression, a gate that just finished)
+  moved to `trace::tests::aeon_fuse_minutes_*`. Parts 5-6 (cockpit-metrics.py's thrash
+  counter, the SPIRA_THRASH_MINUTES conf.d default) are untouched.
+- `test-aeon-lease.sh` — the `alm`-driven table (no lease file, a future deadline, a past
+  deadline, an empty file, a non-numeric file, an empty bead id) moved to
+  `trace::tests::aeon_lease_minutes_table`. The `fayth_get`/chamber-fayth section (a
+  different family) is untouched.
+- `test-aeon-wiki-dirty.sh` — T1 (`wiki_commit_paths` via a bash sourcing shim) moved to
+  `trace::tests::wiki_commit_paths_selects_own_dirty_writes_never_tasks_md`. T3, a whole-run
+  test against the real `aeon` binary, is untouched — it does not care whether the family
+  lives in bash or Rust.
+- `test-groom-escalation-check.sh` — T1 (`groom_claims_verified` via a bash sourcing shim)
+  moved to `trace::tests::groom_claims_verified_table`. T3, the same shape as above, is
+  untouched.
+- `test-cockpit-fuse.sh` — Part 4 (`trace_tail`'s turn-boundary rendering, via a bash
+  sourcing shim) moved to `trace::tests::trace_tail_renders_result_as_a_turn_index_not_session_ended`.
+  Parts 1-3 and 5, which drive the real `cockpit-collect probe now` binary and the `health`
+  pane, are untouched.
+
+No suite was deleted outright: `trace_last`, `trace_stats` and `bead_named_paths` had no
+dedicated bash suite at all (covered only incidentally through the whole-run suites above),
+so their first direct tests are new rows in `aeon/src/trace.rs` rather than ported ones.
+
+`aeon/src/seam.rs`'s allowlist drops `trace_last`, `aeon_fuse_minutes`, `wiki_write_paths`,
+`wiki_commit_paths`, `groom_claims_verified`, `bead_named_paths` and `_tsd_aeon_session`,
+and gains one new entry, `spira_landref` (singular — the heartbeat's own base-ref lookup,
+replacing the whole `aeon_fuse_minutes` bash function it used to call).
+
+`cargo test -p aeon -p cockpit-collect -p sentinel`: 154 + 50 + 89 tests, all green (19 new
+in `aeon::trace`).

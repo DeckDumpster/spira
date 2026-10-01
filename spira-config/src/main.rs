@@ -8,12 +8,22 @@
 //!   spira-config resolve --sh [file]    env > toml > derived defaults, as KEY='value' lines
 //!                                       for the typed export set (sp-eekjm; SPIRA_HOME and
 //!                                       SPIRA_REPO come from this process's own environment)
+//!   spira-config resolve --sh-all [file]  the same resolution, but EVERY resolved key —
+//!                                       conf.sh's own `eval` target (sp-ubcgo), which needs
+//!                                       SPIRA_REPO_MAP/SPIRA_FAYTHS/SPIRA_MAX_AEONS and every
+//!                                       other registry key too, not only the typed export set
+//!   ... --conf-d DIR                    read the registry from DIR instead of
+//!                                       SPIRA_HOME/conf.d — conf.sh's own fix for its
+//!                                       symlink fence, where SPIRA_HOME resolves to a test
+//!                                       fixture but conf.d/ stays beside conf.sh's real file
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
+//!   spira-config fayth ...              the chamber registry (wave 4.22, sp-r5zd2) — names,
+//!                                       get, roster, task, lane, partitions, for-labels, model
 //!
 //! `validate`, `get` and `export` read `spira.toml` from: the file argument if given (`-` for
 //! stdin, named on purpose), else the same search `locate` reports — `$SPIRA_TOML` (exclusive:
@@ -31,6 +41,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use spira_config::chamber;
 use spira_config::locate::locate;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
@@ -213,15 +224,35 @@ fn cmd_path_tail() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// `resolve --sh [file]` — `spira_config::resolve()`'s typed export set as `KEY='value'`
-/// lines (sp-eekjm, "wave 4.4: spira-config resolve"). `SPIRA_HOME`/`SPIRA_REPO` come from
-/// THIS process's own environment, never self-located — the one caller that will matter,
-/// `conf.sh`'s own `eval "$(spira-config resolve --sh)"` (a later bead, sp-ubcgo), has
-/// already derived both by the time it gets here, exactly as it derives them today. `file`,
-/// if given, pins the `spira.toml` to read the same way `validate`/`get`/`export` already
-/// do; with no argument, it is located the same way `spira-config locate` reports (no
+/// `resolve --sh [file]` / `resolve --sh-all [file]` — `spira_config::resolve()`'s result as
+/// `KEY='value'` lines (sp-eekjm, "wave 4.4: spira-config resolve"; the `--sh-all` form is
+/// sp-ubcgo, "wave 4.5: conf.sh becomes an eval of resolve"). `SPIRA_HOME`/`SPIRA_REPO` come
+/// from THIS process's own environment, never self-located — the one caller that will
+/// matter, `conf.sh`'s own `eval "$(spira-config resolve --sh-all)"`, has already derived
+/// both by the time it gets here, exactly as it derives them today. `file`, if given, pins
+/// the `spira.toml` to read the same way `validate`/`get`/`export` already do; with no
+/// argument, it is located the same way `spira-config locate` reports (no
 /// `$SPIRA_TOML`/`$SPIRA_CONF` pin here means "no config file", not a search failure).
-fn cmd_resolve_sh(file: Option<&str>) -> ExitCode {
+///
+/// `all`: false prints only [`EXPORT_KEYS`] (the set any caller may safely re-export to a
+/// child process); true prints every resolved key, `SPIRA_REPO_MAP`/`SPIRA_FAYTHS`/
+/// `SPIRA_MAX_AEONS` included — `conf.sh` is sourced, not exec'd, so reading those in-process
+/// here is the same thing bash's own `spira_conf_defaults` always did; `conf.sh` decides
+/// separately, in bash, which names to then `export` to ITS children.
+///
+/// `conf_d_override`: the registry directory to read, when the caller's own `SPIRA_HOME`
+/// is NOT where `conf.d/` actually lives. `conf.sh`'s symlink fence is exactly this case —
+/// dozens of suites `ln -s ".../conf.sh" "$FIXTURE/spira/conf.sh"` so `SPIRA_HOME` resolves
+/// to the fixture, deliberately, while `conf.d/` and `conf-gen.sh` stay beside conf.sh's
+/// REAL file (see conf.sh's own `_spira_conf_gen_ensure`, "RESOLVES THE SYMLINK, unlike
+/// SPIRA_HOME's own derivation"). `home.join("conf.d")` alone would look for a registry
+/// inside the fixture, find nothing, and `resolve` would silently compute only its ~30
+/// hand-ported keys — every one of the ~270 registry-backed keys gone without an error
+/// (sp-ubcgo: caught by test-conf-toml.sh's T1 before this override existed). `None` keeps
+/// the plain `home.join("conf.d")` default, for callers whose `SPIRA_HOME` is not a symlink
+/// target at all (every Rust crate that calls `resolve()` as a library already passes its
+/// own `conf_d`, so this override is a CLI-only concern).
+fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) -> ExitCode {
     let home = match env::var("SPIRA_HOME") {
         Ok(h) if !h.is_empty() => PathBuf::from(h),
         _ => {
@@ -252,14 +283,18 @@ fn cmd_resolve_sh(file: Option<&str>) -> ExitCode {
         None => None,
     };
 
-    let conf_d = home.join("conf.d");
+    let conf_d = conf_d_override.map(PathBuf::from).unwrap_or_else(|| home.join("conf.d"));
     let env_map: BTreeMap<String, String> = env::vars().collect();
     match resolve(ResolveInput { env: &env_map, home: &home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d }) {
         Ok(resolved) => {
             for w in &resolved.warnings {
                 eprintln!("{w}");
             }
-            print!("{}", resolved.to_sh(EXPORT_KEYS));
+            if all {
+                print!("{}", resolved.to_sh_all());
+            } else {
+                print!("{}", resolved.to_sh(EXPORT_KEYS));
+            }
             ExitCode::SUCCESS
         }
         Err(ResolveError::Containment(violations)) => {
@@ -807,6 +842,108 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `$SPIRA_HOME`, or the refusal every `fayth` subcommand prints and fails on — the chamber
+/// lives at `<home>/chamber`, and every lib.sh caller this binary now backs already has
+/// `SPIRA_HOME` set by the time it calls one of these (conf.sh resolves it before lib.sh is
+/// sourced), so an unset value here means something upstream broke, not "use a guess".
+fn fayth_home() -> Result<PathBuf, String> {
+    match env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
+        _ => Err("SPIRA_HOME is not set".to_string()),
+    }
+}
+
+/// `fayth ...` — the chamber registry (wave 4.22, sp-r5zd2): `spira-config fayth <verb>`
+/// backs lib.sh's own `fayth_names`/`spira_fayths`/`spira_task_fayths`/`spira_lane_fayths`/
+/// `fayth_get`/`fayth_partitions`/`fayths_for_labels`/`persona_model`, each now a one-line
+/// shim onto one of these verbs.
+fn cmd_fayth(args: &[String]) -> ExitCode {
+    let home = match fayth_home() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("spira-config fayth: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let roster_override = env::var("SPIRA_FAYTHS").ok();
+    let roster_override = roster_override.as_deref();
+    match args.first().map(String::as_str) {
+        Some("names") => {
+            for n in chamber::fayth_names(&home) {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("get") => match (args.get(1), args.get(2)) {
+            (Some(fayth), Some(var)) => {
+                let def = args.get(3).map(String::as_str).unwrap_or("");
+                print!("{}", chamber::fayth_get(&home, fayth, var, def));
+                ExitCode::SUCCESS
+            }
+            _ => {
+                eprintln!("usage: spira-config fayth get <fayth> <var> [default]");
+                ExitCode::FAILURE
+            }
+        },
+        Some("roster") => {
+            print!("{}", chamber::spira_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("task") => {
+            print!("{}", chamber::spira_task_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("lane") => {
+            print!("{}", chamber::spira_lane_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("partitions") => {
+            for (labels, exclude) in chamber::fayth_partitions(&home, roster_override) {
+                println!("{labels}\t{exclude}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("for-labels") => match args.get(1) {
+            Some(labels) => {
+                for f in chamber::fayths_for_labels(&home, labels) {
+                    println!("{f}");
+                }
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config fayth for-labels <labels>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("model") => match args.get(1) {
+            Some(fayth) => {
+                let def = args.get(2).map(String::as_str);
+                print!("{}", chamber::persona_model(fayth, def));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config fayth model <fayth> [default]");
+                ExitCode::FAILURE
+            }
+        },
+        _ => {
+            eprintln!(
+                "usage: spira-config fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                 \n\
+                 \x20 names                           every persona in the chamber, one per line\n\
+                 \x20 get <fayth> <var> [default]      one field of a fayth\n\
+                 \x20 roster                           spira_fayths: the active roster, in priority order\n\
+                 \x20 task                             spira_task_fayths: the pool's summon set\n\
+                 \x20 lane                              spira_lane_fayths: the declared lane fayths\n\
+                 \x20 partitions                       fayth_partitions: labels\\texclude-labels, one per line\n\
+                 \x20 for-labels <labels>              fayths_for_labels: personas whose partition IS <labels>\n\
+                 \x20 model <fayth> [default]          persona_model: the model this persona launches under"
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -828,12 +965,34 @@ fn main() -> ExitCode {
         }
         Some("locate") => cmd_locate(),
         Some("resolve") => {
-            if args.get(1).map(String::as_str) == Some("--sh") {
-                cmd_resolve_sh(args.get(2).map(String::as_str))
-            } else {
-                eprintln!("usage: spira-config resolve --sh [file]");
-                ExitCode::FAILURE
+            let all = match args.get(1).map(String::as_str) {
+                Some("--sh") => false,
+                Some("--sh-all") => true,
+                _ => {
+                    eprintln!("usage: spira-config resolve --sh|--sh-all [--conf-d DIR] [file]");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut conf_d: Option<String> = None;
+            let mut file: Option<String> = None;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "--conf-d" => {
+                        conf_d = args.get(i + 1).cloned();
+                        if conf_d.is_none() {
+                            eprintln!("usage: spira-config resolve --sh|--sh-all [--conf-d DIR] [file]");
+                            return ExitCode::FAILURE;
+                        }
+                        i += 2;
+                    }
+                    other => {
+                        file = Some(other.to_string());
+                        i += 1;
+                    }
+                }
             }
+            cmd_resolve_sh(all, file.as_deref(), conf_d.as_deref())
         }
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
@@ -853,6 +1012,7 @@ fn main() -> ExitCode {
         },
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
+        Some("fayth") => cmd_fayth(&args[1..]),
         Some("migrate") => match args.get(1) {
             Some(file) => cmd_migrate(file),
             None => {
@@ -862,19 +1022,20 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|migrate|repo> ...\n\
+                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|fayth|migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
                  \x20 locate\n\
-                 \x20 resolve --sh [file]\n\
+                 \x20 resolve --sh|--sh-all [--conf-d DIR] [file]\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
+                 \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
                  \x20 migrate <file>\n\
                  \x20 repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|\n\
                  \x20      name-at|same|containment-check> ..."
