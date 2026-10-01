@@ -119,6 +119,8 @@ T1_KEY="$(gate_tree_key "spira/sp-t1")"
 wait
 
 rc1="$(cat "$TMP/g1.rc" 2>/dev/null)"; rc2="$(cat "$TMP/g2.rc" 2>/dev/null)"
+echo "DEBUG-SPWM2A3 rc1=$rc1 g1.out=[$(cat "$TMP/g1.out" 2>/dev/null)]" >&2
+echo "DEBUG-SPWM2A3 rc2=$rc2 g2.out=[$(cat "$TMP/g2.out" 2>/dev/null)]" >&2
 is  "gate 1 reached a verdict" 0 "$rc1"
 is  "gate 2 reached a verdict" 0 "$rc2"
 
