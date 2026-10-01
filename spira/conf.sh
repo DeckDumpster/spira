@@ -622,102 +622,53 @@ unset _spira_resolved _spira_resolved_rc
 unset _spira_conf_here _spira_conf_home_env _spira_conf_real_dir
 
 # --------------------------------------------------------------------------------------
-# PATH. `bd`, `git`, `gh` and the configured agent CLI live wherever the operator put them,
-# and everything here is invoked from systemd, where a login shell's PATH does not exist.
-# Bootstrapping in one place is the difference between working and failing silently.
+# ENVIRONMENT BOOTSTRAP (sp-kfimz, "wave 4.6: environment bootstrap into spira-config"):
+# the PATH tail, SPIRA_BD resolution and the bd schema preflight — previously three blocks
+# of bash here — are now one call each into spira-config, so this logic exists exactly
+# once rather than in bash and in a Rust re-implementation that could drift from it.
 #
 # THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): every Spira tool is
 # invoked by bare name, and the launcher put the release's bin/ and spira/ at the front of
-# PATH, so nothing this file adds can shadow a release tool. This file only APPENDS the
-# box's own tail — SPIRA_PATH (the config's business), then ~/.local/bin, ~/.cargo/bin
-# (cargo, for the gate and testenv that build a tree under test — it holds no Spira tool)
-# and the system directories — each segment once, so re-sourcing does not grow PATH.
-# --------------------------------------------------------------------------------------
-_spira_path_seg=""
-for _spira_path_seg in ${SPIRA_PATH//:/ } "$HOME/.local/bin" "$HOME/.cargo/bin" /usr/local/bin /usr/bin /bin; do
-    case ":${PATH:-}:" in
-        *":$_spira_path_seg:"*) ;;
-        *) PATH="${PATH:+$PATH:}$_spira_path_seg" ;;
-    esac
-done
-unset _spira_path_seg
-export PATH
-
-# SPIRA_BD — resolved once, deterministically, after SPIRA_PATH is applied. When the
-# environment or a config file already set it (both captured before this point), the value
-# survives unchanged. When neither did, it resolves to the first bd on the PATH this
-# harness just assembled — rather than whatever PATH the calling context carries. PATH
-# order differs between a login shell, a systemd unit and an aeon's confined environment,
-# so a caller that fell through to ${SPIRA_BD:-bd} in lib.sh could silently pick a
-# different binary in each context (sp-s2zvn, scar from 2026-09-08).
-if [ -z "${SPIRA_BD:-}" ]; then
-    SPIRA_BD="$(command -v bd 2>/dev/null || echo bd)"
+# PATH. `env-bootstrap` only APPENDS the box's own tail — SPIRA_PATH (the config's
+# business), then ~/.local/bin, ~/.cargo/bin (cargo, for the gate and testenv that build a
+# tree under test — it holds no Spira tool) and the system directories — each segment
+# once, so re-sourcing does not grow PATH. It then resolves SPIRA_BD from that PATH, unless
+# the environment or spira.toml already gave it one (sp-s2zvn, scar from 2026-09-08: a bare
+# ${SPIRA_BD:-bd} fallback in lib.sh could silently pick a different binary depending on
+# whether the caller was a login shell, a systemd unit or an aeon's confined environment —
+# all three disagree about PATH order).
+#
+# PATH, HOME and SPIRA_PATH are passed on THIS ONE CALL'S OWN ENVIRONMENT, not by exporting
+# them first — SPIRA_PATH is resolved above but not yet `export`ed (that happens only in
+# the explicit export list below), so a plain inherited environment would not carry it to
+# a child process. Same reasoning as SPIRA_HOME/SPIRA_REPO's own per-call passing, above.
+#
+# FAIL CLOSED, matching the guard above: `spira-config` was already confirmed present on
+# PATH before this file got this far, so only a crash or a truly empty result can leave
+# PATH/SPIRA_BD unset — checking the exit code here, rather than trusting empty output to
+# mean "nothing to do", is what keeps that failure loud instead of silent.
+_spira_env_bootstrap="$(PATH="$PATH" HOME="$HOME" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_BD="${SPIRA_BD:-}" spira-config env-bootstrap --sh)"
+_spira_env_bootstrap_rc=$?
+if [ "$_spira_env_bootstrap_rc" -ne 0 ]; then
+    unset _spira_env_bootstrap _spira_env_bootstrap_rc
+    printf 'spira: spira-config env-bootstrap failed — PATH/SPIRA_BD could not be resolved\n' >&2
+    exit 1
 fi
-export SPIRA_BD
+eval "$_spira_env_bootstrap"
+unset _spira_env_bootstrap _spira_env_bootstrap_rc
 
 # BD SCHEMA REFUSAL. When the resolved bd's migration count disagrees with the database's,
 # bd exits 0 with the complaint on stdout — callers that check exit status read success and
-# parse the error as data. Catching it here, once, stops the mismatch from propagating to
-# every bdq call. Only runs when the database is present; on a fresh install or in a test
-# fixture that has not yet called testdb_up, $SPIRA_DB/.beads does not exist and the check
-# is skipped entirely. bd's version string does not order against release tags — a dev build
-# knows MORE migrations than a tagged release — so pin by migration count, not version string.
-if [ -d "${SPIRA_DB:-}/.beads" ]; then
-    # SCHEMA CHECK CACHE. Running `bd migrate schema` on every conf.sh source opens the
-    # store once before any actual work — doubling the load. The check is cached by the
-    # bd binary's mtime and size: if neither has changed since the last successful pass,
-    # the cursor cannot have moved (migrations are applied by bd, not by the database alone).
-    # Both fields are required: mtime alone has second-level resolution, so two distinct
-    # binaries built in the same second but with different content share a mtime but differ
-    # in size. The stamp file lives in SPIRA_RUN so it is instance-qualified.
-    _spira_schema_stamp="${SPIRA_RUN}/bd-schema-stamp"
-    _spira_bd_mtime="$(stat -c '%Y %s' "$SPIRA_BD" 2>/dev/null || true)"
-    _spira_schema_cached=0
-    if [ -n "$_spira_bd_mtime" ] && [ -f "$_spira_schema_stamp" ]; then
-        _spira_stamp_val="$(cat "$_spira_schema_stamp" 2>/dev/null || true)"
-        [ "$_spira_stamp_val" = "$_spira_bd_mtime" ] && _spira_schema_cached=1
-    fi
-    if [ "$_spira_schema_cached" = 0 ]; then
-        _spira_bd_out="$(timeout 30 "$SPIRA_BD" -C "$SPIRA_DB" migrate schema 2>&1)"
-        _spira_bd_rc=$?
-        _spira_schema_ok=0
-        if [ "$_spira_bd_rc" -eq 0 ]; then
-            _spira_schema_ok=1
-        elif grep -q 'dolt_server_port.*deprecated' <<< "$_spira_bd_out"; then
-            # A deprecated field in metadata.json; schema is unaffected (sp-lh8r).
-            _spira_schema_ok=1
-        elif grep -q 'locked by another dolt process' <<< "$_spira_bd_out"; then
-            # Lock contention means the store is in embedded mode — one exclusive lock,
-            # many waiters. Embedded mode is refused by doctor; run it to diagnose.
-            printf 'spira: bd locked — store is in embedded mode (dolt_mode); run doctor\n' >&2
-            [ -z "${SPIRA_DOCTOR:-}" ] && { unset _spira_bd_out _spira_bd_rc _spira_schema_ok; exit 1; }
-        else
-            _spira_bd_db="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'database is at v[0-9]+' | grep -oE '[0-9]+')"
-            _spira_bd_bin="$(printf '%s\n' "$_spira_bd_out" | grep -oE 'binary knows up to v[0-9]+' | grep -oE '[0-9]+')"
-            # Report both versions, rendering ? when one cannot be read. (sp-1khst)
-            if [ -n "${_spira_bd_db:-}" ] || [ -n "${_spira_bd_bin:-}" ]; then
-                printf 'spira: bd schema mismatch — database is at v%s, %s knows up to v%s\n' \
-                    "${_spira_bd_db:-?}" "$SPIRA_BD" "${_spira_bd_bin:-?}" >&2
-                printf 'spira: rebuild bd at v%s or set SPIRA_BD in %s\n' \
-                    "${_spira_bd_db:-?}" "${SPIRA_CONF_FILE:-spira.conf}" >&2
-            else
-                printf 'spira: bd migrate schema failed — %s\n' \
-                    "$(printf '%s\n' "$_spira_bd_out" | head -1)" >&2
-                printf 'spira: bd is %s\n' "$SPIRA_BD" >&2
-            fi
-            unset _spira_bd_db _spira_bd_bin
-            # SPIRA_DOCTOR=1 means doctor is the caller; it runs its own schema check.
-            [ -z "${SPIRA_DOCTOR:-}" ] && { unset _spira_bd_out _spira_bd_rc _spira_schema_ok; exit 1; }
-        fi
-        unset _spira_bd_out _spira_bd_rc
-        # Write the stamp only after a successful check (best-effort; failure is silent).
-        if [ "${_spira_schema_ok:-0}" = 1 ] && [ -n "$_spira_bd_mtime" ] && mkdir -p "$SPIRA_RUN" 2>/dev/null; then
-            printf '%s\n' "$_spira_bd_mtime" > "$_spira_schema_stamp" 2>/dev/null || true
-        fi
-        unset _spira_schema_ok
-    fi
-    unset _spira_schema_stamp _spira_bd_mtime _spira_schema_cached _spira_stamp_val
-fi
+# parse the error as data. `spira-config check-bd` is the cached preflight that catches it
+# once, here, before the mismatch can propagate to every bdq call; see its own doc
+# (spira-config/src/env_bootstrap.rs) for the cache key, the locked-dolt tolerance and
+# SPIRA_DOCTOR's exemption, all preserved exactly. `exit`, NOT `return` (unlike the
+# "spira-config not found" guard above): a schema mismatch ends the WHOLE process that
+# sourced conf.sh, even for the handful of callers that source it as `. conf.sh || true` —
+# unchanged from this check's own behaviour before this bead.
+SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
+    SPIRA_DOCTOR="${SPIRA_DOCTOR:-}" SPIRA_CONF_FILE="${SPIRA_CONF_FILE:-spira.conf}" \
+    spira-config check-bd || exit 1
 
 # BD_IGNORE_SCHEMA_SKEW WAS EXPORTED HERE AND IS GONE, because the recovery it was waiting on
 # has run. The database was at schema v61, migrated by the accidental v1.2.0/v1.2.1 release,
