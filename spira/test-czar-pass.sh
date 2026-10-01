@@ -237,8 +237,11 @@ lack "halted: no incident filed" "incident:" "$_inc_log"
 printf '\n%s\n' "9. new config keys in conf.sh allowlist"
 # ==========================================================================================
 conf_sh="$HERE/conf.sh"
+# sp-g3uwp: conf.sh no longer carries its allowlist as literal text — a key's membership
+# is now the existence of its own file under conf.d/, which conf-gen.sh derives the
+# allowlist from directly.
 for key in SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS; do
-    grep -q "$key" "$conf_sh" 2>/dev/null \
+    [ -f "$HERE/conf.d/$key" ] \
         && ok "$key in SPIRA_CONF_KEYS" \
         || bad "$key missing from conf.sh"
 done
@@ -493,7 +496,7 @@ want "base-red: unreadable bead still filed at P0" "priority=0" "$_inc_log"
 printf '\n%s\n' "21. SPIRA_BASE_CI_UNREADABLE_GRACE_SECS and SPIRA_CZAR_STAGE_BASE_RED in conf.sh allowlist"
 # ==========================================================================================
 for key in SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_CZAR_STAGE_BASE_RED; do
-    grep -q "$key" "$conf_sh" 2>/dev/null \
+    [ -f "$HERE/conf.d/$key" ] \
         && ok "$key in SPIRA_CONF_KEYS" \
         || bad "$key missing from conf.sh"
 done
