@@ -55,6 +55,10 @@ git -C "$REPO" fetch -q origin
 git -C "$REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
 
 GIT_BIN="$(dirname "$(command -v git)")"
+# spira_containment_check (every lib.sh source) and the repo registry it shims onto both
+# shell out to spira-config now (sp-37rmg, "wave 4.11") — an otherwise-hermetic `env -i`
+# fixture needs its directory on PATH too, same as git's.
+SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config is not on PATH"
 mkdir -p "$TMP/run"
 
 # run_guard <email> <repo> -> exit code of branch-guard.sh staged
@@ -63,7 +67,7 @@ run_guard() {
     # RUN IN AN EXPLICIT MINIMAL ENVIRONMENT. Ambient conf is the thing that silently decides
     # verdicts in a suite that inherits it. SPIRA_CONF points at a nonexistent file so no
     # config file is read; SPIRA_REPO_MAP likewise so no map is consulted.
-    env -i HOME="$TMP" PATH="$GIT_BIN:/usr/bin:/bin" \
+    env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         GIT_COMMITTER_NAME="test" GIT_COMMITTER_EMAIL="$email" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$root" \
         SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
@@ -126,7 +130,7 @@ git -C "$REPO" commit -q -m "sp-test: aeon commit planted directly on main"
 # The check is run with SPIRA_REPO=$REPO so spira_repos returns the home repo name and
 # repo_root resolves to $REPO. SPIRA_REPO_MAP is absent so the map contributes nothing.
 run_check() {
-    env -i HOME="$TMP" PATH="$GIT_BIN:/usr/bin:/bin" \
+    env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
         SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
         SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
         SPIRA_RUN="$TMP/run" \
