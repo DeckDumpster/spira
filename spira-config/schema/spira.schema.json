@@ -329,6 +329,7 @@
           ]
         },
         "batch_maxpar": {
+          "description": "testenv's own suite concurrency cap (testenv/DESIGN.md §4.3, `schedule::maxpar`). Unset derives a quarter of the CPU ceiling, clamped to [2, 16] — never the hardware bound. 0 and anything that doesn't parse are refused outright, not read as \"unlimited\" (sp-tj8k3: a batch_maxpar of 0 in production put 61 containers and load 90 on one host).",
           "type": [
             "integer",
             "null"
