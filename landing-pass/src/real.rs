@@ -108,28 +108,27 @@ fn resolve_base_refs(
 
 pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow>), String> {
     let mut kv: BTreeMap<String, String> = BTreeMap::new();
-    let mut repos = Vec::new();
-    let reg = repo_registry(home);
     for rec in answer.split('\0') {
         let Some((k, v)) = rec.split_once('=') else { continue };
-        if k == "repo" {
-            let f: Vec<&str> = v.split(FIELD).collect();
-            if f.len() != 3 || f[0].is_empty() {
-                continue;
-            }
-            let name = f[0].to_string();
-            let path = PathBuf::from(f[1]);
-            let mode = LandMode::parse(f[2]);
-            let (landref, base_fq, base_remote, base_branch, forge_ref) = resolve_base_refs(&reg, &name, &path, &mode);
-            repos.push(RepoRow { name, path, mode, landref, base_fq, base_remote, base_branch, forge_ref });
-        } else {
-            kv.insert(k.into(), v.into());
-        }
+        kv.insert(k.into(), v.into());
     }
     let run = kv.get("run").cloned().unwrap_or_default();
     if run.is_empty() {
         return Err("the context seam named no SPIRA_RUN".into());
     }
+    // spira_home_repo/spira_repos/repo_root/repo_land (family U) in-process (sp-k6lku,
+    // "wave 4.13"): the seam above no longer emits "repo=" records or "home_repo" at all.
+    let reg = repo_registry(home);
+    let repos: Vec<RepoRow> = reg
+        .all()
+        .into_iter()
+        .map(|name| {
+            let path = reg.root(&name).map(PathBuf::from).unwrap_or_default();
+            let mode = LandMode::parse(&reg.land(&name));
+            let (landref, base_fq, base_remote, base_branch, forge_ref) = resolve_base_refs(&reg, &name, &path, &mode);
+            RepoRow { name, path, mode, landref, base_fq, base_remote, base_branch, forge_ref }
+        })
+        .collect();
     let g = |k: &str| kv.get(k).cloned().unwrap_or_default();
     let num = |k: &str, d: i64| kv.get(k).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(d);
     let path_opt = |k: &str| kv.get(k).filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -140,7 +139,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         db: g("db"),
         bd: kv.get("bd").filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| "bd".into()),
         bd_timeout: num("bd_timeout", 180).max(1) as u64,
-        home_repo: g("home_repo"),
+        home_repo: reg.home_repo().to_string(),
         id_prefix: g("id_prefix"),
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),

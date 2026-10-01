@@ -1474,23 +1474,47 @@ fn records_keep_their_shell_formats() {
 
 #[test]
 fn the_context_answer_parses_into_settings_and_rows() {
-    // Each repo record is name/path/mode only now (sp-o88bx, "wave 4.12"): the base-ref
-    // columns (family W) are resolved in-process against a real checkout by
-    // `resolve_base_refs`, not carried on the wire — see seam.rs's own integration test for
-    // that resolution exercised against real git. Neither "/h" nor the empty path below is
-    // a real checkout, so every base-ref field reads None/empty, same as `repo_root`
-    // answering nothing: this test is about the kv/record split, not git.
-    let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0home_repo=spira\0\
-repo=spira\u{1d}/h\u{1d}queue.local\0\
-repo=other\u{1d}\u{1d}\0";
+    // The repository list itself (family U: spira_home_repo/spira_repos/repo_root/
+    // repo_land) moved in-process (sp-k6lku, "wave 4.13"), same as the base-ref columns
+    // (family W, sp-o88bx "wave 4.12"): parse_context no longer reads "repo=" records off
+    // the wire at all — it builds the list from spira_config::repos against a real
+    // repo-map, read here from SPIRA_REPO_MAP/SPIRA_HOME_REPO (serialised: process-global
+    // state). Neither "/h" nor the blank path below is a real checkout, so every base-ref
+    // field reads None/empty, same as `repo_root` answering nothing — this test is about
+    // the kv/record split and the repo list's shape, not git (see seam.rs's own
+    // integration test for that resolution exercised against real git).
+    let _serial = crate::testutil::serial();
+    let dir = crate::testutil::tmpdir("context-answer");
+    let map = dir.join("repomap-fixture");
+    fs::write(&map, "spira | /h | queue.local\nother |\n").unwrap();
+    let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+    let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
+    std::env::set_var("SPIRA_REPO_MAP", &map);
+    std::env::set_var("SPIRA_HOME_REPO", "spira");
+
+    let ans = "run=/r\0db=/db\0land_maxsec=3600\0gate_reserve=2700\0";
     let (s, repos) = crate::real::parse_context(ans, Path::new("/home")).unwrap();
+    let no_map = crate::real::parse_context("db=x\0", Path::new("/h"));
+
+    match prev_map {
+        Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+        None => std::env::remove_var("SPIRA_REPO_MAP"),
+    }
+    match prev_home_repo {
+        Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
+        None => std::env::remove_var("SPIRA_HOME_REPO"),
+    }
+
     assert_eq!((s.run.as_path(), s.land_maxsec, s.gate_reserve), (Path::new("/r"), 3600, 2700));
+    assert_eq!(s.home_repo, "spira");
     assert_eq!(s.queue_bin.as_deref(), Some(Path::new("queue")), "queue by name, on the launcher's PATH");
+    assert_eq!(repos[0].name, "spira");
     assert_eq!(repos[0].mode, LandMode::QueueLocal);
     assert_eq!(repos[0].base_remote, None);
     assert_eq!(repos[0].forge_ref, None);
+    assert_eq!(repos[1].name, "other");
     assert_eq!((repos[1].path.as_os_str().is_empty(), repos[1].landref.clone(), &repos[1].mode), (true, None, &LandMode::Push));
-    assert!(crate::real::parse_context("db=x\0", Path::new("/h")).is_err());
+    assert!(no_map.is_err());
     assert_eq!(s.path, None, "no path key: halt inherits the caller's PATH");
     let (s2, _) = crate::real::parse_context("run=/r\0path=/stub:/usr/bin\0", Path::new("/h")).unwrap();
     assert_eq!(s2.path.as_deref(), Some("/stub:/usr/bin"));

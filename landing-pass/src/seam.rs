@@ -93,13 +93,14 @@ progress() { printf '\037%s\n' "$*"; }
 act() { log "$*"; }
 "#;
 
-/// Settings and every repository row. Settings are `key=value\0`; each repository is
-/// `repo=<name>\x1d<path>\x1d<mode>\0`. The base-ref columns family W used to fill in here
-/// (landref/base_fq/remote/branch/forge) are resolved in-process now (sp-o88bx, "wave
-/// 4.12") by `real.rs`'s `load_context`/`parse_context`, through `spira_config::repos` —
-/// not by this loop shelling spira_landref/ref_remote/ref_branch/qualify_base_ref/
-/// spira_publish_forge, each an extra spira-config subprocess, once per repository, inside
-/// this one already-running bash seam call.
+/// Settings only — the repository list itself (family U: `spira_home_repo`/`spira_repos`/
+/// `repo_root`/`repo_land`) and the base-ref columns (family W: `spira_landref`/
+/// `ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_publish_forge`) are both resolved
+/// in-process now by `real.rs`'s `load_context`/`parse_context`, through
+/// `spira_config::repos` (family W since sp-o88bx "wave 4.12"; family U since sp-k6lku
+/// "wave 4.13") — not by a loop in this script shelling into each of those, every one of
+/// them an extra spira-config subprocess, once per function per repository, inside this
+/// one already-running bash seam call.
 const CONTEXT: &str = r#"__kv() { printf '%s=%s\0' "$1" "$2"; }
 printf '\036'
 __kv home "${SPIRA_HOME:-$HERE}"
@@ -108,7 +109,6 @@ __kv repo "${SPIRA_REPO:-}"
 __kv db "${SPIRA_DB:-}"
 __kv bd "${SPIRA_BD:-bd}"
 __kv bd_timeout "${BD_TIMEOUT:-180}"
-__kv home_repo "$(spira_home_repo)"
 __kv id_prefix "${SPIRA_ID_PREFIX:-sp}"
 __kv land_maxsec "${SPIRA_LAND_MAXSEC:-3600}"
 __kv gate_reserve "${SPIRA_LAND_GATE_RESERVE:-1200}"
@@ -136,11 +136,6 @@ __kv noverdict_max "${SPIRA_NOVERDICT_MAX:-3}"
 __kv noverdict_class_window "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}"
 __kv rebase_decompose_files "${SPIRA_REBASE_DECOMPOSE_FILES:-4}"
 __kv rebase_generated_files "${SPIRA_REBASE_GENERATED_FILES:-}"
-for __n in $(spira_repos); do
-    __p="$(repo_root "$__n" 2>/dev/null)" || __p=""
-    __m="$(repo_land "$__n" 2>/dev/null)"
-    printf 'repo=%s\035%s\035%s\0' "$__n" "$__p" "$__m"
-done
 exit 0
 "#;
 
@@ -301,11 +296,13 @@ mod tests {
 
     #[test]
     fn the_context_script_resolves_every_repository_through_lib_sh() {
-        // spira_landref/ref_remote/ref_branch/qualify_base_ref/spira_publish_forge dropped
-        // from the CONTEXT script's loop (sp-o88bx, "wave 4.12") — parse_context resolves
-        // them in-process through spira_config::repos against a REAL checkout now, not
-        // these stubs, so "h" and "o" are real git repositories rather than bare `.git`
-        // markers, and SPIRA_REPO_MAP is a real map (serialised: it's process-global state).
+        // spira_home_repo/spira_repos/repo_root/repo_land (family U, sp-k6lku "wave 4.13")
+        // and spira_landref/ref_remote/ref_branch/qualify_base_ref/spira_publish_forge
+        // (family W, sp-o88bx "wave 4.12") are both dropped from the CONTEXT script —
+        // parse_context resolves all of them in-process through spira_config::repos
+        // against a REAL repo-map and REAL checkouts now, not stubbed bash functions, so
+        // "h" and "o" are real git repositories rather than bare `.git` markers, and
+        // SPIRA_REPO_MAP/SPIRA_HOME_REPO are real env (serialised: process-global state).
         let _serial = crate::testutil::serial();
         let dir = crate::testutil::tmpdir("ctx");
         let h = dir.join("h");
@@ -328,21 +325,20 @@ mod tests {
         git(&upstream, &["commit", "-q", "-m", "x"]);
         git(&dir, &["clone", "-q", upstream.to_str().unwrap(), o.to_str().unwrap()]);
 
+        // "spira" (the home repo) declares land=queue.local; "other" and "ghost" leave
+        // land blank (repo_land's own default, "push" — repos[1].mode is not asserted
+        // either way); "ghost" declares no path at all, matching the old fake's `*) return
+        // 1;;` branch for an unmapped name.
         let map = dir.join("repomap-fixture");
-        std::fs::write(&map, format!("spira | {}\nother | {}\n", h.display(), o.display())).unwrap();
+        std::fs::write(&map, format!("spira | {} | queue.local\nother | {}\nghost |\n", h.display(), o.display())).unwrap();
         let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
         std::env::set_var("SPIRA_REPO_MAP", &map);
+        std::env::set_var("SPIRA_HOME_REPO", "spira");
 
-        let lib = format!(
-            r#"SPIRA_RUN=/run/x; SPIRA_TOML_FILE=/cfg/doc
-log() {{ echo "L $*"; }}
-spira_home_repo() {{ printf spira; }}
-spira_repos() {{ printf 'spira\nother\nghost\n'; }}
-repo_root() {{ case "$1" in spira) printf '{d}/h';; other) printf '{d}/o';; *) return 1;; esac; }}
-repo_land() {{ case "$1" in spira) printf queue.local;; other) printf push;; *) printf push;; esac; }}
-"#,
-            d = dir.display()
-        );
+        let lib = r#"SPIRA_RUN=/run/x; SPIRA_TOML_FILE=/cfg/doc
+log() { echo "L $*"; }
+"#;
         std::fs::write(dir.join("lib.sh"), lib).unwrap();
         let (rc, out) = run(&dir, Op::Context, &[]);
 
@@ -356,6 +352,10 @@ repo_land() {{ case "$1" in spira) printf queue.local;; other) printf push;; *) 
         match prev_map {
             Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
             None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+        match prev_home_repo {
+            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
+            None => std::env::remove_var("SPIRA_HOME_REPO"),
         }
 
         let (s, repos) = result.unwrap();
