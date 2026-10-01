@@ -192,25 +192,11 @@ fn schema_name(home: &str, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// `aeon_alive <pidfile>`: ordinary Rust, no shell needed — `/proc/<pid>/cmdline` against
-/// the `(^|/)aeon( |$)|aeon\.sh` pattern, matching `lib.sh`'s own liveness check.
+/// `aeon_alive <pidfile>`: the one canonical implementation (`strand::probe::aeon_alive`,
+/// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies") rather than this
+/// crate's own duplicate of the same /proc check.
 fn aeon_alive(pidfile: &str) -> bool {
-    let pid = match std::fs::read_to_string(pidfile) {
-        Ok(s) => s.trim().to_string(),
-        Err(_) => return false,
-    };
-    if pid.is_empty() || !Path::new(&format!("/proc/{pid}")).is_dir() {
-        return false;
-    }
-    let cmdline = std::fs::read_to_string(format!("/proc/{pid}/cmdline")).unwrap_or_default();
-    let cmd = cmdline.replace('\0', " ");
-    if cmd.contains("aeon.sh") {
-        return true;
-    }
-    cmd.split_whitespace().any(|tok| {
-        let base = tok.rsplit('/').next().unwrap_or(tok);
-        base == "aeon"
-    })
+    strand::probe::aeon_alive(Path::new(pidfile))
 }
 
 fn mail_send(aeon_id: &str, body: &str) {

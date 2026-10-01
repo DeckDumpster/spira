@@ -84,7 +84,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         let facts = Facts {
             now,
             ghost_grace: cfg.ghost_grace,
-            live: fayths.iter().map(|f| probe::aeon_count(cfg, f)).sum(),
+            live: fayths.iter().map(|f| probe::aeon_count(cfg, f, None)).sum(),
             total_live,
             max_aeons: cfg.max_live_aeons,
             capacity_paused: capacity.clone(),

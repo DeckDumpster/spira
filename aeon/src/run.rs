@@ -239,7 +239,10 @@ impl<'a> Run<'a> {
     }
 
     fn take_name(&mut self) {
-        let name = self.sv("aeon_name_take", &s(&[self.f()])).text();
+        // In-process (wave 4.23, sp-0ffox): this crate is aeon_name_take's own owning
+        // crate — the ONLY caller besides this one is sweep.rs's own copy of the same
+        // call, so there is no cross-crate reason left to round-trip through lib.sh.
+        let name = crate::naming::aeon_name_take(self.run_dir(), self.f());
         let actor = format!("aeon-{name}");
         let env = self.d.env;
         env.set("SPIRA_AEON", &name);

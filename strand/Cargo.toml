@@ -9,6 +9,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
+sending = { path = "../sending" }
+
+[lib]
+name = "strand"
+path = "src/lib.rs"
 
 [[bin]]
 name = "strand"

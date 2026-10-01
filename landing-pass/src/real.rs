@@ -1076,39 +1076,13 @@ pub fn pid_alive(pid: &str) -> bool {
 }
 
 impl Procs for RealProcs {
+    /// A thin wrapper onto `sending::reap::holder_alive` — the destruction chokepoint's own
+    /// canonical implementation (sp-9envm) — rather than this crate's own copy (wave 4.23,
+    /// sp-0ffox: "holder_alive is reached through sending's library"). ONE holder-liveness
+    /// predicate in the whole tree, not landing-pass's own second one.
     fn holder_alive(&self, id: &str) -> bool {
-        if let Ok(pid) = fs::read_to_string(self.run.join(format!("hold-{id}.pid"))) {
-            if pid_alive(&pid) {
-                return true;
-            }
-        }
-        let suffix = format!("-{id}.pid");
-        let Ok(rd) = fs::read_dir(&self.run) else { return false };
-        for e in rd.flatten() {
-            let n = e.file_name().to_string_lossy().into_owned();
-            if !(n.starts_with("aeon-") && n.ends_with(&suffix)) {
-                continue;
-            }
-            let Ok(pid) = fs::read_to_string(e.path()) else { continue };
-            if !pid_alive(&pid) {
-                continue;
-            }
-            // argv must be our runner, not a recycled pid.
-            let cmd = fs::read(format!("/proc/{}/cmdline", pid.trim())).unwrap_or_default();
-            if is_aeon_cmdline(&String::from_utf8_lossy(&cmd).replace('\0', " ")) {
-                return true;
-            }
-        }
-        false
+        sending::reap::holder_alive(&self.run, id)
     }
-}
-
-/// Whether a space-joined cmdline is an aeon: the Rust binary (argv[0] `aeon` or `…/aeon`)
-/// or the retired `aeon.sh` — the rule lib.sh aeon_alive, the sentinel, strand and
-/// rebase-stale share.
-pub fn is_aeon_cmdline(cmd: &str) -> bool {
-    let argv0 = cmd.split(' ').next().unwrap_or("");
-    cmd.contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
 }
 
 pub struct RealClock;
@@ -1123,12 +1097,26 @@ impl Clock for RealClock {
 }
 
 #[cfg(test)]
-mod aeon_cmdline_tests {
+mod holder_alive_tests {
+    use super::*;
+
+    // Wave 4.23 (sp-0ffox) retired this crate's own hold/aeon-argv checking — the
+    // aeon-cmdline positive/negative controls now live with the one implementation,
+    // sending::reap (see its own suite). This just confirms RealProcs reaches it.
     #[test]
-    fn the_binary_and_the_retired_script_are_both_aeons() {
-        assert!(super::is_aeon_cmdline("/r/current/bin/aeon --home /r/current/spira builder "));
-        assert!(super::is_aeon_cmdline("bash /h/spira/aeon.sh builder "));
-        assert!(!super::is_aeon_cmdline("sleep 30 "));
-        assert!(!super::is_aeon_cmdline("/usr/bin/aeonic --x "));
+    fn holder_alive_checks_the_hold_pidfile_by_pid_only() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive");
+        std::fs::write(run.join("hold-sp-h1.pid"), std::process::id().to_string()).unwrap();
+        let procs = RealProcs { run: run.to_path_buf() };
+        assert!(procs.holder_alive("sp-h1"));
+        assert!(!procs.holder_alive("sp-h2"));
+    }
+
+    #[test]
+    fn holder_alive_requires_aeon_argv_for_an_aeon_pidfile() {
+        let run = testkit::TempDir::new("landing-pass-holder-alive-aeon");
+        std::fs::write(run.join("aeon-builder-sp-a1.pid"), std::process::id().to_string()).unwrap();
+        let procs = RealProcs { run: run.to_path_buf() };
+        assert!(!procs.holder_alive("sp-a1"), "a live pid that is not an aeon must not count");
     }
 }

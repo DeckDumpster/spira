@@ -118,7 +118,6 @@ impl Seam for FakeSeam {
             "aeon_count" => Out::ok("0"),
             "fayth_free" => Out::ok("1"),
             "_aeon_capacity_paused" => Out::fail(1, ""),
-            "aeon_name_take" => Out::ok("ifrit"),
             "_aeon_rebase" => Out::ok(""),
             "_aeon_thrash_meta" => Out::ok("\n\n\n"),
             "release_own_claim" => {
