@@ -5,7 +5,8 @@
 #
 #   ./test-aeon-worktree-collision.sh
 #
-# THE DEFECT THIS REPRODUCES. A bead's branch is recorded state (bead_branch, lib.sh), and a
+# THE DEFECT THIS REPRODUCES. A bead's branch is recorded state (the branch:<name> label; the
+# old lib.sh bead_branch reader was retired dead at sp-27hsi, aeon reads the state itself), and a
 # split that inherits a label handed every child the SAME recorded branch as its parent —
 # sp-zs04v.2/.5/.6 all carried branch:spira/sp-zs04v, the PARENT's branch. `git worktree add`
 # refuses a second worktree on one branch, and aeon.sh treated that refusal as a thing to work

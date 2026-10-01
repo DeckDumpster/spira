@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 #
 # test-fayth.sh — the persona roster and predicates: discovery, own-partition selection,
-#   fayth_exclude, effective lanes, and the fields the shipped fayths must carry.
+#   fayth_exclude, and the fields the shipped fayths must carry.
 #
 #   ./test-fayth.sh
 #
-# T1 for dispatch UC-07/08/13. Merges test-fayth-predicates.sh's runtime rows (the exact
+# T1 for dispatch UC-07/08. Merges test-fayth-predicates.sh's runtime rows (the exact
 # source-text rows are deleted: the runtime override rows below already prove the property
 # that a predicate is built from a variable, not a literal), test-lanes.sh's roster-split
-# and real-roster rows, all of test-effective-lanes.sh, and test-spike.sh's fayth-fields row.
+# and real-roster rows, and test-spike.sh's fayth-fields row.
+#
+# UC-dispatch-13 (effective lanes: .spira/modes ∩ repo-map lanes ∩ SPIRA_FAYTHS, all of the
+# former test-effective-lanes.sh) was retired at sp-27hsi along with the dead functions it
+# drove (_spira_lane_diag, _spira_modes_lanes, _spira_fayths_lane_set): nothing calls that
+# three-way-intersection-with-named-refusal diagnostic any more. Lane admission in the live
+# path is maechen-trigger/groom-trigger.sh's much simpler spira_lane_admitted (any repo-map
+# lanes column membership, no .spira/modes or SPIRA_FAYTHS intersection, no refusal naming),
+# which stays and is exercised through maechen-trigger's own mocked-port unit tests, not a
+# bash suite. See docs/test-plan/dispatch.toml for the UC-dispatch-13 [use_case.uncovered].
 #
 # THE DEFECT (sp-fayth-predicate). sentinel.sh CHECK 7 computed one $ready from the
 # builder's own predicate and gated every persona's summon on it, so ops never woke on its
@@ -22,7 +31,7 @@
 #
 # defect: sp-fayth-predicate sp-czsf4 sp-xrkuu
 # tier: T1
-# covers: spira/lib.sh sentinel/src/* spira/schema.sh spira/conf.sh doctor/src/* spira/chamber/*.fayth UC-dispatch-07 UC-dispatch-08 UC-dispatch-13
+# covers: spira/lib.sh sentinel/src/* spira/schema.sh spira/conf.sh doctor/src/* spira/chamber/*.fayth UC-dispatch-07 UC-dispatch-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -236,174 +245,6 @@ for f in "$HERE/chamber/"*.fayth; do
         ok "$name.fayth: FAYTH_LABELS resolves through a variable, not a bare literal"
     fi
 done
-
-# ==========================================================================================
-# UC-dispatch-13 — effective lanes: .spira/modes ∩ repo-map lanes ∩ SPIRA_FAYTHS
-# (all of test-effective-lanes.sh; ACCEPTANCE CRITERIA from bead sp-czsf4)
-# ==========================================================================================
-#   1. modes=self, map=develop  -> maechen-sweep refused, diagnostic names repo-map.
-#   2. modes=consume, map=self  -> plan alone; refused lanes named .spira/modes.
-#   3. SPIRA_FAYTHS missing a fayth -> that lane absent; diagnostic names SPIRA_FAYTHS.
-#   4. No .spira/modes, no lanes column -> plan alone, no refusal diagnostics.
-#   5. Missing working copy -> no crash; .spira/modes treated as absent.
-#   6. .spira/modes parse error -> modes-error line; effective falls back to plan.
-#
-# POSITIVE CONTROLS. Each absence assertion is preceded by a presence assertion so
-# a check pointed at the wrong thing and a check that found nothing look different
-# (law-absence-needs-a-positive-control).
-EL="$T/el"
-mkdir -p "$EL/run" "$EL/chamber"
-
-# Non-default label values where possible so assertions are not trivially satisfied
-# by literals in the code (law-gates-run-in-a-clean-environment).
-export SPIRA_RUN="$EL/run"
-export SPIRA_CONF="$EL/no-such.conf"
-export SPIRA_HOME="$EL"
-export SPIRA_DB="$EL/no-db"
-export SPIRA_PLAN_LABEL="plan"
-export SPIRA_INCIDENT_LABEL="incident"
-export SPIRA_GROOMER_LABEL="groom"
-export SPIRA_MAECHEN_LABEL="maechen-sweep"
-export SPIRA_SPIKE_LABEL="spike"
-export SPIRA_CZAR_LABEL="czar-trigger"
-
-EL_MAP="$EL/repo-map"
-export SPIRA_REPO_MAP="$EL_MAP"
-
-# Minimal chamber — each fayth exposes only the one label it owns.
-for _f_name in builder ops groomer maechen spike czar; do
-    case "$_f_name" in
-        builder) _f_label='${SPIRA_PLAN_LABEL:-plan}' ;;
-        ops)     _f_label='${SPIRA_INCIDENT_LABEL:-incident}' ;;
-        groomer) _f_label='${SPIRA_GROOMER_LABEL:-groom}' ;;
-        maechen) _f_label='${SPIRA_MAECHEN_LABEL:-maechen-sweep}' ;;
-        spike)   _f_label='${SPIRA_SPIKE_LABEL:-spike}' ;;
-        czar)    _f_label='${SPIRA_CZAR_LABEL:-czar-trigger}' ;;
-    esac
-    printf 'FAYTH_LABELS="%s"\n' "$_f_label" > "$EL/chamber/$_f_name.fayth"
-done
-unset _f_name _f_label
-
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
-
-EL_REPO="$EL/repo"
-mkdir -p "$EL_REPO/.spira"
-
-# criterion 1 — modes=self, map=develop: maechen-sweep refused by repo-map
-printf 'alpha | %s | push | origin/main | | true | develop\n' "$EL_REPO" > "$EL_MAP"
-printf 'self\n' > "$EL_REPO/.spira/modes"
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-# POSITIVE CONTROL: a lane that IS in both is present in effective.
-out1="$(_spira_lane_diag alpha "$EL_REPO")"
-want "crit1 pos: plan in effective"        "effective:" "$out1"
-want "crit1 pos: plan present"             "plan"       "$out1"
-want "crit1 pos: incident present"         "plan incident" "$out1"
-
-# maechen-sweep: in modes (self) but NOT in map (develop) -> refused by repo-map
-want  "crit1: maechen-sweep refused"       "refused: maechen-sweep"   "$out1"
-want  "crit1: refuser is repo-map"         "refused: maechen-sweep by repo-map" "$out1"
-# czar-trigger also not in develop
-want  "crit1: czar-trigger refused"        "refused: czar-trigger by repo-map" "$out1"
-# plan, incident, groom, spike are in effective (develop includes them)
-nowant "crit1: plan not refused"           "refused: plan"            "$out1"
-nowant "crit1: incident not refused"       "refused: incident"        "$out1"
-nowant "crit1: groom not refused"          "refused: groom"           "$out1"
-nowant "crit1: spike not refused"          "refused: spike"           "$out1"
-# fayths and modes do NOT appear as refusers for maechen-sweep
-nowant "crit1: SPIRA_FAYTHS not named"    "maechen-sweep by SPIRA_FAYTHS" "$out1"
-nowant "crit1: modes not named"           "maechen-sweep by .spira/modes" "$out1"
-
-rm -f "$EL_REPO/.spira/modes"
-
-# criterion 2 — modes=consume, map=self: plan alone; refused lanes name .spira/modes
-printf 'alpha | %s | push | origin/main | | true | self\n' "$EL_REPO" > "$EL_MAP"
-printf 'consume\n' > "$EL_REPO/.spira/modes"
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-# POSITIVE CONTROL: plan is in effective.
-out2="$(_spira_lane_diag alpha "$EL_REPO")"
-want "crit2 pos: effective contains plan"  "effective: plan"          "$out2"
-
-# All non-plan lanes are refused by .spira/modes
-want  "crit2: incident refused by modes"  "refused: incident by .spira/modes"     "$out2"
-want  "crit2: groom refused by modes"     "refused: groom by .spira/modes"        "$out2"
-want  "crit2: maechen refused by modes"   "refused: maechen-sweep by .spira/modes" "$out2"
-want  "crit2: spike refused by modes"     "refused: spike by .spira/modes"        "$out2"
-want  "crit2: czar refused by modes"      "refused: czar-trigger by .spira/modes" "$out2"
-# repo-map and SPIRA_FAYTHS do NOT appear as refusers (they grant all)
-nowant "crit2: repo-map not named"        "by repo-map"              "$out2"
-nowant "crit2: SPIRA_FAYTHS not named"   "by SPIRA_FAYTHS"          "$out2"
-
-rm -f "$EL_REPO/.spira/modes"
-
-# criterion 3 — SPIRA_FAYTHS missing maechen: maechen-sweep refused by SPIRA_FAYTHS
-printf 'alpha | %s | push | origin/main | | true | self\n' "$EL_REPO" > "$EL_MAP"
-printf 'self\n' > "$EL_REPO/.spira/modes"
-# Roster excludes maechen — no maechen.fayth needed, SPIRA_FAYTHS is what matters.
-export SPIRA_FAYTHS="builder ops groomer spike czar"
-
-# POSITIVE CONTROL: a lane whose fayth IS configured is in effective.
-out3="$(_spira_lane_diag alpha "$EL_REPO")"
-want "crit3 pos: plan in effective"       "plan"                      "$out3"
-want "crit3 pos: incident in effective"   "incident"                  "$out3"
-# THE FIX: this was `nowant ... "effective:.*maechen-sweep" ...` — a glob-looking string
-# that `nowant`'s plain substring match never finds literally, so it passed regardless of
-# what the code under test did. Assert against the actual effective: line instead.
-effective_line="$(printf '%s\n' "$out3" | grep '^effective:')"
-nowant "crit3 pos: maechen NOT effective" "maechen-sweep" "$effective_line"
-
-# maechen-sweep: in both map and modes but fayths doesn't include it
-want  "crit3: maechen refused"            "refused: maechen-sweep"    "$out3"
-want  "crit3: refuser is SPIRA_FAYTHS"   "refused: maechen-sweep by SPIRA_FAYTHS" "$out3"
-nowant "crit3: repo-map not named"        "maechen-sweep by repo-map" "$out3"
-nowant "crit3: modes not named"           "maechen-sweep by .spira/modes" "$out3"
-
-rm -f "$EL_REPO/.spira/modes"
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-# criterion 4 — no .spira/modes, no lanes column: plan alone, no refusal lines
-printf 'alpha | %s | push | origin/main | | true\n' "$EL_REPO" > "$EL_MAP"
-# No .spira/modes file.
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-# POSITIVE CONTROL: plan is present in effective (proves the check runs).
-out4="$(_spira_lane_diag alpha "$EL_REPO")"
-want "crit4 pos: effective line present"  "effective:"                "$out4"
-want "crit4 pos: plan in effective"       "plan"                      "$out4"
-
-# No refused lines at all.
-nowant "crit4: no refused lines"          "refused:"                  "$out4"
-
-# criterion 5 — missing working copy: no crash, .spira/modes treated as absent
-printf 'alpha | /nonexistent/path | push | origin/main | | true | self\n' > "$EL_MAP"
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-rc5=0; out5="$(_spira_lane_diag alpha "/nonexistent/path")" || rc5=$?
-is    "crit5: exits cleanly"              "0"       "$rc5"
-want  "crit5: effective line present"     "effective:" "$out5"
-# With no .spira/modes the effective set is map_lanes ∩ fayths_lanes = all-of-self
-want  "crit5: plan in effective"          "plan"      "$out5"
-# No modes file -> modes is not a refuser for anything map+fayths both grant
-nowant "crit5: modes not a refuser"       "by .spira/modes" "$out5"
-
-# criterion 6 — .spira/modes parse error: modes-error line, falls back to plan
-printf 'alpha | %s | push | origin/main | | true | self\n' "$EL_REPO" > "$EL_MAP"
-export SPIRA_FAYTHS="builder ops groomer maechen spike czar"
-
-# POSITIVE CONTROL: a valid modes file produces no modes-error line.
-printf 'self\n' > "$EL_REPO/.spira/modes"
-out6_ok="$(_spira_lane_diag alpha "$EL_REPO")"
-nowant "crit6 pos: valid modes: no error" "modes-error:" "$out6_ok"
-
-# Invalid modes file produces modes-error line.
-printf 'badmode\n' > "$EL_REPO/.spira/modes"
-out6="$(_spira_lane_diag alpha "$EL_REPO")"
-want  "crit6: modes-error line present"   "modes-error:"   "$out6"
-want  "crit6: effective line still present" "effective:"   "$out6"
-
-rm -f "$EL_REPO/.spira/modes"
 
 # ==========================================================================================
 # Restore the real chamber for the remaining, chamber-file-level sections
