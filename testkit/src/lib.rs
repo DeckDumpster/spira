@@ -68,7 +68,9 @@ impl Drop for TempDir {
 /// the file here instead, so no fork in this process can inherit a descriptor on it.
 pub fn write_exe(path: impl AsRef<Path>, body: &str) {
     let path = path.as_ref();
-    let mut c = Command::new("sh")
+    // /bin/sh by absolute path: another test in the same binary may have set the process PATH
+    // to a directory with no sh in it (release/src/tests.rs does, under its own ENV_LOCK).
+    let mut c = Command::new("/bin/sh")
         .arg("-c")
         .arg("cat > \"$1\"")
         .arg("sh")
@@ -93,6 +95,7 @@ mod tests {
     fn dir(tag: &str) -> TempDir {
         TempDir::new(&format!("testkit-{tag}"))
     }
+
 
     #[test]
     fn a_temp_dir_is_fresh_distinct_and_gone_after_drop() {

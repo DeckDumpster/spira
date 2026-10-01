@@ -812,7 +812,7 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         });
-        if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools) {
+        if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools.as_ref()) {
             // A branch red before its suites step ran (a fence, the selector) is judged on the
             // base's fences only: the base's suites answer no question this red asks, and they
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
@@ -861,6 +861,12 @@ impl<'w, W: World> Trial<'w, W> {
                 format!("gate: signalled during the base trial for {br}"),
             );
         }
+        // sp-kqger fix: the base's own `bin` tools (if its tree declares any, e.g. a
+        // tree-owned testenv, sp-isom7) outlive the `if let` above, so the image-tag query
+        // and the targeted rerun below can use them too — never bare names on the release's
+        // PATH, which may not resolve at all for a tree whose testenv it cannot run.
+        let base_bdef: Option<&def::Def> = base_gate.as_ref().and_then(|(_, d)| d.as_ref());
+        let base_tools_ref: Option<&Tools> = base_tools.as_ref().and_then(Option::as_ref);
 
         // EACH RED IS JUDGED ON THE BASE ON THAT SUITE (sp-hh5h0). A branch red the base
         // trial did not run — its selection differed, or --deadline deferred it — is run on
@@ -900,13 +906,17 @@ impl<'w, W: World> Trial<'w, W> {
                         let t = w.now();
                         let (tag_rc, tag_out) = w.run_gate(
                             &tree,
-                            &env(
-                                &base_rev,
-                                "testenv image tag (sp-kqger base-suite cache)",
-                                &Composition::Fences,
+                            &with_bins(
+                                env(
+                                    &base_rev,
+                                    "testenv image tag (sp-kqger base-suite cache)",
+                                    &Composition::Fences,
+                                ),
+                                base_bdef,
+                                base_tools_ref,
                             ),
                             &timeout,
-                            "testenv container tag",
+                            "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag",
                         );
                         self.s
                             .phases
@@ -938,12 +948,16 @@ impl<'w, W: World> Trial<'w, W> {
                 let t = w.now();
                 let (r, o) = w.run_gate(
                     &tree,
-                    &env(
-                        &base_rev,
-                        "base trial — the branch's red suites the base trial did not run",
-                        &Composition::Suites {
-                            why: "base-rerun".into(),
-                        },
+                    &with_bins(
+                        env(
+                            &base_rev,
+                            "base trial — the branch's red suites the base trial did not run",
+                            &Composition::Suites {
+                                why: "base-rerun".into(),
+                            },
+                        ),
+                        base_bdef,
+                        base_tools_ref,
                     ),
                     &timeout,
                     &rerun,
@@ -1408,8 +1422,17 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
         .map(String::as_str)
         .filter(|s| crate::compose::is_suite_name(s))
         .collect();
+    // `${SPIRA_TESTENV_BIN:-testenv}` (sp-kqger fix): a tree that owns its own testenv
+    // (`bin SPIRA_TESTENV_BIN testenv` in gate.steps, sp-isom7 — "the release's testenv
+    // could not run such a branch's suites at all") needs THAT binary here too, never the
+    // release's bare name on PATH, which may not even resolve. `with_bins` sets the
+    // variable when the base's own definition declares one; unset, this falls back to
+    // bare `testenv` exactly as it always did. Scar: before this, every targeted rerun
+    // against such a tree exited 127 near-instantly, mapped to NO_VERDICT base-untestable
+    // — invisible while this path was rare, then most of every red gate once sp-kqger
+    // made it the primary one.
     format!(
-        "{BASE_RERUN_MARK}_b=0; testenv --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
+        "{BASE_RERUN_MARK}_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         list.join(",")
     )
 }

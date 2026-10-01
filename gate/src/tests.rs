@@ -458,7 +458,7 @@ impl World for Fake {
         // sp-kqger: the base-suite cache's fourth key component, queried once per base trial
         // that has an uncached red suite to ask about. Kept apart from the `--suites`/`cargo`
         // branches below so it is never mistaken for a rerun or a unit phase.
-        if cmd == "testenv container tag" {
+        if cmd == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag" {
             return self.image_tag.borrow().clone();
         }
         let br = env
@@ -861,10 +861,10 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
         4,
         "branch trial, base trial, the cache's image tag, base re-run: {cmds:?}"
     );
-    assert_eq!(cmds[2], "testenv container tag", "sp-kqger: the cache is consulted first");
+    assert_eq!(cmds[2], "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag", "sp-kqger: the cache is consulted first");
     assert!(
         cmds[3].contains(&format!(
-            "testenv --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
+            "\"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {SUITE} \"$SPIRA_GATE_BRANCH\""
         )),
         "{}",
         cmds[3]
@@ -930,7 +930,7 @@ fn a_fresh_base_suite_cache_hit_skips_the_rerun_entirely() {
     assert_eq!(f.run(), FAIL, "{}", f.stderr());
     assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
     assert!(
-        f.cmds.borrow().iter().any(|c| c == "testenv container tag"),
+        f.cmds.borrow().iter().any(|c| c == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag"),
         "the cache is still consulted: {:?}",
         f.cmds.borrow()
     );
@@ -1063,6 +1063,80 @@ fn a_rerun_that_faulted_writes_no_cache_entry() {
     );
 }
 
+/// THE PRODUCTION REGRESSION (2026-10-01, landed 23:17Z): base-untestable jumped from 1 in
+/// 52 gates to 7 in 50 once this bead made the targeted rerun the primary path for every red
+/// suite, not a rare fallback. Root cause: `spira`'s own `gate.steps` declares `bin
+/// SPIRA_TESTENV_BIN testenv` ("the release's testenv could not run such a branch's suites
+/// at all", sp-isom7) — the targeted rerun (and the cache's image-tag query) called bare
+/// `testenv` on the release's PATH regardless, which exits 127 for such a tree, mapped to
+/// NO_VERDICT. `base_out` then never gained the suite's line at all, so
+/// `parse::attribute` found the branch's red suite nowhere in it: not run, not red —
+/// `BaseUntestable`, not a judgement. This is the fixture `test-gate-base-selection.sh`
+/// cannot reach (its gate command is a bare shell snippet, never a tree-owned `bin`), so it
+/// passed throughout.
+///
+/// A branch red on an uncached suite, on a tree that owns a `bin SPIRA_TESTENV_BIN testenv`,
+/// must still rerun X on the base through that binary and attribute branch-red or base-red
+/// — never base-untestable because the rerun could not even start.
+#[test]
+fn a_tree_owned_testenv_reruns_through_its_own_binary_never_bare_testenv() {
+    const WITH_TESTENV: &str = "# the tree's gate\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/fence.sh\n";
+    let f = tree_owned(Some(WITH_TESTENV), Some(WITH_TESTENV));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    // The base's own fences (now Composition::Fences, sp-kqger) pass — unrelated to the
+    // regression; what matters is that the rerun below is actually judged.
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "fence: a-fence checked 1 files".into()));
+    f.reruns.borrow_mut().insert(
+        (BASE.into(), SUITE.into()),
+        (0, format!("  {SUITE:<32} ok      1s")),
+    );
+    assert_eq!(f.run(), FAIL, "{}", f.stderr());
+    assert!(
+        f.verdict_line().contains("reason=branch-red"),
+        "a rerun that actually ran must attribute, never base-untestable: {}",
+        f.verdict_line()
+    );
+    // Prove it ran through the tree's OWN testenv, not a bare name that this tree's release
+    // copy cannot run: the rerun call's env names the tree-keyed binary.
+    let cmds = f.cmds.borrow();
+    let rerun_idx = cmds
+        .iter()
+        .position(|c| c.contains("--suites"))
+        .expect("the targeted rerun ran");
+    assert_eq!(
+        f.env_of(rerun_idx, "SPIRA_TESTENV_BIN"),
+        format!("{GATE_TREE}/target/gate-tools/tree-of-{BASE}/testenv"),
+        "the rerun used the base's own tree-built testenv"
+    );
+}
+
+/// The same regression, but the rerun never gets the chance to run at all — if it did (the
+/// defect, before the fix), this is exactly the silent BaseUntestable production saw: no
+/// `SPIRA_TESTENV_BIN` reaching a tree that declared one would make a real `testenv`
+/// resolve to nothing on the release's PATH. Asserting the env reaches the image-tag query
+/// too (the cache's own first call) covers sp-kqger's other new call site.
+#[test]
+fn the_image_tag_query_also_uses_the_tree_owned_testenv() {
+    const WITH_TESTENV: &str = "# the tree's gate\nbin SPIRA_TESTENV_BIN testenv\nstep bash spira/fence.sh\n";
+    let f = tree_owned(Some(WITH_TESTENV), Some(WITH_TESTENV));
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "fence: a-fence checked 1 files".into()));
+    f.run();
+    let cmds = f.cmds.borrow();
+    let tag_idx = cmds
+        .iter()
+        .position(|c| c.contains("container tag"))
+        .expect("the image tag was queried");
+    assert_eq!(
+        f.env_of(tag_idx, "SPIRA_TESTENV_BIN"),
+        format!("{GATE_TREE}/target/gate-tools/tree-of-{BASE}/testenv")
+    );
+}
+
 /// testenv's --deadline deferred the suite on the base: not run, so re-run.
 #[test]
 fn a_red_the_base_deferred_by_deadline_is_re_run() {
@@ -1128,6 +1202,19 @@ fn the_re_run_names_only_shell_safe_suites() {
     ]);
     assert!(
         c.contains("--suites test-a.sh,test-b.sh \"$SPIRA_GATE_BRANCH\""),
+        "{c}"
+    );
+}
+
+/// sp-kqger fix: a tree that declares its own testenv (`bin SPIRA_TESTENV_BIN testenv`,
+/// sp-isom7 — "the release's testenv could not run such a branch's suites at all") needs
+/// that binary for the rerun too. The command names it with a default, so a repository with
+/// no such binding keeps today's bare `testenv`.
+#[test]
+fn the_re_run_prefers_a_tree_owned_testenv_with_a_bare_fallback() {
+    let c = crate::engine::base_rerun_cmd(&["test-a.sh".into()]);
+    assert!(
+        c.contains("\"${SPIRA_TESTENV_BIN:-testenv}\" --suites test-a.sh"),
         "{c}"
     );
 }
@@ -2580,7 +2667,7 @@ fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
     );
     assert_eq!(f.run(), FAIL);
     assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
-    assert!(f.cmds.borrow().iter().any(|c| c == "testenv container tag"), "{:?}", f.cmds.borrow());
+    assert!(f.cmds.borrow().iter().any(|c| c == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag"), "{:?}", f.cmds.borrow());
     assert!(
         f.cmds.borrow().iter().any(|c| c.contains("--suites test-b.sh")),
         "the red suite is still judged on the base, just not by a mirrored selection: {:?}",
@@ -2597,7 +2684,7 @@ fn a_red_inside_the_suites_step_is_still_judged_on_the_base_per_suite() {
     f.run();
     assert_eq!(f.env_of(1, "SPIRA_GATE_SUITES"), "off");
     assert!(
-        !f.cmds.borrow().iter().any(|c| c == "testenv container tag"),
+        !f.cmds.borrow().iter().any(|c| c == "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag"),
         "no suite named: nothing to ask the cache about"
     );
 }
