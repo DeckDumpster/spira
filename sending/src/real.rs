@@ -1,6 +1,7 @@
-//! The real world: the destruction chokepoint in-process (`reap.rs`, sp-9envm); what has
-//! not moved to Rust yet (context/base/bead — families U/W/A/B) through the lib.sh seam;
-//! `gh` for the one forge question; `spira-lc` by bare name on the launcher PATH.
+//! The real world: the destruction chokepoint in-process (`reap.rs`, sp-9envm); base
+//! (family W) in-process too (sp-o88bx, "wave 4.12", `spira_config::repos`); what has not
+//! moved to Rust yet (context/bead — families U/A/B) through the lib.sh seam; `gh` for the
+//! one forge question; `spira-lc` by bare name on the launcher PATH.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -67,6 +68,16 @@ impl Real {
 
     fn setting(&self, k: &str, default: &str) -> String {
         self.settings.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| default.to_string())
+    }
+
+    /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
+    /// `spira_landrefs`/`ref_remote` — the `Op::Base` seam used to shell into, one bash
+    /// subprocess per checkout). Built from THIS process's own environment, exactly as
+    /// `aeon::conf::Conf` and `cockpit_collect::io::repo_registry` already read it.
+    fn repo_registry(&self) -> spira_config::repos::Registry {
+        let env_map: BTreeMap<String, String> = std::env::vars().collect();
+        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
     }
 
     /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's
@@ -143,14 +154,16 @@ fn p(x: &Path) -> String {
 
 impl World for Real {
     fn base(&self, root: &Path) -> Option<Base> {
-        let a = self.seam(Op::Base, &[&p(root)]);
-        if a.rc != 0 {
-            return None;
-        }
-        let f: Vec<&str> = a.text.split(FIELD).collect();
-        let landref = f.first().filter(|s| !s.is_empty())?.to_string();
-        let landrefs = f.get(1).map(|s| s.split_whitespace().map(String::from).collect()).unwrap_or_default();
-        let remote = f.get(2).filter(|s| !s.is_empty()).map(|s| s.to_string());
+        // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+        // spira_landref/spira_landrefs/ref_remote Op::Base bash seam.
+        let reg = self.repo_registry();
+        let root_s = p(root);
+        let (landref, local) = spira_config::repos::landrefs(&reg, &root_s)?;
+        let landrefs = match &local {
+            Some(l) => vec![landref.clone(), l.clone()],
+            None => vec![landref.clone()],
+        };
+        let remote = spira_config::repos::ref_remote(&landref, Some(&root_s));
         Some(Base { landref, landrefs, remote })
     }
     fn witness(&self, id: &str) -> Option<String> {
@@ -247,5 +260,51 @@ impl reap::BdProbe for Real {
         let reachable = f.first().copied() == Some("1");
         let status = f.get(1).map(|s| s.to_string()).unwrap_or_default();
         (reachable, status)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    }
+
+    /// `base()` (sp-o88bx, "wave 4.12") resolves in-process through `spira_config::repos`
+    /// rather than the retired `Op::Base` seam — this exercises the real wiring (a real
+    /// checkout with no remote, so rung 4 answers its own current branch) rather than
+    /// re-proving `spira_config::repos`' own rungs, which have their own unit tests.
+    #[test]
+    fn base_resolves_through_spira_config_repos_with_no_remote() {
+        let dir = testkit::TempDir::new("sending-real-base");
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        run_git(&repo, &["init", "-q", "-b", "trunk"]);
+        std::fs::write(repo.join("f"), "x").unwrap();
+        run_git(&repo, &["add", "f"]);
+        run_git(&repo, &["commit", "-q", "-m", "x"]);
+        let r = Real::minimal(dir.path().to_path_buf(), None);
+        let base = r.base(&repo).expect("a repo with no remote resolves through rung 4");
+        assert_eq!(base.landref, "trunk");
+        assert_eq!(base.landrefs, vec!["trunk".to_string()]);
+        assert_eq!(base.remote, None);
+    }
+
+    #[test]
+    fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
+        let dir = testkit::TempDir::new("sending-real-base-not-a-repo");
+        let r = Real::minimal(dir.path().to_path_buf(), None);
+        assert_eq!(r.base(dir.path()), None);
     }
 }
