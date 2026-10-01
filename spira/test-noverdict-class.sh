@@ -35,7 +35,6 @@ SH="$TMP/spira"
 mkdir -p "$SH" "$TMP/run"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-: > "$SH/repo-map"
 
 MAIL_LOG="$TMP/mail-log"; : > "$MAIL_LOG"
 cat > "$SH/mail" <<MAILEOF
@@ -55,7 +54,7 @@ printf '[]\n' > "$BD_FIXTURE"
 
 # The fixture home first on PATH: the native port calls `mail` by name too (sp-gypjk).
 export PATH="$SH:$PATH"
-export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" SPIRA_REPO_MAP="$SH/repo-map" \
+export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" \
        SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" BEADS_NO_AUTO_IMPORT=1
 
 noverdict() {   # noverdict <id> <branch> <repo> <reason> <outcome> <gate-output>

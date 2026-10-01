@@ -536,7 +536,7 @@ fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring
         }
         let arg_after = |k: &str| s.args.iter().position(|a| a == k).and_then(|i| s.args.get(i + 1)).map(String::as_str);
         assert_eq!(arg_after("--status"), Some("open"));
-        assert_eq!(arg_after("--label"), Some("needs-operator"));
+        assert_eq!(arg_after("--label"), Some("needs-operator")); // literal-ok: asserts argv built from the fixture
         ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
     });
     let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));

@@ -158,7 +158,7 @@ impl Settings {
             pr_refresh_max: 5,
             toml: None,
             lifecycle_enforce: false,
-            ask_label: "needs-operator".into(),
+            ask_label: String::new(),
             noverdict_max: 3,
             noverdict_class_window: 86_400,
             rebase_decompose_files: 4,

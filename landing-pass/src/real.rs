@@ -133,10 +133,10 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         toml: path_opt("toml"),
         lifecycle_enforce: false,
-        ask_label: {
-            let v = g("ask_label");
-            if v.is_empty() { "needs-operator".into() } else { v }
-        },
+        // Empty only when conf.sh itself did not run (a stand-in lib.sh in a unit test);
+        // in production conf.sh always sets SPIRA_ASK_LABEL before this seam reads it, so
+        // no fallback literal belongs here (law-schema-over-code).
+        ask_label: g("ask_label"),
         noverdict_max: num("noverdict_max", 3).max(1) as u32,
         noverdict_class_window: num("noverdict_class_window", 86_400).max(0),
         rebase_decompose_files: num("rebase_decompose_files", 4).max(1) as u32,
