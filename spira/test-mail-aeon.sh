@@ -31,6 +31,15 @@ bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
+# conf.d/conf-gen.sh ALSO HAVE TO BE HERE, not just reachable through lib.sh's source chain:
+# the aeon binary's own in-process config resolution (spira_config::resolve, wave 4.8)
+# reads conf.d/<KEY> straight off this literal SPIRA_HOME (home.join("conf.d")), never
+# through a symlink or source chain (that is `default_conf_d`'s own doc). Every other
+# fixture driving the real `aeon` binary already carries this copy (test-aeon-resume.sh,
+# test-aeon-chamber-overlay.sh, ...); without it, every generic registry key — SPIRA_MAIL
+# among them — silently resolves to "" because its conf.d/SPIRA_MAIL file is never found,
+# so part (d) below created no mailbox for the stub to see.
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf
@@ -136,7 +145,6 @@ id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
       print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
 [ -n "$id" ] || exit 1
-{ echo "DEBUG id=$id SPIRA_MAIL=[$SPIRA_MAIL]"; ls -la "$SPIRA_MAIL" 2>&1; ls -la "$SPIRA_MAIL/aeon-$id" 2>&1; } >> "${DEBUG_LOG:-/dev/null}" 2>&1
 # POSITIVE CONTROL (row 12): the mailbox must exist WHILE the aeon runs, before it is
 # checked for absence after — otherwise "gone" is indistinguishable from "never made".
 [ -d "$SPIRA_MAIL/aeon-$id" ] && touch "${MAILBOX_SEEN_MARKER:-/dev/null}"
@@ -152,15 +160,11 @@ BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_
 [ -n "$BID4" ] || { bad "(d): could not file test bead" ""; tl_summary; exit 1; }
 
 aeon_rc=0
-DEBUG_LOG="$TMP/debug.log"
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
 SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
-SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" DEBUG_LOG="$DEBUG_LOG" \
+SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
-    aeon --home "$SPIRA_HOME" builder >"$TMP/aeon.out" 2>"$TMP/aeon.err" || aeon_rc=$?
-echo "=== DEBUG aeon.out ===" >&2; cat "$TMP/aeon.out" >&2
-echo "=== DEBUG aeon.err ===" >&2; cat "$TMP/aeon.err" >&2
-echo "=== DEBUG debug.log ===" >&2; cat "$DEBUG_LOG" >&2 2>/dev/null
+    aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
 
 status="$(bdq show "$BID4" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(d.get("status",""))' 2>/dev/null)"
