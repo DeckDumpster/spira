@@ -7,7 +7,7 @@
 # THE FAILURE THIS SUITE EXISTS FOR. cockpit.sh writes the snapshot the health
 # pane reads, and nothing else may: an aeon running the collector from its
 # worktree, a retired brain collector calling a vendored copy, or a manual
-# `cockpit.sh once` each overwrites the live snapshot with whatever keys its
+# `cockpit-collect once` each overwrites the live snapshot with whatever keys its
 # branch carries, and the pane reads `?` for every key the interloper lacked.
 #
 # The fence is INVOCATION_ID: systemd sets it for exactly one process tree per
@@ -15,7 +15,7 @@
 # spira-cockpit.service's — or SPIRA_COCKPIT_FORCE=1 names the override.
 #
 # defect: sp-20d
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 # scar: cockpit.sh wrote the snapshot unconditionally; an aeon running a vendored copy or a manual invocation overwrote the live snapshot, and the pane read `?` for every key the interloper lacked.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -33,7 +33,7 @@ run_cockpit() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         "$@" \
-        cockpit.sh once 2>/dev/null
+        cockpit-collect once 2>/dev/null
 }
 
 # ======================================================================================
@@ -85,7 +85,7 @@ env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     INVOCATION_ID="inv-42" MOCK_INVOCATION_ID="inv-42" \
-    cockpit.sh once >/dev/null 2>&1
+    cockpit-collect once >/dev/null 2>&1
 if [ -f "$RUN/cockpit.env" ]; then
     ok "matching INVOCATION_ID: snapshot IS written"
 else
@@ -112,53 +112,50 @@ want "SP_WRITER is set" "SP_WRITER=" "$snap"
 want "SP_WRITER names 'force'" "force" "$snap"
 
 # ======================================================================================
-# UC-01 (docs/test-plan/cockpit-observability.md, row 01): cockpit_may_write and the loop
-# guard, as SOURCED FUNCTIONS rather than a full `once`/`loop` process. cockpit.sh skips
-# its dispatch case when sourced (BASH_SOURCE[0] != $0), so each case below sources the
-# file in a minimal `env -i` process and calls the fence directly — no probe() pass, no
-# write_snapshot. The mismatched-INVOCATION_ID and unsupervised-loop refusals above move
-# here.
+# UC-01 (docs/test-plan/cockpit-observability.md, row 01): the may-write fence and the
+# collect-loop guard, driven directly rather than through a full `once`/`collect` process.
+#
+# sp-kt4l3: cockpit.sh's dispatch-skip-when-sourced trick (`BASH_SOURCE[0] != $0`) has no
+# Rust equivalent — a compiled binary cannot be "sourced" to expose an internal function.
+# `cockpit-collect --test-may-write`/`--test-loop-guard` are the CLI-level replacement:
+# real subcommands over the same `supervisor::may_write` the `once`/`collect` paths use,
+# so this suite still drives the exact code that runs, not a copy of it.
 echo
-echo "cockpit_may_write and the loop guard, sourced:"
+echo "the may-write fence and the collect-loop guard, driven directly:"
 
-# $0 inside the sourcing process must differ from the sourced path, or cockpit.sh's own
-# BASH_SOURCE[0]==$0 dispatch guard sees a match and runs the full case statement.
-# COCKPIT names the real file to source; $0 stays a same-directory placeholder so
-# cockpit.sh's internal `dirname "$0"` still resolves to spira/.
-
-# may_write [env <ASSIGN...>] -> prints 1 if cockpit_may_write allows the write, else 0.
+# may_write [env <ASSIGN...>] -> prints 1 if the fence allows the write, else 0.
 may_write() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" COCKPIT="$HERE/cockpit.sh" \
+        SPIRA_COCKPIT="$TMP" \
         "$@" \
-        bash -c '. "$COCKPIT"; cockpit_may_write && echo 1 || echo 0' "$HERE/test-cockpit.sh" 2>/dev/null
+        cockpit-collect --test-may-write 2>/dev/null
 }
 
-# run_loop_guard [env <ASSIGN...>] -> exits with _loop_guard's own status, relaying stderr.
+# run_loop_guard [env <ASSIGN...>] -> exits with the guard's own status, relaying stderr.
 run_loop_guard() {
     env -i PATH="$BIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" COCKPIT="$HERE/cockpit.sh" \
+        SPIRA_COCKPIT="$TMP" \
         "$@" \
-        bash -c '. "$COCKPIT"; _loop_guard' "$HERE/test-cockpit.sh"
+        cockpit-collect --test-loop-guard
 }
 
-is "sourced: no INVOCATION_ID refuses"          0 "$(may_write)"
-is "sourced: matching INVOCATION_ID allows"     1 "$(may_write env INVOCATION_ID=inv-42 MOCK_INVOCATION_ID=inv-42)"
-is "sourced: mismatched INVOCATION_ID refuses"  0 "$(may_write env INVOCATION_ID=inv-imposter MOCK_INVOCATION_ID=inv-42)"
-is "sourced: SPIRA_COCKPIT_FORCE=1 allows"      1 "$(may_write env SPIRA_COCKPIT_FORCE=1)"
+is "direct: no INVOCATION_ID refuses"          0 "$(may_write)"
+is "direct: matching INVOCATION_ID allows"     1 "$(may_write env INVOCATION_ID=inv-42 MOCK_INVOCATION_ID=inv-42)"
+is "direct: mismatched INVOCATION_ID refuses"  0 "$(may_write env INVOCATION_ID=inv-imposter MOCK_INVOCATION_ID=inv-42)"
+is "direct: SPIRA_COCKPIT_FORCE=1 allows"      1 "$(may_write env SPIRA_COCKPIT_FORCE=1)"
 
 loop_out="$(run_loop_guard 2>&1)"; loop_rc=$?
-is   "sourced: loop guard exits 1 without supervision" 1 "$loop_rc"
-want "sourced: loop guard names the refusal"            "not the supervised process" "$loop_out"
+is   "direct: loop guard exits 1 without supervision" 1 "$loop_rc"
+want "direct: loop guard names the refusal"            "not the supervised process" "$loop_out"
 
 run_loop_guard env SPIRA_COCKPIT_FORCE=1 >/dev/null 2>&1
-is "sourced: loop guard allows with SPIRA_COCKPIT_FORCE=1" 0 "$?"
+is "direct: loop guard allows with SPIRA_COCKPIT_FORCE=1" 0 "$?"
 
 # ======================================================================================
 # RATE LIMIT WINDOWS — the ratelim seam.
@@ -181,7 +178,7 @@ rl_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-    cockpit.sh ratelim 2>/dev/null)"
+    cockpit-collect probe ratelim 2>/dev/null)"
 
 want  "five_hour utilisation present"        "SP_RATELIM_5H="     "$rl_out"
 want  "seven_day utilisation present"        "SP_RATELIM_7D="     "$rl_out"
@@ -203,7 +200,7 @@ rl_empty="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
     SPIRA_RUN="$EMPTY_RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-    cockpit.sh ratelim 2>/dev/null)"
+    cockpit-collect probe ratelim 2>/dev/null)"
 
 want "SP_RATELIM_5H is '?'" "SP_RATELIM_5H=?" "$rl_empty"
 want "SP_RATELIM_7D is '?'" "SP_RATELIM_7D=?" "$rl_empty"

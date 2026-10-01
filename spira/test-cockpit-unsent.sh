@@ -28,7 +28,7 @@
 # and the branch-walking half of this probe is exactly what a mocked bd cannot exercise.
 #
 # defect: sp-884p sp-ctag9
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 # scar: SP_BRANCH_DONE was overwritten per-repo so only the first repository's zero survived; SP_UNSENT counted every ref under refs/heads/spira/* regardless of whether the suffix resolved to a bead.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -104,7 +104,7 @@ mkdir -p "$RUN/queue/alpha"
     printf 'branch=spira/queue/%s\n' "$QSTAMP"
 } > "$RUN/queue/alpha/open"
 
-# Run cockpit.sh unsent — the probe's own subcommand, not a full `once` — with bd reads
+# Run cockpit-collect probe unsent — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 unsent() {    # unsent <fixture-file>
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -114,7 +114,7 @@ unsent() {    # unsent <fixture-file>
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        cockpit.sh unsent 2>/dev/null
+        cockpit-collect probe unsent 2>/dev/null
 }
 
 out="$(unsent "$TMP/beads.json")"
@@ -146,7 +146,7 @@ nowant "SP_UNADOPTED_NAMES excludes orphan work" "tmp-stray" "$(val SP_UNADOPTED
 # sp-ghi5q: spira/round-NN has no bead and its commits are (by design) not yet on base
 # while a round is in flight — the same shape as tmp-stray above, so a name-blind probe
 # folds it into SP_ORPHAN_WORK, permanently, every round. sending.sh:377 already excludes
-# round-* branches for exactly this reason; cockpit.sh's classifier did not.
+# round-* branches for exactly this reason; cockpit-collect's classifier did not.
 git -C "$ALPHA" checkout -q -b spira/round-81
 git -C "$ALPHA" commit --allow-empty -m "round 81 in flight" -q
 git -C "$ALPHA" checkout -q main 2>/dev/null || git -C "$ALPHA" checkout -q master

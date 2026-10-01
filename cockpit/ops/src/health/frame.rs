@@ -164,4 +164,47 @@ mod tests {
         let bounded = frame(0, 80, &base_inputs());
         assert_eq!(unlimited.len(), bounded.len());
     }
+
+    /// The regression this pins: `term_size` falling to a small hardcoded default (the
+    /// `stty size`-via-a-null-stdin bug, sp-llbmi) made `render` believe the pane was 5
+    /// rows tall no matter what it actually was, so on the operator's real 81-row pane
+    /// only the header and a fold marker ever showed. This asserts the OTHER half of the
+    /// fix holds: given the pane's TRUE height (81, the exact live-pane reproduction), every
+    /// major body section is present, not just the header — i.e. a correctly-read 81 must
+    /// actually render 81 rows' worth of content, never fold down to a handful regardless
+    /// of `term_size`'s own correctness.
+    #[test]
+    fn a_correctly_read_81_row_pane_renders_every_body_section() {
+        let mut inputs = base_inputs();
+        inputs.cols = 168;
+        // A non-trivial snapshot, so NOW/NEXT/QUEUE/RECENT/INFLOW/CI have real content to
+        // show rather than their single-line "unread"/"empty" shapes — the fold bug is
+        // about budget, and a budget bug can hide behind sections that were only ever
+        // going to be one line regardless.
+        inputs.snapshot_content = "SP_AT='1000000000'\n\
+             SP_SENTINEL_TIMER='1'\nSP_OPS_TIMER='1'\nSP_AURON_TIMER='1'\n\
+             SP_AEON_N='1'\nSP_AEON0_NAME='shiva'\nSP_AEON0_FAYTH='builder'\n\
+             SP_AEON0_BEAD='sp-llbmi'\nSP_AEON0_MIN='1'\nSP_AEON0_TURNS='1'\n\
+             SP_AEON0_CTX='100'\nSP_AEON0_MODEL='claude-sonnet-4-6'\n\
+             SP_AEON0_FAYTH_MODEL='claude-sonnet-4-6'\nSP_AEON0_FILES='1'\n\
+             SP_AEON0_PRI='1'\nSP_AEON0_PARTITION='builder'\nSP_AEON0_TITLE='t'\n\
+             SP_AEON0_LEASE='8'\nSP_AEON0_QUIET='1'\n\
+             SP_NEXT_N='1'\nSP_NEXT0='P1 builder sp-a some next bead'\n\
+             SP_EVENT0='5s builder landed sp-b a recent landing'\n\
+             SP_INFLOW_N='1'\nSP_INFLOW0='5s task P1 sp-c an inflow bead'\n\
+             SP_AWAITING_N='1'\nSP_AWAITING0='sp-d waiting on ci'\n";
+        inputs.snapshot_exists = true;
+        let out = render(81, 168, &inputs);
+        let joined = out.join("\n");
+        for label in ["NOW", "NEXT", "QUEUE", "RECENT", "INFLOW", "CI", "ATTN", "SEND", "BEADS", "LAND"] {
+            assert!(
+                joined.contains(label),
+                "expected the {label} section in an 81-row render, got:\n{joined}"
+            );
+        }
+        // And it must not have folded: 81 rows asked for, 81 rows (or fewer, if the frame
+        // itself is genuinely shorter) delivered — never truncated with a drop marker.
+        assert!(out.len() <= 81);
+        assert!(!out[0].contains('\u{25be}'), "header carries a fold-drop marker: {}", out[0]);
+    }
 }

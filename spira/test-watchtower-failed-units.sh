@@ -7,7 +7,7 @@
 # WHAT THIS SUITE IS FOR
 # -----------------------
 # sp-niqjl: spira-czar-pass-prod.service exited every 30s for four days — 11,000 failures —
-# and nothing noticed, because watchtower.sh, cockpit.sh and doctor.sh contained no check of
+# and nothing noticed, because watchtower, cockpit-collect and doctor.sh contained no check of
 # systemd unit state at all. doctor.sh now does the one-pass read (sp-utt1i); this suite
 # covers what doctor's own comment says is left: dedup, age-since-failed, and the anomaly a
 # persistently failed unit becomes.
@@ -37,7 +37,7 @@
 #    nor the state file — no evidence, no claim.
 #
 # tier: T1
-# covers: spira/watchtower.sh doctor/src/*
+# covers: watchtower/src/* doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -93,7 +93,7 @@ wt_show() {
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
-        watchtower.sh --show 2>/dev/null
+        watchtower --show 2>/dev/null
 }
 fu_row() { printf '%s\n' "$1" | sed -n 's/^  FAILED UNITS  *//p' | head -1; }
 
@@ -113,7 +113,7 @@ MOCK
         SPIRA_SYSTEMCTL="$BIN/systemctl" SPIRA_JOURNALCTL="$BIN/journalctl" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
-        watchtower.sh >/dev/null 2>&1
+        watchtower >/dev/null 2>&1
 }
 inc_calls() { cat "$TMP/inc-calls" 2>/dev/null || true; }
 seed_state() {   # seed_state <unit> <age-seconds> <escalated 0|1>

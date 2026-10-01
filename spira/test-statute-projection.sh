@@ -25,7 +25,7 @@
 # testdb.sh, not a stub that models only the surface we remember.
 #
 # tier: T2
-# covers: rule.sh spira/cockpit.sh spira/law-synth.sh UC-operator-channel-43 G-07
+# covers: rule.sh cockpit-collect/src/* spira/law-synth.sh UC-operator-channel-43 G-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -160,7 +160,7 @@ want "commit: no SPIRA_WIKI prints manual-commit hint" \
 
 # ==========================================================================
 # PAGE_N FIXTURE (UC-18, docs/test-plan/cockpit-observability.md): a small wiki tree with
-# a committed common-law.md, 10 mock statutes. Built unconditionally — the cockpit.sh
+# a committed common-law.md, 10 mock statutes. Built unconditionally — the cockpit-collect
 # statute_keys section below reads it directly and must not depend on a reachable brain
 # checkout, only the law-synth.sh section further down does.
 # ==========================================================================
@@ -305,9 +305,9 @@ nowant "rule.sh: default hook: no brain path named" "brain/.claude"   "$out_defa
     || bad "rule.sh: default hook rendered common-law.md" "file missing"
 
 echo
-echo "=== cockpit.sh statute_keys: SP_STATUTE_SKEW (no-wiki case) ==="
+echo "=== cockpit-collect statute_keys: SP_STATUTE_SKEW (no-wiki case) ==="
 
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}" cockpit.sh statute 2>/dev/null; }
+run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="${1:-}" cockpit-collect probe statute 2>/dev/null; }
 
 # NEGATIVE CONTROL: SPIRA_WIKI unset → all ? (the WIKI-dependent MISMATCH/OK cases live in
 # test-law-synth.sh, which needs a wiki checkout and reports its absence as a skip).

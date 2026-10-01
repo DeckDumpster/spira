@@ -10,7 +10,7 @@
 #   (c) positive control — funnel keys absent from env renders ? in the pane (not 0).
 #
 # tier: T2
-# covers: spira/cockpit.sh cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -100,7 +100,7 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
-    cockpit.sh once 2>/dev/null)"
+    cockpit-collect once 2>/dev/null)"
 
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
@@ -185,7 +185,7 @@ out_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
-    cockpit.sh once 2>/dev/null)"
+    cockpit-collect once 2>/dev/null)"
 
 valb() { printf '%s' "$out_b" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 

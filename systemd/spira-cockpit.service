@@ -4,8 +4,11 @@
 # silently frozen this dashboard the moment the purge deleted that file. A pane that stops
 # updating still renders, and a stale panel is the failure mode this whole surface exists
 # to prevent.
+#
+# sp-kt4l3: `spira/cockpit.sh` and `spira/collect.sh` are retired; this unit now runs the
+# `cockpit-collect` crate's own tiered supervisor (`cockpit-collect collect`).
 Description=Spira cockpit collector (snapshot for the ops pane)
-Documentation=file://@SPIRA_HOME@/collect.sh
+Documentation=file://@SPIRA_PROD_ROOT@/cockpit-collect/DESIGN.md
 After=default.target
 StartLimitIntervalSec=120
 StartLimitBurst=5
@@ -17,18 +20,20 @@ StartLimitBurst=5
 # checkout's root until the release deploy lands).
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
-# Type=notify: spira-supervise sends READY=1 once collect.sh is up, then WATCHDOG=1 while
-# the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
+# Type=notify: spira-supervise sends READY=1 once cockpit-collect is up, then WATCHDOG=1
+# while the snapshot is fresh.  The supervisor is the main PID so its datagrams are credited
 # by the manager (sp-3az9w established that bash cannot satisfy this; sp-mplcb fixes it).
 Type=notify
-ExecStart=@SPIRA_PROD_ROOT@/bin/spira-supervise @SPIRA_PROD@/collect.sh loop
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-supervise @SPIRA_PROD_ROOT@/bin/cockpit-collect collect
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_SNAP_STALE_S=@SPIRA_SNAP_STALE_S@
 Restart=always
 RestartSec=15
 # Watchdog fires when spira-supervise stops pinging — which it does when the snapshot
-# stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s).  WatchdogSec=60
+# stops being written on schedule (SPIRA_SNAP_STALE_S, default 60s). WatchdogSec=60
 # means the supervisor pings every 30s; systemd kills after 60s with no ping.
+# `cockpit-collect collect` refuses to run at all unless its INVOCATION_ID matches this
+# unit's own (or SPIRA_COCKPIT_FORCE=1 overrides) — see cockpit-collect/DESIGN.md.
 WatchdogSec=60
 StandardOutput=append:@SPIRA_RUN@/collector.log
 StandardError=append:@SPIRA_RUN@/collector.log

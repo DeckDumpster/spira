@@ -48,9 +48,14 @@ fn build_env() -> Env {
         .or_else(|| std::env::var("SPIRA_AEON").ok().map(|a| format!("aeon-{a}")))
         .or_else(|| std::env::var("USER").ok())
         .unwrap_or_else(|| "unknown".to_string());
+    // sp-kt4l3: spira/cockpit.sh is retired (-> the cockpit-collect crate); the default
+    // METRIC target is its `probe` subcommand now, not a bare bash script off PATH.
+    // `real.rs::metric_probe` inserts the `probe` arg itself for this (non-overridden)
+    // path — an override still runs bare, unchanged (a test's own fixture script, taking
+    // just the subcmd, same as before).
     let cockpit_override = std::env::var("SOP_METRIC_COCKPIT").ok().filter(|v| !v.is_empty());
     let cockpit_bash_prefix = cockpit_override.is_some();
-    let cockpit_bin = cockpit_override.unwrap_or_else(|| "cockpit.sh".to_string());
+    let cockpit_bin = cockpit_override.unwrap_or_else(|| "cockpit-collect".to_string());
     Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix }
 }
 

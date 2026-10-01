@@ -1,4 +1,5 @@
-// spira-supervise: main-PID supervisor for collect.sh (or any configured child).
+// spira-supervise: main-PID supervisor for cockpit-collect's `collect` subcommand (or any
+// other configured child; sp-kt4l3 retired the bash `collect.sh` this originally named).
 //
 // Spawns the child, sends READY=1 when it is up, then sends WATCHDOG=1 on an
 // interval — but only while the child is demonstrably healthy.  "Healthy" for

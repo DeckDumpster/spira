@@ -4,16 +4,16 @@
 # SP_STRAND_GHOST and SP_STRAND_OTHER, derived from $SPIRA_RUN/strands.json.
 #
 # Before this suite, gap #2 of docs/test-plan/cockpit-observability.md: these four keys
-# were only ever SEEDED into fixtures (test-cockpit-probe-fault.sh, watchtower.sh's own
+# were only ever SEEDED into fixtures (test-cockpit-probe-fault.sh, watchtower's own
 # suite) — nothing derived them from a strands.json shaped the way strand.sh actually
 # writes it (partition:kind:id -> {first, acted, escalated}), and nothing checked the
 # collector's own honest-unknown branches.
 #
-# Runs the real `cockpit.sh strands` subcommand (registered in collect.sh's PROBES),
+# Runs the real `cockpit-collect probe strands` subcommand (registered in cockpit-collect's PROBES),
 # the same seam czar_triggers uses.
 #
 # tier: T1
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -27,7 +27,7 @@ run_strands() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        cockpit.sh strands 2>/dev/null
+        cockpit-collect probe strands 2>/dev/null
 }
 
 field() { printf '%s\n' "$1" | grep "^$2=" | sed "s/^$2=//"; }
