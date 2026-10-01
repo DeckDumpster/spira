@@ -60,7 +60,7 @@ fn spira_home() -> String {
 /// was set to; `SPIRA_HOME` only steers what lib.sh's OWN functions read afterwards (e.g.
 /// `bulk_ready_by_fayth`'s chamber lookup). A compiled binary has no `$0` directory to be
 /// relative to, so this is the equivalent self-location — used by every seam that needs
-/// lib.sh's CODE (`git::spira_landref`, `seams::repo_root`, `seams::pipeline_probe`).
+/// lib.sh's CODE (`git::spira_landref`, `seams::registry`, `seams::pipeline_probe`).
 /// Conflating this with `$SPIRA_HOME` was a real bug (sp-lnmbq): a suite that points
 /// `SPIRA_HOME` at a fixture directory holding only a `chamber/` and no `lib.sh` at all
 /// (test-watchtower.sh's idle-while-ready section) made every one of those seams source

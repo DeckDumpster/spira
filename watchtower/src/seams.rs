@@ -1,8 +1,10 @@
-//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3): `lib.sh`'s
-//! `repo_root`, and `world.sh`'s `TIMER_PRIORITY` plus `ctrl.sh`'s suspension map. Every
-//! script text here is a constant — nothing is ever interpolated into it; the only data
-//! that crosses the boundary travels as argv to the fixed script or as NUL/tab-delimited
-//! stdout, the same discipline `sentinel/src/seams.rs` documents for its own lib.sh seams.
+//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3):
+//! `world.sh`'s `TIMER_PRIORITY` plus `ctrl.sh`'s suspension map. Every script text here is
+//! a constant — nothing is ever interpolated into it; the only data that crosses the
+//! boundary travels as argv to the fixed script or as NUL/tab-delimited stdout, the same
+//! discipline `sentinel/src/seams.rs` documents for its own lib.sh seams. `repo_root`
+//! (family U) is no longer one of these seams (sp-k6lku, "wave 4.13") — [`registry`] reads
+//! it in-process through `spira_config::repos`.
 
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -27,13 +29,6 @@ pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
     }
     let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
     spira_config::repos::Registry::new(map_text.as_deref(), &env, std::path::Path::new(spira_home))
-}
-
-/// `repo_root "<repo>"` — the registered repository's filesystem path, or `None` if the
-/// repo is unregistered. In-process via [`registry`] (sp-k6lku, "wave 4.13"); was
-/// `. "$SPIRA_HOME/lib.sh"; repo_root "<repo>"`.
-pub fn repo_root(spira_home: &str, repo: &str) -> Option<String> {
-    registry(spira_home).root(repo)
 }
 
 pub struct Timers {
@@ -153,7 +148,7 @@ mod tests {
 
     #[test]
     fn repo_root_is_none_when_lib_sh_is_missing() {
-        assert_eq!(repo_root("/does/not/exist", "spira"), None);
+        assert_eq!(registry("/does/not/exist").root("spira"), None);
     }
 
     /// world.sh/ctrl.sh are the `world`/`ctrl` binaries now (sp-6onps): the seam calls
