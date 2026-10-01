@@ -445,7 +445,10 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # `SPIRA_NO_LOOP_LABEL`/`SPIRA_SUBMITTED_LABEL` ARE exported and spira-claim reads them as a
 # fallback when spira.toml carries no value, so none of the three needs threading either.
 _spira_claim() {
-    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" spira-claim "$@"
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
+    SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
+    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
+        spira-claim "$@"
 }
 
 mapfile -t READY_ARGS < <(_spira_claim ready-args)

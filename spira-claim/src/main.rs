@@ -76,7 +76,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply", "--raw"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
@@ -629,8 +629,19 @@ fn resolved_label(flag: Option<&str>, toml: Option<&str>, env_key: &str, default
     default.to_string()
 }
 
+// EVERY default below is "", NOT the conf.d-documented value (e.g. "no-loop",
+// "spira-queue-waiting") — matching each bash original's own bare `${VAR:-}` fallback
+// (READY_ARGS, ready_raw_args, ready_shared_exclude never hardcode a default themselves;
+// only conf.sh's *derivation* does, and conf.sh running is a precondition this port cannot
+// observe). The lib.sh shims thread the caller's CURRENT value of the unexported ones
+// (`_spira_claim`'s own env prefix) explicitly across the exec boundary, so this process
+// sees exactly what the calling shell held — empty if conf.sh never ran (every suite that
+// sources lib.sh alone), derived if it did (production) — never a value of this port's own
+// invention. A direct caller that skips the shim (a test, or a future Rust caller) still
+// gets spira.toml's value when one is configured, and "" otherwise — the same "no
+// restriction" default the bash functions themselves fall back to.
 fn no_loop_label(a: &Args, env: &Env) -> String {
-    resolved_label(a.get("--noloop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "no-loop") // literal-ok: the conf.d-documented fallback default
+    resolved_label(a.get("--noloop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "")
 }
 
 fn scope_label(a: &Args, env: &Env) -> String {
@@ -638,15 +649,19 @@ fn scope_label(a: &Args, env: &Env) -> String {
 }
 
 fn queue_wait_label(env: &Env) -> String {
-    resolved_label(None, env.config.queue_wait_label.as_deref(), "SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting")
+    resolved_label(None, env.config.queue_wait_label.as_deref(), "SPIRA_QUEUE_WAIT_LABEL", "")
 }
 
 fn open_children_label(env: &Env) -> String {
-    resolved_label(None, env.config.open_children_label.as_deref(), "SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")
+    resolved_label(None, env.config.open_children_label.as_deref(), "SPIRA_OPEN_CHILDREN_LABEL", "")
 }
 
+/// `ready_shared_exclude`'s own reading of `SPIRA_SUBMITTED_LABEL` (bare `${VAR:-}`) —
+/// distinct from [`submitted_label`], which backs `epics`/`select` and matches
+/// `epic_parent_lookup`'s own `${SPIRA_SUBMITTED_LABEL:-spira-submitted}` fallback. The same
+/// key, two different bash functions, two different embedded defaults — both kept exactly.
 fn submitted_label_f(env: &Env) -> String {
-    resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "spira-submitted")
+    resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "")
 }
 
 /// `READY_ARGS`, resolved from this call's flags/config/environment.

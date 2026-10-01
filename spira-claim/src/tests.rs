@@ -731,10 +731,16 @@ fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
 fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_FAYTHS", "SPIRA_TOML"]);
+    let saved = save_env(&["SPIRA_HOME", "SPIRA_FAYTHS", "SPIRA_TOML", "SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL"]);
     std::env::set_var("SPIRA_HOME", &*home);
     std::env::remove_var("SPIRA_FAYTHS");
     std::env::remove_var("SPIRA_TOML");
+    // These three are what conf.sh's own derivation would hold by the time the bash shim
+    // threads them through (lib.sh's `_spira_claim`) — set explicitly here because a bare
+    // `cargo test` process has no conf.sh behind it at all.
+    std::env::set_var("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting");
+    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
+    std::env::set_var("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children");
     let o = run(&["fayth-exclude", "builder", "qa-proposed"], "");
     restore_env(saved);
     assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-submitted,spira-open-children,fayth:ops");
@@ -742,11 +748,56 @@ fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
 }
 
 #[test]
+fn fayth_exclude_cli_defaults_to_empty_when_nothing_is_configured() {
+    // THE REGRESSION THIS GUARDS (found by test-unclaimable.sh going red): lib.sh's
+    // `ready_shared_exclude`/`READY_ARGS`/`ready_raw_args` never hardcode a label default
+    // themselves — only conf.sh's derivation does, and a suite that sources lib.sh alone
+    // (most of them) never runs conf.sh at all. A hardcoded conf.d default here would
+    // silently add exclusions no bash caller ever asked for.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = chamber_home(&[("builder", "spira,plan", "")]);
+    let keys = [
+        "SPIRA_HOME", "SPIRA_FAYTHS", "SPIRA_TOML", "SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL",
+        "SPIRA_NO_LOOP_LABEL",
+    ];
+    let saved = save_env(&keys);
+    std::env::set_var("SPIRA_HOME", &*home);
+    for k in &keys[1..] {
+        std::env::remove_var(k);
+    }
+    let o = run(&["fayth-exclude", "builder", ""], "");
+    let args = run(&["ready-args", "--raw"], "");
+    restore_env(saved);
+    assert_eq!((o.code, o.out.as_str()), (0, ""));
+    assert_eq!(args.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n", "no --exclude-label when SPIRA_NO_LOOP_LABEL is unset");
+}
+
+#[test]
 fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
     // test-dispatch-open-children.sh calls `ready_shared_exclude` directly, not through
-    // `fayth_exclude` — this verb exists only for that caller.
+    // `fayth_exclude` — this verb exists only for that caller. The three env vars below
+    // are what conf.sh's derivation would hold by the time the bash shim threads them
+    // through; a bare `cargo test` process has no conf.sh behind it at all.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = save_env(&["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL"]);
+    std::env::set_var("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting");
+    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
+    std::env::set_var("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children");
     let o = run(&["shared-exclude"], "");
+    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-submitted,spira-open-children"));
+}
+
+#[test]
+fn shared_exclude_cli_defaults_to_empty_when_unset() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = save_env(&["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL", "SPIRA_TOML"]);
+    for k in ["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL", "SPIRA_TOML"] {
+        std::env::remove_var(k);
+    }
+    let o = run(&["shared-exclude"], "");
+    restore_env(saved);
+    assert_eq!((o.code, o.out.as_str()), (0, ""));
 }
 
 #[test]
@@ -824,12 +875,16 @@ fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"b","labels":["spira","ops-trigger"]},{"id":"c","labels":["spira","plan","spira-submitted"]}]'"#,
     );
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_SNAPSHOT", "SPIRA_FAYTHS"]);
+    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_SNAPSHOT", "SPIRA_FAYTHS", "SPIRA_SUBMITTED_LABEL", "SPIRA_QUEUE_WAIT_LABEL"]);
     std::env::set_var("SPIRA_HOME", &*home);
     std::env::set_var("SPIRA_BD", &*bd);
     std::env::remove_var("SPIRA_DB");
     std::env::remove_var("SPIRA_READY_SNAPSHOT");
     std::env::remove_var("SPIRA_FAYTHS");
+    // What conf.sh's derivation would hold by the time bulk_ready_by_fayth's own shim
+    // threads SPIRA_SUBMITTED_LABEL through (lib.sh, matching ready-bucket.py's env prefix).
+    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
+    std::env::remove_var("SPIRA_QUEUE_WAIT_LABEL");
     let o = run(&["bulk-ready-by-fayth"], "");
     restore_env(saved);
     assert_eq!(o.out, "builder 1\nops 1\n", "c is dropped by the shared spira-submitted exclusion");
