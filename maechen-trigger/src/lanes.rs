@@ -97,7 +97,7 @@ mod tests {
             plan: "plan".into(),
             incident: "incident".into(),
             groomer: "groom".into(),
-            maechen: "maechen-sweep".into(),
+            maechen: "maechen-sweep".into(), // literal-ok: test fixture
             spike: "spike".into(),
             czar: "czar-trigger".into(),
         }
@@ -106,7 +106,7 @@ mod tests {
     #[test]
     fn no_lanes_column_admits_every_lane() {
         let out = repo_lanes("alpha", None, &labels()).unwrap();
-        for l in ["plan", "incident", "groom", "maechen-sweep", "spike", "czar-trigger"] {
+        for l in ["plan", "incident", "groom", "maechen-sweep", "spike", "czar-trigger"] { // literal-ok: test fixture
             assert!(out.split(' ').any(|x| x == l), "{out} missing {l}");
         }
     }
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn self_mode_yields_all_six_in_order() {
-        assert_eq!(repo_lanes("gamma", Some("self"), &labels()).unwrap(), "plan incident groom spike maechen-sweep czar-trigger");
+        assert_eq!(repo_lanes("gamma", Some("self"), &labels()).unwrap(), "plan incident groom spike maechen-sweep czar-trigger"); // literal-ok: test fixture
     }
 
     #[test]
