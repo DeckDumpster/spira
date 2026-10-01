@@ -2,7 +2,6 @@
 
 use crate::ports::World;
 use std::cell::OnceCell;
-use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
