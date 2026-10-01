@@ -1,6 +1,7 @@
 //! The production [`crate::ports::World`].
 
 use crate::ports::World;
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,11 +12,31 @@ pub struct Real {
     pub db: String,
     pub bd: String,
     pub repo_map: Option<PathBuf>,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
     pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>) -> Real {
-        Real { home, run, db, bd, repo_map }
+        Real { home, run, db, bd, repo_map, registry: OnceCell::new() }
+    }
+
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"): `spira_home_repo`/`repo_root`/`spira_landref` were already a bash
+    /// subprocess sourcing lib.sh THEN shelling to the `spira-config` binary a second time
+    /// (lib.sh's own shim, sp-37rmg) — two processes per lookup. `from_env` resolves
+    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` in-process
+    /// instead, the same way conf.sh does, when this (bare, unit-launched) process's own
+    /// environment lacks them (sp-z3eyk) — reading the bare three and the map text by hand,
+    /// as this used to, found nothing in production, since conf.sh exports none of them.
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
+    }
+
+    fn repo_map_text_inner(&self) -> String {
+        match &self.repo_map {
+            Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+            None => String::new(),
+        }
     }
 
     /// The `lib.sh` seam (same pattern as `gate-check/src/real.rs`): source `lib.sh`, then
@@ -94,32 +115,19 @@ impl World for Real {
     }
 
     fn home_repo(&self) -> String {
-        self.seam("spira_home_repo", &[])
+        self.registry().home_repo().to_string()
     }
 
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
-        let out = self.seam("repo_root \"$1\" 2>/dev/null", &[name]);
-        if out.is_empty() {
-            None
-        } else {
-            Some(PathBuf::from(out))
-        }
+        self.registry().root(name).map(PathBuf::from)
     }
 
     fn landref(&self, repo_path_or_name: &str) -> Option<String> {
-        let out = self.seam("spira_landref \"$1\" 2>/dev/null", &[repo_path_or_name]);
-        if out.is_empty() {
-            None
-        } else {
-            Some(out)
-        }
+        spira_config::repos::landref(self.registry(), repo_path_or_name)
     }
 
     fn repo_map_text(&self) -> String {
-        match &self.repo_map {
-            Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
-            None => String::new(),
-        }
+        self.repo_map_text_inner()
     }
 
     fn git_log_subjects(&self, repo_path: &Path, since_ts: i64, base_ref: &str) -> String {

@@ -379,6 +379,7 @@ name = "gate-check"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -397,6 +398,7 @@ name = "gate-run"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "spira-config",
  "testkit",
 ]
 
@@ -427,6 +429,7 @@ version = "1.0.0"
 dependencies = [
  "serde_json",
  "sha2",
+ "spira-config",
  "ureq",
 ]
 
@@ -436,6 +439,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -1179,6 +1183,9 @@ dependencies = [
 [[package]]
 name = "skew"
 version = "1.0.0"
+dependencies = [
+ "spira-config",
+]
 
 [[package]]
 name = "slab"
