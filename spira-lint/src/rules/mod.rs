@@ -8,6 +8,7 @@ pub mod event_taxonomy;
 pub mod fence_scripts;
 pub mod incident_cause_lint;
 pub mod inventory;
+pub mod lib_sh_shims;
 pub mod literal_lint;
 pub mod lockfile_lint;
 pub mod gate_workflow;

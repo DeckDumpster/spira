@@ -906,6 +906,161 @@ fn ck7_summon_pass_rotates_across_two_real_passes() {
 }
 
 // ---------------------------------------------------------------------------------------
+// express-lane bypass of the summon throttle (sp-yh7yx)
+//
+// lib.sh's `express_ready_in_task_pool` (fbddd3e2b) was deleted outright at wave
+// 4.25/sp-obhv6 while `_ck7_summon_body`'s bash original still called it by name — the
+// call failed silently every throttled pass from then on ("command not found" from an
+// undefined bash function, never visible as a diff), so "express ready" read false
+// forever and the bypass never fired again. Wave 4.27/sp-gzmd2 ported `_ck7_summon_body`
+// faithfully — meaning it ported that silent `false` too. These four rows are the
+// predicate restored: express ready grants the bypass; no express ready holds the
+// throttle; and the bypass never overrides the gates that sit ABOVE it in `summon_fayth`
+// (world halted, account capacity) even when it fires.
+
+/// A `spira-claim` stub answering `fayth-exclude` (empty — no exclusions in this
+/// fixture), `fayth-ready` (ordinary per-fayth readiness; "builder" alone is ready) and
+/// `ready-count` (the express-composed query `express_ready_in_task_pool` issues — ready
+/// only when the label list it was handed carries ",express").
+fn stub_express_claim(r: &FakeRunner) {
+    r.on(|s| {
+        if s.prog != "spira-claim" {
+            return None;
+        }
+        let verb = s.args.first().map(String::as_str).unwrap_or("");
+        let arg1 = s.args.get(1).map(String::as_str).unwrap_or("");
+        match verb {
+            "fayth-exclude" => ok(""),
+            "fayth-ready" => ok(if arg1 == "builder" { "1" } else { "0" }),
+            "ready-count" => ok(if arg1.contains(",express") { "1" } else { "0" }),
+            _ => None,
+        }
+    });
+}
+
+/// `builder`/`ops` chamber files carrying `FAYTH_LABELS` — `express_ready_in_task_pool`
+/// skips a fayth with none (lib.sh's own `[ -n "${FAYTH_LABELS:-}" ] || exit 1` guard),
+/// and without this fixture neither fayth would even be asked.
+fn express_chamber(w: &World) {
+    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
+    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LABELS=spira,incident\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+}
+
+#[test]
+fn express_ready_in_task_pool_bypasses_the_throttle_and_summons() {
+    let (w, r, sink, clock) = setup("express-bypass");
+    express_chamber(&w);
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    stub_express_claim(&r);
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(
+        sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1 (restricted to 'express')"),
+        "{}",
+        sink.text()
+    );
+    assert!(sink.has("ACT summoned a builder aeon"), "{}", sink.text());
+    let launch = r.find(|s| s.prog == "systemd-run").expect("systemd-run must have been called");
+    assert!(
+        launch.args.iter().any(|a| a == "--setenv=SPIRA_REQUIRE_LABEL=express"),
+        "express grant must restrict the summoned aeon to the express label: {:?}",
+        launch.args
+    );
+    // Exactly one summon: the express grant sets the pool to EXACTLY 1 — a second ready
+    // task fayth (ops has none in this fixture, but the cap matters regardless) must not
+    // also draw on it.
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 1);
+}
+
+#[test]
+fn no_express_ready_stays_throttled() {
+    let (w, r, sink, clock) = setup("express-none");
+    express_chamber(&w);
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    // No bead anywhere carries the express label: every ready-count call answers 0.
+    r.on(|s| {
+        if s.prog != "spira-claim" {
+            return None;
+        }
+        match s.args.first().map(String::as_str).unwrap_or("") {
+            "fayth-exclude" => ok(""),
+            "fayth-ready" => ok("1"),
+            "ready-count" => ok("0"),
+            _ => None,
+        }
+    });
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(
+        sink.has("CHECK7 pool: throttle active (since=2026-10-01T00:00:00Z depth=20 since_land=60m) — task pool held at 0"),
+        "{}",
+        sink.text()
+    );
+    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "nothing should launch while held at 0");
+}
+
+#[test]
+fn express_ready_but_world_halted_does_not_summon() {
+    let (w, r, sink, clock) = setup("express-halted");
+    express_chamber(&w);
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    std::fs::write(w.run.join("world.halted"), "halted\n").unwrap();
+    stub_express_claim(&r);
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    // The bypass still computes and grants the pool slot — exactly what the bash original
+    // did (pool math runs before any per-persona summon_fayth call) — but the halted gate,
+    // checked first inside summon_fayth, refuses every attempt regardless.
+    assert!(sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1"), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: halted — not summoning"), "{}", sink.text());
+    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "a halted world must never be bypassed by express");
+}
+
+#[test]
+fn express_ready_but_capacity_unknown_does_not_summon() {
+    let (w, r, sink, clock) = setup("express-capacity-unknown");
+    express_chamber(&w);
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    // A capacity-pause file that exists but cannot be parsed reads as Unknown
+    // (aeon::capacity::pause_state) — never treated as Open.
+    std::fs::write(w.run.join("capacity-pause"), "not-a-number\n").unwrap();
+    stub_express_claim(&r);
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(sink.has("CHECK7 pool: throttle active — express bead ready, granting pool=1"), "{}", sink.text());
+    assert!(sink.has("CHECK7 builder: the account is out of capacity for another ?s — not summoning"), "{}", sink.text());
+    assert!(!sink.has("ACT summoned"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "capacity Unknown must never be bypassed by express");
+}
+
+// ---------------------------------------------------------------------------------------
 // CHECK 2 / 2c (lifecycle)
 
 #[test]

@@ -1,5 +1,6 @@
 //! The production [`crate::ports::World`].
 
+use crate::lanes::LaneLabels;
 use crate::ports::World;
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
@@ -12,20 +13,20 @@ pub struct Real {
     pub db: String,
     pub bd: String,
     pub repo_map: Option<PathBuf>,
+    pub lane_labels: LaneLabels,
     registry: OnceCell<spira_config::repos::Registry>,
     strand_cfg: OnceCell<strand::config::Config>,
 }
 
 impl Real {
-    pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>) -> Real {
-        Real { home, run, db, bd, repo_map, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+    pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>, lane_labels: LaneLabels) -> Real {
+        Real { home, run, db, bd, repo_map, lane_labels, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
     }
 
     /// `strand::config::Config`, resolved once per process the same way `strand`'s own
     /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
     /// the detectors moved there (wave 4.29, sp-8ofmt) and are reached in-process instead
-    /// of through the `lib.sh` seam [`Real::seam`] still carries for
-    /// `spira_open_trigger_count`/`spira_lane_admitted`.
+    /// of through the `lib.sh` seam.
     fn strand_cfg(&self) -> &strand::config::Config {
         self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }
@@ -47,42 +48,6 @@ impl Real {
             Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
             None => String::new(),
         }
-    }
-
-    /// The `lib.sh` seam (same pattern as `gate-check/src/real.rs`): source `lib.sh`, then
-    /// run `body` with `args` as positional parameters, capturing trimmed stdout.
-    fn seam(&self, body: &str, args: &[&str]) -> String {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(self.home.join("lib.sh"))
-            .args(args)
-            .env("SPIRA_HOME", &self.home)
-            .env("SPIRA_DB", &self.db)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        out.ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string())
-            .unwrap_or_default()
-    }
-
-    fn seam_ok(&self, body: &str, args: &[&str]) -> bool {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(self.home.join("lib.sh"))
-            .args(args)
-            .env("SPIRA_HOME", &self.home)
-            .env("SPIRA_DB", &self.db)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
     }
 
     fn read_epoch_file(&self, name: &str) -> i64 {
@@ -117,11 +82,28 @@ impl World for Real {
     }
 
     fn open_trigger_count(&self, labels: &str) -> u64 {
-        self.seam("spira_open_trigger_count \"$1\"", &[labels]).parse().unwrap_or(0)
+        let out = Command::new(&self.bd)
+            .arg("-C")
+            .arg(&self.db)
+            .args(["list", "--status", "open,in_progress", "--label", labels, "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => json_array_count(&String::from_utf8_lossy(&o.stdout)),
+            _ => 0,
+        }
     }
 
     fn lane_admitted(&self, lane: &str) -> bool {
-        self.seam_ok("spira_lane_admitted \"$1\"", &[lane])
+        let home = self.registry().home_repo().to_string();
+        let names = self.registry().names();
+        crate::lanes::lane_admitted(lane, &home, &names, |n| self.registry().field(n, spira_config::repos::Column::Lanes), &self.lane_labels)
+    }
+
+    fn repo_lanes(&self, name: &str) -> Result<String, String> {
+        let raw = self.registry().field(name, spira_config::repos::Column::Lanes);
+        crate::lanes::repo_lanes(name, raw.as_deref(), &self.lane_labels)
     }
 
     fn home_repo(&self) -> String {
@@ -190,6 +172,16 @@ impl World for Real {
             }
             Err(format!("bd create exited {status}: {msg}"))
         }
+    }
+}
+
+/// `spira_open_trigger_count`'s own counter: `bd list --json`'s array length, 0 for
+/// anything that fails to parse — `bd list --json` always answers an array on success, so
+/// the bash's `len(d)` over whatever `json.load` returned never hit its other branches.
+fn json_array_count(input: &str) -> u64 {
+    match serde_json::from_str::<serde_json::Value>(input) {
+        Ok(serde_json::Value::Array(a)) => a.len() as u64,
+        _ => 0,
     }
 }
 

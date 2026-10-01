@@ -286,6 +286,10 @@ pub struct Cfg {
     pub queue_throttle_override: String,
     /// `SPIRA_THROTTLE_STAMP` (default `$SPIRA_RUN/queue-throttled`).
     pub throttle_stamp: PathBuf,
+    /// `SPIRA_EXPRESS_LABEL` (default "express"): the label `express_ready_in_task_pool`
+    /// composes onto a task fayth's own `FAYTH_LABELS` when the throttle is engaged, and
+    /// the `SPIRA_REQUIRE_LABEL` an express grant restricts the summoned aeon to.
+    pub express_label: String,
     /// `SPIRA_SENTINEL_PASS_BUDGET_SECS` (default 90s): CHECK 7's own per-partition budget,
     /// distinct from `pass_target`, the whole pass's budget.
     pub pass_budget_secs: i64,
@@ -435,6 +439,7 @@ impl Cfg {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| run.join("queue-throttled")),
+            express_label: or("SPIRA_EXPRESS_LABEL", "express"),
             pass_budget_secs: num("SPIRA_SENTINEL_PASS_BUDGET_SECS", 90),
             summon_lock_wait: num("SPIRA_SUMMON_LOCK_WAIT", 30).max(0) as u64,
             lane_round_robin: run.join("lane-round-robin"),

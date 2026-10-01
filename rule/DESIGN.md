@@ -29,10 +29,24 @@ rule [--home <spira-dir>] enact <slug> "<text>" [--dry-run]
 rule [--home <spira-dir>] retire <slug>
 rule [--home <spira-dir>] list
 rule [--home <spira-dir>] show <slug>
+rule [--home <spira-dir>] render-memories [prefix-csv] [char-budget] [core-csv]
+rule system-prompt-split <sysfile> <taskfile> <statutes> <prompt>
 ```
 
 `<slug>` is written without the `law-` prefix; it is added for you (stripped once if
 already present, so `rule enact law-foo ...` and `rule enact foo ...` enact the same key).
+
+**`render-memories`/`system-prompt-split`** (wave 4.35, sp-kelr2, wave4-decomposition.md row
+Q) are `spira/lib.sh`'s `render_memories`/`system_prompt_split` shim doors, not statute
+writes, and do NOT share the `enact`/`retire`/`list`/`show` `$SPIRA_DB/.beads` gate above —
+`render-memories` can run entirely off the `SPIRA_MEMORIES_CMD` test seam with no database
+at all (test-render-memories.sh's own shape), and `system-prompt-split` touches no database
+ever. `render-memories` additionally reads `SPIRA_STATUTE_CORE` (when `core-csv` is omitted
+or empty), `SPIRA_REPO` (the index tier's `rule.sh show` hint — `<harness>` when unset),
+`SPIRA_MEMORIES_CACHE`/`SPIRA_MEMORIES_CACHE_AGE` (the read-through cache), and
+`SPIRA_MEMORIES_CMD` (the test seam — unset, it reads `bdq memories --json` for real). On a
+cache miss it shells to `bdq`, not `bd` directly, so bdq's own fences and retry loop still
+apply to this read — unchanged from the bash's `bdjson memories`.
 
 Env read directly (the same contract `rule.sh` had — nothing sources `conf.sh` a second
 time inside this binary; the shim already did, so every var below is already exported by
@@ -69,11 +83,18 @@ a derived default rather than setting the variable explicitly.
   — `bd`'s own exit status is checked before anything is parsed, exactly as the bash fixed
   it for sp-n93br.
 
-**Stayed bash, invoked as a subprocess (out of scope — lib.sh/conf.sh/law-synth.sh are
-rewrite-wave group 4, "leave lib.sh alone"):**
+**Ported since (wave 4.35, sp-kelr2, row Q):** `render_memories`'s tiering/cache logic
+(`rule::memories::render` plus `main.rs`'s cache read/write and `SPIRA_MEMORIES_CMD`/`bdq`
+seam — same contract, one fewer `python3` process per call) and `system_prompt_split`'s
+split (`rule::memories::split`). `lib.sh`'s own two functions are now one-line shims onto
+`render-memories`/`system-prompt-split` above.
+
+**Stayed bash, invoked as a subprocess:**
 - `law-synth.sh` (or `$SPIRA_WIKI_HOOK`) — the wiki regeneration hook itself.
 - `wiki-commit.sh` — the wiki commit.
-- `bd` — the statute book's only writer/reader.
+- `bd`/`bdq` — the statute book's and the memories read's only writer/reader.
+- `conf.sh` itself — parsing `spira.conf`/`spira.toml` is its own, separate rewrite
+  (wave4-decomposition.md beads 4–10), not this crate's.
 
 ## Parity
 

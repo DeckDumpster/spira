@@ -226,7 +226,7 @@ pub fn run_probe_body(cfg: &Config, name: &str, timeout_s: u64, subcommand: &str
             let content = format!("_PROBE_AT={now}\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\n{body}");
             write_atomic(&frag, &content);
             if name == "slots" {
-                let _ = io::lib_call(&io::home_dir(), "_tsd_slots_sample", &[frag.to_str().unwrap_or("")]);
+                io::tsd_slots_sample(&cfg.run_dir, &frag);
             }
             let wall_s = started.elapsed().as_secs();
             // The log line lives here, in the body, not in a caller — `_probe_body_test`

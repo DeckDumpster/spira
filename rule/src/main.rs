@@ -7,6 +7,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rule::{
     list_body, parse_enact_args, slugify, word_count, word_limit_refusal, write_succeeded_line,
@@ -26,21 +27,31 @@ fn main() {
         }
     }
 
-    let db = std::env::var("SPIRA_DB").unwrap_or_default();
-    if !Path::new(&format!("{db}/.beads")).is_dir() {
-        eprintln!("rule: {db} has no .beads — refusing to guess a database");
-        std::process::exit(1);
-    }
-
     let mut args = rest.into_iter();
     let cmd = args.next().unwrap_or_default();
     let rest: Vec<String> = args.collect();
+
+    // ENACT/RETIRE/LIST/SHOW are the statute book itself and refuse a `$SPIRA_DB` that is
+    // not a real store (never fall through to `bd`'s own auto-discovery of some other one).
+    // RENDER-MEMORIES/SYSTEM-PROMPT-SPLIT (wave 4.35, sp-kelr2, row Q) are lib.sh's
+    // `render_memories`/`system_prompt_split` shim doors: pure string transforms, or a read
+    // the `SPIRA_MEMORIES_CMD` test seam bypasses `bd` for entirely, so they must not share
+    // this gate — concierge.sh is their one production caller and always has a real `$SPIRA_DB`,
+    // but test-render-memories.sh's seam cases deliberately never set one.
+    let needs_db = matches!(cmd.as_str(), "enact" | "retire" | "list" | "show");
+    let db = std::env::var("SPIRA_DB").unwrap_or_default();
+    if needs_db && !Path::new(&format!("{db}/.beads")).is_dir() {
+        eprintln!("rule: {db} has no .beads — refusing to guess a database");
+        std::process::exit(1);
+    }
 
     let rc = match cmd.as_str() {
         "enact" => cmd_enact(&db, &home, &rest),
         "retire" => cmd_retire(&db, &home, &rest),
         "list" => cmd_list(&db),
         "show" => cmd_show(&db, &rest),
+        "render-memories" => cmd_render_memories(&home, &rest),
+        "system-prompt-split" => cmd_system_prompt_split(&rest),
         _ => {
             println!("{USAGE}");
             1
@@ -306,5 +317,137 @@ fn cmd_show(db: &str, rest: &[String]) -> i32 {
         return 1;
     }
     println!("{stdout}");
+    0
+}
+
+// =========================================================================================
+// render-memories / system-prompt-split (wave 4.35, sp-kelr2, row Q) — lib.sh's
+// `render_memories`/`system_prompt_split` shim doors. The tiering/split logic itself is
+// `rule::memories`; everything here is the I/O the bash+python did inline: the cache, the
+// `SPIRA_MEMORIES_CMD` test seam, and the real `bdq memories --json` read.
+// =========================================================================================
+
+fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
+    let prefixes = match rest.first().map(String::as_str) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => "law-".to_string(),
+    };
+    // The bash's `int($budget)` crashes uncaught on a non-numeric budget — its traceback is
+    // swallowed by the python call's own `2>/dev/null`, so the whole function renders
+    // empty. Matched rather than "fixed": nothing production ever passes a non-numeric one.
+    let budget: usize = match rest.get(1).map(String::as_str) {
+        None | Some("") => 120_000,
+        Some(s) => match s.parse() {
+            Ok(n) => n,
+            Err(_) => return 0,
+        },
+    };
+    let core_csv = match rest.get(2).map(String::as_str) {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => std::env::var("SPIRA_STATUTE_CORE").unwrap_or_default(),
+    };
+    let harness = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "<harness>".to_string());
+
+    let mem_json = memories_json_cached(home);
+    println!("{}", rule::memories::render(&mem_json, &prefixes, budget, &core_csv, &harness));
+    0
+}
+
+fn epoch_secs(t: SystemTime) -> i64 {
+    match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(e) => -(e.duration().as_secs() as i64), // t is before the epoch
+    }
+}
+
+/// The cache-or-fetch read `render_memories` did inline: a fresh cache hit (file exists,
+/// `now - mtime < age`) short-circuits the fetch entirely; anything else — missing, stale,
+/// or present but empty once read — falls through to [`fetch_memories_json`], and a
+/// non-empty result only is written back.
+fn memories_json_cached(home: &str) -> String {
+    let cache = memories_cache_path(home);
+    let age: i64 = std::env::var("SPIRA_MEMORIES_CACHE_AGE").ok().and_then(|s| s.parse().ok()).unwrap_or(300);
+
+    let mut mem_json = String::new();
+    if let Some(path) = cache.as_deref() {
+        if let Ok(meta) = std::fs::metadata(path) {
+            let mtime = meta.modified().map(epoch_secs).unwrap_or(0);
+            if epoch_secs(SystemTime::now()) - mtime < age {
+                mem_json = std::fs::read_to_string(path).unwrap_or_default().trim_end_matches('\n').to_string();
+            }
+        }
+    }
+    if mem_json.is_empty() {
+        mem_json = fetch_memories_json();
+        if let Some(path) = cache.as_deref() {
+            if !mem_json.is_empty() {
+                if let Some(parent) = Path::new(path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                let _ = std::fs::write(path, format!("{mem_json}\n"));
+            }
+        }
+    }
+    mem_json
+}
+
+/// `SPIRA_MEMORIES_CMD` stands in for the live read in every test but one — set, it runs
+/// verbatim through a shell and `bd`/`bdq` is never touched. Unset, this is `bdjson
+/// memories` = `bdq memories --json 2>/dev/null | json_only`.
+fn fetch_memories_json() -> String {
+    if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
+        if !cmd.is_empty() {
+            return Command::new("bash")
+                .arg("-c")
+                .arg(&cmd)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string())
+                .unwrap_or_default();
+        }
+    }
+    Command::new("bdq")
+        .args(["memories", "--json"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .map(|o| json_only(&String::from_utf8_lossy(&o.stdout)).trim_end_matches('\n').to_string())
+        .unwrap_or_default()
+}
+
+/// `json_only`: keep the first line (and everything after) that starts, at column 1, with
+/// `[` or `{` — drops a warning banner `bd --json` printed on stdout first; no match at all
+/// is empty. Mirrors `bead::bdq::json_only` (not depended on: one small stdin filter is not
+/// worth a crate dependency here).
+fn json_only(input: &str) -> &str {
+    let mut offset = 0usize;
+    for line in input.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        if body.starts_with('[') || body.starts_with('{') {
+            return &input[offset..];
+        }
+        offset += line.len();
+    }
+    ""
+}
+
+fn cmd_system_prompt_split(rest: &[String]) -> i32 {
+    if rest.len() != 4 {
+        println!("{USAGE}");
+        return 1;
+    }
+    let (sysfile, taskfile, statutes, prompt) = (&rest[0], &rest[1], &rest[2], &rest[3]);
+    let (sys, task) = rule::memories::split(statutes, prompt);
+    if std::fs::write(sysfile, sys).is_err() {
+        eprintln!("rule: could not write {sysfile}");
+        return 1;
+    }
+    if std::fs::write(taskfile, task).is_err() {
+        eprintln!("rule: could not write {taskfile}");
+        return 1;
+    }
     0
 }

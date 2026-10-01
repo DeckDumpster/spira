@@ -673,6 +673,7 @@ dependencies = [
 name = "maechen-trigger"
 version = "1.0.0"
 dependencies = [
+ "serde_json",
  "spira-config",
  "strand",
  "testkit",
@@ -1543,6 +1544,7 @@ name = "tsd"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "testkit",
 ]
 
 [[package]]

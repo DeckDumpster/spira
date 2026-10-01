@@ -1,9 +1,11 @@
 //! `maechen-trigger` — DESIGN.md. Rust port of `spira/maechen-trigger.sh` (sp-0ekp7).
 
 mod engine;
+mod lanes;
 mod ports;
 mod real;
 
+use lanes::LaneLabels;
 use ports::World;
 use real::Real;
 use std::env;
@@ -95,6 +97,41 @@ fn env_u64(key: &str, default: u64) -> u64 {
     resolved_env(key).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// The six `SPIRA_*_LABEL` conf keys, resolved exactly as `run()`'s own `maechen_label`
+/// already is — `env_or`'s raw-env-then-registry precedence, never a raw `env::var` read,
+/// per law-a-binary-resolves-the-config-it-reads: three of these six are not in
+/// `spira_config::resolve::EXPORT_KEYS` (wave4-decomposition.md row (b) names this crate by
+/// file for exactly that reason), so a bare `std::env::vars()` lookup would see them in a
+/// test that exports them and miss them in production, which never does.
+fn lane_labels() -> LaneLabels {
+    LaneLabels {
+        plan: env_or("SPIRA_PLAN_LABEL", "plan"),
+        incident: env_or("SPIRA_INCIDENT_LABEL", "incident"),
+        groomer: env_or("SPIRA_GROOMER_LABEL", "groom"),
+        maechen: env_or("SPIRA_MAECHEN_LABEL", "maechen-sweep"), // literal-ok: Rust fallback mirroring conf.sh's own default when SPIRA_MAECHEN_LABEL is unset
+        spike: env_or("SPIRA_SPIKE_LABEL", "spike"),
+        czar: env_or("SPIRA_CZAR_LABEL", "czar-trigger"),
+    }
+}
+
+/// `env::args()` with the `--home <path>` pair [`parse_home_flag`] already consumed
+/// stripped out, leaving only positional arguments. Used by the lib.sh shim doors below —
+/// `groom-trigger.sh` is the one surviving bash caller of `spira_lane_admitted`/
+/// `spira_open_trigger_count`/`spira_repo_lanes` (wave 4.35, sp-kelr2, row V), and it always
+/// passes `--home` first, exactly as the sweep's own invocation does.
+fn subcommand_args() -> Vec<String> {
+    let mut it = env::args().skip(1);
+    let mut out = Vec::new();
+    while let Some(a) = it.next() {
+        if a == "--home" {
+            it.next();
+        } else {
+            out.push(a);
+        }
+    }
+    out
+}
+
 fn main() {
     if let Some(h) = parse_home_flag() {
         let _ = HOME_OVERRIDE.set(h);
@@ -104,7 +141,37 @@ fn main() {
     let db = env_or("SPIRA_DB", ".");
     let bd = env_or("SPIRA_BD", "bd");
     let repo_map = env::var("SPIRA_REPO_MAP").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
-    let world = Real::new(spira_home, spira_run.clone(), db, bd, repo_map);
+    let world = Real::new(spira_home, spira_run.clone(), db, bd, repo_map, lane_labels());
+
+    // THE THREE LIB.SH SHIM DOORS (wave 4.35, row V) — none of them touches the sweep's own
+    // lock file below; `groom-trigger.sh` calling `lane-admitted` must never contend with, or
+    // wait on, a concurrent Maechen sweep.
+    let sub_args = subcommand_args();
+    match sub_args.first().map(String::as_str) {
+        Some("repo-lanes") => {
+            let name = sub_args.get(1).cloned().unwrap_or_default();
+            match world.repo_lanes(&name) {
+                Ok(s) => {
+                    println!("{s}");
+                    return;
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some("lane-admitted") => {
+            let lane = sub_args.get(1).cloned().unwrap_or_default();
+            std::process::exit(if world.lane_admitted(&lane) { 0 } else { 1 });
+        }
+        Some("open-trigger-count") => {
+            let labels = sub_args.get(1).cloned().unwrap_or_default();
+            println!("{}", world.open_trigger_count(&labels));
+            return;
+        }
+        _ => {}
+    }
 
     // MUTUAL EXCLUSION (gap G10) — non-blocking; a caller that loses the race skips this
     // tick rather than risking two overlapping list-then-create dedup checks (sp-uq55c,
@@ -315,6 +382,9 @@ mod tests {
         }
         fn lane_admitted(&self, _lane: &str) -> bool {
             true
+        }
+        fn repo_lanes(&self, _name: &str) -> Result<String, String> {
+            Ok(String::new())
         }
         fn home_repo(&self) -> String {
             self.home_repo.clone()

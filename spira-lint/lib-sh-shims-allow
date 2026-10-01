@@ -1,0 +1,57 @@
+# lib-sh-shims allow list — spira/lib.sh and spira/conf.sh real-bodied functions kept on
+# purpose, with why. Shrinks as each is ported, retired, or its blocker clears; an entry
+# naming a function that no longer exists is refused (lib_sh_shims.rs). One per line,
+# `<file>:<function>`.
+#
+# Full audit: sp-hlng2 ("wave 4.37: close-out, lib.sh is shims only"), report in the bead.
+
+# --- lib.sh: live bash callers outside the family the plan ported, or a suite that
+# --- overrides a sibling function by name after sourcing this file (the EXEC-BOUNDARY
+# --- TRAP: shimming onto a subprocess would make that override unreachable). Each is
+# --- already named in this file's own header comment at the function's definition.
+spira/lib.sh:host_cores
+spira/lib.sh:ready_raw_args
+spira/lib.sh:ready_count
+spira/lib.sh:fayth_free
+
+# --- row I, "aeon half" (wave4-decomposition.md): aeon.sh's own direct seam into the bead
+# --- machine (spira-lc), never routed through a bash subprocess per call because aeon.sh
+# --- IS the trusted driver the design (§3.1.1, §3.5) names. Blocked on groups 5-7 the same
+# --- way as the rest of this list below — aeon.sh's own launch path is not a wave-4 crate.
+spira/lib.sh:lc_bead_row
+spira/lib.sh:lc_event_bead
+spira/lib.sh:lc_claim_bead
+spira/lib.sh:lc_release_bead
+spira/lib.sh:lc_bead_verified
+spira/lib.sh:release_own_claim
+spira/lib.sh:park_unmapped
+
+# --- blocked on groups 5-7 of wiki/projects/spira/remaining-bash-inventory.md (operator
+# --- surface, install/units, persona passes — out of wave 4's scope, "rewrite when
+# --- touched"): each still has a live bash caller there, or a bash test suite that drives
+# --- the function itself as its subject rather than the Rust port every production path
+# --- already uses. No CLI door exists to shim onto without first touching that caller.
+spira/lib.sh:content_landed
+spira/lib.sh:spira_status_seam
+spira/lib.sh:spira_bead_status
+spira/lib.sh:spira_db_reachable
+spira/lib.sh:_tsd_slots_sample
+
+# --- conf.sh's own bootstrap: this IS the logic that locates and, if needed, converts the
+# --- config BEFORE any `spira-config` subprocess call can be made — it cannot shim onto
+# --- the binary it exists to find. Owner in wave4-decomposition.md row C1/C2 is
+# --- "spira-config" in the sense that crate carries the same search for ITS OWN use
+# --- (sp-hconl); conf.sh keeps this copy because conf.sh's job is deciding whether and how
+# --- to invoke that binary in the first place.
+spira/conf.sh:_spira_conf_gen_ensure
+spira/conf.sh:spira_conf_file
+spira/conf.sh:spira_toml_file
+spira/conf.sh:_spira_repo_map_candidate
+spira/conf.sh:_spira_fayth_paths
+spira/conf.sh:_spira_toml_convert_from_conf
+spira/conf.sh:spira_toml_resolve
+spira/conf.sh:spira_toml_write_target
+
+# --- blocked on group 5 (health.sh, collect.sh, loom.sh — operator surface, "rewrite when
+# --- touched"): a general mtime-changed check with no Spira-specific logic to port.
+spira/conf.sh:conf_changed

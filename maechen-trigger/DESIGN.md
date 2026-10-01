@@ -26,9 +26,20 @@ would-file) the same single bead:
 
 ```
 maechen-trigger
+maechen-trigger [--home <spira-dir>] repo-lanes <repo-name>
+maechen-trigger [--home <spira-dir>] lane-admitted <lane>
+maechen-trigger [--home <spira-dir>] open-trigger-count <labels>
 ```
 
-No arguments, no subcommands (matches the bash: the script takes none). Reads its
+The bare form is the sweep (matches the bash: the script took no arguments). The three
+subcommands (wave 4.35, sp-kelr2) are `lib.sh`'s shim doors for `spira_repo_lanes`/
+`spira_lane_admitted`/`spira_open_trigger_count` — `groom-trigger.sh`'s route onto this
+crate's now-in-process port of family V, never the sweep's own invocation, and they never
+touch the sweep's lock file. `repo-lanes` prints the lane set and exits 1 (stderr names the
+row and the bad token) on an unknown mode or lane label; `lane-admitted` is exit-code-only
+(0 admitted, 1 not); `open-trigger-count` prints the integer count.
+
+Reads its
 configuration from environment (`SPIRA_RUN`, `SPIRA_HOME`, `SPIRA_DB`, `SPIRA_BD`,
 `SPIRA_REPO_MAP`, `SPIRA_SCOPE_LABEL`, `SPIRA_MAECHEN_LABEL`, `SPIRA_MAECHEN_LANDING_INTERVAL`,
 `SPIRA_MAECHEN_MAX_GAP_SECONDS`, `SPIRA_MAECHEN_MAX_BEADS`), exactly as the bash did, so
@@ -57,10 +68,13 @@ Side effects (unchanged from the bash):
   string assembly. Every function is a table-driven unit test; this is the surface `sp-0ekp7`'s
   parity proof rests on.
 - `ports.rs` — the `World` trait: the seam between decision logic and everything stateful.
-- `real.rs` — `World` for production: shells to the **`lib.sh` seam** (source `lib.sh`, call
-  one function, read stdout — the identical pattern `gate-check/src/real.rs` already
-  established) for `spira_home_repo`, `repo_root`, `spira_landref`, `spira_lane_admitted`,
-  `spira_open_trigger_count` and `detect_invalid_closed`; shells to `bd` directly for
+- `real.rs` — `World` for production: `spira_home_repo`/`repo_root`/`spira_landref` and, since
+  wave 4.35 (sp-kelr2, row V), `spira_lane_admitted`/`spira_open_trigger_count`/
+  `spira_repo_lanes` all run in-process (`spira_config::repos::Registry` plus `crate::lanes`,
+  the latter fed label values `main.rs` resolves through `spira_config::resolve` — never a raw
+  `env::var` read, per law-a-binary-resolves-the-config-it-reads); `detect_invalid_closed`
+  alone still shells to the **`lib.sh` seam** (source `lib.sh`, call one function, read
+  stdout — the pattern `gate-check/src/real.rs` established); shells to `bd` directly for
   `create`; shells to `git log` for landing counts; reads the watermark/lastpass files and
   the repo-map file directly off disk.
 - `main.rs` — orchestration matching the bash's control flow 1:1: lock → dedup → lane check →
@@ -69,22 +83,26 @@ Side effects (unchanged from the bash):
 
 ## Non-goals (out of scope for this bead)
 
-- **`spira_lane_admitted`'s fayth-label scan, `spira_open_trigger_count`, `detect_invalid_closed`.**
-  These are `lib.sh`'s own functions (families V and T), shared with `groom-trigger.sh`, the
-  census and the closed-record review. `lib.sh` is explicitly the *last* component in the wave
-  order (wave-brief "Order is the inventory's ... lib.sh last"); reimplementing any of them
-  here now would create a second, driftable copy of logic lib.sh's own wave will port
-  properly. They stay a subprocess seam.
+- **`detect_invalid_closed`.** `lib.sh`'s own function (family T), shared with the census and
+  the closed-record review, and owned by a later bead in that wave (`sentinel`/`strand`, not
+  this crate). Stays a subprocess seam here.
 - **`repo_field`, `spira_landref`'s resolution ladder — no longer true.** Family U (the repo
   registry) and family W (base refs) ported to `spira_config::repos` in sp-37rmg/sp-o88bx
   ("wave 4.11"/"4.12"); `real.rs`'s `home_repo`/`repo_root`/`landref` call that in-process now
   (sp-k6lku, "wave 4.13") instead of a `bash -c '. lib.sh; ...'` seam that itself only shelled
   into the `spira-config` binary a second time. This is calling the canonical port, not a
   second copy of it.
+- **`spira_lane_admitted`/`spira_open_trigger_count`/`spira_repo_lanes` — no longer true
+  either.** Family V ported in-process (wave 4.35, sp-kelr2, "the plan: shims, not a big
+  bang" — this bead's own family moves to its owning crate, and that crate's Rust seam
+  switches in-process in the same bead rather than a follow-up). `lib.sh`'s three functions
+  are now one-line shims onto this binary's `repo-lanes`/`lane-admitted`/`open-trigger-count`
+  CLI doors; `_spira_expand_lanes` had no caller outside `spira_repo_lanes` itself and is
+  retired rather than given its own door.
 - **`mail.sh`.** Not used by `maechen-trigger.sh` at all (only `incident.sh` sends mail); no
   change needed here.
-- **`groom-trigger.sh`.** Shares `spira_open_trigger_count`/`spira_lane_admitted` with this
-  script (duplicate cluster D14) but is a separate bead's scope (not in wave 7b's inventory).
+- **`groom-trigger.sh` itself.** Still bash — only the three `lib.sh` functions it calls
+  moved; the script's own control flow is untouched and out of this bead's scope.
 
 ## Parity
 

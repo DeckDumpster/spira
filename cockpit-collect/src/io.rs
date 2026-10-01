@@ -342,6 +342,50 @@ f="$2"; shift 2
     }
 }
 
+/// `_tsd_slots_sample <fragment-file>` (wave4-decomposition.md row AC, wave 4.35, sp-kelr2):
+/// turns the slots probe's own fragment into one `tsd-write` row, in-process — replacing
+/// the one [`lib_call`] this crate used to make for it (every OTHER `lib_call` site in this
+/// crate is a separate family, untouched by this bead). Reads the fragment directly, never
+/// the merged `cockpit.env`: the fragment is this probe's own fresh sample, and the merge's
+/// first-wins rule can otherwise repeat a stale one. Still shells to the `tsd-write` binary
+/// itself (its flock-protected append is not duplicated here) rather than sourcing all of
+/// `lib.sh` first just to reach it, as the bash shim did. Best-effort, like every tsd
+/// producer: a failure here is never fatal to the probe.
+pub fn tsd_slots_sample(run: &Path, frag: &Path) {
+    let text = match std::fs::read_to_string(frag) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    // Last occurrence wins on a duplicate key, matching the bash's own `while read` loop
+    // (each matching line simply overwrites the variable as the file is read through).
+    let mut kv: BTreeMap<&str, &str> = BTreeMap::new();
+    for line in text.lines() {
+        if let Some((k, v)) = line.split_once('=') {
+            kv.insert(k, v);
+        }
+    }
+    let field = |key: &str| -> String { kv.get(key).copied().unwrap_or("?").to_string() };
+    let live = field("SP_SLOTS_LIVE");
+    let ceiling = field("SP_SLOTS_CEILING");
+    let lanes_live = field("SP_SLOTS_LANES_LIVE");
+    let ready = field("SP_SLOTS_READY");
+    let paused = field("SP_SLOTS_CAPACITY_PAUSED");
+    let _ = Command::new("tsd-write")
+        .arg("--family")
+        .arg("slots")
+        .arg("--root")
+        .arg(run)
+        .args(["--field", &format!("live={live}")])
+        .args(["--field", &format!("ceiling={ceiling}")])
+        .args(["--field", &format!("lanes_live={lanes_live}")])
+        .args(["--field", &format!("ready={ready}")])
+        .args(["--field", &format!("capacity_paused={paused}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 /// `git -C <repo> <args>`, stdout on success, `None` on any non-zero exit or spawn failure.
 pub fn git(repo: &Path, args: &[&str]) -> Option<String> {
     let out = Command::new("git")

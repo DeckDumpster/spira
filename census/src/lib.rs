@@ -6,6 +6,7 @@
 
 pub mod ports;
 pub mod real;
+pub mod sql;
 #[cfg(test)]
 mod tests;
 
