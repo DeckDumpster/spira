@@ -70,6 +70,89 @@ pub fn default_conf_d(home: &Path) -> std::path::PathBuf {
     home.join("conf.d")
 }
 
+/// `SPIRA_REPO_DERIVED` (`spira/conf.sh`, right after `SPIRA_HOME` is settled, BEFORE the
+/// env-override line) — the filesystem-only half of `SPIRA_REPO`'s derivation, kept separate
+/// from [`derive_home_repo`] because `spira-config`'s own [`crate::repos::Registry`] reads
+/// the two as DIFFERENT facts: an explicit `SPIRA_REPO` is a caller saying "this tree is the
+/// harness in force" (a fixture, the gate's scratch checkout), while the derived value is
+/// just where this file happens to sit, and `repo_root`'s own "self" match needs to tell
+/// them apart. `git -C home rev-parse --show-toplevel`, with the git HOOK environment
+/// scrubbed (`GIT_DIR`/`GIT_WORK_TREE`/`GIT_INDEX_FILE`/`GIT_PREFIX`) so a git hook that
+/// sourced conf.sh does not resolve one level too deep (conf.sh's own comment on this exact
+/// bug); otherwise `home`'s own parent directory, canonicalized the way `cd "$HOME/.." &&
+/// pwd -P` is — NOT a plain `Path::parent()`, which would leave a trailing `..`-relative
+/// symlink unresolved where bash's `pwd -P` does not. An unresolvable parent (home itself
+/// does not exist) returns `home` itself, matching bash's `SPIRA_REPO_DERIVED=""` as a
+/// non-empty placeholder a caller can still pass on rather than inventing its own
+/// empty-path special case.
+pub fn derive_repo_filesystem(home: &Path) -> std::path::PathBuf {
+    let toplevel = std::process::Command::new("git")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_PREFIX")
+        .arg("-C")
+        .arg(home)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from);
+    toplevel.unwrap_or_else(|| {
+        home.join("..")
+            .canonicalize()
+            .unwrap_or_else(|_| home.to_path_buf())
+    })
+}
+
+/// `SPIRA_REPO`'s own derivation (`spira/conf.sh`'s `SPIRA_REPO="${SPIRA_REPO:-$SPIRA_REPO_DERIVED}"`)
+/// — ported so an in-process caller can build [`ResolveInput::repo`] itself instead of
+/// shelling into bash for it (wave4-decomposition.md bead sp-mz7dn, "wave 4.8: retire conf
+/// re-import seams"). `env`'s own `SPIRA_REPO` wins if set and non-empty — a caller's
+/// explicit override; otherwise [`derive_repo_filesystem`]. A caller that also needs the
+/// undiluted derived value (`repos::Registry` does — see [`derive_repo_filesystem`]'s own
+/// doc) calls that function directly rather than trying to recover it from this one's
+/// result.
+pub fn derive_home_repo(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    match env.get("SPIRA_REPO").filter(|s| !s.is_empty()) {
+        Some(r) => std::path::PathBuf::from(r),
+        None => derive_repo_filesystem(home),
+    }
+}
+
+/// Everything a Rust crate needs to call [`resolve`] from inside its own process in one
+/// step, replacing a `bash -c '. conf.sh; ...'` or `compgen -v` re-import seam
+/// (wave4-decomposition.md bead sp-mz7dn, "wave 4.8"). `home`/`repo` are the caller's own
+/// per-copy facts — [`resolve`] never self-locates them, and neither does this (see
+/// [`derive_home_repo`] for `repo`, when the caller does not already have it). The
+/// `spira.toml` in force is located the same way `spira-config locate` reports (no explicit
+/// file pin): [`crate::discover`]`(None)` then [`crate::load`]; a config file that fails to
+/// parse is a `String` error a caller can print and bail on, the same as every other
+/// `spira_config` entry point already does, rather than a new enum variant [`resolve`]
+/// itself would have to carry for an IO step it otherwise never performs.
+pub fn resolve_for_process(
+    home: &Path,
+    repo: &Path,
+    env: &BTreeMap<String, String>,
+) -> Result<Resolved, String> {
+    let toml_path = crate::discover(None);
+    let doc = match &toml_path {
+        Some(p) => Some(crate::load(p)?),
+        None => None,
+    };
+    let conf_d = default_conf_d(home);
+    resolve(ResolveInput {
+        env,
+        home,
+        repo,
+        toml: doc.as_ref(),
+        conf_d: &conf_d,
+    })
+    .map_err(|e| e.to_string())
+}
+
 /// Every resolved key, plus any warning `resolve` itself produced (today, only the
 /// `SPIRA_CLAUDE` deprecation notice) — a caller prints these to stderr; `resolve` itself
 /// never writes anywhere.
@@ -920,5 +1003,95 @@ mod tests {
         }
         assert!(sh.contains("SPIRA_RUN="), "{sh}");
         assert!(sh.contains("SPIRA_DB="), "{sh}");
+    }
+
+    #[test]
+    fn derive_home_repo_env_override_wins() {
+        let ws = testkit::TempDir::new("spira-config-derive-repo-env");
+        let (home, _repo) = fixture_home_repo(&ws);
+        let e = env(&[("SPIRA_REPO", "/explicit/override")]);
+        assert_eq!(derive_home_repo(&home, &e), Path::new("/explicit/override"));
+    }
+
+    #[test]
+    fn derive_home_repo_uses_git_toplevel() {
+        let ws = testkit::TempDir::new("spira-config-derive-repo-git");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        let e = env(&[]);
+        let got = derive_home_repo(&home, &e).canonicalize().unwrap();
+        let want = repo.canonicalize().unwrap();
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn derive_home_repo_falls_back_to_parent_outside_a_checkout() {
+        let ws = testkit::TempDir::new("spira-config-derive-repo-noparent");
+        let (home, repo) = fixture_home_repo(&ws);
+        // deliberately NOT a git repo: no `git init`
+        let e = env(&[]);
+        let got = derive_home_repo(&home, &e).canonicalize().unwrap();
+        let want = repo.canonicalize().unwrap();
+        assert_eq!(got, want);
+    }
+
+    // ENV VARS ARE PROCESS-GLOBAL: the one test here that sets GIT_DIR/GIT_WORK_TREE takes
+    // this lock for its whole body, so it never races another test's own environment.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn derive_home_repo_scrubs_the_git_hook_environment() {
+        // conf.sh's own scar: a git hook runs with GIT_DIR exported, and --show-toplevel
+        // under that answers the -C directory itself (<repo>/spira) instead of climbing to
+        // <repo> — one level too deep — unless GIT_DIR (and friends) are scrubbed first.
+        let _g = ENV_LOCK.lock().unwrap();
+        let ws = testkit::TempDir::new("spira-config-derive-repo-hook");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        let e = env(&[]);
+        let fake_git_dir = home.join(".git-hook-fake");
+        std::fs::create_dir_all(&fake_git_dir).unwrap();
+        std::env::set_var("GIT_DIR", &fake_git_dir);
+        std::env::set_var("GIT_WORK_TREE", &home);
+        let got = derive_home_repo(&home, &e).canonicalize().unwrap();
+        std::env::remove_var("GIT_DIR");
+        std::env::remove_var("GIT_WORK_TREE");
+        let want = repo.canonicalize().unwrap();
+        assert_eq!(got, want, "a scrubbed GIT_DIR must still climb to the real toplevel");
+    }
+
+    #[test]
+    fn resolve_for_process_matches_resolve_given_the_same_inputs() {
+        // discover(None), unlike resolve() itself, reads THIS PROCESS's real environment
+        // (SPIRA_TOML/XDG_CONFIG_HOME/HOME/$SPIRA_CONF), never the `env` map passed to
+        // resolve() — exactly the box this machine's own operator spira.toml under
+        // ~/.config/spira would otherwise fall into. Clear and repoint all four so this
+        // test gets the same "nothing resolves" answer on every machine, not only one
+        // with no real config, the hazard spira-config's own locate.rs tests guard the
+        // same way.
+        let _g = ENV_LOCK.lock().unwrap();
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> =
+            names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-for-process");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let e = env(&[("HOME", "/h")]);
+        let direct = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") }).unwrap();
+        let via_wrapper = resolve_for_process(&home, &repo, &e).unwrap();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert_eq!(direct, via_wrapper);
     }
 }
