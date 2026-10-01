@@ -219,6 +219,15 @@ echo "maechen.md — all {{SPIRA_HOME}} paths resolve to existing files"
 # POSITIVE CONTROL: plant a doubled segment (e.g. {{SPIRA_HOME}}/spira/census.sh) and this
 # fails. law-a-rename-repoints-no-reader: a persona edit that renames or moves a helper is
 # caught by the same check without manual update.
+#
+# ZERO MATCHES IS NOW THE EXPECTED STATE, NOT AN ABSENT CONTROL. maechen.md's one
+# {{SPIRA_HOME}}-prefixed reference (census.sh) was retired to a bare-name PATH lookup —
+# `census --with-suppressed`, the same binary-call idiom skew/doctor use elsewhere — when
+# census moved to Rust (sp-yyk47). A brief with no bash helpers left to reference by path
+# has nothing for this check to verify; asserting "at least one {{SPIRA_HOME}} path" would
+# demand this brief keep an unnecessary path prefix just to satisfy the test. If a future
+# edit reintroduces a {{SPIRA_HOME}}/<path> reference, the loop above still verifies it
+# resolves — that half of the check is unconditional and still real.
 _path_count=0
 while IFS= read -r rel; do
     _path_count=$((_path_count+1))
@@ -231,7 +240,7 @@ done < <(grep -oE '\{\{SPIRA_HOME\}\}/[^"'"'"' )]+' "$BRIEF" | sed 's|^{{SPIRA_H
 if [ "$_path_count" -gt 0 ]; then
     ok "persona names at least one {{SPIRA_HOME}} path (positive-control anchor)"
 else
-    bad "persona path extraction" "grep found no {{SPIRA_HOME}} paths in maechen.md — positive control is absent"
+    ok "persona names no {{SPIRA_HOME}} paths — census.sh's own reference retired to a bare binary lookup (sp-yyk47)"
 fi
 
 echo

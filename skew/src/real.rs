@@ -251,13 +251,12 @@ impl World for Real {
         Ok(())
     }
     fn overrides_apply(&self, repo: &Path) {
-        let _ = Command::new("overrides.sh")
-            .arg("apply")
-            .arg(repo)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
+        // bash: `overrides.sh apply "$repo"` -- unredirected, so whatever it prints (an
+        // override's own "<label>: applied"/"retired" line) reaches skew's own stdout
+        // directly. Redirecting to Stdio::null() here discarded that line entirely; fixed
+        // by inheriting stdout/stderr (Command's own default) instead of silencing them.
+        // Caught live by testenv's test-overrides.sh (sp-yyk47).
+        let _ = Command::new("overrides.sh").arg("apply").arg(repo).stdin(Stdio::null()).status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {
         // units-install is a compiled binary now (sp-31dm0): exec it directly, never
