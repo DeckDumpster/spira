@@ -2039,23 +2039,10 @@ SPIRA_TRACE_MARK='=== spira attempt'
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
 # batcher-cut's Rust seam) calls this, so every reader that widens its own match to a
 # trailing title (landed()/landed_sha() below, CHECK5 in sentinel.sh, cockpit.sh,
-# overrides.sh) stays in sync with what is actually written.
+# overrides.sh) stays in sync with what is actually written. Ported to Rust (sp-81t4d,
+# "wave 4.17" — family R, landed verification); see `land_verify::land_subject`.
 land_subject() {
-    local id="$1" _t
-    _t="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-    t = str(d[0].get("title", "")) if d else ""
-except Exception:
-    t = ""
-print(" ".join(t.split())[:120])
-' 2>/dev/null)"
-    if [ -n "${_t:-}" ]; then
-        printf 'spira: land %s — %s' "$id" "$_t"
-    else
-        printf 'spira: land %s' "$id"
-    fi
+    landing-pass land-subject "$1"
 }
 
 # landed <id> <repo> -> 0 landed, 1 not landed, 2 CANNOT TELL.
@@ -2070,51 +2057,22 @@ print(" ".join(t.split())[:120])
 # closed, and this still reported "no commit on main names it" and reopened the bead four
 # times. It reached attempt 4 against a poison threshold of 3: the harness was one pass from
 # escalating a finished, merged deliverable as a failure.
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R, landed verification); see
+# `land_verify::landed`. Both shims resolve the same optional `<repo>` default (`repo_root`)
+# bash always did and hand the binary an explicit path — the one piece of its own work this
+# shim still does, since `repo_root` lives in bash (family U) either way.
 landed() {
-    local id="$1" repo="${2:-$(repo_root)}" refs _landed_subj
-    # THE REPOSITORY'S OWN LAND REF, not `main`, and its local counterpart alongside it. The
-    # sentinel lands by pushing from the .landing worktree straight to the remote, and
-    # nothing in the harness ever pulls the shared checkout, so the local ref there is
-    # however stale the last human left it. That was survivable only while a landed branch
-    # was never deleted and CHECK 5 could fall back to "the work exists on spira/<id>"; the
-    # reaper removes that branch, so this ref list is now the only thing standing between a
-    # landed bead and being reopened. spira_landrefs keeps only refs that resolve, so a
-    # repository with no local copy of its base still works.
-    refs="$(spira_landrefs "$repo")" || return 2
-    # A LANDING RECORD, NOT A MENTION. --grep over the full message treated any commit that
-    # named the id ANYWHERE — a dependency list, a "Fixes: <id> (analysis)" cross-reference, a
-    # "Filed <id>" note in an unrelated bead's own commit — as proof that id had landed. Five
-    # certified branches were reaped and their landstate written LANDED on exactly this: a
-    # commit that talked about the bead, not one that landed it (sp-dgaig). --grep is still
-    # used to narrow full history to candidates cheaply; only the SUBJECT of each candidate is
-    # then trusted, and only two shapes count: the queue's own merge subject
-    # ("spira: land <id>", optionally " — <title>", written by land_subject() and produced
-    # by batch.sh/verdict.sh/landing.sh), or an aeon's own commit for its own bead
-    # ("<id>: ..." — never a substring, the colon must follow immediately).
-    # shellcheck disable=SC2086
-    while IFS= read -r _landed_subj; do
-        case "$_landed_subj" in
-            "spira: land $id" | "spira: land $id "*) return 0 ;;
-            "$id":*) return 0 ;;
-        esac
-    done < <(git -C "$repo" log --format='%s' --grep="$id" -F $refs 2>/dev/null)
-    return 1
+    local id="$1" repo="${2:-$(repo_root)}"
+    landing-pass landed "$id" "$repo" >/dev/null
 }
 
 # landed_sha <id> <repo> -> the sha of the commit landed() would say yes about, so a
 # caller that needs to CITE the landing (a GitHub comment) gets the same commit the
-# ancestry check trusted, never a second guess at which one that was.
+# ancestry check trusted, never a second guess at which one that was. Ported to Rust
+# (sp-81t4d, "wave 4.17"); same binary as landed(), stdout kept this time.
 landed_sha() {
-    local id="$1" repo="${2:-$(repo_root)}" refs _sha _subj
-    refs="$(spira_landrefs "$repo")" || return 2
-    # shellcheck disable=SC2086
-    while IFS=$'\t' read -r _sha _subj; do
-        case "$_subj" in
-            "spira: land $id" | "spira: land $id "*) printf '%s' "$_sha"; return 0 ;;
-            "$id":*) printf '%s' "$_sha"; return 0 ;;
-        esac
-    done < <(git -C "$repo" log --format='%H%x09%s' --grep="$id" -F $refs 2>/dev/null)
-    return 1
+    local id="$1" repo="${2:-$(repo_root)}"
+    landing-pass landed "$id" "$repo"
 }
 
 # content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
@@ -2169,46 +2127,10 @@ content_landed() {
 # Accepts a sha only when the note uses an explicit hand-landed phrase
 # ("landed as <sha>" or "hand-landed <sha>") → cited-declared, or when the commit
 # message at that sha names the bead id → cited-named.  A bare sha in prose is never
-# sufficient (law-closed-is-not-landed).
+# sufficient (law-closed-is-not-landed). Ported to Rust (sp-81t4d, "wave 4.17" — family R);
+# see `land_verify::bead_cited_commit_on_base`.
 bead_cited_commit_on_base() {
-    local id="$1" repo="$2" base="$3" kind sha _lines
-    _lines="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json, re
-try:
-    d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-    notes = d[0].get("notes") if d else None
-    if isinstance(notes, str): notes = [n for n in notes.split("\n") if n.strip()]
-    elif isinstance(notes, list): notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
-    else: notes = []
-    declared = re.compile(r"(?:landed\s+as|hand-landed)\s+([0-9a-f]{7,40})", re.IGNORECASE)
-    sha_pat = re.compile(r"[0-9a-f]{7,40}")
-    seen = set()
-    for n in notes:
-        for m in declared.finditer(str(n).lower()):
-            s = m.group(1)
-            if s not in seen:
-                seen.add(s); print("declared " + s)
-    for n in notes:
-        for s in sha_pat.findall(str(n).lower()):
-            if s not in seen:
-                seen.add(s); print("bare " + s)
-except Exception:
-    pass
-' 2>/dev/null)" || return 1
-    [ -n "$_lines" ] || return 1
-    while IFS=' ' read -r kind sha; do
-        [ -n "$sha" ] || continue
-        git -C "$repo" rev-parse -q --verify "${sha}^{commit}" >/dev/null 2>&1 || continue
-        git -C "$repo" merge-base --is-ancestor "$sha" "$base" 2>/dev/null || continue
-        if [ "$kind" = "declared" ]; then
-            printf '%s cited-declared\n' "$sha"; return 0
-        else
-            git -C "$repo" log -1 --format=%B "${sha}^{commit}" 2>/dev/null \
-                | grep -qE "(^|[^a-z0-9-])${id}([^a-z0-9-]|$)" \
-                && { printf '%s cited-named\n' "$sha"; return 0; }
-        fi
-    done <<< "$_lines"
-    return 1
+    landing-pass cited-commit "$1" "$2" "$3"
 }
 
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
@@ -2220,11 +2142,10 @@ except Exception:
 # THIS IS EVIDENCE FOR NOT REOPENING, NEVER EVIDENCE FOR DELETING. A merged pull request says
 # the work was accepted; it does not say the ref holds nothing else. A caller about to destroy
 # a branch must use content_landed, which is exact and local. This one reaches the network, so
-# it belongs behind a cheap check that has already failed — never on the common path.
+# it belongs behind a cheap check that has already failed — never on the common path. Ported
+# to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::pr_merged`.
 pr_merged() {
-    local repo="$1" br="$2" state
-    state="$( cd "$repo" 2>/dev/null && ghq pr view "$br" --json state -q .state 2>/dev/null )" || return 1
-    [ "$state" = "MERGED" ]
+    landing-pass pr-merged "$1" "$2"
 }
 
 # other_beads_on_conflicts <repo> <branch> <base> <conflicted-files> -> space-separated
@@ -2236,36 +2157,15 @@ pr_merged() {
 # in different words, one lands, and the other's rebase stops on exactly the files the
 # first one changed. The note "resolve the conflict" is misleading in that case — the
 # correct resolution may be to drop the branch rather than replay it. This function does
-# not decide; it names the evidence so the next aeon can judge.
-#
-# NO PIPE INTO GREP. `git log | grep` under pipefail returns 141 on a match when grep
-# closes the pipe first (law-no-grep-q-under-pipefail). Capture whole, then scan.
+# not decide; it names the evidence so the next aeon can judge. Ported to Rust (sp-81t4d,
+# "wave 4.17" — family R); see `land_verify::other_beads_on_conflicts`.
 other_beads_on_conflicts() {
-    local repo="$1" br="$2" base="$3" files="$4" own_id mb subjects ids
-    [ -n "$files" ] || return 0
-    own_id="${br#spira/}"
-    mb="$(git -C "$repo" merge-base "$base" "refs/heads/$br" 2>/dev/null)" || return 0
-    # shellcheck disable=SC2086
-    subjects="$(git -C "$repo" log --format='%s' "$mb..$base" -- $files 2>/dev/null)" || return 0
-    [ -n "$subjects" ] || return 0
-    ids="$(grep -oE "${own_id%%-*}-[a-z0-9]+" <<< "$subjects" | sort -u)" || return 0
-    ids="$(grep -vxF "$own_id" <<< "$ids")" || return 0
-    printf '%s' "$ids" | tr '\n' ' ' | sed 's/ $//'
+    landing-pass other-beads "$1" "$2" "$3" "$4"
 }
 
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::conflict_reopen_note`.
 conflict_reopen_note() {
-    local repo="$1" br="$2" base="$3" name="$4" conflicts="$5" actor="$6" rq_n="${7:-1}"
-    local rn other_beads note base_display
-    base_display="${base#refs/remotes/}"
-    rn="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null || echo '?')"
-    other_beads="$(other_beads_on_conflicts "$repo" "$br" "$base" "$conflicts")"
-    note="Reopened by $actor: $br does not rebase onto $base_display in $name; conflicts in ${conflicts:-unknown}. This is rebase-conflict attempt $rq_n on this bead. The branch carries $rn commit(s) from the previous session — resume from the existing work."
-    if [ -n "$other_beads" ]; then
-        note="$note Those files were changed on $base_display by $other_beads — check whether this work is already landed before resolving."
-    else
-        note="$note A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it."
-    fi
-    printf '%s' "$note"
+    landing-pass conflict-note "$1" "$2" "$3" "$4" "$5" "$6" "${7:-1}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -3559,37 +3459,13 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
 SPIRA_EVENT_COOLDOWN="${SPIRA_EVENT_COOLDOWN:-3600}"
 
 spira_event() {          # spira_event <kind> <target|-> <title> [detail]
-    local kind="${1:-}" target="${2:--}" title="${3:-}" detail="${4:-}"
-    local dir="$SPIRA_RUN/events" key f now last=0 supp=0
-    [ -n "$kind" ] && [ -n "$title" ] || return 1
-    [ "$target" = "-" ] && target=""
-
-    mkdir -p "$dir" 2>/dev/null || return 1
-    key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
-    f="$dir/$key"
-    now="${SPIRA_NOW:-$(date -u +%s)}"
-    find "$dir" -maxdepth 1 -type f -mmin +"$(( (SPIRA_EVENT_COOLDOWN * 2) / 60 + 1 ))" -delete 2>/dev/null
-    [ -s "$f" ] && read -r last supp < "$f"
-    case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
-    case "${supp:-}" in ''|*[!0-9]*) supp=0 ;; esac
-
-    if [ "$last" -gt 0 ] && [ "$(( now - last ))" -lt "$SPIRA_EVENT_COOLDOWN" ]; then
-        printf '%s %s\n' "$last" "$(( supp + 1 ))" > "$f"
-        return 0
-    fi
-    [ "$supp" -gt 0 ] \
-        && title="$title (+$supp more since $(date -u -d "@$last" +%H:%MZ 2>/dev/null || echo 'the last one'))"
-    printf '%s 0\n' "$now" > "$f"
-
-    # Events are informational — they go to the event log, not the operator mailbox.
-    # Operator asks (question/decision mails) are sent directly by the callers that have
-    # the context to write them properly. Claims, reopens, landings, and similar transitions
-    # belong in the log; the operator's mailbox holds only decisions.
-    printf '%s\tkind: %s\ttarget: %s\t%s%s\n' \
-        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$kind" "${target:--}" "$title" \
-        "${detail:+$(printf '\t%s' "$detail")}" \
-        >> "$SPIRA_RUN/events.log" 2>/dev/null || true
-    return 0
+    # Ported to `bead event` (sp-ogu8x, wave 4.24, family Z — events are the audit trail
+    # census/tsd/cockpit read; see bead/DESIGN.md "event", including why strand's own
+    # independent copy is not also collapsed onto this one yet). SPIRA_RUN/
+    # SPIRA_EVENT_COOLDOWN/SPIRA_NOW are already in this process's environment (none of the
+    # three is an unexported conf.sh derivation), so nothing needs re-threading across this
+    # exec, unlike `bdq`'s shim.
+    command bead event "$@"
 }
 
 # The status witness, and the seam a suite drives it through. `--status-from` is the honest
@@ -3978,14 +3854,10 @@ if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
 # bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
 # feature by default) — the types a builder's own close is converted to submitted instead
 # of left closed (aeon.sh, at session teardown). Non-code types (spike, ask, insight,
-# investigation, event, chore, epic) close by the agent's own hand, unchanged.
+# investigation, event, chore, epic) close by the agent's own hand, unchanged. Ported to
+# Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::is_work_type`.
 bead_is_work_type() {
-    local t="$1"
-    [ -n "$t" ] || return 1
-    case " ${SPIRA_WORK_CLOSE_TYPES:-task bug feature} " in
-        *" $t "*) return 0 ;;
-        *) return 1 ;;
-    esac
+    landing-pass is-work-type "$1"
 }
 
 # bead_close_on_land — the only place a work bead is closed for a landed reason.
@@ -4007,49 +3879,12 @@ bead_is_work_type() {
 # own repo:/branch: labels resolve the branch, spira_destroy_branch's content fence refuses
 # if that branch's diff is somehow not on the repository's base, and either kind of miss is
 # still caught by the Sending, which remains the backstop for everything this cannot reach.
+#
+# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::close_on_land`. Every
+# caller already discards this function's exit code (`|| true`), so the shim's own `|| true`
+# below is belt-and-suspenders, not a behaviour change.
 bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
-    local id="$1" sha="${2:-}"
-    local st repo_label br_label
-    read -r st repo_label br_label <<< "$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-d = d if isinstance(d, list) else [d]
-if not d: raise SystemExit(0)
-row = d[0]
-labs = row.get("labels") or []
-submitted = sys.argv[1] in labs
-repo = next((l[5:] for l in labs if l.startswith("repo:")), "-")
-br = next((l[7:] for l in labs if l.startswith("branch:")), "-")
-st = row.get("status") or "-"
-if st != "closed" and submitted: st = "submitted"
-print(f"{st} {repo} {br}")
-' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null)"
-    [ -n "${st:-}" ] || return 0
-    [ "$st" = closed ] && return 0
-    [ "$st" = submitted ] || return 0
-    if bdq close "$id" --reason-file - <<REASON >/dev/null 2>&1
-OUTCOME: landed
-Closed by the landing pass: work landed at ${sha:-unknown} (law-closed-is-not-landed).
-REASON
-    then
-        log "land-close $id: closed at ${sha:-unknown} (submitted -> landed)"
-        land_mark "$id" LANDED "$sha" "Closed by landing pass"
-    else
-        log "land-close $id: bd close failed — left submitted, CHECK 5 will report it"
-        return 0
-    fi
-    if [ "$repo_label" != "-" ] && [ "$br_label" != "-" ]; then
-        local _rp
-        if _rp="$(repo_root "$repo_label" 2>/dev/null)" \
-           && git -C "$_rp" show-ref --verify -q "refs/heads/$br_label" 2>/dev/null; then
-            if spira_reap_landed_branch "$id" "$br_label" "$_rp" "landed at ${sha:-unknown}"; then
-                log "land-close $id: reaped branch $br_label"
-            else
-                log "land-close $id: branch $br_label not reaped: ${SPIRA_REAP_ERR:-unknown} — left for the Sending"
-            fi
-        fi
-    fi
+    landing-pass close-on-land "$1" "${2:-}" || true
 }
 
 # _gh_close_ask_unblock — backfill: convert any blocking "Close GitHub issue" ask

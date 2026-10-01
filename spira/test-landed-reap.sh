@@ -25,7 +25,7 @@
 #
 # defect: sp-jci6o
 # tier: T1
-# covers: spira/lib.sh sending/src/* queue/src/*
+# covers: spira/lib.sh landing-pass/src/* sending/src/* queue/src/*
 # hermetic-ok: a stub bd (a JSON-file-per-id fixture) and local git repos — no database, no
 #   systemd, no real network
 set -uo pipefail
