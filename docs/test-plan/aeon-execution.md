@@ -493,3 +493,24 @@ Verified: `bash spira/testenv-batch.sh --suites test-aeon-teardown-e2e.sh,
 test-deadlock-sweep.sh,test-session-result-fields.sh,test-session-yield-headless.sh,
 test-testlib-migrated.sh,test-aeon-resume.sh spira/sp-g44ke` — all green. `plan-lint.sh
 --orphans` against the pre-consolidation tip reports no UC left uncovered.
+
+## 13. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
+
+`test-holds.sh` (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
+catalogued `UC-` of its own — it predates this area's numbered use cases and was never
+folded in) went red in `concierge/sp-aufxu`'s landing gate under the full parallel
+corpus, in its T5 case only: a claiming aeon's own rendered prompt should name the
+"Files already in flight" holds section and the open bead already touching the fixture
+path, and the capture came back empty both times (`wanted [...] in []`) rather than
+wrong. T1–T4 (the pure `bead_named_paths`/`render_holds_brief` logic and `holds.sh`
+against a real store) stayed green throughout.
+
+Run alone through `./target/release/testenv`, once on `concierge/sp-aufxu` and once on
+`local/main`: green on both. Per law-a-test-that-flips-is-deleted, deleted rather than
+fixed on a branch that does not touch its subject. Root-cause-and-re-add filed as
+sp-caetu — T5 claims a real bead through a real aeon inside the container, and the
+leading theory is that its prompt-capture step is what goes silently empty under cgroup
+memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 suites),
+rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
+marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
+entry is orphaned by its removal — this section is the only record of what it checked.
