@@ -22,10 +22,10 @@ impl Real {
     }
 
     /// `strand::config::Config`, resolved once per process the same way `strand`'s own
-    /// binary resolves it (env, then spira.toml, then the conf.sh default) — the detectors
-    /// moved there (wave 4.29, sp-8ofmt) and are reached in-process instead of through the
-    /// `lib.sh` seam [`Real::seam`] still carries for `spira_open_trigger_count`/
-    /// `spira_lane_admitted`.
+    /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
+    /// the detectors moved there (wave 4.29, sp-8ofmt) and are reached in-process instead
+    /// of through the `lib.sh` seam [`Real::seam`] still carries for
+    /// `spira_open_trigger_count`/`spira_lane_admitted`.
     fn strand_cfg(&self) -> &strand::config::Config {
         self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }

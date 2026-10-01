@@ -435,7 +435,7 @@ pub fn detect_livelocked(cfg: &Config) -> String {
                 }
                 let title = sanitize_title(b.title.as_deref().unwrap_or(""), 60);
                 out.push(format!(
-                    "LIVELOCK {} unmapped-repo — repo:{} not in repo-map; aeon.sh refuses to claim it; fix the label or add the repo to repo-map. title: {}",
+                    "LIVELOCK {} unmapped-repo — repo:{} not in the repo map; aeon.sh refuses to claim it; fix the label or add the repo to the repo map. title: {}",
                     b.id,
                     bad.join(", "),
                     title

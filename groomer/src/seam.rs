@@ -58,8 +58,8 @@ impl LibSeam {
     }
 
     /// `strand::config::Config`, resolved once per process exactly as `strand`'s own
-    /// binary resolves it (env, then spira.toml, then the conf.sh default) — never from
-    /// this struct's own `lib_sh` path, since the detectors no longer source it.
+    /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
+    /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
     fn strand_cfg(&self) -> &strand::config::Config {
         self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }
