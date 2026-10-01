@@ -269,9 +269,32 @@ fn pb(s: &str) -> Option<PathBuf> {
     (!s.is_empty()).then(|| PathBuf::from(s))
 }
 
+/// `git -C <repo> remote`, space-joined — matching the bash's own `git -C "$__p" remote
+/// 2>/dev/null | tr '\n' ' '`, which `real.rs`'s callers already split back apart with
+/// `split_whitespace`.
+fn git_remotes(repo: &str) -> Vec<String> {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("remote")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect())
+        .unwrap_or_default()
+}
+
 impl Lib for RealLib {
     fn context(&self, repo: Option<&str>) -> Result<(Settings, RepoCtx), String> {
-        let (rc, ans) = self.answer(Op::Context, &[repo.unwrap_or("")]);
+        // spira_home_repo/repo_root/repo_land/repo_field (family U) and spira_landref/
+        // spira_publish_forge (family W, sp-o88bx "wave 4.12") no longer a bash seam call
+        // (sp-k6lku, "wave 4.13"): the name is resolved in-process first, then threaded
+        // into the (slimmed) CONTEXT seam as $1 only so its CI-timeout per-repo override
+        // lookup still has it, and every repo-registry field below reads the same
+        // Registry the shims used to shell out to.
+        let reg = self.repo_registry();
+        let name = repo.map(str::to_string).unwrap_or_else(|| reg.home_repo().to_string());
+        let (rc, ans) = self.answer(Op::Context, &[&name]);
         if rc != 0 || ans.is_empty() {
             return Err(format!("lib.sh context seam exited {rc}"));
         }
@@ -294,7 +317,7 @@ impl Lib for RealLib {
             batcher_off: g("batcher_enable").trim() == "0",
             lc_bin: Some(PathBuf::from("spira-lc")),
             submitted_label: g("submitted_label"),
-            home_repo: g("home_repo"),
+            home_repo: reg.home_repo().to_string(),
             db: g("db"),
             bd: g("bd"),
             transition_pollsec: n("pollsec", 5),
@@ -309,46 +332,40 @@ impl Lib for RealLib {
                 incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
             },
         };
-        // spira_landref/spira_publish_forge dropped from the CONTEXT seam body
-        // (sp-o88bx, "wave 4.12"): resolved in-process here instead, through the exact
-        // same spira_config::repos the bash shims they used to call now shell out to —
-        // so this agrees with repo_root's own (still-bash, family U) resolution by
-        // construction, not by coincidence.
-        let name = g("name");
-        let reg = self.repo_registry();
+        let path = reg.root(&name);
         let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let publish = spira_config::repos::publish_forge(&reg, &name, &env_map);
+        let remotes = path.as_deref().map(git_remotes).unwrap_or_default();
+        let path = path.map(PathBuf::from);
         let r = RepoCtx {
+            mode: LandMode::parse(&reg.land(&name)).unwrap_or(LandMode::Push),
+            map_land: reg.field(&name, spira_config::repos::Column::Land).unwrap_or_default(),
+            map_base: reg.field(&name, spira_config::repos::Column::Base).unwrap_or_default(),
             name,
-            path: (g("path_ok") == "0").then(|| PathBuf::from(g("path"))).filter(|p| !p.as_os_str().is_empty()),
-            mode: LandMode::parse(&g("mode")).unwrap_or(LandMode::Push),
+            path,
             landref,
-            map_land: g("map_land"),
-            map_base: g("map_base"),
             publish,
-            remotes: g("remotes").split_whitespace().map(String::from).collect(),
+            remotes,
         };
         Ok((s, r))
     }
     fn repos(&self) -> Result<Vec<String>, String> {
-        let (rc, ans) = self.answer(Op::Repos, &[]);
-        let names = seam::parse_names0(&ans);
-        if rc != 0 || names.is_empty() {
-            return Err(format!("lib.sh repos seam exited {rc} with {} name(s)", names.len()));
-        }
-        Ok(names)
+        // spira_repos (family U) in-process (sp-k6lku, "wave 4.13"); was `_spira_config_repo
+        // all` through a bash seam call. Always non-empty: the home repo is unconditionally
+        // first.
+        Ok(self.repo_registry().all())
     }
     fn toml_path(&self) -> Option<PathBuf> {
         let (_, ans) = self.answer(Op::TomlPath, &[]);
         pb(ans.trim())
     }
     fn readback(&self, name: &str) -> (String, String) {
-        let (_, ans) = self.answer(Op::Readback, &[name]);
-        let land = ans.split('\0').next().unwrap_or("").to_string();
-        // spira_landref dropped from the Readback seam body (sp-o88bx, "wave 4.12");
-        // resolved in-process instead, same as context()'s own landref above.
-        let landref = spira_config::repos::landref(&self.repo_registry(), name).unwrap_or_default();
+        // repo_land/spira_landref (sp-k6lku, "wave 4.13"; spira_landref since sp-o88bx
+        // "wave 4.12") both in-process now — no bash seam call at all for this op.
+        let reg = self.repo_registry();
+        let land = reg.land(name);
+        let landref = spira_config::repos::landref(&reg, name).unwrap_or_default();
         (land, landref)
     }
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
@@ -783,16 +800,16 @@ mod tests {
 
     /// A stand-in lib.sh with the functions the seam calls, so RealLib's whole path —
     /// fixed script, stdin values, answer mark, record parse — runs for real.
+    /// `spira_home_repo`/`spira_repos`/`repo_root`/`repo_land`/`repo_field` (family U) are
+    /// NOT faked here (sp-k6lku, "wave 4.13"): they are no longer a bash seam call at all,
+    /// so a test exercising them sets `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` and writes a real
+    /// repo-map file instead — the same fixture `spira_config::repos` itself reads, not a
+    /// stand-in for it.
     fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
         fs::write(
             d.join("lib.sh"),
             r#"SPIRA_RUN=/run/x; LANDSTATE=/run/x/landstate; SPIRA_RELEASES=; SPIRA_DB=/db
-spira_home_repo() { printf spira; }
-spira_repos() { printf 'spira\nsvc\n\nspira\n'; }
-repo_root() { [ "$1" = spira ] && printf /repo || return 1; }
-repo_land() { printf queue.local; }
-repo_field() { case "$2" in land) echo queue.local;; base) echo local/main;; esac; }
 git() { printf 'origin\nupstream\n'; }
 land_subject() { echo "noise on stdout"; printf 'spira: land %s — T' "$1"; }
 rebase_branch() { REBASE_FAILURE=conflict; return 1; }
@@ -801,6 +818,29 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         )
         .unwrap();
         d
+    }
+
+    /// Sets `SPIRA_REPO_MAP` (and `SPIRA_HOME_REPO` when given) for the duration of `f`,
+    /// restoring whatever was there before — the real-registry counterpart of `stub_home`'s
+    /// bash fakes, for the family-U/W fields only `spira_config::repos` resolves now.
+    fn with_repo_map<R>(map: &Path, home_repo: Option<&str>, f: impl FnOnce() -> R) -> R {
+        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
+        std::env::set_var("SPIRA_REPO_MAP", map);
+        match home_repo {
+            Some(h) => std::env::set_var("SPIRA_HOME_REPO", h),
+            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        }
+        let out = f();
+        match prev_map {
+            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+            None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+        match prev_home_repo {
+            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
+            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        }
+        out
     }
 
     #[test]
@@ -856,12 +896,12 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
 
-        // spira_landref/spira_publish_forge are resolved in-process now (sp-o88bx, "wave
-        // 4.12"), through spira_config::repos against THIS process's real environment and
-        // a real git checkout — not through the stubbed lib.sh above, which still answers
-        // everything else context() asks (including repo_root's own fake "/repo", which is
-        // why `r.path` below is unaffected). A real registry file plus a real checkout
-        // stand in for them.
+        // spira_home_repo/repo_root/repo_land/repo_field (family U) and spira_landref/
+        // spira_publish_forge (family W) are all resolved in-process now (family U since
+        // sp-k6lku "wave 4.13"; family W since sp-o88bx "wave 4.12"), through
+        // spira_config::repos against THIS process's real environment and a real git
+        // checkout — not through the stubbed lib.sh above, which no longer answers any of
+        // them at all. A real registry file plus a real checkout stand in for them.
         let repo = home.join("repo");
         fs::create_dir_all(&repo).unwrap();
         let git = |args: &[&str]| {
@@ -882,42 +922,69 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         git(&["add", "f"]);
         git(&["commit", "-q", "-m", "x"]);
         git(&["branch", "-q", "local/main"]);
+        // `remotes` (git_remotes, a real `git -C <repo> remote` now — sp-k6lku, "wave
+        // 4.13" — not the stubbed lib.sh's fake `git()` shell function CONTEXT used to
+        // shell out to) needs real remotes on this real checkout.
+        git(&["remote", "add", "origin", "."]);
+        git(&["remote", "add", "upstream", "."]);
         let map = home.join("repomap-fixture");
         fs::write(&map, format!("spira | {} | queue.local | local/main |  | \n", repo.display())).unwrap();
-        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
-        std::env::set_var("SPIRA_REPO_MAP", &map);
 
-        let (s, r) = lib.context(Some("spira")).unwrap();
-
-        match prev_map {
-            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
-            None => std::env::remove_var("SPIRA_REPO_MAP"),
-        }
+        let (s, r) = with_repo_map(&map, Some("spira"), || lib.context(Some("spira")).unwrap());
 
         assert_eq!(s.run, PathBuf::from("/run/x"));
         assert_eq!(s.queue_dir, PathBuf::from("/run/x/queue"));
         assert_eq!(s.releases, None);
         assert_eq!(s.submitted_label, "spira-submitted"); // literal-ok: conf.sh's own default
         assert_eq!(s.transition_maxsec, 1800);
-        assert_eq!(r.path, Some(PathBuf::from("/repo")));
+        assert_eq!(s.home_repo, "spira");
+        assert_eq!(r.path, Some(repo.clone()));
         assert_eq!(r.mode, LandMode::QueueLocal);
+        assert_eq!(r.map_land, "queue.local");
+        assert_eq!(r.map_base, "local/main");
         assert_eq!(r.landref.as_deref(), Some("local/main"));
         assert_eq!(r.publish, Some(("origin".to_string(), "main".to_string())));
         assert_eq!(r.remotes, vec!["origin", "upstream"]);
-        let (_, other) = lib.context(Some("nope")).unwrap();
+        let (_, other) = with_repo_map(&map, Some("spira"), || lib.context(Some("nope")).unwrap());
         assert_eq!(other.path, None);
     }
 
     #[test]
-    fn repos_seam_lists_home_first_once_each_and_ignores_log_lines() {
+    fn repos_seam_lists_home_first_once_each() {
         let _serial = crate::testutil::serial();
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
-        assert_eq!(lib.repos().unwrap(), vec!["spira".to_string(), "svc".to_string()]);
-        // a lib.sh that logs while it is sourced: the log precedes the mark, never a name
-        let d = crate::testutil::tmpdir("reallib-noisy");
-        fs::write(d.join("lib.sh"), "echo 'spira: noise while sourcing' >&1\nspira_repos() { printf 'a\\nb\\n'; }\n").unwrap();
-        assert_eq!(RealLib { home: d.to_path_buf() }.repos().unwrap(), vec!["a".to_string(), "b".to_string()]);
+        let map = home.join("repomap-fixture");
+        // Home repo first always, a repeated or blank row dropped, and a row sharing the
+        // home repo's own name not duplicated — spira_config::repos::Registry::all()'s own
+        // contract (spira_repos' bash original: `repo_names | grep -vx -- "$home"`).
+        fs::write(&map, "svc | /nonexistent/svc | push |  |  | \nspira | /nonexistent/spira | push |  |  | \n\n").unwrap();
+        let names = with_repo_map(&map, Some("spira"), || lib.repos().unwrap());
+        assert_eq!(names, vec!["spira".to_string(), "svc".to_string()]);
+    }
+
+    #[test]
+    fn repos_seam_is_never_empty_even_with_no_map() {
+        // spira_repos (sp-k6lku, "wave 4.13") in-process via Registry::all(), which always
+        // puts the home repo first: there is no bash seam left to fail or answer nothing,
+        // so (unlike the retired seam call) this can no longer error.
+        let _serial = crate::testutil::serial();
+        let home = stub_home();
+        let lib = RealLib { home: home.to_path_buf() };
+        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+        let prev_home_repo = std::env::var("SPIRA_HOME_REPO").ok();
+        std::env::remove_var("SPIRA_REPO_MAP");
+        std::env::set_var("SPIRA_HOME_REPO", "spira");
+        let names = lib.repos();
+        match prev_map {
+            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+            None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+        match prev_home_repo {
+            Some(v) => std::env::set_var("SPIRA_HOME_REPO", v),
+            None => std::env::remove_var("SPIRA_HOME_REPO"),
+        }
+        assert_eq!(names.unwrap(), vec!["spira".to_string()]);
     }
 
     #[test]
@@ -936,16 +1003,6 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let seen = fs::read_to_string(&rec).unwrap();
         let lines: Vec<&str> = seen.lines().collect();
         assert_eq!(lines, ["batcher spira 0", "batcher svc 1"]);
-    }
-
-    #[test]
-    fn repos_seam_that_answers_nothing_is_an_error_not_an_empty_list() {
-        let _serial = crate::testutil::serial();
-        let d = crate::testutil::tmpdir("reallib-norepos");
-        fs::write(d.join("lib.sh"), "spira_repos() { return 0; }\n").unwrap();
-        assert!(RealLib { home: d.to_path_buf() }.repos().is_err());
-        fs::write(d.join("lib.sh"), "exit 9\n").unwrap();
-        assert!(RealLib { home: d.to_path_buf() }.repos().is_err());
     }
 
     #[test]
