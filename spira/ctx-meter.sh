@@ -644,7 +644,7 @@ elif arc_name == "safe":
     else:
         arc = f" \x1b[33m✓ safe as of {arc_behind}t ago\x1b[0m"
 elif arc_name == "failed":
-    arc = " \x1b[31m! archive failed (run archivist.sh now)\x1b[0m"
+    arc = " \x1b[31m! archive failed (run archivist now)\x1b[0m"
 elif arc_name == "timeout":
     arc = " \x1b[33m⏸ archive timed out, retrying\x1b[0m"
 elif arc_name == "capacity":

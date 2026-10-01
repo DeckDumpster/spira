@@ -301,10 +301,12 @@ impl World for Real {
         }
     }
     fn watchd_manifest(&self) -> Result<String, String> {
-        let out = Command::new("watchd.sh").arg("manifest").stdin(Stdio::null()).output();
+        // watchd is the Rust binary now (sp-07yxy's own concurrent landing) -- was
+        // watchd.sh; carried into this port per the coordinator's instruction, sp-yyk47.
+        let out = Command::new("watchd").arg("manifest").stdin(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => Ok(String::from_utf8_lossy(&o.stdout).into_owned()),
-            Ok(_) => Err("watchd.sh manifest failed".into()),
+            Ok(_) => Err("watchd manifest failed".into()),
             Err(e) => Err(e.to_string()),
         }
     }

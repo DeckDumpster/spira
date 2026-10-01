@@ -174,7 +174,7 @@ printf 'recurred | fallback-test | 1 | 1\n' > "$CENSUS_SQL_FILE"
 # The skew guard now compares the substrate's UTC_TIMESTAMP() against the HOST's own
 # UTC clock (sp-9b8py), not against the substrate's NOW(). census.sh reads that clock as
 # ${SPIRA_NOW:-$(date -u +%s)} — the same test-clock override every other suite in this
-# tree pins a clock with (lib.sh:6120, watchd.sh, test-archivist.sh, ...) — so the
+# tree pins a clock with (lib.sh:6120, watchd, test-archivist.sh, ...) — so the
 # fixtures below are relative to CENSUS_FIXED_HOST_EPOCH, a fixed epoch this suite pins
 # via SPIRA_NOW, not a fixed calendar date the real clock would eventually catch up to.
 CENSUS_FIXED_HOST_EPOCH=1781000000

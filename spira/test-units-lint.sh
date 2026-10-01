@@ -39,7 +39,7 @@ COCKPIT="$TMP/elsewhere/cockpit"; RUN="$TMP/elsewhere/run"
 mkdir -p "$COCKPIT" "$RUN/watchd"
 MAN="$TMP/watchers"
 # A daemon row, not a log row: only "daemon" watchers get a spira-watch@ unit
-# (watchd.sh cmd_units), which is the one this suite needs rendered.
+# (watchd units), which is the one this suite needs rendered.
 printf 'alpha|daemon|/usr/bin/true|\n' > "$MAN"
 RENDER_DIR="$TMP/render"; mkdir -p "$RENDER_DIR"
 CONF="$RENDER_DIR/spira.conf"
@@ -61,7 +61,7 @@ printf 'test-units-lint.sh\n'
 # THE RENDER PASS. Cheap (no systemctl, no install run) — one Python substitution per unit,
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
-# SPIRA_WATCHERS IN THE ENVIRONMENT, not only the conf: units.sh runs `watchd.sh` by name
+# SPIRA_WATCHERS IN THE ENVIRONMENT, not only the conf: units.sh runs `watchd` by name
 # (sp-gypjk), i.e. the tree's own copy, whose conf.sh would otherwise find the tree's
 # spira.toml before this suite's pinned conf. The environment wins over any config file.
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \

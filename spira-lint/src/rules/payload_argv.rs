@@ -59,8 +59,10 @@ pub struct Hit {
     pub cmd: String,
 }
 
-/// Resolve the environment and argv of `cmd`, unwrapping env/command/exec/nohup.
-fn resolve(cmd: &Command) -> (Vec<&Word>, Vec<&Word>) {
+/// Resolve the environment and argv of `cmd`, unwrapping env/command/exec/nohup. Shared
+/// with `script-callers` (sp-9y0gf), which needs the same unwrap to find the word a
+/// suite actually executes under an `env -i …` prefix.
+pub(crate) fn resolve(cmd: &Command) -> (Vec<&Word>, Vec<&Word>) {
     let (env, argv) = cmd.split_env();
     let mut env: Vec<&Word> = env.iter().collect();
     let mut argv: Vec<&Word> = argv.iter().collect();

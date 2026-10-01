@@ -156,6 +156,11 @@ id = "UC-operator-channel-27"
 tier = "T2"
 statement = "watchd tail allows one reader per watcher. A second reader refuses at once (exit 3) and names the holder pid and --takeover. Each event is delivered exactly…"
 
+[use_case.uncovered]
+reason = "test-watchd-tail.sh retired (sp-48f6g: watchd.sh rewritten to the Rust binary watchd; the reader-lock contract — free/held/released-on-drop, takeover, exact-range read, cursor advances even on a filtered-out line — is covered by watchd's own unit tests, cargo test -p watchd (lock::tests::*, tail::tests::*, commands::tests::drain_*). The coverage fence cannot yet count a Rust unit test as cover for a use case (sp-pype5); this stays a dated exception until it lands."
+date = "2026-09-30"
+bead = "sp-pype5"
+
 [[use_case]]
 id = "UC-operator-channel-28"
 tier = "T2"
@@ -201,20 +206,40 @@ id = "UC-operator-channel-32"
 tier = "T1"
 statement = "watch-refresh restarts an active daemon watcher when its target, a sibling library, the config, conf.sh, the manifest, the dispatcher or its unit's ExecStart…"
 
+[use_case.uncovered]
+reason = "test-watch-refresh.sh deleted (sp-48f6g, law-a-test-that-flips-is-deleted): the restarting-pass exec-count assertion went red then green on reruns of the identical tree (18/18 clean in isolation, red in 2 of 5 full-gate batches); sp-43627 finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-43627"
+
 [[use_case]]
 id = "UC-operator-channel-33"
 tier = "T1"
 statement = "A refresh pass fails loudly and restarts nothing when systemctl show fails, the start time is unreadable or the manifest is malformed. The orphan reaper…"
+
+[use_case.uncovered]
+reason = "test-watch-refresh.sh deleted (sp-48f6g, law-a-test-that-flips-is-deleted): the restarting-pass exec-count assertion went red then green on reruns of the identical tree (18/18 clean in isolation, red in 2 of 5 full-gate batches); sp-43627 finds the root cause and re-adds it"
+date = "2026-09-30"
+bead = "sp-43627"
 
 [[use_case]]
 id = "UC-operator-channel-34"
 tier = "T1"
 statement = "health-ids reads the id prefix from the database's issue_prefix, not from the goal (sp-c57o), and falls back to SPIRA_ID_PREFIX. A state file with none of our…"
 
+[use_case.uncovered]
+reason = "test-watchd-health-ids.sh retired (sp-48f6g: watchd.sh rewritten to the Rust binary watchd). The prefix-derivation and own-ids-absent checks are covered by cargo test -p watchd's manifest and commands tests plus a unit test on cmd_health_ids's regex boundary. The coverage fence cannot yet count a Rust unit test as cover for a use case (sp-pype5); this stays a dated exception until it lands."
+date = "2026-09-30"
+bead = "sp-pype5"
+
 [[use_case]]
 id = "UC-operator-channel-35"
 tier = "T1"
 statement = "prune removes the runtime files of watcher names that are no longer in the manifest and keeps active ones. A malformed manifest removes nothing, and a missing…"
+
+[use_case.uncovered]
+reason = "test-watchd-prune.sh retired (sp-48f6g: watchd.sh rewritten to the Rust binary watchd). Its subject — mechanism-file pruning, unit disable/removal for retired daemon rows, the log surviving prune — is covered by cargo test -p watchd (commands::tests::prune_*). The coverage fence cannot yet count a Rust unit test as cover for a use case (sp-pype5); this stays a dated exception until it lands."
+date = "2026-09-30"
+bead = "sp-pype5"
 
 [[use_case]]
 id = "UC-operator-channel-36"

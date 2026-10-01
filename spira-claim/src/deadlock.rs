@@ -4,7 +4,7 @@
 //! THE GIT STAYS OUT (same boundary as `select`, DESIGN.md §7 "`select` does no git"):
 //! resolving a bead's repository and land ref, and asking whether `spira/<id>` names the
 //! bead and merges cleanly, needs the repo map and `git`, which belong to lib.sh. The
-//! caller (`groomer.sh deadlocked`) does that legwork once per candidate and hands the
+//! caller (`groomer deadlocked`) does that legwork once per candidate and hands the
 //! verdict in on `--merge-status`; this module owns only the decision every poisoned
 //! candidate needs made from it, and the write.
 //!
@@ -20,7 +20,7 @@
 use crate::events;
 use crate::unpoison::{LcApply, LcRow, World, POISON_LABEL};
 
-/// One candidate's git verdict, from `groomer.sh deadlocked`'s merge-tree check.
+/// One candidate's git verdict, from `groomer deadlocked`'s merge-tree check.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Candidate {
     pub id: String,

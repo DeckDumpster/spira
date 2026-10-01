@@ -655,6 +655,33 @@ fn orphan_units_unknown_watcher_fails() {
     assert!(out[0].msg.contains("retired-thing"));
 }
 
+/// A watcher retired to a non-daemon kind (e.g. `log`) still orphans the old unit — a row
+/// that changed kind is not the same as a row still owning that unit. (test-doctor-orphan-
+/// units.sh property 3, retired to this crate's own tests, sp-yyk47.)
+#[test]
+fn orphan_units_watcher_retired_to_non_daemon_kind_still_orphans() {
+    let f = Fake::default();
+    f.set("SPIRA_INSTANCE", "prod");
+    *f.watchd.borrow_mut() = Ok("retired-thing|log|\n".into());
+    *f.enabled_units.borrow_mut() = Ok(vec!["spira-watch-retired-thing-prod.service".into()]);
+    let out = check_orphan_units(&f);
+    assert_eq!(out[0].level, Level::Fail);
+    assert!(out[0].msg.contains("retired-thing"));
+}
+
+/// systemctl itself failing (unreachable manager) is a FAIL, never a silent "no orphan
+/// units" — an unanswerable probe must not read as a clean bill of health. (test-doctor-
+/// orphan-units.sh property 4.)
+#[test]
+fn orphan_units_probe_failure_is_fail_not_silent_ok() {
+    let f = Fake::default();
+    f.set("SPIRA_INSTANCE", "prod");
+    *f.watchd.borrow_mut() = Ok(String::new());
+    *f.enabled_units.borrow_mut() = Err("systemctl: unreachable manager".into());
+    let out = check_orphan_units(&f);
+    assert_eq!(out[0].level, Level::Fail);
+}
+
 // ============================================================================ snapshot fresh
 
 #[test]

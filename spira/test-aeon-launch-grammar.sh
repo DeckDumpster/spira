@@ -5,7 +5,7 @@
 #
 # WHAT IS UNDER TEST
 # ------------------
-# aeon.sh and archivist.sh pass --system-prompt-snapshot on to the agent. The installed
+# aeon.sh and archivist pass --system-prompt-snapshot on to the agent. The installed
 # CLI requires an explicit value; a bare flag (no value) causes it to consume the following
 # argument (e.g. --system-prompt-file) as the value and exit with "invalid choice". This
 # suite confirms the grammar with the real binary: on is accepted, the bare flag is refused.
@@ -18,7 +18,7 @@
 #
 # defect: sp-w8l21
 # tier: T1
-# covers: aeon/src/* spira/archivist.sh doctor/src/*
+# covers: aeon/src/* archivist/src/* doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

@@ -1,0 +1,18 @@
+[package]
+name = "watchd"
+version = "1.0.0"
+edition = "2021"
+description = "watchd — the watcher manifest, and the face over the logs and cursors systemd fills. Replaces spira/watchd.sh (sp-48f6g)."
+
+[dependencies]
+libc = "0.2"
+regex = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

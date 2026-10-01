@@ -59,7 +59,7 @@ What the operator ordered (Ryan, 2026-09-30):
   a slot while it holds another, so the pools cannot deadlock (there is no hold-and-wait).
 * **Inherited admission.** A process whose environment carries `SPIRA_ADMISSION=<pool>:<slot>`
   runs inside a job that is already admitted. It takes no slot of its own. The gate sets this on
-  every command it runs, so its testenv and cargo run on the gate's slot. testenv's own build
+  every command it runs, so its testenv and cargo run on the gate's slot, except that a gate's build also takes a compile lease without waiting, so agent builds queue behind it (D11). testenv's own build
   uses the plain build wrapper (no `spira-admit`), so it runs on the compile slot testenv took
   in-process. Inheritance also follows the process tree
   for compile leases: a cargo whose ancestor already holds a compile lease (for example a nested
@@ -289,6 +289,43 @@ them release builds.
   (`SPIRA_TESTENV_MAX_CONCURRENT`, which gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`) stays
   as a backstop, and the test pool normally keeps it from ever engaging. Nothing else is
   dropped.
+* **D11: a gate's builds take compile leases without waiting.** This is option 2 of
+  sp-f4ig1-fix, chosen by the Concierge on 2026-10-01 after concierge/sp-yyk47 ended in
+  `NO_VERDICT reason=budget`.
+  **What happened.** That trial's `__batch__` row is `resolve:2,build:148`, against a setup
+  share of 150 s. It shows no `admit-compile` phase and no `admission` row, so the trial never
+  waited for admission. Its warm-copy build was slow because three admitted agent builds were
+  compiling at full width beside it, and the share expired.
+  **The rule.** While a gate's build runs, it holds weight in the compile pool, as a release
+  build does. Agent builds therefore queue behind it instead of competing with it, and the
+  gate never waits for a slot. That changes a count, which law-reduce-the-count-never-throttle-the-job
+  allows. Raising the setup share was rejected: budgets are not raised to make things pass.
+  **Mechanism.**
+  * `spira_config::admission::take_now` writes the lease at once, whatever the pool holds.
+    When the pool is full, the lease oversubscribes it. Agent leases must fit (`try_take`), so
+    they wait until the gate's lease is released.
+  * The gate's build environment fronts every cargo with `spira-admit`, carrying the token
+    `SPIRA_ADMISSION=gate` and `SPIRA_ADMIT_WHO=gate:<branch>`. That covers tools, unit phases,
+    the build fence's `make build` and `--release-bins`. Before this change, `--release-bins`
+    ran outside the trial environment without the token.
+  * The wrapper's one decision, `wrapper_action`, returns `TakeNow` for a gate token, `Wait`
+    for no token and `Exec` for a probe or a job admitted elsewhere. A `TakeNow` lease is held
+    by that cargo process and is reclaimed when the cargo exits.
+  * testenv under a gate token takes its build's lease in-process with `take_now_guard`, holds
+    it for the build only, and releases it before the test phase. The test phase takes no test
+    slot, because it rides the gate's slot.
+  * A lease's weight follows the build: an optimised or release build weighs
+    `WEIGHT_RELEASE`, anything else weighs 1.
+  * Every fresh take is logged: `gate build took compile slot N (weight W) without waiting —
+    oversubscribed: H of S held; new agent builds queue behind it`. The lease ends in the
+    `admission` telemetry like any other. cargo hides a dependency crate's stderr, so when the
+    first compile of a build is a dependency, the line is not shown; the lease is still taken
+    and recorded.
+  * If `spira-admit` is not on the gate's PATH (an older release), the gate keeps the plain
+    wrapper and the token. It never waits, but it holds nothing.
+  **What it does not do.** Agent builds that are already running when the gate's lease is
+  taken keep running at full width. The lease stops new agent builds from starting; it never
+  pre-empts one.
 * **Finding, not fixed here.** Under `lifecycle_enforce`, the model's restricted environment
   (`aeon/src/restrict.rs`) carries neither `RUSTC_WRAPPER` nor cargo on its PATH. An enforced
   session therefore gets neither the build cache nor admission. That is the restriction's

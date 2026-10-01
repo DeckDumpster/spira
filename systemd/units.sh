@@ -27,7 +27,7 @@
 # WHAT CALLERS MUST SET BEFORE SOURCING
 # --------------------------------------
 #   SPIRA_INSTANCE     the instance suffix (e.g. "prod", "test")
-#   SPIRA_HOME         the harness spira/ directory (provides watchd.sh)
+#   SPIRA_HOME         the harness spira/ directory (provides the manifest `watchd` reads)
 #   SPIRA_DOLT_DATA    if non-empty, include and enable dolt-beads.service
 #   SPIRA_TESTDB_DATA  if non-empty, include dolt-beads-test.service (not enabled)
 #
@@ -57,7 +57,7 @@ inst_name() {
 }
 
 # WATCHER UNIT NAME. The manifest row named <wname> installs as this unit for this instance.
-# spira-watch@<name>.service (watchd.sh output) → spira-watch-<name>-<instance>.service
+# spira-watch@<name>.service (watchd output) → spira-watch-<name>-<instance>.service
 inst_watch_name() { printf 'spira-watch-%s-%s.service' "$1" "$SPIRA_INSTANCE"; }
 
 # THE BROKER'S PRODUCER-PRESENT PREDICATE, called from here and from unit-ensure.sh
@@ -198,7 +198,7 @@ ENABLE+=("$(inst_name spira-reconciler-flow.timer)")
 # names (e.g., "spira-watch-testview-prod.service") for the prune membership check below.
 _watch_names=()
 watch_units=" "
-if watch_list="$(watchd.sh units)"; then
+if watch_list="$(watchd units)"; then
     for _wu in $watch_list; do
         _wname="${_wu#spira-watch@}"; _wname="${_wname%.service}"
         _inst_wu="$(inst_watch_name "$_wname")"

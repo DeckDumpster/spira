@@ -933,6 +933,39 @@ filter hold to).
   per suite and not unconditionally — a trial whose only red suite is absent on the base, or
   whose base's own broad run already happens to mention it, never pays for it.
 
+### Scar: the targeted rerun used bare `testenv`, invisible until this bead made it primary
+
+Landed 2026-09-30 23:17Z; base-untestable went from 1 in 52 gates to 7 in 50 within hours
+(concierge/sp-ooh1k, sp-aufxu, sp-31dm0). `gate.steps` here declares `bin SPIRA_TESTENV_BIN
+testenv` — "the release's testenv could not run such a branch's suites at all" (sp-isom7) —
+but both the targeted rerun (`base_rerun_cmd`, pre-existing since sp-hh5h0) and this bead's
+own image-tag query called bare `testenv` on the release's PATH regardless, because the code
+computing them sat **outside** the `if let (Some(bdef), Some(base_tools)) = …` block that
+holds the base's own tool bindings — a scoping accident, not a deliberate choice. Bare
+`testenv` exits 127 for a tree it cannot run; `base_rerun_cmd`'s own case clause maps that to
+NO_VERDICT. `base_out` then never gained the suite's line at all — not run, not red — so
+`parse::attribute` returned `BaseUntestable`, indistinguishable from a rerun that genuinely
+could not judge. Invisible at 1/52 (the old mirror answered most suites directly; only a
+selection mismatch ever reached the rerun); common once this bead made the rerun the primary
+path for every red suite on such a tree.
+
+**Fix:** `base_bdef`/`base_tools_ref` are read once, right after the `if let` closes (from
+the same `base_gate`/`base_tools` it no longer consumes by value), and both the image-tag
+query and the rerun now run through `with_bins`, and name `"${SPIRA_TESTENV_BIN:-testenv}"`
+rather than a bare name — the environment variable when the base's own tree declares one,
+the same bare name as always when it does not. No repository without a tree-owned `bin`
+testenv sees any behavior change. `cargo test -p gate`'s
+`a_tree_owned_testenv_reruns_through_its_own_binary_never_bare_testenv` and
+`the_image_tag_query_also_uses_the_tree_owned_testenv` fix this as a positive control: a
+fixture with `bin SPIRA_TESTENV_BIN testenv` declared, a branch red on a suite the base does
+not share, must attribute `branch-red` — never `base-untestable` — and the rerun's own env
+must carry the tree-keyed binary path, not nothing.
+
+**Lesson for the next port out of this `if let`:** anything computed inside depends on that
+scope ending where the destructuring does; a value needed later must be re-derived from the
+`Option` it was matched out of (`.as_ref()`, not by value) rather than assumed to still be
+in reach.
+
 ## Admission: visible, logged, re-read (sp-q20wb)
 
 Seen 2026-09-30 ~19:05Z: two Concierge landing gates sat 20 minutes behind

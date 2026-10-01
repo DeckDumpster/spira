@@ -471,7 +471,7 @@ pub fn check_failed_units(w: &dyn World) -> Vec<Line> {
 pub fn check_orphan_units(w: &dyn World) -> Vec<Line> {
     let rows = match w.watchd_manifest() {
         Ok(r) => r,
-        Err(_) => return vec![fail_bare("cannot read the watcher manifest")],
+        Err(_) => return vec![fail("cannot read the watcher manifest", "Check: watchd manifest")],
     };
     let mut known: Vec<&str> = Vec::new();
     for line in rows.lines() {
@@ -494,7 +494,7 @@ pub fn check_orphan_units(w: &dyn World) -> Vec<Line> {
         if known.contains(&wname) {
             continue;
         }
-        out.push(fail(format!("{unit} is enabled but '{wname}' has no daemon row in the manifest"), "Check: watchd.sh prune"));
+        out.push(fail(format!("{unit} is enabled but '{wname}' has no daemon row in the manifest"), "Check: watchd prune"));
     }
     if out.is_empty() {
         out.push(ok("no orphan spira-watch units"));

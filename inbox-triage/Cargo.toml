@@ -1,0 +1,17 @@
+[package]
+name = "inbox-triage"
+version = "1.0.0"
+edition = "2021"
+description = "inbox-triage — the concierge's in-session Monitor over SPIRA_CONCIERGE_INBOX: drop echoes, dedup, pass the rest. Replaces spira/inbox-triage.sh (sp-48f6g)."
+
+[dependencies]
+regex = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

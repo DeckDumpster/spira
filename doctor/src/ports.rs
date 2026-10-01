@@ -77,7 +77,8 @@ pub trait World {
     /// `systemctl --user list-units --state=failed --no-legend --plain <pattern>`.
     /// Err only when the query itself could not run; Ok(unit names) otherwise (empty = none).
     fn systemd_failed_units(&self, pattern: &str) -> Result<Vec<String>, String>;
-    /// `watchd.sh manifest` -> Ok(its stdout) or Err(query failed).
+    /// `watchd manifest` (the Rust binary, was `watchd.sh`) -> Ok(its stdout) or
+    /// Err(query failed).
     fn watchd_manifest(&self) -> Result<String, String>;
     /// `systemctl --user list-unit-files --no-legend --state=enabled <pattern>`. Ok(unit
     /// names); Err(first output line) only when the manager itself could not be reached

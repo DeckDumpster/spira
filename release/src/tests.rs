@@ -363,6 +363,51 @@ fn build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_p
     assert!(!w.rel(A).exists());
 }
 
+/// sp-6onps-compat (a P0): the one path that matters — `release build --bin-dir`, what
+/// `queue land-local` and every real deploy actually takes — must carry every declared
+/// compat name, exactly like spira/build-tarball.sh's own build does. Before this fix it
+/// did not: c26c3a7d8 shipped with none of them.
+#[test]
+fn build_with_a_bin_dir_also_carries_every_declared_compat_name() {
+    let w = World::with_git(FakeGit {
+        extra: vec![(
+            "spira/deps.toml".into(),
+            "[[compat]]\nname = \"tool\"\nalias = \"tool.sh\"\n\n[[compat]]\nname = \"missing\"\nalias = \"missing.sh\"\n".into(),
+            false,
+        )],
+        ..Default::default()
+    });
+    let tested = w.sb.p().join("round/target/release");
+    exe(&tested.join("tool"), "#!/bin/sh\n# the round's tested build\n");
+    let o = BuildOpts { repo: w.sb.p(), commit: A, target_dir: None, system_dirs: vec![], bin_dir: Some(tested) };
+    build::build(&w.cfg, &w.git, &NoCargo, &o).unwrap();
+
+    // bin/tool.sh resolves to the real binary — a bare-name PATH lookup for either name
+    // reaches the identical file.
+    let bin_alias = w.rel(A).join("bin/tool.sh");
+    assert!(bin_alias.is_symlink(), "bin/tool.sh must exist");
+    assert_eq!(fs::read_link(&bin_alias).unwrap(), Path::new("tool"));
+    assert_eq!(fs::read_to_string(&bin_alias).unwrap(), "#!/bin/sh\n# the round's tested build\n");
+
+    // spira/tool.sh resolves the same way, for a caller still spelling
+    // "$SPIRA_HOME/tool.sh" rather than relying on PATH.
+    let spira_alias = w.rel(A).join("spira/tool.sh");
+    assert!(spira_alias.is_symlink(), "spira/tool.sh must exist");
+    assert_eq!(fs::read_link(&spira_alias).unwrap(), Path::new("../bin/tool"));
+    assert_eq!(fs::read_to_string(&spira_alias).unwrap(), "#!/bin/sh\n# the round's tested build\n");
+
+    // "missing" was never built (its declared binary doesn't exist) — skipped, not refused.
+    assert!(!w.rel(A).join("bin/missing.sh").exists());
+    assert!(!w.rel(A).join("spira/missing.sh").exists());
+
+    // The manifest records both symlinks (Manifest::scan's existing Node::Link handling),
+    // and verify() still reports a clean release.
+    let m = Manifest::load(&w.rel(A)).unwrap();
+    assert_eq!(m.entries.get("bin/tool.sh"), Some(&Entry::Link("tool".into())));
+    assert_eq!(m.entries.get("spira/tool.sh"), Some(&Entry::Link("../bin/tool".into())));
+    assert_eq!(verify::verify(&w.cfg, A, &no_pre()).unwrap(), Vec::<String>::new());
+}
+
 #[test]
 fn build_refuses_a_partial_binary_set_and_leaves_nothing_behind() {
     let w = World::new();
