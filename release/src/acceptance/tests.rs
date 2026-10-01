@@ -211,7 +211,8 @@ impl Fake {
                     _ => ok(""),
                 }
             }
-            ("bash", _) => ok(""), // install.sh, ready.sh
+            ("bash", _) => ok(""), // ready.sh
+            ("spira-install", _) => ok(""), // spira-install (sp-31dm0): invoked directly now, no bash wrapper
             ("deploy.sh", args) => {
                 let tag = args.last().unwrap();
                 if args.contains(&"--allow-draft") {
@@ -415,11 +416,11 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
         assert_eq!(c.prog, "/opt/candidate/bin/release");
         assert_eq!(c.env_of("SPIRA_RUN"), Some(b.root.join("tmp/run").display().to_string().as_str()));
     }
-    // install.sh always runs with SPIRA_OPERATED=0, on the launcher environment too.
-    for c in log.iter().filter(|c| c.prog == "bash" && c.args.first().is_some_and(|a| a.ends_with("install.sh"))) {
+    // install (sp-31dm0) always runs with SPIRA_OPERATED=0, on the launcher environment too.
+    for c in log.iter().filter(|c| c.prog.ends_with("/bin/spira-install")) {
         assert_eq!(c.env_of("SPIRA_OPERATED"), Some("0"));
         assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"));
-        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install.sh resolves doctor and spira-config by bare name");
+        assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "install resolves doctor and spira-config by bare name");
         assert_eq!(c.env_of("SPIRA_RELEASE"), Some(cur.display().to_string().as_str()));
     }
     // The probe carries the builder partition's labels.

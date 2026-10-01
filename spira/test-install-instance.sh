@@ -33,7 +33,7 @@
 # SKIP CONDITION: XDG_RUNTIME_DIR is not /run/user/1001 (suite must run inside
 # the testenv container as spirauser) or user systemd is not responding.
 #
-# covers: systemd/install.sh
+# covers: install/src/bin/units_install.rs
 # requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -90,7 +90,7 @@ inst() {
     SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
     "$@" \
-    bash "$HERE/../systemd/install.sh" test 2>&1
+    units-install test 2>&1
 }
 
 # ==========================================================================
@@ -106,7 +106,7 @@ rendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SPI
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
-    bash "$HERE/../systemd/install.sh" test --render 2>&1)"
+    units-install test --render 2>&1)"
 render_rc=$?
 if [ "$render_rc" != 0 ]; then
     printf 'fixture: install.sh test --render failed (rc=%s)\n' "$render_rc"
@@ -166,7 +166,7 @@ wrendered="$(SCTL_LOG="$SCTL_LOG" PATH="$TMP/bin:$PATH" SPIRA_PATH="$TMP/bin" SP
     SPIRA_RUN="$SPIRA_RUN_DIR" SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 SPIRA_WATCHERS="$WATCHERS" \
-    bash "$HERE/../systemd/install.sh" test --render 2>&1)"
+    units-install test --render 2>&1)"
 current_unit=""
 while IFS= read -r line; do
     if [[ "$line" =~ ^=====\ (.+)\ =====$ ]]; then

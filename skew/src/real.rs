@@ -1,5 +1,5 @@
-//! The production [`crate::ports::World`]: git, `bd`-adjacent tools (`release`, `mail.sh`,
-//! `overrides.sh`, `install.sh`, `exclude.sh`), `gh`, and the `lib.sh` repository-map seam —
+//! The production [`crate::ports::World`]: git, `bd`-adjacent tools (`release`, `mail`,
+//! `overrides.sh`, `units-install`, `exclude.sh`), `gh`, and the `lib.sh` repository-map seam —
 //! the same one-shot context call `gate-check`/`queue` use rather than re-deriving the repository map
 //! resolution in Rust a second time (DESIGN.md §4: lib.sh stays the one authority).
 
@@ -260,7 +260,10 @@ impl World for Real {
             .status();
     }
     fn install_diff(&self, installer: &Path) -> (i32, String) {
-        let out = Command::new("bash").arg(installer).arg("--diff").stdin(Stdio::null()).output();
+        // units-install is a compiled binary now (sp-31dm0): exec it directly, never
+        // through bash -- the old install.sh needed `bash <installer>` because it was a
+        // script with no guaranteed +x bit; a binary is run like any other.
+        let out = Command::new(installer).arg("--diff").stdin(Stdio::null()).output();
         match out {
             Ok(o) => (
                 o.status.code().unwrap_or(-1),
@@ -268,6 +271,13 @@ impl World for Real {
             ),
             Err(e) => (3, e.to_string()),
         }
+    }
+    fn which(&self, name: &str) -> Option<String> {
+        let path = self.env("PATH")?;
+        std::env::split_paths(&path).map(|d| d.join(name)).find(|p| is_exec(p)).map(|p| p.to_string_lossy().into_owned())
+    }
+    fn is_executable(&self, p: &Path) -> bool {
+        is_exec(p)
     }
     fn gh_release_list(&self, slug: &str) -> Result<String, String> {
         let gh_timeout = std::env::var("GH_TIMEOUT").unwrap_or_else(|_| "120".to_string());
@@ -332,9 +342,6 @@ impl World for Real {
     fn read_to_string(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
     }
-    fn canonicalize_dir(&self, p: &Path) -> Option<PathBuf> {
-        std::fs::canonicalize(p).ok().filter(|c| c.is_dir())
-    }
     fn write_staged(&self, p: &Path, content: &[u8], executable: bool) -> Result<(), String> {
         use std::os::unix::fs::PermissionsExt;
         let tmp = p.with_extension(format!("spira-new.{}", std::process::id()));
@@ -383,4 +390,9 @@ fn pipe_through_exclude(home: &Path, text: &str) -> Vec<String> {
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect())
         .unwrap_or_default()
+}
+
+fn is_exec(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }

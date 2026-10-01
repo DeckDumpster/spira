@@ -825,18 +825,19 @@ pub fn gap(w: &dyn World, repo_arg: Option<&str>) -> i32 {
 // =============================================================================================
 
 pub fn units(w: &dyn World) -> i32 {
-    let spira_home = w.env("SPIRA_HOME").unwrap_or_default();
-    let systemd_dir = Path::new(&spira_home).join("..").join("systemd");
-    let base_dir = w.canonicalize_dir(&systemd_dir);
-    let installer = match &base_dir {
-        Some(d) => d.join("install.sh"),
-        None => systemd_dir.join("install.sh"),
-    };
-    if !w.exists(&installer) {
-        w.err(&format!("skew: install.sh is missing at {} — unit staleness has no answer", installer.display()));
+    // units-install is a compiled binary now (sp-31dm0, on top of sp-yyk47's own skew):
+    // install.sh --diff retired to `units-install --diff`, resolved via SPIRA_INSTALL_SH
+    // first (an explicit pin, matching skew.sh's own fix) or PATH otherwise — never a
+    // path relative to SPIRA_HOME/../systemd, which only made sense for a bash script
+    // living beside the old systemd/install.sh. EMPTY OR NOT EXECUTABLE both refuse — an
+    // explicit SPIRA_INSTALL_SH pin pointing at nothing is exactly as unanswerable as no
+    // pin and no PATH hit (skew.sh's own `[ -z "$installer" ] || [ ! -x "$installer" ]`).
+    let installer = w.env("SPIRA_INSTALL_SH").filter(|v| !v.is_empty()).or_else(|| w.which("units-install"));
+    let Some(installer) = installer.filter(|p| w.is_executable(Path::new(p))) else {
+        w.err("skew: units-install is missing (not on PATH) — unit staleness has no answer");
         return EXIT_CANNOT_CHECK;
-    }
-    let (rc, out) = w.install_diff(&installer);
+    };
+    let (rc, out) = w.install_diff(Path::new(&installer));
     if rc == 0 {
         w.out("skew: units — installed units match what this box renders");
         return EXIT_OK;

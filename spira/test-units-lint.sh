@@ -9,7 +9,7 @@
 # render+install their own unit to ask this; consolidated here it is one clone and one pass.
 #
 # tier: T0
-# covers: systemd/*.service systemd/*.timer systemd/install.sh UC-operator-channel-37
+# covers: systemd/*.service systemd/*.timer install/src/bin/units_install.rs UC-operator-channel-37
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -58,14 +58,27 @@ printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS
 printf 'test-units-lint.sh\n'
 
 # =======================================================================================
-# THE RENDER PASS. Cheap (no systemctl, no install run) — one Python substitution per unit,
+# THE RENDER PASS. Cheap (no systemctl, no install run) — one substitution pass per unit,
 # which is what every removed per-suite section actually needed to check content.
 # =======================================================================================
 # SPIRA_WATCHERS IN THE ENVIRONMENT, not only the conf: units.sh runs `watchd` by name
 # (sp-gypjk), i.e. the tree's own copy, whose conf.sh would otherwise find the tree's
 # spira.toml before this suite's pinned conf. The environment wins over any config file.
+#
+# SPIRA_HOME/SPIRA_RUN/SPIRA_COCKPIT/SPIRA_PROD IN THE ENVIRONMENT TOO (sp-31dm0): $CONF
+# above still exists for the tools that source conf.sh (watchd.sh), but units-install is a
+# compiled binary that never sources conf.sh and so never reads a spira.conf file at all —
+# it only reads real environment variables (install::bootstrap::host_from_env). Leaving
+# these four to the conf file alone rendered every @SPIRA_HOME@/@SPIRA_RUN@/@SPIRA_PROD@
+# path empty or wrong (e.g. "/spira/watchd.sh", "append:/watch-notify.log") without units-
+# install ever saying so — paths_are_configured caught it as a stray path on
+# spira-watch-notify-prod.service, the one unit here whose [Service] block leans on all
+# three. SPIRA_HOME = $CLONE/spira (this suite's own clone, never the real checkout, per
+# the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
+# SPIRA_HOME is exactly what the comment below this block is testing).
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    bash "$CLONE/systemd/install.sh" --render 2>"$TMP/render.err")"
+    SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
+    units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
 # Rust binary elsewhere in UNITS, not rendered here) — informational, not a render failure.
@@ -160,9 +173,15 @@ IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$PRODROOT/spira" > "$TMP/install.conf"
+# SPIRA_RUN/SPIRA_COCKPIT/SPIRA_PROD IN THE ENVIRONMENT TOO (sp-31dm0), same reason as the
+# render pass above: units-install never sources conf.sh, so $TMP/install.conf alone never
+# reaches it. Left to the conf file alone, @SPIRA_PROD_ROOT@ fell back to dirname(SPIRA_HOME)
+# — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
+# box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
-    bash "$CLONE/systemd/install.sh" > "$TMP/install.out" 2>&1
+    SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_PROD="$PRODROOT/spira" \
+    units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"
 case "$ilog" in *daemon-reload*) ;; *) tail -20 "$TMP/install.out" | sed 's/^/# install: /' ;; esac

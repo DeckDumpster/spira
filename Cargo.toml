@@ -55,6 +55,7 @@ members = [
     "skew",
     "doctor",
     "census",
+    "install",
     "watchd",
     "inbox-triage",
     "gh-intake",

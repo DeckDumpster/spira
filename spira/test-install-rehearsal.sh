@@ -31,7 +31,7 @@
 # SKIP CONDITION: no podman on PATH, or user systemd not available in the container.
 #
 # runtime: ~3m
-# covers: systemd/install.sh spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile
+# covers: install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
@@ -170,6 +170,17 @@ echo "configure — non-interactive spira.conf bootstrap:"
     "$CNAME" bash /workspace/spira/configure.sh >&2
 iszero "configure.sh exits 0" "$?"
 
+# ===========================================================================
+echo
+echo "build spira-install (sp-31dm0: systemd/install.sh is retired; it is a compiled binary now):"
+# ===========================================================================
+# Targeted, not a full workspace build (the gap sp-isom7 tracks for the release's own bin/
+# staying stubbed here): only the crate this suite itself now needs to exec.
+"${CEXEC[@]}" "$CNAME" bash -c \
+    'cd /workspace && cargo build --release -p install --bin spira-install 2>&1' >&2
+iszero "cargo build -p install exits 0" "$?"
+INSTALL_BIN="/workspace/target/release/spira-install"
+
 # Create the fake database marker. The .beads directory satisfies directory-existence
 # checks in ready.sh ("database absent — no .beads") and seed.sh without requiring
 # a real Dolt store or any bd migration state. The stub bd handles all list/memories
@@ -199,8 +210,8 @@ iszero "world.halted created" "$?"
 
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
-    "$CNAME" bash /workspace/systemd/install.sh >&2
-iszero "install.sh exits 0" "$?"
+    "$CNAME" "$INSTALL_BIN" >&2
+iszero "install exits 0" "$?"
 
 # ===========================================================================
 echo
@@ -299,7 +310,7 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >/dev/null
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
-    "$CNAME" bash /workspace/systemd/install.sh >/dev/null 2>&1
+    "$CNAME" "$INSTALL_BIN" >/dev/null 2>&1
 iszero "re-install for stray test exits 0" "$?"
 
 # Plant a unit not present in the owned manifest. uninstall.sh's stray sweep walks

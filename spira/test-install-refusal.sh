@@ -16,7 +16,7 @@
 #    systemctl call — this is install.sh:33-39's exit-1 contract (gap G3), previously
 #    asserted only by grepping for the phase name, never by running the refusal.
 #
-# covers: install.sh UC-instance-lifecycle-18
+# covers: install/src/bin/install.rs UC-instance-lifecycle-18
 # tier: T2
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -92,7 +92,6 @@ exit 0
 EOF
 chmod +x "$COCKPIT_DIR/layout.sh"
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -176,7 +175,7 @@ run_install() {
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "${extra_env[@]+"${extra_env[@]}"}" \
-        bash "$FIXTURE/install.sh" "${install_args[@]+"${install_args[@]}"}" 2>&1
+        spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 
 CONF_DEST="$FAKE_HOME/.config/spira/spira.conf"

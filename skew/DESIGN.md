@@ -39,8 +39,9 @@ already resolves one name:
 - **`exclude.sh harness-in`** (which directories inside a repository are a vendored harness
   copy) is unchanged, still bash, out of this bead's scope (group 1, gate/fences). `skew`
   pipes `git ls-files` / `git ls-tree` through it as a subprocess, exactly as bash did.
-- **`release`, `mail.sh`, `overrides.sh`, `install.sh --diff`, `gh`** are called exactly as
-  skew.sh called them (same argv shapes, same env vars: `SPIRA_GH`, `GH_TIMEOUT`). Nothing
+- **`release`, `mail`, `overrides.sh`, `units-install --diff` (was `install.sh --diff`,
+  sp-31dm0), `gh`** are called exactly as skew.sh called them (same argv shapes, same env
+  vars: `SPIRA_GH`, `GH_TIMEOUT`, and now `SPIRA_INSTALL_SH` to pin the installer). Nothing
   about the release binary's own contract, the mail format, or the override mechanism moves.
 
 ## 3. Contract
@@ -94,7 +95,7 @@ trait World {
     fn ref_remote(&self, base: &str, repo: &Path) -> Option<String>;
     fn ref_branch(&self, base: &str) -> String;
 
-    // git, exclude.sh, release/mail.sh/overrides.sh/install.sh/gh — one method per
+    // git, exclude.sh, release/mail/overrides.sh/units-install/gh — one method per
     // semantic operation skew.sh needed, not one per raw flag.
     ...
 

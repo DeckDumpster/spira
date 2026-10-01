@@ -7,29 +7,30 @@
 #
 # WHAT THIS GUARDS
 # ----------------
-# deploy.sh step 7 runs `SPIRA_DOCTOR=1 doctor.sh | grep '^  FAIL  '` before activation and
-# refuses the deploy on any match. doctor.sh used to have a unit-installation section that
-# diffed the box's installed units against the templates on disk (install.sh --diff, exposed
-# standalone as `skew.sh units`); a unit the incoming release adds is, by definition, not yet
+# deploy.sh step 7 runs `SPIRA_DOCTOR=1 doctor | grep '^  FAIL  '` before activation and
+# refuses the deploy on any match. doctor used to have a unit-installation section that
+# diffed the box's installed units against the templates on disk (units-install --diff, exposed
+# standalone as `skew units`); a unit the incoming release adds is, by definition, not yet
 # installed, so that section reported it MISSING — a FAIL — before the step that would have
 # installed it (step 11). Any release that added a unit refused to deploy itself.
 #
-# doctor.sh no longer has that section (sp-utt1i: doctor becomes runtime-health-only; unit
+# doctor no longer has that section (sp-utt1i: doctor becomes runtime-health-only; unit
 # installation is a host-preflight question now, not a running-box one). This suite locks
 # that in: it proves the "unit not installed" condition is real and detectable by the
-# mechanism the bug report named, then proves doctor.sh — what step 7 actually runs — does
+# mechanism the bug report named, then proves doctor — what step 7 actually runs — does
 # not FAIL on it.
 #
 # THE POSITIVE CONTROL COMES FIRST (law-absence-needs-a-positive-control). Before trusting
-# doctor.sh's silence, `install.sh --diff` is shown to report MISSING for the very unit this
-# suite then withholds from doctor.sh's environment — proving the box state really is the
+# doctor's silence, `units-install --diff` is shown to report MISSING for the very unit this
+# suite then withholds from doctor's environment — proving the box state really is the
 # "release adds a unit the box lacks" case, not a fixture that never had a chance to fail.
 #
 # THE FIXTURE IS BUILT FROM THE REAL INSTALLER (law-prefer-the-real-dependency), the same
-# approach as test-unit-drift.sh: real templates, real install.sh, a DEST this test controls.
+# approach as test-unit-drift.sh: real templates, the real units-install binary, a DEST
+# this test controls.
 #
 # tier: T1
-# covers: spira/deploy.sh doctor/src/* systemd/install.sh skew/src/*
+# covers: spira/deploy.sh doctor/src/* install/src/bin/units_install.rs skew/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -41,7 +42,7 @@ echo "test-deploy-preflight-new-unit.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# Fixture: a real harness tree install.sh can render templates from, per test-unit-drift.sh.
+# Fixture: a real harness tree units-install can render templates from, per test-unit-drift.sh.
 # ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
 mkdir -p "$FIXTURE/systemd" "$FIXTURE/spira"
@@ -49,7 +50,6 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
-ln -s "$HERE/../systemd/install.sh" "$FIXTURE/systemd/install.sh"
 for f in conf.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
@@ -68,10 +68,12 @@ inst() {
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$DOLT_DIR" \
+        SPIRA_HOME="$FIXTURE/spira" \
+        SPIRA_REPO="$FIXTURE" \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # Render every template and install it, simulating a box fully caught up on the
@@ -92,7 +94,7 @@ done <<< "$rendered"
 
 # ==========================================================================
 echo
-echo "positive control — fully-installed box: install.sh --diff reports clean:"
+echo "positive control — fully-installed box: units-install --diff reports clean:"
 # ==========================================================================
 diff_out="$(inst --diff)"; rc=$?
 is   "fixture sane: diff exits 0 before any unit is withheld" "0" "$rc"
@@ -109,9 +111,9 @@ new_unit_name="$(basename "${new_unit_path:-}")"
 rm -f "$new_unit_path"
 
 diff_out="$(inst --diff)"; rc=$?
-is   "install.sh --diff: MISSING is detected — not a silent pass" "1" "$rc"
-want "install.sh --diff: names the withheld unit as MISSING" "MISSING" "$diff_out"
-want "install.sh --diff: names the withheld unit itself" "$new_unit_name" "$diff_out"
+is   "units-install --diff: MISSING is detected — not a silent pass" "1" "$rc"
+want "units-install --diff: names the withheld unit as MISSING" "MISSING" "$diff_out"
+want "units-install --diff: names the withheld unit itself" "$new_unit_name" "$diff_out"
 
 skew_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
@@ -126,7 +128,7 @@ want "skew units: also names it MISSING" "MISSING" "$skew_out"
 
 # ==========================================================================
 echo
-echo "doctor.sh — what deploy.sh step 7 actually runs — must not FAIL on it:"
+echo "doctor — what deploy.sh step 7 actually runs — must not FAIL on it:"
 # ==========================================================================
 # A clean, minimal environment (per test-doctor-events-probe.sh's server-mode fixture) so any
 # FAIL that appears is attributable to the withheld unit, not to unrelated missing plumbing.

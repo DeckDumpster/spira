@@ -38,6 +38,8 @@ pub struct Fake {
     pub overrides_applied: RefCell<Vec<PathBuf>>,
     pub install_diff_rc: RefCell<i32>,
     pub install_diff_out: RefCell<String>,
+    pub which: RefCell<BTreeMap<String, String>>,
+    pub not_executable: RefCell<Vec<PathBuf>>,
     pub gh_tags_json: RefCell<Option<Result<String, String>>>,
     pub mail_calls: RefCell<Vec<(String, String, String)>>,
     pub mail_ok: RefCell<bool>,
@@ -194,21 +196,11 @@ impl World for Fake {
     fn read_to_string(&self, p: &Path) -> Option<String> {
         self.files.borrow().get(p).cloned()
     }
-    fn canonicalize_dir(&self, p: &Path) -> Option<PathBuf> {
-        // Lexical normalization of `..`/`.` components — good enough for a fake that never
-        // touches a real filesystem, and it makes `units()`'s constructed installer path
-        // (`$SPIRA_HOME/../systemd`) match a plain test fixture path like `/systemd`.
-        let mut out = PathBuf::new();
-        for comp in p.components() {
-            match comp {
-                std::path::Component::ParentDir => {
-                    out.pop();
-                }
-                std::path::Component::CurDir => {}
-                other => out.push(other.as_os_str()),
-            }
-        }
-        Some(out)
+    fn which(&self, name: &str) -> Option<String> {
+        self.which.borrow().get(name).cloned()
+    }
+    fn is_executable(&self, p: &Path) -> bool {
+        !self.not_executable.borrow().contains(&p.to_path_buf())
     }
     fn write_staged(&self, p: &Path, content: &[u8], executable: bool) -> Result<(), String> {
         self.written.borrow_mut().insert(p.to_path_buf(), (content.to_vec(), executable));
@@ -729,15 +721,16 @@ fn refresh_checkout_mode_stages_and_swaps() {
 #[test]
 fn units_installer_missing_cannot_check() {
     let f = Fake::default();
-    f.set_env("SPIRA_HOME", "/spira");
+    // units-install is a compiled binary now (sp-31dm0): neither SPIRA_INSTALL_SH nor a
+    // PATH hit resolves it -- units() must refuse, not guess a bash-script path.
     assert_eq!(units(&f), EXIT_CANNOT_CHECK);
+    assert!(f.stderr_joined().contains("units-install"));
 }
 
 #[test]
 fn units_clean() {
     let f = Fake::default();
-    f.set_env("SPIRA_HOME", "/spira");
-    f.existing.borrow_mut().push(PathBuf::from("/systemd/install.sh"));
+    f.which.borrow_mut().insert("units-install".into(), "/bin/units-install".into());
     *f.install_diff_rc.borrow_mut() = 0;
 
     assert_eq!(units(&f), EXIT_OK);
@@ -747,11 +740,42 @@ fn units_clean() {
 #[test]
 fn units_stale_is_a_finding() {
     let f = Fake::default();
-    f.set_env("SPIRA_HOME", "/spira");
-    f.existing.borrow_mut().push(PathBuf::from("/systemd/install.sh"));
+    f.which.borrow_mut().insert("units-install".into(), "/bin/units-install".into());
     *f.install_diff_rc.borrow_mut() = 1;
     *f.install_diff_out.borrow_mut() = "DIFFERS spira-gate.service\n".into();
 
     assert_eq!(units(&f), EXIT_FINDING);
     assert!(f.stdout_joined().contains("DIFFERS"));
+}
+
+/// SPIRA_INSTALL_SH, when set, is an explicit pin that wins over a PATH lookup — matching
+/// skew.sh's own fix (sp-31dm0): an operator who built units-install somewhere non-standard
+/// must be able to point skew at it without touching PATH.
+#[test]
+fn units_spira_install_sh_env_wins_over_path() {
+    let f = Fake::default();
+    f.set_env("SPIRA_INSTALL_SH", "/explicit/units-install");
+    // Deliberately NOT registered in `which` -- if units() fell back to a PATH lookup
+    // instead of honoring the env var, this would resolve to None and refuse.
+    *f.install_diff_rc.borrow_mut() = 0;
+
+    assert_eq!(units(&f), EXIT_OK);
+}
+
+/// EMPTY OR NOT EXECUTABLE both refuse — skew.sh's own
+/// `[ -z "$installer" ] || [ ! -x "$installer" ]`. A SPIRA_INSTALL_SH pin pointing at
+/// something that exists but is not executable (or does not exist at all) is exactly as
+/// unanswerable as no pin and no PATH hit; it must never be handed to install_diff and
+/// reported as a "finding" (exit 1) instead of CANNOT_CHECK (exit 3).
+#[test]
+fn units_spira_install_sh_set_but_not_executable_cannot_check() {
+    let f = Fake::default();
+    f.set_env("SPIRA_INSTALL_SH", "/explicit/units-install");
+    f.not_executable.borrow_mut().push(PathBuf::from("/explicit/units-install"));
+    // If units() fell through to install_diff anyway, this would be exit 0 -- the fixture
+    // deliberately makes "ran it successfully" distinguishable from "refused to run it".
+    *f.install_diff_rc.borrow_mut() = 0;
+
+    assert_eq!(units(&f), EXIT_CANNOT_CHECK);
+    assert!(f.stderr_joined().contains("units-install"));
 }

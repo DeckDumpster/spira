@@ -101,10 +101,20 @@ id = "UC-instance-lifecycle-16"
 tier = "T1"
 statement = "root install refuses with exit 5 on each conflict (foreign harness, live `aeon.sh`, gate lock held, instance mismatch, Dolt port serving another data_dir), naming the remedy and `SPIRA_INSTALL_CONFLICT_CONSIDERED`; a clean box passes"
 
+[use_case.uncovered]
+reason = "test-install-conflicts.sh retired: it sourced root install.sh directly for its five _conflict_* functions, which is gone (sp-31dm0). The five predicates are install::guards::conflict_foreign/conflict_aeon/conflict_lock/conflict_instance_arg/conflict_instance_run/conflict_dolt now, proved by cargo test -p install: guards::tests::conflict_foreign_is_clear_when_no_unit_is_installed_or_it_matches, conflict_aeon_matches_the_full_argv_entry_only, conflict_lock_is_clear_unless_the_gate_tree_lock_is_held, conflict_instance_arg_is_clear_unless_it_disagrees_with_the_existing_config, conflict_instance_run_is_clear_unless_another_instance_shares_the_run_dir, conflict_dolt_is_clear_unless_a_different_data_dir_is_being_served — not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-31dm0"
+
 [[use_case]]
 id = "UC-instance-lifecycle-17"
 tier = "T1"
 statement = "root install refuses a git-checkout `SPIRA_PROD` and a `CONFIGURE_PROD` without `conf.sh`; on an empty `SPIRA_RELEASES` it bootstraps `releases/bootstrap` with `current -> bootstrap`, otherwise it refuses naming `activate.sh`"
+
+[use_case.uncovered]
+reason = "test-install-prod-checkout.sh and test-install-bootstrap-release.sh retired: both sourced root install.sh directly for _prod_guard/_configure_prod_guard/_bootstrap_decision, which is gone (sp-31dm0). Those are install::guards::prod_guard/configure_prod_guard/bootstrap_decision now, proved by cargo test -p install: guards::tests::prod_guard_refuses_a_git_checkout_unless_overridden, configure_prod_guard_requires_conf_sh_at_the_named_path, bootstrap_decision_requires_prods_parent_under_releases — not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-31dm0"
 
 [[use_case]]
 id = "UC-instance-lifecycle-18"
@@ -121,6 +131,11 @@ id = "UC-instance-lifecycle-20"
 tier = "T1"
 statement = "the unit installer refuses when another instance's config shares any of `SPIRA_RUN`/`SPIRA_DB`/`SPIRA_PROD`/`SPIRA_DOLT_DATA`/`SPIRA_TESTDB_PORT`, naming the key, the other instance and its file, writing no unit"
 
+[use_case.uncovered]
+reason = "test-install-collisions.sh (its only suite) retired: systemd/install.sh is retired (sp-31dm0) and the check it sourced under SPIRA_INSTALL_LIB=1 is install::guards::check_path_collisions now, proved by cargo test -p install: guards::tests::a_shared_run_dir_across_instances_collides, guards::tests::the_same_instance_never_collides_with_itself, guards::tests::conf_key_parsing_strips_quotes_and_expands_home — not by a spira/test-*.sh suite this matrix can see"
+date = "2026-09-30"
+bead = "sp-31dm0"
+
 [[use_case]]
 id = "UC-instance-lifecycle-21"
 tier = "T1"
@@ -130,6 +145,11 @@ statement = "the unit installer refuses while this instance's aeons are live (be
 id = "UC-instance-lifecycle-22"
 tier = "T1"
 statement = "per-unit apply decision table: changed writes/restarts/counts; unchanged does nothing; masked is left and reported; operator-disabled is not re-enabled; ctrl-suspended is not enabled; world-halted enables without `--now`; `spira-aeon-*` is never restarted or enabled"
+
+[use_case.uncovered]
+reason = "test-install-decide.sh retired: systemd/install.sh's _unit_action is install::decide::decide now (sp-31dm0), proved by cargo test -p install: decide::tests::a_mask_outranks_every_other_signal, suspended_outranks_disabled_and_halted, operator_disabled_outranks_halted, a_halted_world_enables_without_starting, unchanged_and_active_is_skipped, changed_and_active_is_restarted, everything_else_is_enable_now — the full six-input table, not by a spira/test-*.sh suite this matrix can see. The spira-aeon-* clause is structural now: transient aeon units are never in the manifest ENABLE set this decision runs over (install::manifest), so they are unreachable by construction rather than refused by a case in the table"
+date = "2026-09-30"
+bead = "sp-31dm0"
 
 [[use_case]]
 id = "UC-instance-lifecycle-23"

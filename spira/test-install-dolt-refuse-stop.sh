@@ -19,8 +19,9 @@
 # ---------------------
 # 1. POSITIVE CONTROL (render): a template missing the line does not match the check —
 #    a suite that never fails on the defect proves nothing when it passes.
-# 2. RENDER: RefuseManualStop=yes is present in the real template AND survives render.py
-#    substitution into the actual unit text install.sh installs.
+# 2. RENDER: RefuseManualStop=yes is present in the real template AND survives render-unit
+#    (sp-31dm0: render.py is retired) substitution into the actual unit text
+#    units-install installs.
 # 3. POSITIVE CONTROL (dispatch): a unit not named dolt-beads.service, changed and
 #    active, is applied with `restart` — the ordinary path still works for everyone else.
 # 4. DISPATCH: dolt-beads.service, changed and active (the upgrade/deploy case — sp-hsnqk,
@@ -28,7 +29,7 @@
 #    install.sh still exits 0.
 #
 # tier: T1
-# covers: systemd/install.sh systemd/dolt-beads.service systemd/render.py
+# covers: install/src/bin/units_install.rs systemd/dolt-beads.service install/src/values.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
@@ -41,7 +42,6 @@ echo "test-install-dolt-refuse-stop.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 TEMPLATE="$REAL_REPO/systemd/dolt-beads.service"
-RENDER_PY="$REAL_REPO/systemd/render.py"
 
 # ==========================================================================
 echo
@@ -66,7 +66,7 @@ else
 fi
 
 DOLT_BIN="$(command -v dolt 2>/dev/null || echo /usr/bin/dolt)"
-rendered="$(python3 "$RENDER_PY" "$TEMPLATE" \
+rendered="$(render-unit "$TEMPLATE" \
     --home /fake_home --repo /fake_repo --run /fake_run --db /fake_db \
     --cockpit /fake_cockpit --dolt-data /fake_dolt_data \
     --testdb-data /fake_testdb_data --dolt "$DOLT_BIN" \
@@ -146,7 +146,7 @@ out="$(env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SP
     SPIRA_COCKPIT="$REAL_COCKPIT" \
     SPIRA_INSTANCE=prod SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
     CALL_LOG="$LOG" \
-    bash "$FIXTURE/systemd/install.sh" 2>&1)"
+    units-install 2>&1)"
 rc=$?
 iszero "install.sh exits 0 against a dolt-beads that refuses restart" "$rc"
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/install.sh skew/src/* UC-instance-lifecycle-34
+# covers: install/src/bin/units_install.rs skew/src/* UC-instance-lifecycle-34
 #
 # test-unit-drift.sh — a landed template change leaves the installed unit stale, and is
 # detected.
@@ -55,7 +55,7 @@ inst() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # ==========================================================================
@@ -142,17 +142,20 @@ fi
 echo
 echo "skew units — missing installer:"
 # ==========================================================================
-# Point SPIRA_HOME at a directory with a real lib.sh/conf.sh (so `skew` initializes) but
-# no systemd/ sibling — bash's skew.sh found lib.sh beside its OWN script regardless of
-# SPIRA_HOME, so SPIRA_HOME there was purely `units()`'s own data path; `skew` (a compiled
-# binary) uses SPIRA_HOME to locate lib.sh too (DESIGN.md §5), so this fixture needs both:
-# a real init target and a missing installer sibling.
+# units-install is a compiled binary now (sp-31dm0): `skew units` resolves it via
+# SPIRA_INSTALL_SH (an explicit pin) first, else a PATH lookup — not a path relative to
+# SPIRA_HOME/../systemd, which only made sense for a bash script living beside the old
+# systemd/install.sh. $PATH in this suite's own process still has the real units-install
+# reachable (testenv built the whole workspace), so the only reliable way to make it
+# genuinely unanswerable is to pin SPIRA_INSTALL_SH at something that is not executable —
+# exactly skew.sh's own `[ -z "$installer" ] || [ ! -x "$installer" ]` refusal.
 mkdir -p "$TMP/empty-spira"
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$TMP/empty-spira/"
-: > "$TMP/empty-spira/suite-covers.sh"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$TMP/empty-spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$TMP/empty-spira/"
 out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_HOME="$TMP/empty-spira" SPIRA_REPO="$TMP" \
+    SPIRA_INSTALL_SH="$TMP/no-such-units-install" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
     skew units 2>&1)"; rc=$?

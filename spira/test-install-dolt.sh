@@ -24,10 +24,9 @@
 # is instead invoked directly with controlled flags, bypassing conf.sh entirely.
 # This runs the actual renderer, not a copy.
 #
-# covers: systemd/render.py systemd/install.sh
+# covers: install/src/values.rs install/src/bin/units_install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-RENDER_PY="$HERE/../systemd/render.py"
 . "$HERE/testlib.sh"
 iszero()  { [ "$2" = 0 ] && ok "$1" || bad "$1" "wanted exit 0, got $2"; }
 nonzero() { [ "$2" != 0 ] && ok "$1" || bad "$1" "wanted non-zero exit, got 0"; }
@@ -37,24 +36,21 @@ echo "test-install-dolt.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # ---------------------------------------------------------------------------
-# Part 1: render.py's guard when DOLT is empty
+# Part 1: render-unit's guard when DOLT is empty (sp-31dm0: render.py is retired)
 #
-# render.py is called directly with controlled flags, so this is the actual
-# module install.sh and unit-ensure.sh both invoke, not a copy of it.
+# render-unit is called directly with controlled flags, so this is the actual
+# binding units-install and unit-ensure both invoke, not a copy of it.
 # ---------------------------------------------------------------------------
 
-if [ ! -f "$RENDER_PY" ]; then
-    printf 'FATAL: %s not found\n' "$RENDER_PY" >&2
-    exit 1
-fi
+command -v render-unit >/dev/null 2>&1 || bail "render-unit is not on PATH"
 
 DOLT_TEMPLATE="$HERE/../systemd/dolt-beads.service"
 
 # run_renderer <dolt_value> <template_path>
-# Calls render.py with controlled flags, returns its stdout+stderr and rc.
+# Calls render-unit with controlled flags, returns its stdout+stderr and rc.
 run_renderer() {
     local dolt_val="$1" template="$2"
-    python3 "$RENDER_PY" "$template" \
+    render-unit "$template" \
         --home /fake_home --repo /fake_repo --run /fake_run --db /fake_db \
         --cockpit /fake_cockpit --dolt-data /fake_dolt_data \
         --testdb-data /fake_testdb_data --dolt "$dolt_val" \

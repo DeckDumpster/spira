@@ -1,6 +1,6 @@
 //! Everything skew.sh's ported logic needs from the world, as a trait (DESIGN.md §4).
 //! `real.rs` implements it against the host (git, bd, release, gh, mail, overrides.sh,
-//! install.sh, exclude.sh, and the lib.sh repository-map seam); `tests.rs` implements it as a
+//! units-install, exclude.sh, and the lib.sh repository-map seam); `tests.rs` implements it as a
 //! fake recording calls and returning canned data — the same technique `forge`'s `FakeGh`
 //! and `gate-check`'s fakes use.
 
@@ -69,8 +69,14 @@ pub trait World {
     /// --releases <releases>`, in that order; Err on the first failure.
     fn release_build_verify_activate(&self, sha: &str, repo: &Path, base: &str, releases: &Path) -> Result<(), String>;
     fn overrides_apply(&self, repo: &Path);
-    /// `bash <installer> --diff` -> (exit code, combined output).
+    /// `<installer> --diff` (units-install, a compiled binary now, sp-31dm0 -- was
+    /// `bash install.sh --diff`) -> (exit code, combined output).
     fn install_diff(&self, installer: &Path) -> (i32, String);
+    /// Resolves `name` on PATH (a bare lookup; `units()`'s own `units-install` lookup) ->
+    /// its full path, or None if not found.
+    fn which(&self, name: &str) -> Option<String>;
+    /// `[ -x <p> ]` — a regular file with at least one executable bit set.
+    fn is_executable(&self, p: &Path) -> bool;
     /// `gh release list --repo <slug> --json tagName,isDraft` -> Ok(json) or Err(stderr's first line).
     fn gh_release_list(&self, slug: &str) -> Result<String, String>;
     /// `mail send operator --from "Skew check <skew@spira>" --subject <subject> --kind
@@ -86,8 +92,6 @@ pub trait World {
     fn readlink(&self, p: &Path) -> Option<String>;
     fn exists(&self, p: &Path) -> bool;
     fn read_to_string(&self, p: &Path) -> Option<String>;
-    /// `cd <p> 2>/dev/null && pwd -P` — None when `p` does not exist or is not a directory.
-    fn canonicalize_dir(&self, p: &Path) -> Option<PathBuf>;
     /// Writes `content`, chmod 755 when `executable`, else 644. Atomic (write-and-rename)
     /// when the target already exists so a reader mid-refresh never sees a truncated file.
     fn write_staged(&self, p: &Path, content: &[u8], executable: bool) -> Result<(), String>;
