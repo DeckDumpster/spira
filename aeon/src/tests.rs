@@ -261,8 +261,8 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
         ("SPIRA_CLAIM_RETRIES", "1".to_string()),
         ("SPIRA_CLAIM_RETRY_DELAY_S", "0".to_string()),
         ("FAYTH_LABELS", labels.to_string()),
-        // spira_config::repos (sp-37rmg): no repo-map fixture here, so the home repo
-        // resolves through the SPIRA_REPO override exactly as the old FakeSeam's
+        // spira_config::repos (sp-37rmg): no registered-repository fixture here, so the
+        // home repo resolves through the SPIRA_REPO override exactly as the old FakeSeam's
         // "repo_root"/"repo_land"/"spira_home_repo" answers always did — f.repo, "fixture",
         // "push". A test wanting an UNMAPPED repo (there is exactly one) cancels the
         // override via `extra` instead (SPIRA_REPO_DERIVED == SPIRA_REPO).
