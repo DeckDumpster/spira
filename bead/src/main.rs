@@ -69,7 +69,7 @@ fn main() {
 /// hop. That hop is still load-bearing for `cmd_file`'s `bd create`: `bead.sh` (the shim
 /// that execs into this binary) re-exports only `SPIRA_HOME`/`SPIRA_REPO_MAP` of the five
 /// vars the repo-label fence needs — `SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED` are not, because
-/// `bead.sh` only patches up the two every fixture's repo-map already depends on. This
+/// `bead.sh` only patches up the two every fixture's repository map already depends on. This
 /// script sources `lib.sh` (hence `conf.sh`) fresh inside the bash subprocess, which
 /// re-derives all five correctly before its own `bdq()` shim threads them across the exec
 /// boundary to the binary — the same exec-boundary trap this wave's rules name, worked

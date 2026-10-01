@@ -15,8 +15,8 @@
 //! rejected, not overlooked). `_auron_bdq` has no Rust-side logic of its own to retire: it
 //! sources `lib.sh`, whose own `bdq`/`_bdq_check_*`/`json_only` are already one-line shims
 //! onto `bead::bdq` (sp-w3h16, wave 4.14), so every call through this seam already reaches
-//! the one real implementation. What the bash hop still buys, and a direct
-//! `Command::new("bdq")` would not, is a FRESH `conf.sh` resolution every call:
+//! the one real implementation. What the bash hop still buys, and spawning the `bdq` binary
+//! directly would not, is a FRESH `conf.sh` resolution every call:
 //! `spira-auron.service` sets only `SPIRA_RELEASE`/`PATH` (deliberately — "nothing inherited
 //! from the user manager"), so `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED`/
 //! `SPIRA_ASK_LABEL`/`SPIRA_DB` exist in auron's own process only via this seam's bash
