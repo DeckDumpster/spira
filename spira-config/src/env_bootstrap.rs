@@ -258,10 +258,10 @@ mod tests {
 
     #[test]
     fn path_tail_appends_each_segment_once() {
-        let got = path_tail("/release/bin:/release/spira", "/opt/custom", "/home/op");
+        let got = path_tail("/release/bin:/release/spira", "/opt/custom", "/fixture-home");
         assert_eq!(
             got,
-            "/release/bin:/release/spira:/opt/custom:/home/op/.local/bin:/home/op/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
+            "/release/bin:/release/spira:/opt/custom:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
         );
     }
 
@@ -270,21 +270,21 @@ mod tests {
         // THE LAUNCHER'S PATH COMES FIRST AND IS NEVER REWRITTEN (sp-gypjk): a tail segment
         // that already appears at the front (here, SPIRA_PATH naming /usr/bin, which is also
         // a hardcoded tail entry) must not be duplicated or reordered.
-        let got = path_tail("/release/bin", "/usr/bin", "/home/op");
-        assert_eq!(got, "/release/bin:/usr/bin:/home/op/.local/bin:/home/op/.cargo/bin:/usr/local/bin:/bin");
+        let got = path_tail("/release/bin", "/usr/bin", "/fixture-home");
+        assert_eq!(got, "/release/bin:/usr/bin:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/bin");
     }
 
     #[test]
     fn path_tail_is_idempotent_on_resource() {
-        let once = path_tail("/release/bin", "", "/home/op");
-        let twice = path_tail(&once, "", "/home/op");
+        let once = path_tail("/release/bin", "", "/fixture-home");
+        let twice = path_tail(&once, "", "/fixture-home");
         assert_eq!(once, twice, "re-sourcing conf.sh must not grow PATH");
     }
 
     #[test]
     fn path_tail_empty_spira_path_contributes_nothing() {
-        let got = path_tail("/release/bin", "", "/home/op");
-        assert_eq!(got, "/release/bin:/home/op/.local/bin:/home/op/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
+        let got = path_tail("/release/bin", "", "/fixture-home");
+        assert_eq!(got, "/release/bin:/fixture-home/.local/bin:/fixture-home/.cargo/bin:/usr/local/bin:/usr/bin:/bin");
     }
 
     #[test]
@@ -318,13 +318,13 @@ mod tests {
 
     #[test]
     fn bootstrap_sh_leaves_an_existing_spira_bd_untouched() {
-        let out = bootstrap_sh("/release/bin", "", "/home/op", "/pinned/bd");
+        let out = bootstrap_sh("/release/bin", "", "/fixture-home", "/pinned/bd");
         assert!(out.contains("SPIRA_BD='/pinned/bd'"), "{out}");
     }
 
     #[test]
     fn bootstrap_sh_resolves_bd_when_unset() {
-        let out = bootstrap_sh("/release/bin", "", "/home/op", "");
+        let out = bootstrap_sh("/release/bin", "", "/fixture-home", "");
         assert!(out.contains("SPIRA_BD='bd'"), "{out}");
         assert!(out.starts_with("PATH="), "{out}");
     }
