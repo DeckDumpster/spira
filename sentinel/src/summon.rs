@@ -388,6 +388,48 @@ impl<'a> Sentinel<'a> {
         }
     }
 
+    /// express_ready_in_task_pool <task-fayths> <express-label> -> true when some task
+    /// fayth has a bead ready under its OWN partition plus the express label (lib.sh's
+    /// `express_ready_in_task_pool`, fbddd3e2b). Composes with `FAYTH_LABELS` rather than
+    /// bypassing them — exactly `ready-count "<FAYTH_LABELS>,<express-label>"
+    /// "<fayth-exclude f FAYTH_EXCLUDE_LABELS>"`, per task fayth, stopping at the first hit.
+    ///
+    /// DELETED OUTRIGHT, NOT MISSING A CALLER: wave 4.25 (sp-obhv6) deleted this function
+    /// as "no live callers" while `_ck7_summon_body` (lib.sh) still called it by name —
+    /// the call failed silently every throttled pass from then on (an undefined bash
+    /// function is "command not found", never a bug visible in a diff), so "express ready"
+    /// read false forever and the bypass never fired again. Wave 4.27 (sp-gzmd2) ported
+    /// `_ck7_summon_body` faithfully, which means it ported that silent `false` too — this
+    /// restores the actual predicate the bash intended, not the broken state it had drifted
+    /// into (sp-yh7yx).
+    ///
+    /// A fayth with no `FAYTH_LABELS` is skipped, same as the bash guard
+    /// (`[ -n "${FAYTH_LABELS:-}" ] || exit 1`) — never counted as ready.
+    fn express_ready_in_task_pool(&self, task_fayths: &[String], express_label: &str) -> bool {
+        let home = &self.cfg.home;
+        let bin = self.cfg.claim_bin.clone();
+        for f in task_fayths {
+            let labels = spira_config::chamber::fayth_get(home, f, "FAYTH_LABELS", "");
+            if labels.is_empty() {
+                continue;
+            }
+            let own = spira_config::chamber::fayth_get(home, f, "FAYTH_EXCLUDE_LABELS", "");
+            let ex = self
+                .h
+                .run(Spec::args_owned(bin.clone(), vec!["fayth-exclude".into(), f.clone(), own]));
+            let exclude = ex.stdout.trim().to_string();
+            let combined = format!("{labels},{express_label}");
+            let rc = self
+                .h
+                .run(Spec::args_owned(bin.clone(), vec!["ready-count".into(), combined, exclude]));
+            let n: i64 = rc.stdout.trim().parse().unwrap_or(0);
+            if n > 0 {
+                return true;
+            }
+        }
+        false
+    }
+
     /// summon_refill_argv -> the ExecStopPost property that refills this slot the instant
     /// the aeon it is attached to exits (lib.sh:1141; sp-0y2av). The resolved path, not the
     /// bare name: systemd validates an ExecStopPost command line itself and refuses a bare
@@ -614,20 +656,33 @@ impl<'a> Sentinel<'a> {
             }
         }
         // ADMISSION THROTTLE: the stamp holds the task pool at 0 unless the override pins
-        // it clear. The express bypass this pass once granted (`express_ready_in_task_pool`)
-        // was deleted outright at wave 4.25/sp-obhv6 with no replacement — this preserves
-        // that pass's own observable decision (the stamp alone governs; nothing is ever
-        // granted back) rather than reaching for a predicate that no longer exists.
+        // it clear, UNLESS an express bead is ready in the task pool (sp-yh7yx restores
+        // this: wave 4.25/sp-obhv6 deleted `express_ready_in_task_pool` while this loop's
+        // bash original still called it, so the bypass silently never fired from then on,
+        // and wave 4.27/sp-gzmd2 ported that broken state faithfully). An express grant
+        // sets the pool to EXACTLY 1 (`check7_pool_decision`) and restricts the summon to
+        // the express label — every OTHER gate in `summon_fayth` (world halted/draining,
+        // account capacity, the fleet ceiling) still runs on that one slot unchanged.
+        let mut express_label = String::new();
         if ck7_throttled(self.cfg.throttle_stamp.is_file(), &self.cfg.queue_throttle_override) {
-            pool = Some(check7_pool_decision(true, pool.unwrap_or(0), false));
+            let express_ready = self.express_ready_in_task_pool(&task_fayths, &self.cfg.express_label);
+            pool = Some(check7_pool_decision(true, pool.unwrap_or(0), express_ready));
             let head = std::fs::read_to_string(&self.cfg.throttle_stamp)
                 .ok()
                 .and_then(|s| s.lines().next().map(str::to_string))
                 .unwrap_or_default();
-            self.log(&format!(
-                "CHECK7 pool: throttle active ({head}) — task pool held at {}",
-                pool.unwrap_or(0)
-            ));
+            if express_ready {
+                express_label = self.cfg.express_label.clone();
+                self.log(&format!(
+                    "CHECK7 pool: throttle active — express bead ready, granting pool={} (restricted to '{express_label}')",
+                    pool.unwrap_or(0)
+                ));
+            } else {
+                self.log(&format!(
+                    "CHECK7 pool: throttle active ({head}) — task pool held at {}",
+                    pool.unwrap_or(0)
+                ));
+            }
         }
         for f in &task_fayths {
             if self.h.now() - start >= budget {
@@ -637,7 +692,7 @@ impl<'a> Sentinel<'a> {
             let mut fill: i64 = 0;
             let mut reuse: Option<i64> = None;
             loop {
-                let attempt = self.summon_fayth(f, pool, "", reuse);
+                let attempt = self.summon_fayth(f, pool, &express_label, reuse);
                 reuse = attempt.ready;
                 if !attempt.summoned {
                     break;
