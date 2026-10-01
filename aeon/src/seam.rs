@@ -12,6 +12,12 @@
 //! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
 //! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
 //! no longer shell into this seam for it at all — not even through a lib.sh shim.
+//!
+//! `_aeon_capacity_paused`, `capacity_reset_at` and `capacity_pause_set` are dropped the
+//! same way (wave 4.26, family K → `capacity.rs`): `run.rs`/`sweep.rs`/`escape.rs`/
+//! `teardown.rs` call that module in-process now, and `lib.sh`'s own `capacity_*`
+//! functions are one-line shims onto `aeon capacity <verb>` for the one bash caller left
+//! (`capacity.sh`) — not reached through this seam at all.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -27,13 +33,13 @@ IFS= read -r -d '' __aeon_fn || exit 96
 __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
-    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|\
+    _aeon_snapshot|_aeon_rebase|\
     _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
-    bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|land_state|\
+    bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|\
+    land_state|\
     land_mark|bead_is_work_type|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
@@ -58,11 +64,6 @@ _aeon_snapshot() {
     for __r in "${READY_ARGS[@]}"; do printf '%s\0' "$__r"; done
     printf '__AEON_EXCLUDE__\0'
     printf '%s\0' "$(fayth_exclude "$FAYTH" "${FAYTH_EXCLUDE_LABELS:-}")"
-}
-_aeon_capacity_paused() {
-    capacity_paused >&2; local __rc=$?
-    printf '%s' "${SPIRA_CAPACITY_LEFT:-}"
-    return $__rc
 }
 _aeon_world_gate() {
     world_gate "$FAYTH" "$1" >&2; local __rc=$?

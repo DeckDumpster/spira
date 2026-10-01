@@ -11,6 +11,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2",
  "signal-hook",
  "spira-config",
  "testkit",
@@ -29,6 +30,7 @@ dependencies = [
 name = "archivist"
 version = "1.0.0"
 dependencies = [
+ "aeon",
  "libc",
  "serde",
  "serde_json",
