@@ -30,7 +30,6 @@ pub fn unsent_keys() -> Kv {
 // ---------------------------------------------------------------------------------------
 
 fn branch_backlog_section(out: &mut Kv) {
-    let home = io::home_dir();
     let run = io::run_dir();
     let now = io::now();
 
@@ -64,7 +63,9 @@ fn branch_backlog_section(out: &mut Kv) {
         if !rp_path.join(".git").exists() {
             continue;
         }
-        let base = io::lib_call(&home, "spira_landref", &[&rname]);
+        // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+        // spira_landref/spira_landrefs/ref_remote lib.sh seam.
+        let base = spira_config::repos::landref(&reg, &rname);
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
@@ -363,7 +364,6 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let repos: HashSet<&str> = closed_pairs.iter().map(|r| r.repo.as_str()).collect();
     let mut subjects: Vec<String> = Vec::new();
     let mut branches: Vec<String> = Vec::new();
-    let home = io::home_dir();
     let reg = io::repo_registry();
     for r in repos {
         let Some(rp) = reg.root(r) else { continue };
@@ -371,9 +371,14 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if !rp_path.join(".git").exists() {
             continue;
         }
-        let Some(refs) = io::lib_call(&home, "spira_landrefs", &[&rp]) else { continue };
-        let first_ref = refs.split_whitespace().next().unwrap_or("");
-        if let Some(remote) = io::lib_call(&home, "ref_remote", &[first_ref, &rp]) {
+        // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+        // spira_landrefs/ref_remote lib.sh seam.
+        let Some((base, local)) = spira_config::repos::landrefs(&reg, &rp) else { continue };
+        let refs = match local {
+            Some(l) => format!("{base} {l}"),
+            None => base.clone(),
+        };
+        if let Some(remote) = spira_config::repos::ref_remote(&base, Some(&rp)) {
             let _ = io::git(rp_path, &["fetch", "-q", &remote]);
         }
         let mut log_args = vec!["log", "--format=%s", "-n", "2000"];

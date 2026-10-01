@@ -430,14 +430,16 @@ fn cmd_repo_containment_check() -> ExitCode {
 }
 
 /// `repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|name-at|same|
-/// containment-check> ...` — the CLI door onto [`spira_config::repos`] for the ~20 bash
-/// scripts that still call lib.sh's `repo_field`/`repo_root`/... by name (now one-line shims
-/// onto this), and for any Rust crate that has not yet been switched to call the library
+/// containment-check|landref|ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge>
+/// ...` — the CLI door onto [`spira_config::repos`] for the bash scripts that still call
+/// lib.sh's `repo_field`/`repo_root`/`spira_landref`/... by name (now one-line shims onto
+/// this), and for any Rust crate that has not yet been switched to call the library
 /// in-process (wave4-decomposition.md row 13). `field`/`gate`/`format`/`base` refuse (exit 1,
 /// no output) when `SPIRA_REPO_MAP` itself is absent — matching `repo_field`'s own
 /// `[ -f "$SPIRA_REPO_MAP" ] || return 1` — while `land`/`land-queued`/`names`/`all`/
 /// `home-repo` never refuse, matching their bash originals exactly (see `repos.rs`'s own doc
-/// on each).
+/// on each). The base-ref verbs (sp-o88bx, "wave 4.12") follow their own lib.sh originals'
+/// refusal shapes one-for-one, also documented on their `spira_config::repos` functions.
 fn cmd_repo(args: &[String]) -> ExitCode {
     let reg = repo_registry();
     match args.first().map(String::as_str) {
@@ -572,10 +574,96 @@ fn cmd_repo(args: &[String]) -> ExitCode {
             }
         },
         Some("containment-check") => cmd_repo_containment_check(),
+        // Family W (sp-o88bx, "wave 4.12"): spira_landref/ref_remote/ref_branch/
+        // qualify_base_ref/spira_landrefs/spira_publish_forge. Unlike the lookups above,
+        // `ref-branch` and `qualify-base-ref` never consult the registry at all (they only
+        // ever shell to git on the repo they're given), so lib.sh's shims for those two skip
+        // `_spira_config_repo`'s env threading entirely — see lib.sh's own comment.
+        Some("landref") => {
+            let arg = args.get(1).map(String::as_str).unwrap_or("");
+            match spira_config::repos::landref(&reg, arg) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            }
+        }
+        Some("ref-remote") => match args.get(1) {
+            // An empty `repo` positional is the shim's "${2:-}" with nothing passed, which
+            // means "no repo given" — same convention as `root`'s empty name defaulting to
+            // the home repo elsewhere in this file, not a literal empty path to shell `git
+            // -C` onto.
+            Some(r) => match spira_config::repos::ref_remote(r, args.get(2).map(String::as_str).filter(|s| !s.is_empty())) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo ref-remote <ref> [repo]");
+                ExitCode::FAILURE
+            }
+        },
+        Some("ref-branch") => match args.get(1) {
+            Some(r) => {
+                println!("{}", spira_config::repos::ref_branch(r));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config repo ref-branch <ref>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("qualify-base-ref") => match (args.get(1), args.get(2)) {
+            (Some(r), Some(repo)) => {
+                println!("{}", spira_config::repos::qualify_base_ref(r, repo));
+                ExitCode::SUCCESS
+            }
+            _ => {
+                eprintln!("usage: spira-config repo qualify-base-ref <ref> <repo>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("landrefs") => match args.get(1) {
+            Some(repo) => match spira_config::repos::landrefs(&reg, repo) {
+                Some((base, None)) => {
+                    println!("{base}");
+                    ExitCode::SUCCESS
+                }
+                Some((base, Some(local))) => {
+                    println!("{base} {local}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo landrefs <repo>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("publish-forge") => match args.get(1) {
+            Some(name) => {
+                let env_map: BTreeMap<String, String> = env::vars().collect();
+                match spira_config::repos::publish_forge(&reg, name, &env_map) {
+                    Some((remote, branch)) => {
+                        println!("{remote} {branch}");
+                        ExitCode::SUCCESS
+                    }
+                    None => ExitCode::FAILURE,
+                }
+            }
+            None => {
+                eprintln!("usage: spira-config repo publish-forge <name>");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
             eprintln!(
                 "usage: spira-config repo <field|names|all|home-repo|root|land|land-queued|\n\
-                 \x20            gate|format|base|name-at|same|containment-check> ..."
+                 \x20            gate|format|base|name-at|same|containment-check|landref|\n\
+                 \x20            ref-remote|ref-branch|qualify-base-ref|landrefs|publish-forge> ..."
             );
             ExitCode::FAILURE
         }

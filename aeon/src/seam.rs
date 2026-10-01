@@ -5,6 +5,13 @@
 //! (and so conf.sh) and the fayth exactly as aeon.sh did at its top, refuses any function
 //! not on its allowlist, and calls it. Inside bash a function's arguments are not a
 //! process argv, so no payload size can hit E2BIG (law-payloads-go-on-stdin).
+//!
+//! `_aeon_base`/`_aeon_repo_info`, `qualify_base_ref`/`spira_landrefs`, and the bare
+//! `spira_landref` sp-27d3d added for the heartbeat's fuse (concurrently with this bead)
+//! are all dropped from the allowlist (sp-o88bx, "wave 4.12"): family W
+//! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
+//! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
+//! no longer shell into this seam for it at all — not even through a lib.sh shim.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,14 +27,13 @@ IFS= read -r -d '' __aeon_fn || exit 96
 __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
-    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
+    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|\
     _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
-    qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
+    spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|spira_landrefs|spira_landref|\
-    land_state|\
+    capacity_pause_set|land_state|\
     land_mark|bead_is_work_type|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
@@ -73,23 +79,6 @@ _aeon_rebase() {
     printf '%s' "${REBASE_CONFLICTS:-}"
     return $__rc
 }
-_aeon_repo_info() {
-    local __n __root __base
-    for __n in "$@"; do
-        __root="$(repo_root "$__n" 2>/dev/null)" || continue
-        [ -d "$__root/.git" ] || continue
-        __base="$(spira_landref "$__root")" || __base=""
-        printf '%s\t%s\t%s\n' "$__n" "$__root" "$__base"
-    done
-}
-_aeon_base() {
-    local __b __r
-    __b="$(spira_landref "$1")" || return 1
-    printf '%s\n' "$__b"
-    printf '%s\n' "$(ref_branch "$__b")"
-    __r="$(ref_remote "$__b" "$1")" || __r=""
-    printf '%s\n' "$__r"
-}
 _aeon_thrash_meta() {
     printf '%s\n' "$(bead_metadata "$1" thrash_streak)"
     printf '%s\n' "$(bead_metadata "$1" thrash_tip)"
@@ -114,7 +103,7 @@ pub const SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_ALLOW_PROD_DIRTY", "SPIRA_CLOSE_REASON_OVERRIDE", "SPIRA_WORKFLOW_RUN_CONSIDERED",
     "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
     "SPIRA_CLAIM_RETRY_DELAY_S", "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
-    "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "PATH", "HOME", "DB",
+    "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "SPIRA_SUMMON_JITTER", "PATH", "HOME", "DB",
     "FAYTH_NAME", "FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS", "FAYTH_MAX_CONCURRENT",
     "FAYTH_ELASTIC", "FAYTH_LEASE_MINUTES", "FAYTH_HEARTBEAT_SECONDS", "FAYTH_TIMEOUT_SECONDS",
     "FAYTH_MEMORY_PREFIXES", "FAYTH_STATUTE_CORE", "FAYTH_TOOLS", "FAYTH_PROJECT_INSTRUCTIONS",
@@ -266,6 +255,32 @@ mod tests {
         assert!(!s.vars.contains_key("NOPE"));
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
         assert_eq!(s.claim_exclude, "x:builder:p");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-1cdgq: SPIRA_SUMMON_JITTER must be in SNAPSHOT_VARS, or no value a caller sets —
+    /// env, the resolved config file, a test's own override — ever reaches `Conf` at all: `Conf::new`
+    /// builds its map from `snap.vars` (the allowlisted subset `_aeon_snapshot` was asked
+    /// for), never from `snap.env` (the unfiltered `env -0` dump also on the wire). A knob
+    /// missing from this list is not "defaulted" — it is unreachable, silently, with no
+    /// error anywhere: `conf.n(JITTER_ENV, JITTER_DEFAULT)` falls back to 20 even when the
+    /// caller is certain it set it to 0 (test-thrash-teardown.sh's Case 3, seen red: the
+    /// suite's own `export SPIRA_SUMMON_JITTER=0` in testlib.sh had no effect at all).
+    #[test]
+    fn summon_jitter_env_var_reaches_the_snapshot() {
+        let dir = testkit::TempDir::new("aeon-seam-jitter");
+        let lib = dir.join("lib.sh");
+        std::fs::write(&lib, "READY_ARGS=()\nfayth_exclude() { :; }\n").unwrap();
+        std::fs::write(dir.join("b.fayth"), "FAYTH_LABELS=spira,plan\n").unwrap();
+        let mut orig = BTreeMap::new();
+        orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
+        orig.insert("SPIRA_SUMMON_JITTER".to_string(), "0".to_string());
+        let env = Env::new(orig, BTreeMap::new());
+        let seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &env };
+        let vars: Vec<String> = SNAPSHOT_VARS.iter().map(|s| s.to_string()).collect();
+        let o = seam.call("_aeon_snapshot", &vars);
+        let s = parse_snapshot(&o.stdout).unwrap();
+        assert_eq!(s.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str), Some("0"), "SPIRA_SUMMON_JITTER is set in the environment but SNAPSHOT_VARS drops it before Conf ever sees it");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

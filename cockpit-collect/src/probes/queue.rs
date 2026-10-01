@@ -184,7 +184,9 @@ pub fn queue_keys() -> Kv {
             if reg.land(&rname) != "queue" {
                 continue;
             }
-            let Some(rbase) = io::lib_call(&home, "spira_landref", &[&rname]) else { continue };
+            // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+            // spira_landref lib.sh seam.
+            let Some(rbase) = spira_config::repos::landref(&reg, &rname) else { continue };
             let rbase_sha = io::git(std::path::Path::new(&rp), &["rev-parse", &rbase]).map(|s| s.trim().to_string());
             let Some(rbase_sha) = rbase_sha else { continue };
             let Some(cert) = io::lib_call(&home, "queue_certified_list", &[&rp]) else { continue };

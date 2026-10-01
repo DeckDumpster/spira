@@ -319,6 +319,220 @@ impl Registry {
     }
 }
 
+// ========================================================================================
+// BASE REFS (wave4-decomposition.md row W, sp-o88bx "wave 4.12"): `spira_landref`,
+// `ref_remote`, `ref_branch`, `qualify_base_ref`, `spira_landrefs`, `spira_publish_forge`.
+// Ported from lib.sh's own essay (see its "THE BASE" comment, preserved there) — the
+// rationale is reproduced only in brief here:
+//
+// Every branch this harness creates or lands is measured against the REMOTE-TRACKING ref of
+// its repository's default branch, resolved per repository in this order, refusing rather
+// than guessing when none of them answers: (1) the repo-map's declared `base` column —
+// verified to exist, since shipping an unverified guess only moves the guess into the map;
+// (2) `refs/remotes/origin/HEAD`, the remote's own default as already cached locally; (3)
+// asking the remote once (`git remote set-head --auto`, which also WRITES the ref rung 2
+// reads, so this is paid at most once per repository, not once per call) — reached only when
+// there is exactly one remote, or a remote literally named `origin` among several, and
+// refused outright when there is some other number of candidates; (4) a repository with NO
+// remote at all falls back to its own current branch, since nothing can be stale against a
+// remote that does not exist — this is the ONLY rung that ever reads a checkout's HEAD, and
+// it is unreached whenever any remote exists at all, however rung 3 turns out.
+//
+// `main` is never assumed: three of a real seven-row repo-map had no `main` at all (their
+// default was `master`), so guessing breaks worktree creation, CHECK 6's rebase and
+// `gh pr create --base` all at once.
+// ========================================================================================
+
+fn git_status_ok(repo: &str, args: &[&str]) -> bool {
+    Command::new("git").arg("-C").arg(repo).args(args).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+fn git_stdout(repo: &str, args: &[&str]) -> Option<String> {
+    let out = Command::new("git").arg("-C").arg(repo).args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!s.is_empty()).then_some(s)
+}
+
+/// `git -C <repo> remote` — every configured remote, one per line. A command failure reads
+/// as "no remotes," exactly as bash's own `$(git remote 2>/dev/null)` does (a failed
+/// substitution is just an empty string, and nothing downstream distinguishes the two).
+fn git_remotes(repo: &str) -> Vec<String> {
+    match Command::new("git").arg("-C").arg(repo).arg("remote").output() {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).lines().map(str::to_string).filter(|l| !l.is_empty()).collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// `git rev-parse --verify -q <r>` — whether `r` resolves to an object in `repo`, discarding
+/// git's own error text exactly as bash's `>/dev/null 2>&1` does.
+fn verify_ref(repo: &str, r: &str) -> bool {
+    git_status_ok(repo, &["rev-parse", "--verify", "-q", r])
+}
+
+fn symbolic_ref_short(repo: &str, r: &str) -> Option<String> {
+    git_stdout(repo, &["symbolic-ref", "-q", "--short", r])
+}
+
+/// `spira_landref [repo-path-or-name]` -> the base ref, or `None` if unresolvable. `arg`
+/// containing a `/` is a repository PATH (lib.sh's own `*/*` case pattern); otherwise it is a
+/// NAME (empty meaning the home repo), resolved through `reg.root`.
+pub fn landref(reg: &Registry, arg: &str) -> Option<String> {
+    let mut name = String::new();
+    let repo = if arg.contains('/') {
+        arg.to_string()
+    } else {
+        name = if arg.is_empty() { reg.home_repo().to_string() } else { arg.to_string() };
+        reg.root(&name)?
+    };
+    if name.is_empty() {
+        name = reg.name_at(&repo).unwrap_or_default();
+    }
+    // `[ -e "$repo/.git" ]` — exists, not is-dir: a worktree's `.git` is a file.
+    if !Path::new(&repo).join(".git").exists() {
+        return None;
+    }
+
+    // 1 — declared. A row with no `base` column, an unmapped name, or an absent map all read
+    // as "" here, same as repo_field's own return convention.
+    if !name.is_empty() {
+        let r = reg.base(&name).unwrap_or_default();
+        if !r.is_empty() {
+            return verify_ref(&repo, &r).then_some(r);
+        }
+    }
+
+    // 2 — the remote's own declared default, as cached locally.
+    if let Some(r) = symbolic_ref_short(&repo, "refs/remotes/origin/HEAD") {
+        if verify_ref(&repo, &r) {
+            return Some(r);
+        }
+    }
+
+    // 3 — ask the remote once: `origin` if present, the lone remote if there is only one,
+    // refused on any other count. Reaching this rung with any remote at all means rung 4 is
+    // never consulted, win or lose — a checkout's HEAD is never trusted while a remote
+    // exists.
+    let remotes = git_remotes(&repo);
+    if !remotes.is_empty() {
+        let remote = if remotes.iter().any(|r| r == "origin") {
+            Some("origin".to_string())
+        } else if remotes.len() == 1 {
+            Some(remotes[0].clone())
+        } else {
+            None
+        };
+        if let Some(remote) = remote {
+            if git_status_ok(&repo, &["remote", "set-head", &remote, "--auto"]) {
+                if let Some(r) = symbolic_ref_short(&repo, &format!("refs/remotes/{remote}/HEAD")) {
+                    if verify_ref(&repo, &r) {
+                        return Some(r);
+                    }
+                }
+            }
+        }
+        return None;
+    }
+
+    // 4 — no remote at all: the repository's own current branch, the only rung that reads
+    // a checkout's HEAD at all.
+    if let Some(r) = symbolic_ref_short(&repo, "HEAD") {
+        if verify_ref(&repo, &r) {
+            return Some(r);
+        }
+    }
+    None
+}
+
+/// `ref_remote <ref> [repo]` -> the remote name before the first `/`, or `None` when `ref`
+/// has no `/` at all, or (when `repo` is given) that prefix does not actually name one of
+/// `repo`'s remotes — a `queue.local` row's ref like `local/main` is a local branch that
+/// happens to contain a slash, not a remote-tracking one, and `repo` is what tells the two
+/// apart. Without a repo (a caller that predates that distinction), the split is unconditional.
+pub fn ref_remote(ref_: &str, repo: Option<&str>) -> Option<String> {
+    let prefix = ref_.split_once('/')?.0.to_string();
+    if let Some(repo) = repo {
+        if !git_remotes(repo).iter().any(|r| r == &prefix) {
+            return None;
+        }
+    }
+    Some(prefix)
+}
+
+/// `ref_branch <ref>` -> everything after the first `/`, or `ref` unchanged when it has none.
+pub fn ref_branch(ref_: &str) -> String {
+    match ref_.split_once('/') {
+        Some((_, rest)) => rest.to_string(),
+        None => ref_.to_string(),
+    }
+}
+
+/// `qualify_base_ref <ref> <repo>` -> the fully-qualified `refs/remotes/<remote>/<branch>`
+/// when `ref` names one of `repo`'s remotes and that ref actually exists there, else `ref`
+/// unchanged — a bare `origin/main` is ambiguous when `refs/heads/origin/main` also exists,
+/// so a caller that has resolved a remote wants the qualified form to be unambiguous.
+pub fn qualify_base_ref(ref_: &str, repo: &str) -> String {
+    let Some(remote) = ref_remote(ref_, Some(repo)) else {
+        return ref_.to_string();
+    };
+    let branch = ref_branch(ref_);
+    let fq = format!("refs/remotes/{remote}/{branch}");
+    if verify_ref(repo, &fq) {
+        fq
+    } else {
+        ref_.to_string()
+    }
+}
+
+/// `spira_landrefs <repo>` -> the land ref, plus its local counterpart when one exists. The
+/// commit graph is read across BOTH because a commit can be on the local branch and not yet
+/// pushed, or pushed and never pulled into this checkout.
+pub fn landrefs(reg: &Registry, repo: &str) -> Option<(String, Option<String>)> {
+    let base = landref(reg, repo)?;
+    let lo = ref_branch(&base);
+    let local = if lo != base && verify_ref(repo, &lo) { Some(lo) } else { None };
+    Some((base, local))
+}
+
+/// `spira_publish_forge <name>` -> `(remote, branch)`, the forge target a `queue.local`
+/// repository's publish queue fast-forwards on a green publish PR. Never `ref_remote` of the
+/// land ref — under `queue.local` that ref is a bare local branch by design, so the forge
+/// target must be named instead: the remote defaults to `origin`
+/// (`SPIRA_PUBLISH_REMOTE`/per-repo `SPIRA_PUBLISH_REMOTE_<NAME>` override it); the branch
+/// defaults to the land ref's own name with a leading `local/` stripped
+/// (`SPIRA_PUBLISH_BRANCH_<NAME>` overrides that). `<NAME>` is `name` uppercased with `-`
+/// mapped to `_` (bash: `tr 'a-z-' 'A-Z_'` — only lowercase letters and `-` are touched).
+pub fn publish_forge(reg: &Registry, name: &str, env: &BTreeMap<String, String>) -> Option<(String, String)> {
+    let base = landref(reg, name)?;
+    let key: String = name
+        .chars()
+        .map(|c| match c {
+            'a'..='z' => c.to_ascii_uppercase(),
+            '-' => '_',
+            other => other,
+        })
+        .collect();
+    let remote = env
+        .get(&format!("SPIRA_PUBLISH_REMOTE_{key}"))
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .or_else(|| env.get("SPIRA_PUBLISH_REMOTE").filter(|v| !v.is_empty()).cloned())
+        .unwrap_or_else(|| "origin".to_string());
+    let branch = env
+        .get(&format!("SPIRA_PUBLISH_BRANCH_{key}"))
+        .filter(|v| !v.is_empty())
+        .cloned()
+        .unwrap_or_else(|| base.strip_prefix("local/").unwrap_or(&base).to_string());
+    if branch.is_empty() {
+        return None;
+    }
+    Some((remote, branch))
+}
+
 /// `_spira_gitstore <path>` — its shared git directory, canonicalized, or `None` when `path`
 /// is not inside a git checkout at all. `--git-common-dir` and not `--git-dir`: a worktree has
 /// a private git dir and a shared common one, and only the shared one identifies the
@@ -350,9 +564,73 @@ pub fn same_repo(a: &str, b: &str) -> bool {
     }
 }
 
+/// The registry's inputs — `SPIRA_REPO_MAP`, `SPIRA_HOME_REPO`, `SPIRA_REPO`,
+/// `SPIRA_REPO_DERIVED` — filled in when this process's environment lacks them. conf.sh
+/// resolves all four but exports none, and a binary run from a unit or a shell that never
+/// sourced it (queue, first), so reading the bare environment found no map, no `spira` row, and no landing
+/// ref: every land-local refused (sp-z3eyk). Resolve them in-process exactly as conf.sh
+/// would; a key the environment already sets wins, and a failed resolve leaves the
+/// environment as it was, so the lookup still refuses rather than guessing.
+pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    const KEYS: [&str; 4] = ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_REPO", "SPIRA_REPO_DERIVED"];
+    if KEYS.iter().all(|k| env.get(*k).is_some_and(|v| !v.is_empty())) {
+        return env;
+    }
+    let repo = env
+        .get("SPIRA_REPO")
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| home.parent().map(std::path::Path::to_path_buf))
+        .unwrap_or_default();
+    let doc = crate::locate::locate(None)
+        .found()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| crate::validate(&t).ok());
+    let conf_d = crate::resolve::default_conf_d(home);
+    let input = crate::resolve::ResolveInput { env: &env, home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d };
+    if let Ok(r) = crate::resolve::resolve(input) {
+        for k in KEYS {
+            if env.get(k).is_none_or(|v| v.is_empty()) && !r.get(k).is_empty() {
+                env.insert(k.to_string(), r.get(k).to_string());
+            }
+        }
+    }
+    env
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sp-z3eyk: conf.sh resolves the repo map but never exports it, so queue's own
+    /// environment lacks it (queue: sp-z3eyk). The registry must still find it, resolved in-process.
+    #[test]
+    fn registry_env_resolves_the_map_conf_sh_never_exports() {
+        let t = testkit::TempDir::new("repos-registry-env");
+        let xdg = t.path().join("xdg");
+        std::fs::create_dir_all(xdg.join("spira")).unwrap();
+        std::fs::write(xdg.join("spira/repo-map"), "spira|/nowhere|local|local/main\n").unwrap();
+        std::fs::write(xdg.join("spira/spira.conf"), "").unwrap();
+        let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HOME".to_string(), t.path().display().to_string());
+        env.insert("XDG_CONFIG_HOME".to_string(), xdg.display().to_string());
+        env.insert("SPIRA_REPO".to_string(), t.path().display().to_string());
+        env.insert("SPIRA_CONF".to_string(), xdg.join("spira/spira.conf").display().to_string());
+        let out = registry_env(env, &home);
+        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(xdg.join("spira/repo-map").to_str().unwrap()), "{out:?}");
+    }
+
+    #[test]
+    fn registry_env_keeps_what_the_environment_already_sets() {
+        let mut env = std::collections::BTreeMap::new();
+        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0")] {
+            env.insert(k.to_string(), v.to_string());
+        }
+        let out = registry_env(env.clone(), std::path::Path::new("/nonexistent/spira"));
+        assert_eq!(out, env);
+    }
+
 
     fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
@@ -577,5 +855,172 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
     fn same_repo_is_false_when_either_path_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("spira-config-repos-not-a-repo");
         assert!(!same_repo(dir.path().to_str().unwrap(), dir.path().to_str().unwrap()));
+    }
+
+    // ---- base refs (family W, sp-o88bx) ---------------------------------------------------
+
+    fn init_repo(dir: &Path, branch: &str) {
+        std::fs::create_dir_all(dir).unwrap();
+        run_git(dir, &["init", "-q", "-b", branch]);
+        std::fs::write(dir.join("f"), "x").unwrap();
+        run_git(dir, &["add", "f"]);
+        run_git(dir, &["commit", "-q", "-m", "x"]);
+    }
+
+    fn registry_for(map: &str, home_name: &str) -> Registry {
+        Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", home_name)]), Path::new("/nonexistent"))
+    }
+
+    #[test]
+    fn ref_branch_strips_up_to_the_first_slash_or_passes_through() {
+        assert_eq!(ref_branch("origin/master"), "master");
+        assert_eq!(ref_branch("local/main"), "main");
+        assert_eq!(ref_branch("main"), "main");
+    }
+
+    #[test]
+    fn ref_remote_reads_the_prefix_and_a_repo_narrows_it_to_a_real_remote() {
+        assert_eq!(ref_remote("main", None), None, "no slash at all");
+        assert_eq!(ref_remote("origin/main", None), Some("origin".to_string()), "no repo: unconditional split");
+        let dir = testkit::TempDir::new("spira-config-repos-ref-remote");
+        let repo = dir.join("repo");
+        init_repo(&repo, "main");
+        let repo = repo.to_str().unwrap();
+        assert_eq!(ref_remote("origin/main", Some(repo)), None, "no remote named origin here");
+        assert_eq!(
+            ref_remote("local/main", Some(repo)), None,
+            "a queue.local ref: the 'local' prefix is not a real remote, so it reads as local, not remote 'local'"
+        );
+    }
+
+    #[test]
+    fn qualify_base_ref_qualifies_only_a_real_remote_tracking_ref() {
+        let dir = testkit::TempDir::new("spira-config-repos-qualify");
+        let upstream = dir.join("upstream");
+        init_repo(&upstream, "main");
+        let local = dir.join("local");
+        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
+        let local = local.to_str().unwrap();
+        assert_eq!(qualify_base_ref("origin/main", local), "refs/remotes/origin/main");
+        // local/main is not a remote-tracking ref here at all (no remote named "local").
+        assert_eq!(qualify_base_ref("local/main", local), "local/main");
+        assert_eq!(qualify_base_ref("main", local), "main", "no slash: unchanged");
+    }
+
+    #[test]
+    fn landref_prefers_the_declared_base_when_it_verifies() {
+        let dir = testkit::TempDir::new("spira-config-repos-landref-declared");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "release"]);
+        let map = format!("r | {} | push | release |  | \n", repo.display());
+        let reg = registry_for(&map, "r");
+        assert_eq!(landref(&reg, "r"), Some("release".to_string()));
+        // by path, not by name, reads the same declared base once the name is recovered via name_at.
+        assert_eq!(landref(&reg, repo.to_str().unwrap()), Some("release".to_string()));
+    }
+
+    #[test]
+    fn landref_refuses_a_declared_base_that_does_not_exist() {
+        let dir = testkit::TempDir::new("spira-config-repos-landref-bad-declared");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        let map = format!("r | {} | push | no-such-branch |  | \n", repo.display());
+        let reg = registry_for(&map, "r");
+        // rung 1 fails outright rather than falling through — a declared base naming a ref
+        // this checkout does not have is the defect, not a cue to guess further.
+        assert_eq!(landref(&reg, "r"), None);
+    }
+
+    #[test]
+    fn landref_falls_back_to_head_when_there_is_no_remote_at_all() {
+        let dir = testkit::TempDir::new("spira-config-repos-landref-head");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        let map = format!("r | {}\n", repo.display());
+        let reg = registry_for(&map, "r");
+        assert_eq!(landref(&reg, "r"), Some("trunk".to_string()));
+    }
+
+    #[test]
+    fn landref_asks_the_remote_once_when_origin_head_is_not_yet_cached() {
+        let dir = testkit::TempDir::new("spira-config-repos-landref-remote");
+        let upstream = dir.join("upstream");
+        init_repo(&upstream, "main");
+        let local = dir.join("local");
+        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
+        // A clone caches refs/remotes/origin/HEAD itself; drop it to exercise rung 3 ("ask
+        // the remote once") rather than rung 2 reading clone's own cache.
+        let _ = std::fs::remove_file(local.join(".git/refs/remotes/origin/HEAD"));
+        let map = format!("r | {}\n", local.display());
+        let reg = registry_for(&map, "r");
+        assert_eq!(landref(&reg, "r"), Some("origin/main".to_string()));
+    }
+
+    #[test]
+    fn landref_refuses_an_unmapped_name_and_a_missing_git_dir() {
+        let reg = registry_for("r | /nope\n", "r");
+        assert_eq!(landref(&reg, "ghost"), None, "unmapped name");
+        assert_eq!(landref(&reg, "r"), None, "mapped but not a real checkout");
+    }
+
+    #[test]
+    fn landrefs_pairs_the_base_with_its_verified_local_counterpart() {
+        let dir = testkit::TempDir::new("spira-config-repos-landrefs");
+        let upstream = dir.join("upstream");
+        init_repo(&upstream, "main");
+        let local = dir.join("local");
+        run_git(dir.path(), &["clone", "-q", upstream.to_str().unwrap(), local.to_str().unwrap()]);
+        let local = local.to_str().unwrap();
+        let map = format!("r | {local}\n");
+        let reg = registry_for(&map, "r");
+        // declared base is origin/main (rung 2, clone's own cache); the local "main" branch
+        // the clone checked out also exists, so both are reported.
+        assert_eq!(landrefs(&reg, local), Some(("origin/main".to_string(), Some("main".to_string()))));
+    }
+
+    #[test]
+    fn landrefs_omits_the_local_counterpart_when_it_does_not_exist() {
+        let dir = testkit::TempDir::new("spira-config-repos-landrefs-no-local");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "release"]);
+        let map = format!("r | {} | push | release |  | \n", repo.display());
+        let reg = registry_for(&map, "r");
+        // base is "release" (no slash at all), so ref_branch(base) == base: never a distinct
+        // "local counterpart" to go looking for.
+        assert_eq!(landrefs(&reg, repo.to_str().unwrap()), Some(("release".to_string(), None)));
+    }
+
+    #[test]
+    fn publish_forge_defaults_to_origin_and_the_land_ref_stripped_of_local() {
+        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-default");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "local/trunk"]);
+        let map = format!("q | {} | push | local/trunk |  | \n", repo.display());
+        let reg = registry_for(&map, "q");
+        assert_eq!(publish_forge(&reg, "q", &env(&[])), Some(("origin".to_string(), "trunk".to_string())));
+    }
+
+    #[test]
+    fn publish_forge_takes_a_per_name_override_over_the_default() {
+        let dir = testkit::TempDir::new("spira-config-repos-publish-forge-override");
+        let repo = dir.join("repo");
+        init_repo(&repo, "trunk");
+        run_git(&repo, &["branch", "-q", "local/trunk"]);
+        let map = format!("my-queue | {} | push | local/trunk |  | \n", repo.display());
+        let reg = registry_for(&map, "my-queue");
+        let overrides = env(&[("SPIRA_PUBLISH_REMOTE_MY_QUEUE", "upstream"), ("SPIRA_PUBLISH_BRANCH_MY_QUEUE", "release")]);
+        assert_eq!(publish_forge(&reg, "my-queue", &overrides), Some(("upstream".to_string(), "release".to_string())));
+        // the blanket SPIRA_PUBLISH_REMOTE only applies when no per-name override exists.
+        let blanket = env(&[("SPIRA_PUBLISH_REMOTE", "upstream")]);
+        assert_eq!(publish_forge(&reg, "my-queue", &blanket), Some(("upstream".to_string(), "trunk".to_string())));
+    }
+
+    #[test]
+    fn publish_forge_refuses_when_the_land_ref_itself_does_not_resolve() {
+        let reg = registry_for("q | /nope\n", "q");
+        assert_eq!(publish_forge(&reg, "q", &env(&[])), None);
     }
 }

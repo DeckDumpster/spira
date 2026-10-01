@@ -33,6 +33,23 @@ pub mod resolve;
 
 pub use locate::LocateOutcome;
 
+/// THE ONE CRATE-WIDE ENV LOCK (sp-dh4fv). `cargo test`'s threads share this binary's
+/// process environment — `HOME`, `XDG_CONFIG_HOME`, `SPIRA_TOML`, `SPIRA_CONF`,
+/// `SPIRA_REPO`, and anything else a test sets or clears. Every test in this crate
+/// (including its `tests/` integration binaries, which each get their OWN copy of this
+/// static — see their own lock below) that reads `env::set_var`/`env::remove_var` must
+/// take this lock for its whole body, no exceptions. Before sp-dh4fv, `lib.rs` and
+/// `locate.rs` each had their own private `ENV_LOCK`, which serialized tests against others
+/// in the same module but not against the other module's tests — two locks that never
+/// contend is not a lock at all. `cargo test -p spira-config` (default, 32-wide thread
+/// pool) flaked on exactly that race; `--test-threads=1` hid it by accident. A function
+/// that only *reads* env outside of a test doesn't need this — only a test that mutates
+/// the process env does. Prefer not needing it at all: give the function a pure variant
+/// that takes the values as an argument (`chamber::persona_model_from_doc` is the pattern)
+/// and test that instead of the env-reading wrapper.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
 pub const FILE_NAME: &str = "spira.toml";
@@ -1552,8 +1569,9 @@ mod tests {
     }
 
     // ENV VARS ARE PROCESS-GLOBAL: every `discover` test holding one of these keys takes
-    // `ENV_LOCK` for its whole body, so two tests never observe each other's value mid-run.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // the crate-wide `ENV_LOCK` (declared near `FILE_NAME` above, sp-dh4fv) for its whole
+    // body, so it also serializes against `locate`'s own env-mutating tests, not just its
+    // siblings here.
     static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn scratch_dir(tag: &str) -> testkit::TempDir {
@@ -1578,7 +1596,7 @@ mod tests {
 
     #[test]
     fn discover_prefers_the_explicit_path_over_the_environment() {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = std::env::var("SPIRA_TOML").ok();
         std::env::set_var("SPIRA_TOML", "/should-not-be-used/spira.toml");
         let explicit = PathBuf::from("/explicit/spira.toml");
@@ -1602,7 +1620,7 @@ mod tests {
             eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
             return;
         }
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved_toml = std::env::var("SPIRA_TOML").ok();
         let saved_repo = std::env::var("SPIRA_REPO").ok();
         let saved_home = std::env::var("HOME").ok();

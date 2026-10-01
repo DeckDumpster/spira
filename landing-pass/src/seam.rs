@@ -94,7 +94,12 @@ act() { log "$*"; }
 "#;
 
 /// Settings and every repository row. Settings are `key=value\0`; each repository is
-/// `repo=<name>\x1d<path>\x1d<mode>\x1d<landref>\x1d<base_fq>\x1d<remote>\x1d<branch>\x1d<forge>\0`.
+/// `repo=<name>\x1d<path>\x1d<mode>\0`. The base-ref columns family W used to fill in here
+/// (landref/base_fq/remote/branch/forge) are resolved in-process now (sp-o88bx, "wave
+/// 4.12") by `real.rs`'s `load_context`/`parse_context`, through `spira_config::repos` —
+/// not by this loop shelling spira_landref/ref_remote/ref_branch/qualify_base_ref/
+/// spira_publish_forge, each an extra spira-config subprocess, once per repository, inside
+/// this one already-running bash seam call.
 const CONTEXT: &str = r#"__kv() { printf '%s=%s\0' "$1" "$2"; }
 printf '\036'
 __kv home "${SPIRA_HOME:-$HERE}"
@@ -134,21 +139,7 @@ __kv rebase_generated_files "${SPIRA_REBASE_GENERATED_FILES:-}"
 for __n in $(spira_repos); do
     __p="$(repo_root "$__n" 2>/dev/null)" || __p=""
     __m="$(repo_land "$__n" 2>/dev/null)"
-    __lr=""; __fq=""; __rm=""; __br=""; __fg=""
-    if [ -n "$__p" ] && [ -e "$__p/.git" ]; then
-        __lr="$(spira_landref "$__p" 2>/dev/null)" || __lr=""
-        if [ -n "$__lr" ]; then
-            __rm="$(ref_remote "$__lr" "$__p")" || __rm=""
-            __br="$(ref_branch "$__lr")"
-            __fq="$(qualify_base_ref "$__lr" "$__p")"
-            if [ "$__m" = queue.local ]; then
-                __pf="$(spira_publish_forge "$__n" 2>/dev/null)" && __fg="refs/remotes/${__pf% *}/${__pf#* }"
-            else
-                __fg="$__fq"
-            fi
-        fi
-    fi
-    printf 'repo=%s\035%s\035%s\035%s\035%s\035%s\035%s\035%s\0' "$__n" "$__p" "$__m" "$__lr" "$__fq" "$__rm" "$__br" "$__fg"
+    printf 'repo=%s\035%s\035%s\0' "$__n" "$__p" "$__m"
 done
 exit 0
 "#;
@@ -294,11 +285,54 @@ mod tests {
         assert_eq!(split(&out).answer, "conflict\u{1d}a b\u{1d}");
     }
 
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+    }
+
     #[test]
     fn the_context_script_resolves_every_repository_through_lib_sh() {
+        // spira_landref/ref_remote/ref_branch/qualify_base_ref/spira_publish_forge dropped
+        // from the CONTEXT script's loop (sp-o88bx, "wave 4.12") — parse_context resolves
+        // them in-process through spira_config::repos against a REAL checkout now, not
+        // these stubs, so "h" and "o" are real git repositories rather than bare `.git`
+        // markers, and SPIRA_REPO_MAP is a real map (serialised: it's process-global state).
+        let _serial = crate::testutil::serial();
         let dir = crate::testutil::tmpdir("ctx");
-        std::fs::create_dir_all(dir.join("h/.git")).unwrap();
-        std::fs::create_dir_all(dir.join("o/.git")).unwrap();
+        let h = dir.join("h");
+        let o = dir.join("o");
+        std::fs::create_dir_all(&h).unwrap();
+        std::fs::create_dir_all(&o).unwrap();
+        // "h": no remote at all, so landref falls back (rung 4) to its own current branch —
+        // which IS "local/main", a queue.local-shaped ref with no real "local" remote.
+        git(&h, &["init", "-q", "-b", "local/main"]);
+        std::fs::write(h.join("f"), "x").unwrap();
+        git(&h, &["add", "f"]);
+        git(&h, &["commit", "-q", "-m", "x"]);
+        // "o": a real "origin" remote whose default branch is "master" (rung 2, via clone's
+        // own cache of refs/remotes/origin/HEAD).
+        let upstream = dir.join("upstream");
+        std::fs::create_dir_all(&upstream).unwrap();
+        git(&upstream, &["init", "-q", "-b", "master"]);
+        std::fs::write(upstream.join("f"), "x").unwrap();
+        git(&upstream, &["add", "f"]);
+        git(&upstream, &["commit", "-q", "-m", "x"]);
+        git(&dir, &["clone", "-q", upstream.to_str().unwrap(), o.to_str().unwrap()]);
+
+        let map = dir.join("repomap-fixture");
+        std::fs::write(&map, format!("spira | {}\nother | {}\n", h.display(), o.display())).unwrap();
+        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+        std::env::set_var("SPIRA_REPO_MAP", &map);
+
         let lib = format!(
             r#"SPIRA_RUN=/run/x; SPIRA_TOML_FILE=/cfg/doc
 log() {{ echo "L $*"; }}
@@ -306,18 +340,25 @@ spira_home_repo() {{ printf spira; }}
 spira_repos() {{ printf 'spira\nother\nghost\n'; }}
 repo_root() {{ case "$1" in spira) printf '{d}/h';; other) printf '{d}/o';; *) return 1;; esac; }}
 repo_land() {{ case "$1" in spira) printf queue.local;; other) printf push;; *) printf push;; esac; }}
-spira_landref() {{ case "$1" in */h) printf local/main;; */o) printf origin/master;; esac; }}
-ref_remote() {{ case "$1" in origin/*) printf origin;; *) return 1;; esac; }}
-ref_branch() {{ printf '%s' "${{1#*/}}"; }}
-qualify_base_ref() {{ case "$1" in origin/*) printf 'refs/remotes/%s' "$1";; *) printf '%s' "$1";; esac; }}
-spira_publish_forge() {{ printf 'origin main\n'; }}
 "#,
             d = dir.display()
         );
         std::fs::write(dir.join("lib.sh"), lib).unwrap();
         let (rc, out) = run(&dir, Op::Context, &[]);
-        assert_eq!(rc, 0, "{out}");
-        let (s, repos) = crate::real::parse_context(&split(&out).answer, &dir).unwrap();
+
+        let result = (|| -> Result<_, String> {
+            if rc != 0 {
+                return Err(format!("seam exited {rc}: {out}"));
+            }
+            crate::real::parse_context(&split(&out).answer, &dir)
+        })();
+
+        match prev_map {
+            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+            None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+
+        let (s, repos) = result.unwrap();
         assert_eq!(s.run, std::path::PathBuf::from("/run/x"));
         assert_eq!(s.toml, Some(std::path::PathBuf::from("/cfg/doc")));
         assert_eq!(s.home_repo, "spira");

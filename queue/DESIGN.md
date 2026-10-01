@@ -257,7 +257,7 @@ cost / members; percentage integer.
 | `…/<repo>/open` | eject, abandon, claim, release, open-batch, in-delivery | open-batch, claim, release, abandon (renamed `closed-pr<n>-<stamp>`), eject (removed) |
 | `…/<repo>/publish` | publish, to-forge | publish |
 | `…/<repo>/round-seq` | land-local, rollback-local | land-local |
-| `…/<repo>/divergence-alarmed` | lib.sh | lib.sh (via seam) |
+| `…/<repo>/divergence-alarmed` | queue, in process (sp-hwjsq, "wave 4.32") | queue, in process |
 | `$SPIRA_QUEUE_DIR/<id>` | — | submit (`CERTIFIED <tip> <epoch>`) |
 | `$SPIRA_RUN/landstate/<id>` | eject, abandon, publish (tips), in-delivery | lib.sh `land_mark` / `bead_reopen` only |
 | `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish, land-local `QUEUE UNGATED` (append) |
@@ -311,14 +311,14 @@ operation (the function name is part of the text, never data).
 | R6 `bead_close_on_land` | `bead_close_on_land <id> <sha>` | close + LANDED + branch reap |
 | R7 `gh_issue_closeout` | `gh_issue_closeout <id> <sha> <repo>` | GitHub issue close-out |
 | R8 `bead_comment` | `bdq comment <id> --stdin` (text piped inside the script) | bdq's retry, czar and fixture logic |
-| R9 `notify` | `queue_notify_concierge <repo> <subject> <body>` | mail wiring |
+| ~~R9 `notify`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::notify`; lib.sh's `queue_notify_concierge` is retired, not a shim | — |
 | R10 `event` | `spira_event <kind> - <title> <detail>` | rate-limited events log |
-| R11 `divergence` | `queue_local_check_divergence <repo> <path> <forge> <local>` | one alarm per foreign tip, state file |
-| R12 `push` | `spira_git_push <path> -q <remote> <src:dst>` | GitHub App credentials |
+| ~~R11 `divergence`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::check_divergence`; lib.sh's `queue_local_check_divergence` is retired, not a shim | — |
+| ~~R12 `push`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::git_push_cmd`; lib.sh's `spira_git_push` keeps a shim onto the `queue git-push` CLI for its other callers (branch-sweep.sh, landing-pass's own separate seam) | — |
 | R13 `rebase` | `rebase_branch <br> <base> <path> <repo>` (push-mode submit) | scratch worktrees, salvage, formatter |
 | R14 `land_subject` | `land_subject <id>` | merge subject with title |
-| R15 `sort_rows` | `queue_sort_rows <path> <base>` with `PRIO_JSON` set **inside** the script from a value read on stdin; rows piped in | the ranking batch.sh also uses |
-| R16 `cancel_runs` | `queue_cancel_branch_runs <forge> <path> <branch> QUEUE` | RUN_CANCEL log lines |
+| ~~R15 `sort_rows`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::sort_rows` + `is_suite_transition`; lib.sh's `queue_sort_rows` keeps a shim onto the `queue sort-rows` CLI (test-queue-sort-large.sh, cockpit-collect); `queue_is_suite_transition` is retired, not a shim | — |
+| ~~R16 `cancel_runs`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::cancel_branch_runs`; lib.sh's `queue_cancel_branch_runs` is retired, not a shim | — |
 | R17 `lc_returned` | not a seam since sp-arpjt: `spira-lc returned <id> <reason>` run directly (switch ON only) | the Returned event CAS |
 | R18 `batch_fns` | `format_batch`, `base_conflict`, `pf_gate` — open-batch only, the queue.forge assembly primitives | **inlined, sp-uwhx0**: same bodies, no longer sourced from batch.sh (deleted); `pf_gate`'s `_PF_DEADLINE` shared-wall bookkeeping dropped, since open-batch calls it exactly once (the wall is just its own `wall_secs` argument) |
 | ~~R19 `settle_publish`~~ | retired: the settle is Rust (DESIGN-verdict.md) | — |
