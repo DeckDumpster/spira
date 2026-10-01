@@ -16,6 +16,11 @@ id = "UC-aeon-execution-03"
 tier = "T1"
 statement = "a bead poisoned right after claim is released before workspace setup, ledger `poison-raced`"
 
+[use_case.uncovered]
+reason = "bead_has_label and aeon_disposition (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the read-after-claim poison check is aeon::bd::has_label, exercised by aeon/src/tests.rs::poison_raced_releases_and_records; the suite that called the bash functions directly (test-aeon-disposition.sh) was trimmed to what remains live"
+date = "2026-09-30"
+bead = "sp-j89pd"
+
 [[use_case]]
 id = "UC-aeon-execution-04"
 tier = "T1"
@@ -40,6 +45,11 @@ statement = "brief rendering leaves no unrendered `{{placeholder}}`; RESUME/SLAI
 id = "UC-aeon-execution-08"
 tier = "T1"
 statement = "the lease renews on trace growth and lapses on silence past `FAYTH_LEASE_SECONDS`, killing `-$$`"
+
+[use_case.uncovered]
+reason = "hb_tick, fayth_lease_seconds and hb_wait_outcome (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the renew/lapse/thrash decision is aeon::decide::hb_tick, exercised by aeon/src/decide.rs::tests::hb_tick_table (its own comment names the retired test-aeon-lease.sh / test-thrash.sh rows it replaces); test-aeon-lease.sh keeps only its still-live aeon_lease_minutes/fayth_get rows"
+date = "2026-09-30"
+bead = "sp-j89pd"
 
 [[use_case]]
 id = "UC-aeon-execution-09"

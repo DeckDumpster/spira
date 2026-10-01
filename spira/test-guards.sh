@@ -14,7 +14,7 @@
 #
 # defect: sp-kz8ob sp-mvg44
 # tier: T1
-# covers: spira/hooks/aeon-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh aeon/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15 UC-safety-fences-16
+# covers: spira/hooks/aeon-fence.sh spira/bd-close-unacked-guard.sh spira/bd-unacked-comment-deliver.sh aeon/src/* testenv/src/suites/* UC-safety-fences-01 UC-safety-fences-02 UC-safety-fences-03 UC-safety-fences-04 UC-safety-fences-05 UC-safety-fences-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -28,10 +28,13 @@ BDCLOSE_DELIVER="$HERE/bd-unacked-comment-deliver.sh"
 [ -x "$BDCLOSE_GUARD" ]  || bail "bd-close-unacked-guard.sh missing or not executable"
 [ -x "$BDCLOSE_DELIVER" ] || bail "bd-unacked-comment-deliver.sh missing or not executable"
 
-# UC-safety-fences-16 (gap 1): the allow-list itself — that aeon_settings() registers
-# exactly these two guards and no others — is already pinned by
-# test-aeon-settings-guard-allowlist.sh (sp-fjsxb). Cited, not re-tested (gap 16 of
-# docs/test-plan/safety-fences.md is explicit that re-testing it here is duplication).
+# UC-safety-fences-16 RETIRED (sp-j89pd, wave 4.2): aeon_settings (lib.sh) had zero live
+# callers — aeon::run::aeon_settings is the Rust port, a pure function with a fixed
+# two-entry PreToolUse allow-list and no python3 subprocess at all, so the python3-failure
+# fallback Gap 2 used to test here is not merely covered elsewhere, it is structurally gone.
+# test-aeon-settings-guard-allowlist.sh (gap 1, sp-fjsxb) is retired with it. Both are now
+# aeon::run::tests::settings_json_matches_python_dumps; see docs/test-plan/safety-fences.md
+# and the [use_case.uncovered] marker on UC-safety-fences-16.
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 FAKE_RUN="$TMP/run"; FAKE_PROD="$TMP/prod"; FIXDIR="$TMP/fixtures"
@@ -575,34 +578,6 @@ out="$(bdclose_run bc1 "$(close_cmd_for bc1)")"
 BDCLOSE_RC=$?
 is     "gap8/bdclose-protocol-exits-2-when-blocking"          2                     "$BDCLOSE_RC"
 nowant "gap8/bdclose-protocol-does-not-emit-decision-json"    '"decision":"block"'  "$out"
-
-# ===========================================================================
-echo
-echo "Gap 2 — aeon_settings() fails open silently (python3 error, non-executable guard):"
-# ===========================================================================
-LIB_SH="$HERE/lib.sh"
-extract_aeon_settings() { sed -n '/^aeon_settings() {/,/^}/p' "$LIB_SH"; }
-
-GAP2_HOME="$TMP/gap2-home"; mkdir -p "$GAP2_HOME/hooks"
-cp "$FENCE" "$GAP2_HOME/hooks/aeon-fence.sh"
-cp "$HERE/hooks/aeon-mail-deliver.sh" "$GAP2_HOME/hooks/aeon-mail-deliver.sh"
-cp "$BDCLOSE_GUARD" "$GAP2_HOME/bd-close-unacked-guard.sh"
-chmod +x "$GAP2_HOME/hooks/aeon-fence.sh" "$GAP2_HOME/hooks/aeon-mail-deliver.sh" "$GAP2_HOME/bd-close-unacked-guard.sh"
-
-baseline="$(SPIRA_HOME="$GAP2_HOME" bash -c "$(extract_aeon_settings); aeon_settings")"
-want "gap2/baseline-wires-both-guards" "aeon-fence.sh" "$baseline"
-
-chmod -x "$GAP2_HOME/bd-close-unacked-guard.sh"
-noexec_out="$(SPIRA_HOME="$GAP2_HOME" bash -c "$(extract_aeon_settings); aeon_settings" 2>&1)"
-nowant "gap2/non-executable-guard-dropped-silently"        "bd-close-unacked-guard.sh" "$noexec_out"
-want   "gap2/non-executable-guard-other-hook-still-present" "aeon-fence.sh"             "$noexec_out"
-chmod +x "$GAP2_HOME/bd-close-unacked-guard.sh"
-
-mkdir -p "$TMP/nobin"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/nobin/python3"; chmod +x "$TMP/nobin/python3"
-nopy_out="$(SPIRA_HOME="$GAP2_HOME" PATH="$TMP/nobin:$PATH" bash -c \
-    "$(extract_aeon_settings); _AEON_SETTINGS=\"\$(aeon_settings)\" || _AEON_SETTINGS=''; printf '<%s>' \"\$_AEON_SETTINGS\"")"
-is "gap2/python3-failure-falls-back-to-no-fences" "<>" "$nopy_out"
 
 # ===========================================================================
 echo

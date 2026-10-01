@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 #
-# test-aeon-prompt-layers.sh — aeon_claude_argv (lib.sh) builds the claude CLI argv from the
-#   fayth's own knobs: FAYTH_SYSTEM_PROMPT picks --system-prompt-file (replace) or
-#   --append-system-prompt-file (append/default, via system_prompt_split's SPIRA_SYSTEM_FLAG);
-#   FAYTH_PROJECT_INSTRUCTIONS=none adds --setting-sources user; --settings is added only
-#   when aeon_settings() has a hook to wire in. system.md carries the statutes; task.md
+# test-aeon-prompt-layers.sh — the claude CLI argv built from the fayth's own knobs:
+#   FAYTH_SYSTEM_PROMPT picks --system-prompt-file (replace) or --append-system-prompt-file
+#   (append/default); FAYTH_PROJECT_INSTRUCTIONS=none adds --setting-sources user; --settings
+#   is added only when there is a hook to wire in. system.md carries the statutes; task.md
 #   carries the bead body and no statutes.
 #
+# RETIRED (sp-j89pd, wave 4.2): aeon_claude_argv, system_prompt_split and aeon_settings
+# (lib.sh) had zero live callers — the whole table is now built in aeon/src/run.rs. Its
+# direct-call T1 table is deleted with them; T3 below proves the same table end to end
+# through the real `aeon` binary and real chamber fayths.
+#
 # defect: sp-d0rnp
-# covers: aeon/src/* spira/lib.sh spira/chamber/*.fayth
+# covers: aeon/src/* spira/chamber/*.fayth spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -16,77 +20,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-aeon-prompt-layers.sh"
-
-# ===========================================================================================
-echo
-echo "T1: system_prompt_split + aeon_claude_argv — no aeon run, no bd"
-# ===========================================================================================
-FAYTH_HOME="$TMP/argv-home"; mkdir -p "$FAYTH_HOME/hooks"
-
-argv_for() {   # argv_for <FAYTH_SYSTEM_PROMPT> <FAYTH_PROJECT_INSTRUCTIONS> [model] [tools]
-    local sp="$1" pi="$2" model="${3:-}" tools="${4:-}"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_HOME="$FAYTH_HOME" SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        ${sp:+FAYTH_SYSTEM_PROMPT="$sp"} ${pi:+FAYTH_PROJECT_INSTRUCTIONS="$pi"} \
-        ${model:+FAYTH_MODEL="$model"} ${tools:+FAYTH_TOOLS="$tools"} \
-        bash -c '. "$1"/lib.sh
-sysfile="$2/sys.md"; taskfile="$2/task.md"
-system_prompt_split "$sysfile" "$taskfile" "statutes" "prompt <!-- task --> body"
-aeon_claude_argv "$SPIRA_SYSTEM_FLAG" "$sysfile"' _ "$HERE" "$TMP" 2>/dev/null
-}
-
-out="$(argv_for replace '')"
-want   "replace: --system-prompt-file in argv"          "--system-prompt-file" "$out"
-nowant "replace: no --append-system-prompt-file"         "--append-system-prompt-file" "$out"
-nowant "replace, no project-instructions knob: no --setting-sources" "--setting-sources" "$out"
-
-out="$(argv_for append '')"
-want   "append: --append-system-prompt-file in argv"     "--append-system-prompt-file" "$out"
-nowant "append: no --system-prompt-file"                 "--system-prompt-file" "$out"
-
-out="$(argv_for '' '')"
-want   "no-knob: behaves as append (default)"             "--append-system-prompt-file" "$out"
-nowant "no-knob: no --system-prompt-file"                  "--system-prompt-file" "$out"
-
-out="$(argv_for replace none)"
-want "FAYTH_PROJECT_INSTRUCTIONS=none: --setting-sources user, in EITHER system-prompt mode" \
-     "$(printf -- '--setting-sources\nuser')" "$out"
-out="$(argv_for append none)"
-want "same in append mode too — the knob is independent of the system-prompt flag" \
-     "$(printf -- '--setting-sources\nuser')" "$out"
-
-out="$(argv_for replace repo)"
-nowant "FAYTH_PROJECT_INSTRUCTIONS=repo: no --setting-sources" "--setting-sources" "$out"
-
-out="$(argv_for replace '')"
-want "the static flags are always present: --dangerously-skip-permissions" "--dangerously-skip-permissions" "$out"
-want "and --system-prompt-snapshot on"                                      "$(printf -- '--system-prompt-snapshot\non')" "$out"
-want "the default model"                                                    "claude-opus-5" "$out"
-want "the default tool allowlist"                                           "Bash,Read,Edit,Write,Glob,Grep" "$out"
-
-out="$(argv_for replace '' claude-sonnet-5 'Bash,Read')"
-# sp-zs04v.4: the model no longer comes from FAYTH_MODEL — persona_model (lib.sh) is the
-# one resolver now, reading persona.<fayth>.model out of spira.toml; see
-# test-persona-model.sh for its own fallback ladder and end-to-end argv coverage.
-nowant "FAYTH_MODEL no longer overrides the default" "claude-sonnet-5" "$out"
-want   "the default model still wins with no spira.toml entry" "claude-opus-5" "$out"
-want   "FAYTH_TOOLS overrides the default"       "$(printf -- '--allowedTools\nBash,Read')" "$out"
-
-# --settings always appears — aeon_settings() (lib.sh) wires the mail-delivery hook
-# unconditionally — but names aeon-fence.sh only once that hook is actually installed,
-# proved both ways (law-absence-needs-a-positive-control).
-out="$(argv_for replace '')"
-want   "no fence installed: --settings still appears (mail hook is unconditional)" "--settings" "$out"
-nowant "no fence installed: --settings does not name aeon-fence.sh" "aeon-fence.sh" "$out"
-cat > "$FAYTH_HOME/hooks/aeon-fence.sh" <<'HOOK'
-#!/usr/bin/env bash
-exit 0
-HOOK
-chmod +x "$FAYTH_HOME/hooks/aeon-fence.sh"
-out="$(argv_for replace '')"
-want "aeon-fence.sh installed: --settings appears" "--settings" "$out"
-want "and names the fence hook"                    "aeon-fence.sh" "$out"
-rm -f "$FAYTH_HOME/hooks/aeon-fence.sh"
 
 # ===========================================================================================
 echo

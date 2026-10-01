@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # test-holds.sh — holds.sh reports which OPEN beads have a branch touching a set of paths,
-#   right now; bead_named_paths and render_holds_brief (lib.sh) turn that into the brief an
-#   aeon reads before it edits.
+#   right now; bead_named_paths (lib.sh) turns that into the brief an aeon reads before it
+#   edits. render_holds_brief (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers)
+#   — it is now aeon::brief (aeon/src/brief.rs); its T2 table below is deleted with it.
 #
 # THE CASE THIS REPRODUCES. Three writers can add a case to the same few lines of a shared
 # file on the same day without any existing tool noticing, because the duplicate-work guard
@@ -50,30 +51,6 @@ got2="$(bnp "touches spira/batch.sh and spira/lib.sh both")"
 want "names the first of two real paths"  "spira/batch.sh" "$got2"
 want "names the second of two real paths" "spira/lib.sh"   "$got2"
 is   "no path-shaped text names nothing"  ""               "$(bnp "nothing file-shaped in here at all")"
-
-# ===========================================================================================
-echo
-echo "T2: render_holds_brief <bead-id> <rc> <holds-output> -> the brief text"
-# ===========================================================================================
-
-rhb() {   # rhb <bead-id> <rc> <out> -> render_holds_brief's own output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; render_holds_brief "$2" "$3" "$4"' \
-        _ "$HERE" "$1" "$2" "$3" 2>/dev/null
-}
-
-is "rc=0, no output -> no brief at all" "" "$(rhb sp-self 0 "")"
-
-out="$(rhb sp-self 0 "$(printf 'tst-holder\tspira/batch.sh\n')")"
-want "rc=0 with a hit names the holder"       "tst-holder"     "$out"
-want "rc=0 with a hit names the path"         "spira/batch.sh" "$out"
-
-self_only="$(rhb sp-self 0 "$(printf 'sp-self\tspira/other.sh\n')")"
-is "a bead never reports holding against itself" "" "$self_only"
-
-fail_out="$(rhb sp-self 1 "")"
-want "rc!=0 renders a visible marker" "COULD NOT CHECK" "$fail_out"
 
 # ===========================================================================================
 echo
