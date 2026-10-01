@@ -703,7 +703,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-hand");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput {
             env: &e,
             home: &home,
@@ -714,8 +714,8 @@ mod tests {
         .unwrap();
         assert_eq!(r.get("SPIRA_HOME_REPO"), "spira-harness");
         assert_eq!(r.get("SPIRA_INSTANCE"), "prod");
-        assert_eq!(r.get("SPIRA_DB"), "/home/x/.local/share/spira/db");
-        assert_eq!(r.get("SPIRA_RUN"), "/home/x/.local/share/spira/run");
+        assert_eq!(r.get("SPIRA_DB"), "/h/.local/share/spira/db");
+        assert_eq!(r.get("SPIRA_RUN"), "/h/.local/share/spira/run");
         assert_eq!(r.get("SPIRA_WORKSPACES"), ws.display().to_string());
         assert_eq!(r.get("SPIRA_CERTIFY_SUITES"), "on");
         assert_eq!(r.get("SPIRA_AGENT"), "claude");
@@ -729,12 +729,12 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-instance");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x"), ("SPIRA_INSTANCE", "test")]);
+        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
-        assert_eq!(r.get("SPIRA_DB"), "/home/x/.local/share/spira-test/db");
-        assert_eq!(r.get("SPIRA_RUN"), "/home/x/.local/share/spira-test/run");
-        assert_eq!(r.get("SPIRA_DOLT_DATA"), "/home/x/.local/share/spira/dolt");
+        assert_eq!(r.get("SPIRA_DB"), "/h/.local/share/spira-test/db");
+        assert_eq!(r.get("SPIRA_RUN"), "/h/.local/share/spira-test/run");
+        assert_eq!(r.get("SPIRA_DOLT_DATA"), "/h/.local/share/spira/dolt");
     }
 
     #[test]
@@ -744,7 +744,7 @@ mod tests {
         run_git(&repo, &["init", "-q"]);
         let toml_text = "[spira]\ninstance = \"from-toml\"\n";
         let doc = crate::validate(toml_text).unwrap();
-        let e = env(&[("HOME", "/home/x"), ("SPIRA_INSTANCE", "from-env")]);
+        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "from-env")]);
         let r = resolve(ResolveInput {
             env: &e,
             home: &home,
@@ -763,7 +763,7 @@ mod tests {
         run_git(&repo, &["init", "-q"]);
         let toml_text = "[spira]\ninstance = \"from-toml\"\n";
         let doc = crate::validate(toml_text).unwrap();
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput {
             env: &e,
             home: &home,
@@ -780,7 +780,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-preserve-empty");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x"), ("SPIRA_DB", "")]);
+        let e = env(&[("HOME", "/h"), ("SPIRA_DB", "")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_DB"), "");
@@ -793,7 +793,7 @@ mod tests {
         std::fs::create_dir_all(repo.join("spira/conf.d")).unwrap();
         std::fs::write(repo.join("MANIFEST"), "repo brain\nrelease-repo rgantt/spira\n").unwrap();
         let home = repo.join("spira");
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_HOME_REPO"), "brain");
@@ -806,7 +806,7 @@ mod tests {
         let repo = ws.join("spira-20261001T000000Z");
         std::fs::create_dir_all(repo.join("spira/conf.d")).unwrap();
         let home = repo.join("spira");
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_HOME_REPO"), "");
@@ -817,7 +817,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-claude");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x"), ("SPIRA_CLAUDE", "my-claude")]);
+        let e = env(&[("HOME", "/h"), ("SPIRA_CLAUDE", "my-claude")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         assert_eq!(r.get("SPIRA_AGENT"), "my-claude");
@@ -829,7 +829,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-no-home-repo");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         assert!(!r.values.contains_key("SPIRA_HOME"));
@@ -857,7 +857,7 @@ mod tests {
             "TYPE=string\nGROUP=cockpit\nDOC=x\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_COCKPIT:=$(dirname \"$SPIRA_HOME\")/cockpit}\"\nSPIRA_CONF_DEFAULT_EOF\n",
         )
         .unwrap();
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &conf_d }).unwrap();
         assert_eq!(r.get("SPIRA_QUEUE_BATCH_MAX"), "8");
         assert_eq!(r.get("SPIRA_QUEUE_THROTTLE_DEPTH_AT"), "16");
@@ -877,7 +877,7 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         // The repo-map lives where SPIRA_REPO_MAP's own default would look: $SPIRA_HOME/repo-map.
         std::fs::write(home.join("repo-map"), format!("x|{}\n", outside.display())).unwrap();
-        let e = env(&[("HOME", "/home/x"), ("SPIRA_INSTANCE", "test")]);
+        let e = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
         let err = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap_err();
         match err {
@@ -891,7 +891,7 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-resolve-to-sh");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[("HOME", "/home/x")]);
+        let e = env(&[("HOME", "/h")]);
         let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
             .unwrap();
         let sh = r.to_sh(EXPORT_KEYS);

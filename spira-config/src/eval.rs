@@ -317,15 +317,15 @@ mod tests {
         assert_eq!(
             eval_expr(
                 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides",
-                &known(&[("HOME", "/home/x")])
+                &known(&[("HOME", "/h")])
             )
             .unwrap(),
-            "/home/x/.config/spira/overrides"
+            "/h/.config/spira/overrides"
         );
         assert_eq!(
             eval_expr(
                 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides",
-                &known(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/x")])
+                &known(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/h")])
             )
             .unwrap(),
             "/xdg/spira/overrides"
