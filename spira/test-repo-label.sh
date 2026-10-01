@@ -126,5 +126,42 @@ want   "example map: absent name is refused"         "is not in the repo map"  "
 nowant "example map: bd not called for absent"       "bd-called"               "$out_ex2"
 want   "example map: refusal names a valid key"      "$example_first"          "$out_ex2"
 
+# ==========================================================================
+echo
+echo "EXEC BOUNDARY: the shim carries SPIRA_REPO_MAP across to the compiled bdq binary even"
+echo "though conf.sh's OWN resolution leaves it genuinely unexported, as production does:"
+# ==========================================================================
+# conf.sh deliberately never exports SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_DERIVED,
+# SPIRA_HOME_REPO or SPIRA_REPO_MAP (each a per-copy fact, not configuration). Every section
+# above overrides SPIRA_REPO_MAP via `env -i ... SPIRA_REPO_MAP="$MAP" bash -c ...` — but
+# `env -i VAR=val` always produces an EXPORTED shell variable once bash starts, and bash
+# NEVER strips the export attribute on a later plain reassignment (verified: `export X=1;
+# X=2` leaves X exported) — so every section above, including the repo-map.example one,
+# accidentally keeps SPIRA_REPO_MAP exported the whole time and never exercises the hazard.
+#
+# This section instead sets NO SPIRA_REPO_MAP at all — only SPIRA_HOME (as every real caller
+# does: a systemd unit, an aeon session, always exports it) — so conf.sh resolves the map
+# itself, through `spira-config resolve`'s own typed export set, which assigns SPIRA_REPO_MAP
+# with a PLAIN statement (confirmed: `declare -p SPIRA_REPO_MAP` after sourcing shows
+# `declare --`, no `-x`). That is the genuine hazard: a value lib.sh's own machinery computed
+# and deliberately left unexported, which the compiled `bdq` binary — spawned as a child
+# process — cannot see unless this shim threads it through explicitly. Checked against the
+# same repo-map.example content the section above already parsed into $example_first.
+run_ambient() {   # run_ambient <labels> -> relies entirely on conf.sh's own resolution
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_HOME="$HERE" SPIRA_DB="$TMP/nodb" \
+        SPIRA_BD="$STUB_BD" BD_TIMEOUT=10 \
+        bash -c '. "$1/lib.sh"; bdq create title --labels "$2"' \
+            -- "$HERE" "$1" 2>&1
+}
+
+out_amb1="$(run_ambient "plan,repo:$example_first" 2>&1)" || true
+nowant "ambient map: known entry ($example_first) has no refusal"  "is not in the repo map"  "$out_amb1"
+want   "ambient map: known entry reaches bd"                       "bd-called"               "$out_amb1"
+
+out_amb2="$(run_ambient "plan,repo:definitely-not-a-repo" 2>&1)" || true
+want   "ambient map: unknown entry is refused"              "is not in the repo map"  "$out_amb2"
+nowant "ambient map: bd not called for unknown entry"       "bd-called"               "$out_amb2"
+want   "ambient map: refusal names a valid key"             "$example_first"          "$out_amb2"
+
 echo
 tl_summary
