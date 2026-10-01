@@ -22,6 +22,9 @@ pub mod admission;
 pub mod build;
 pub mod convert;
 pub mod legacy_map;
+pub mod locate;
+
+pub use locate::LocateOutcome;
 
 /// The one filename this schema's document is ever named on disk — every path-resolution
 /// function below builds on this instead of a caller spelling `"spira.toml"` itself.
@@ -35,30 +38,20 @@ pub fn find_under(dir: &Path) -> Option<PathBuf> {
 }
 
 /// The search a host-wide reader with no explicit path resolves one from: `explicit` if
-/// given (a caller's own `--config`/`$SPIRA_TOML` precedence), else `$SPIRA_TOML`, else
-/// `$SPIRA_REPO/spira.toml`, else `$XDG_CONFIG_HOME/spira/spira.toml` (`$HOME/.config` when
-/// `XDG_CONFIG_HOME` is unset), else `/etc/spira/spira.toml` — first of these that exists.
-/// The one search order every host-wide reader (`queue-watch`) shares, so two daemons can
-/// never disagree about which file is in force on the same host.
+/// given (a caller's own `--config`/`$SPIRA_TOML` precedence), else `$SPIRA_TOML` (exclusive —
+/// a pinned path that is not a file means "no config", not "keep looking"), else
+/// `$XDG_CONFIG_HOME/spira/spira.toml` (`$HOME/.config` when `XDG_CONFIG_HOME` is unset), else
+/// `/etc/spira/spira.toml` — first of these that exists. The one search order every host-wide
+/// reader (`queue-watch`) shares, so two daemons can never disagree about which file is in
+/// force on the same host, and the same search `conf.sh`'s `spira_toml_file` runs (sp-hconl;
+/// **no `$SPIRA_REPO` tier** — removed from bash by sp-9hwim, "the running system must not
+/// read [from beside the checkout] at all"; this function still offered one until this bead).
+///
+/// `None` collapses every reason nothing resolved (truly absent, or only a legacy
+/// `spira.conf`) into the one answer every existing caller already treats as "use derived
+/// defaults" — see [`locate::locate`] for the richer [`LocateOutcome`] a diagnostic needs.
 pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
-    if explicit.is_some() {
-        return explicit;
-    }
-    if let Ok(p) = std::env::var("SPIRA_TOML") {
-        return Some(PathBuf::from(p));
-    }
-    let mut cands = Vec::new();
-    if let Ok(r) = std::env::var("SPIRA_REPO") {
-        cands.push(PathBuf::from(r).join(FILE_NAME));
-    }
-    let xdg = std::env::var("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|_| std::env::var("HOME").map(|h| PathBuf::from(h).join(".config")));
-    if let Ok(x) = xdg {
-        cands.push(x.join("spira").join(FILE_NAME));
-    }
-    cands.push(PathBuf::from("/etc/spira").join(FILE_NAME));
-    cands.into_iter().find(|p| p.is_file())
+    locate::locate(explicit).found()
 }
 
 /// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
@@ -1539,15 +1532,34 @@ mod tests {
     }
 
     #[test]
-    fn discover_falls_back_through_spira_toml_then_spira_repo() {
+    fn discover_never_falls_back_through_spira_repo() {
+        // REGRESSION (sp-hconl): discover() used to offer $SPIRA_REPO/spira.toml as a
+        // candidate (sp-cx0mj); sp-9hwim's bash rewrite deliberately dropped that tier from
+        // conf.sh a day later ("the running system must not read [from beside the checkout]
+        // at all") and this function was never updated to match. A spira.toml sitting right
+        // there, with nothing at the XDG/etc tiers, must resolve to None, not that file. The
+        // tier logic itself is exercised in full in `locate`'s own tests; this is the
+        // public-wrapper regression guard.
+        if Path::new("/etc/spira/spira.toml").is_file() {
+            eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
+            return;
+        }
         let _g = ENV_LOCK.lock().unwrap();
         let saved_toml = std::env::var("SPIRA_TOML").ok();
         let saved_repo = std::env::var("SPIRA_REPO").ok();
+        let saved_home = std::env::var("HOME").ok();
+        let saved_xdg = std::env::var("XDG_CONFIG_HOME").ok();
         std::env::remove_var("SPIRA_TOML");
-        let repo_dir = scratch_dir("discover-repo");
+        std::env::remove_var("XDG_CONFIG_HOME");
+        let dir = scratch_dir("discover-repo");
+        let repo_dir = dir.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
         std::fs::write(repo_dir.join(FILE_NAME), "[spira]\n").unwrap();
+        let empty_home = dir.join("home-empty");
+        std::fs::create_dir_all(&empty_home).unwrap();
         std::env::set_var("SPIRA_REPO", &repo_dir);
-        assert_eq!(discover(None), Some(repo_dir.join(FILE_NAME)));
+        std::env::set_var("HOME", &empty_home);
+        assert_eq!(discover(None), None);
         match saved_toml {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
             None => std::env::remove_var("SPIRA_TOML"),
@@ -1555,6 +1567,14 @@ mod tests {
         match saved_repo {
             Some(v) => std::env::set_var("SPIRA_REPO", v),
             None => std::env::remove_var("SPIRA_REPO"),
+        }
+        match saved_home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+        match saved_xdg {
+            Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+            None => std::env::remove_var("XDG_CONFIG_HOME"),
         }
     }
 
