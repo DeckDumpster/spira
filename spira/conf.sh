@@ -813,7 +813,7 @@ spira_conf_defaults() {
     : "${SPIRA_MAIL_MUTE:=0}"
     : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
     # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
-    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh
+    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage
     # Monitor is what reaches the session, so a burst of mail can never land mid-keystroke in
     # the operator's own half-written message the way a keystroke wake could. An operator who
     # wants the old keystroke-wake reader back for another mailbox still sets
@@ -835,12 +835,12 @@ spira_conf_defaults() {
     : "${SPIRA_MAIL_TIDY_FRESH:=86400}"
     : "${SPIRA_MAIL_INDEX:=$SPIRA_MAIL/index}"
     # THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
-    # (inbox-append.sh); the concierge's inbox-triage.sh Monitor tails it, drops echoes and
+    # (inbox-append.sh); the concierge's inbox-triage Monitor tails it, drops echoes and
     # duplicates, and passes what needs action — never a keystroke into the pane.
     : "${SPIRA_CONCIERGE_INBOX:=$SPIRA_RUN/watchd/concierge-inbox.log}"
     # DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
     : "${SPIRA_CONCIERGE_INBOX_DEDUP:=600}"
-    # THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
+    # THE KEEPER'S THRESHOLDS. If no inbox-triage Monitor has been running for
     # SPIRA_CONCIERGE_INBOX_STALL seconds while the inbox holds lines it has not seen, the
     # keeper re-arms with ONE wake (held by concierge.sh wake until the input line is empty),
     # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.

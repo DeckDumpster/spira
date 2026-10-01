@@ -398,7 +398,7 @@ impl Rebuild {
         }
 
         out.push("\n== watchers".to_string());
-        if let Ok(o) = Command::new("watchd.sh").arg("status").output() {
+        if let Ok(o) = Command::new("watchd").arg("status").output() {
             for line in String::from_utf8_lossy(&o.stdout).lines() {
                 out.push(format!("  {line}"));
             }

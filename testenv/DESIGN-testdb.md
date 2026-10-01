@@ -173,7 +173,7 @@ on the meter's mtime).
 `$SPIRA_RUN/bd-schema-stamp`, keyed on `stat "$SPIRA_BD"`. `testdb_up` exported a bare
 `SPIRA_BD=bd` (server) or `bd-embedded` (shared baseline), which never stats, so **every**
 conf.sh source by a script the code under test spawns (landing-pass → `skew.sh refresh`,
-`systemd/unit-ensure.sh`, `watchd.sh manifest|units`, …) re-ran the check: 123 of
+`systemd/unit-ensure.sh`, `watchd manifest|units`, …) re-ran the check: 123 of
 test-certify's 231 bd calls were `migrate schema`. `up` now prints `TESTDB_BD`, the absolute
 path of B as found on the caller's PATH **without** resolving links (inside a metered suite
 it is the meter's link, so calls stay metered), and `testdb.sh` exports it as `SPIRA_BD`
