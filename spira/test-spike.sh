@@ -41,7 +41,7 @@
 #
 # defect: sp-qkf
 # tier: T3
-# covers: spira/confine.sh landing-pass/* spira/chamber/* UC-safety-fences-32
+# covers: spira/confine.sh landing-pass/* spira/chamber/* spira-claim/* UC-safety-fences-32
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

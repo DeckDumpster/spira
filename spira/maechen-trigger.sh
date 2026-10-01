@@ -19,10 +19,14 @@ bin="$(command -v maechen-trigger)" || {
 }
 # conf.sh sets SPIRA_HOME as a plain shell variable, never exported (it is read within
 # THIS process, by scripts that source it directly) — but the binary below is a fresh
-# process image after exec, and its own lib.sh seam (real.rs's `seam`/`seam_ok`) re-sources
-# lib.sh in yet another subprocess, which needs SPIRA_HOME to find it at all. Exporting it
-# here, to the one value that is always correct ($HERE, computed above from this script's
-# own location, a lib.sh sibling), closes that gap — found via every seam call in
-# test-maechen-trigger.sh failing uniformly (source-lib.sh rc=96, SPIRA_HOME seen as ".").
-export SPIRA_HOME="$HERE"
-exec "$bin" "$@"
+# process image after exec, so it needs SPIRA_HOME another way. THE EXPORT THIS COMMENT
+# ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa): `export SPIRA_HOME="$HERE"` is replaced
+# with `--home "$HERE"` on the binary's own argv, the same convention bead.sh/rule.sh
+# already use — SPIRA_HOME is a per-copy fact `spira_config::resolve` deliberately never
+# derives, so it has to be told, not read back out of something that itself depends on it.
+# `main.rs` parses `--home` once, at the top, and every later `spira_config::resolve_for_
+# process` call (including the one behind its own lib.sh-sourcing seam, `real.rs`'s `seam`/
+# `seam_ok`, which still `.env("SPIRA_HOME", ...)`s that subprocess explicitly) now reads
+# it from there. Found originally via every seam call in test-maechen-trigger.sh failing
+# uniformly (source-lib.sh rc=96, SPIRA_HOME seen as ".") — this fix keeps that path closed.
+exec "$bin" --home "$HERE" "$@"
