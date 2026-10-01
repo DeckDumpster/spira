@@ -129,6 +129,30 @@ fragment, anything — not just correct as long as every probe always behaves.
 `re.sub(...)[:80].replace("=", "-")`) can never fire: the allowlist already maps `=` to a
 space before that call runs. Ported as-is for the same reason.
 
+### The re-entry command: `self_exe`, never `probe_exe`
+
+`run_loop` schedules a probe by re-entering this same binary with `--supervised-run <name>
+<timeout> <subcmd>` — a TOP-LEVEL dispatch flag `main.rs`'s own `run()` matches on, not a
+probe invocation. `run_probe_body` separately spawns `<probe_exe> <probe_exe_args...>
+<subcmd>` to run one probe's actual logic (COCK-overridable in tests, defaulting to this
+binary's own `probe` subcommand). These are two different commands for two different
+purposes, and conflating them was a real production defect: `run_loop` built the re-entry
+command from `probe_exe`/`probe_exe_args` too, so the real argv was `<self> probe
+--supervised-run now 30 now` — `main.rs` parsed that as subcommand `probe` with probe-name
+`--supervised-run`, printed usage, and exited 1, before ever reaching `run_probe_body` or
+writing a fragment. No probe the supervisor scheduled ever ran; `now`'s 5s cadence
+surfaced it first, because the pane's own staleness check keys on `SP_AT`, which only
+`now_keys` emits (the operator, 2026-10-01: production's `now.env` frozen at the
+pre-cutover bash collector's last pass, `cockpit.env` rewritten every tick by `merge` but
+`SP_AT` never advancing, `SP_PROBE_FAIL=0` because nothing ever got far enough to fail).
+
+`Config` now carries `self_exe` (always `current_exe()`, never `COCK`) separately from
+`probe_exe`/`probe_exe_args`, and `supervised_run_command` builds the re-entry command from
+`self_exe` alone, with nothing before `--supervised-run`. `run_loop`'s reap loop also now
+logs a scheduled child that exits non-zero — the class of failure this defect was, which
+previously left no trace anywhere (a fragment that is never written looks identical to a
+probe that has simply never been due).
+
 ## Decisions
 
 - **Root `cockpit.sh` is out of scope** (see "Scope" above) — a basename collision in the

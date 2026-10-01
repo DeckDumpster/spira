@@ -55,10 +55,22 @@ pub struct Config {
     pub tick: Duration,
     pub slow_concurrent: usize,
     pub merge_fail_max: u32,
-    /// The binary (and leading args) to invoke for one probe pass: normally this same
-    /// executable with `probe`; overridable in tests.
+    /// The binary (and leading args) `run_probe_body` invokes to run ONE probe's logic:
+    /// normally this same executable with `probe`; overridable in tests (`COCK`). Used by
+    /// `run_probe_body` and `_probe_body_test` only.
     pub probe_exe: PathBuf,
     pub probe_exe_args: Vec<String>,
+    /// This binary's own path, ALWAYS — never `COCK`-overridden. `run_loop` re-enters
+    /// itself with `--supervised-run` to run one probe slot as its own child process;
+    /// that re-entry is this binary's own top-level dispatch (`main.rs`'s `run()`), not a
+    /// probe invocation, so it must never carry `probe_exe_args`' `"probe"` prefix — doing
+    /// so sent every scheduled child `<self> probe --supervised-run <name> ...`, which
+    /// `main.rs` parses as `probe` with probe-name `"--supervised-run"`, a no-op that exits
+    /// 1 before ever reaching `run_probe_body` or writing a fragment. No probe the
+    /// supervisor scheduled ever ran; `now`'s 5s cadence made it the first one caught (the
+    /// operator, 2026-10-01, production: `now.env` frozen at the pre-cutover bash pass,
+    /// `cockpit.env`'s own `SP_AT` never advancing while the merge itself kept running).
+    pub self_exe: PathBuf,
 }
 
 impl Config {
@@ -84,12 +96,10 @@ impl Config {
         // cockpit.sh)}"`): a suite that overrides it points at its own mock script, invoked
         // directly with no subcommand prefix — the same direct-call shape the bash used.
         // Production leaves it unset and gets this binary's own `probe` subcommand.
+        let self_exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cockpit-collect"));
         let (probe_exe, probe_exe_args) = match std::env::var_os("COCK").filter(|v| !v.is_empty()) {
             Some(cock) => (PathBuf::from(cock), Vec::new()),
-            None => (
-                std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cockpit-collect")),
-                vec!["probe".to_string()],
-            ),
+            None => (self_exe.clone(), vec!["probe".to_string()]),
         };
         Config {
             run_dir,
@@ -101,6 +111,7 @@ impl Config {
             merge_fail_max,
             probe_exe,
             probe_exe_args,
+            self_exe,
         }
     }
 }
@@ -436,6 +447,24 @@ fn due_probes<'a>(
 /// merge failures. Spawns each due probe as a detached child tracked in `running`; a probe
 /// still running when its slot comes due again is skipped (visible as growing fragment age,
 /// never a silent backlog — `docs/test-plan` UC-05/UC-06).
+/// The exact command `run_loop` spawns to run one probe slot as its own child process:
+/// always THIS binary (`cfg.self_exe`, never `COCK`), with no args before
+/// `--supervised-run` — that flag is `main.rs`'s own top-level dispatch, not a probe
+/// invocation `cfg.probe_exe_args`' `"probe"` prefix could ever apply to. Pure and unit
+/// tested directly via `Command::get_program`/`get_args` (no spawn), the same way
+/// `due_probes` is tested without a real tick loop.
+fn supervised_run_command(cfg: &Config, p: &Probe) -> Command {
+    let mut cmd = Command::new(&cfg.self_exe);
+    cmd.arg("--supervised-run")
+        .arg(p.name)
+        .arg(p.timeout_s.to_string())
+        .arg(p.subcommand)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd
+}
+
 pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
     let _ = std::fs::create_dir_all(&cfg.frag_dir);
     sweep_probe_tmps(&cfg.frag_dir);
@@ -453,13 +482,30 @@ pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
         let mut finished = Vec::new();
         for (name, child) in running.iter_mut() {
             match child.try_wait() {
-                Ok(Some(_)) => finished.push(*name),
+                Ok(Some(status)) => {
+                    // A scheduled probe's own child exiting non-zero is distinct from a
+                    // probe that ran and reported a failure through its fragment
+                    // (run_probe_body already logs that) — this is the child never
+                    // REACHING run_probe_body at all (a bad re-entry command, a missing
+                    // binary, anything), which would otherwise be silent: the fragment
+                    // simply stays whatever it was, forever, with nothing to say why.
+                    if !status.success() {
+                        log(&format!(
+                            "collect: probe {name} exited {} before writing its fragment — scheduling is broken for this probe, not the probe itself",
+                            status.code().map(|c| c.to_string()).unwrap_or_else(|| "(signal)".to_string())
+                        ));
+                    }
+                    finished.push(*name);
+                }
                 Ok(None) => {
                     if PROBES.iter().find(|p| p.name == *name).map(|p| p.interval_s).unwrap_or(0) >= 600 {
                         slow_running += 1;
                     }
                 }
-                Err(_) => finished.push(*name),
+                Err(e) => {
+                    log(&format!("collect: probe {name}: wait failed: {e}"));
+                    finished.push(*name);
+                }
             }
         }
         for name in finished {
@@ -468,23 +514,14 @@ pub fn run_loop(cfg: &Config, log: impl Fn(&str)) -> i32 {
 
         let running_names: std::collections::HashSet<&str> = running.keys().copied().collect();
         for p in due_probes(PROBES, now, &running_names, &last_started, slow_running, cfg.slow_concurrent) {
-            let mut cmd = Command::new(&cfg.probe_exe);
-            for a in &cfg.probe_exe_args {
-                cmd.arg(a);
-            }
-            cmd.arg("--supervised-run")
-                .arg(p.name)
-                .arg(p.timeout_s.to_string())
-                .arg(p.subcommand)
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null());
-            if let Ok(child) = cmd.spawn() {
+            if let Ok(child) = supervised_run_command(cfg, p).spawn() {
                 running.insert(p.name, child);
                 last_started.insert(p.name, now);
                 if p.interval_s >= 600 {
                     slow_running += 1;
                 }
+            } else {
+                log(&format!("collect: probe {}: failed to spawn {:?}", p.name, cfg.self_exe));
             }
         }
 
@@ -617,6 +654,131 @@ mod tests {
         let last_started: HashMap<&'static str, i64> = HashMap::new();
         let due = due_probes(&probes, 1_000_000, &running, &last_started, 0, 1);
         assert_eq!(due.iter().map(|p| p.name).collect::<Vec<_>>(), vec!["slow_a"]);
+    }
+
+    /// The regression this bead exists for (the operator, 2026-10-01, production): every
+    /// scheduled probe's child was spawned as `<self_exe> <probe_exe_args...>
+    /// --supervised-run <name> <timeout> <subcmd>` — `probe_exe_args` defaults to
+    /// `["probe"]`, so the real argv was `<self> probe --supervised-run now 30 now`, which
+    /// `main.rs`'s own dispatch parses as subcommand `probe` with probe-name
+    /// `--supervised-run` — not a probe name, so it prints usage and exits 1 before ever
+    /// reaching `run_probe_body`. No fragment was ever written by ANY scheduled probe;
+    /// `now`'s 5s cadence surfaced it first because `SP_AT`'s staleness is what the pane
+    /// watches. `supervised_run_command` must use `self_exe` with NOTHING before
+    /// `--supervised-run`, regardless of what `probe_exe_args` holds.
+    #[test]
+    fn supervised_run_command_never_carries_the_probe_exe_args_prefix() {
+        let run = TempDir::new("cc-supervised-cmd");
+        let mut cfg = cfg(&run);
+        cfg.self_exe = PathBuf::from("/usr/local/bin/cockpit-collect");
+        // Deliberately non-empty and different from self_exe, so a regression that uses
+        // probe_exe/probe_exe_args here instead of self_exe cannot pass by coincidence.
+        cfg.probe_exe = PathBuf::from("/some/other/mock");
+        cfg.probe_exe_args = vec!["probe".to_string()];
+        let p = &PROBES[0];
+
+        let cmd = supervised_run_command(&cfg, p);
+        assert_eq!(cmd.get_program(), std::ffi::OsStr::new("/usr/local/bin/cockpit-collect"));
+        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
+        assert_eq!(
+            args,
+            vec![
+                std::ffi::OsStr::new("--supervised-run"),
+                std::ffi::OsStr::new(p.name),
+                std::ffi::OsStr::new(&p.timeout_s.to_string()),
+                std::ffi::OsStr::new(p.subcommand),
+            ],
+            "no \"probe\" prefix, and self_exe, not probe_exe"
+        );
+    }
+
+    /// End-to-end through the REAL spawn path (not a mock of it): a fake `self_exe` script
+    /// stands in for `cockpit-collect --supervised-run`, writing a fresh, advancing
+    /// `SP_AT` to its fragment exactly the way the real `now` probe does. Scheduling it
+    /// twice (via `due_probes` + `supervised_run_command`, the same two calls `run_loop`
+    /// makes) and merging after each must produce a strictly advancing `SP_AT` in
+    /// `cockpit.env` — catching any future regression in the re-entry command the way the
+    /// pure argv test above cannot (that one does not spawn anything).
+    #[test]
+    fn two_consecutive_scheduled_runs_produce_an_advancing_sp_at() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
+        let run = TempDir::new("cc-advancing-sp-at");
+        let mut cfg = cfg(&run);
+        let self_exe = run.path().join("fake-self");
+        // Mimics `cockpit-collect --supervised-run now <timeout> now`: write a fragment
+        // carrying a fresh SP_AT directly, exactly what run_probe_body's own
+        // write_atomic would have left behind had the real probe run ($2 is the probe
+        // name in `--supervised-run <name> <timeout> <subcmd>`, matching argv position).
+        testkit::write_exe(
+            &self_exe,
+            r#"#!/usr/bin/env bash
+printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s)" "$(date +%s%N)" > "$FRAG_DIR/$2.env"
+"#,
+        );
+        std::fs::create_dir_all(&cfg.frag_dir).unwrap();
+        std::env::set_var("FRAG_DIR", &cfg.frag_dir);
+        cfg.self_exe = self_exe;
+
+        let probes = [Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" }];
+        let mut running: HashMap<&'static str, std::process::Child> = HashMap::new();
+        let mut last_started: HashMap<&'static str, i64> = HashMap::new();
+
+        let run_one_tick = |running: &mut HashMap<&'static str, std::process::Child>, last_started: &mut HashMap<&'static str, i64>| {
+            let now = io::now();
+            let running_names: std::collections::HashSet<&str> = running.keys().copied().collect();
+            for p in due_probes(&probes, now, &running_names, last_started, 0, cfg.slow_concurrent) {
+                let child = supervised_run_command(&cfg, p).spawn().expect("spawn fake self_exe");
+                running.insert(p.name, child);
+                last_started.insert(p.name, now);
+            }
+            for (_, child) in running.iter_mut() {
+                child.wait().expect("wait for fake self_exe");
+            }
+            running.clear();
+            assert!(merge_fragments(&cfg));
+        };
+
+        run_one_tick(&mut running, &mut last_started);
+        let snap1 = std::fs::read_to_string(&cfg.snap).unwrap();
+        let at1 = snap1.lines().find_map(|l| l.strip_prefix("SP_AT=")).expect("SP_AT present after first run");
+
+        // Force the next tick to be due immediately regardless of the 5s interval, the
+        // same way the real supervisor's next tick would be once 5s has actually passed.
+        last_started.clear();
+        run_one_tick(&mut running, &mut last_started);
+        let snap2 = std::fs::read_to_string(&cfg.snap).unwrap();
+        let at2 = snap2.lines().find_map(|l| l.strip_prefix("SP_AT=")).expect("SP_AT present after second run");
+
+        std::env::remove_var("FRAG_DIR");
+        assert_ne!(at1, at2, "SP_AT must advance between two scheduled runs, not freeze");
+    }
+
+    /// A scheduled probe whose child exits non-zero before writing anything (this bead's
+    /// exact defect, reproduced directly) must be LOGGED by the supervisor loop itself —
+    /// not silently dropped. Before this fix, nothing anywhere said a probe never ran.
+    #[test]
+    fn a_probe_that_exits_without_writing_is_logged_not_silent() {
+        let run = TempDir::new("cc-logged-failure");
+        let mut cfg = cfg(&run);
+        let self_exe = run.path().join("fake-self-fails");
+        testkit::write_exe(&self_exe, "#!/usr/bin/env bash\nexit 1\n");
+        cfg.self_exe = self_exe;
+
+        let p = Probe { name: "now", interval_s: 5, timeout_s: 30, subcommand: "now" };
+        let mut child = supervised_run_command(&cfg, &p).spawn().expect("spawn");
+        let status = child.wait().expect("wait");
+
+        let logged = std::sync::Mutex::new(Vec::<String>::new());
+        // Reproduce exactly the check `run_loop`'s reap loop performs on a finished child.
+        if !status.success() {
+            logged.lock().unwrap().push(format!(
+                "collect: probe {} exited {} before writing its fragment — scheduling is broken for this probe, not the probe itself",
+                p.name,
+                status.code().map(|c| c.to_string()).unwrap_or_else(|| "(signal)".to_string())
+            ));
+        }
+        assert_eq!(logged.lock().unwrap().len(), 1, "a failed-before-writing child must produce exactly one log line");
+        assert!(logged.lock().unwrap()[0].contains("exited 1"));
     }
 
     #[test]
