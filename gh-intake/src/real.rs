@@ -224,9 +224,9 @@ impl Mail for RealMail {
 
     /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): stdout discarded, stderr
     /// captured as the error text exactly as `_err="$(... 2>&1 >/dev/null)"` did.
-    fn send_question(&self, from: &str, subject: &str, default: &str, body: &[u8]) -> Result<(), String> {
+    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
         let mut child = Command::new(&self.mail_bin)
-            .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default])
+            .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

@@ -349,7 +349,7 @@ pub fn gh_issue_ask_unlanded(d: &Deps, ctx: &Ctx, id: &str, ext_ref: &str, draft
 
     let dflt = draft.filter(|d| !d.is_empty()).unwrap_or("post a comment explaining the resolution and close the issue");
     let body = ask_unlanded_body(&subj, dflt, id, ext_ref);
-    match d.mail.send_question("Landing gate <gate@spira>", &subj, dflt, body.as_bytes()) {
+    match d.mail.send_question("Landing gate <gate@spira>", &subj, dflt, id, body.as_bytes()) {
         Ok(()) => log.push(format!("gh-closeout {id}: asked operator about {ext_ref}")),
         Err(e) if !e.is_empty() => log.push(format!("gh-closeout {id}: ask refused ({e})")),
         Err(_) => log.push(format!("gh-closeout {id}: ask refused — probe fault: mail produced no reason")),
@@ -759,7 +759,7 @@ mod tests {
 
     #[derive(Default)]
     struct FakeMail {
-        sent: RefCell<Vec<(String, String, String, String)>>, // from, subject, default, body
+        sent: RefCell<Vec<(String, String, String, String, String)>>, // from, subject, default, bead_id, body
         fail: RefCell<Option<String>>,
     }
 
@@ -767,11 +767,17 @@ mod tests {
         fn send_operator_note(&self, _subject: &str, _body: &[u8]) -> bool {
             true
         }
-        fn send_question(&self, from: &str, subject: &str, default: &str, body: &[u8]) -> Result<(), String> {
+        fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String> {
             if let Some(e) = self.fail.borrow().clone() {
                 return Err(e);
             }
-            self.sent.borrow_mut().push((from.to_string(), subject.to_string(), default.to_string(), String::from_utf8_lossy(body).into_owned()));
+            self.sent.borrow_mut().push((
+                from.to_string(),
+                subject.to_string(),
+                default.to_string(),
+                bead_id.to_string(),
+                String::from_utf8_lossy(body).into_owned(),
+            ));
             Ok(())
         }
     }

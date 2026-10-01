@@ -82,10 +82,13 @@ pub trait Mail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool;
 
     /// `mail send operator --from <from> --subject <subject> --kind question --default
-    /// <default>`, body on stdin (sp-j3fim, `gh_issue_ask_unlanded`). `Ok(())` on success;
-    /// `Err(stderr)` otherwise — stderr may itself be empty, exactly as lib.sh's
-    /// `_err="$(... 2>&1 >/dev/null)"` could capture nothing from a probe fault.
-    fn send_question(&self, from: &str, subject: &str, default: &str, body: &[u8]) -> Result<(), String>;
+    /// <default> --bead <bead_id>`, body on stdin (sp-j3fim, `gh_issue_ask_unlanded`).
+    /// `--bead` is what lets the real `mail` binary wire the ask it creates to the work
+    /// bead with `dep relate` (never `dep add` — a reopened bead must not be stranded
+    /// behind its own ask). `Ok(())` on success; `Err(stderr)` otherwise — stderr may
+    /// itself be empty, exactly as lib.sh's `_err="$(... 2>&1 >/dev/null)"` could capture
+    /// nothing from a probe fault.
+    fn send_question(&self, from: &str, subject: &str, default: &str, bead_id: &str, body: &[u8]) -> Result<(), String>;
 }
 
 /// lib.sh's `ghq` (`ghq() { command bdq __ghq "$@"; }` — never its own binary): `bdq

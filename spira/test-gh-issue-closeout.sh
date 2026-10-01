@@ -123,7 +123,10 @@ else
     bad "gh issue was closed" "no 'issue close' call"
 fi
 SHORT_SHA="$(git -C "$REPO" rev-parse --short "$LANDED_SHA")"
-if grep -q "issue comment" "$GHLOG" 2>/dev/null && grep "issue comment" "$GHLOG" | grep -q "https://github.com/fixture/testrepo/commit/"; then
+# The comment body carries its own blank line before the link, so the gh stub's one
+# `printf '%s\n' "$*"` call spans several lines in GHLOG — search the whole file, not
+# just the "issue comment" line.
+if grep -q "issue comment" "$GHLOG" 2>/dev/null && grep -q "https://github.com/fixture/testrepo/commit/" "$GHLOG" 2>/dev/null; then
     ok "comment contains a commit link"
 else
     bad "comment contains a commit link" "GHLOG: $(cat "$GHLOG" 2>/dev/null)"

@@ -133,7 +133,7 @@ impl Mail for FakeMail {
         self.sent.borrow_mut().push((subject.to_string(), String::from_utf8_lossy(body).to_string()));
         true
     }
-    fn send_question(&self, _from: &str, _subject: &str, _default: &str, _body: &[u8]) -> Result<(), String> {
+    fn send_question(&self, _from: &str, _subject: &str, _default: &str, _bead_id: &str, _body: &[u8]) -> Result<(), String> {
         Ok(())
     }
 }
