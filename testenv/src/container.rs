@@ -63,6 +63,16 @@ pub trait Host {
     fn free_disk(&self, p: &Path) -> String;
     fn free_mem(&self) -> String;
     fn owner_dir(&self) -> PathBuf;
+    /// Each of `dir`'s immediate entries that is a symlink, resolved to its target's own
+    /// absolute, canonical parent directory, each listed once (sp-e5v53-3): the extra bind
+    /// mounts a checkout whose build directories are themselves symlinks elsewhere (a gate
+    /// tree's `target/{aeon,release,debug,gate-tools}`, gate/src/target.rs's tmpfs root)
+    /// needs, so the symlink still resolves once the checkout itself is bind-mounted into a
+    /// container — nothing outside the checkout is otherwise visible in there, and a bind
+    /// mount preserves a symlink as a symlink, never resolving it for the mount. Empty for a
+    /// `dir` with no symlinked entries, or that does not exist — every ordinary (non-gate)
+    /// worktree's `target/` is a real directory and this always reports nothing for one.
+    fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf>;
     fn err(&self, line: &str);
     fn out(&self, line: &str);
 }
@@ -655,8 +665,21 @@ impl Driver<'_> {
         if !self.admit() {
             return 1;
         }
+        // sp-e5v53-3: a checkout whose build directories are themselves symlinks elsewhere
+        // (a gate tree's `target/{aeon,release,debug,gate-tools}`, gate/src/target.rs's
+        // tmpfs root) needs that elsewhere mounted too — the bind mount below preserves the
+        // symlink as a symlink, and nothing outside the checkout is otherwise visible once
+        // inside the container, so a suite built through it "was not built" from in here.
+        // Empty, and this is one volume line fewer, for every ordinary (non-gate) worktree.
+        let target_dir = Path::new(&checkout).join("target");
+        let extra_mounts: Vec<String> = self
+            .host
+            .symlinked_targets(&target_dir)
+            .into_iter()
+            .flat_map(|p| [s("--volume"), format!("{}:{}:z", p.display(), p.display())])
+            .collect();
         // pids-limit 8192: 52 parallel suites exhausted podman's rootless default of 2048.
-        let run = vec![
+        let run: Vec<String> = [
             s("run"),
             s("-d"),
             s("--name"),
@@ -668,12 +691,17 @@ impl Driver<'_> {
             s(TESTENV_LABEL),
             s("--volume"),
             format!("{checkout}:{CONTAINER_CHECKOUT}:z"),
+        ]
+        .into_iter()
+        .chain(extra_mounts)
+        .chain([
             s("--volume"),
             format!("{name}-cargo-reg:{CONTAINER_CARGO}/registry"),
             s("--volume"),
             format!("{name}-cargo-git:{CONTAINER_CARGO}/git"),
             img,
-        ];
+        ])
+        .collect();
         if self.host.podman(&run, Io::Loud).0 != 0 {
             self.err(&format!("testenv: podman run {name} failed"));
             return 1;
@@ -1104,6 +1132,32 @@ impl Host for RealHost {
     }
     fn owner_dir(&self) -> PathBuf {
         PathBuf::from("/tmp")
+    }
+    fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf> {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let mut out: Vec<PathBuf> = Vec::new();
+        for e in entries.flatten() {
+            let p = e.path();
+            let Ok(meta) = std::fs::symlink_metadata(&p) else {
+                continue;
+            };
+            if !meta.file_type().is_symlink() {
+                continue;
+            }
+            let Ok(canon) = std::fs::canonicalize(&p) else {
+                continue;
+            };
+            let Some(parent) = canon.parent() else {
+                continue;
+            };
+            let parent = parent.to_path_buf();
+            if !out.contains(&parent) {
+                out.push(parent);
+            }
+        }
+        out
     }
     fn err(&self, line: &str) {
         eprintln!("{line}");

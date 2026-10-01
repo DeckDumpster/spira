@@ -17,8 +17,8 @@
 #     tested directly in test-watchtower-throttle.sh
 #   - lane rotation order                            -> lane_rotate (G1),
 #     tested directly in test-lane-ceiling.sh
-#   - CHECK 8's firing predicate                      -> check8_should_judge (G15),
-#     tested directly in test-check8-progressed.sh
+#   - CHECK 8's firing predicate                      -> sentinel's audit::tests::judgement_table
+#     (G15; check8_should_judge/test-check8-progressed.sh retired at sp-8itaf, zero live callers)
 #
 # SP-994Y9: A NORMAL PASS TOOK 4-5 MINUTES against a 2-minute timer because CHECK 4 (poison,
 # walks every dispatchable bead), CHECK 5 (closed-not-landed) and CHECK 6b (the Sending,

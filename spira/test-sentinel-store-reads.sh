@@ -87,50 +87,6 @@ testdb_reset
 
 # ==========================================================================================
 echo
-echo "case 1 — dispatchable_open: per-partition fan-out replaced by one cached list"
-# ==========================================================================================
-reset_calls
-unset SPIRA_LIST_SNAPSHOT
-out_nosnap="$(dispatchable_open 2>/dev/null)"
-calls_nosnap="$(n_calls)"
-[ "${calls_nosnap:-0}" -gt 1 ] \
-    && ok "1a POSITIVE CONTROL: no snapshot — more than one partition asks bd (${calls_nosnap} calls)" \
-    || bad "1a POSITIVE CONTROL: no snapshot — more than one partition asks bd" "got ${calls_nosnap:-0} calls"
-
-reset_calls
-SPIRA_LIST_SNAPSHOT="$TMP/list-snapshot.json"
-bdjson list --all --limit 0 > "$SPIRA_LIST_SNAPSHOT" 2>/dev/null
-reset_calls
-out_snap="$(SPIRA_LIST_SNAPSHOT="$SPIRA_LIST_SNAPSHOT" dispatchable_open 2>/dev/null)"
-calls_snap="$(n_calls)"
-is   "1b: with the snapshot cached, dispatchable_open asks bd zero more times" "0" "${calls_snap:-x}"
-is   "1c: output is identical with and without the snapshot" "$out_nosnap" "$out_snap"
-unset SPIRA_LIST_SNAPSHOT
-
-# ==========================================================================================
-echo
-echo "case 2 — check4_closed_branched: same fix, the ~10.5MB-of-closed-JSON call site"
-# ==========================================================================================
-reset_calls
-out_nosnap="$(check4_closed_branched 2>/dev/null)"
-calls_nosnap="$(n_calls)"
-[ "${calls_nosnap:-0}" -gt 1 ] \
-    && ok "2a POSITIVE CONTROL: no snapshot — more than one partition asks bd (${calls_nosnap} calls)" \
-    || bad "2a POSITIVE CONTROL: no snapshot — more than one partition asks bd" "got ${calls_nosnap:-0} calls"
-
-reset_calls
-LIST_SNAP="$TMP/list-snapshot2.json"
-bdjson list --all --limit 0 > "$LIST_SNAP" 2>/dev/null
-reset_calls
-out_snap="$(SPIRA_LIST_SNAPSHOT="$LIST_SNAP" check4_closed_branched 2>/dev/null)"
-calls_snap="$(n_calls)"
-is   "2b: with the snapshot cached, check4_closed_branched asks bd zero more times" "0" "${calls_snap:-x}"
-is   "2c: output is identical with and without the snapshot" "$out_nosnap" "$out_snap"
-want "2d: both closed+branched beads are still found (sp-c1)" "sp-c1" "$out_snap"
-want "2e: both closed+branched beads are still found (sp-c2)" "sp-c2" "$out_snap"
-
-# ==========================================================================================
-echo
 echo "case 3 — bulk_ready_by_fayth reads SPIRA_READY_SNAPSHOT instead of asking bd again"
 # ==========================================================================================
 reset_calls

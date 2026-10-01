@@ -702,48 +702,6 @@ $_ev
 MAILEOF
 }
 
-# spira_ask_timeout_loop — escalate a bead that keeps timing out in a capped lane.
-#
-# A bead routed to a lane with FAYTH_TIMEOUT_SECONDS is killed when the cap expires. One
-# timeout is expected for work that arrived labelled as an incident but carries more code than
-# the 8-minute cap allows. N timeouts in a row is a loop: the cap is the wrong lane, and the
-# right answer is either a persona with no cap, or splitting the work.
-#
-# Deduped on the bead id so the ask fires once per (id, timeout-count): a new timeout is new
-# information even if a previous ask about the same bead was already closed.
-spira_ask_timeout_loop() {  # <bead> <branch> <fayth> <cap-seconds> <timeout-count>
-    local id="$1" br="$2" fayth="$3" cap="$4" n="$5"
-    ask_already_open "$id timed out $n" && return 0
-    local _subj="$id timed out $n times in the $fayth lane (${cap}s cap)"
-    local _dflt="move the bead to a persona with no cap (e.g. a builder) by replacing the 'incident' label with 'plan', or split the work into pieces that fit the lane"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$br has been killed by the ${cap}s cap $n times without committing anything. This is the lane routing the bead to a wall it cannot finish inside, not a verdict about the approach. The work is neither wrong nor charged; it is stuck in a lane too short for it.
-MAILEOF
-}
-
-# land_log_tail — last N lines of landing.log for escalation evidence.
-#
-# landing.log is PLAIN TEXT, so it is tailed with `tail` and not with trace_tail. trace_tail
-# renders a stream-json session log and silently drops every line that does not start with
-# `{` — pointed at this file it returns the empty string, and an escalation whose evidence
-# section is empty is the same failure as no escalation at all, arriving with a reassuring
-# shape (law-escalations-carry-their-evidence).
-land_log_tail() {
-    local f="$SPIRA_RUN/landing.log" n="${1:-30}"
-    [ -r "$f" ] || { printf '(no landing log — the worker has never written one)'; return 0; }
-    tail -n "$n" "$f" 2>/dev/null
-}
-
 # land_escalate — ask the operator once when the landing leg is broken.
 #
 # The escalation is rate limited because a dead landing leg stays dead until someone fixes
@@ -960,40 +918,6 @@ spira_task_fayths() {
     printf '%s' "${out# }"
 }
 
-# spira_operator_fayths -> the personas only a human starts. FAYTH_SUMMON is not `auto`.
-#
-# A PERSONA THE SENTINEL MUST NEVER SUMMON IS A DECLARED FACT, NOT AN ACCIDENT OF ITS SHAPE.
-# The concierge is the case: it holds no partition, claims no bead and runs for days as the
-# operator's Remote Control session, so every property that would have kept it out of the
-# pool by side effect — an empty FAYTH_LABELS, an absent FAYTH_LANE — is a property somebody
-# could reasonably change while meaning something else entirely, and the sentinel would then
-# start summoning a session that has no bead to work and no deadline to end it.
-#
-# The cockpit's allocator taught this the same week, in miniature: it decided which sections
-# were served first by testing `base == max`, and the day two sections were capped they
-# satisfied that test by accident and starved a third. A property's MEANING and the shape it
-# happens to have are two facts, and deriving one from the other breaks at the moment somebody
-# changes the shape for an unrelated reason.
-#
-# IT READS THE CHAMBER, NOT `spira_fayths`, AND THAT IS THE ONE DIFFERENCE FROM EVERY LIST
-# ABOVE. `spira_fayths` honours $SPIRA_FAYTHS, which is a HOST's declaration of which personas
-# it runs — a deployment list, and a list of things that get SUMMONED. An operator persona is
-# summoned by nobody, so whether this box runs a worker pool containing it is not a question
-# that applies: the operator can start it whether or not the sentinel has ever heard of it.
-#
-# The practical consequence is the safe one. On a host whose $SPIRA_FAYTHS omits the concierge
-# — which is every host today — the sentinel cannot summon it because it is not in the roster,
-# AND `FAYTH_SUMMON` would stop it if it were. Two independent reasons, neither relying on the
-# other, which is what is wanted for the one persona that must never be started by a machine.
-spira_operator_fayths() {
-    local f out=""
-    for f in $(fayth_names); do
-        [ "$(fayth_get "$f" FAYTH_SUMMON auto)" = auto ] && continue
-        out="$out $f"
-    done
-    printf '%s' "${out# }"
-}
-
 # spira_lane_fayths -> the personas that belong to a declared lane (FAYTH_LANE set).
 #
 # A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from SPIRA_MAX_AEONS,
@@ -1015,38 +939,6 @@ spira_lane_fayths() {
         [ -n "$(fayth_get "$f" FAYTH_LANE "")" ] && out="$out $f"
     done
     printf '%s' "${out# }"
-}
-
-SPIRA_ROSTER_WARN_STAMP="${SPIRA_ROSTER_WARN_STAMP:-$SPIRA_RUN/roster-warn.stamp}"
-
-# A NARROWED ROSTER SAYS SO. SPIRA_FAYTHS is a legitimate host override — which personas a
-# HOST runs is deployment configuration — but it is also the exact shape of the defect this
-# section exists under: a fayth present in the chamber and absent from the roster is a persona
-# that landed complete and will never run, and nothing about that looks wrong from the outside.
-# It went unnoticed for a day. Name it instead.
-#
-# The warning fires once per change to the exclusion set, not once per pass. A warning that
-# fires every pass on a deliberate configuration trains operators to skip the log
-# (law-alerts-must-be-actionable).
-roster_warnings() {      # roster_warnings <roster> -> a WARN line per fayth left out
-    local roster=" $1 " f excluded stamp
-    excluded=""
-    for f in $(fayth_names); do
-        grep -qw -- "$f" <<< "$roster" && continue
-        excluded="$excluded $f"
-    done
-    excluded="${excluded# }"
-    if [ -z "$excluded" ]; then
-        rm -f "$SPIRA_ROSTER_WARN_STAMP"
-        return 0
-    fi
-    stamp="$(printf '%s' "$excluded" | tr ' ' '\n' | sort | tr '\n' ' ')"
-    [ "$(cat "$SPIRA_ROSTER_WARN_STAMP" 2>/dev/null)" = "$stamp" ] && return 0
-    printf '%s' "$stamp" > "$SPIRA_ROSTER_WARN_STAMP"
-    for f in $excluded; do
-        log "WARN $f.fayth is in the chamber but not in SPIRA_FAYTHS — that persona will never be summoned here"
-    done
-    return 0
 }
 
 # persona_model <fayth> [default] -> the model this persona launches under.
@@ -1314,118 +1206,6 @@ claim_retry() {
     return 1
 }
 
-# check2_protect_waiting — protect IN_PROGRESS beads blocked solely on operator-ask deps
-# from the time-based dead-worker reaper (CHECK 2 in sentinel.sh).
-#
-# An aeon that exits because its bead's only open dep carries the ask label is not a dead
-# worker — it followed its contract: "record state and exit". Its lease goes stale and the
-# time-based reaper fires, finds an IN_PROGRESS bead with a stale lease, and reclaims it.
-# The next aeon re-derives the same diagnosis and exits, and the 180m loop repeats. The
-# reclaim is wrong: sp-mfa4 hit it six times before this fix existed.
-#
-# The fix: apply a spira-lc "wait" hold to qualifying beads (sp-i2m7y: this was the
-# SPIRA_RECLAIM_SKIP_LABEL bd label, and check2_reclaim_stale's own reaper skips a wait-held
-# bead the same way it used to skip the label). Release the hold when the dep closes, which
-# lets the reaper reclaim the stale lease on that same pass — no latency, no polling.
-#
-# TWO STEPS, ONE PASS, BATCHED:
-# (a) Beads already wait-held: re-check. If no open dep still carries the ask label, release
-#     the hold so the reaper can fire normally.
-# (b) IN_PROGRESS beads with deps but no wait hold: if ALL open deps carry the ask label
-#     (and there is at least one), apply the hold.
-#
-# CONSERVATIVE: only marks when EVERY open dep carries the ask label. One open dep without
-# it means other blockers exist; the bead is handled by normal reclaim or claim paths, and
-# protecting it would mask a genuine dead-worker case.
-#
-# BATCHED: one `bd list` + one `bd show` + one `spira-lc list --hold wait` regardless of how
-# many IN_PROGRESS beads exist. In practice there are only a few at a time, so this is cheap.
-check2_protect_waiting() {
-    local ask_label="$SPIRA_ASK_LABEL"
-    local held_wait; held_wait="$(spira-lc list-held wait 2>/dev/null)"
-
-    # Collect IN_PROGRESS beads that need dep inspection.
-    # Output: one line per bead: "<id> <has_skip:0|1> <dep_count>"
-    local bead_lines
-    bead_lines="$(bdjson list --all --status in_progress --limit 0 2>/dev/null \
-        | python3 -c '
-import sys, json
-held = set(sys.argv[1].split())
-try: d = json.load(sys.stdin)
-except: sys.exit(0)
-for item in (d if isinstance(d, list) else [d]):
-    dep_count = item.get("dependency_count", 0)
-    has_skip = 1 if item["id"] in held else 0
-    if has_skip or dep_count > 0:
-        print(item["id"], has_skip, dep_count)
-' "$held_wait" 2>/dev/null)"
-
-    [ -n "$bead_lines" ] || return 0
-
-    # Collect IDs for re-check and for candidate protection.
-    local remove_ids=() add_ids=()
-    local id has_skip dep_count
-    while IFS=' ' read -r id has_skip dep_count; do
-        [ -n "$id" ] || continue
-        if [ "${has_skip:-0}" = 1 ]; then
-            remove_ids+=("$id")
-        elif [ "${dep_count:-0}" -gt 0 ]; then
-            add_ids+=("$id")
-        fi
-    done <<< "$bead_lines"
-
-    [ "${#remove_ids[@]}" -eq 0 ] && [ "${#add_ids[@]}" -eq 0 ] && return 0
-
-    # One batch show call for all IDs that need dep inspection.
-    local all_ids=("${remove_ids[@]}" "${add_ids[@]}")
-    local show_json
-    show_json="$(bdjson show "${all_ids[@]}" 2>/dev/null)"
-    [ -n "$show_json" ] || return 0
-
-    # Decide: hold or release the wait.
-    local decisions
-    decisions="$(python3 -c '
-import sys, json
-ask = sys.argv[1]
-# Reconstruct the sets from newline-separated args 2 and 3.
-remove_set = set(filter(None, sys.argv[2].split(","))) if sys.argv[2] else set()
-add_set    = set(filter(None, sys.argv[3].split(","))) if sys.argv[3] else set()
-try: d = json.load(sys.stdin)
-except: sys.exit(0)
-for item in (d if isinstance(d, list) else [d]):
-    bid = item.get("id", "")
-    deps = item.get("dependencies") or []
-    open_deps    = [x for x in deps if x.get("status") != "closed"]
-    ask_open     = [x for x in open_deps if ask in (x.get("labels") or [])
-                and (x.get("dependency_type") or x.get("type")) == "blocks"]
-    non_ask_open = [x for x in open_deps if ask not in (x.get("labels") or [])]
-    if bid in remove_set and not ask_open:
-        print("remove", bid)
-    elif bid in add_set and open_deps and ask_open and not non_ask_open:
-        print("add", bid)
-' "$ask_label" \
-    "$(IFS=,; printf '%s' "${remove_ids[*]}")" \
-    "$(IFS=,; printf '%s' "${add_ids[*]}")" \
-    <<< "$show_json")"
-
-    local action
-    while IFS=' ' read -r action id; do
-        [ -n "$id" ] || continue
-        case "$action" in
-            add)
-                spira-lc hold "$id" wait "waiting on $ask_label dep(s), excluded from CHECK 2's reclaim" sentinel >/dev/null 2>&1 || true
-                log "CHECK2 $id: only open dep(s) carry $ask_label — wait-held, excluded from reclaim"
-                act "protected $id from reclaim: waiting on $ask_label dep"
-                ;;
-            remove)
-                spira-lc unhold "$id" wait sentinel >/dev/null 2>&1 || true
-                log "CHECK2 $id: $ask_label dep no longer blocking — wait released, re-enters the reaper"
-                act "unprotected $id: $ask_label dep closed"
-                ;;
-        esac
-    done <<< "$decisions"
-}
-
 # fayth_exclude <fayth> -> the persona's own exclusions, plus every OTHER persona's claim.
 #
 # THE ENCOUNTER CHOOSES THE PARTY (the operator, 2026-09-07: "Spira is the world. there are
@@ -1531,27 +1311,6 @@ fayth_ready() {
 # `FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}..."`), so the `inc <= L` test in
 # ready-bucket.py rejects an out-of-scope bead exactly as READY_ARGS's own --label would
 # have, and reading the broader snapshot changes no fayth's count.
-# ready_cache_populate <dir> -> path to a populated SPIRA_READY_CACHE file on stdout, or
-# nothing (rc 1) when bulk_ready_by_fayth could not produce one.
-#
-# NEVER HANDS BACK AN EMPTY-BUT-EXISTING FILE. fayth_ready trusts the cache unconditionally
-# once the file exists (`[ -f "$SPIRA_READY_CACHE" ]`), printing 0 for any fayth absent from
-# it — so an empty file left by a failed bulk query (a SPIRA_HOME missing ready-bucket.py, a
-# bd error) would silently answer every fayth_ready call with a false zero for the rest of
-# the pass, worse than having no cache at all. Every caller populates the cache through this
-# rather than writing bulk_ready_by_fayth's output straight to a file itself.
-ready_cache_populate() {
-    local dir="${1:-$SPIRA_RUN}" f
-    f="$(mktemp "$dir/ready-cache.XXXXXX" 2>/dev/null)" || return 1
-    bulk_ready_by_fayth > "$f" 2>/dev/null
-    if [ -s "$f" ] || [ -z "$(spira_fayths 2>/dev/null)" ]; then
-        printf '%s' "$f"
-        return 0
-    fi
-    rm -f "$f"
-    return 1
-}
-
 bulk_ready_by_fayth() {
     local raw parts f inc exc
     if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
@@ -1666,23 +1425,6 @@ ck7_fill_cap() {
     if [ -n "$pool" ] && [ "$pool" -le 0 ]; then printf stop; return 0; fi
     if [ "$fill" -ge "${SPIRA_MAX_LIVE_AEONS:-4}" ]; then printf stop; return 0; fi
     printf continue
-}
-
-# check8_should_judge <plan_ready> <plan_inprog> <n_open> <progressed> <last> <now> <every>
-#   -> yes / cooldown / no. CHECK 8 fires (yes) only when the plan's own queue is starved —
-# plan_inprog=0, n_open>0, plan_ready=0 — and nothing progressed this pass; `acted>0` never
-# suppresses it, only `progressed` does. A ready plan bead (plan_ready>0) means the DAG is
-# moving whether or not an aeon was free to take it, so it exits before judgement even when
-# an incident is ready (G15). `cooldown` means starved but within <every> seconds of <last>.
-check8_should_judge() {
-    local plan_ready="$1" plan_inprog="$2" n_open="$3" progressed="$4"
-    local last="$5" now="$6" every="$7"
-    [ "$plan_ready" -gt 0 ] && { printf no; return 0; }
-    if [ "$plan_inprog" -eq 0 ] && [ "$n_open" -gt 0 ] && [ "$progressed" -eq 0 ]; then
-        if [ $(( now - last )) -lt "$every" ]; then printf cooldown; else printf yes; fi
-        return 0
-    fi
-    printf no
 }
 
 # mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
@@ -2206,63 +1948,6 @@ park_unmapped() {
     spira-lc hold "$id" ask "repo:$repo_name has no repo-map entry" aeon.sh || true
     bdq note "$id" "Parked by aeon.sh: this bead carries repo:$repo_name, and $SPIRA_REPO_MAP has no entry for it (or its path is not a git checkout). Labeled $SPIRA_ASK_LABEL and overseer — no aeon will claim it again until a human corrects the label or adds the repo to the map and removes that label. Refusing to work it in the home repo — a fix landed in the wrong repository passes every check downstream." >/dev/null 2>&1
     release_own_claim "$id"
-}
-
-
-# check2_reclaim_stale -> CHECK 2's time-based dead-worker reaper: every spira-lc bead row in
-# WORKING state whose lease has been expired for more than SPIRA_RECLAIM_GRACE_SECS gets a
-# HolderDead event, WORKING -> READY.
-#
-# ONE spira-lc list CALL FOR THE WHOLE GRAPH, NOT ONE bdq reclaim PER PARTITION (sp-i2m7y).
-# The old call needed a --label scope because bd has no other way to bound a bulk reclaim;
-# spira-lc has no partition dimension at all — every persona's WORKING beads are rows in the
-# same flat table, so one scan already covers every partition the chamber declares, including
-# ones nobody thought to loop over (the defect fayth_partitions fixed for the bd-label form).
-#
-# A WAIT-HELD BEAD (check2_protect_waiting, above) IS SKIPPED: its lease is stale because its
-# aeon exited on a legitimate contract, not because the worker died.
-# check2c_lc_consistency -> CHECK 2c moved onto spira-lc (sp-i2m7y). The bd-specific race
-# it fixed — a status reset that leaves the assignee standing, because bd's status and
-# assignee are two separate writes with a gap between them — cannot happen in spira_lifecycle:
-# holder and state change together in one version-checked transaction (bead.rs's own Claim/
-# Release/HolderDead transitions). release_claim/release_own_claim stay exactly as they are:
-# they are aeon.sh's own claim contract on bd, a different bead's cutover, not this check's.
-#
-# DETECTS, NEVER REPAIRS. An inconsistent row here means some writer reached spira_lifecycle
-# outside the machine's own CAS — this sweep cannot tell which field is the wrong one, so it
-# names the anomaly rather than guessing a fix (law-a-control-that-cannot-check-must-refuse).
-# It stays as the POSITIVE CONTROL on the invariant the design's own CAS is supposed to
-# guarantee: a bypass that produces a healthy-looking row is a bug, and this is what turns
-# that silence into a visible line (law-absence-needs-a-positive-control).
-check2c_lc_consistency() {   # check2c_lc_consistency -> an INCONSISTENT line per bad row
-    local id state holder
-    while IFS=$'\t' read -r id state holder; do
-        [ -n "$id" ] || continue
-        if [ "$state" = WORKING ] && [ -z "$holder" ]; then
-            printf 'INCONSISTENT\t%s\tWORKING with no holder\n' "$id"
-        elif [ "$state" != WORKING ] && [ -n "$holder" ]; then
-            printf 'INCONSISTENT\t%s\t%s with a holder still set\n' "$id" "$state"
-        fi
-    done < <(spira-lc list-all)
-    return 0
-}
-
-check2_reclaim_stale() {
-    local grace="${SPIRA_RECLAIM_GRACE_SECS:-10800}" id lease_until holds now
-    local n_reclaimed=0
-    now="$(date +%s)"
-    while IFS=$'\t' read -r id lease_until holds; do
-        [ -n "$id" ] || continue
-        [ -n "$lease_until" ] || continue
-        case ",$holds," in *,wait,*) continue ;; esac
-        [ $(( now - lease_until )) -gt "$grace" ] || continue
-        spira-lc holder-dead "$id" sentinel || continue
-        bump_reclaim "$id" stale-lease >/dev/null 2>&1
-        bdq note "$id" "Reclaimed by CHECK 2: in_progress with a lease that expired $(( (now - lease_until) / 60 ))m ago and was never released." >/dev/null 2>&1
-        n_reclaimed=$((n_reclaimed+1))
-    done < <(spira-lc list-state WORKING)
-    [ "$n_reclaimed" -gt 0 ] && progress "reclaimed $n_reclaimed stale lease(s)"
-    return 0
 }
 
 # fayth_free <fayth> [pool-remaining] [exclude-unit] -> free concurrency slots, never negative.
@@ -3189,25 +2874,11 @@ attempts_of() {
     return 1
 }
 
-reopens_of() {         # reopens_of <id> -> count of reopened events
-    local id="$1" q result=""
-    q="$(printf "select count(*) from events where issue_id='%s' and event_type='reopened'" "$id")"
-    if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
-                  | tr -d ' ')" && [ -n "$result" ] \
-       && printf '%d' "$result" >/dev/null 2>&1; then
-        printf '%d' "$result"; return 0
-    fi
-    printf '0'
-}
-
-# BUMP FUNCTIONS. bump_attempt and bump_timeout are no-ops (attempts are counted via
-# status_changed events that bd writes natively; timeouts have no census role). The
-# remaining three — bump_reclaim, bump_requeue, bump_recur — write a typed event row so
-# that census can aggregate failure classes across the whole store (sp-2lk).
+# BUMP FUNCTIONS. bump_requeue writes a typed event row so that census can aggregate
+# failure classes across the whole store (sp-2lk); bump_lapsed and bump_poison_cleared
+# (below) write through the same helper for their own event types.
 #
 # Failure is silent — a missed counter is acceptable; a crash in a caller is not.
-# bump_attempt and bump_timeout remain no-ops so that callers compile without change
-# and test-check4-events.sh criterion 1 (no label writes) holds.
 #
 # _bump_write_event_try — the real write, reporting whether bd sql accepted it.
 # _bump_write_event must keep returning 0: aeon.sh runs under `set -e` and calls
@@ -3224,11 +2895,7 @@ _bump_write_event_try() {
 }
 
 _bump_write_event() { _bump_write_event_try "$@" >/dev/null 2>&1; return 0; }
-bump_attempt() { return 0; }
-bump_reclaim() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 bump_requeue() { _bump_write_event "${1:-}" requeued  "${2:-unrecorded}"; }
-bump_timeout() { return 0; }
-bump_recur()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
 bump_lapsed()  { _bump_write_event "${1:-}" lapsed    "${2:-unrecorded}"; }
 
 write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip> -> $SPIRA_RUN/lapsed/<bead>-<ts>
@@ -3245,17 +2912,6 @@ write_lapse_record() {  # write_lapse_record <bead> <quiet_s> <last_action> <tip
 # is indistinguishable from one that was never judged, and the next CHECK 4 pass reads the
 # unchanged count against a bare label and re-poisons within minutes.
 bump_poison_cleared() { _bump_write_event "${1:-}" 'poison.cleared' "${2:-unrecorded}"; }
-
-bump_reopen()  {
-    # new_value is intentionally empty for reopened events — cannot use _bump_write_event
-    # which defaults to 'unrecorded' when the cause argument is empty or absent.
-    local id="${1:-}"; [ -n "$id" ] || return 0
-    local actor="${BEADS_ACTOR:-harness}" uuid
-    uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))' 2>/dev/null)" || return 0
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql \
-        "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'reopened', '$actor', '', UTC_TIMESTAMP())" \
-        >/dev/null 2>&1; return 0
-}
 
 # bead_metadata <id> <key> -> the value bd update --set-metadata wrote, or empty when unset.
 # --long is required: bd show --json omits metadata by default (sp-4rzlw).
@@ -3310,9 +2966,8 @@ thrash_streak_bump() {
     printf '%d' "$streak"
 }
 
-# DIAGNOSTIC ACCESSORS — requeue/reclaim/recur counters are read from the events
-# table via bd sql (sp-2lk). timeouts_of returns 0 (no census role; events-based
-# timeout detection is a separate future deliverable).
+# DIAGNOSTIC ACCESSOR — the requeue counter is read from the events table via bd sql
+# (sp-2lk).
 # --------------------------------------------------------------------------------------
 # _counter_events_sql <id> <event_type> — SQL that returns a single integer count.
 _counter_events_sql() {
@@ -3321,9 +2976,10 @@ _counter_events_sql() {
 _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, or '?' if bd sql fails
     # '?' ON FAILURE, NOT '0'. A query that cannot reach the events table and one that
     # reached it and found nothing print the same digit if both return '0' — the reader
-    # cannot tell "no recurrences" from "the driver is down" (law-absence-needs-a-positive-
-    # control). recurs_of's caller (incident.sh's Sin decision) folded that silence into
-    # zero recurrences and would stay silent through an outage forever (sp-39yd3).
+    # cannot tell "no activity" from "the driver is down" (law-absence-needs-a-positive-
+    # control). recurs_of's caller (incident.sh's Sin decision, before recurs_of moved to
+    # the incident crate) once folded that silence into zero recurrences and stayed
+    # silent through an outage forever (sp-39yd3).
     local id="$1" etype="$2" q result=""
     q="$(_counter_events_sql "$id" "$etype")"
     if result="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>/dev/null | sed -n '3p' \
@@ -3334,10 +2990,7 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
     printf '?'
     return 1
 }
-reclaims_of() { _counter_events_query "${1:-}" reclaimed; }
 requeues_of() { _counter_events_query "${1:-}" requeued;  }
-timeouts_of() { printf '0'; }
-recurs_of()   { _counter_events_query "${1:-}" recurred;  }
 
 # CENSUS SQL — the query and runner used by census to aggregate failure classes.
 # Kept in lib.sh so that tests can call it directly without parsing census.
@@ -3484,32 +3137,16 @@ census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular o
     return 1
 }
 
-# counter_of, counter_label, counter_causes, bump_counter, attempt_causes, requeue_causes,
-# recur_causes: retained for any bead still carrying the historical sp-attempt-N /
-# sp-reclaim-N / sp-requeue-N labels bump_counter stopped writing at sp-lzt — a read-only
-# rendering of whatever a caller finds, nothing more (spira-claim/DESIGN.md §9's `audit`
-# is the going-forward tool, and reads the events table instead). These do not write
-# anything.
-counter_of() {           # counter_of <id> <prefix> -> integer (empty when unset)
-    bdq label list "$1" 2>/dev/null | grep -oE "$2-[0-9]+" | grep -oE '[0-9]+$' \
-        | sort -n | tail -1 || true
-}
+# counter_label -> the historical sp-attempt-N / sp-reclaim-N / sp-requeue-N bd label a
+# bead still carries, if any, read-only. bump_counter stopped writing these at sp-lzt
+# (spira-claim/DESIGN.md §9's `audit` is the going-forward tool, reading the events table
+# instead); this remains only to render whatever a caller finds on an old bead.
 counter_label() {
     local all hit
     all="$(bdq label list "$1" 2>/dev/null | sed -n 's/^ *- //p')" || all=""
     hit="$(grep -xE "$2-$3(-.*)?" <<<"$all")" || return 1
     printf '%s' "$(sed -n 1p <<<"$hit")"
 }
-counter_causes() {
-    local all rungs
-    all="$(bdq label list "$1" 2>/dev/null | sed -n 's/^ *- //p')" || all=""
-    rungs="$(grep -E "^$2-[0-9]+(-|$)" <<<"$all")" || return 0
-    sed -E "s/^$2-([0-9]+)$/\1 unrecorded/;s/^$2-([0-9]+)-(.*)$/\1 \2/" <<<"$rungs" | sort -n
-}
-bump_counter()   { return 0; }  # no-op: counter labels are no longer written (sp-lzt)
-attempt_causes() { counter_causes "$1" sp-attempt; }
-requeue_causes() { counter_causes "$1" sp-requeue; }
-recur_causes()   { counter_causes "$1" sp-recur; }
 
 # --------------------------------------------------------------------------------------
 # WHAT ENDED THIS SESSION — AND THE DEFAULT IS "WE DO NOT KNOW".
@@ -3753,19 +3390,6 @@ rapid_recur_check() {
 # --------------------------------------------------------------------------------------
 SPIRA_POISON_ASKED="${SPIRA_POISON_ASKED:-$SPIRA_RUN/poison-asked}"
 
-poison_asked() {         # poison_asked <id> <n> -> 0 if this exact (bead, count) already asked
-    local f="$SPIRA_POISON_ASKED/$1"
-    # grep reads the file itself. There is no pipe here on purpose: `... | grep -q` under
-    # `set -o pipefail` returns 141 when it MATCHES, which in this position would read as
-    # "not yet asked" exactly when it had been (law-no-grep-q-under-pipefail).
-    [ -r "$f" ] && grep -qxF -- "$2" "$f" 2>/dev/null
-}
-
-poison_asked_mark() {    # poison_asked_mark <id> <n>
-    mkdir -p "$SPIRA_POISON_ASKED" 2>/dev/null || return 1
-    printf '%s\n' "$2" >> "$SPIRA_POISON_ASKED/$1"
-}
-
 # poison_asked_clear <id> — drop this bead's ask history. A poison.cleared event floors
 # attempts_of back to zero (sp-qd2ul), so a genuinely new run of failures can reach the same
 # raw count (e.g. 3) the pre-clear history already has a "3" entry for, and poison_asked would
@@ -3773,51 +3397,6 @@ poison_asked_mark() {    # poison_asked_mark <id> <n>
 # was just reset; its history must reset with it.
 poison_asked_clear() {
     rm -f "${SPIRA_POISON_ASKED:?}/$1" 2>/dev/null || true
-}
-
-# THE LIFT'S OWN DEDUP, FOR THE SAME REASON THE ASK NEEDS ONE. `groomer.sh deadlocked` (via
-# `spira-claim deadlocked`) takes the label off; it does not and must not touch the attempt
-# count (the rungs are the record
-# of how the bead got here, sp-rq-s in test-requeue.sh asserts the count survives). So the
-# next CHECK 4 pass reads the same n it always did, against a label that is no longer there,
-# and "poison" fires again within minutes of the lift — sp-wiyr2. Keying the suppression on
-# the count the lift happened at (not a bare boolean) means a genuinely new failure — a claim
-# that pushes n past what was lifted — still poisons the bead; only "nothing has changed
-# since the lift" is exempt.
-SPIRA_POISON_LIFTED="${SPIRA_POISON_LIFTED:-$SPIRA_RUN/poison-lifted}"
-
-poison_lifted() {       # poison_lifted <id> <n> -> 0 if lifted at a count >= n
-    local f="$SPIRA_POISON_LIFTED/$1" last
-    [ -r "$f" ] || return 1
-    last="$(tail -n1 "$f" 2>/dev/null)" || return 1
-    [ -n "$last" ] && [ "$last" -ge "${2:-0}" ] 2>/dev/null
-}
-
-poison_lifted_mark() {  # poison_lifted_mark <id> <n> — overwrites; only the latest lift counts
-    mkdir -p "$SPIRA_POISON_LIFTED" 2>/dev/null || return 1
-    printf '%s\n' "${2:-0}" > "$SPIRA_POISON_LIFTED/$1"
-}
-
-SPIRA_REQUEUE_ASKED="${SPIRA_REQUEUE_ASKED:-$SPIRA_RUN/requeue-asked}"
-
-requeue_asked() {        # requeue_asked <id> -> 0 if this bead already asked
-    [ -s "$SPIRA_REQUEUE_ASKED/$1" ]
-}
-
-requeue_asked_mark() {   # requeue_asked_mark <id> <n>
-    mkdir -p "$SPIRA_REQUEUE_ASKED" 2>/dev/null || return 1
-    printf '%s\n' "$2" >> "$SPIRA_REQUEUE_ASKED/$1"
-}
-
-SPIRA_RECLAIM_ASKED="${SPIRA_RECLAIM_ASKED:-$SPIRA_RUN/reclaim-asked}"
-
-reclaim_asked() {        # reclaim_asked <id> -> 0 if this bead already asked
-    [ -s "$SPIRA_RECLAIM_ASKED/$1" ]
-}
-
-reclaim_asked_mark() {   # reclaim_asked_mark <id> <n>
-    mkdir -p "$SPIRA_RECLAIM_ASKED" 2>/dev/null || return 1
-    printf '%s\n' "$2" >> "$SPIRA_RECLAIM_ASKED/$1"
 }
 
 # --------------------------------------------------------------------------------------
@@ -4827,71 +4406,14 @@ bead_named_paths() {
 
 
 
-# dispatchable_open -> every non-closed bead the summoner can reach, one id a line.
-#
-# THE SET ANY CHECK ABOUT "THE WORK" MUST ITERATE. Two predicates for "which beads are ours"
-# is the defect: summoning goes through fayth_ready, which asks each persona its own
-# FAYTH_LABELS, while the poison valve iterated one epic's children — so a bead labelled
-# for a partition and parented outside that epic was dispatchable and unpoisonable. It could
-# be summoned every pass, fail every time, and never trip the valve that exists to stop
-# exactly that; one measured 9 attempts against a threshold of 3, and the 8 children examined
-# stood for 66 beads dispatched. The fix is the one fayth_ready already made one check along:
-# ask each persona's own predicate.
-#
-# A PARTITION'S EXCLUSIONS ARE ITS OWN, applied here exactly as claiming applies them, so
-# this set and the claimable set cannot disagree. Epics go too — the summoner passes
-# --exclude-type epic,event, and a container or a record is not work.
-#
-# EMPTY WHEN THE CHAMBER IS EMPTY, and it says so on stderr rather than returning a quiet
-# zero: nothing dispatchable and nothing watched are the same silence otherwise
-# (law-absence-needs-a-positive-control).
-dispatchable_open() {
-    local labels exclude n=0
-    {
-        while IFS=$'\t' read -r labels exclude; do
-            [ -n "$labels" ] || continue
-            n=$((n+1))
-            # SPIRA_LIST_SNAPSHOT, WHEN SET, REPLACES THE PER-PARTITION QUERY —
-            # sentinel.sh's full pass fetches `bd list --all` once (sp-bo67y) and every
-            # partition below filters the same cached JSON in-process instead of asking bd
-            # again; label and exclude-label matching moves into this python either way, so
-            # the fallback bd query (already narrowed to $labels) is filtered identically
-            # and harmlessly a second time.
-            if [ -n "${SPIRA_LIST_SNAPSHOT:-}" ] && [ -r "$SPIRA_LIST_SNAPSHOT" ]; then
-                cat "$SPIRA_LIST_SNAPSHOT"
-            else
-                bdjson list --limit 0 --label "$labels" 2>/dev/null
-            fi \
-            | SPIRA_EXCL="$exclude" SPIRA_LBL="$labels" python3 -c '
-import json, os, sys
-excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
-need = {x for x in (os.environ.get("SPIRA_LBL") or "").split(",") if x}
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") == "closed" or i.get("issue_type") in ("epic", "event"):
-        continue
-    lbls = set(i.get("labels") or [])
-    if not need <= lbls:
-        continue
-    if excl & lbls:
-        continue
-    print(i["id"] + "\t" + ",".join(i.get("labels") or []))
-' 2>/dev/null
-        done < <(fayth_partitions)
-        [ "$n" -gt 0 ] || log "WARN no persona in the chamber declares a partition — no bead is dispatchable, and none is being examined" >&2
-    } | awk -F'\t' 'NF && !seen[$1]++'
-    return 0
-}
-
 # all_partition_members -> every open/in_progress bead a partition's own labels would
 # match, one id per line, deduped — EVERY EXCLUSION DROPPED (moved out of spira/attempts.sh,
 # sp-rfodk; its own header comment, verbatim: "a poisoned bead is excluded from dispatch and
 # is exactly the bead whose count most needs reading, so filtering it out here would hide
-# the evidence"). `dispatchable_open` above answers a different question — what CAN be
-# claimed right now — and applies exclusions to answer it; this answers "whose is it", which
-# a poisoned or asked-about bead still is. groomer.sh's `deadlocked` and any future census
-# over the full board read this, never `dispatchable_open`.
+# the evidence"). The claimable-set predicate (fayth_ready/bdq) answers a different
+# question — what CAN be claimed right now — and applies exclusions to answer it; this
+# answers "whose is it", which a poisoned or asked-about bead still is. groomer.sh's
+# `deadlocked` and any future census over the full board read this, not the claimable set.
 all_partition_members() {
     local labels exclude
     while IFS=$'\t' read -r labels exclude; do
@@ -4904,190 +4426,6 @@ except Exception: sys.exit(0)
 for i in (d if isinstance(d, list) else [d]): print(i["id"])' 2>/dev/null
     done < <(fayth_partitions) | awk 'NF && !seen[$0]++'
     return 0
-}
-
-# check4_closed_branched -> closed beads in fayth partitions with a branch: label.
-# id TAB comma-separated-labels, one per line; deduped. Used by sentinel CHECK 4 to
-# find beads that cycle closed without landing so the requeue cap can reach them.
-check4_closed_branched() {
-    local labels exclude
-    {
-        while IFS=$'\t' read -r labels exclude; do
-            [ -n "$labels" ] || continue
-            # SPIRA_LIST_SNAPSHOT, WHEN SET, REPLACES THE PER-PARTITION QUERY — see
-            # dispatchable_open's identical comment (sp-bo67y). The bead's own reason for
-            # this one being singled out: it pulled ~10.5MB of closed JSON per partition,
-            # every pass, to find a handful of branch:-carrying rows.
-            if [ -n "${SPIRA_LIST_SNAPSHOT:-}" ] && [ -r "$SPIRA_LIST_SNAPSHOT" ]; then
-                cat "$SPIRA_LIST_SNAPSHOT"
-            else
-                bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null
-            fi \
-            | SPIRA_EXCL="$exclude" SPIRA_LBL="$labels" python3 -c '
-import json, os, sys
-excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
-need = {x for x in (os.environ.get("SPIRA_LBL") or "").split(",") if x}
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") != "closed":
-        continue
-    if i.get("issue_type") in ("epic", "event"):
-        continue
-    lbls = i.get("labels") or []
-    if not need <= set(lbls):
-        continue
-    if excl & set(lbls):
-        continue
-    if not any(l.startswith("branch:") for l in lbls):
-        continue
-    print(i["id"] + "\t" + ",".join(lbls))
-' 2>/dev/null
-        done < <(fayth_partitions)
-    } | awk -F'\t' 'NF && !seen[$1]++'
-    return 0
-}
-
-# _check4_bulk_sql <in-clause> -> SQL returning attempts, reopens and reclaims for each id
-#
-# THE poison.cleared FLOOR APPLIES ONLY TO att, per-row inside its own CASE WHEN — not as a
-# shared WHERE clause — because rep/rcl feed REQUEUE_AT/RECLAIM_AT, thresholds independent of
-# spira-poison by design (check4_decide's own comment), and a clear that reset them too would
-# silently forgive a reclaim streak the operator never judged. See _attempts_sql_query for why
-# the floor exists at all.
-#
-# THE FLOOR IS A LEFT JOIN AGAINST ONE PER-ISSUE DERIVED TABLE, computed once per issue_id —
-# not a correlated subquery run per row per CASE branch, which made every id past the first
-# a full table scan (5 ids: 26.8s; 200 ids after this fix: 1.02s against 74,527 events;
-# sp-rp4g4). Same output as the old form — see test-attempts-sql.sh.
-_check4_bulk_sql() {
-    printf "select e.issue_id, greatest(sum(case when (e.event_type='claimed' or (e.event_type='status_changed' and e.new_value like '%%in_progress%%')) and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end) - sum(case when e.event_type='closed' and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end) - sum(case when e.event_type='requeued' and (e.new_value='thrash' or e.new_value like 'unjudged%%') and e.created_at > coalesce(p.pc,'1970-01-01') then 1 else 0 end), 0) as att, sum(case when e.event_type='reopened' then 1 else 0 end) as rep, sum(case when e.event_type='reclaimed' then 1 else 0 end) as rcl from events e left join (select issue_id, max(created_at) as pc from events where event_type='poison.cleared' and issue_id in (%s) group by issue_id) p on p.issue_id=e.issue_id where e.issue_id in (%s) group by e.issue_id" "$1" "$1"
-}
-
-# check4_bulk_data <dispatchable-output> -> id TAB attempts TAB reopens TAB reclaims, one per bead
-# One GROUP BY replaces attempts_of, reopens_of and reclaims_of called per bead in the CHECK 4
-# loop — the per-bead cost sp-f1m7f removed. Beads with no events are absent from the output;
-# callers default missing entries to 0.
-# FAIL CLOSED, NOT OPEN. A `bd sql` failure used to fall straight through to the parser
-# below, which found no rows and left every id defaulted to 0 attempts by the caller —
-# indistinguishable from a bead that never failed, so a poisoned bead's very next pass read
-# `clear` off a false zero (sp-rp4g4). A nonzero return here, with no rows printed, is the
-# caller's signal to make no poison/requeue/reclaim decision this pass at all. `bdq`, not a
-# bare bd call, so this gets BD_TIMEOUT and the invalid-connection retry like every other bd
-# call (see bdq's own comment) instead of blocking the pass on a runaway query indefinitely.
-check4_bulk_data() {
-    local input="${1:-}"; [ -n "$input" ] || return 0
-    local in_clause
-    in_clause="$(printf '%s' "$input" | awk -F'\t' '{print $1}' | grep -v '^$' \
-        | sed "s/.*/'&'/" | paste -sd,)"
-    [ -n "$in_clause" ] || return 0
-    local _raw _rc
-    _raw="$(bdq sql "$(_check4_bulk_sql "$in_clause")")"
-    _rc=$?
-    if [ "$_rc" -ne 0 ]; then
-        log "check4_bulk_data: bulk attempts query failed (rc=$_rc) — no rows returned, CHECK 4 makes no decision this pass" >&2
-        return "$_rc"
-    fi
-    printf '%s\n' "$_raw" | python3 -c '
-import sys
-for line in sys.stdin:
-    s = line.rstrip("\n")
-    if "|" in s:
-        if s.lstrip().startswith("+-"):
-            continue
-        cols = [c.strip() for c in s.strip("|").split("|")]
-        if len(cols) >= 4 and cols[0] and cols[0] not in ("issue_id",):
-            try:
-                print(cols[0] + "\t" + str(int(cols[1] or 0)) + "\t" + str(int(cols[2] or 0)) + "\t" + str(int(cols[3] or 0)))
-            except (ValueError, IndexError):
-                pass
-    else:
-        parts = s.split("\t") if "\t" in s else s.split()
-        if len(parts) >= 4:
-            try:
-                a = int(parts[1].strip())
-                r = int(parts[2].strip())
-                c = int(parts[3].strip())
-                bid = parts[0].strip()
-                if bid:
-                    print(bid + "\t" + str(a) + "\t" + str(r) + "\t" + str(c))
-            except (ValueError, IndexError):
-                pass
-' 2>/dev/null
-}
-
-# --------------------------------------------------------------------------------------
-# check4_decide <attempts> <requeues> <reclaims> <labels> <asked-stamp> [poisoned:0|1] -> decision tokens
-#   asked-stamp = "<requeue-already-asked 0|1>:<reclaim-already-asked 0|1>:<poison-already-asked-at-n 0|1>:<poison-lifted-at-or-above-n 0|1>"
-#   the fourth field is optional (bash `read` leaves a missing trailing field empty, which
-#   this treats as "not lifted") so every existing three-field caller is unaffected.
-#   thresholds come from POISON_AT/REQUEUE_AT/RECLAIM_AT, sentinel.sh's own shell vars,
-#   defaulted here so a caller (a test) need not export them.
-#
-#   `poisoned` is the caller's own read of the bead's spira-lc poison hold (sp-i2m7y) — NOT
-#   parsed from `labels` here, because the spira-poison bd label is no longer written and a
-#   lifecycle decision must not read one anyway. Defaults to 0 (not poisoned) so a caller
-#   that has not been converted yet gets the pre-poison behaviour rather than a silent wrong
-#   answer. `labels` still carries `delivers:action` (a deliverable-type marker, not
-#   lifecycle state) for the requeue exemption below.
-#
-#   -> a space-separated subset of: requeue-mail reclaim-mail poison clear ask
-#      "none" when nothing applies.
-#
-# CHECK 4'S DECISION, EXTRACTED. The per-bead loop used to make this call inline against a
-# `bd sql`/label read per bead across 7 server-mode suites (~1,400s, sp-f1m7f's motive);
-# every input here now comes from ONE bulk query (check4_bulk_data) plus the labels
-# dispatchable_open already carries, so this function itself issues no query at all — the
-# cost sp-f1m7f removed cannot silently come back through this seam.
-#
-# ONE FUNCTION FOR THREE CALL SITES in sentinel.sh: the main dispatch loop, the
-# closed-but-unlanded requeue supplement, and the stale-poison-clear scan. The three
-# concerns are independent BY DESIGN (a bead over the requeue cap is not thereby exempt
-# from poisoning, and vice versa — "distinct" per the comments this replaces), so each
-# token is decided on its own rather than one skipping the rest via a shared early exit.
-# --------------------------------------------------------------------------------------
-check4_decide() {
-    local n="${1:-0}" requeues="${2:-0}" reclaims="${3:-0}" labels="${4:-}" stamp="${5:-0:0:0:0}"
-    local poisoned="${6:-0}"
-    local rq_asked="0" rc_asked="0" po_asked="0" pl_lifted="0"
-    IFS=: read -r rq_asked rc_asked po_asked pl_lifted <<<"$stamp"
-    local p_at="${POISON_AT:-3}" r_at="${REQUEUE_AT:-5}" c_at="${RECLAIM_AT:-5}"
-    local out=""
-
-    case "$labels" in
-        *'delivers:action'*) ;;  # closes without a commit; reopens are not landing stalls
-        *)
-            if [ "$requeues" -ge "$r_at" ] && [ "${rq_asked:-0}" != 1 ]; then
-                out="$out requeue-mail"
-            fi
-            ;;
-    esac
-
-    if [ "$reclaims" -ge "$c_at" ] && [ "${rc_asked:-0}" != 1 ]; then
-        out="$out reclaim-mail"
-    fi
-
-    if [ "$poisoned" = 1 ]; then
-        # A bead at the threshold with zero charged attempts means POISON_AT=0 and
-        # nothing failed — but a held bead cannot be at n=0 by that route, so the
-        # clear condition needs only the threshold, not the n>0 guard poison/ask need.
-        if [ "$n" -lt "$p_at" ]; then out="$out clear"; fi
-    else
-        # A LIFT AT THIS COUNT OR HIGHER MEANS NOTHING NEW HAS FAILED SINCE. The count
-        # itself is not touched by the lift (the rungs are the record), so without this
-        # guard the very next pass reads the same n against a hold that just came off
-        # and re-poisons inside minutes — the count was never the thing that changed.
-        if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${pl_lifted:-0}" != 1 ]; then
-            out="$out poison"
-        fi
-    fi
-
-    if [ "$n" -ge "$p_at" ] && [ "$n" -gt 0 ] && [ "${po_asked:-0}" != 1 ]; then
-        out="$out ask"
-    fi
-
-    out="${out# }"
-    printf '%s' "${out:-none}"
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.

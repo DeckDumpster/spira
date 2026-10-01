@@ -72,8 +72,6 @@ ln -sfn "$CH" "$TMP/chamber"
 
 is "the task pool is the ordinary fayth alone"        "worker"          "$(roster spira_task_fayths)"
 is "the lane list is the ordinary lane fayth alone"   "laner"           "$(roster spira_lane_fayths)"
-# fayth_names sorts, so both operator personas appear in this order.
-is "and the operator personas are named as such"      "human humanlane" "$(roster spira_operator_fayths)"
 
 nowant "an operator persona is never in the task pool"  "human" "$(roster spira_task_fayths)"
 nowant "nor in the lane list, which is the second door" "human" "$(roster spira_lane_fayths)"
@@ -97,7 +95,6 @@ ship() { # ship <function>   — the REAL chamber, with the concierge listed in 
 # reason that is doing the work by accident and leaves only FAYTH_SUMMON holding the line.
 nowant "the shipped concierge is not in the task pool"   "concierge" "$(ship spira_task_fayths)"
 nowant "the shipped concierge is not in the lane list"   "concierge" "$(ship spira_lane_fayths)"
-want   "the shipped concierge IS an operator persona"    "concierge" "$(ship spira_operator_fayths)"
 want   "and the other personas are still summonable"     "builder"   "$(ship spira_task_fayths)"
 
 echo

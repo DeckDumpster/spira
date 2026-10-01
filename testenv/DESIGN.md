@@ -1006,10 +1006,12 @@ What matters, and is ported:
    `SPIRA_TESTENV_QUEUE_POLL` (5) seconds, and gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`
    (900) seconds.
 4. **Boot.** `podman run -d --systemd=true --pids-limit 8192 --label spira.testenv=1`, the
-   checkout bind-mounted at `/workspace`, the two named cargo volumes; wait for
-   `basic.target` (one retry); on failure measure inotify, pids, the user slice's tasks and
-   the keyring, name the one closest to its cap, and remove the container. Then linger,
-   `safe.directory`, cargo-volume ownership, and wait for `user@1001.service`.
+   checkout bind-mounted at `/workspace`, plus one bind mount per distinct directory
+   `Host::symlinked_targets(<checkout>/target)` names (D23) — empty for an ordinary
+   checkout — the two named cargo volumes; wait for `basic.target` (one retry); on failure
+   measure inotify, pids, the user slice's tasks and the keyring, name the one closest to
+   its cap, and remove the container. Then linger, `safe.directory`, cargo-volume
+   ownership, and wait for `user@1001.service`.
 5. **The owner-file guard** (law-guard-binds-the-caller). `up` records its parent pid in
    `/tmp/<name>.owner` unless a caller claimed it first; `down` refuses a live owner that is
    not the caller or an ancestor of it, unless `--force-foreign`.
@@ -1081,6 +1083,27 @@ default conf.sh carries — conf.sh is no longer sourced:
   container, as root, on paths the image defines; one exec instead of nine.
 * **Dropped:** the `_image_tag` "narrow closure" positive control (it tested `sha256sum`);
   `cut -c` byte-truncation of heartbeat lines (now characters); `df -Ph`/`free -h` (now statvfs and `/proc/meminfo` MemAvailable, same units).
+* **D23 — a symlinked build directory gets its own mount too, so a bind-mounted checkout's
+  `/workspace` can still see what it points to (sp-e5v53-3).** Found 2026-10-01: a gate
+  tree's `target/{aeon,release,debug,gate-tools}` are each a symlink to a tmpfs root
+  *outside* the checkout (gate/src/target.rs, sp-z61hj — "every path a step or the tools
+  phase reads is unchanged; only where the bytes land moves"). `up`'s bind mount of the
+  checkout preserves that symlink as a symlink; a binary built right through it is
+  genuinely there on the host, but `/workspace/target/aeon` inside the container resolves
+  to a host path nothing mounted there, so `stage` faults "aeon was not built into
+  /workspace/target/aeon" — a suite the gate's own targeted base-suite rerun (sp-kqger,
+  sp-e5v53, sp-e5v53-2) was the first caller to hit, because it is the one caller that
+  builds "in place" directly inside a gate tree rather than a warm or scratch slot (those
+  are ordinary directories, never symlinked this way). Reproduced directly: `cargo build
+  --profile aeon --workspace` in such a tree succeeds; `stage` still faults rc=1, same
+  message, until the extra mount is added. Fix: `Host::symlinked_targets(dir)` lists each
+  of `dir`'s immediate entries that is a symlink, resolved to its target's own canonical
+  parent, each listed once — every `[LINKED]` entry in a gate tree shares one root
+  (`gate/src/target.rs`), so this is one extra mount, not four. `cmd_up` adds a
+  `--volume <path>:<path>:z` for each. An ordinary (non-gate) checkout, whose `target/` is
+  a real directory, gets nothing extra — the existing `up_boots_with_the_label_limit_and_
+  volumes_and_records_its_caller` test is the fixture's own positive control that it stays
+  that way.
 
 ## Build IO (sp-z61hj)
 

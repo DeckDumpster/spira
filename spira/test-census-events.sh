@@ -50,6 +50,13 @@ testdb_up census-events || {
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
+# bump_recur/bump_reclaim (lib.sh) were retired at sp-8itaf — zero live callers; the
+# production writers are now incident::ports::bump_recur and strand::check::bump_reclaim
+# (Rust). This suite's own subject is census.sh reading the events table, not who writes
+# it, so these two local wrappers reach the same shared writer lib.sh's versions did.
+recur_event()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
+reclaim_event() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
+
 echo "test-census-events.sh"
 
 seed_bead() {   # seed_bead <id> — one open bead
@@ -73,7 +80,7 @@ echo "sp-2lk acceptance criteria — bump_requeue and bump_recur produce census 
 seed_bead "sp-c1"
 bump_requeue "sp-c1" merge-conflict
 bump_requeue "sp-c1" merge-conflict
-bump_recur   "sp-c1" suite-red
+recur_event   "sp-c1" suite-red
 
 out="$(census_out)"
 want "census reports 1 distinct bead sp-reopen-rebase-conflict" "1 sp-reopen-rebase-conflict" "$out"
@@ -85,8 +92,8 @@ echo
 echo "bump_reclaim — events counted as sp-reclaim"
 # ======================================================================================
 seed_bead "sp-c2"
-bump_reclaim "sp-c2"
-bump_reclaim "sp-c2"
+reclaim_event "sp-c2"
+reclaim_event "sp-c2"
 
 out="$(census_out)"
 want "census reports sp-reclaim with 2 detections (1 bead)" "sp-reclaim (2 detections" "$out"
@@ -96,9 +103,9 @@ echo
 echo "bump_reclaim with cause — events counted as sp-reclaim-<cause>"
 # ======================================================================================
 seed_bead "sp-c3"
-bump_reclaim "sp-c3" timeout
-bump_reclaim "sp-c3" timeout
-bump_reclaim "sp-c3" timeout
+reclaim_event "sp-c3" timeout
+reclaim_event "sp-c3" timeout
+reclaim_event "sp-c3" timeout
 
 out="$(census_out)"
 want "census reports sp-reclaim-timeout with 3 detections (1 bead)" "sp-reclaim-timeout (3 detections" "$out"
@@ -164,7 +171,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-f2","title":"strand test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
 JSONL
 bdq reclaim --id "sp-f2" --older-than 1s >/dev/null 2>&1 || true
-bump_reclaim "sp-f2" ghost >/dev/null 2>&1
+reclaim_event "sp-f2" ghost >/dev/null 2>&1
 
 out="$(census_out)"
 want "strand reclaim path produces sp-reclaim-ghost" "1 sp-reclaim-ghost" "$out"

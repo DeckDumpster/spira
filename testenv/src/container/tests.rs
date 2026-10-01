@@ -28,6 +28,9 @@ struct Fake {
     inotify: Cell<u64>,
     sysctls: RefCell<BTreeMap<String, String>>,
     replaced: RefCell<Option<Vec<String>>>,
+    /// What `symlinked_targets` answers, by the `dir` it is asked about; absent = none (an
+    /// ordinary, non-symlinked `target/`).
+    symlinked_targets: RefCell<BTreeMap<PathBuf, Vec<PathBuf>>>,
 }
 
 struct FakeBuild<'a>(&'a Fake);
@@ -59,6 +62,14 @@ impl Fake {
         self.files
             .borrow_mut()
             .insert(PathBuf::from(p), s.as_bytes().to_vec());
+    }
+    /// What `symlinked_targets(dir)` answers: the fake's stand-in for scanning `dir` on a
+    /// real filesystem.
+    fn symlink_target(&self, dir: &str, targets: &[&str]) {
+        self.symlinked_targets.borrow_mut().insert(
+            PathBuf::from(dir),
+            targets.iter().map(PathBuf::from).collect(),
+        );
     }
     fn on(&self, r: impl Fn(&[String]) -> Option<(i32, String)> + 'static) {
         self.rules.borrow_mut().push(Box::new(r));
@@ -157,6 +168,13 @@ impl Host for Fake {
     }
     fn owner_dir(&self) -> PathBuf {
         PathBuf::from("/tmp")
+    }
+    fn symlinked_targets(&self, dir: &Path) -> Vec<PathBuf> {
+        self.symlinked_targets
+            .borrow()
+            .get(dir)
+            .cloned()
+            .unwrap_or_default()
     }
     fn err(&self, line: &str) {
         self.err.borrow_mut().push(line.to_string());
@@ -625,6 +643,44 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
     assert!(f.errs().contains("user@1001.service active"));
 }
 
+/// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{aeon,release,debug,
+/// gate-tools}` are symlinks to a tmpfs root outside the checkout (gate/src/target.rs,
+/// sp-z61hj). `--checkout /wt` bind-mounts `/wt` at `/workspace`, preserving the symlink as
+/// a symlink — `/workspace/target/aeon`, from inside the container, points to a host path
+/// that was never mounted there, so a binary built right through it is invisible to `stage`
+/// ("testenv: stage: aeon was not built into /workspace/target/aeon"), even though it
+/// genuinely was built. Reproduced directly against this repository before this fix: `cargo
+/// build --profile aeon --workspace` in such a tree succeeds, `stage` still faults rc=1.
+///
+/// Fix: `up` now also mounts whatever `symlinked_targets` names, at the same absolute path,
+/// so the symlink resolves inside the container too.
+#[test]
+fn up_also_mounts_a_checkouts_symlinked_target_directories() {
+    let f = Fake::new();
+    booting(&f);
+    f.symlink_target(
+        "/wt/target",
+        &["/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf"],
+    );
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        0
+    );
+    let run = f.calls_with("run");
+    assert!(
+        run[0].windows(2).any(|w| w
+            == [
+                "--volume".to_string(),
+                "/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:/tmp/spira-gate-target-abc123/.gate.harness.concierge-sp-8itaf:z".to_string()
+            ]),
+        "{:?}",
+        run[0]
+    );
+    // Still named, same as always — the extra mount is additive, not a replacement.
+    assert!(run[0].windows(2).any(|w| w == ["--volume".to_string(), "/wt:/workspace:z".to_string()]));
+}
+
 #[test]
 fn up_defaults_to_the_harness_checkout_and_keeps_an_existing_owner() {
     let f = Fake::new();
@@ -1014,4 +1070,46 @@ fn sizes_read_like_df_h() {
     assert_eq!(human(512), "512B");
     assert_eq!(human(3 * 1024 * 1024 * 1024 + 100 * 1024 * 1024), "3.1G");
     assert_eq!(human(45 * 1024 * 1024 * 1024), "45G");
+}
+
+// ---- RealHost::symlinked_targets, against a real filesystem (sp-e5v53-3) -----------------
+
+#[test]
+fn symlinked_targets_finds_a_real_symlinked_build_dir_and_collapses_a_shared_root() {
+    let d = testkit::TempDir::new("testenv-symlinked-targets");
+    let root = d.join("tmpfs-root").join("tree-x");
+    for p in ["aeon", "release", "debug", "gate-tools"] {
+        std::fs::create_dir_all(root.join(p)).unwrap();
+    }
+    let target = d.join("checkout").join("target");
+    std::fs::create_dir_all(&target).unwrap();
+    for p in ["aeon", "release", "debug", "gate-tools"] {
+        std::os::unix::fs::symlink(root.join(p), target.join(p)).unwrap();
+    }
+    // An ordinary, non-symlinked entry alongside them (e.g. ".rustc_info.json" or any real
+    // file testenv's own build leaves) must never be reported as something to mount.
+    std::fs::write(target.join("CACHEDIR.TAG"), "Signature: 8a477f597d").unwrap();
+
+    let got = RealHost.symlinked_targets(&target);
+    assert_eq!(
+        got,
+        vec![std::fs::canonicalize(&root).unwrap()],
+        "all four symlinks share one root (gate/src/target.rs) — one mount, not four"
+    );
+}
+
+#[test]
+fn symlinked_targets_is_empty_for_an_ordinary_non_symlinked_target_dir() {
+    let d = testkit::TempDir::new("testenv-symlinked-targets-plain");
+    let target = d.join("checkout").join("target");
+    std::fs::create_dir_all(target.join("aeon")).unwrap();
+    assert_eq!(RealHost.symlinked_targets(&target), Vec::<PathBuf>::new());
+}
+
+#[test]
+fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
+    assert_eq!(
+        RealHost.symlinked_targets(Path::new("/nonexistent/target")),
+        Vec::<PathBuf>::new()
+    );
 }
