@@ -17,12 +17,47 @@ extern "C" {
 const LOCK_EX: i32 = 2;
 const LOCK_NB: i32 = 4;
 
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
+/// inside [`resolved_config`]'s own init, which must not call back into [`env_or`]/
+/// [`env_u64`] (that would recurse into `resolved_config()` while it is still being built).
+fn raw_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|v| !v.is_empty())
+}
+
+/// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
+/// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
+/// `spira.toml` load at all (wave4-decomposition.md row (b) names maechen-trigger by
+/// file, "beyond its shim": SPIRA_MAECHEN_*). Resolved once, lazily, and cached:
+/// `spira_config::resolve_for_process`, using `SPIRA_HOME` (raw — the same precedence
+/// `main`'s own `spira_home` local already uses) and
+/// `spira_config::resolve::derive_home_repo`. A resolution failure yields an empty
+/// [`spira_config::resolve::Resolved`] — [`env_or`]/[`env_u64`]'s own callers see exactly
+/// the behaviour this crate had before this bead, never a panic.
+fn resolved_config() -> &'static spira_config::resolve::Resolved {
+    static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        let home = PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(|| ".".to_string()));
+        let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
+        spira_config::resolve::resolve_for_process(&home, &repo, &env_map).unwrap_or_default()
+    })
+}
+
+/// The environment, then `spira_config::resolve()`'s in-process answer — never the
+/// reverse, so an explicit env override still wins exactly as it did before this bead.
+fn resolved_env(key: &str) -> Option<String> {
+    raw_env(key).or_else(|| {
+        let v = resolved_config().get(key);
+        (!v.is_empty()).then(|| v.to_string())
+    })
+}
+
 fn env_or(key: &str, default: &str) -> String {
-    env::var(key).ok().filter(|v| !v.is_empty()).unwrap_or_else(|| default.to_string())
+    resolved_env(key).unwrap_or_else(|| default.to_string())
 }
 
 fn env_u64(key: &str, default: u64) -> u64 {
-    env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    resolved_env(key).and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
 fn main() {
@@ -177,6 +212,33 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::path::Path;
+
+    /// Wave 4.8: `env_or`/`env_u64` now fall back to `spira_config::resolve()` between
+    /// the raw environment and the caller's own default. This is the ONLY test in this
+    /// binary that calls them (so the `OnceLock` inside `resolved_config`, which computes
+    /// once per process and never resets, cannot collide with another test's fixture).
+    /// SPIRA_HOME/SPIRA_TOML point at a throwaway fixture (never the real box's).
+    #[test]
+    fn env_u64_falls_back_to_the_registry_then_the_callers_default() {
+        let dir = testkit::TempDir::new("maechen-trigger-env");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_MAECHEN_MAX_BEADS"),
+            "TYPE=u32\nGROUP=maechen\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_MAECHEN_MAX_BEADS:=3}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        env::set_var("SPIRA_HOME", &home);
+        env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        env::remove_var("SPIRA_MAECHEN_MAX_BEADS");
+
+        assert_eq!(env_u64("SPIRA_MAECHEN_MAX_BEADS", 1), 3, "a registry default must reach env_u64 without an env override");
+        assert_eq!(env_or("SPIRA_NO_SUCH_KEY_AT_ALL_EVER", "fallback"), "fallback");
+
+        env::set_var("SPIRA_MAECHEN_MAX_BEADS", "99");
+        assert_eq!(env_u64("SPIRA_MAECHEN_MAX_BEADS", 1), 99, "an explicit env override still wins over the registry");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A `World` whose every answer is a canned value, to test `run`/`count_landings`'s
     /// own orchestration without a database, a git checkout or the `lib.sh` seam.
