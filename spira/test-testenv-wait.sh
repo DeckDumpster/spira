@@ -101,7 +101,7 @@ mkdir -p "$TMP/home" "$TMP/run" "$TMP/verdicts"
         SPIRA_BATCH_PSI_THRESHOLD=0 \
         SPIRA_BATCH_MAXPAR=2 \
         HOME="$TMP/home" \
-        testenv --profile dev --suites test-a.sh topic >"$OUT2" 2>&1 &
+        testenv --profile dev --suites test-a.sh topic "$REPO" >"$OUT2" 2>&1 &
     echo $! > "$OUT2.pid"
 )
 RUNPID="$(cat "$OUT2.pid" 2>/dev/null || true)"
