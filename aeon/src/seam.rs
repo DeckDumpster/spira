@@ -98,28 +98,54 @@ _aeon_thrash_meta() {
 "$__aeon_fn" "${__aeon_args[@]}"
 "#;
 
-/// The shell variables captured once at startup (exported or not). FAYTH_* come from the
-/// sourced fayth file; everything else is conf.sh's resolution.
+/// The shell variables captured once at startup (exported or not), still read through the
+/// bash seam. FAYTH_* come from the sourced fayth file; LANDSTATE/LAND_EVICTION_REASONS are
+/// lib.sh's own derived values (family S, a later wave4 bead); SPIRA_HOME/SPIRA_REPO/
+/// SPIRA_REPO_DERIVED are per-copy facts `spira_config::resolve()` never produces (see that
+/// module's `ResolveInput` doc); the rest here (SPIRA_WORLD_STOP_SKIP, SPIRA_TOML_FILE,
+/// SPIRA_MEMORIES_CMD, SPIRA_ALLOW_PROD_DIRTY, SPIRA_CLOSE_REASON_OVERRIDE,
+/// SPIRA_WORKFLOW_RUN_CONSIDERED, BD_TIMEOUT, SPIRA_BDQ_CONN_RETRIES, SPIRA_BDJSON_FIXTURE,
+/// SPIRA_TRACE_MARK, SPIRA_SUMMON, PATH, HOME, DB) have no `spira/conf.d/<KEY>` entry at
+/// all — ad hoc overrides or lib.sh literals, never conf.sh's.
+///
+/// UNTIL WAVE 4.8 this list also carried every name conf.sh's own registry resolves
+/// (SPIRA_RUN, SPIRA_DB, SPIRA_BD, SPIRA_WIKI, SPIRA_ASK_LABEL, SPIRA_MAX_AEONS, ...): `_aeon_snapshot`
+/// read each one back out of the bash process that had just sourced conf.sh, a second,
+/// bash-shaped derivation of values `main.rs`'s `merge_resolved_config` now computes
+/// in-process and merges into `Snapshot.vars` after this seam call returns — see that
+/// function's own doc for the list and for why SPIRA_HOME/SPIRA_REPO/SPIRA_REPO_DERIVED are
+/// still inserted explicitly.
 pub const SNAPSHOT_VARS: &[&str] = &[
-    "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
-    "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
-    "SPIRA_WORLD_STOP_SKIP", "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
-    "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_REPO_DERIVED", "SPIRA_HOME_REPO", "LANDSTATE", "SPIRA_THRASH_MINUTES",
-    "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
-    "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
-    "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",
-    "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_MEMORIES_CMD", "SPIRA_AGENT",
-    "SPIRA_LIFECYCLE_ENFORCE",
-    "SPIRA_TOML_FILE", "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
+    "SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "LANDSTATE",
+    "SPIRA_WORLD_STOP_SKIP",
+    "SPIRA_MEMORIES_CMD",
+    "SPIRA_TOML_FILE",
     "SPIRA_ALLOW_PROD_DIRTY", "SPIRA_CLOSE_REASON_OVERRIDE", "SPIRA_WORKFLOW_RUN_CONSIDERED",
-    "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
-    "SPIRA_CLAIM_RETRY_DELAY_S", "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
+    "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
     "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "PATH", "HOME", "DB",
     "FAYTH_NAME", "FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS", "FAYTH_MAX_CONCURRENT",
     "FAYTH_ELASTIC", "FAYTH_LEASE_MINUTES", "FAYTH_HEARTBEAT_SECONDS", "FAYTH_TIMEOUT_SECONDS",
     "FAYTH_MEMORY_PREFIXES", "FAYTH_STATUTE_CORE", "FAYTH_TOOLS", "FAYTH_PROJECT_INSTRUCTIONS",
     "FAYTH_SYSTEM_PROMPT", "FAYTH_SOP_REQUIRED", "FAYTH_GROOM_ESCALATION_CHECK",
     "FAYTH_GRAPH_ONLY",
+];
+
+/// Every `SNAPSHOT_VARS` name wave 4.8 retired from the bash seam call, resolved
+/// in-process instead (`main.rs`'s `merge_resolved_config`) — kept as its own list so a
+/// parity check can diff this crate's old and new answers key by key.
+pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
+    "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
+    "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
+    "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
+    "SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_THRASH_MINUTES",
+    "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
+    "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
+    "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",
+    "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_AGENT",
+    "SPIRA_LIFECYCLE_ENFORCE",
+    "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
+    "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
+    "SPIRA_CLAIM_RETRY_DELAY_S",
 ];
 
 /// conf.sh's resolution, captured once (DESIGN.md §3).
