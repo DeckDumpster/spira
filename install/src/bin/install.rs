@@ -345,7 +345,13 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let host = bootstrap::host_from_env(&instance);
+    let host = match bootstrap::host_from_env(&instance) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("install: {e}");
+            return ExitCode::from(2);
+        }
+    };
     let systemctl = RealSystemctl::from_env();
 
     if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {

@@ -185,7 +185,13 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    let host = bootstrap::host_from_env(&instance);
+    let host = match bootstrap::host_from_env(&instance) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("units-install: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let dir = bootstrap::unit_dir();
     let systemctl = RealSystemctl::from_env();
     let suspended = bootstrap::suspended_set();

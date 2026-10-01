@@ -37,15 +37,27 @@ pub fn which(prog: &str) -> Option<String> {
 /// `: "${VAR:=default}"` conf.sh lines that matter to rendering. A caller that already
 /// sourced conf.sh (a human, `deploy.sh`) exports the real value first, so this default is
 /// reached only when nothing did — never a silent override of an explicit setting.
-pub fn host_from_env(instance: &str) -> HostValues {
-    let repo = nonempty_env("SPIRA_REPO").unwrap_or_default();
-    let home = nonempty_env("SPIRA_HOME").unwrap_or_else(|| format!("{repo}/spira"));
+///
+/// NEITHER SET (sp-al35q): `SPIRA_REPO/spira` with an empty `SPIRA_REPO` rendered the
+/// literal string "/spira" into every unit's substituted content — not a missing file (that
+/// would at least be loud), a wrong one. test-unit-drift.sh's "matching units" case, which
+/// deliberately sets neither (the same real-world shape as pre-activate, sp-w1r4f), rendered
+/// every single unit with this bogus home baked in and reported DIFFERS across the board.
+/// Falls back to the same release-relative resolution `templates_dir()` uses — `<release>/
+/// spira` beside the binary's own `bin/`, verified by requiring `conf.sh` there, exactly as
+/// `templates_dir`'s own fallback requires `spira-sentinel.service` under its `systemd/`
+/// candidate — and refuses outright when even that fails, rather than ever rendering
+/// "/spira" again.
+pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
+    let repo = nonempty_env("SPIRA_REPO");
+    let home = resolve_home(nonempty_env("SPIRA_HOME"), repo.clone(), argv0_path().as_deref())?;
+    let repo = repo.unwrap_or_default();
     let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         format!("{parent}/cockpit")
     });
     let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
-    HostValues {
+    Ok(HostValues {
         home,
         repo,
         run: env_var("SPIRA_RUN"),
@@ -59,7 +71,33 @@ pub fn host_from_env(instance: &str) -> HostValues {
         testdb_port: nonempty_env("SPIRA_TESTDB_PORT").unwrap_or_else(|| "3308".to_string()),
         snap_stale_s: nonempty_env("SPIRA_SNAP_STALE_S").unwrap_or_else(|| "60".to_string()),
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
+    })
+}
+
+/// `SPIRA_HOME`, else `SPIRA_REPO/spira`, else the nearest `spira/` holding `conf.sh` above
+/// this binary (a release's `bin/../spira`), else refuse — never the bare, unverified
+/// `"{repo}/spira"` string sp-al35q let through when `repo` was itself empty. Pure (takes
+/// `exe` explicitly) so the no-env refusal and the release-relative fallback are both
+/// testable without touching the real environment or `argv0_path()`'s real `argv[0]`.
+fn resolve_home(home_env: Option<String>, repo_env: Option<String>, exe: Option<&Path>) -> Result<String, String> {
+    if let Some(h) = home_env {
+        return Ok(h);
     }
+    if let Some(r) = repo_env {
+        return Ok(format!("{r}/spira"));
+    }
+    match exe.and_then(spira_above) {
+        Some(p) => Ok(p.to_string_lossy().into_owned()),
+        None => Err(
+            "cannot resolve SPIRA_HOME: neither SPIRA_HOME nor SPIRA_REPO is set, and no spira/ \
+             (holding conf.sh) was found beside this binary's own release"
+                .to_string(),
+        ),
+    }
+}
+
+fn spira_above(exe: &Path) -> Option<PathBuf> {
+    exe.ancestors().skip(1).map(|a| a.join("spira")).find(|d| d.join("conf.sh").is_file())
 }
 
 /// `watchd units` — the watcher manifest. `watchd.sh` is retired (sp-48f6g: rewritten to
@@ -207,5 +245,52 @@ mod templates_dir_tests {
         let t = testkit::TempDir::new("tpl-dir-env");
         let got = templates_dir_from(None, Some(t.path().display().to_string()), Some(Path::new("/nonexistent/bin/x")));
         assert_eq!(got, t.path().join("systemd"));
+    }
+}
+
+#[cfg(test)]
+mod resolve_home_tests {
+    use super::*;
+
+    #[test]
+    fn spira_home_wins_over_everything() {
+        let got = resolve_home(Some("/explicit/spira".into()), Some("/repo".into()), Some(Path::new("/bin/x")));
+        assert_eq!(got, Ok("/explicit/spira".to_string()));
+    }
+
+    #[test]
+    fn spira_repo_wins_over_the_binarys_location_when_home_is_unset() {
+        let got = resolve_home(None, Some("/repo".into()), Some(Path::new("/nonexistent/bin/x")));
+        assert_eq!(got, Ok("/repo/spira".to_string()));
+    }
+
+    /// NEITHER SET, exe resolves (sp-al35q): derives `<release>/spira` beside the binary's
+    /// own location, verified by requiring conf.sh there — the same resolution
+    /// `templates_dir()` uses for `systemd/`, applied to `spira/` instead.
+    #[test]
+    fn with_no_env_home_is_found_beside_the_binarys_release() {
+        let t = testkit::TempDir::new("home-dir");
+        let rel = t.path().join("rel");
+        std::fs::create_dir_all(rel.join("bin")).unwrap();
+        std::fs::create_dir_all(rel.join("spira")).unwrap();
+        std::fs::write(rel.join("spira/conf.sh"), "# conf.sh\n").unwrap();
+        let got = resolve_home(None, None, Some(&rel.join("bin/units-install")));
+        assert_eq!(got, Ok(rel.join("spira").to_string_lossy().into_owned()));
+    }
+
+    /// NEITHER SET, exe does not resolve to a real spira/ (sp-al35q): refuses outright --
+    /// returns Err, never the bare, unverified "/spira" string the bug rendered into every
+    /// unit's substituted content before this fix (an empty SPIRA_REPO formatted straight
+    /// into "{repo}/spira" with no existence check at all).
+    #[test]
+    fn with_no_env_and_no_resolvable_exe_it_refuses_rather_than_guessing() {
+        let got = resolve_home(None, None, Some(Path::new("/nonexistent/bin/units-install")));
+        assert!(got.is_err(), "{got:?}");
+    }
+
+    #[test]
+    fn with_no_env_and_no_exe_at_all_it_refuses() {
+        let got = resolve_home(None, None, None);
+        assert!(got.is_err(), "{got:?}");
     }
 }
