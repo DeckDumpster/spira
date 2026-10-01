@@ -7,6 +7,7 @@ pub mod acceptance;
 pub mod activate;
 pub mod build;
 pub mod canary;
+pub mod compat;
 pub mod config;
 pub mod fsutil;
 pub mod git;
