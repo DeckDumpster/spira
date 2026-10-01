@@ -12,7 +12,7 @@
 #
 # defect: sp-vmh4
 # tier: T1
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 # scar: bd exits 0 on a schema-version mismatch and emits the refusal to stdout; a probe counting output lines read the refusal as zero, and SP_READY showed 0 during a real outage.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -31,7 +31,7 @@ run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_BD="$bd_path" \
-        cockpit.sh once 2>/dev/null
+        cockpit-collect once 2>/dev/null
 }
 
 # SPIRA_FAYTHS NAMES A PERSONA THAT EXISTS. It used to say `t`, for which there is no
@@ -70,7 +70,7 @@ _unres_out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=no-such-persona \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_BD="$BD_EMPTY" \
-    cockpit.sh once 2>/dev/null)"
+    cockpit-collect once 2>/dev/null)"
 want   "SP_READY is ? when no persona resolves"   "SP_READY=?"  "$_unres_out"
 nowant "SP_READY is NOT 0 when no persona resolves" "SP_READY=0" "$_unres_out"
 

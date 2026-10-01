@@ -13,7 +13,7 @@
 #   - gate-run.sh --status emits nothing on stderr under a changing process table
 #
 # defect: sp-idml
-# covers: spira/cockpit.sh spira/gate-run.sh cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* spira/gate-run.sh cockpit/ops/src/health.rs
 # scar: the gate/landing section was absent from the cockpit snapshot, so the DONE-to-LANDED stretch and live gate status were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,8 +25,8 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
 # UC-15 (docs/test-plan/cockpit-observability.md, row 15): each case below calls the one
-# tier function it actually exercises — `cockpit.sh now` for the gate-run/proc liveness
-# section, `cockpit.sh unsent` for landing.status/landing.progress — instead of a full
+# tier function it actually exercises — `cockpit-collect probe now` for the gate-run/proc liveness
+# section, `cockpit-collect probe unsent` for landing.status/landing.progress — instead of a full
 # `once`, which ran every probe (16 tiers) just to reach one of them.
 run_now() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -34,7 +34,7 @@ run_now() {
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         "$@" \
-        cockpit.sh now 2>/dev/null
+        cockpit-collect probe now 2>/dev/null
 }
 run_unsent() {
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -43,7 +43,7 @@ run_unsent() {
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         BD_TIMEOUT=1 \
         "$@" \
-        cockpit.sh unsent 2>/dev/null
+        cockpit-collect probe unsent 2>/dev/null
 }
 
 # ======================================================================================

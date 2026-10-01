@@ -16,3 +16,4 @@ pub mod frame;
 pub mod model;
 pub mod sections;
 pub mod share;
+pub mod term;

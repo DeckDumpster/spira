@@ -1,5 +1,26 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-09-30 (sp-kt4l3): `spira/cockpit.sh` and `spira/collect.sh` retired, replaced by
+> the `cockpit-collect` crate** (rewrite wave 5c). Every `*_keys` function and the
+> supervisor's probe registry/fragment/merge machinery are now Rust; see
+> `cockpit-collect/DESIGN.md` for the full contract and `Decisions`. Root `cockpit.sh`
+> (build/repair the tmux cockpit) is a different file sharing a basename and is untouched.
+> Every `test-cockpit-*.sh` invocation of `cockpit.sh <subcommand>`/`collect.sh
+> loop|merge|_probe_body_test` is repointed to the compiled binary
+> (`cockpit-collect probe <name>` / `once` / `collect` / `merge` / `_probe_body_test`),
+> against the same fixtures. Three suites are retired outright because the property they
+> guarded is now structural or a Rust unit test: `test-cockpit-history-leak.sh` and the
+> kill-mid-probe half of `test-cockpit-tmp.sh` (the bash's `mktemp`-then-hold-open temp no
+> longer exists — `once` writes-then-renames in one tight sequence); the EXIT-trap section
+> of `test-cockpit-collector-quota.sh` (no traps, no unbound-variable class in Rust);
+> `test-cockpit-collect-concurrency.sh` and the registry half of
+> `test-cockpit-collect-probes.sh` (superseded by `cockpit-collect`'s own
+> `probes_registry_is_well_formed` and `due_probes_*` unit tests, which check the real
+> `PROBES` const and the real scheduling decision rather than a source-extracted copy).
+> `cockpit/layout.sh`'s collector-staleness check (`${SPIRA_PROD}/cockpit.sh`'s mtime) is a
+> live caller of the retired file living in sp-llbmi's concurrent wave-5d assignment; not
+> edited here — flagged for whoever lands second to repoint.
+
 > **2026-09-30 (sp-o8n10): `real_bd_answers_in_the_shape_the_fake_is_built_from` deleted**
 > (law-a-test-that-flips-is-deleted): the one case in `test-cockpit-rust.sh`
 > (`loom/tests/endpoint.rs`, UC-cockpit-observability-31's "T1 cert (fake bd) + one T2 real-bd

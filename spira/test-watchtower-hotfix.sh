@@ -24,7 +24,7 @@
 # than filing a real bead.
 #
 # tier: T1
-# covers: spira/watchtower.sh
+# covers: watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -75,7 +75,7 @@ wt_file() {
         SPIRA_INCIDENT_SH="$INC_MOCK" \
         SPIRA_TEST_CAPTURE="$TMP/captured.txt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        watchtower.sh 2>/dev/null
+        watchtower 2>/dev/null
 }
 # `release` must resolve by bare name (the box's own convention, sp-gypjk): symlink it
 # into the directory PATH is given above instead of pointing PATH at $TMP/bin, so the

@@ -7,7 +7,7 @@
 # Replaces test-ci-park.sh (deleted, sp-0r1lv: flipped in Concierge full-corpus round 24 —
 # a container-runtime timeout in the batch harness, not a real assertion failure; all 35
 # cases passed). This suite keeps only the pure core: no testdb, no git, no aeon.sh, no
-# cockpit.sh, so it cannot be caught by the class of infrastructure flake that took the
+# cockpit-collect, so it cannot be caught by the class of infrastructure flake that took the
 # original suite down. The aeon-brief and ops-pane halves of the old suite are not
 # reproduced here; see docs/test-plan/cockpit-observability.md for that lost coverage.
 #

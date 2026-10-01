@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 #
 # test-cockpit-queue-wait.sh — a bead carrying SPIRA_QUEUE_WAIT_LABEL must not
-# appear in SP_NEXT; cockpit.sh must pass the wait label to bd's --exclude-label.
+# appear in SP_NEXT; cockpit-collect must pass the wait label to bd's --exclude-label.
 #
-# THE DEFECT. cockpit.sh's NEXT query excluded spira-poison, SPIRA_ASK_LABEL and
+# THE DEFECT. cockpit-collect's NEXT query excluded spira-poison, SPIRA_ASK_LABEL and
 # SPIRA_CI_LABEL but not SPIRA_QUEUE_WAIT_LABEL. A bead sp-n9z (content-landed,
 # spira-queue-waiting, landstate=LANDED, no branch) appeared in the NEXT row while
 # every fayth excluded it — zero aeons could claim it, the operator read it as a
 # stalled loop (sp-rvoun).
 #
-# THE FIX. cockpit.sh's NEXT query adds SPIRA_QUEUE_WAIT_LABEL to --exclude-label,
+# THE FIX. cockpit-collect's NEXT query adds SPIRA_QUEUE_WAIT_LABEL to --exclude-label,
 # matching what fayth_exclude passes to bd ready for each aeon.
 #
 # WHAT THIS SUITE CHECKS (4 assertions).
@@ -20,7 +20,7 @@
 #   4. SP_READY is 0 when the only bead has the wait label.
 #
 # defect: sp-rvoun
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 # hermetic-ok: mock bd binary, no systemd or database
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -32,7 +32,7 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 : "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
-# run_core <bd-binary> <wait-label> -> stdout of cockpit.sh core (SP_NEXT* and SP_READY keys)
+# run_core <bd-binary> <wait-label> -> stdout of cockpit-collect probe core (SP_NEXT* and SP_READY keys)
 run_core() {
     local bd_path="$1" wait_label="${2:-spira-queue-waiting}"
     env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
@@ -43,7 +43,7 @@ run_core() {
         SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_QUEUE_WAIT_LABEL="$wait_label" \
         SPIRA_BD="$bd_path" \
-        cockpit.sh core 2>/dev/null
+        cockpit-collect probe core 2>/dev/null
 }
 
 # make_bd_wait <path> <wait-label> — a mock bd that returns a bead carrying the

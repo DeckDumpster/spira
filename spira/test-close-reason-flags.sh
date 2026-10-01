@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-close-reason-flags.sh — close-reason-flags.py's classifiers, table-tested directly
-#   against canned reason strings. No database, no cockpit.sh livelock.
+#   against canned reason strings. No database, no cockpit-collect probe livelock.
 #
 #   ./test-close-reason-flags.sh
 #
@@ -21,7 +21,7 @@
 # already table-tests it end to end (its own area — not duplicated here).
 #
 # test-livelock.sh keeps ONE row of each family proving detect_invalid_closed's output
-# reaches cockpit.sh livelock's report — the integration, not the classification.
+# reaches cockpit-collect probe livelock's report — the integration, not the classification.
 #
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control): a positive control proves
 # the classifier can fire before any negative control is believed.

@@ -266,20 +266,20 @@ impl<'a> Sentinel<'a> {
         let mailbox = self.cfg.run.join("landing.progress");
         self.drain_into_progress(&mailbox, "landing.progress");
 
-        let wt = self.script("watchtower.sh");
-        if std::fs::File::open(&wt).is_ok() {
-            for flag in [
-                "--throttle-check",
-                "--czar-outcome-check",
-                "--pr-stall-check",
-                "--disabled-timer-check",
-            ] {
-                self.h.run(
-                    Spec::args_owned("bash", vec![wt.to_string_lossy().into_owned(), flag.into()])
-                        .out(Io::Inherit)
-                        .err(Io::Null),
-                );
-            }
+        // `watchtower` is a compiled binary on the release PATH now (DESIGN.md §3 of the
+        // watchtower crate), not a script under SPIRA_HOME — called by bare name, never by
+        // a constructed path (law: callers invoke tools by bare name on the launcher PATH).
+        for flag in [
+            "--throttle-check",
+            "--czar-outcome-check",
+            "--pr-stall-check",
+            "--disabled-timer-check",
+        ] {
+            self.h.run(
+                Spec::args_owned("watchtower", vec![flag.into()])
+                    .out(Io::Inherit)
+                    .err(Io::Null),
+            );
         }
 
         let mut age: i64 = -1;

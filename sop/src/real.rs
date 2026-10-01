@@ -98,11 +98,14 @@ impl Proc for RealProc {
         let mut cmd = Command::new("timeout");
         cmd.arg(timeout_secs.to_string());
         if bash_prefix {
-            cmd.arg("bash").arg(bin);
+            // An override: a test's own fixture script, taking the subcmd directly —
+            // unchanged from before cockpit-collect existed.
+            cmd.arg("bash").arg(bin).arg(subcmd);
         } else {
-            cmd.arg(bin);
+            // The default target is cockpit-collect's own `probe` subcommand (sp-kt4l3;
+            // formerly bare `cockpit.sh <subcmd>` off PATH).
+            cmd.arg(bin).arg("probe").arg(subcmd);
         }
-        cmd.arg(subcmd);
         let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
         if !out.status.success() {
             return None;

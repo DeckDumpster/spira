@@ -26,7 +26,7 @@
 # the marker; only a successful prompt-file write does.
 #
 # tier: T1
-# covers: spira/watchtower.sh spira/lib.sh aeon/src/*
+# covers: watchtower/src/* spira/lib.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -36,7 +36,7 @@ echo "test-watchtower-lapse.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
 # FAST MOCK FOR suites.sh status — see test-watchtower.sh for why: every wt()/wt_file()
-# call invokes watchtower.sh, which calls suites.sh status (~3.5s x2 for host-check.sh)
+# call invokes watchtower, which calls suites.sh status (~3.5s x2 for host-check.sh)
 # unless this is set. Missing here made this suite pay that cost on every one of its
 # ~20 invocations for no reason this suite's assertions ever needed.
 MOCK_SUITES="$TMP/mock-suites.sh"
@@ -52,7 +52,7 @@ wt() {  # wt [VAR=val ...] -> the snapshot
         SPIRA_LAPSED_DIR="${SPIRA_LAPSED_DIR_OVERRIDE:-$TMP/run/lapsed}" \
         SPIRA_LAPSED_MARKER="${SPIRA_LAPSED_MARKER_OVERRIDE:-$TMP/run/lapsed.swept}" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        "$@" watchtower.sh --show 2>/dev/null
+        "$@" watchtower --show 2>/dev/null
 }
 
 # wt_file: runs watchtower for real (no --show), writes the prompt file.
@@ -67,7 +67,7 @@ wt_file() {  # wt_file [VAR=val ...] -> $TMP/ops-prompt written
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 
 fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }

@@ -160,7 +160,7 @@ after_ll="$(env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
     SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
     SPIRA_SPIKE_LABEL=spike \
     SPIRA_SCOPE_LABEL="$SCOPE" \
-    cockpit.sh livelock 2>/dev/null)"
+    cockpit-collect probe livelock 2>/dev/null)"
 
 want  "after sweep: unclaimable bead still reported"       "sp-sw-unc"  "$after_ll"
 want  "after sweep: described bead still reported"         "sp-sw-desc" "$after_ll"

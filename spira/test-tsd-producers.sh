@@ -9,9 +9,9 @@
 #   1. aeon-session: ledger_done (aeon.sh) appends a row carrying bead/fayth/rc/status and
 #      the same wall_s/api_s/turns/cost_usd session_result_fields already computed for its
 #      own ledger line — best-effort when tsd-write fails.
-#   2. slots: _tsd_slots_sample (lib.sh) turns a collect.sh fragment into one row, an absent
-#      key renders "?" rather than a silent 0; slots_keys' (cockpit.sh) fleet ceiling comes
-#      from config alone, never a database call.
+#   2. slots: _tsd_slots_sample (lib.sh) turns a cockpit-collect fragment into one row, an
+#      absent key renders "?" rather than a silent 0; slots_keys' (cockpit-collect) fleet
+#      ceiling comes from config alone, never a database call.
 #   3. round: _tsd_round_phase (lib.sh) refuses any phase outside build/corpus/attribute/
 #      rerun/land/publish — the whitelist that keeps a round row state-free (design §2a,
 #      "round rows carry no state"). attribute.sh and testenv-batch.sh's own shipped call
@@ -25,7 +25,7 @@
 # accepting case, and every empty/absent case is paired with a real write.
 #
 # tier: T3
-# covers: spira/lib.sh aeon/src/* sentinel/src/* spira/cockpit.sh spira/collect.sh
+# covers: spira/lib.sh aeon/src/* sentinel/src/* cockpit-collect/src/*
 #         testenv/src/* reconciler-engine/src/io.rs
 #         reconciler/src/main.rs reconciler-flow/src/main.rs
 set -uo pipefail
@@ -90,20 +90,22 @@ is "slots: an absent key renders '?', not 0" "?" "$(jpy "$RUN3B/tsd/slots.jsonl"
 
 # slots_keys' fleet ceiling is config-only: SPIRA_MAX_LIVE_AEONS wins outright over pool +
 # lane caps, and without it the sum is used — neither figure ever comes from a bd query.
-CEILING_FUNC="$T/slots_keys.sh"
-sed -n '/^slots_keys() {/,/^}/p' "$HERE/cockpit.sh" > "$CEILING_FUNC"
-[ -s "$CEILING_FUNC" ] || bad "could not extract slots_keys from cockpit.sh"
+#
+# sp-kt4l3: slots_keys is cockpit-collect's own Rust `slots_keys()` now, not a bash function
+# to extract and source — this drives the real compiled probe (`cockpit-collect probe
+# slots`), which is a stronger check than the extraction ever was (no risk of the extracted
+# text drifting from what actually runs).
+#
+# EMPTY_HOME carries a symlinked lib.sh (cockpit-collect's `io::lib_call` bridge sources
+# "$SPIRA_HOME/lib.sh" exactly as the bash did) but no chamber/, so fayth_names finds
+# nothing and SPIRA_FAYTHS="" resolves to zero fayths rather than the real chamber's.
 EMPTY_HOME="$T/empty-home"; mkdir -p "$EMPTY_HOME"
+ln -sf "$HERE/lib.sh" "$EMPTY_HOME/lib.sh"
 ceiling_of() {
     (
-        # An empty SPIRA_HOME (no chamber/) — fayth_names finds nothing, so
-        # SPIRA_FAYTHS="" resolves to zero fayths rather than the real chamber's.
         export SPIRA_RUN="$T/no-such-run" SPIRA_HOME="$EMPTY_HOME" SPIRA_FAYTHS="" SPIRA_SUMMON=test-stub
         export SPIRA_MAX_AEONS="$1" SPIRA_MAX_LIVE_AEONS="${2:-}"
-        set -uo pipefail
-        . "$HERE/lib.sh"
-        . "$CEILING_FUNC"
-        slots_keys 2>/dev/null | awk -F= '/^SP_SLOTS_CEILING=/{print $2}'
+        cockpit-collect probe slots 2>/dev/null | awk -F= '/^SP_SLOTS_CEILING=/{print $2}'
     )
 }
 is "slots_keys: ceiling = pool + lane caps (0 here) when SPIRA_MAX_LIVE_AEONS is unset" \
