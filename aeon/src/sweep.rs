@@ -2,6 +2,7 @@
 //! account are checked; the ledger is written; no claim, no worktree, no verdict.
 
 use crate::brief;
+use crate::decide;
 use crate::ledger;
 use crate::ports::s;
 use crate::run::Run;
@@ -80,7 +81,8 @@ impl Run<'_> {
         self.ledger.done(self.now(), &f, "sweep", rc, "sweep", &fields);
         // A sweep that ran and did work succeeded even if the CLI exited 1; a refused one
         // keeps its rc so the named unit enters FAILED.
-        match self.d.seam.call("session_outcome", &s(&[&logf.display().to_string()])).text().as_str() {
+        let seg = ledger::trace_segment(Some(&logf), 0, &self.conf.trace_mark());
+        match decide::session_outcome(seg.as_deref()) {
             "unlanded" | "killed" => 0,
             _ => rc,
         }

@@ -8,6 +8,8 @@
 //!   sentinel --open-children [--dry-run]
 //!                            CHECK 3c alone over a fresh snapshot (suites; a read-only
 //!                            production probe with --dry-run)
+//!   sentinel --land-escalate land_escalate alone, stdin `<why>\n<evidence>` (sp-31hjr;
+//!                            the real-sender suites' way in, no whole pass)
 
 mod audit;
 mod cfg;

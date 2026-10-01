@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::bd;
 use crate::decide::{self, DispositionIn, NoteKey};
+use crate::ledger;
 use crate::ports::s;
 use crate::run::{Run, FIXTURE_DROP};
 
@@ -136,7 +137,8 @@ impl Run<'_> {
             } else if let Some((2, why)) = self.gate_status() {
                 i.gate_unfinished = true;
                 gw = why;
-            } else if self.sv("open_ask_blocker", &s(&[&bd::json(self.d.bd, &["show", &id]), &id])).success() {
+            // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset (same as below)
+            } else if decide::open_ask_blocker(&bd::json(self.d.bd, &["show", &id]), &id, &self.conf.or("SPIRA_ASK_LABEL", "needs-operator")) {
                 i.decision_blocked = true;
             } else if self.s.session_rc == 124 && !self.s.committed {
                 // timeout — decided from session_rc / committed
@@ -148,12 +150,13 @@ impl Run<'_> {
                 i.submitted = true;
             } else if bd::show(self.d.bd, &id).is_some_and(|r| r.has_label(&self.conf.submitted_label())) {
                 i.submitted = true;
-            } else if self.sv("session_yield_headless", &s(&[&logf])).success() {
+            } else if ledger::trace_segment(self.s.logf.as_deref(), 50_000, &self.conf.trace_mark()).is_some_and(|seg| decide::session_yield_headless(&seg)) {
                 i.yield_headless = true;
             } else if !self.s.session_started {
                 // pre-session death
             } else {
-                i.outcome = Some(self.sv("session_outcome", &s(&[&logf])).text());
+                let seg = ledger::trace_segment(self.s.logf.as_deref(), 0, &self.conf.trace_mark());
+                i.outcome = Some(decide::session_outcome(seg.as_deref()).to_string());
             }
             // SESSION_RC, committed and REQUEUE_CAUSE are passed whatever was gathered, as
             // aeon.sh passed them; the precedence lives in decide::disposition.
@@ -282,7 +285,7 @@ impl Run<'_> {
         } else if let Some((gate_st, why)) = self.gate_status() {
             gate_why = why.clone();
             let superseded = bd::show(self.d.bd, &id).is_some_and(|r| r.superseded());
-            let queued = self.sv("repo_land_queued", &s(&[&self.s.repo_name])).success();
+            let queued = self.conf.repos.land_queued(&self.s.repo_name);
             let hasown = queued && self.has_own_commit();
             let br = self.s.branch.clone();
             let rn = self.s.repo_name.clone();

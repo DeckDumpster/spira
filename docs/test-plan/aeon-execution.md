@@ -544,3 +544,127 @@ memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 sui
 rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
 marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
 entry is orphaned by its removal — this section is the only record of what it checked.
+
+## 15. Wave 4.33: verdict (J) and session outcome (N) ported natively (sp-8kqww)
+
+The last eight lib.sh functions aeon still reached through the bash seam for its own
+teardown/verdict decisions — all aeon-only, zero other caller — are ported into the aeon
+crate and deleted from lib.sh: `verdict_committed`, `delivers_verdict`, `close_verdict`
+(`aeon/src/verdict.rs`); `session_outcome`, `open_ask_blocker`, `session_yield_headless`,
+`rapid_recur_streak` (`aeon/src/decide.rs`); `rapid_recur_check`
+(`aeon::run::Run::rapid_recur_check`). `attempt_trace` (family P, not yet ported) already
+had a native twin in `aeon::ledger::attempt_trace` from the original aeon rewrite, so
+`session_outcome`/`session_yield_headless` need no seam call at all now; `verdict_committed`
+still reaches `spira_landrefs` (family W, bead 12, unported) through the seam — one new
+allowlist entry, in place of the six it replaces (`session_outcome`,
+`session_yield_headless`, `open_ask_blocker`, `verdict_committed`, `close_verdict`,
+`_aeon_rapid_recur`).
+
+Suites deleted outright (tested only these functions directly, through a bash `lib.sh`
+source — `aeon_disposition` et al already retired at sp-j89pd left them with nothing else
+to cover): `test-aeon-disposition.sh`, `test-session-yield-headless.sh`,
+`test-rapid-recur.sh`. A fourth, `test-incident-delivers-reopen-mismatch.sh`, is a
+source-grep over `lib.sh`'s raw text (`grep -qE 'applied\.jsonl'` and a bead-id reference
+near it, not a function call) proving `delivers_verdict`'s applied.jsonl identity-check
+branch exists in lib.sh at all — true by construction once that branch lives only in
+`verdict::delivers_verdict` (Rust) instead, the same SOURCE-GREP-goes-stale shape the
+original plan called out for `test-delivers-parity.sh`. `delivers_verdict_note_and_report`
+(`aeon/src/verdict.rs`) covers the identity-vs-mtime regression directly, with a real fixture
+instead of a grep. Neither carried a `UC-aeon-execution-NN` token in its own `covers:`
+line, so no catalogue entry is orphaned (unlike sp-j89pd's UC-03/08). Every row becomes a
+Rust unit test: `decide::tests::{session_outcome_table, open_ask_blocker_table,
+session_yield_headless_table, rapid_recur_streak_table}` (phrasing/fixture tables ported
+verbatim from the bash suites), `verdict::tests::{verdict_committed_walks_branch_then_landrefs,
+delivers_verdict_beads, delivers_verdict_note_and_report, delivers_verdict_check_and_action,
+close_verdict_precedence}`, and two whole-run tests in `aeon/src/tests.rs`
+(`rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons`,
+`rapid_recur_does_not_park_a_bead_with_real_prior_runs`) for the side effects (label add,
+note, `spira-lc hold`) the pure arithmetic doesn't reach. `test-attempts.sh` keeps its
+real-bd counter/release rows and drops only the `session_outcome` table it sourced `lib.sh`
+for directly.
+
+Trued up two stale citations left over from sp-j89pd's own trim of `test-aeon-disposition.sh`
+to just `open_ask_blocker` (it no longer covered the disposition-table unjudged-<cause> rows
+those citations meant): `test-aeon-gate-unfinished-attempts.sh` and
+`test-aeon-slain-attempts.sh` now point at `decide::tests::disposition_table` directly.
+`test-aeon-teardown-e2e.sh`'s three pointers to the deleted suites are repointed at their
+Rust homes.
+
+Two behavioural fixes surfaced by making the fake honest, both in `aeon/src/tests.rs`: both
+relied on `FakeSeam` hard-coding `session_outcome => "unlanded"` regardless of the trace
+file's real content, which the native classifier does not do.
+`a_session_that_leaves_the_bead_open_is_unlanded_and_exits_its_rc`'s `act` closure wrote
+nothing to the log at all (reads as `refused` — no `{` lines — not `unlanded`); `sweep_runs_
+without_a_bead`'s wrote a bare `result` record with no `tool_use` (reads as `refused` too —
+`acted` is false — not `unlanded`, so `sweep.rs`'s own `"unlanded"|"killed" => 0` match would
+no longer fire). Both closures now write a believable trace (a `tool_use` plus a clean
+`result`, the same shape as test-attempts.sh's retired `clean.log` fixture) so each test
+still proves what its name says. `sweep.rs`'s own call — a third seam call to
+`session_outcome` this bead's first grep pass missed, caught by a second whole-tree grep
+after the port — is native now too (`decide::session_outcome` over
+`ledger::trace_segment`).
+
+## 16. Wave 4.34: trace/heartbeat (P), groom claims and bead-named paths (Q), the
+    aeon-session tsd row (sp-27d3d)
+
+The trace/heartbeat family's live functions — `trace_last`, `trace_stats`, `trace_tail`,
+`aeon_fuse_minutes`, `aeon_lease_minutes`, `wiki_write_paths`, `wiki_commit_paths` — plus
+the brief/memories family's aeon-owned pair (`groom_claims_verified`, `bead_named_paths`)
+and the aeon half of the tsd producers (`_tsd_aeon_session`) are ported into `aeon::trace`
+and deleted from lib.sh. `attempt_trace` itself (family P) stays in lib.sh: `capacity_reset_at`
+(family K, unported) still calls it, so it is not yet dead. `_tsd_kv_field` (family AC) is
+left in place too — bead 35 ("Leftovers") owns its fate, and it is a private helper rather
+than one this bead's title named.
+
+Three of these functions have readers outside aeon: cockpit-collect called
+`aeon_fuse_minutes`, `aeon_lease_minutes` and `trace_stats`/`trace_tail` through the generic
+`io::lib_call` bash bridge, and sentinel called `trace_tail` through its own fixed S6 seam
+script. Both crates now depend on the aeon crate as a library and call `aeon::trace`
+in-process: cockpit-collect resolves the base ref for `aeon_fuse_minutes` with one
+remaining `io::lib_call(..., "spira_landref", ...)` (family W, unported) and runs the
+`git log --format=%ct` itself; sentinel reads `SPIRA_TRACE_MARK` out of its own context
+probe's `@vars` (already captured for other reasons) instead of threading it through a new
+field. `aeon::trace::aeon_fuse_minutes` and `::bead_named_paths` take their git-derived
+inputs already resolved by the caller (a commit timestamp, a `git ls-files` listing) rather
+than a `Git` port parameter, so the same function serves all three crates without each
+reimplementing a git adapter.
+
+The output contract is kept byte for byte: every `?`/`-`/`gate`/`KEY=value` sentinel the
+bash functions could render still renders identically, verified against the same fixtures
+the bash suites used (a real git worktree aged with `utime(2)`, a `bash -c 'exec -a
+gate.sh sleep 9999'` standing in for a live gate process, literal stream-json transcripts).
+
+Suites trimmed (each kept whatever didn't source lib.sh directly for the retired function;
+every removed row becomes a `aeon::trace` unit test):
+
+- `test-thrash.sh` — Parts 1-4b (`aeon_fuse_minutes` via a bash sourcing shim: no worktree,
+  a fresh write, a stale write, live/dead gate suppression, a gate that just finished)
+  moved to `trace::tests::aeon_fuse_minutes_*`. Parts 5-6 (cockpit-metrics.py's thrash
+  counter, the SPIRA_THRASH_MINUTES conf.d default) are untouched.
+- `test-aeon-lease.sh` — the `alm`-driven table (no lease file, a future deadline, a past
+  deadline, an empty file, a non-numeric file, an empty bead id) moved to
+  `trace::tests::aeon_lease_minutes_table`. The `fayth_get`/chamber-fayth section (a
+  different family) is untouched.
+- `test-aeon-wiki-dirty.sh` — T1 (`wiki_commit_paths` via a bash sourcing shim) moved to
+  `trace::tests::wiki_commit_paths_selects_own_dirty_writes_never_tasks_md`. T3, a whole-run
+  test against the real `aeon` binary, is untouched — it does not care whether the family
+  lives in bash or Rust.
+- `test-groom-escalation-check.sh` — T1 (`groom_claims_verified` via a bash sourcing shim)
+  moved to `trace::tests::groom_claims_verified_table`. T3, the same shape as above, is
+  untouched.
+- `test-cockpit-fuse.sh` — Part 4 (`trace_tail`'s turn-boundary rendering, via a bash
+  sourcing shim) moved to `trace::tests::trace_tail_renders_result_as_a_turn_index_not_session_ended`.
+  Parts 1-3 and 5, which drive the real `cockpit-collect probe now` binary and the `health`
+  pane, are untouched.
+
+No suite was deleted outright: `trace_last`, `trace_stats` and `bead_named_paths` had no
+dedicated bash suite at all (covered only incidentally through the whole-run suites above),
+so their first direct tests are new rows in `aeon/src/trace.rs` rather than ported ones.
+
+`aeon/src/seam.rs`'s allowlist drops `trace_last`, `aeon_fuse_minutes`, `wiki_write_paths`,
+`wiki_commit_paths`, `groom_claims_verified`, `bead_named_paths` and `_tsd_aeon_session`,
+and gains one new entry, `spira_landref` (singular — the heartbeat's own base-ref lookup,
+replacing the whole `aeon_fuse_minutes` bash function it used to call).
+
+`cargo test -p aeon -p cockpit-collect -p sentinel`: 154 + 50 + 89 tests, all green (19 new
+in `aeon::trace`).

@@ -190,7 +190,9 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 name = "cockpit-collect"
 version = "1.0.0"
 dependencies = [
+ "aeon",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -785,6 +787,7 @@ name = "rebase-stale"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -1025,6 +1028,7 @@ dependencies = [
 name = "sentinel"
 version = "1.0.0"
 dependencies = [
+ "aeon",
  "libc",
  "serde",
  "serde_json",

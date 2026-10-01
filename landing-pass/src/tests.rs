@@ -41,6 +41,12 @@ impl Beads for FakeBeads {
         }
         self.rows.borrow().get(id).map(|b| b.status.clone()).unwrap_or_else(|| "-".into())
     }
+    fn ask_open(&self, _label: &str, _subject: &str) -> bool {
+        false
+    }
+    fn context(&self, id: &str, _now: i64) -> String {
+        format!("(fixture context for {id})")
+    }
 }
 
 #[derive(Default)]

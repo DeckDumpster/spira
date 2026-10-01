@@ -2,6 +2,7 @@
 //! mechanically, so a bead reaches an aeon only for a real content conflict or a red gate.
 //! See DESIGN.md for the contract this implements.
 
+pub mod branch;
 pub mod engine;
 pub mod git;
 pub mod holder;

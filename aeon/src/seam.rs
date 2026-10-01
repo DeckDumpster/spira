@@ -21,16 +21,15 @@ __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
-    _aeon_thrash_meta|_aeon_rapid_recur|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
+    _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
-    lc_bead_verified|park_unmapped|repo_root|repo_land|repo_land_queued|\
-    spira_home_repo|qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
+    lc_bead_verified|park_unmapped|\
+    qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|session_outcome|session_yield_headless|trace_last|\
-    aeon_fuse_minutes|open_ask_blocker|verdict_committed|close_verdict|land_state|\
-    land_mark|bead_is_work_type|bead_named_paths|bead_cited_commit_on_base|\
-    other_beads_on_conflicts|spira_destroy_branch|groom_claims_verified|\
-    wiki_write_paths|wiki_commit_paths|_tsd_aeon_session) ;;
+    capacity_pause_set|spira_landrefs|spira_landref|\
+    land_state|\
+    land_mark|bead_is_work_type|bead_cited_commit_on_base|\
+    other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac
 . "$__aeon_lib" || exit 98
@@ -96,9 +95,6 @@ _aeon_thrash_meta() {
     printf '%s\n' "$(bead_metadata "$1" thrash_tip)"
     printf '%s\n' "$(bead_metadata "$1" thrash_last)"
 }
-_aeon_rapid_recur() {
-    BEAD_ID="$1" LEDGER="$2" rapid_recur_check
-}
 "$__aeon_fn" "${__aeon_args[@]}"
 "#;
 
@@ -108,7 +104,7 @@ pub const SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
     "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
     "SPIRA_WORLD_STOP_SKIP", "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
-    "SPIRA_REPO", "SPIRA_REPO_MAP", "LANDSTATE", "SPIRA_THRASH_MINUTES",
+    "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_REPO_DERIVED", "SPIRA_HOME_REPO", "LANDSTATE", "SPIRA_THRASH_MINUTES",
     "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
     "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
     "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# test-groom-escalation-check.sh — groom_claims_verified (lib.sh): a groom log line
-# claiming ESCALATED without a matching ask bead is unproven; one with the ask is not.
+# test-groom-escalation-check.sh — groom_claims_verified: a groom log line claiming
+# ESCALATED without a matching ask bead is unproven; one with the ask is not.
 # FAYTH_GROOM_ESCALATION_CHECK tells aeon.sh to reopen and poison the trigger on the
 # unproven case.
 #
@@ -20,7 +20,16 @@
 # fayth called `scrubber` that sets the key is held to the rule; one that does not is not.
 # Asserting through groomer.fayth directly would pass against a check keyed on the name.
 #
-# covers: aeon/src/* spira/lib.sh spira/chamber/groomer.fayth spira/conf.sh
+# RETIRED (wave 4.34, sp-27d3d): groom_claims_verified was lib.sh; it is ported to
+# aeon::trace::groom_claims_verified, called in-process from Run::verdict
+# (aeon/src/verdict.rs). The T1 table that drove it through a bash sourcing shim (no
+# escalation keyword, a claim with no ask bead, a fresh matching ask, an ask bead created
+# before the session epoch, the id named in the description rather than the title, two
+# claims with only one backed, "flagged" as a claim keyword, and an empty log) moved to
+# groom_claims_verified_table (aeon/src/trace.rs). T3 (below) is unaffected — it drives the
+# real `aeon` binary end to end and does not care whether the family lives in bash or Rust.
+#
+# covers: aeon/src/* spira/chamber/groomer.fayth spira/conf.sh
 # defect: sp-yr4ih
 # scar: groomer wrote ESCALATED to the groom log without calling mail; sentinel accepted the log line as evidence of the escalation
 set -uo pipefail
@@ -33,55 +42,6 @@ TOOLS="$(dirname "$(command -v spira-config)"):$HERE"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-groom-escalation-check.sh"
-
-gcv() {   # gcv <log> <ask-json> <epoch> -> groom_claims_verified's own output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; groom_claims_verified "$2" "$3" "$4"' \
-        _ "$HERE" "$1" "$2" "$3" 2>/dev/null
-}
-
-# ===========================================================================================
-echo
-echo "T1: groom_claims_verified <new-log-lines> <ask-json> <epoch> — no aeon run, no bd"
-# ===========================================================================================
-EPOCH=1900000000
-NEW_TS="$(date -u -d "@$((EPOCH + 60))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '2030-03-11T05:01:00Z')"
-OLD_TS="$(date -u -d "@$((EPOCH - 3600))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '2030-03-11T04:00:00Z')"
-
-LOG_CLAIM='2026-09-20T00:00:00Z groom: pass complete. Actions: ESCALATED sp-gc1.'
-LOG_NOCLAIM='2026-09-20T00:00:00Z groom: pass complete. Actions: CLOSED sp-xx premise-gone.'
-LOG_MULTI='2026-09-20T00:00:00Z groom: Actions: ESCALATED sp-gc1. Also flagged sp-gc2 for review.'
-
-ASK_NONE='[]'
-ask_for() {   # ask_for <id> <created_at> [field: title|description]
-    python3 -c 'import json,sys; print(json.dumps([{"title": (sys.argv[1] if sys.argv[3]!="description" else "unrelated"), "description": (sys.argv[1] if sys.argv[3]=="description" else ""), "created_at": sys.argv[2]}]))' \
-        "Close $1 as litter?" "$2" "${3:-title}"
-}
-
-out="$(gcv "$LOG_NOCLAIM" "$ASK_NONE" "$EPOCH")"
-is "no escalation keyword at all: nothing claimed, nothing unproven" "" "$out"
-
-out="$(gcv "$LOG_CLAIM" "$ASK_NONE" "$EPOCH")"
-is "a claim with no ask bead at all is unproven" "sp-gc1" "$out"
-
-out="$(gcv "$LOG_CLAIM" "$(ask_for sp-gc1 "$NEW_TS")" "$EPOCH")"
-is "a claim backed by a matching, fresh ask bead is verified" "" "$out"
-
-out="$(gcv "$LOG_CLAIM" "$(ask_for sp-gc1 "$OLD_TS")" "$EPOCH")"
-is "an ask bead created BEFORE the session epoch does not excuse the claim" "sp-gc1" "$out"
-
-out="$(gcv "$LOG_CLAIM" "$(ask_for sp-gc1 "$NEW_TS" description)" "$EPOCH")"
-is "the id may be named in the description rather than the title" "" "$out"
-
-out="$(gcv "$LOG_MULTI" "$(ask_for sp-gc1 "$NEW_TS")" "$EPOCH")"
-is "two claims, only one backed: the other is named unproven" "sp-gc2" "$out"
-
-out="$(gcv "$LOG_MULTI" "$(python3 -c 'import json; print(json.dumps([]))')" "$EPOCH")"
-want "'flagged' is recognised as a claim keyword, same as ESCALATED" "sp-gc2" "$out"
-
-out="$(gcv "" "$ASK_NONE" "$EPOCH")"
-is "an empty log: nothing claimed, nothing unproven" "" "$out"
 
 # ===========================================================================================
 echo

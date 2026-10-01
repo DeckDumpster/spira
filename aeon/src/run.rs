@@ -17,6 +17,7 @@ use crate::restrict;
 use crate::seam::Snapshot;
 use crate::session::{self, Beat, Heartbeat, Launcher, SessionSpec, Stop};
 use crate::stack;
+use crate::trace;
 use crate::util::{self, Out, Sink};
 use crate::worktree;
 
@@ -174,8 +175,52 @@ impl<'a> Run<'a> {
     pub fn ledger_done(&self, rc: i32, status: &str) {
         let fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
         self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
-        self.sdo("_tsd_aeon_session", &s(&[&self.s.bead, self.f(), &rc.to_string(), status, &fields.render()]));
-        self.sdo("_aeon_rapid_recur", &s(&[&self.s.bead, &self.conf.ledger().display().to_string()]));
+        trace::tsd_aeon_session(self.d.exec, &self.run_dir().display().to_string(), &self.s.bead, self.f(), rc, status, &fields);
+        self.rapid_recur_check();
+    }
+
+    /// `rapid_recur_check`: three (SPIRA_RAPID_RECUR_THRESHOLD) consecutive sub-10s `done`
+    /// lines for this bead are a setup loop that recurs identically on every retry
+    /// (law-a-retry-must-change-an-input) — park with the ask label and `overseer` rather
+    /// than keep re-summoning into the same fault. Reads the ledger the `done` line above
+    /// just wrote.
+    fn rapid_recur_check(&self) {
+        let id = self.s.bead.clone();
+        if id.is_empty() {
+            return;
+        }
+        let threshold = self.conf.n("SPIRA_RAPID_RECUR_THRESHOLD", 3).max(0) as usize;
+        if threshold == 0 {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return };
+        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(&id))).unwrap();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l)).collect();
+        let tail = &matches[matches.len().saturating_sub(threshold)..];
+        let count = decide::rapid_recur_streak(tail);
+        if count < threshold as i64 {
+            return;
+        }
+        let ask = self.conf.ask_label();
+        if self.d.bd.bd(&s(&["label", "list", &id])).text().contains(&ask) {
+            return;
+        }
+        self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
+        let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
+        let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
+        // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
+        let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f()]), None, None);
+        bd::note(
+            self.d.bd,
+            &id,
+            &format!(
+                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with {ask} and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
+            ),
+        );
+        self.sdo(
+            "spira_event",
+            &s(&["aeon.rapid", &id, &format!("Rapid-recur: {id} — {count} consecutive sub-10s aeon summons (setup loop) — parked")]),
+        );
     }
 
     fn check_stop(&self) -> Result<(), Abort> {
@@ -416,10 +461,13 @@ impl<'a> Run<'a> {
         }
 
         // ---- the repository comes from the bead; an unknown name is refused ----
-        self.s.repo_name = if c.repo.is_empty() { self.sv("spira_home_repo", &[]).text() } else { c.repo.clone() };
-        let root = self.sv("repo_root", &s(&[&self.s.repo_name]));
-        let repo = PathBuf::from(root.text());
-        if !root.success() || !repo.join(".git").exists() {
+        // spira_config::repos (sp-37rmg, "wave 4.11") in-process, instead of a bash seam
+        // call per lookup — repo_root/repo_land/spira_home_repo were the most-called family
+        // in the whole decomposition.
+        self.s.repo_name = if c.repo.is_empty() { self.conf.repos.home_repo().to_string() } else { c.repo.clone() };
+        let root = self.conf.repos.root(&self.s.repo_name);
+        let repo = root.clone().map(PathBuf::from).unwrap_or_default();
+        if root.is_none() || !repo.join(".git").exists() {
             self.log(&format!("{}: {} names repo:{}, which repo-map does not resolve to a checkout", self.f(), c.id, self.s.repo_name));
             self.sdo("park_unmapped", &s(&[&c.id, &self.s.repo_name]));
             self.ledger_done(1, "unmapped-repo");
@@ -428,7 +476,7 @@ impl<'a> Run<'a> {
             return Err(1);
         }
         self.s.repo = repo;
-        self.s.repo_land = self.sv("repo_land", &s(&[&self.s.repo_name])).text();
+        self.s.repo_land = self.conf.repos.land(&self.s.repo_name);
         self.d.env.set("SPIRA_INCIDENT_REPO", &self.s.repo_name);
         self.log(&format!("{}: {} works repo:{} at {} (land={})", self.f(), c.id, self.s.repo_name, self.s.repo.display(), self.s.repo_land));
 
@@ -778,7 +826,13 @@ impl<'a> Run<'a> {
         let keep = self.conf.n("SPIRA_BRIEF_KEEP_RECURRENCES", 5).max(0) as usize;
         let max = self.conf.n("SPIRA_BRIEF_NOTES_MAX_CHARS", 8000).max(0) as usize;
         let mut body = brief::bound_bead_notes(&format!("{body}\n"), keep, max).trim_end_matches('\n').to_string();
-        let paths: Vec<String> = self.sv("bead_named_paths", &s(&[&body, &self.s.repo.display().to_string()])).stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+        let tracked = if self.s.repo.join(".git").exists() {
+            let o = self.d.git.git(&self.s.repo, &["ls-files"]);
+            if o.success() { o.stdout } else { String::new() }
+        } else {
+            String::new()
+        };
+        let paths: Vec<String> = trace::bead_named_paths(&body, &tracked);
         if !paths.is_empty() {
             let mut a = s(&["--repo", &self.s.repo_name]);
             a.extend(paths);
@@ -804,7 +858,7 @@ impl<'a> Run<'a> {
 
         let scope = self.conf.s("SPIRA_SCOPE_LABEL");
         let home = self.home().display().to_string();
-        let home_repo = self.sv("spira_home_repo", &[]).text();
+        let home_repo = self.conf.repos.home_repo().to_string();
         let tokens = Tokens {
             single: vec![
                 ("BEAD_ID", bead.clone()),
@@ -1017,8 +1071,11 @@ impl<'a> Run<'a> {
             logf: self.s.logf.clone().unwrap_or_default(),
             bead: self.s.bead.clone(),
             work: self.run_dir().join("worktree").join(&self.s.bead),
+            run: self.conf.run.clone(),
             repo_name: self.s.repo_name.clone(),
+            mark: self.conf.trace_mark(),
             seam: self.d.seam,
+            git: self.d.git,
             bd: self.d.bd,
             sink: self.d.sink,
             clock: self.d.clock,
@@ -1038,8 +1095,11 @@ pub struct RealBeat<'a> {
     pub logf: PathBuf,
     pub bead: String,
     pub work: PathBuf,
+    pub run: PathBuf,
     pub repo_name: String,
+    pub mark: String,
     pub seam: &'a dyn Seam,
+    pub git: &'a dyn Git,
     pub bd: &'a dyn Bd,
     pub sink: &'a dyn Sink,
     pub clock: &'a (dyn Fn() -> i64 + Sync),
@@ -1053,10 +1113,22 @@ impl Beat for RealBeat<'_> {
         session::mtime(&self.logf)
     }
     fn fuse(&self) -> String {
-        self.seam.call("aeon_fuse_minutes", &s(&[&self.bead, &self.work.display().to_string(), &self.repo_name])).text()
+        // `base` (family W, base refs — not yet ported) still reaches lib.sh's
+        // spira_landref through the seam; everything else here is native.
+        let base: Option<String> = if self.repo_name.is_empty() {
+            None
+        } else {
+            let o = self.seam.call("spira_landref", &s(&[&self.repo_name]));
+            (o.success() && !o.text().is_empty()).then(|| o.text())
+        };
+        let commit_ahead_ts = base.as_deref().and_then(|b| {
+            let o = self.git.git(&self.work, &["log", "--format=%ct", "-1", &format!("{b}..HEAD")]);
+            o.success().then(|| o.text()).filter(|t| !t.is_empty()).and_then(|t| t.parse::<i64>().ok())
+        });
+        trace::aeon_fuse_minutes(&self.bead, &self.work, &self.run, commit_ahead_ts, (self.clock)())
     }
     fn trace_last(&self, n: usize) -> String {
-        let t = self.seam.call("trace_last", &s(&[&self.logf.display().to_string()])).stdout;
+        let t = trace::trace_last(&self.logf, &self.mark);
         let b = t.as_bytes();
         String::from_utf8_lossy(&b[..b.len().min(n)]).into_owned()
     }

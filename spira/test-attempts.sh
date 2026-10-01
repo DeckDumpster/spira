@@ -34,105 +34,22 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 # ======================================================================================
-# session_outcome — what ended this session? Pure text over a trace file, so it runs with no
-# database at all. Only `unlanded` may charge an attempt; every other answer, INCLUDING the
-# one that means "we cannot tell", is about the worker.
+# session_outcome — what ended this session? RETIRED from lib.sh (wave 4.33, sp-8kqww: zero
+# live callers — aeon was the only caller, and it calls natively now). It is
+# aeon::decide::session_outcome (aeon/src/decide.rs), over an already-extracted trace
+# segment (aeon::ledger::trace_segment); every fixture in this block's old table (empty,
+# missing, rate-limited, worked-then-refused, clean, api_error_status:null, killed,
+# truncated, the appended-segments pair) is `decide::tests::session_outcome_table`. The
+# charging rule itself (outcome_charges) was already retired at sp-j89pd (wave 4.2) and is
+# exercised by `decide::tests::disposition_table`.
+#
+# TMP/SPIRA_DB/SPIRA_RUN and the lib.sh source below are kept: the real-bd counters section
+# further down still needs them.
 # ======================================================================================
 TMP="$(mktemp -d)"
 export SPIRA_DB="${SPIRA_DB:-$TMP/no-such-db}" SPIRA_RUN="$TMP/run"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
-
-echo "session_outcome:"
-
-: > "$TMP/empty.log"
-is "an empty trace is a session that never ran" refused "$(session_outcome "$TMP/empty.log")"
-
-# NOT `refused`. A trace that is not there and a session that wrote nothing are different
-# facts, and collapsing them would make a mis-aimed log path indistinguishable from a healthy
-# harness reading a quiet one (law-absence-needs-a-positive-control). Both decline to charge;
-# only the recorded cause tells a human which happened.
-is "a missing trace is not classified at all" unknown "$(session_outcome "$TMP/no-such.log")"
-is "an unnamed trace is not classified at all" unknown "$(session_outcome "")"
-
-# The verbatim shape of a refusal: a synthetic assistant message and a result carrying an
-# api_error_status, seconds after the claim.
-cat > "$TMP/ratelimit.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"session limit reached"}]},"error":"rate_limit"}
-{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"result":"session limit reached"}
-LOG
-is "a rate-limited session is not an attempt" refused "$(session_outcome "$TMP/ratelimit.log")"
-
-# A session that acted and then ended badly at the API is still not a verdict about the work:
-# the terminal record says the account refused it, and that is a fact about the account.
-cat > "$TMP/worked-then-refused.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
-{"type":"result","subtype":"success","is_error":true,"api_error_status":429}
-LOG
-is "a session refused after it acted is still not an attempt" refused "$(session_outcome "$TMP/worked-then-refused.log")"
-
-cat > "$TMP/clean.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Edit","input":{}}]}}
-{"type":"result","subtype":"success","is_error":false,"num_turns":40}
-LOG
-is "a session that ran to its own end and left the bead open IS an attempt" unlanded "$(session_outcome "$TMP/clean.log")"
-
-# THE CLI NOW EMITS "api_error_status":null ON EVERY RESULT RECORD. A session that ran real
-# work and returned null for api_error_status is NOT a refusal — null means "no API error
-# occurred". Classifying on the key's presence (not its value) caused every completed session
-# to read as refused, blocking all attempt charges (defect: sp-1g37h).
-cat > "$TMP/null-status.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
-{"type":"result","subtype":"success","is_error":false,"api_error_status":null}
-LOG
-is "a session with api_error_status:null is an attempt, not a refusal" unlanded "$(session_outcome "$TMP/null-status.log")"
-
-# A trace with tool calls and no terminal record is a session that was killed part-way — the
-# host died, the cgroup was torn down, or its worktree was deleted under it. Nothing in it is
-# a verdict about the bead.
-cat > "$TMP/killed.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Now I will"}]}}
-LOG
-is "a session killed mid-work is not an attempt" killed "$(session_outcome "$TMP/killed.log")"
-
-cat > "$TMP/truncated.log" <<'LOG'
-{"type":"system","subtype":"init","session_id":"x"}
-{"type":"assistant","message":{"content":[{"type":"text","text":"Let me look at the bead."}]}}
-LOG
-is "a truncated trace with no tool call is not an attempt" refused "$(session_outcome "$TMP/truncated.log")"
-
-# THE TRACE IS APPENDED TO ACROSS ATTEMPTS, so the classifier must read the LAST SEGMENT and
-# not the file. Without that, a session refused before it wrote anything inherits the previous
-# attempt's terminal `result` — which reads as `unlanded` and charges the refusal as a verdict
-# about the work. That is default-allow restored through the back door, in exactly the case
-# the whole rule exists for, and nothing about it would look wrong: the count just grows.
-#
-# THE PAIR IS THE POINT. The same two segments read as `unlanded` while the first is the last
-# one, so a green result here cannot be a classifier that answers `refused` to everything
-# (law-absence-needs-a-positive-control).
-cp "$TMP/clean.log" "$TMP/appended.log"
-is "one finished segment reads as an attempt" unlanded "$(session_outcome "$TMP/appended.log")"
-printf '%s 2 aeon-t
-' "$SPIRA_TRACE_MARK" >> "$TMP/appended.log"
-is "a second segment that never spoke is not" refused "$(session_outcome "$TMP/appended.log")"
-# And a second segment that DID run to its own end is judged on its own terms, not the first's.
-cat >> "$TMP/appended.log" <<'LOG'
-{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
-{"type":"result","subtype":"success","is_error":true,"api_error_status":429}
-LOG
-is "and a refused second segment reads as refused" refused "$(session_outcome "$TMP/appended.log")"
-
-# THE CHARGING RULE ITSELF was asserted here, once, over every outcome the classifier can
-# return: default-deny is only default-deny while that list is exhaustive. outcome_charges
-# (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — it is now
-# aeon::decide::outcome_charges (aeon/src/decide.rs), exercised by the exhaustive match in
-# aeon::decide::disposition and that function's own `disposition_table` unit test.
 
 # ======================================================================================
 # THE TEARDOWN MUST RUN TO ITS END. Structural, and deliberately so: the regression was that

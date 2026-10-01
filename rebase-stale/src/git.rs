@@ -76,6 +76,37 @@ impl Git {
         finish(self.cmd().args(args).output())
     }
 
+    /// Like `run`, but `input` is written to the child's stdin and closed — the one shape
+    /// `commit -F -` needs (law-commit-messages-via-stdin: a message containing backticks or
+    /// `$( )` must never be executed by the quoting meant to quote it).
+    pub fn run_stdin<I, S>(&self, args: I, input: &str) -> Run
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        use std::io::Write;
+        use std::process::Stdio;
+        let mut c = self.cmd();
+        c.args(args).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        let Ok(mut child) = c.spawn() else {
+            return Run { ok: false, stdout: String::new(), stderr: "spawn failed".into() };
+        };
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(input.as_bytes());
+        }
+        finish(child.wait_with_output())
+    }
+
+    /// `diff -z --name-only <a> <b>`, NUL-split (unlike `out`, which assumes line-oriented
+    /// output and would corrupt a filename containing a newline).
+    pub fn diff_name_only_z(&self, a: &str, b: &str) -> Vec<String> {
+        let r = self.run(["diff", "-z", "--name-only", a, b]);
+        if !r.ok {
+            return Vec::new();
+        }
+        r.stdout.split('\0').filter(|s| !s.is_empty()).map(String::from).collect()
+    }
+
     /// stdout trimmed, or None on failure.
     pub fn out<I, S>(&self, args: I) -> Option<String>
     where
