@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=batch
+DOC=THE BATCHER PERSONA'S PARTITION LABEL (sp-47kq1). A round the batcher-cut binary
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE BATCHER PERSONA'S PARTITION LABEL (sp-47kq1). A round the batcher-cut binary
+    # cannot resolve mechanically — a local double-red, or a CI-only red on a batcher-owned
+    # batch PR (sp-lomk3) — is filed through bead.sh --for batcher, which reads this label
+    # from batcher.fayth's own FAYTH_LABELS. A literal here is the same disagreement risk
+    # SPIRA_PLAN_LABEL exists to close (law-schema-over-code).
+    : "${SPIRA_BATCH_JUDGEMENT_LABEL:=batch-judgement}"
+SPIRA_CONF_DEFAULT_EOF

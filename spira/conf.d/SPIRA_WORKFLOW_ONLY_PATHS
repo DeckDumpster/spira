@@ -1,0 +1,10 @@
+TYPE=list
+GROUP=workflow
+DOC=WORKFLOW-RUN FENCE — scripts that only a workflow executes. A branch that changes
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WORKFLOW-RUN FENCE — scripts that only a workflow executes. A branch that changes
+    # any of these, or any .github/workflows/ file, must cite a dispatched run URL
+    # (law-a-workflow-lands-on-its-own-run). SPIRA_GH_API is the GitHub REST API base; set
+    # it to a local stub in tests to avoid live network calls.
+    : "${SPIRA_WORKFLOW_ONLY_PATHS:=spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh}"
+SPIRA_CONF_DEFAULT_EOF

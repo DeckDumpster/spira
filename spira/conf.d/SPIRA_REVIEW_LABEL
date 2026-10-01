@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=review
+DOC=THE LABEL APPLIED TO FINDING BEADS. The deployment controller (sp-gsmx.5) and the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL APPLIED TO FINDING BEADS. The deployment controller (sp-gsmx.5) and the
+    # groomer query on this label to find open findings for a release unit.
+    : "${SPIRA_REVIEW_LABEL:=review-finding}"
+SPIRA_CONF_DEFAULT_EOF

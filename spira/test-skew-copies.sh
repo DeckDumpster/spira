@@ -32,6 +32,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 SH="$TMP/spira"; RUN="$TMP/run"; WS="$TMP/ws"
 mkdir -p "$SH" "$RUN" "$WS"
 cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 sig() { local d="$1" body="${2:-x}"; mkdir -p "$d"; printf '%s\n' "$body" > "$d/boundary"; printf '%s\n' "$body" > "$d/gate.sh"; printf '%s\n' "$body" > "$d/lib.sh"; }
 commit() { git -C "$1" add -A >/dev/null 2>&1; git -C "$1" commit -q -m "${2:-c}" >/dev/null 2>&1; } # hermetic-ok: $1 is always a path under $WS ($TMP); positional params can't be statically traced

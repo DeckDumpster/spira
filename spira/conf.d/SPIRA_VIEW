@@ -1,0 +1,17 @@
+TYPE=string
+GROUP=view
+DOC=THE VIEW FOLLOWER: the program that keeps the attention surface pointed at whatever the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE VIEW FOLLOWER: the program that keeps the attention surface pointed at whatever the
+    # operator should be looking at right now. Empty means this installation has none, and the
+    # optional manifest row that would watch it is dropped rather than run against a path that
+    # is not there. It is a key rather than a shipped script because the surface it steers is
+    # the operator's — a terminal multiplexer here, something else elsewhere.
+    #
+    # THE CONTRACT IT MUST MEET, so the manifest can both run it and judge it:
+    #   <prog> watch    a loop that enacts the state; this is what the unit starts
+    #   <prog> status   prints `want: <session>` — the multiplexer session that SHOULD be
+    #                   visible. That one line is what makes blindness measurable, because
+    #                   the view it is steering can be read independently.
+    : "${SPIRA_VIEW:=}"
+SPIRA_CONF_DEFAULT_EOF

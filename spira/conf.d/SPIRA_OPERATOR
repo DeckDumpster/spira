@@ -1,0 +1,6 @@
+TYPE=list
+GROUP=operator
+DOC=SPIRA_OPERATOR (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_OPERATOR:=the operator}"
+SPIRA_CONF_DEFAULT_EOF

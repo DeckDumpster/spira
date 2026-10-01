@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=clipboard
+DOC=RELAYS A MOUSE COPY OUT OF THE NESTED CONCIERGE CLIENT TO THE OPERATOR'S TERMINAL, via
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # RELAYS A MOUSE COPY OUT OF THE NESTED CONCIERGE CLIENT TO THE OPERATOR'S TERMINAL, via
+    # tmux's OSC 52 forwarding. tmux defaults set-clipboard off; see cockpit/layout.sh
+    # apply_clipboard_mode for the mechanism and concierge.sh's tmux PATH shim for the other
+    # half. off/no/0 leaves the server default alone.
+    : "${COCKPIT_CLIPBOARD:=on}"
+SPIRA_CONF_DEFAULT_EOF

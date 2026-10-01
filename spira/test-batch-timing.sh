@@ -134,12 +134,14 @@ is "C3: second row is red"  "red"   "$(awk 'NR==2{print $5}' FS='\t' "$LEDGER_C"
 # ===========================================================================
 printf '\nPart D: SPIRA_BATCH_LEDGER in SPIRA_CONF_KEYS\n'
 
-_key_present="$(grep -c 'SPIRA_BATCH_LEDGER' "$CONF_SH" 2>/dev/null || echo 0)"
-[ "$_key_present" -gt 0 ] && ok "D1: SPIRA_BATCH_LEDGER in conf.sh" \
-    || bad "D1: SPIRA_BATCH_LEDGER in conf.sh" "not found"
+# sp-g3uwp: conf.sh no longer carries its allowlist as literal text — a key's membership
+# is now the existence of its own file under conf.d/, which conf-gen.sh derives the
+# allowlist from directly.
+[ -f "$HERE/conf.d/SPIRA_BATCH_LEDGER" ] && ok "D1: SPIRA_BATCH_LEDGER in conf.sh" \
+    || bad "D1: SPIRA_BATCH_LEDGER in conf.sh" "not found under conf.d/"
 
 # Positive control: a made-up key is absent (proves the membership test ran).
-if grep -q 'SPIRA_BATCH_LEDGER_NONEXISTENT' "$CONF_SH" 2>/dev/null; then
+if [ -f "$HERE/conf.d/SPIRA_BATCH_LEDGER_NONEXISTENT" ]; then
     bad "D2: made-up key absent (positive control)" "found unexpectedly"
 else
     ok "D2: made-up key absent (positive control passes)"

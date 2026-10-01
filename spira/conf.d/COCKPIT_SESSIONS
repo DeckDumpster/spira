@@ -1,0 +1,9 @@
+TYPE=list
+GROUP=sessions
+DOC=THE SESSIONS rebuild.sh CREATES WHEN BUILDING A COCKPIT FROM NOTHING. brain and hunk
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE SESSIONS rebuild.sh CREATES WHEN BUILDING A COCKPIT FROM NOTHING. brain and hunk
+    # are structural — the cockpit LINKS their windows. Any additional names are convenience
+    # sessions recreated alongside them. Override in spira.conf to match your own workflow.
+    : "${COCKPIT_SESSIONS:=brain hunk chat}"
+SPIRA_CONF_DEFAULT_EOF

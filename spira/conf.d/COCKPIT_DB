@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=db
+DOC=COCKPIT_DB (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${COCKPIT_DB:=$SPIRA_DB}"
+SPIRA_CONF_DEFAULT_EOF

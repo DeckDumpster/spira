@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=reviewer
+DOC=HOW LONG ONE REVIEW MAY RUN, in seconds. A review that exceeds this exits 2 (error);
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG ONE REVIEW MAY RUN, in seconds. A review that exceeds this exits 2 (error);
+    # promote.sh refuses to promote an unreviewed unit, so the unit waits for a successful run.
+    : "${SPIRA_REVIEWER_TIMEOUT:=300}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=watchers
+DOC=THE OPERATOR'S OWN ROWS, same family as SPIRA_CHAMBER_OVERLAY and for the same reason:
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE OPERATOR'S OWN ROWS, same family as SPIRA_CHAMBER_OVERLAY and for the same reason:
+    # operator state beside the repo-map, never inside a checkout a `spira: land` push can
+    # overwrite. Every `*.watchers` file here is read like SPIRA_WATCHERS itself and merged
+    # into the one manifest, so a watcher the Concierge or an operator owns survives a session
+    # the same way a harness watcher does — as a unit, not an in-session Monitor that dies with
+    # the session that started it.
+    : "${SPIRA_WATCHERS_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/watchers.d}"
+SPIRA_CONF_DEFAULT_EOF

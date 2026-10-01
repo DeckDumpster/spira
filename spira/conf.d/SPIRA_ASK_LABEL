@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=ask
+DOC=THE LABEL THAT MEANS "WAITING ON THE OPERATOR". It is the one the escalation gate defers
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL THAT MEANS "WAITING ON THE OPERATOR". It is the one the escalation gate defers
+    # on, the one every persona's predicate excludes, and the one the attention panel reads,
+    # so all of those must agree on it — which is why it is one key and not five literals.
+    # Changing it on a live installation orphans every bead already carrying the old value.
+    : "${SPIRA_ASK_LABEL:=needs-operator}"
+SPIRA_CONF_DEFAULT_EOF

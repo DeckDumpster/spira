@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=eviction
+DOC=HOW MANY EVICTION-RACE REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD, mirroring
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY EVICTION-RACE REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD, mirroring
+    # SPIRA_REBASE_ESCALATE_AT above: a bead whose eviction-race reopen keeps firing is not
+    # recertifying itself, and nothing else names an actor who would.
+    : "${SPIRA_EVICTION_ESCALATE_AT:=3}"
+SPIRA_CONF_DEFAULT_EOF

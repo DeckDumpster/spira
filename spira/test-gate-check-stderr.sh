@@ -32,6 +32,7 @@ SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE/gate-check.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/suite-covers.sh" "$HERE/incident.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # --------------------------------------------------------------------------------------
 # POSITIVE CONTROL: confirm that a broken environment DOES produce stderr.

@@ -1,0 +1,20 @@
+TYPE=string
+GROUP=gate
+DOC=WHICH SUITES THE LANDING GATE RUNS, as a file of repository-relative paths, one per
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHICH SUITES THE LANDING GATE RUNS, as a file of repository-relative paths, one per
+    # line. suites.sh reads it to run everything the `spira/test-*.sh` glob finds that this
+    # file does NOT name — so the gated set and the timed set are complements by construction
+    # and no suite can fall between them. That is the whole defect the file exists to close:
+    # the list used to live inside gate-spira.sh where nothing else could read it, and five of
+    # nine suites were running nowhere at all before anybody compared the two by hand.
+    #
+    # THE GATE ITSELF IGNORES THIS KEY and reads the copy beside it in the tree under trial,
+    # which is not a disagreement but the same rule as SPIRA_HOME: the gate extracts a branch
+    # to a scratch tree and must judge THAT tree, so a configured path would point it back at
+    # the installed copy and it would test the code already in force. In every real
+    # installation the two resolve to the same file. What the key buys is a fixture that can
+    # pin it somewhere disposable, which is what stops a suite asserting against the shipped
+    # list and passing just as well with the list written back into the code.
+    : "${SPIRA_GATE_SUITES:=$SPIRA_HOME/gate-suites}"
+SPIRA_CONF_DEFAULT_EOF

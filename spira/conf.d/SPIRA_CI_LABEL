@@ -1,0 +1,14 @@
+TYPE=string
+GROUP=ci
+DOC=THE LABEL THAT MEANS "PARKED ON A CI RUN". An aeon puts it on a bead whose pull request
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL THAT MEANS "PARKED ON A CI RUN". An aeon puts it on a bead whose pull request
+    # is open so nothing pays for a session to sit and watch a test suite; the CI sweep takes
+    # it off again when the run resolves. Every predicate that decides what an aeon may claim
+    # excludes it, and so does the stalled-work report — which is what stops parked work
+    # looking abandoned, and is also why a park applied where no run exists is permanent AND
+    # invisible. One key rather than five literals, for the same reason as the ask label: the
+    # sweep, the personas, the report and the panel must agree on it or the panel is the half
+    # nobody notices is wrong, because it simply shows fewer.
+    : "${SPIRA_CI_LABEL:=awaiting-ci}"
+SPIRA_CONF_DEFAULT_EOF

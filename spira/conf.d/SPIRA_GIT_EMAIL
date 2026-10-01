@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=git
+DOC=SPIRA_GIT_EMAIL (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_GIT_EMAIL:=spira@spira.invalid}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=town
+DOC=Optional, and EMPTY IS THE DEFAULT for every one of them. Each names something a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Optional, and EMPTY IS THE DEFAULT for every one of them. Each names something a
+    # colleague does not have — a Gas Town, a wiki, a design document — and every caller
+    # must treat empty as "skip this", never as "guess". That is rule 2 of the boundary:
+    # an optional call is not a dependency, a hard path is.
+    : "${SPIRA_TOWN:=}"
+SPIRA_CONF_DEFAULT_EOF

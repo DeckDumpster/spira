@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=health
+DOC=HOW LONG A HEALTH COMMAND MAY RUN, in seconds. A probe is an operator-supplied command
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A HEALTH COMMAND MAY RUN, in seconds. A probe is an operator-supplied command
+    # run by `watchd.sh status`, and `status` is what a session hook runs at every start — so
+    # an unbounded one hangs the opening of a context window rather than merely being slow.
+    # A probe that runs out of time is DEGRADED, which is the honest reading: it did not
+    # prove the watcher is seeing anything.
+    : "${SPIRA_HEALTH_TIMEOUT:=10}"
+SPIRA_CONF_DEFAULT_EOF

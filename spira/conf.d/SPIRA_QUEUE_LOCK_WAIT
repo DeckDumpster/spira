@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG queue verdict AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG queue verdict AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
+    # Must be well under the timer interval (OnUnitActiveSec=2min) so a waiting run
+    # completes before the next tick fires, preventing concurrent runs.
+    : "${SPIRA_QUEUE_LOCK_WAIT:=90}"
+SPIRA_CONF_DEFAULT_EOF

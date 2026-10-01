@@ -24,9 +24,14 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 CONF_NAMES=(SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN SPIRA_GH SPIRA_GH_APP_CONFIG)
 
-scan_conf() {   # scan_conf <file> -> missing names, one per line; exit 0 either way
-    local f="$1" name
+scan_conf() {   # scan_conf <file> [<conf.d-dir>] -> missing names, one per line; exit 0 either way
+    # sp-g3uwp: conf.sh no longer carries its allowlist as literal text — a name that has
+    # its own file under conf.d/ is declared there instead. The <conf.d-dir> argument is
+    # only ever passed for the real, shipped conf.sh below; --scan-conf's synthetic fixtures
+    # keep scanning the file's text alone, unchanged.
+    local f="$1" d="${2:-}" name
     for name in "${CONF_NAMES[@]}"; do
+        [ -n "$d" ] && [ -f "$d/$name" ] && continue
         grep -q "$name" "$f" 2>/dev/null || printf '%s\n' "$name"
     done
 }
@@ -50,7 +55,7 @@ case "${1:-}" in
 esac
 
 bad=0
-conf_missing="$(scan_conf "$HERE/conf.sh")"
+conf_missing="$(scan_conf "$HERE/conf.sh" "$HERE/conf.d")"
 if [ -n "$conf_missing" ]; then
     bad=1
     while IFS= read -r name; do

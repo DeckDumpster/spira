@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW OFTEN queue.sh to-forge POLLS ITS OWN FINAL PUBLISH for a settled verdict. In seconds.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW OFTEN queue.sh to-forge POLLS ITS OWN FINAL PUBLISH for a settled verdict. In seconds.
+    : "${SPIRA_QUEUE_TRANSITION_POLLSEC:=5}"
+SPIRA_CONF_DEFAULT_EOF

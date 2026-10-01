@@ -134,6 +134,7 @@ notes()   { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 lib() { bash -c ". \"$SPIRA_HOME/lib.sh\"; $1" 2>/dev/null; }
 count_of() { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 
 echo "test-deadlock-sweep.sh"
 

@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=gh
+DOC=How long a closed bead with an open GitHub issue and no landing evidence gets before
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # How long a closed bead with an open GitHub issue and no landing evidence gets before
+    # the unlanded scan asks about it — closing and landing are separate passes, so a bead
+    # closed this instant is not yet stuck, it is just early (law-landed-is-content).
+    : "${SPIRA_GH_ASK_GRACE_SECS:=3600}"
+SPIRA_CONF_DEFAULT_EOF

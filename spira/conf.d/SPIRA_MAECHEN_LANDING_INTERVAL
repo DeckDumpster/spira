@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=maechen
+DOC=SPIRA_MAECHEN_LANDING_INTERVAL — how many landings trigger a pass (counted from the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_MAECHEN_LANDING_INTERVAL — how many landings trigger a pass (counted from the
+    # commit graph, not from bead status). At the 2026-09-11 rate of ~6/hour, 25 landings
+    # takes ~4h, so the 3h gap ceiling binds and this is the volume floor.
+    : "${SPIRA_MAECHEN_LANDING_INTERVAL:=25}"
+SPIRA_CONF_DEFAULT_EOF

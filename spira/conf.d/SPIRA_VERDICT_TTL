@@ -1,0 +1,16 @@
+TYPE=u32
+GROUP=verdict
+DOC=HOW LONG A GATE VERDICT MAY BE REUSED, in seconds. The gate computes each verdict once
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A GATE VERDICT MAY BE REUSED, in seconds. The gate computes each verdict once
+    # and keys it by everything the verdict depends on that it can name — the tree, the base,
+    # the changed file list, the repository's gate command and this harness — so a reused
+    # verdict is never about a different question. What the key CANNOT name is the box: the
+    # toolchain the command ran under, what was installed beside it, what the network
+    # answered. Those drift while the key stands still, which makes a verdict a claim about a
+    # moment as well as about a tree. A day bounds that drift and still spans the whole of a
+    # branch's life from an aeon's own gate to its landing, which is the reuse worth having.
+    #
+    # 0 disables reuse entirely: every entry reads as expired and every gate runs its suites.
+    : "${SPIRA_VERDICT_TTL:=86400}"
+SPIRA_CONF_DEFAULT_EOF

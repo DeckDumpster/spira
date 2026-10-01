@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=rapid
+DOC=HOW MANY CONSECUTIVE sub-10s aeon runs on one bead trigger the rapid-recur alert.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY CONSECUTIVE sub-10s aeon runs on one bead trigger the rapid-recur alert.
+    # Three in quick succession is already a setup loop; lower means earlier but noisier.
+    : "${SPIRA_RAPID_RECUR_THRESHOLD:=3}"
+SPIRA_CONF_DEFAULT_EOF

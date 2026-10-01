@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=archivist
+DOC=A HARD CEILING, unlike an aeon's. An aeon has none because a clock cannot tell slow from
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A HARD CEILING, unlike an aeon's. An aeon has none because a clock cannot tell slow from
+    # stuck and its heartbeat can; this has no heartbeat and no lease, and it holds the sweep
+    # while it runs, so an archivist wedged on a huge transcript would stop every other session
+    # from ever being looked at.
+    : "${SPIRA_ARCHIVIST_TIMEOUT:=900}"
+SPIRA_CONF_DEFAULT_EOF

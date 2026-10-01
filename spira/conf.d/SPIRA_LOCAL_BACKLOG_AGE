@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=local
+DOC=...or when the OLDEST of those unpublished commits is older than this many seconds.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ...or when the OLDEST of those unpublished commits is older than this many seconds.
+    # Either threshold alone is enough to alarm — a burst of small commits and one commit
+    # stuck behind a red publish are both "the publish queue is falling behind."
+    : "${SPIRA_LOCAL_BACKLOG_AGE:=10800}"
+SPIRA_CONF_DEFAULT_EOF

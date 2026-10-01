@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=SPIRA_QUEUE_THROTTLE_STALL_MINS: if nothing has landed in this many minutes, the queue
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SPIRA_QUEUE_THROTTLE_STALL_MINS: if nothing has landed in this many minutes, the queue
+    # is stalled rather than busy. Stall → escalate, not throttle.
+    # Matches the loop-stall threshold by default (SPIRA_LOOP_STALL_SECS / 60 = 50m).
+    : "${SPIRA_QUEUE_THROTTLE_STALL_MINS:=50}"
+SPIRA_CONF_DEFAULT_EOF

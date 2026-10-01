@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=land
+DOC=THE RESERVE MATCHES THE GATE BUDGET. A pass that starts a gate with fewer seconds left
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE RESERVE MATCHES THE GATE BUDGET. A pass that starts a gate with fewer seconds left
+    # than the gate is allowed to run will be killed mid-gate by RuntimeMaxSec, which is the
+    # "four consecutive passes killed mid-gate" scar. The reserve is at least SPIRA_GATE_TIMEOUT
+    # so a gate that is started can finish.
+    : "${SPIRA_LAND_GATE_RESERVE:=2700}"
+SPIRA_CONF_DEFAULT_EOF

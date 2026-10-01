@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=capacity
+DOC=PROBE_WINDOW: horizon threshold beyond which probing makes sense, in seconds.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PROBE_WINDOW: horizon threshold beyond which probing makes sense, in seconds.
+    # A pause with less than this remaining is likely about to expire on its own; probing
+    # it costs a request and saves at most a few minutes. Default is one five-hour window.
+    : "${SPIRA_CAPACITY_PROBE_WINDOW:=18000}"
+SPIRA_CONF_DEFAULT_EOF

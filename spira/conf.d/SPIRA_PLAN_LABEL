@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=plan
+DOC=THE PLAN PARTITION LABEL — the label that marks a bead as ready plan work for a builder.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE PLAN PARTITION LABEL — the label that marks a bead as ready plan work for a builder.
+    # Declared here so the fayth predicate, the sentinel, and any other reader that needs to
+    # say "plan bead" all read the same value. A literal in multiple files is how those
+    # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
+    # value the store has always used — so upgrading a clean install changes nothing.
+    : "${SPIRA_PLAN_LABEL:=plan}"
+SPIRA_CONF_DEFAULT_EOF

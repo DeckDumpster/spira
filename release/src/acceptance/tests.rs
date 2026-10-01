@@ -99,11 +99,10 @@ fn note_carries_tarball_upgrade_path_and_waiver() {
 
 #[test]
 fn the_override_key_is_one_conf_sh_honours() {
-    let conf = fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.sh")).expect("spira/conf.sh");
-    let start = conf.find("SPIRA_CONF_KEYS=\"").expect("SPIRA_CONF_KEYS block");
-    let block = &conf[start..];
-    let block = &block[..block[18..].find('"').map(|e| e + 18).unwrap_or(block.len())];
-    assert!(block.split_whitespace().any(|k| k == OVERRIDE_KEY), "{OVERRIDE_KEY} is not in SPIRA_CONF_KEYS: conf.sh would refuse it and the override would never be in force");
+    // conf.sh's allowlist is generated from spira/conf.d/, one file per key (sp-g3uwp): a key
+    // with no file there is refused, and the override would never be in force.
+    let key = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira/conf.d")).join(OVERRIDE_KEY);
+    assert!(key.is_file(), "{OVERRIDE_KEY} has no spira/conf.d entry: conf.sh would refuse it and the override would never be in force");
 }
 
 // ---- arguments ---------------------------------------------------------------------------

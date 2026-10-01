@@ -1,0 +1,13 @@
+TYPE=u32
+GROUP=archivist
+DOC=HOW MANY TURNS BETWEEN SWEEPS. The timer fires every five minutes; on each pass, a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ---- THE ARCHIVIST: WHEN A FULL SESSION GETS ITS UNFINISHED BUSINESS RESCUED ---------
+    # HOW MANY TURNS BETWEEN SWEEPS. The timer fires every five minutes; on each pass, a
+    # session whose turn count has advanced by at least this delta since the last successful
+    # archive is swept. A session nobody has typed in costs a stat and a measurement; one that
+    # has moved 40 turns gets an archivist. Context depth is not in the trigger at all — a
+    # 74k session that has moved 40 turns is swept, a 900k session that has moved none is not
+    # — because what the archivist covers is TURNS, and its cost is proportional to them.
+    : "${SPIRA_ARCHIVIST_EVERY:=40}"
+SPIRA_CONF_DEFAULT_EOF

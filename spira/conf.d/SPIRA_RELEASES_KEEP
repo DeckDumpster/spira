@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=releases
+DOC=HOW MANY RELEASES TO KEEP. Old releases beyond this count are pruned after each
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY RELEASES TO KEEP. Old releases beyond this count are pruned after each
+    # activation (best-effort; a prune failure never fails the activation). Each release
+    # directory is the unpacked contents of one tarball — about 1.4 MB — so 100 releases
+    # total roughly 140 MB. Per Ryan: "They're tiny. make it 100."
+    : "${SPIRA_RELEASES_KEEP:=100}"
+SPIRA_CONF_DEFAULT_EOF

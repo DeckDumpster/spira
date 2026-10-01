@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=gh
+DOC=THE GITHUB REPOSITORY this harness's releases are published to, as "owner/repo".
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE GITHUB REPOSITORY this harness's releases are published to, as "owner/repo".
+    # Set this in spira.conf on artifact deployments — those run from an extracted tarball
+    # with no .git, so gh cannot infer the repository from the working directory.
+    # When set, deploy.sh exports it as GH_REPO before any gh call.
+    # Empty by default: a source checkout lets gh infer the repository, and a default
+    # pointing at somebody else's account would silently fetch their releases.
+    : "${SPIRA_GH_REPO:=}"
+SPIRA_CONF_DEFAULT_EOF

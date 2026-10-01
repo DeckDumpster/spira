@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=max
+DOC=HOW MANY AEONS MAY RUN AT ONCE, ACROSS EVERY PERSONA. Until 2026-09-07 this key was
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY AEONS MAY RUN AT ONCE, ACROSS EVERY PERSONA. Until 2026-09-07 this key was
+    # validated, documented and read by nothing: each persona had a private cap and no pool
+    # coordinated them, so the box's real ceiling was whatever the caps happened to sum to.
+    # Four is the sum of what the two shipped personas declared, so this default changes
+    # nothing on a host that was already running them and starts enforcing an order.
+    : "${SPIRA_MAX_AEONS:=4}"
+SPIRA_CONF_DEFAULT_EOF

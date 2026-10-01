@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=auron
+DOC=AURON RESTART-LOOP DETECTION thresholds. A Restart=always unit never reaches
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # AURON RESTART-LOOP DETECTION thresholds. A Restart=always unit never reaches
+    # 'failed', so incident intake misses it; Auron detects it by watching NRestarts.
+    # RESTARTS: how many restarts within the window trigger an alert.
+    # RESTART_WINDOW: the measurement window in seconds; the baseline resets at expiry
+    # so a loop that stopped more than this long ago does not continue to fire.
+    : "${SPIRA_AURON_RESTARTS:=5}"
+SPIRA_CONF_DEFAULT_EOF

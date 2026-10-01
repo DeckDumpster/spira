@@ -1,0 +1,16 @@
+TYPE=u32
+GROUP=suites
+DOC=THE PRIORITY A RED FROM THE TIMED PASS IS FILED AT. Routine by default: the timed pass
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE PRIORITY A RED FROM THE TIMED PASS IS FILED AT. Routine by default: the timed pass
+    # blocks nothing and reopens nothing, and by law-reversibility-outranks-coverage a failure
+    # caught twenty minutes after landing is fine when a revert undoes it. A suite that covers
+    # something where that is not true says so ITSELF, with a `# priority: N` line beside its
+    # `# covers:` line — the priority of what a suite covers is a claim only the suite's author
+    # can make, and a central table of it would be a second list to keep in step with the glob.
+    # ROUTINE IS P3, NOT P2. A red suite is the harness reporting on itself, and self-reported
+    # defects filed above the band that outside bug reports arrive in is a priority inversion:
+    # with one aeon, 123 P2 suite reds in three days kept 22 reported bugs from ever being
+    # reached. A suite whose subject genuinely outranks a user's bug says so itself.
+    : "${SPIRA_SUITES_PRIORITY:=3}"
+SPIRA_CONF_DEFAULT_EOF

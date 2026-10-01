@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=czar
+DOC=THE CZAR PARTITION LABEL — the label on queue-state escalation beads. Watchtower
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CZAR PARTITION LABEL — the label on queue-state escalation beads. Watchtower
+    # attaches this label instead of SPIRA_INCIDENT_LABEL to the queue-check incidents it
+    # files, routing them to the czar rather than to ops. One definition keeps czar.fayth,
+    # watchtower, and any other reader in agreement on which label means "queue event for the
+    # czar" (law-schema-over-code). The labels are mutually exclusive by design: a bead that
+    # carries both would be claimable by both ops and czar, which is a race condition.
+    : "${SPIRA_CZAR_LABEL:=czar-trigger}"
+SPIRA_CONF_DEFAULT_EOF

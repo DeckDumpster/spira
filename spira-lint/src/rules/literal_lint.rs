@@ -144,6 +144,14 @@ fn exempt(path: &str) -> bool {
     path == OWN_SOURCE
         || b == "schema.sh"
         || b == "conf.sh"
+        // sp-g3uwp: spira/conf.d/<KEY> is conf.sh's own former defaults block, split one
+        // file per key — the canonical place a label's default literal is declared, exactly
+        // as conf.sh itself already was exempt for. conf.d.keys.generated.sh and
+        // conf.d.defaults.generated.sh are conf-gen.sh's build output (never committed, but
+        // exempted too in case a scratch tree carries them) for the same reason.
+        || path.contains("/conf.d/")
+        || b == "conf.d.keys.generated.sh"
+        || b == "conf.d.defaults.generated.sh"
         || path.ends_with(".md")
         || (b.starts_with("test-") && b.ends_with(".sh"))
         || path.ends_with(".json")
@@ -238,6 +246,11 @@ mod tests {
         t.write("spira/test-ci.sh", "#!/usr/bin/env bash\nDB_LABEL=awaiting-ci\n");
         t.write("spira/labels.json", "{\"label\":\"awaiting-ci\"}\n");
         t.write("docs/notes.md", "the default label is awaiting-ci\n");
+        // sp-g3uwp: conf.d/<KEY> is conf.sh's own former defaults block, one file per key —
+        // exempt for the same reason conf.sh itself is, just above.
+        t.write("spira/conf.d/SPIRA_CI_LABEL", "DEFAULT<<'EOF'\n    : \"${SPIRA_CI_LABEL:=awaiting-ci}\"\nEOF\n");
+        t.write("spira/conf.d.keys.generated.sh", "SPIRA_CONF_KEYS=\"SPIRA_CI_LABEL\"\n");
+        t.write("spira/conf.d.defaults.generated.sh", ": \"${SPIRA_CI_LABEL:=awaiting-ci}\"\n");
         t.git(&["add", "."]);
         let got = run(&t).unwrap();
         assert_eq!(got.len(), 1, "{got:?}");

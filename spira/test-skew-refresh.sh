@@ -280,6 +280,7 @@ QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
 
 mkdir -p "$QSH" "$QRUN"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/skew.sh" "$QSH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$QSH/"
 cat > "$QSH/repo-map" <<MAP
 qfixture | $QREPO | queue | |
 MAP

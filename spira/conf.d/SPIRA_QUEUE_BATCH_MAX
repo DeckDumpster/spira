@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=queue
+DOC=THE QUEUE-DEPTH THROTTLE'S OWN SCALE (sp-h3g55). The batcher crate no longer caps a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ---- MERGE QUEUE (queue land mode) -------------------------------------------------
+    # THE QUEUE-DEPTH THROTTLE'S OWN SCALE (sp-h3g55). The batcher crate no longer caps a
+    # round's size on this — its own pool target is adaptive (sp-vsob2) — so this key now
+    # only sizes SPIRA_QUEUE_THROTTLE_DEPTH_AT/RELEASE_AT below and the cockpit's display.
+    : "${SPIRA_QUEUE_BATCH_MAX:=8}"
+SPIRA_CONF_DEFAULT_EOF

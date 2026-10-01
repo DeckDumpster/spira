@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=flaky
+DOC=WHICH GITHUB ORG/REPO the gate watcher scans for completed runs carrying "flaky suite"
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHICH GITHUB ORG/REPO the gate watcher scans for completed runs carrying "flaky suite"
+    # annotations. Empty means no scan. Format: "owner/repo".
+    : "${SPIRA_FLAKY_GH_REPO:=}"
+SPIRA_CONF_DEFAULT_EOF

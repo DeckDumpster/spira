@@ -1,0 +1,20 @@
+TYPE=string
+GROUP=id
+DOC=THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
+    # assertion looks for to prove a watcher is reading THIS database and not one that was
+    # retired underneath it.
+    #
+    # WHY ABSENCE AND NOT PRESENCE IS THE TEST, which is the whole reason this key exists.
+    # A database here legitimately holds beads imported under other prefixes, so an assertion
+    # keyed on "names a foreign prefix" passes on a watcher that is entirely blind — measured
+    # once at 145 of 1825 rows carrying the local prefix. What proves the wrong database is
+    # that NOT ONE local id appears. This generalises the guard the mirror exporter carries.
+    #
+    # WRITTEN IN, NEVER DERIVED (sp-k6m1m). It used to be cut from the goal epic's id; the
+    # goal is retired (Spira works the whole backlog), and `spira-config validate` (doctor,
+    # the release's pre-activate) refuses a [spira] table without `id_prefix`. Unset here
+    # means no config file named one.
+    : "${SPIRA_ID_PREFIX:=}"
+SPIRA_CONF_DEFAULT_EOF

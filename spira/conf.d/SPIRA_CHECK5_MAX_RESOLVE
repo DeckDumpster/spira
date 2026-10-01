@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=check5
+DOC=AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS RESOLVED PER SENTINEL PASS (CHECK 5).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS RESOLVED PER SENTINEL PASS (CHECK 5).
+    # A resolve costs one `bd close`, ~1s, now that the lookup behind it is one map read per
+    # pass rather than one query per bead — so this cap can sit far above SPIRA_CHECK5_MAX_FILE
+    # without approaching TimeoutStartSec; 5 let 33 proven-landed incidents pile up unresolved.
+    : "${SPIRA_CHECK5_MAX_RESOLVE:=50}"
+SPIRA_CONF_DEFAULT_EOF

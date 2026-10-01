@@ -1,0 +1,12 @@
+TYPE=u32
+GROUP=testenv
+DOC=HOW MANY testenv containers may run at once, host-wide, across every caller
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY testenv containers may run at once, host-wide, across every caller
+    # (a lone `testenv container up`, batch.sh, an accept or debug session). Each running
+    # container's systemd holds inotify instances, keyring entries and pids for as long
+    # as it lives, all three charged against this real UID's single, shared budget — so a
+    # box oversubscribed on containers fails them outright rather than slowing down
+    # (sp-cvle7). 0 disables the gate for a box known to have more headroom.
+    : "${SPIRA_TESTENV_MAX_CONCURRENT:=8}"
+SPIRA_CONF_DEFAULT_EOF

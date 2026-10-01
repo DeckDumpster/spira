@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=claim
+DOC=SPIRA_CLAIM_RETRY_DELAY_S (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CLAIM_RETRY_DELAY_S:=1}"
+SPIRA_CONF_DEFAULT_EOF

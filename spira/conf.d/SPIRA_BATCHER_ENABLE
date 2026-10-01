@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=batcher
+DOC=THE BATCHER'S CUT, on or off (sp-gypjk). 1: queue cuts rounds with the release's
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE BATCHER'S CUT, on or off (sp-gypjk). 1: queue cuts rounds with the release's
+    # `batcher`. 0: it cuts none (the operator cuts rounds by hand). This replaces the
+    # retired `batcher_bin = "/bin/true"` idiom — a switch is a switch, not a binary path.
+    : "${SPIRA_BATCHER_ENABLE:=1}"
+SPIRA_CONF_DEFAULT_EOF

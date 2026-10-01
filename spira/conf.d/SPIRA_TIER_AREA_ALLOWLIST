@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=tier
+DOC=THE SAME RATCHET, for areas (UC-<area>) with more than one T3 suite today. Shrink-only,
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE SAME RATCHET, for areas (UC-<area>) with more than one T3 suite today. Shrink-only,
+    # same as SPIRA_TIER_ALLOWLIST above; consolidating an area's T3 coverage removes/lowers
+    # its line.
+    : "${SPIRA_TIER_AREA_ALLOWLIST:=$SPIRA_HOME/tier-budget-area-allowlist}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=publish
+DOC=THE GIT REMOTE a queue.local repository's publish queue pushes to and fast-forwards
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE GIT REMOTE a queue.local repository's publish queue pushes to and fast-forwards
+    # on a green publish (spira_publish_forge). Per-repo: SPIRA_PUBLISH_REMOTE_<NAME>.
+    : "${SPIRA_PUBLISH_REMOTE:=origin}"
+SPIRA_CONF_DEFAULT_EOF

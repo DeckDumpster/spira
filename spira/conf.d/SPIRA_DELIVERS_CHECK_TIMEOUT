@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=delivers
+DOC=DELIVERS:CHECK TIMEOUT: seconds allowed for one delivers:check:<command> to run in
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DELIVERS:CHECK TIMEOUT: seconds allowed for one delivers:check:<command> to run in
+    # CHECK 5. A hanging command must not stall the whole sentinel pass behind it; a timeout
+    # is scored the same as a non-zero exit — not yet — rather than left to hang.
+    : "${SPIRA_DELIVERS_CHECK_TIMEOUT:=60}"
+SPIRA_CONF_DEFAULT_EOF

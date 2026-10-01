@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=token
+DOC=The rate limit is charged against a rolling window, and every figure the token meter
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ---- WHAT THE ACCOUNT SPENDS -------------------------------------------------------
+    # The rate limit is charged against a rolling window, and every figure the token meter
+    # reports is "inside the window" — so this number decides what the dashboard means. It is
+    # a fact about the operator's PLAN, not about this box, which is why it is a key: a
+    # colleague on a different plan reads a window of a different length.
+    : "${SPIRA_TOKEN_WINDOW_H:=5}"
+SPIRA_CONF_DEFAULT_EOF

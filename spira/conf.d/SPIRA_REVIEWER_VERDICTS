@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=reviewer
+DOC=WHERE VERDICTS ARE WRITTEN. One file per release tag, named <tag>.verdict. The file
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE VERDICTS ARE WRITTEN. One file per release tag, named <tag>.verdict. The file
+    # carries verdict, cost, token counts and finding count so the reviewer's per-unit cost
+    # is readable without re-parsing the trace.
+    : "${SPIRA_REVIEWER_VERDICTS:=$SPIRA_RUN/review-verdicts}"
+SPIRA_CONF_DEFAULT_EOF

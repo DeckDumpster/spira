@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=queue
+DOC=THE GITHUB ACTIONS APP ID used in the required-status-checks rule set by queue.sh
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE GITHUB ACTIONS APP ID used in the required-status-checks rule set by queue.sh
+    # protect. Omitting it (or setting it to -1) lets the source be inferred from history,
+    # which admits a hand-posted commit status that bypasses gate enforcement. 15368 is the
+    # GitHub Actions app. Must be a non-negative integer.
+    : "${SPIRA_QUEUE_ACTIONS_APP_ID:=15368}"
+SPIRA_CONF_DEFAULT_EOF

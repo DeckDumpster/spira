@@ -1,0 +1,12 @@
+TYPE=u32
+GROUP=ci
+DOC=HOW LONG A PARK MAY LAST BEFORE IT IS TREATED AS LOST, in seconds. A park is a promise
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A PARK MAY LAST BEFORE IT IS TREATED AS LOST, in seconds. A park is a promise
+    # that something else is watching; past the longest plausible run that promise is false,
+    # and the bead should be back in the report that would have found it rather than excluded
+    # from it. Ninety minutes is longer than any run this was written against — raise it if
+    # your CI is slower, and set it to 0 to disable the deadline, which reinstates the
+    # permanent invisible park and should be a deliberate choice.
+    : "${SPIRA_CI_PARK_MAX:=5400}"
+SPIRA_CONF_DEFAULT_EOF
