@@ -23,7 +23,7 @@
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
 # covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh
-#         spira/test-landing.sh spira/test-timeout.sh
+#         spira/test-landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -85,7 +85,7 @@ else
     bad "SPIRA_DB must be unset after testdb_up failure" "still set to: $_spira_db_after"
 fi
 
-# ---- four suites must exit non-zero and must not write to the stand-in ----
+# ---- the two remaining real-bd suites must exit non-zero and must not write to the stand-in ----
 #
 # Each suite is run in a subprocess with:
 #   SPIRA_DB pointing at the stand-in (so any inadvertent write is detectable)
@@ -112,9 +112,9 @@ suite_env=(
     TESTDB_SERVER_BD="$TMP/fail-bd"
 )
 
-# test-landing.sh and test-timeout.sh use testdb with real bd writes and each guard
-# with `testdb_up ... || exit 1`; they are included here to confirm the failsafe
-# protects them when the shared-fixture reset fails and SPIRA_DB is left unset.
+# test-landing.sh uses testdb with real bd writes and guards with `testdb_up ... ||
+# exit 1`; it is included here to confirm the failsafe protects it when the
+# shared-fixture reset fails and SPIRA_DB is left unset.
 #
 # test-bd-close-unacked-guard.sh (its testdb-backed predecessor) was merged into
 # spira/test-guards.sh by sp-qsr44, which drives the guard through a stub bd instead
@@ -126,7 +126,11 @@ suite_env=(
 # test-loom-page.sh dropped its testdb_up arm (moved to test-cockpit-bd-contract.sh's
 # real-bd row for loom's model.js — coverage row 33): it now runs a fixture-only
 # node --test and never touches SPIRA_DB, so it has nothing left to protect here.
-for suite in test-cockpit-bd-contract test-landing test-timeout; do
+# test-timeout.sh dropped its testdb_up arm at sp-8itaf: its counters-against-a-real-bd
+# section tested timeouts_of/bump_timeout/spira_ask_timeout_loop, all retired outright
+# (zero live callers); what remains (SP_OPS_AGE, a pure /proc read) sources lib.sh
+# directly and never calls testdb_up, so it has nothing left to protect here either.
+for suite in test-cockpit-bd-contract test-landing; do
     [ -f "$HERE/$suite.sh" ] || { bad "$suite is listed but does not exist" "missing $HERE/$suite.sh"; continue; }
     out="$("${suite_env[@]}" bash "$HERE/$suite.sh" 2>&1)"; rc=$?
     if [ $rc -ne 0 ]; then
@@ -137,7 +141,7 @@ for suite in test-cockpit-bd-contract test-landing test-timeout; do
     fi
 done
 
-# After all four suites ran against the stand-in, its bead count must be unchanged.
+# After both suites ran against the stand-in, its bead count must be unchanged.
 count_after="$("$PROD_BD" -C "$PROD_DB" list --limit 0 --json 2>/dev/null \
     | grep -c '"id"' 2>/dev/null || printf '0')"
 is "production stand-in bead count unchanged after all suite runs" \

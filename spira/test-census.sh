@@ -33,14 +33,21 @@ testdb_up census || {
     exit 77
 }
 
-# Source lib.sh for bump_recur/bump_requeue/bump_reclaim/bead_reopen. These write the
-# event rows census.sh reads; adding labels via 'bd label add' only creates
-# 'label_added' events, which census never queries. Protect SPIRA_DB since lib.sh
-# re-sources conf.sh.
+# Source lib.sh for bump_requeue/bead_reopen and the shared _bump_write_event helper.
+# These write the event rows census.sh reads; adding labels via 'bd label add' only
+# creates 'label_added' events, which census never queries. Protect SPIRA_DB since
+# lib.sh re-sources conf.sh.
 _PRE_LIB_SPIRA_DB="$SPIRA_DB"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 SPIRA_DB="$_PRE_LIB_SPIRA_DB"; unset _PRE_LIB_SPIRA_DB
+
+# bump_recur/bump_reclaim (lib.sh) were retired at sp-8itaf — zero live callers; the
+# production writers are now incident::ports::bump_recur and strand::check::bump_reclaim
+# (Rust). This suite's own subject is census.sh reading the events table, not who writes
+# it, so these two local wrappers reach the same shared writer lib.sh's versions did.
+recur_event()   { _bump_write_event "${1:-}" recurred  "${2:-unrecorded}"; }
+reclaim_event() { _bump_write_event "${1:-}" reclaimed "${2:-unrecorded}"; }
 
 CENSUS="$HERE/census.sh"
 B() { bd -C "$SPIRA_DB" "$@"; }
@@ -84,26 +91,26 @@ is "positive control: empty store reports nothing" "" "$empty_out"
 
 bid_a="$(plant_bead "bead-a")"
 [ -n "$bid_a" ] || { bad "bead-a created" "create failed"; tl_summary; exit; }
-bump_recur "$bid_a" suite-red; bump_recur "$bid_a" suite-red; bump_recur "$bid_a" suite-red
+recur_event "$bid_a" suite-red; recur_event "$bid_a" suite-red; recur_event "$bid_a" suite-red
 
 bid_b="$(plant_bead "bead-b")"
-bump_recur "$bid_b" suite-red
+recur_event "$bid_b" suite-red
 
 bid_c="$(plant_bead "bead-c")"
 bump_requeue "$bid_c" quota-exceeded
-bump_reclaim "$bid_c"
+reclaim_event "$bid_c"
 
 out1="$(run_census)"
 want "bump_recur: 2 distinct beads, 4 detections" "2 sp-recur-suite-red (4" "$out1"
 want "bump_requeue: 1 distinct bead, 1 detection"  "1 sp-requeue-quota-exceeded (1" "$out1"
 want "bump_reclaim: 1 distinct bead, 1 detection"  "1 sp-reclaim (1"          "$out1"
 
-# UC-ops-detection-remediation-07: the Sin escalation's recurrence counter (recurs_of,
-# lib.sh) is what decides when SPIRA_SIN_AT is reached. The decision itself (threshold,
-# exempt refs, DRAINING) is table-tested against a stub bd in test-sin-exempt.sh; this is
-# the one row proving recurs_of counts real 'recurred' events rather than a stub's canned
-# response, reusing bid_a's three bump_recur calls above instead of a second testdb_up.
-is "recurs_of reads the real events table (UC-ops-detection-remediation-07)" "3" "$(recurs_of "$bid_a")"
+# UC-ops-detection-remediation-07's Sin-escalation recurrence counter is now
+# incident::ports::recurs_of (Rust, cargo test -p incident) rather than a lib.sh
+# accessor — the decision itself (threshold, exempt refs, DRAINING) is table-tested
+# against a stub bd in test-sin-exempt.sh. What stays here is proof that census.sh
+# itself counts the real 'recurred' events bid_a's three calls above just wrote,
+# which the assertions above already establish.
 
 # ==============================================================================
 echo
@@ -163,7 +170,7 @@ _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
     >/dev/null 2>&1
 
 bid_live="$(plant_bead "live-watermark-bead")"
-bump_recur "$bid_live" live-class
+recur_event "$bid_live" live-class
 
 _CENSUS_RUN="$TMP/wm-run"; mkdir -p "$_CENSUS_RUN"
 printf '1500000000\n' > "$_CENSUS_RUN/maechen.watermark"
@@ -179,7 +186,7 @@ echo "4. open remedy bead -> class suppressed, --with-suppressed annotates it"
 # ==============================================================================
 testdb_reset
 bid_r="$(plant_bead "remedy-target-bead")"
-bump_recur "$bid_r" remedy-class
+recur_event "$bid_r" remedy-class
 
 remedy_id="$(B create "Fix sp-recur-remedy-class" --type task --priority 2 \
     --labels "spira,plan,${REMEDY_LABEL},covers:sp-recur-remedy-class" \

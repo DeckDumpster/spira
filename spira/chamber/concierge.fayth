@@ -33,7 +33,7 @@ FAYTH_DESC="Concierge — the operator's session: unbounded remit, reachable fro
 #
 # DECLARED RATHER THAN ARRANGED. Every other property that would keep this out of the pool
 # does so as a SIDE EFFECT — no FAYTH_LABELS, no FAYTH_LANE — and a side effect is exactly
-# what somebody changes while meaning something else. See spira_operator_fayths.
+# what somebody changes while meaning something else.
 FAYTH_SUMMON=operator
 
 # NO PARTITION, AND THE ABSENCE IS THE POINT. The concierge reaches Spira through beads it
