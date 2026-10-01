@@ -46,6 +46,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -157,6 +158,7 @@ name = "broker"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -255,6 +257,7 @@ version = "1.0.0"
 dependencies = [
  "reconciler-engine",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -305,6 +308,7 @@ name = "forge"
 version = "1.0.0"
 dependencies = [
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]
@@ -376,6 +380,7 @@ name = "gate-diag"
 version = "0.1.0"
 dependencies = [
  "serde_json",
+ "spira-config",
  "testenv",
  "testkit",
 ]
@@ -538,6 +543,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spira-config",
  "testkit",
 ]
 
@@ -646,6 +652,7 @@ dependencies = [
 name = "maechen-trigger"
 version = "1.0.0"
 dependencies = [
+ "spira-config",
  "testkit",
 ]
 
@@ -800,6 +807,7 @@ version = "1.0.0"
 dependencies = [
  "reconciler-engine",
  "serde_json",
+ "spira-config",
  "spira-desired-state",
  "testkit",
 ]
@@ -1603,6 +1611,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 

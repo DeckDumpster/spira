@@ -7,7 +7,42 @@ mod token;
 
 use std::process::ExitCode;
 
+/// `SPIRA_*` values a bash process this binary spawns must never see pre-set — the same
+/// per-copy-fact / host-policy keys `cockpit-collect`'s `bootstrap_config` names
+/// (wave4-decomposition.md row (b)).
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+
+/// Wave 4.8 ("retire conf re-import seams in Rust"): every `std::env::var(...)` read across
+/// this crate's submodules (execute.rs, read.rs, submit.rs, repo_map.rs, token.rs) used to
+/// see only this process's own already-set environment — no spira.toml load at all
+/// (wave4-decomposition.md row (b) names broker by file: SPIRA_GH_APP_*). Merges
+/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
+/// at the top of `main`, before any subcommand dispatch — inserting a key only when it is
+/// not already set and never one of [`NEVER_EXPORTED`]. `SPIRA_GH_APP_ID`/`_INSTALLATION_ID`/
+/// `_KEY` are credentials — the registry's own default for each is empty, same as the
+/// `~/.config/spira/github-app.env` fallback `token.rs` already carries, so this changes
+/// nothing for a secret that only ever reaches the box's own environment or that config
+/// file, and only matters for an operator who puts a non-secret override (a different
+/// config file path) in spira.toml. Best-effort: a missing registry or a containment
+/// refusal leaves the environment exactly as it was.
+fn merge_resolved_env() {
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let home = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default());
+    let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
+    if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
+        for (k, v) in resolved.values {
+            if NEVER_EXPORTED.contains(&k.as_str()) {
+                continue;
+            }
+            if std::env::var_os(&k).is_none() {
+                std::env::set_var(k, v);
+            }
+        }
+    }
+}
+
 fn main() -> ExitCode {
+    merge_resolved_env();
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(String::as_str).unwrap_or("");
 
@@ -105,5 +140,58 @@ fn run_token() -> ExitCode {
     match token::mint() {
         Ok(t)  => { println!("{}", t); ExitCode::SUCCESS }
         Err(e) => { eprintln!("broker token: {}", e); ExitCode::FAILURE }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ENV VARS ARE PROCESS-GLOBAL: the one test below that resolves config takes this
+    // lock for its whole body.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    // Wave 4.8: merge_resolved_env() must reach a registry key this crate never hardcoded
+    // a default for, and must never leak a NEVER_EXPORTED key into this process's own
+    // environment.
+    #[test]
+    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_home = std::env::var_os("SPIRA_HOME");
+        let saved_bd = std::env::var_os("SPIRA_BD");
+        let saved_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
+        std::env::remove_var("SPIRA_BD");
+        std::env::remove_var("SPIRA_MAX_AEONS");
+        let dir = testkit::TempDir::new("broker-merge-env");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_BD"),
+            "TYPE=string\nGROUP=bd\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_BD:=bd}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        std::env::set_var("SPIRA_HOME", &home);
+
+        merge_resolved_env();
+
+        let got_bd = std::env::var("SPIRA_BD").ok();
+        let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");
+
+        match saved_home {
+            Some(v) => std::env::set_var("SPIRA_HOME", v),
+            None => std::env::remove_var("SPIRA_HOME"),
+        }
+        match saved_bd {
+            Some(v) => std::env::set_var("SPIRA_BD", v),
+            None => std::env::remove_var("SPIRA_BD"),
+        }
+        match saved_max_aeons {
+            Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
+            None => std::env::remove_var("SPIRA_MAX_AEONS"),
+        }
+
+        assert_eq!(got_bd, Some("bd".to_string()), "a registry default must reach the real environment");
+        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

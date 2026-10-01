@@ -5,6 +5,7 @@ edition = "2021"
 description = "Broker — aeons submit forge-write intents; a credentialed executor validates and executes them."
 
 [dependencies]
+spira-config = { path = "../spira-config" }
 serde_json = "1"
 
 [profile.release]
