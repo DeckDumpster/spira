@@ -29,12 +29,24 @@
 //! this function, not as a separate call a caller could forget — exactly the property its own
 //! design note asks for.
 //!
-//! WHAT IS DELIBERATELY NOT HERE (later beads, per the plan's dependency chain): the gate-
-//! outcome constants and `spira_unit`/deps machinery (bead sp-ubcgo's successor, "10: small
-//! conf.sh families" — these are not even inside `spira_conf_defaults` in bash today), and
-//! config WRITES (`spira_config_set`/`unset`, bead sp-ksrss). None of those are part of
-//! `spira_conf_defaults`'s own contract, so none are ported here. The PATH tail and
-//! `SPIRA_BD`/schema-preflight bootstrap this doc used to list here moved instead, in
+//! THE GATE-OUTCOME CONSTANTS ARE HERE, AS FIXED VALUES (bead sp-wqj3o, "wave 4.10: small
+//! conf.sh families") — `SPIRA_GATE_NOVERDICT`/`SPIRA_GATE_BASEFAIL` are computed below, not
+//! read from `env`/`toml_map` the way every other key in this function is: `conf.sh`'s own
+//! comment on them is explicit that they are "DELIBERATELY NOT SETTABLE, and so not in
+//! SPIRA_CONF_KEYS" — a configurable NO_VERDICT could be set to 0, turning every withheld
+//! verdict into a pass. They were never part of `spira_conf_defaults`'s own contract either
+//! (bash computed them as top-level assignments, not inside that function); this bead gives
+//! them a home anyway, since conf.sh no longer carries ANY hand-written config value once
+//! this lands.
+//!
+//! WHAT IS STILL DELIBERATELY NOT HERE: `spira_unit`/`watch_unit_name` and the deps.toml
+//! family (also bead sp-wqj3o, but living in [`crate::unit`]/[`crate::deps`] instead) —
+//! both do their own I/O (a `systemctl` query, a second file read), which is exactly why
+//! [`crate::env_bootstrap`] is already a separate module rather than part of this pure
+//! function. Config WRITES (`spira_config_set`/`unset`, bead sp-ksrss) are a separate
+//! family for the same reason.
+//!
+//! THE PATH TAIL AND `SPIRA_BD`/schema-preflight bootstrap this doc used to list here moved instead, in
 //! sp-kfimz ("wave 4.6"), to [`crate::env_bootstrap`] — a separate module rather than part of
 //! `resolve()` itself, because both are side-effecting (PATH depends on the process's own
 //! ambient PATH, not only `spira.toml`; the schema preflight shells out to `bd` and writes a
@@ -226,11 +238,12 @@ impl Resolved {
 
 /// `spira-config resolve --sh`'s typed export set — the Rust replacement for `conf.sh`'s own
 /// hand-maintained `export KEY \ KEY \ ...` block (wave4-decomposition.md row C6). Every name
-/// here is exported there TODAY; nothing is added speculatively, and the five names that
-/// block exports but `spira_conf_defaults` itself never computes (`SPIRA_GATE_NOVERDICT`,
-/// `SPIRA_GATE_BASEFAIL`, `SPIRA_CONF_FILE`, `SPIRA_TOML_FILE`, `SPIRA_SYSTEMCTL` — set
-/// elsewhere in `conf.sh`, outside the function this bead ports) are deliberately left out:
-/// adding them here would claim a contract this bead does not keep.
+/// here is exported there TODAY. `SPIRA_GATE_NOVERDICT`/`SPIRA_GATE_BASEFAIL` joined this
+/// list in bead sp-wqj3o ("wave 4.10"), now that `resolve` itself computes them (see the
+/// module doc above) — the other three names `conf.sh`'s block exports but this function
+/// still never computes (`SPIRA_CONF_FILE`, `SPIRA_TOML_FILE`, `SPIRA_SYSTEMCTL` — set
+/// elsewhere in `conf.sh`) stay deliberately left out: adding them here would claim a
+/// contract this function does not keep.
 ///
 /// DELIBERATELY ABSENT, even though `resolve` computes them: `SPIRA_REPO_MAP`, `SPIRA_FAYTHS`
 /// and `SPIRA_MAX_AEONS` are host policy, read in-process, never exported to a child
@@ -261,6 +274,8 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_EXPORTER",
     "SPIRA_EXPRESS_LABEL",
     "SPIRA_FLAKY_GH_REPO",
+    "SPIRA_GATE_BASEFAIL",
+    "SPIRA_GATE_NOVERDICT",
     "SPIRA_GH_INTAKE_BEAD_REPO",
     "SPIRA_GH_INTAKE_PRIORITY",
     "SPIRA_GH_INTAKE_REPO",
@@ -540,6 +555,12 @@ pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
             || Ok::<String, String>($s.to_string())
         };
     }
+
+    // GATE OUTCOME CONSTANTS. Fixed, never read from `env` or `toml_map` — see this
+    // module's own doc. 75 is EX_TEMPFAIL ("try again"), 76 is EX_UNAVAILABLE ("the service
+    // is not available"); both outside the range a gate command of its own would return.
+    set!("SPIRA_GATE_NOVERDICT", "75".to_string());
+    set!("SPIRA_GATE_BASEFAIL", "76".to_string());
 
     // 1. SPIRA_HOME_REPO
     let home_repo = resolve_colon("SPIRA_HOME_REPO", env, &toml_map, || {
@@ -840,6 +861,24 @@ mod tests {
         assert_eq!(r.get("SPIRA_SCOPE_LABEL"), "spira-harness");
         assert_eq!(r.get("SPIRA_RELEASES"), format!("{}/spira-releases", ws.display()));
         assert_eq!(r.get("SPIRA_PROD"), format!("{}/spira-releases/current/spira", ws.display()));
+    }
+
+    #[test]
+    fn gate_outcome_constants_resolve_fixed_and_ignore_env_and_toml() {
+        let ws = testkit::TempDir::new("spira-config-resolve-gate-constants");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        // An attempt to override either constant through the environment — the one seam
+        // every other key in this module honours — must be ignored outright: a
+        // configurable NO_VERDICT could be set to 0, turning every withheld verdict into a
+        // pass (this module's own doc).
+        let e = env(&[("HOME", "/h"), ("SPIRA_GATE_NOVERDICT", "0"), ("SPIRA_GATE_BASEFAIL", "0")]);
+        let r = resolve(ResolveInput { env: &e, home: &home, repo: &repo, toml: None, conf_d: &home.join("conf.d") })
+            .unwrap();
+        assert_eq!(r.get("SPIRA_GATE_NOVERDICT"), "75");
+        assert_eq!(r.get("SPIRA_GATE_BASEFAIL"), "76");
+        assert!(EXPORT_KEYS.contains(&"SPIRA_GATE_NOVERDICT"));
+        assert!(EXPORT_KEYS.contains(&"SPIRA_GATE_BASEFAIL"));
     }
 
     #[test]

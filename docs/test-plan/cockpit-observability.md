@@ -1,5 +1,19 @@
 # Test plan — Cockpit telemetry and operator views (`cockpit-observability`)
 
+> **2026-10-01 (sp-ogu8x): `spira_event` (UC-20) retired to `bead::event`, row 20's own
+> "DEMOTE" already applied.** `spira/lib.sh`'s `spira_event` is now `bead::event::emit` plus
+> a `bead event` subcommand (rewrite wave 4.24, family Z); `lib.sh` keeps a one-line shim
+> onto it. `spira/test-event.sh` is retired outright — every assertion (rate limit,
+> suppressed-count carry-over, the two refusals, the plan-level dash target) is now a
+> `cargo test -p bead` case under `bead::event::tests`, with the clock already injected
+> (`now`), needing none of the suite's ~7s of real `sleep`. The taxonomy/call-site half was
+> already a T0 lint (`spira-lint`'s `event-taxonomy` rule); unaffected by this move — see
+> `bead/DESIGN.md` "event" for why. `docs/test-plan/cockpit-observability.toml`'s UC-20 entry
+> already read `tier = "T0"` ahead of this landing. `test-gate-tree.sh`, `test-queue-ops.sh`,
+> `test-landing.sh` and `test-poison.sh` still assert on `events.log` as a side effect of
+> their own subject and are untouched — they drive the shim through the real seam exactly as
+> they drove the function.
+
 > **2026-09-30 (sp-kt4l3): `spira/cockpit.sh` and `spira/collect.sh` retired, replaced by
 > the `cockpit-collect` crate** (rewrite wave 5c). Every `*_keys` function and the
 > supervisor's probe registry/fragment/merge machinery are now Rust; see
