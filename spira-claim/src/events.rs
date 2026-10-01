@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn null_safe_nothing_after_floor() {
-        // sp-r66qd: three failures, then attempts.sh clear, then nothing: 0, not <nil>.
+        // sp-r66qd: three failures, then a clear (unpoison.sh, now spira-claim unpoison), then nothing: 0, not <nil>.
         let r = rows(&[("claimed", ""), ("claimed", ""), ("claimed", ""), ("poison.cleared", "operator")]);
         let l = fold(B, &r);
         assert_eq!(l.attempts, 0);

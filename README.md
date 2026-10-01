@@ -281,12 +281,14 @@ a repository is how work aimed at the harness lands in it, passes its gate, and 
 |---|---|
 | `capacity.sh` | is the rate-limit window shut, and which attempts did that cost |
 | `tokens.sh` | what is actually spent, and on what |
-| `attempts.sh` | what every claimable bead carries on the retry ladder, and why |
+| `spira-claim audit` | what every claimable bead carries on the retry ladder, and why |
 | `yield.sh` | what the gate is *worth*, recorded beside what it costs |
 | `ctx-meter.sh` | how much context a session carries, and how close that is to the edge |
 
-Attempts charged while the rate-limit window was shut are given back, but only where the
-session log that proves it survives; reclassification refuses to reason about the rest.
+Attempts charged while the rate-limit window was shut were given back by a one-time
+reclassification pass over the historical `sp-attempt-N-cause` labels (`spira/attempts.sh
+reclassify`, retired at sp-rfodk once `bump_counter` stopped writing those labels at
+sp-lzt — every attempt since is counted from the events table, never a label).
 
 ---
 
@@ -298,7 +300,7 @@ declares which prefixes it reads.
 - **Statutes** (`law-`) are how to behave. `rule.sh enact <slug> "<text>"` is one command,
   because a rule that depends on remembering a second step is a resolution, not a mechanism.
   `rule.sh retire` is the other half, and retiring is as deliberate an act as enacting.
-- **SOPs** (`sop-`) are how to fix. `sop.sh` writes, matches, recalls and synthesises them. An
+- **SOPs** (`sop-`) are how to fix. `sop` writes, matches, recalls and synthesises them. An
   SOP has a *shape* — match expression, checks, steps — and the program refuses prose, because
   a runbook written as a paragraph cannot be matched to an incident by a program.
 

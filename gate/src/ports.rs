@@ -109,6 +109,15 @@ pub trait World {
     // ---- admission and the tree
     fn nproc_all(&self) -> u64;
     fn mem_avail_mib(&self) -> u64;
+    /// `[spira] certify_par` read fresh from the config document on every call (sp-q20wb) —
+    /// never the frozen `Ctx.SPIRA_CERTIFY_PAR`, which conf.sh resolved once, before this
+    /// process's `exec`, and which therefore cannot see a limit raised in the document while
+    /// a gate already waits on it. None when no document is in force, or it sets no
+    /// `certify_par`: the caller then falls back to the environment, then the derived
+    /// default, as before. The one mechanism `admission_par` re-reads from on every poll;
+    /// `admission_wait_line` below takes the result as its own `par` argument rather than
+    /// re-deriving it, so there is still only one source for what the pool's size is.
+    fn certify_par_live(&self) -> Option<u64>;
     /// Try `slot.<n>.lock` without waiting; true = held until exit, with `slot.<n>.holder`
     /// naming `who` (sp-f4ig1; advisory, for `spira-admit status` and waiting lines).
     fn admission_try(&self, dir: &Path, slot: u64, who: &str) -> bool;

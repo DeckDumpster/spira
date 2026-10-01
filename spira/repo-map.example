@@ -155,13 +155,15 @@ platform     | /srv/checkouts/platform    | push | origin/main   |              
 # for the history of what moved where. The row below mirrors gate.steps by hand so the
 # two do not read as contradictory: bare spira-lint (no --only) runs every rule,
 # including inventory, literal-lint, scratch-fence, testdb-mode-lint, bd-stdin-lint,
-# gh-intake-lint, incident-cause-lint, tmux-scope-fence and wiki-add-fence — all ported
-# off standalone bash scripts (sp-ekkak; sp-hyc3a for the last five, re-homed off the
-# dead gate-spira.sh they used to run, sp-nhid0's decision). build-fence.sh (sp-9uro3)
+# incident-cause-lint, tmux-scope-fence and wiki-add-fence — all ported off standalone
+# bash scripts (sp-ekkak; sp-hyc3a for the last five, re-homed off the dead
+# gate-spira.sh they used to run, sp-nhid0's decision). gh-intake-lint was also one of
+# these but is itself retired (sp-8fsql): its subject, spira/gh-intake.sh, is deleted,
+# and the property it scanned for is structural in the gh-intake crate. build-fence.sh (sp-9uro3)
 # stays a script: a unit-mode branch's own build phase replaces it instead (sp-aprxm),
 # and `compose::gate_string` strips this exact step from the string for that mode —
 # doctor.sh fails a row that does not name it. Suite selection is suite-select
-# (sp-wx2tw), not select.sh/gate-touched.sh (both retired). sop.sh lint and
+# (sp-wx2tw), not select.sh/gate-touched.sh (both retired). `sop lint` and
 # suite-state-fence.sh are deliberately NOT here: both need a real SPIRA_DB, which a
 # fresh clone of this example has no opinion about.
 harness      | /srv/checkouts/harness     | queue | origin/main  |                 | spira-lint && bash spira/build-fence.sh && { _s="$(suite-select gate "$SPIRA_GATE_BASE" "${SPIRA_GATE_SELECT_HEAD:-$SPIRA_GATE_BRANCH}")" || { _r=$?; [ "$_r" = 1 ] && exit 1; exit 75; }; [ -n "$_s" ] || exit 0; _b=0; testenv --deadline "${SPIRA_GATE_BUDGET:-300}" --suites "${_s//$'\n'/,}" "$SPIRA_GATE_BRANCH" || _b=$?; case "$_b" in 2|3|127) exit 75;; *) exit "$_b";; esac; }

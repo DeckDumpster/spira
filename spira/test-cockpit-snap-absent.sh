@@ -17,14 +17,14 @@
 #
 # No database, no network.
 #
-# covers: cockpit/health.sh
+# covers: cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-PANE="$HERE/../cockpit/health.sh"
+PANE="health"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
-if [ ! -f "$PANE" ]; then
+if ! command -v "$PANE" >/dev/null 2>&1; then
     bail "cannot find pane at $PANE"
 fi
 
@@ -44,7 +44,7 @@ pane_at() {
     env -i PATH="$PATH" HOME="$PD/home" TERM=dumb LC_ALL=C.UTF-8 \
         SPIRA_CONF="$PD/no.conf" SPIRA_REPO="$PD/repo" SPIRA_RUN="$run" \
         SPIRA_SYSTEMCTL="$PD/bin/mock-systemctl" \
-        bash "$PANE" once "$rows" 0 2>/dev/null \
+        "$PANE" once "$rows" 0 2>/dev/null \
       | sed 's/\x1b\[[?0-9;]*[a-zA-Z]//g'
 }
 

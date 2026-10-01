@@ -13,9 +13,9 @@
 # WHAT "SILENCE" MEANS, EXACTLY, and why the distinction is the entire suite. A session may
 # end three honest ways, and each is one command:
 #
-#   nothing on the shelf fit; something new was diagnosed   sop.sh write
-#   an SOP fit but was incomplete                           sop.sh write   (the upsert)
-#   an SOP fit and its CHECK confirmed                      sop.sh applied --check pass
+#   nothing on the shelf fit; something new was diagnosed   sop write
+#   an SOP fit but was incomplete                           sop write   (the upsert)
+#   an SOP fit and its CHECK confirmed                      sop applied --check pass
 #
 # The third row is what keeps this from firing on the good case. "It matched, it held, it
 # taught us nothing new" is the outcome a healthy shelf produces most of the time and is
@@ -48,13 +48,13 @@
 # not. Asserting through the shipped ops.fayth would pass just as well against a check with
 # the persona's name written into it.
 #
-# Driven through the REAL aeon.sh and the REAL sop.sh against a real bd on a throwaway
+# Driven through the REAL aeon and the REAL sop against a real bd on a throwaway
 # fixture, with a shim standing in for the model. What is under test is a comparison of two
 # database reads either side of a session, and a stub of either side would be a second
 # implementation of the thing in question (law-prefer-the-real-dependency).
 #
 # defect: sp-9pyr
-# covers: aeon/src/* spira/sop.sh spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
+# covers: aeon/src/* sop/src/*.rs spira/close-reason-flags.py spira/chamber/ops.fayth spira/chamber/ops.md spira/test-ops-closing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -79,7 +79,7 @@ HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 # SCAR: the fixture's cp list omitted suite-covers.sh after sp-dt8u added it to lib.sh.
 # lib.sh sources suite-covers.sh at boot; without it a "No such file" error goes to stderr,
 # which 2>&1 in the sop helper merges into stdout, inflating sop digest | grep -c . by 1.
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/sop.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/close-reason-flags.py" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 REPO_MAP="$TMP/repo-map"
@@ -118,6 +118,25 @@ for _t in aeon spira-claim; do
     command -v "$_t" >/dev/null 2>&1 \
         || { echo "test-ops-closing: $_t is not on PATH — refusing to run the real model" >&2; exit 1; }
 done
+# sop (sp-8fsql) is built into the same scratch bin/ the claude shim lives in, rather than
+# assumed already on the caller's PATH like aeon/spira-claim above: this suite is the one
+# place outside sop's own tests that drives it through a real aeon session, so it builds its
+# own copy instead of depending on one having been staged elsewhere.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+[ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ] && CARGO_BIN="$HOME/.cargo/bin/cargo"
+if [ -z "$CARGO_BIN" ]; then
+    echo "SKIP test-ops-closing: cargo not found — sop binary cannot be built"
+    exit 77
+fi
+SOP_BUILD_LOG="$TMP/cargo-build-sop.log"
+if ! CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$TMP/sop-target" \
+    "$CARGO_BIN" build --manifest-path "$HERE/../sop/Cargo.toml" -p sop >"$SOP_BUILD_LOG" 2>&1
+then
+    echo "test-ops-closing: cargo build -p sop failed, see $SOP_BUILD_LOG" >&2
+    tail -60 "$SOP_BUILD_LOG" >&2
+    exit 1
+fi
+cp "$TMP/sop-target/debug/sop" "$BIN/sop"
 cat > "$BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
@@ -125,18 +144,19 @@ id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 # WHAT THIS SESSION DID ABOUT ITS RUNBOOK, chosen by the case under test. Everything runs
-# through the real sop.sh at the path the brief itself was handed.
+# through the real `sop` (sp-8fsql; built into the same scratch bin/ this shim lives in) at
+# the path the brief itself was handed.
 case "$(cat "$TMP/act")" in
     none) ;;
     write-new)
-        sop.sh write brand-new - >/dev/null 2>&1 <<'SOP'
+        sop write brand-new - >/dev/null 2>&1 <<'SOP'
 SYMPTOM: something nobody had seen before
 CHECK: systemctl is-failed fixture.service
 FIX: restart it and watch the next run
 SOP
         ;;
     amend)
-        sop.sh write disk-full - >/dev/null 2>&1 <<'SOP'
+        sop write disk-full - >/dev/null 2>&1 <<'SOP'
 MATCH: (No space left on device|disk.*full)
 SYMPTOM: a unit fails and the volume it writes to is full
 CHECK: df -h /var | tail -1
@@ -144,13 +164,13 @@ FIX: clear the oldest artifacts, restart the unit, and confirm the next run is g
 SOP
         ;;
     applied-yes)
-        sop.sh applied disk-full --bead "$id" --check pass --held yes >/dev/null 2>&1 ;;
+        sop applied disk-full --bead "$id" --check pass --held yes >/dev/null 2>&1 ;;
     applied-no)
-        sop.sh applied disk-full --bead "$id" --check pass --held no >/dev/null 2>&1 ;;
+        sop applied disk-full --bead "$id" --check pass --held no >/dev/null 2>&1 ;;
     applied-fail)
-        sop.sh applied disk-full --bead "$id" --check fail --held unknown >/dev/null 2>&1 ;;
+        sop applied disk-full --bead "$id" --check fail --held unknown >/dev/null 2>&1 ;;
     retire)
-        sop.sh retire disk-full >/dev/null 2>&1 ;;
+        sop retire disk-full >/dev/null 2>&1 ;;
 esac
 case "$(cat "$TMP/act")" in
     bad-reason) bd -C "$SPIRA_DB" close "$id" --reason "DIAGNOSED: X. TEMPORARY WORKAROUND: Y must be removed once fix lands." >/dev/null 2>&1 ;;
@@ -165,13 +185,13 @@ chmod +x "$BIN/claude"
 
 # THE ENVIRONMENT IS NAMED, NOT INHERITED. Two keys make this mandatory rather than tidy: an
 # inherited SPIRA_CONF would let a real box decide these verdicts, and an inherited
-# SPIRA_WIKI would send `sop.sh write`'s synthesis into a real wiki page — this suite writes
+# SPIRA_WIKI would send `sop write`'s synthesis into a real wiki page — this suite writes
 # SOPs, so that is not hypothetical. HOME is the real one because `bd` and `dolt` read their
 # credentials from it, and SPIRA_PATH is passed because conf.sh rebuilds PATH from it.
 run_aeon() {             # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
+    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" TMP="$TMP" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_REPO_MAP="$REPO_MAP" SPIRA_AGENT="$BIN/claude" \
@@ -181,11 +201,11 @@ run_aeon() {             # run_aeon <fayth> <act>
         timeout 300 aeon --home "$HOMEDIR" "$1" > "$TMP/out" 2>&1
 }
 sop() {                  # the same program the aeon runs, in the same environment
-    env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
+    env -i HOME="$HOME" PATH="$BIN:$PATH" SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_WIKI="" \
         SPIRA_HOME="$HOMEDIR" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
         SPIRA_SOP_LEDGER="${LEDGER_OVERRIDE:-$LEDGER}" BEADS_NO_AUTO_IMPORT=1 \
-        timeout 120 bash "$HOMEDIR/sop.sh" "$@" 2>&1
+        timeout 120 sop "$@" 2>&1
 }
 seed() {                 # seed <id> [extra-label]
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${2:+,\"$2\"}"
@@ -232,7 +252,7 @@ is   "the bead is open again"              open  "$(field sp-oc-1 status)"
 is   "and its claim is released"           ""    "$(field sp-oc-1 assignee)"
 want "it is poisoned"                      "spira-poison" "$(labels sp-oc-1)"
 want "the note says no runbook came out of it" "no runbook came out of it" "$(notes sp-oc-1)"
-want "and names both ways it could have discharged the rule" "sop.sh applied --check pass" "$(notes sp-oc-1)"
+want "and names both ways it could have discharged the rule" "sop applied --check pass" "$(notes sp-oc-1)"
 want "and the log names the rule it broke" "REOPENED and POISONED" "$(cat "$TMP/out")"
 # THE ATTEMPT LEDGER MUST NOT ALSO CHARGE THIS SESSION. The bead is open because the harness
 # reopened it, and the teardown reads the session's trace, which is of a session that

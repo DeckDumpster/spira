@@ -681,7 +681,7 @@ impl<'a> Run<'a> {
         self.s.session_epoch = self.now();
         self.d.env.set("SESSION_EPOCH", &self.s.session_epoch.to_string());
         if self.fayth.sop_required {
-            let sop = "sop.sh";
+            let sop = "sop";
             if !self.d.exec.exec(sop, &s(&["ledger-init"]), None, None).success() {
                 self.log(&format!("{}: could not create the SOP applications ledger — the closing rule cannot be judged this run", self.f()));
             }
@@ -818,7 +818,7 @@ impl<'a> Run<'a> {
                 ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
                 // Tools by bare name (sp-gypjk): the aeon's environment carries the
                 // launcher's PATH, whose first entries are the release's bin/ and spira/.
-                ("SOP", "sop.sh".into()),
+                ("SOP", "sop".into()),
                 ("INCIDENT", "incident.sh".into()),
                 ("ASK", "mail.sh".into()),
                 ("SUITES", format!("{} suites", brief::TESTENV)),
