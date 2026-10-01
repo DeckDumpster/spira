@@ -153,15 +153,17 @@ fn importable(resolved: &spira_config::resolve::Resolved, already_set: &BTreeMap
 pub fn repo_registry() -> spira_config::repos::Registry {
     let home = home_dir();
     match BOOT.get() {
+        // `Boot.repo_registry_env` already carries all four registry keys, correctly
+        // resolved by `bootstrap_config` (which ran once, in-process, via
+        // `resolve_for_process` — no bash at all) — `Registry::new` here is safe
+        // (`#[doc(hidden)]`, test-only elsewhere) only because this specific caller
+        // supplies an already-complete snapshot, not a bare environment.
         Some(b) => spira_config::repos::Registry::new(b.repo_map_text.as_deref(), &b.repo_registry_env, &home),
-        None => {
-            let env_map: BTreeMap<String, String> = std::env::vars().collect();
-            let map_text = env_map
-                .get("SPIRA_REPO_MAP")
-                .filter(|p| !p.is_empty())
-                .and_then(|p| std::fs::read_to_string(p).ok());
-            spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &home)
-        }
+        // Never ran bootstrap_config (a unit test exercising this function alone):
+        // Registry::from_env resolves the four keys in-process itself, the same one
+        // production door every other crate uses now (sp-k6lku, following the
+        // structural fix for sp-z3eyk).
+        None => spira_config::repos::Registry::from_env(std::env::vars().collect(), &home),
     }
 }
 

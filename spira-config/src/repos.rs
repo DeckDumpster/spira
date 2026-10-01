@@ -201,9 +201,19 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// TEST-ONLY. `env` here is read VERBATIM — no `registry_env` backfill, no resolve.
+    /// Production code must never call this: conf.sh resolves `SPIRA_REPO_MAP`/
+    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` but exports NONE of them, so a
+    /// process started by a unit (env = `SPIRA_RELEASE` + `PATH` only) or a bare shell
+    /// sees none of them either, and a `Registry` built straight from that bare env has no
+    /// map and no landref — every `land-local` refused in production (sp-z3eyk) before this
+    /// was caught. [`Registry::from_env`] is the one production door onto a `Registry`; this
+    /// stays `pub` only because tests across several crates build deterministic registries
+    /// from explicit, already-complete env maps (no resolve wanted, no filesystem touched).
     /// `map_text` is `None` when `SPIRA_REPO_MAP` does not exist — "no map" is not a parse
     /// error (lib.sh: `[ -f "$SPIRA_REPO_MAP" ] || return 0/1`, depending on the caller; see
     /// [`Registry::map_present`]).
+    #[doc(hidden)]
     pub fn new(map_text: Option<&str>, env: &BTreeMap<String, String>, home: &Path) -> Registry {
         Registry {
             rows: map_text.map(parse).unwrap_or_default(),
@@ -211,6 +221,23 @@ impl Registry {
             root_override: repo_override(env),
             map_present: map_text.is_some(),
         }
+    }
+
+    /// THE production constructor (sp-k6lku, following through on sp-z3eyk's
+    /// `registry_env`): fills `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/
+    /// `SPIRA_REPO_DERIVED` in-process via [`registry_env`] (itself built on
+    /// [`crate::resolve::resolve_for_process`]) when `env` lacks them — which it always
+    /// does for a bare process env, since conf.sh exports none of the four — then reads
+    /// the map file and builds the `Registry` exactly as [`Registry::new`] would. A caller
+    /// holding a genuine conf.sh-resolved snapshot (a bash subprocess that sourced
+    /// lib.sh/conf.sh and read its own variables back, or another `resolve_for_process`
+    /// answer already merged in) can pass that snapshot here too: `registry_env` leaves
+    /// every key already present untouched, so this never re-resolves work already done.
+    /// ONE way to get a registry — nothing outside this module calls `new` in production.
+    pub fn from_env(env: BTreeMap<String, String>, home: &Path) -> Registry {
+        let env = registry_env(env, home);
+        let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        Registry::new(map_text.as_deref(), &env, home)
     }
 
     /// Whether `SPIRA_REPO_MAP` existed — `repo_field`-based lookups ([`Registry::field`],
@@ -576,19 +603,18 @@ pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &
     if KEYS.iter().all(|k| env.get(*k).is_some_and(|v| !v.is_empty())) {
         return env;
     }
+    // sp-mz7dn ("wave 4.8") gave every crate a proper, one-call way to do this —
+    // `resolve_for_process`, with `derive_home_repo` for the `repo` it needs — so this no
+    // longer hand-rolls its own locate/load/resolve (and no longer falls back to
+    // `home.parent()` for `repo`, which guessed wrong wherever `home` was not a direct
+    // child of the checkout root; `derive_repo_filesystem`'s `git rev-parse
+    // --show-toplevel` is the correct derivation conf.sh itself uses).
     let repo = env
         .get("SPIRA_REPO")
         .filter(|v| !v.is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| home.parent().map(std::path::Path::to_path_buf))
-        .unwrap_or_default();
-    let doc = crate::locate::locate(None)
-        .found()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|t| crate::validate(&t).ok());
-    let conf_d = crate::resolve::default_conf_d(home);
-    let input = crate::resolve::ResolveInput { env: &env, home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d };
-    if let Ok(r) = crate::resolve::resolve(input) {
+        .unwrap_or_else(|| crate::resolve::derive_home_repo(home, &env));
+    if let Ok(r) = crate::resolve::resolve_for_process(home, &repo, &env) {
         for k in KEYS {
             if env.get(k).is_none_or(|v| v.is_empty()) && !r.get(k).is_empty() {
                 env.insert(k.to_string(), r.get(k).to_string());

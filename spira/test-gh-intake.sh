@@ -157,18 +157,19 @@ STUB
 chmod +x "$T/bin_mail.sh"
 export MAILLOG
 
-# ---- stub lib.sh: just enough of repo_root for RealRepo's seam ---------------------------
+# ---- a real repo-map: RealRepo's root_with_git reads SPIRA_REPO_MAP directly now
+# (sp-k6lku, "wave 4.13") through spira_config::repos, not a bash repo_root() seam, so the
+# fixture is the map file itself, not a faked lib.sh function.
 mkdir -p "$T/spira-home"
 REPOCHECKOUT="$T/repo-checkout"; mkdir -p "$REPOCHECKOUT/.git"
-cat > "$T/spira-home/lib.sh" <<EOF
-repo_root() { [ "\$1" = "widgets" ] && printf '%s' "$REPOCHECKOUT" || return 1; }
-EOF
+REPOMAP="$T/repo-map"
+printf 'widgets | %s\n' "$REPOCHECKOUT" > "$REPOMAP"
 
 run_intake() {
     env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
         BDLOG="$BDLOG" CREATED="$CREATED" MAILLOG="$MAILLOG" \
         SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-        SPIRA_HOME="$T/spira-home" \
+        SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
         SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="widgets" \
         SPIRA_GH_INTAKE_API="$API" SPIRA_GH_INTAKE_PRIORITY="2" \
         SPIRA_SCOPE_LABEL="spira" SPIRA_PLAN_LABEL="plan" \
@@ -214,7 +215,7 @@ echo
 echo "4. an unresolvable bead repo is refused, not silently skipped"
 out="$(env -i PATH="$T:/usr/bin:/bin" HOME="$HOME" \
     SPIRA_DB=fixture SPIRA_BD="$T/bin_bd" SPIRA_MAIL_BIN="$T/bin_mail.sh" \
-    SPIRA_HOME="$T/spira-home" \
+    SPIRA_HOME="$T/spira-home" SPIRA_REPO_MAP="$REPOMAP" \
     SPIRA_GH_INTAKE_REPO="acme/widgets" SPIRA_GH_INTAKE_BEAD_REPO="no-such-repo" \
     SPIRA_GH_INTAKE_API="$API" "$BIN" 2>&1)"; rc=$?
 is "exits 1" "1" "$rc"

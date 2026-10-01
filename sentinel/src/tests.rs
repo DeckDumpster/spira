@@ -1228,8 +1228,41 @@ fn probe_failure_is_reported() {
     let e = crate::probe(&r, Path::new("/h"), true).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
-    assert_eq!(env_of(&s, "SENTINEL_PROBE_REPOS"), Some("1"));
+    // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is
+    // resolved in-process from @vars after a successful probe, so a failed probe never
+    // reaches that code at all, and the seam call itself carries no SENTINEL_PROBE_REPOS.
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
+}
+
+/// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
+/// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
+/// itself reads, not a faked `repo_root`/`spira_landrefs` bash function (which is exactly
+/// what 4.12 found CHECK5/audit's own tests faking, and why that switch was reverted then).
+/// `spira` is unmapped but IS the home repo (so `root`/`queued` resolve through
+/// `SPIRA_HOME_REPO`); `other` is mapped with no declared `base` and no real git checkout,
+/// so `landrefs` is empty rather than guessed (same "refuse, never guess" contract the real
+/// seam had).
+#[test]
+fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
+    let d = testkit::TempDir::new("sentinel-resolve-repos");
+    let map = d.join("repo-map");
+    std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("SPIRA_REPO_MAP".to_string(), map.to_string_lossy().into_owned());
+    vars.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
+    vars.insert("SPIRA_REPO".to_string(), "/h".to_string());
+    vars.insert("SPIRA_REPO_DERIVED".to_string(), "/h".to_string());
+
+    let repos = crate::resolve_repos(&vars, Path::new("/h"));
+
+    let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
+    assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
+    assert!(!spira.queued);
+
+    let other = repos.iter().find(|r| r.name == "other").expect("every mapped name, not only the home repo");
+    assert_eq!(other.root.as_deref(), Some("/nonexistent/other"));
+    assert!(other.queued, "queue.local counts as queued");
+    assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
 // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same

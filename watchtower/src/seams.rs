@@ -1,31 +1,22 @@
-//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3): `lib.sh`'s
-//! `repo_root`, and `world.sh`'s `TIMER_PRIORITY` plus `ctrl.sh`'s suspension map. Every
-//! script text here is a constant — nothing is ever interpolated into it; the only data
-//! that crosses the boundary travels as argv to the fixed script or as NUL/tab-delimited
-//! stdout, the same discipline `sentinel/src/seams.rs` documents for its own lib.sh seams.
+//! Fixed `bash -c` seams into libraries this bead does not own (DESIGN.md §3):
+//! `world.sh`'s `TIMER_PRIORITY` plus `ctrl.sh`'s suspension map. Every script text here is
+//! a constant — nothing is ever interpolated into it; the only data that crosses the
+//! boundary travels as argv to the fixed script or as NUL/tab-delimited stdout, the same
+//! discipline `sentinel/src/seams.rs` documents for its own lib.sh seams. `repo_root`
+//! (family U) is no longer one of these seams (sp-k6lku, "wave 4.13") — [`registry`] reads
+//! it in-process through `spira_config::repos`.
 
 use std::process::Command;
 
-/// `. "$SPIRA_HOME/lib.sh"; repo_root "<repo>"` — the registered repository's filesystem
-/// path, or `None` if lib.sh could not be loaded or the repo is unregistered.
-pub fn repo_root(spira_home: &str, repo: &str) -> Option<String> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(r#". "$1/lib.sh" >/dev/null 2>&1 && repo_root "$2""#)
-        .arg("_")
-        .arg(spira_home)
-        .arg(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+/// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
+/// resolved once, in-process — no `bash -c '. lib.sh; repo_root ...'` subprocess, and no
+/// one-shot snapshot subprocess either: `from_env` resolves
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
+/// conf.sh does, in-process, when this (bare, unit-launched) process's own environment
+/// lacks them (sp-z3eyk). `spira_home` is `lib_sh_dir()`'s own output (the directory
+/// holding lib.sh), matching every other caller here.
+pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(spira_home))
 }
 
 pub struct Timers {
@@ -143,9 +134,20 @@ pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<Pip
 mod tests {
     use super::*;
 
+    /// `registry()` now resolves for real when the environment lacks the four registry
+    /// keys (`Registry::from_env`, sp-k6lku). Pinning `SPIRA_TOML` alone is not enough:
+    /// `SPIRA_REPO_MAP`'s own default (`repo_map_candidate`, spira-config/src/resolve.rs)
+    /// checks a LEGACY `spira.conf`'s directory too, found through `HOME`/
+    /// `XDG_CONFIG_HOME` independent of the `SPIRA_TOML` pin — so both legacy-search
+    /// inputs are pinned at a fixture directory that holds neither, to never resolve the
+    /// real operator's own map file on the machine running the suite.
     #[test]
     fn repo_root_is_none_when_lib_sh_is_missing() {
-        assert_eq!(repo_root("/does/not/exist", "spira"), None);
+        let d = testkit::TempDir::new("watchtower-repo-root-missing");
+        std::env::set_var("SPIRA_TOML", d.join("no-such-config.toml"));
+        std::env::set_var("HOME", d.path());
+        std::env::set_var("XDG_CONFIG_HOME", d.join("no-such-xdg"));
+        assert_eq!(registry("/does/not/exist").root("spira"), None);
     }
 
     /// world.sh/ctrl.sh are the `world`/`ctrl` binaries now (sp-6onps): the seam calls
