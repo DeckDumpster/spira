@@ -29,10 +29,15 @@ mkdir -p "$TMP/run"
 _units() {
     local inotify_mode="$1" path="$PATH"
     if [ "$inotify_mode" = without ]; then
-        local iw_dir d newpath=""
-        iw_dir="$(dirname "$(command -v inotifywait 2>/dev/null || true)")"
+        # Drop EVERY PATH entry that holds an inotifywait, not just the one `command -v`
+        # happens to pick first — on a box where /bin is its own PATH entry alongside
+        # /usr/bin (not merely a symlink collapsed by the shell), inotifywait resolves from
+        # both, and install::bootstrap::which's own raw PATH scan (unlike a single `command
+        # -v` lookup) would still find the surviving one.
+        local d newpath=""
         while IFS= read -r d; do
-            [ "$d" = "$iw_dir" ] && continue
+            [ -n "$d" ] || continue
+            [ -e "$d/inotifywait" ] && continue
             newpath="${newpath:+$newpath:}$d"
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
         path="$newpath"
