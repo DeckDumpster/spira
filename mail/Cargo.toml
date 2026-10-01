@@ -1,0 +1,25 @@
+[package]
+name = "mail"
+version = "1.0.0"
+edition = "2021"
+description = "mail — Maildir mailboxes for operator/concierge messages: send with transport lint and repeat-guard, list/read/count/unread-age/done, sendmail (RFC 5322 reply intake that closes the tracking bead), tidy and sweep-dismissed. Replaces spira/mail.sh (sp-ooh1k)."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+libc = "0.2"
+regex = "1"
+
+[[bin]]
+name = "mail"
+path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

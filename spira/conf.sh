@@ -1102,6 +1102,13 @@ spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the b
 }
 
 # --------------------------------------------------------------------------------------
+# SPIRA_ID_PREFIX and every SPIRA_MAIL* key joined this list for sp-ooh1k: `mail` is a
+# compiled binary now and cannot re-derive them the way mail.sh did, by sourcing this file
+# itself in its own process. A bash caller that pins a non-default value (a test fixture,
+# `SPIRA_MAIL_LOCAL_TIDY_FRESH=...`) must still see `mail` agree — this is not the
+# SPIRA_HOME/SPIRA_REPO fence above SPIRA_CONF_KEYS: those are facts about where the caller
+# itself lives, never configuration: these are ordinary operational config, exactly like
+# SPIRA_RUN and SPIRA_DB already exported below.
 export COCKPIT_BOTTOM_PCT \
     COCKPIT_CLIENT_IDLE_SECS \
     COCKPIT_CLIPBOARD \
@@ -1130,6 +1137,7 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_GH_INTAKE_PRIORITY \
     SPIRA_GH_INTAKE_REPO \
     SPIRA_GROOM_ASK_LABEL \
+    SPIRA_ID_PREFIX \
     SPIRA_INCIDENT_LABEL \
     SPIRA_INCIDENT_PRIORITY \
     SPIRA_INSTANCE \
@@ -1145,6 +1153,13 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_LOOM_BUDGET_MS \
     SPIRA_LOOM_CACHE_S \
     SPIRA_LOOM_READY_GRACE \
+    SPIRA_MAIL \
+    SPIRA_MAIL_INDEX \
+    SPIRA_MAIL_KINDS \
+    SPIRA_MAIL_MUTE \
+    SPIRA_MAIL_REPEAT_WINDOW \
+    SPIRA_MAIL_SESSION_MAILBOX \
+    SPIRA_MAIL_TIDY_FRESH \
     SPIRA_MIRROR \
     SPIRA_NO_LOOP_LABEL \
     SPIRA_OPERATOR \

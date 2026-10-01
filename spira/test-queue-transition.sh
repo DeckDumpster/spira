@@ -45,7 +45,7 @@ cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 chmod +x "$SH"/*.sh 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
-stub mail.sh 'exit 0'
+stub mail 'exit 0'
 
 REMOTE="$TMP/remote.git"; REPO="$TMP/repo"
 git init -q --bare -b main "$REMOTE"

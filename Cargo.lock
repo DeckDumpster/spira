@@ -630,6 +630,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mail"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "testkit",
+]
+
+[[package]]
 name = "matchit"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

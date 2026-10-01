@@ -17,7 +17,7 @@
 #
 # defect: sp-mebw
 # tier: T1
-# covers: archivist/src/* spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh spira/mail.sh spira/chamber/archivist.md
+# covers: archivist/src/* spira/conf.sh spira/hooks/session.sh spira/ctx-meter.sh mail/src/* spira/chamber/archivist.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

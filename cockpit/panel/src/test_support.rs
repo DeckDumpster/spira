@@ -119,12 +119,12 @@ exit "$rc"
         self
     }
 
-    /// Also installs a `mail.sh` stub beside the `bd` one — on `SPIRA_PATH`, so the panel's
-    /// by-name `mail.sh` (child_path) finds it first — for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
+    /// Also installs a `mail` stub beside the `bd` one — on `SPIRA_PATH`, so the panel's
+    /// by-name `mail` (child_path) finds it first — for `close_decision`/`comment`'s mail-delivery leg. The stub's stdin (the whole
     /// RFC 5322 message) is captured to its own file, since argv alone (`sendmail`) says
     /// nothing about what was sent. Controlled by `MAIL_RC`.
     pub fn mail(mut self) -> Self {
-        let script = self.dir.join("mail.sh");
+        let script = self.dir.join("mail");
         let inbox = self.dir.join("mail-inbox");
         std::fs::write(
             &script,
@@ -140,15 +140,15 @@ exit "$rc"
                 inbox = inbox,
             ),
         )
-        .expect("write stub mail.sh");
+        .expect("write stub mail");
         let mut perm = std::fs::metadata(&script).unwrap().permissions();
         std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).expect("chmod stub mail.sh");
+        std::fs::set_permissions(&script, perm).expect("chmod stub mail");
         self.mail_inbox = Some(inbox);
         self
     }
 
-    /// The last message the stubbed `mail.sh sendmail` received on stdin, whole.
+    /// The last message the stubbed `mail sendmail` received on stdin, whole.
     pub fn mail_inbox(&self) -> String {
         self.mail_inbox
             .as_ref()

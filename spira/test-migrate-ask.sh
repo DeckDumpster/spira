@@ -2,7 +2,7 @@
 #
 # test-migrate-ask.sh — no caller of the retired cockpit/ask.sh remains (UC-operator-channel-13).
 #
-# The lint-fidelity half that used to live here (hand-copied sender bodies through mail.sh's
+# The lint-fidelity half that used to live here (hand-copied sender bodies through mail's
 # lint) tested copies, not the senders themselves — replaced by the real-emitter test in
 # test-mail-real-senders.sh (gap G-05, test-plan-2026-09-23 coverage-map row 05).
 #
@@ -11,7 +11,7 @@
 # callers" trivially.
 #
 # tier: T0
-# covers: spira/lib.sh sentinel/src/* watchd/* spira/skew.sh spira/pilgrimage.sh spira/reflect.sh spira/incident.sh strand/src/* spira/mail.sh incident/* UC-operator-channel-13 archivist/src/*
+# covers: spira/lib.sh sentinel/src/* watchd/* spira/skew.sh spira/pilgrimage.sh spira/reflect.sh spira/incident.sh strand/src/* mail/src/* incident/* UC-operator-channel-13 archivist/src/*
 # host-reason: greps the tree; no systemd/gh/network required; no shared state written
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

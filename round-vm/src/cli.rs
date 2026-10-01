@@ -1,5 +1,5 @@
 //! Command dispatch and the real wiring: config from the environment and spira.toml, the
-//! Proxmox provider, mail.sh alarms, ssh/rsync, git.
+//! Proxmox provider, mail alarms, ssh/rsync, git.
 
 use std::fs::OpenOptions;
 use std::os::unix::process::CommandExt;
@@ -151,7 +151,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
         return if verb == "run" { 2 } else { 1 };
     }
     let pool = pool_for(&cfg);
-    let alarm = MailAlarm { mail: "mail.sh".into(), mailbox: cfg.mailbox.clone(), retry_secs: cfg.retry_interval.as_secs() };
+    let alarm = MailAlarm { mail: "mail".into(), mailbox: cfg.mailbox.clone(), retry_secs: cfg.retry_interval.as_secs() };
     let spawner = SelfSpawner { state_dir: cfg.state_dir.clone() };
     let factory = real_attempt;
     let deps = Deps { factory: &factory, alarm: &alarm, spawner: &spawner };

@@ -65,7 +65,7 @@ esac
 BDSTUB
 chmod +x "$SH/bd-stub.sh"
 
-printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
+printf '#!/usr/bin/env bash\ntrue\n' > "$SH/mail"; chmod +x "$SH/mail"
 # the verdict's observe-flake goes to `testenv suites` now (testenv/DESIGN-suites.md §9).
 printf '#!/usr/bin/env bash\ntrue\n' > "$SH/testenv-stub.sh"; chmod +x "$SH/testenv-stub.sh"
 

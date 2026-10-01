@@ -25,7 +25,7 @@ ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve
 Environment=SPIRA_LC_PASSWORD_FILE=/etc/spira-lc/credential
 Environment=SPIRA_LC_USER=spira_lc
 Environment=SPIRA_LC_DATA_DIR=/tmp
-# Read by work.rs/bd.rs to find bead.sh/mail.sh — this service has no other reason to
+# Read by work.rs/bd.rs to find bead.sh/mail — this service has no other reason to
 # know or care what its own working directory is.
 Environment=SPIRA_REPO=@SPIRA_REPO@
 Restart=on-failure

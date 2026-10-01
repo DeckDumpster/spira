@@ -9,7 +9,7 @@
 # no-op. The record lives at queue/<repo>/publish, never
 # queue/<repo>/open, so it can never be mistaken for a queue.forge batch in flight.
 #
-# REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail.sh runs for real so cases 5
+# REAL MAIL, NOT A STUB, for the divergence alarm (row 4): mail runs for real so cases 5
 # and 7 can assert the actual inbox line landed in $RUN/mail/concierge/new/*, naming the
 # foreign commit — the same seam test-publish-backlog.sh uses for its own alarm assertions.
 #
@@ -34,7 +34,11 @@ echo "test-queue-publish.sh"
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
+# mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
+# the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
+# compiled binary in by name instead, so a bare `mail` found via $SH on PATH is the real
+# thing ("REAL MAIL, NOT A STUB" above).
+ln -sf "$(command -v mail)" "$SH/mail"
 chmod +x "$SH"/*.sh 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 
@@ -89,6 +93,7 @@ queue() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
@@ -102,6 +107,7 @@ verdict() {
     SPIRA_HOME_REPO="$REPONAME" \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
     SPIRA_QUEUE_DIR="$QDIR" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_FORGE="$SH/forge-fixture.sh" \
@@ -158,7 +164,7 @@ clear_calls()  { : > "$CALL_LOG"; }
 landing_log()  { cat "$RUN/landing.log" 2>/dev/null; }
 clear_log()    { : > "$RUN/landing.log"; }
 # Scoped to the divergence alarm's own subject line: land-local's ordinary "local landing"
-# notice goes through the same real mailbox once mail.sh is no longer stubbed, and would
+# notice goes through the same real mailbox once mail is no longer stubbed, and would
 # otherwise be indistinguishable from the alarm this suite is asserting on.
 divergence_files() { grep -l '^Subject:.*divergence:' "$RUN"/mail/concierge/new/* 2>/dev/null; }
 mail_count()   { divergence_files | wc -l | tr -d ' '; }

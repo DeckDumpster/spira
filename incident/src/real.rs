@@ -1,4 +1,4 @@
-//! The ports against the host: `bd` on PATH (or `$SPIRA_BD`), `mail.sh` on PATH, and the
+//! The ports against the host: `bd` on PATH (or `$SPIRA_BD`), `mail` on PATH, and the
 //! wall clock. Mirrors lib.sh's `bdq`: `timeout $BD_TIMEOUT bd -C "$db" "$@"`, retried once
 //! on a dead pooled connection ("invalid connection").
 
@@ -240,7 +240,7 @@ pub struct RealMailer;
 impl Mailer for RealMailer {
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool {
         let full_body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{body}\n");
-        let mut cmd = Command::new("mail.sh");
+        let mut cmd = Command::new("mail");
         cmd.args(["send", "operator", "--from", "Incident <incident@spira>", "--subject", subject, "--kind", "question", "--default", default])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

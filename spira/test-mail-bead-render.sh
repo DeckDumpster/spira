@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-mail-bead-render.sh — mail.sh renders a bead block for every bead it is
+# test-mail-bead-render.sh — mail renders a bead block for every bead it is
 # given, so a message that names a bead cannot lack its details
 # (law-a-bead-reference-carries-its-details).
 #
@@ -18,11 +18,11 @@
 # REGRESSION (law-a-regression-test-must-be-seen-to-fail): the last case sends the
 # exact subject shape lib.sh's gh-closeout path produces — "Close GitHub issue ... for
 # bead <id>", carrying nothing else — the case that motivated this bead: a producer
-# that names a bead and says nothing about it. Against mail.sh before this change, no
+# that names a bead and says nothing about it. Against mail before this change, no
 # render step exists at all, so this assertion fails; verified by hand against the
-# pre-change mail.sh.
+# pre-change mail.
 #
-# covers: spira/mail.sh spira/lib.sh spira/conf.sh
+# covers: mail/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -43,7 +43,7 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_MAIL_REPEAT_CONSIDERED="test-suite"
 
-run() { mail.sh "$@"; }
+run() { mail "$@"; }
 
 body_of() {
     local mailbox="$1" f
@@ -106,7 +106,7 @@ want "body-only id: rendered block present with real title" "$KNOWN_ID: $KNOWN_T
 
 # ==========================================================================
 # 4. Regression: the gh-closeout subject shape (lib.sh) — names a bead and nothing
-#    else about it. SEEN RED against the pre-change mail.sh (no render step at all,
+#    else about it. SEEN RED against the pre-change mail (no render step at all,
 #    so this assertion fails); SEEN GREEN here.
 # ==========================================================================
 echo

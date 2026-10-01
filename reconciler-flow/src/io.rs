@@ -297,10 +297,11 @@ fn read_flow_floors(desired_dir: &Path) -> Option<(Option<f64>, Option<u64>)> {
 /// Sends one message to the Concierge mailbox — the alert path a flow gap has no
 /// deterministic remedy to try instead of (per the design). Deduplication across passes is
 /// explicitly a separate bead's mandate (sp-fufyb); this sends once per pass a gap is
-/// confirmed (`is_gap`), relying on mail.sh's own settle/tidy handling in the meantime.
+/// confirmed (`is_gap`), relying on mail's own settle/tidy handling in the meantime.
 pub fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), String> {
-    let mut child = Command::new("bash")
-        .arg(mail_sh)
+    // `mail` is a compiled binary now (sp-ooh1k), invoked directly by name — never `bash
+    // <path>`, which only ever worked while this was a shell script.
+    let mut child = Command::new(mail_sh)
         .args(["send", "concierge", "--from", "Reconciler <reconciler@spira>", "--subject", subject, "--kind", "note"])
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

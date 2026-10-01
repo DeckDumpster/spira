@@ -80,7 +80,7 @@ mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 # spira_landref rather than re-deriving their side effects.
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail.sh"; chmod +x "$SH/mail.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 
 # A REAL COPY OF THE CHAMBER, so bead.sh's own --for batcher can read batcher.fayth the same
 # way it would in production — file_judgement (io.rs) files through bead.sh's contract, never

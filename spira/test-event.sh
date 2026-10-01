@@ -76,7 +76,7 @@ want "with the kind"                      "kind: bead.landed" "$(emitted)"
 want "the bead it happened to"            "target: sp-x" "$(emitted)"
 want "the title as written"               "landed spira/sp-x on brain's main" "$(emitted)"
 want "and the detail beside it"           "merged as abc1234" "$(emitted)"
-nowant "and never as an email"            "mail.sh"      "$out"
+nowant "and never as an email"            "mail"      "$out"
 
 # An outcome about the plan rather than a bead carries "-" in the target column, not the
 # word "plan": the column is for bead ids only and a literal string would filter incorrectly.

@@ -35,13 +35,13 @@ echo "test-land-local-release.sh"
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-cat > "$SH/mail.sh" <<'EOFM'
+cat > "$SH/mail" <<'EOFM'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0
 echo "mail sent" >&2
 cat > "$MAIL_BODY_FILE"
 EOFM
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 MAIL_BODY_FILE="$TMP/mail-body"
 rm -f "$MAIL_BODY_FILE"
 

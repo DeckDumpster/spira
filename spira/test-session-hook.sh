@@ -39,7 +39,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: spira/hooks/session.sh watchd/* inbox-triage/* spira/mail.sh systemd/install.sh systemd/cockpit-ensure.service
+# covers: release/src/session_hook.rs spira/hooks/session.sh watchd/* inbox-triage/* mail/src/* systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -55,17 +55,19 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 # sp-48f6g: watchd.sh rewritten to the compiled binary `watchd`; the session hook drives it
 # as a subprocess (law-prefer-the-real-dependency, not a stub — see PART 6 below).
 command -v watchd >/dev/null 2>&1 || bail "watchd is not on PATH"
+# sp-ooh1k: mail.sh rewritten to the compiled binary `mail`, same treatment.
+command -v mail >/dev/null 2>&1 || bail "mail is not on PATH"
 
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration, their watcher manifest or their client settings and report a pass it did not
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/mail.sh" "$CLONE/spira/"
+cp "$HERE/conf.sh" "$CLONE/spira/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
-# `watchd` and `inbox-triage` (sp-48f6g) are compiled binaries, not scripts under spira/ to
-# copy — the hook finds them on PATH, same as spira-config above.
+# `watchd`, `inbox-triage` (sp-48f6g) and `mail` (sp-ooh1k) are compiled binaries, not
+# scripts under spira/ to copy — the hook finds them on PATH, same as spira-config above.
 
 # `status` asks systemd about every daemon row. A stub answers instead, so this suite says
 # nothing about whether the box it runs on has a user manager.
@@ -284,7 +286,7 @@ printf 'From: Gate <gate@spira>\nSubject: A gate passed\nDate: Mon, 01 Jan 2024 
 
 mout="$(hook SessionStart startup)"
 has "the mail count line is printed"   "$mout" "You have 1 unread"
-has "and carries the list command"     "$mout" "mail.sh list concierge --unread"
+has "and carries the list command"     "$mout" "mail list concierge --unread"
 hasnt "no message body is printed"    "$mout" "Body text here"
 hasnt "no subject is printed"         "$mout" "A gate passed"
 # NOTHING MOVES TO cur/. The hook peeks, it does not read.
@@ -302,7 +304,7 @@ has "count grows with more messages" "$mout2" "You have 2 unread"
 rm "$MAIL_DIR/concierge/new/1.msg" "$MAIL_DIR/concierge/new/2.msg"
 mout3="$(hook SessionStart startup)"
 hasnt "zero unread: no mail line"    "$mout3" "You have 0 unread"
-hasnt "and no list command either"   "$mout3" "mail.sh list concierge --unread"
+hasnt "and no list command either"   "$mout3" "mail list concierge --unread"
 
 # NO MONITOR INSTRUCTION FOR MAIL. The count line is informational; the reader opens their
 # mail client themselves.

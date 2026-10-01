@@ -46,10 +46,11 @@ CONF="${SPIRA_CONF_FILE:-}"
 # so the one question is whether each name resolves; each missing one is named.
 # --------------------------------------------------------------------------------------
 # The binaries come from deps.toml's release tier — one list, not a second literal here.
-# world.sh is the `world` binary now (sp-6onps) and deps.toml's release tier already
-# names it (alongside ctrl/aeons/slay) — spira_deps_list release covers all four without
-# a hand-written suffix entry; mail.sh and gate.sh are still bash and stay listed by hand.
-SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')mail.sh gate.sh"
+# world.sh is the `world` binary now (sp-6onps) and mail.sh is the `mail` binary now
+# (sp-ooh1k); deps.toml's release tier already names both (alongside ctrl/aeons/slay) —
+# spira_deps_list release covers all of them without a hand-written suffix entry.
+# gate.sh is still bash and stays listed by hand.
+SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')gate.sh"
 doctor_check_release_tools() {
     local t missing="" n=0
     for t in $SPIRA_RELEASE_TOOLS; do

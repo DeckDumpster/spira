@@ -2005,7 +2005,7 @@ fn refuse_repeat(
     let csv = red_suites.replace(' ', ",");
     let short = &key[..16];
     if !already_notified {
-        let mail = s.mail_cmd.clone().or_else(|| deps.which("mail.sh"));
+        let mail = s.mail_cmd.clone().or_else(|| deps.which("mail"));
         if let Some(mail) = mail.filter(|m| m.is_file()) {
             let tip = git(&repo.path, &["rev-parse", "--verify", "-q", br])
                 .unwrap_or_else(|_| "unknown".into());

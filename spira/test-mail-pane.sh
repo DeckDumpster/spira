@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test-mail-pane.sh — ops pane MAIL section and mail.sh done command.
+# test-mail-pane.sh — ops pane MAIL section and mail done command.
 #
 # Seeds a fixture maildir with one new, one read, and one replied message,
 # drives cockpit-collect probe mail to produce snapshot keys, renders health.sh once,
 # and asserts the three states appear. A failed probe renders ?, never 0.
 #
 # tier: T1
-# covers: cockpit-collect/src/* spira/mail.sh cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* mail/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -22,10 +22,10 @@ export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_DB=""
 
-run_mail() { mail.sh "$@"; }
+run_mail() { mail "$@"; }
 
 # ==========================================================================
-# POSITIVE CONTROL — mail.sh done marks R flag
+# POSITIVE CONTROL — mail done marks R flag
 # ==========================================================================
 echo
 echo "done: sets R flag in cur/"

@@ -13,7 +13,7 @@
 # reads a source file to diagnose an incident carried the only path prefix it had seen —
 # $SPIRA_HOME — into the Read, then into the Edit, writing its fix into production instead
 # of its worktree (run/sp-5l3zv.log: the aeon Read, then Edited,
-# $SPIRA_HOME/spira/mail.sh, and only much later discovered {{REPO}} was different).
+# $SPIRA_HOME/mail, and only much later discovered {{REPO}} was different).
 #
 # THE FIX. A "Where you are" section, naming {{REPO}} as the only place to Read or Edit
 # code and {{SPIRA_HOME}} as invoke-only, now opens ops.md before "The loop" ever shows a

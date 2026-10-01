@@ -9,7 +9,7 @@
 #
 # WHAT THIS SUITE IS GUARDING
 # ---------------------------
-# The groomer has a defect: it logs "ESCALATED sp-X" without ever calling mail.sh, and
+# The groomer has a defect: it logs "ESCALATED sp-X" without ever calling mail, and
 # the sentinel accepts the log line as evidence (CHECK5 only checks the line exists).
 # FAYTH_GROOM_ESCALATION_CHECK=1 tells aeon.sh to verify the claim against the database:
 # if no ask bead (type=decision, needs-operator label) was created in this session naming
@@ -22,7 +22,7 @@
 #
 # covers: aeon/src/* spira/lib.sh spira/chamber/groomer.fayth spira/conf.sh
 # defect: sp-yr4ih
-# scar: groomer wrote ESCALATED to the groom log without calling mail.sh; sentinel accepted the log line as evidence of the escalation
+# scar: groomer wrote ESCALATED to the groom log without calling mail; sentinel accepted the log line as evidence of the escalation
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
