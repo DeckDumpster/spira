@@ -128,15 +128,11 @@ cat >> "$TMP/appended.log" <<'LOG'
 LOG
 is "and a refused second segment reads as refused" refused "$(session_outcome "$TMP/appended.log")"
 
-# THE CHARGING RULE ITSELF, stated once over every outcome the classifier can return. This is
-# the assertion that has to fail if someone adds an outcome and forgets to decide about it:
-# default-deny is only default-deny while this list is exhaustive.
-charges() { if outcome_charges "$1"; then echo charges; else echo free; fi; }
-is "only a work verdict charges"     charges "$(charges unlanded)"
-is "a refusal does not charge"       free    "$(charges refused)"
-is "a killed worker does not charge" free    "$(charges killed)"
-is "and UNKNOWN does not charge"     free    "$(charges unknown)"
-is "nor does an outcome nobody has enumerated" free "$(charges something-new)"
+# THE CHARGING RULE ITSELF was asserted here, once, over every outcome the classifier can
+# return: default-deny is only default-deny while that list is exhaustive. outcome_charges
+# (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — it is now
+# aeon::decide::outcome_charges (aeon/src/decide.rs), exercised by the exhaustive match in
+# aeon::decide::disposition and that function's own `disposition_table` unit test.
 
 # ======================================================================================
 # THE TEARDOWN MUST RUN TO ITS END. Structural, and deliberately so: the regression was that
@@ -206,8 +202,9 @@ is "attempts also counts a hand-driven in_progress transition" "1" \
 # the events schema — the same fixture, testing the real store rather than a model of it.
 #
 # The not-judged branch's "records an unjudged requeue event" was a source-order grep of
-# aeon.sh; sp-eq8a4.2.1 moved that cause into aeon_disposition (lib.sh), where
-# test-aeon-disposition.sh's unjudged-<cause> rows (gap G15) assert it behaviourally.
+# aeon.sh; sp-eq8a4.2.1 moved that cause into aeon_disposition, then sp-j89pd (wave 4.2)
+# moved it again into aeon::decide::disposition (aeon/src/decide.rs), where the
+# unjudged-<cause> rows (gap G15) of its own `disposition_table` unit test assert it.
 
 # ======================================================================================
 # The counters and the release, against a real bd.
