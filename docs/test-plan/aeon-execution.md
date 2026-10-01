@@ -544,3 +544,62 @@ memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 sui
 rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
 marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
 entry is orphaned by its removal — this section is the only record of what it checked.
+
+## 15. Wave 4.33: verdict (J) and session outcome (N) ported natively (sp-8kqww)
+
+The last eight lib.sh functions aeon still reached through the bash seam for its own
+teardown/verdict decisions — all aeon-only, zero other caller — are ported into the aeon
+crate and deleted from lib.sh: `verdict_committed`, `delivers_verdict`, `close_verdict`
+(`aeon/src/verdict.rs`); `session_outcome`, `open_ask_blocker`, `session_yield_headless`,
+`rapid_recur_streak` (`aeon/src/decide.rs`); `rapid_recur_check`
+(`aeon::run::Run::rapid_recur_check`). `attempt_trace` (family P, not yet ported) already
+had a native twin in `aeon::ledger::attempt_trace` from the original aeon rewrite, so
+`session_outcome`/`session_yield_headless` need no seam call at all now; `verdict_committed`
+still reaches `spira_landrefs` (family W, bead 12, unported) through the seam — one new
+allowlist entry, in place of the six it replaces (`session_outcome`,
+`session_yield_headless`, `open_ask_blocker`, `verdict_committed`, `close_verdict`,
+`_aeon_rapid_recur`).
+
+Suites deleted outright (tested only these functions directly, through a bash `lib.sh`
+source — `aeon_disposition` et al already retired at sp-j89pd left them with nothing else
+to cover): `test-aeon-disposition.sh`, `test-session-yield-headless.sh`,
+`test-rapid-recur.sh`. A fourth, `test-incident-delivers-reopen-mismatch.sh`, is a
+source-grep over `lib.sh`'s raw text (`grep -qE 'applied\.jsonl'` and a bead-id reference
+near it, not a function call) proving `delivers_verdict`'s applied.jsonl identity-check
+branch exists in lib.sh at all — true by construction once that branch lives only in
+`verdict::delivers_verdict` (Rust) instead, the same SOURCE-GREP-goes-stale shape the
+original plan called out for `test-delivers-parity.sh`. `delivers_verdict_note_and_report`
+(`aeon/src/verdict.rs`) covers the identity-vs-mtime regression directly, with a real fixture
+instead of a grep. Neither carried a `UC-aeon-execution-NN` token in its own `covers:`
+line, so no catalogue entry is orphaned (unlike sp-j89pd's UC-03/08). Every row becomes a
+Rust unit test: `decide::tests::{session_outcome_table, open_ask_blocker_table,
+session_yield_headless_table, rapid_recur_streak_table}` (phrasing/fixture tables ported
+verbatim from the bash suites), `verdict::tests::{verdict_committed_walks_branch_then_landrefs,
+delivers_verdict_beads, delivers_verdict_note_and_report, delivers_verdict_check_and_action,
+close_verdict_precedence}`, and two whole-run tests in `aeon/src/tests.rs`
+(`rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons`,
+`rapid_recur_does_not_park_a_bead_with_real_prior_runs`) for the side effects (label add,
+note, `spira-lc hold`) the pure arithmetic doesn't reach. `test-attempts.sh` keeps its
+real-bd counter/release rows and drops only the `session_outcome` table it sourced `lib.sh`
+for directly.
+
+Trued up two stale citations left over from sp-j89pd's own trim of `test-aeon-disposition.sh`
+to just `open_ask_blocker` (it no longer covered the disposition-table unjudged-<cause> rows
+those citations meant): `test-aeon-gate-unfinished-attempts.sh` and
+`test-aeon-slain-attempts.sh` now point at `decide::tests::disposition_table` directly.
+`test-aeon-teardown-e2e.sh`'s three pointers to the deleted suites are repointed at their
+Rust homes.
+
+Two behavioural fixes surfaced by making the fake honest, both in `aeon/src/tests.rs`: both
+relied on `FakeSeam` hard-coding `session_outcome => "unlanded"` regardless of the trace
+file's real content, which the native classifier does not do.
+`a_session_that_leaves_the_bead_open_is_unlanded_and_exits_its_rc`'s `act` closure wrote
+nothing to the log at all (reads as `refused` — no `{` lines — not `unlanded`); `sweep_runs_
+without_a_bead`'s wrote a bare `result` record with no `tool_use` (reads as `refused` too —
+`acted` is false — not `unlanded`, so `sweep.rs`'s own `"unlanded"|"killed" => 0` match would
+no longer fire). Both closures now write a believable trace (a `tool_use` plus a clean
+`result`, the same shape as test-attempts.sh's retired `clean.log` fixture) so each test
+still proves what its name says. `sweep.rs`'s own call — a third seam call to
+`session_outcome` this bead's first grep pass missed, caught by a second whole-tree grep
+after the port — is native now too (`decide::session_outcome` over
+`ledger::trace_segment`).

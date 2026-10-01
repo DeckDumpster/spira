@@ -1,6 +1,8 @@
 //! The pure decisions (DESIGN.md §4): each was a lib.sh function aeon.sh called with
 //! gathered inputs, each is now a Rust function with its table as a test.
 
+use crate::bd;
+
 /// `world_stop_decide`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorldStop {
@@ -216,19 +218,171 @@ pub fn sop_rule_verdict(before_ok: bool, before: &str, after_ok: bool, after: &s
     (wrote, v)
 }
 
-/// `close_verdict`'s "outcome|reason|msg".
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CloseVerdict {
-    pub outcome: String,
-    pub reason: String,
-    pub msg: String,
+/// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
+/// ask-labelled `blocks` dependency? (the teardown's decision_blocked input). Unparseable or
+/// empty JSON fails closed — not blocked, proceeds (sp-eq8a4.2.1).
+///
+/// A RELATES-TO EDGE IS NOT A BLOCKER (sp-dvsqc): mail wires a non-decision cited bead's ask
+/// via `dep relate`, dependency_type "relates-to", not "blocks".
+///
+/// THIS BEAD'S OWN gh-closeout ASK IS NOT ITS OWN BLOCKER (sp-2a4hd): a "Close GitHub issue
+/// ... for bead <id>" ask targeting this same bead is excluded, or a reopened bead would
+/// decision-block on the ask it is itself waiting to close.
+pub fn open_ask_blocker(json: &str, bead_id: &str, ask_label: &str) -> bool {
+    let Some(row) = bd::first_row(json) else { return false };
+    let close_sfx = (!bead_id.is_empty()).then(|| format!(" for bead {bead_id}"));
+    row.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| {
+        let open = d.status.as_deref() != Some("closed");
+        let has_ask = d.labels.as_deref().unwrap_or(&[]).iter().any(|l| l == ask_label);
+        let blocks = d.kind() == Some("blocks");
+        let title = d.title.as_deref().unwrap_or("");
+        let own_closeout = close_sfx.as_deref().is_some_and(|sfx| title.contains("Close GitHub issue ") && title.contains(sfx));
+        open && has_ask && blocks && !own_closeout
+    })
 }
 
-pub fn parse_close_verdict(s: &str) -> CloseVerdict {
-    let s = s.trim_end_matches('\n');
-    let (outcome, rest) = s.split_once('|').unwrap_or((s, s));
-    let (reason, msg) = rest.split_once('|').unwrap_or((rest, rest));
-    CloseVerdict { outcome: outcome.into(), reason: reason.into(), msg: msg.into() }
+/// `session_outcome`'s classification over an already-extracted trace segment (lib.sh's
+/// "WHAT ENDED THIS SESSION" doc). `None` means the trace file itself is missing or
+/// unreadable — `unknown`, never guessed at as a verdict about the work
+/// (law-absence-needs-a-positive-control).
+///
+/// Deterministic and cheap: the presence of one tool call and of a terminal `result` record
+/// answers the whole question. Only `unlanded` may charge an attempt (`outcome_charges`).
+pub fn session_outcome(segment: Option<&str>) -> &'static str {
+    let Some(seg) = segment else { return "unknown" };
+    if !seg.lines().any(|l| l.starts_with('{')) {
+        return "refused";
+    }
+    let acted = seg.lines().any(|l| l.contains("\"type\":\"tool_use\""));
+    let last = seg.lines().filter(|l| l.contains("\"type\":\"result\"")).last();
+    match last {
+        None => {
+            if acted {
+                "killed"
+            } else {
+                "refused"
+            }
+        }
+        Some(l) if l.contains("\"api_error_status\":null") => {
+            if acted {
+                "unlanded"
+            } else {
+                "refused"
+            }
+        }
+        Some(l) if l.contains("\"api_error_status\"") || l.contains("\"error\":\"rate_limit\"") => "refused",
+        Some(_) => {
+            if acted {
+                "unlanded"
+            } else {
+                "refused"
+            }
+        }
+    }
+}
+
+/// `session_yield_headless`: did the session's last turn end waiting for a background task
+/// notification with no channel for the wakeup to arrive on (headless has none)? Two ways
+/// in: the model's own closing prose says so, OR the trace shows a tool call the harness
+/// moved to the background with no later `tool_result` for that same `tool_use_id` (sp-47d49
+/// — most sessions cut off this way just end their turn on unrelated text).
+pub fn session_yield_headless(segment: &str) -> bool {
+    const PATTERNS: &[&str] = &[
+        r"background task notification",
+        r"background.{0,30}(wait|waiting|woken|wake|notification)",
+        r"(wait|waiting).{0,40}background.{0,30}task",
+        r"will be woken",
+        r"run_in_background",
+    ];
+    let backgrounded = regex::Regex::new(r"(?i)moved to the background").unwrap();
+    let mut last_text = String::new();
+    let mut pending: std::collections::BTreeMap<String, bool> = std::collections::BTreeMap::new();
+    for line in segment.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        let etype = e.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let content: Vec<serde_json::Value> = e.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()).cloned().unwrap_or_default();
+        match etype {
+            "assistant" => {
+                for c in &content {
+                    match c.get("type").and_then(|t| t.as_str()) {
+                        Some("text") => {
+                            if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                                if !t.trim().is_empty() {
+                                    last_text = t.to_string();
+                                }
+                            }
+                        }
+                        Some("tool_use") => {
+                            if let (Some(id), Some(input)) = (c.get("id").and_then(|i| i.as_str()), c.get("input")) {
+                                if truthy(input.get("run_in_background")) {
+                                    pending.insert(id.to_string(), true);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "user" => {
+                for c in &content {
+                    if c.get("type").and_then(|t| t.as_str()) != Some("tool_result") {
+                        continue;
+                    }
+                    let Some(tid) = c.get("tool_use_id").and_then(|t| t.as_str()) else { continue };
+                    let text = match c.get("content") {
+                        Some(serde_json::Value::String(s)) => s.clone(),
+                        Some(v) => v.to_string(),
+                        None => "null".to_string(),
+                    };
+                    if backgrounded.is_match(&text) {
+                        pending.insert(tid.to_string(), true);
+                    } else {
+                        pending.remove(tid);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if !pending.is_empty() {
+        return true;
+    }
+    if last_text.is_empty() {
+        return false;
+    }
+    PATTERNS.iter().any(|p| regex::Regex::new(&format!("(?is){p}")).unwrap().is_match(&last_text))
+}
+
+/// Python truthiness over a JSON value (`None`/`false`/`0`/`""`/`[]`/`{}` are the only falsy
+/// shapes) — `run_in_background`'s own test in the original lib.sh helper.
+fn truthy(v: Option<&serde_json::Value>) -> bool {
+    match v {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::Number(n)) => n.as_f64().is_some_and(|f| f != 0.0),
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(serde_json::Value::Array(a)) => !a.is_empty(),
+        Some(serde_json::Value::Object(o)) => !o.is_empty(),
+    }
+}
+
+/// `rapid_recur_streak <threshold>`: the count of trailing `done` lines (already
+/// grep/tail-limited by the caller to one bead's last `<threshold>`) whose `wall_s` reads
+/// `?` or under 10 seconds, reset to 0 by any line that does not.
+pub fn rapid_recur_streak(lines: &[&str]) -> i64 {
+    let re = regex::Regex::new(r"wall_s=(\?|[0-9.]+)").unwrap();
+    let mut count = 0i64;
+    for line in lines {
+        match re.captures(line) {
+            Some(m) if &m[1] == "?" || m[1].parse::<f64>().is_ok_and(|f| f < 10.0) => count += 1,
+            _ => count = 0,
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -334,11 +488,115 @@ mod tests {
         assert_eq!(sop_rule_verdict(true, "a", true, "a", 2), ("no", SopVerdict::Decline));
     }
 
+    // test-aeon-disposition.sh's open_ask_blocker table.
     #[test]
-    fn close_verdict_parses() {
-        let v = parse_close_verdict("reopen|delivers-mismatch|no note found\n");
-        assert_eq!((v.outcome.as_str(), v.reason.as_str(), v.msg.as_str()), ("reopen", "delivers-mismatch", "no note found"));
-        let k = parse_close_verdict("keep|superseded|");
-        assert_eq!((k.outcome.as_str(), k.reason.as_str()), ("keep", "superseded"));
+    fn open_ask_blocker_table() {
+        let ask = "needs-operator";
+        assert!(open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "positive control: an open ask-labelled blocks dep IS a blocker");
+        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"relates-to","title":"decide"}]}]"#, "sp-x", ask), "sp-dvsqc: relates-to is not a blocker");
+        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"closed","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "a closed ask dep is not a blocker");
+        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["plan"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "an open blocks dep with no ask label is not a blocker");
+        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-x"}]}]"#, "sp-x", ask), "sp-2a4hd: this bead's own gh-closeout ask is not its own blocker");
+        assert!(open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-OTHER"}]}]"#, "sp-x", ask), "a gh-closeout ask for a DIFFERENT bead IS still a blocker");
+        assert!(!open_ask_blocker("", "sp-x", ask), "unparseable JSON fails closed");
+    }
+
+    // test-attempts.sh's session_outcome table.
+    #[test]
+    fn session_outcome_table() {
+        assert_eq!(session_outcome(None), "unknown", "a missing/unreadable trace is not classified at all");
+        assert_eq!(session_outcome(Some("")), "refused", "an empty trace is a session that never ran");
+        assert_eq!(
+            session_outcome(Some(
+                "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"x\"}\n\
+                 {\"type\":\"assistant\",\"message\":{\"model\":\"<synthetic>\",\"content\":[{\"type\":\"text\",\"text\":\"session limit reached\"}]},\"error\":\"rate_limit\"}\n\
+                 {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"api_error_status\":429,\"result\":\"session limit reached\"}\n"
+            )),
+            "refused",
+            "a rate-limited session is not an attempt"
+        );
+        assert_eq!(
+            session_outcome(Some(
+                "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"x\"}\n\
+                 {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+                 {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":true,\"api_error_status\":429}\n"
+            )),
+            "refused",
+            "a session refused after it acted is still not an attempt"
+        );
+        assert_eq!(
+            session_outcome(Some(
+                "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"x\"}\n\
+                 {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Edit\",\"input\":{}}]}}\n\
+                 {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":40}\n"
+            )),
+            "unlanded",
+            "a session that ran to its own end and left the bead open IS an attempt"
+        );
+        assert_eq!(
+            session_outcome(Some(
+                "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+                 {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"api_error_status\":null}\n"
+            )),
+            "unlanded",
+            "api_error_status:null is an attempt, not a refusal (sp-1g37h)"
+        );
+        assert_eq!(
+            session_outcome(Some(
+                "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+                 {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Now I will\"}]}}\n"
+            )),
+            "killed",
+            "a session killed mid-work is not an attempt"
+        );
+        assert_eq!(
+            session_outcome(Some("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Let me look.\"}]}}\n")),
+            "refused",
+            "a truncated trace with no tool call is not an attempt"
+        );
+    }
+
+    // test-session-yield-headless.sh's phrasing table.
+    #[test]
+    fn session_yield_headless_table() {
+        let msg = |t: &str| format!("{{\"type\":\"assistant\",\"message\":{{\"id\":\"m\",\"content\":[{{\"type\":\"text\",\"text\":{}}}]}}}}\n", serde_json::to_string(t).unwrap());
+        assert!(session_yield_headless(&msg("The build is running. I will wait for the background task notification to continue.")), "positive control: the exact phrase yields");
+        assert!(!session_yield_headless(&msg("I ran the command. The output looks fine.")), "ordinary unlanded text does not yield");
+        assert!(session_yield_headless(&msg("kicked off the job; background is waiting on the runner now")));
+        assert!(session_yield_headless(&msg("waiting for a slow background disk task to finish up")));
+        assert!(session_yield_headless(&msg("Kicking off the long build now — will be woken when it lands.")));
+        assert!(session_yield_headless(&msg("Started it with run_in_background so I can keep going.")));
+        assert!(session_yield_headless(&msg("WILL BE WOKEN when the CI run finishes.")), "matching is case-insensitive");
+        let two = format!("{}{}", msg("I will wait for the background task notification."), msg("Never mind — I finished the work myself just now."));
+        assert!(!session_yield_headless(&two), "only the LAST text governs: an earlier yield phrase is overridden");
+        let two_b = format!("{}{}", msg("Kicking off the build now."), msg("I will wait for the background task notification to continue."));
+        assert!(session_yield_headless(&two_b), "only the LAST text governs: a later yield phrase fires");
+        assert!(!session_yield_headless("{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"true\"}}]}}\n"), "an assistant message with no text content does not yield");
+        assert!(!session_yield_headless(""), "an empty trace does not yield");
+
+        // sp-47d49: a backgrounded tool call with no later tool_result yields even when the
+        // model's closing prose never mentions waiting.
+        let backgrounded = "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"text\",\"text\":\"Running the test suite now.\"},{\"type\":\"tool_use\",\"id\":\"toolu_bg1\",\"name\":\"Bash\",\"input\":{\"command\":\"x\",\"timeout\":1800000}}]}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg1\",\"content\":\"Command running in the background with ID bash_1. Command was moved to the background because it exceeded the 120000ms timeout. You will be notified when it completes.\"}]}}\n";
+        assert!(session_yield_headless(backgrounded), "trace-based detector catches a backgrounded tool_use with no later tool_result");
+
+        let resolved = "{\"type\":\"assistant\",\"message\":{\"id\":\"m1\",\"content\":[{\"type\":\"tool_use\",\"id\":\"toolu_bg2\",\"name\":\"Bash\",\"input\":{\"command\":\"x\",\"timeout\":1800000}}]}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg2\",\"content\":\"Command running in the background with ID bash_2. Moved to the background.\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"id\":\"m2\",\"content\":[{\"type\":\"text\",\"text\":\"Finished up.\"}]}}\n\
+             {\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_bg2\",\"content\":\"exit 0\\nall tests passed\"}]}}\n";
+        assert!(!session_yield_headless(resolved), "a backgrounded call later resolved by a tool_result for the same id does not yield");
+    }
+
+    // test-rapid-recur.sh's rapid_recur_streak table.
+    #[test]
+    fn rapid_recur_streak_table() {
+        let done = |wall_s: &str| format!("2026-09-27T00:00:00Z done f b rc=0 status=unlanded wall_s={wall_s} api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01");
+        let (a, b, c) = (done("1"), done("2.5"), done("9.9"));
+        assert_eq!(rapid_recur_streak(&[&a, &b, &c]), 3, "three consecutive sub-10s lines streak to 3");
+        let q = done("?");
+        assert_eq!(rapid_recur_streak(&[&q, &q]), 2, "a wall_s=? line still counts (missing spend, never a free pass)");
+        let real = done("90");
+        assert_eq!(rapid_recur_streak(&[&a, &real]), 0, "a real run (wall_s>=10) resets the streak to 0");
+        assert_eq!(rapid_recur_streak(&[&real, &a]), 1, "the streak resets AFTER the real run, not before it");
     }
 }

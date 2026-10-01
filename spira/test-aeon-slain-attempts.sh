@@ -9,7 +9,8 @@
 # events trail unanswered, so every slain release counted toward the poison threshold exactly
 # like a genuine failure — the same class of gap test-aeon-gate-unfinished-attempts.sh closed
 # for gate-unfinished (capacity and timeout already call bump_requeue with their own
-# unjudged-<cause>, covered at the unit level by test-aeon-disposition.sh).
+# unjudged-<cause>, covered at the unit level by `cargo test -p aeon decide::tests::
+# disposition_table`).
 #
 # SEEN RED FIRST: before the fix, attempts_of read 1 after a single slain release. The fix
 # makes aeon.sh call bump_requeue with the disposition's own unjudged-slain cause.
