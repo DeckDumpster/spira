@@ -50,6 +50,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--no-loop-label L]   (READY_ARGS/ready_raw_args, one token a line)
+       spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; needs $SPIRA_HOME, $SPIRA_FAYTHS)
@@ -198,6 +199,7 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "select" => cmd_select(&a, &mut env),
         "stack" => cmd_stack(&a, &mut env),
         "ready-args" => cmd_ready_args(&a, &mut env),
+        "shared-exclude" => cmd_shared_exclude(&a, &env),
         "ready-count" => cmd_ready_count(&a, &mut env),
         "fayth-exclude" => cmd_fayth_exclude(&a, &mut env),
         "fayth-ready" => cmd_fayth_ready(&a, &mut env),
@@ -771,6 +773,17 @@ fn cmd_fayth_exclude(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(format!("fayth-exclude: {e}")),
     };
     Outcome::ok(fayth_exclude_str(env, &home, &me, own))
+}
+
+/// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the three labels every "is this
+/// claimable" predicate excludes regardless of caller. `fayth_exclude`/`fayth-exclude`
+/// folds this in already; this verb exists only because `test-dispatch-open-children.sh`
+/// calls `ready_shared_exclude` directly, not through `fayth_exclude`.
+fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    Outcome::ok(ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env)))
 }
 
 /// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the

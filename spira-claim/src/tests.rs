@@ -741,6 +741,14 @@ fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
 }
 
 #[test]
+fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
+    // test-dispatch-open-children.sh calls `ready_shared_exclude` directly, not through
+    // `fayth_exclude` — this verb exists only for that caller.
+    let o = run(&["shared-exclude"], "");
+    assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-submitted,spira-open-children"));
+}
+
+#[test]
 fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[]);

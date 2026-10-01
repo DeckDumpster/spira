@@ -478,12 +478,13 @@ epic_rank_rows() {
     return $_rc
 }
 
-# claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth -> moved to spira-claim
-# (wave 4.25, sp-obhv6). `ready_shared_exclude` had no caller but `fayth_exclude` and is
-# folded into the Rust port (spira-claim/src/ready.rs `shared_exclude3`) rather than kept as
-# a separately shimmed function. `express_ready_in_task_pool` has had no live caller since
-# sentinel.sh (the only thing that ever called it) was retired for the Rust sentinel crate —
-# deleted outright rather than ported (see `test-express-lane.sh`, trimmed to match).
+# claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth, ready_shared_exclude ->
+# moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
+# `fayth_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
+# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude3`) rather than
+# deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
+# thing that ever called it) was retired for the Rust sentinel crate — deleted outright
+# rather than ported (see `test-express-lane.sh`, trimmed to match).
 claim_retry() {
     _spira_claim claim-retry "$@"
 }
@@ -498,6 +499,10 @@ fayth_ready() {
 
 bulk_ready_by_fayth() {
     _spira_claim bulk-ready-by-fayth
+}
+
+ready_shared_exclude() {
+    _spira_claim shared-exclude
 }
 
 # check7_pool_decision <throttled:0|1> <free> <express-ready:0|1> -> the task pool CHECK 7
