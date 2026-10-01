@@ -40,6 +40,11 @@ pub struct Settings {
     /// 0 disables.
     pub suite_timeout: u64,
     pub maxpar_requested: Option<i64>,
+    /// Set when SPIRA_BATCH_MAXPAR (or `spira.batch_maxpar`) was given but is not usable:
+    /// zero, negative, or not a whole number. Absent is never folded in here — only a given,
+    /// bad value refuses (sp-tj8k3: a removed/empty key must stay "unset", and a zero or a
+    /// typo must never be read as "unlimited" or silently become the default either).
+    pub maxpar_refusal: Option<String>,
     pub maxpar_ceiling: Option<u32>,
     pub mem_reserve_mib: i64,
     pub mem_per_suite_mib: i64,
@@ -105,6 +110,31 @@ pub fn derive_run(repo: &Path, instance: &str, env: &dyn Fn(&str) -> Option<Stri
     data.join(format!("spira{sfx}")).join("run")
 }
 
+/// SPIRA_BATCH_MAXPAR / `spira.batch_maxpar`: absent is `(None, None)` — the scheduler's own
+/// bounded, host-derived default applies (`schedule::maxpar`). Present and a positive whole
+/// number is `(Some(n), None)` — a request, clamped to the hardware bound. Present and
+/// anything else (zero, negative, or not a number) is `(None, Some(reason))` — refused by
+/// name, never folded into "unset" or "unlimited" (sp-tj8k3: a batch_maxpar of 0 in
+/// production read as unlimited concurrency and put 61 containers on one host).
+fn resolve_maxpar(src: &Source) -> (Option<i64>, Option<String>) {
+    match src.get("SPIRA_BATCH_MAXPAR", Some("spira.batch_maxpar")) {
+        None => (None, None),
+        Some(raw) => match raw.trim().parse::<i64>() {
+            Ok(n) if n > 0 => (Some(n), None),
+            Ok(n) => (
+                None,
+                Some(format!(
+                    "SPIRA_BATCH_MAXPAR={n} is refused — 0 no longer means unlimited; omit the key for the scheduler's bounded default, or set a positive suite count"
+                )),
+            ),
+            Err(_) => (
+                None,
+                Some(format!("SPIRA_BATCH_MAXPAR={raw:?} is not a whole number")),
+            ),
+        },
+    }
+}
+
 fn instance_of(src: &Source) -> String {
     src.get("SPIRA_INSTANCE", Some("spira.instance"))
         .unwrap_or_else(|| "prod".into())
@@ -130,6 +160,7 @@ impl Settings {
     pub fn load(src: &Source, harness_repo: &Path, now: u64) -> Settings {
         let run = resolve_run(src, harness_repo);
         let path = |env: &str| src.get(env, None).map(PathBuf::from);
+        let (maxpar_requested, maxpar_refusal) = resolve_maxpar(src);
         Settings {
             results_root: path("SPIRA_BATCH_RESULTS").unwrap_or_else(|| run.join("batch-results")),
             verdicts: path("SPIRA_VERDICTS").unwrap_or_else(|| run.join("verdicts")),
@@ -140,7 +171,8 @@ impl Settings {
             suite_timeout: src
                 .num("SPIRA_SUITE_TIMEOUT", Some("spira.suite_timeout"))
                 .unwrap_or(600),
-            maxpar_requested: src.num("SPIRA_BATCH_MAXPAR", Some("spira.batch_maxpar")),
+            maxpar_requested,
+            maxpar_refusal,
             maxpar_ceiling: src.num(
                 "SPIRA_BATCH_MAXPAR_CEILING",
                 Some("spira.batch_maxpar_ceiling"),
@@ -320,6 +352,39 @@ mod tests {
         );
         assert_eq!(s.maxpar_requested, Some(16));
         assert_eq!(s.suite_timeout, 0);
+    }
+
+    /// sp-tj8k3: unset must stay unset (no refusal, no override) — only a *given* bad value
+    /// refuses. Zero and a non-numeric value both refuse, by name; a positive value never
+    /// does.
+    #[test]
+    fn maxpar_unset_is_silent_zero_and_garbage_refuse() {
+        let s = load(&[("SPIRA_RUN", "/r")], None);
+        assert_eq!((s.maxpar_requested, s.maxpar_refusal), (None, None));
+
+        let s = load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "0")], None);
+        assert_eq!(s.maxpar_requested, None);
+        assert!(
+            s.maxpar_refusal.as_deref().is_some_and(|r| r.contains("0")),
+            "{:?}",
+            s.maxpar_refusal
+        );
+
+        let s = load(
+            &[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "lots")],
+            None,
+        );
+        assert_eq!(s.maxpar_requested, None);
+        assert!(
+            s.maxpar_refusal
+                .as_deref()
+                .is_some_and(|r| r.contains("lots")),
+            "{:?}",
+            s.maxpar_refusal
+        );
+
+        let s = load(&[("SPIRA_RUN", "/r"), ("SPIRA_BATCH_MAXPAR", "4")], None);
+        assert_eq!((s.maxpar_requested, s.maxpar_refusal), (Some(4), None));
     }
 
     #[test]
