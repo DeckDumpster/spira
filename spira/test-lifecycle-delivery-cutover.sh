@@ -43,7 +43,7 @@ SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/deps.toml \
    "$HERE"/suite-covers.sh "$SH/" 2>/dev/null
-cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "2>/dev/null/"
+copy_conf_registry "$SH"
 
 SPIRA_HOME="$SH"
 export PATH="$PATH:$(dirname "$DOLT_BIN")"
