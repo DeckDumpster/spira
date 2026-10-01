@@ -102,6 +102,21 @@ pub struct Settings {
     /// THE lifecycle switch (DESIGN.md §9), resolved once per invocation by
     /// `lifecycle::lifecycle_on`. OFF: spira-lc is never invoked.
     pub lifecycle_enforce: bool,
+    /// `SPIRA_ASK_LABEL` (sp-31hjr): the label an operator ask carries — `ask_already_open`'s
+    /// own query, native now (family C).
+    pub ask_label: String,
+    /// `SPIRA_NOVERDICT_MAX` (default 3): consecutive same-reason NO_VERDICTs before
+    /// `spira_land_noverdict` escalates.
+    pub noverdict_max: u32,
+    /// `SPIRA_NOVERDICT_CLASS_WINDOW` (default 86400s): a harness-fault class's count
+    /// resets after this long since it last escalated.
+    pub noverdict_class_window: i64,
+    /// `SPIRA_REBASE_DECOMPOSE_FILES` (default 4): a rebase-loop branch touching this many
+    /// files or more gets "split it" advice instead of "rebase it again".
+    pub rebase_decompose_files: u32,
+    /// `SPIRA_REBASE_GENERATED_FILES`: space-separated path substrings `spira_is_generated_file`
+    /// matches (law-regenerate-derived-summaries).
+    pub rebase_generated_files: String,
 }
 
 impl Settings {
@@ -143,6 +158,11 @@ impl Settings {
             pr_refresh_max: 5,
             toml: None,
             lifecycle_enforce: false,
+            ask_label: "needs-operator".into(),
+            noverdict_max: 3,
+            noverdict_class_window: 86_400,
+            rebase_decompose_files: 4,
+            rebase_generated_files: String::new(),
             run,
         }
     }

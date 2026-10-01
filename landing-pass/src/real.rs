@@ -133,6 +133,14 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         pr_refresh_max: num("pr_refresh_max", 5).max(0) as u32,
         toml: path_opt("toml"),
         lifecycle_enforce: false,
+        ask_label: {
+            let v = g("ask_label");
+            if v.is_empty() { "needs-operator".into() } else { v }
+        },
+        noverdict_max: num("noverdict_max", 3).max(1) as u32,
+        noverdict_class_window: num("noverdict_class_window", 86_400).max(0),
+        rebase_decompose_files: num("rebase_decompose_files", 4).max(1) as u32,
+        rebase_generated_files: g("rebase_generated_files"),
     };
     Ok((s, repos))
 }
@@ -149,10 +157,63 @@ pub struct RealLib<'a> {
     pub seam: SeamRunner<'a>,
     /// incident.sh — the intake the base's own red is filed through.
     pub incident: PathBuf,
+    /// sp-31hjr (family C, asks/escalation): the settings and bead reads the native
+    /// `ask_*`/`noverdict` methods need, that the seam used to resolve inside lib.sh.
+    pub s: Settings,
+    pub beads: RealBeads,
 }
 
 fn p(p: &Path) -> String {
     p.to_string_lossy().into_owned()
+}
+
+impl<'a> RealLib<'a> {
+    /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
+    /// already in front of him", so this asks the database.
+    fn ask_already_open(&self, subject: &str) -> bool {
+        self.beads.ask_open(&self.s.ask_label, subject)
+    }
+
+    /// `mail send <to> --from <from> --subject <subject> --kind <kind> [--default <d>]`,
+    /// `body` on stdin. Every escalation path below goes through this one subprocess call
+    /// (sp-gypjk: by bare name), so an escalation that silently drops a message would show
+    /// up here, not three times over.
+    fn send_mail(&self, to: &str, from: &str, subject: &str, kind: &str, default: Option<&str>, body: &str) -> bool {
+        let mut c = command("mail");
+        c.arg("send").arg(to).arg("--from").arg(from).arg("--subject").arg(subject).arg("--kind").arg(kind);
+        if let Some(d) = default {
+            c.arg("--default").arg(d);
+        }
+        c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null());
+        let Ok(mut child) = c.spawn() else { return false };
+        if let Some(mut si) = child.stdin.take() {
+            let _ = si.write_all(body.as_bytes());
+        }
+        child.wait().map(|s| s.success()).unwrap_or(false)
+    }
+
+    /// lib.sh `spira_ask_machinery` — a per-branch machinery-fault ask, deduped on
+    /// "<branch> cannot be judged".
+    #[allow(clippy::too_many_arguments)]
+    fn ask_machinery(&self, id: &str, branch: &str, repo: &str, outcome: &str, reason: &str, n: u32, out: &str) {
+        if self.ask_already_open(&crate::ask::machinery_subject(branch)) {
+            return;
+        }
+        let ev = crate::util::tail_lines(out, 20);
+        let (subj, dflt, body) = crate::ask::machinery_mail(id, branch, repo, outcome, reason, n, &ev);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+    }
+
+    /// lib.sh `spira_ask_machinery_class` — one ask per (repo, reason) class, naming every
+    /// branch it touched, deduped on "<repo> cannot be judged: <outcome> (<reason>)".
+    fn ask_machinery_class(&self, repo: &str, reason: &str, branches: &str, outcome: &str, n: u32, out: &str) {
+        if self.ask_already_open(&crate::ask::machinery_class_subject(repo, outcome, reason)) {
+            return;
+        }
+        let ev = crate::util::tail_lines(out, 20);
+        let (subj, dflt, body) = crate::ask::machinery_class_mail(repo, reason, branches, outcome, n, &ev);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
+    }
 }
 
 impl<'a> Lib for RealLib<'a> {
@@ -165,25 +226,131 @@ impl<'a> Lib for RealLib<'a> {
     fn event(&self, kind: &str, id: &str, title: &str, detail: &str) {
         self.seam.call(Op::Event, &[kind, id, title, detail]);
     }
+    /// lib.sh `spira_land_noverdict` — ported natively (sp-31hjr; was the S5 seam). A
+    /// harness-fault reason is counted and escalated BY CLASS (repo+reason), since a dead
+    /// container makes every branch fail identically; any other reason is per-branch. The
+    /// class window resets after `noverdict_class_window` so a fault that went away and
+    /// came back later escalates again rather than being silenced forever.
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str) {
-        self.seam.call(Op::NoVerdict, &[id, branch, repo, reason, outcome, out]);
+        let dir = self.s.run.join("noverdict");
+        let _ = std::fs::create_dir_all(&dir);
+        let max = self.s.noverdict_max as u64;
+
+        if reason == "harness-fault" {
+            let key = crate::util::branch_key(&format!("{repo}-{reason}"));
+            let file = dir.join(&key);
+            let asked = dir.join(format!("{key}.asked"));
+            let branches_file = dir.join(format!("{key}.branches"));
+            if let Ok(md) = std::fs::metadata(&asked) {
+                let age = unix_now().saturating_sub(md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0));
+                if age as i64 >= self.s.noverdict_class_window {
+                    let _ = std::fs::remove_file(&file);
+                    let _ = std::fs::remove_file(&asked);
+                    let _ = std::fs::remove_file(&branches_file);
+                }
+            }
+            let n = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
+            let _ = crate::util::atomic_write(&file, &n.to_string());
+            let existing = std::fs::read_to_string(&branches_file).unwrap_or_default();
+            if !existing.lines().any(|l| l == branch) {
+                let mut f = existing;
+                f.push_str(branch);
+                f.push('\n');
+                let _ = crate::util::atomic_write(&branches_file, &f);
+            }
+            if n >= max && !asked.exists() {
+                let _ = std::fs::write(&asked, "");
+                let branches_csv = std::fs::read_to_string(&branches_file)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let branches = if branches_csv.is_empty() { branch } else { &branches_csv };
+                self.ask_machinery_class(repo, reason, branches, outcome, n as u32, out);
+                self.seam.out.progress(&format!("escalated {repo} — {outcome} x{n} in a day ({reason}) across {branches}"));
+            }
+            return;
+        }
+
+        let key = crate::util::branch_key(&format!("{branch}-{reason}"));
+        let file = dir.join(&key);
+        let asked = dir.join(format!("{key}.asked"));
+        let n = std::fs::read_to_string(&file).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0) + 1;
+        let _ = crate::util::atomic_write(&file, &n.to_string());
+        if n >= max && !asked.exists() {
+            let _ = std::fs::write(&asked, "");
+            self.ask_machinery(id, branch, repo, outcome, reason, n as u32, out);
+            self.seam.out.progress(&format!("escalated {id} — {outcome} x{n} on {branch}"));
+        }
     }
     fn incident(&self, labels: &str, repo: &str, ext_ref: &str, title: &str, payload: &str) -> Result<String, i32> {
         let intake = p(&self.incident);
         let (rc, ans) = self.seam.call(Op::Incident, &[&intake, labels, repo, ext_ref, title, payload]);
         if rc == 0 { Ok(ans) } else { Err(rc) }
     }
+    /// lib.sh `spira_ask_rebase_loop` — ported natively (sp-31hjr; was the S7 seam). Mail
+    /// send **concierge**, kind note — every call, never deduped: the repetition is
+    /// reported every time the caller's own escalate-at threshold fires.
     fn ask_rebase_loop(&self, args: &[&str]) {
-        self.seam.call(Op::AskRebaseLoop, args);
+        let get = |i: usize| args.get(i).copied().unwrap_or("");
+        let (id, branch, repo, n, conflicts, others) = (get(0), get(1), get(2), get(3), get(4), get(5));
+        let repo_dir = args.get(6).copied().filter(|s| !s.is_empty());
+        let base = args.get(7).copied().filter(|s| !s.is_empty());
+
+        let row = self.beads.show(&[id.to_string()]).ok().and_then(|r| r.into_iter().next());
+        let bead_title = row.as_ref().map(|r| r.title.as_str()).filter(|t| !t.is_empty());
+        let bead_status = row.as_ref().map(|r| r.status.as_str()).filter(|s| !s.is_empty());
+
+        let (mut tip_short, mut ahead, mut nfiles) = (String::new(), String::new(), 0u32);
+        if let (Some(rd), Some(base)) = (repo_dir, base) {
+            let rd = Path::new(rd);
+            let mut c = git(rd);
+            c.args(["rev-parse", "--short", branch]);
+            tip_short = git_out(c).unwrap_or_default();
+            let mut c = git(rd);
+            c.args(["rev-list", "--count", &format!("{base}..{branch}")]);
+            ahead = git_out(c).unwrap_or_else(|| "?".into());
+            let mut c = git(rd);
+            c.args(["diff", "--name-only", &format!("{base}...{branch}")]);
+            nfiles = git_out(c).unwrap_or_default().lines().filter(|l| !l.trim().is_empty()).count() as u32;
+        }
+        let rctx = crate::ask::RebaseLoopCtx {
+            bead_title,
+            bead_status,
+            tip_short: Some(tip_short.as_str()).filter(|s| !s.is_empty()),
+            ahead: Some(ahead.as_str()).filter(|s| !s.is_empty()),
+            nfiles,
+        };
+        let (subj, body) = crate::ask::rebase_loop_mail(id, branch, repo, n, conflicts, others, base, &rctx, self.s.rebase_decompose_files, &self.s.rebase_generated_files);
+        self.send_mail("concierge", "Landing gate <gate@spira>", &subj, "note", None, &body);
     }
+    /// lib.sh `spira_ask_red_recurring` — ported natively (sp-31hjr; was the S7 seam).
     fn ask_red_recurring(&self, id: &str, branch: &str, repo: &str, class: &str, first_at: &str) {
-        self.seam.call(Op::AskRedRecurring, &[id, branch, repo, class, first_at]);
+        if self.ask_already_open(&crate::ask::red_recurring_subject(branch, class)) {
+            return;
+        }
+        let first_epoch: i64 = first_at.trim().parse().unwrap_or(0);
+        let elapsed_h = if first_epoch > 0 { (unix_now() as i64 - first_epoch) / 3600 } else { 0 };
+        let (subj, dflt, body) = crate::ask::red_recurring_mail(id, branch, repo, class, elapsed_h);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
     }
+    /// lib.sh `spira_ask_rebase_refused` — ported natively (sp-31hjr; was the S7 seam).
     fn ask_rebase_refused(&self, id: &str, branch: &str, repo: &str, reason: &str) {
-        self.seam.call(Op::AskRebaseRefused, &[id, branch, repo, reason]);
+        if self.ask_already_open(&crate::ask::rebase_refused_subject(branch)) {
+            return;
+        }
+        let (subj, dflt, body) = crate::ask::rebase_refused_mail(id, branch, repo, reason);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
     }
+    /// lib.sh `spira_ask_budget_deferred` — ported natively (sp-31hjr; was the S7 seam).
+    /// Kind `alert`, no `--default` (unlike every other ask in this family).
     fn ask_budget_deferred(&self, branch: &str, repo: &str, n: u32) {
-        self.seam.call(Op::AskBudgetDeferred, &[branch, repo, &n.to_string()]);
+        if self.ask_already_open(&crate::ask::budget_deferred_subject(branch)) {
+            return;
+        }
+        let (subj, body) = crate::ask::budget_deferred_mail(branch, repo, n);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "alert", None, &body);
     }
     fn rebase(&self, branch: &str, onto: &str, repo: &Path, name: &str) -> Rebase {
         let (rc, ans) = self.seam.call(Op::Rebase, &[branch, onto, &p(repo), name]);
@@ -247,8 +414,18 @@ impl<'a> Lib for RealLib<'a> {
     fn gh_unlanded_scan(&self) {
         self.seam.call(Op::GhUnlandedScan, &[]);
     }
+    /// lib.sh `spira_ask_refresh_loop` — ported natively (sp-31hjr; was the S19 seam).
+    /// Deduped on the bead id ("<id> refresh cap"), not the branch — one alert per cap.
     fn ask_refresh_loop(&self, repo: &Path, name: &str, branch: &str, id: &str, base_fq: &str, n: u32) {
-        self.seam.call(Op::AskRefreshLoop, &[&p(repo), name, branch, id, base_fq, &n.to_string()]);
+        if self.ask_already_open(&crate::ask::refresh_loop_subject(id)) {
+            return;
+        }
+        let mut c = git(repo);
+        c.args(["rev-list", "--count", &format!("{branch}..{base_fq}")]);
+        let behind = git_out(c).unwrap_or_else(|| "?".into());
+        let ctx = self.beads.context(id, unix_now() as i64);
+        let (subj, dflt, body) = crate::ask::refresh_loop_mail(id, branch, name, base_fq, &behind, n, self.s.pr_refresh_max, &ctx);
+        self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), &body);
     }
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) {
         self.seam.call(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha]);
@@ -266,6 +443,7 @@ impl<'a> Lib for RealLib<'a> {
 // The bead store (read only)
 // ──────────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct RealBeads {
     pub home: PathBuf,
     pub db: String,
@@ -319,6 +497,35 @@ impl RealBeads {
         }
         Err(format!("bd show failed: {}", last.lines().next().unwrap_or("")))
     }
+
+    /// `bdq <verb> <args…> --json` (sp-31hjr): the same retry-on-dropped-connection rule
+    /// as `show_raw`, for a verb other than `show`.
+    fn bdq_raw(&self, verb: &str, args: &[&str]) -> Result<String, String> {
+        if let Some(fx) = &self.fixture {
+            let mut c = command("bdsim.py");
+            c.arg(fx).arg(verb).args(args).arg("--json").stdin(Stdio::null());
+            let (rc, so, _) = run_capture(c);
+            return if rc == 0 { Ok(String::from_utf8_lossy(&so).into_owned()) } else { Err(format!("bdsim exited {rc}")) };
+        }
+        if self.db.is_empty() {
+            return Err("SPIRA_DB is empty — refusing to let bd auto-discover a store".into());
+        }
+        let mut last = String::new();
+        for _try in 0..2 {
+            let mut c = command("timeout");
+            c.arg(self.timeout.to_string()).arg(&self.bd).arg("-C").arg(&self.db).arg(verb).args(args).arg("--json");
+            c.stdin(Stdio::null());
+            let (rc, so, se) = run_capture(c);
+            if rc == 0 {
+                return Ok(String::from_utf8_lossy(&so).into_owned());
+            }
+            last = String::from_utf8_lossy(&se).into_owned();
+            if !last.contains("invalid connection") {
+                break;
+            }
+        }
+        Err(format!("bd {verb} failed: {}", last.lines().next().unwrap_or("")))
+    }
 }
 
 impl Beads for RealBeads {
@@ -345,6 +552,53 @@ impl Beads for RealBeads {
             Ok(rows) => rows.into_iter().next().map(|r| r.status).unwrap_or_else(|| "-".into()),
             Err(_) => "-".into(),
         }
+    }
+    fn ask_open(&self, label: &str, subject: &str) -> bool {
+        if subject.is_empty() {
+            return false;
+        }
+        let Ok(raw) = self.bdq_raw("list", &["--status", "open", "--label", label, "--limit", "0"]) else {
+            return false;
+        };
+        let js = json_only(&raw);
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(js) else {
+            return false;
+        };
+        let items: Vec<serde_json::Value> = match v {
+            serde_json::Value::Array(a) => a,
+            o @ serde_json::Value::Object(_) => vec![o],
+            _ => Vec::new(),
+        };
+        items.iter().any(|i| i.get("title").and_then(|t| t.as_str()).is_some_and(|t| t.contains(subject)))
+    }
+    fn context(&self, id: &str, now: i64) -> String {
+        let Ok(raw) = self.show_raw(&[id.to_string()]) else {
+            return format!("(could not read {id} — say so rather than pretend)");
+        };
+        let js = json_only(&raw);
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(js) else {
+            return format!("(could not read {id} — say so rather than pretend)");
+        };
+        let item = match v {
+            serde_json::Value::Array(a) => a.into_iter().next(),
+            o @ serde_json::Value::Object(_) => Some(o),
+            _ => None,
+        };
+        let Some(item) = item else {
+            return "(could not read the bead — say so rather than pretend)".into();
+        };
+        let status = item.get("status").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let priority = item.get("priority").and_then(|x| x.as_i64()).unwrap_or(9999);
+        let created_at = item.get("created_at").and_then(|x| x.as_str()).map(String::from);
+        let title = item.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let labels: Vec<String> = item
+            .get("labels")
+            .and_then(|x| x.as_array())
+            .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let description = item.get("description").and_then(|x| x.as_str()).map(String::from);
+        let notes = item.get("notes").cloned();
+        crate::ask::bead_context(id, &status, priority, created_at.as_deref(), &title, &labels, description.as_deref(), notes.as_ref(), now)
     }
 }
 

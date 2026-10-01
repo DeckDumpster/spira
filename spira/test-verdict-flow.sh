@@ -17,7 +17,7 @@
 #     the raw paragraph would still read "closed" and pass the weaker assertion.
 #
 # tier: T3
-# covers: mail/src/* spira/lib.sh spira/conf.sh aerc/accept-default.sh UC-operator-channel-14 UC-operator-channel-15 UC-operator-channel-16 UC-operator-channel-18 UC-operator-channel-19 UC-operator-channel-24
+# covers: mail/src/* spira/lib.sh spira/conf.sh aerc/accept-default.sh sentinel/src/* UC-operator-channel-14 UC-operator-channel-15 UC-operator-channel-16 UC-operator-channel-18 UC-operator-channel-19 UC-operator-channel-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -348,14 +348,18 @@ is "original stays unmodified (not marked replied) when close fails" "1" \
     "$(ls "$SPIRA_MAIL/operator/new/$missing_msgid" 2>/dev/null | wc -l | tr -d ' ')"
 
 # ==========================================================================
-# UC-24 — land_escalate (was test-sentinel.sh). Renamed section; same testdb.
+# UC-24 — land_escalate (sp-31hjr: ported natively into sentinel; was lib.sh via a seam).
 # ==========================================================================
 echo
 echo "UC-24: land_escalate reaches the operator unless an OPEN ask with the subject exists"
 
+command -v sentinel >/dev/null 2>&1 || bail "sentinel is not on PATH"
+
 # land_escalate shells out to `mail` by name (sp-gypjk), so this section puts a scratch
 # dir carrying a logging stub first on PATH rather than the real mail under test above —
-# the other sections here are about mail itself, this one is about lib.sh's caller contract.
+# the other sections here are about mail itself, this one is about sentinel's caller
+# contract. SPIRA_HOME goes back to the real $HERE (sentinel's own probe needs a real
+# lib.sh/conf.sh to source, unlike the old direct-source test).
 LESC_HOME="$TMP/landesc-home"; mkdir -p "$LESC_HOME"
 MAIL_LOG="$TMP/mail.log"
 cat > "$LESC_HOME/mail" <<MAILSH
@@ -364,15 +368,11 @@ printf '%s\n' "\$*" >> "$MAIL_LOG"
 cat >/dev/null
 MAILSH
 chmod +x "$LESC_HOME/mail"
-
-acted=0
-act() { acted=$((acted+1)); }
-export SPIRA_HOME="$LESC_HOME"
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
+export SPIRA_HOME="$HERE"
 
 do_escalate() {
-    PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 land_escalate "the landing worker will not start" "evidence"
+    printf 'the landing worker will not start\nevidence\n' | \
+        PATH="$LESC_HOME:$PATH" SPIRA_LAND_ESCALATE_EVERY=0 sentinel --land-escalate
 }
 
 echo "land_escalate: positive control — reaches the operator when no ask is open"
@@ -386,7 +386,7 @@ testdb_reset
 printf '{"id":"sp-vf-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open","issue_type":"decision","labels":["%s"],"updated_at":"2026-09-07T00:00:00Z"}\n' \
     "${SPIRA_ASK_LABEL:-needs-operator}" | testdb_seed
 : > "$MAIL_LOG"; rm -f "$SPIRA_RUN/landing.escalated"
-land_escalate "the landing worker will not start" "evidence" >/dev/null 2>&1
+do_escalate >/dev/null 2>&1
 is "and does not ask again while one is still open" "" "$(cat "$MAIL_LOG")"
 
 echo "land_escalate: closed-ask pass-through — a closed ask does NOT suppress a new escalation"

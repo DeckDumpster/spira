@@ -434,6 +434,12 @@ mod tests {
         fn land_status(&self, id: &str) -> String {
             self.status.borrow().get(id).cloned().unwrap_or_else(|| "closed".into())
         }
+        fn ask_open(&self, _label: &str, _subject: &str) -> bool {
+            false
+        }
+        fn context(&self, id: &str, _now: i64) -> String {
+            format!("(fixture context for {id})")
+        }
     }
 
     #[derive(Default)]

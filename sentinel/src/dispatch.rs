@@ -9,7 +9,6 @@ use std::path::Path;
 use crate::host::{Io, Spec};
 use crate::model::status_fields;
 use crate::pass::Sentinel;
-use crate::seams;
 
 /// The mailbox drain: rename it aside (a worker appending mid-drain lands its lines in the
 /// next mailbox), then read EVERY drain file — one a dead pass left behind still holds real
@@ -247,17 +246,50 @@ impl<'a> Sentinel<'a> {
             .map(|t| t.replace('\n', " "))
     }
 
-    /// S3 — land_escalate <why> <evidence>, both on stdin.
+    /// lib.sh `land_escalate <why> <evidence>` — ported natively (sp-31hjr; was the S3
+    /// seam). THE STRONGEST DEDUPE IS "IS IT ALREADY ON HIS SCREEN": an hourly re-ask once
+    /// put NINE identical "Spira is landing nothing" decisions in the operator's pane in a
+    /// day — he closed eight and the ninth arrived anyway. The clock below is a floor
+    /// under that database check, never the answer on its own.
     fn land_escalate(&self, why: &str, evidence: &str) {
+        const SUBJECT: &str = "Spira is landing nothing";
+        if self.ask_already_open(SUBJECT) {
+            return;
+        }
+        let cd = self.cfg.run.join("landing.escalated");
+        let now = self.h.now();
+        let last: i64 = std::fs::read_to_string(&cd).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+        if now - last < self.cfg.land_escalate_every {
+            return;
+        }
+        let _ = std::fs::write(&cd, now.to_string());
         let ev = evidence.trim_end_matches('\n');
-        self.seam(
-            "land-escalate",
-            seams::LAND_ESCALATE,
-            Some(format!("{why}\n{ev}").into_bytes()),
-            Io::Inherit,
-            Io::Inherit,
-            true,
+        let subj = format!("{SUBJECT} — {why}");
+        let dflt = "run `landing-pass land` by hand to see the failure, then file the fix as a bead";
+        let body = format!(
+            "## Question\n{subj}\n\n## Default\n{dflt}\n\nevery finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch\n\n{ev}\n"
         );
+        // An escalation is a write, never a movement: counting a report of paralysis as
+        // progress would mute the one check that notices paralysis.
+        if self.mail("Landing gate <gate@spira>", &subj, dflt, &body, false) {
+            self.act("escalated: the landing leg is not running");
+        }
+    }
+
+    /// `sentinel --land-escalate`: drive [`Sentinel::land_escalate`] alone, for callers
+    /// that have a landing-leg failure to report without standing up a whole pass — and
+    /// for the real-sender suites (test-verdict-flow.sh UC-24) that used to source lib.sh
+    /// directly and call its bash function. Stdin's first line is `why`; the rest is the
+    /// evidence (the S3 seam's own contract, kept so no caller needed to change).
+    pub fn land_escalate_cmd(&self) -> i32 {
+        use std::io::Read;
+        let mut input = String::new();
+        let _ = std::io::stdin().read_to_string(&mut input);
+        let mut lines = input.splitn(2, '\n');
+        let why = lines.next().unwrap_or("");
+        let evidence = lines.next().unwrap_or("");
+        self.land_escalate(why, evidence);
+        0
     }
 
     /// CHECK 6 — dispatch `landing-pass land`; read what the previous run left behind.
