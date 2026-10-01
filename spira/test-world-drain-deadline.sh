@@ -49,12 +49,12 @@ printf '#!/usr/bin/env bash\necho inactive\nexit 3\n' > "$TMP/systemctl"
 chmod +x "$TMP/systemctl"
 
 # Recording slay.sh: appends full argument list to SLAY_CALLS on each call, exits 0.
-cat > "$SH/slay.sh" <<'SLAY'
+cat > "$SH/slay" <<'SLAY'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SLAY_CALLS"
 exit 0
 SLAY
-chmod +x "$SH/slay.sh"
+chmod +x "$SH/slay"
 
 # Fake aeon.sh so live_aeons() finds the process in /proc via argv match.
 printf '#!/usr/bin/env bash\nsleep 120\n' > "$SH/aeon.sh"; chmod +x "$SH/aeon.sh"

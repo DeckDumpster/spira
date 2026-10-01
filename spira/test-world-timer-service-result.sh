@@ -42,7 +42,9 @@ WORLD_BIN="$(command -v world || true)"
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
+printf '#!/usr/bin/env bash
+exit 0
+' > "$SH/slay"; chmod +x "$SH/slay"
 
 # write_sc ACTIVE_TIMER SVC_RESULT
 #   ACTIVE_TIMER — timer unit that is-active returns "active" for
