@@ -156,6 +156,60 @@ impl Conf {
             None => self.run.join("landstate"),
         }
     }
+
+    // ---- capacity pause (family K, wave 4.26) -----------------------------------------
+    //
+    // SPIRA_CAPACITY_PAUSE/_BACKOFF/_PROBE_LAST/_WITHDRAWN are lib.sh literals, not
+    // spira-config registry keys (wave4-decomposition.md (b): "ad hoc overrides... never
+    // conf.sh's"), same footing as SPIRA_TRACE_MARK above. An operator override reaches
+    // `Conf` because `main.rs` merges these four names out of the process environment
+    // explicitly (`merge_capacity_env`) — there is no bash seam round trip to ask for them
+    // any more now that this crate owns the logic.
+
+    pub fn capacity_pause(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_PAUSE").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-pause"))
+    }
+    pub fn capacity_backoff(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_BACKOFF", 900)
+    }
+    pub fn capacity_probe_last(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_PROBE_LAST").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-probe-last"))
+    }
+    pub fn capacity_withdrawn(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_WITHDRAWN").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-withdrawn"))
+    }
+    /// SPIRA_CAPACITY_PROBE_WINDOW/_INTERVAL/_TIMEOUT: registered spira-config keys
+    /// (`spira/conf.d/SPIRA_CAPACITY_PROBE_*`), so these DO come through `resolve()`.
+    pub fn capacity_probe_window(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_PROBE_WINDOW", 18_000)
+    }
+    pub fn capacity_probe_interval(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_PROBE_INTERVAL", 3600)
+    }
+    pub fn capacity_probe_timeout(&self) -> u64 {
+        self.n("SPIRA_CAPACITY_PROBE_TIMEOUT", 30).max(1) as u64
+    }
+    /// `capacity_probe`'s own default: no literal fallback — the builder persona's
+    /// resolved model, so a model change never needs a second edit here.
+    pub fn capacity_probe_model(&self) -> String {
+        let m = self.s("SPIRA_CAPACITY_PROBE_MODEL");
+        if !m.is_empty() {
+            return m;
+        }
+        let toml = self.s("SPIRA_TOML_FILE");
+        persona_model("builder", (!toml.is_empty()).then(|| Path::new(&toml)))
+    }
+}
+
+/// Wave 4.26: an explicit env override for the four `SPIRA_CAPACITY_*` lib.sh literals
+/// reaches `Conf` the same way `SPIRA_TRACE_MARK` always has, without asking the bash
+/// seam for them (there is no bash implementation left to ask).
+pub fn merge_capacity_env(snap: &mut crate::seam::Snapshot, env: &BTreeMap<String, String>) {
+    for k in ["SPIRA_CAPACITY_PAUSE", "SPIRA_CAPACITY_BACKOFF", "SPIRA_CAPACITY_PROBE_LAST", "SPIRA_CAPACITY_WITHDRAWN"] {
+        if let Some(v) = env.get(k) {
+            snap.vars.entry(k.to_string()).or_insert_with(|| v.clone());
+        }
+    }
 }
 
 /// `lifecycle_enforce`, resolved as conf.sh resolves it: the unit's environment wins (how a
@@ -214,6 +268,40 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
     cands.into_iter().find(|p| ok(p)).map(|p| p.canonicalize().unwrap_or(p))
 }
 
+/// Wave 4.8 ("retire conf re-import seams in Rust"): `_aeon_snapshot`'s bash seam used to
+/// read every `seam::RETIRED_SNAPSHOT_VARS` name back out of the subprocess that had just
+/// sourced `lib.sh`/`conf.sh` — a second, bash-shaped derivation of values
+/// `spira_config::resolve()` already computes in-process. This merges that in-process
+/// answer into `snap.vars` instead, via `entry().or_insert()` so nothing the seam itself
+/// still supplies (`seam::SNAPSHOT_VARS` — `LANDSTATE`, every `FAYTH_*`, ...) is ever
+/// overridden, matching conf.sh's own `${VAR:=default}` rule.
+///
+/// `SPIRA_HOME`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` are inserted explicitly: `resolve()`
+/// deliberately never produces them (per-copy facts — see `spira_config::resolve::
+/// ResolveInput`'s own doc), but [`Conf::new`] builds this process's `spira_config::repos::
+/// Registry` straight out of `snap.vars`, and that registry's own `repo_root`/
+/// `spira_home_repo` logic needs all three to tell an explicit `SPIRA_REPO` override apart
+/// from one that merely fell out of where this copy of the harness sits.
+///
+/// Best-effort, same as every other config read in this binary: a containment refusal or
+/// an unreadable registry leaves `snap.vars` exactly as the seam call alone produced it.
+pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) {
+    let repo_derived = spira_config::resolve::derive_repo_filesystem(home, env);
+    let repo = env
+        .get("SPIRA_REPO")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_derived.clone());
+    snap.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
+    snap.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
+    snap.vars.entry("SPIRA_REPO_DERIVED".into()).or_insert_with(|| repo_derived.to_string_lossy().into_owned());
+    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, env) {
+        for (k, v) in resolved.values {
+            snap.vars.entry(k).or_insert(v);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +335,26 @@ mod tests {
         assert!(e[0].contains("does not require 'spira'"));
     }
 
+    /// capacity_probe's own "defaults to the builder's own resolved model" case (wave
+    /// 4.26, moved from test-persona-model.sh's bash source-grep).
+    #[test]
+    fn capacity_probe_model_defaults_to_persona_builder_when_unset() {
+        let dir = testkit::TempDir::new("aeon-conf-capacity-model");
+        let toml = dir.join("spira.toml");
+        std::fs::write(&toml, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
+        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap())]), ..Default::default() };
+        let conf = Conf::new(&snap, &dir);
+        assert_eq!(conf.capacity_probe_model(), "toml-override-model");
+
+        let snap2 = crate::seam::Snapshot {
+            vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
+            ..Default::default()
+        };
+        let conf2 = Conf::new(&snap2, &dir);
+        assert_eq!(conf2.capacity_probe_model(), "operator-override", "an explicit SPIRA_CAPACITY_PROBE_MODEL wins");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn enforce_env_wins_and_binary_presence_is_irrelevant() {
         let dir = testkit::TempDir::new("aeon-conf");
@@ -261,6 +369,86 @@ mod tests {
         std::fs::write(&toml, "[persona.builder]\nmodel = \"claude-x\"\n").unwrap();
         assert_eq!(persona_model("builder", Some(&toml)), "claude-x");
         assert_eq!(persona_model("ops", Some(&toml)), "claude-opus-5");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
+    // hazard): the one test below that resolves config takes this lock, and pins SPIRA_TOML
+    // to a nonexistent path — locate()'s own exclusive-pin rule — so it never depends on a
+    // real operator spira.toml on the machine running this suite.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn merge_resolved_config_inserts_home_repo_and_registry_keys_without_overriding_the_seam() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("SPIRA_TOML").ok();
+        let dir = testkit::TempDir::new("aeon-conf-merge");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_CI_PARK_MAX"),
+            "TYPE=u32\nGROUP=queue\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CI_PARK_MAX:=9}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+
+        let mut snap = crate::seam::Snapshot {
+            vars: vars(&[("LANDSTATE", "/seam/landstate")]),
+            ..Default::default()
+        };
+        merge_resolved_config(&mut snap, &home, &BTreeMap::new());
+
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+
+        assert_eq!(snap.vars.get("LANDSTATE").map(String::as_str), Some("/seam/landstate"), "the seam's own value must survive the merge");
+        assert_eq!(snap.vars.get("SPIRA_HOME").map(String::as_str), Some(home.to_str().unwrap()));
+        assert!(snap.vars.contains_key("SPIRA_REPO"));
+        assert!(snap.vars.contains_key("SPIRA_REPO_DERIVED"));
+        assert_eq!(snap.vars.get("SPIRA_CI_PARK_MAX").map(String::as_str), Some("9"), "a registry key resolve() covers must reach snap.vars in-process");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-1cdgq's own regression (SPIRA_SUMMON_JITTER unreachable because SNAPSHOT_VARS
+    /// never carried it) is superseded by this bead, not re-broken: the name moved to
+    /// RETIRED_SNAPSHOT_VARS (seam.rs), resolved in-process here instead. Proves the same
+    /// guarantee their bash-seam test proved — an env override reaches `Conf` — through
+    /// the new path, plus the toml side their test could not reach at all.
+    #[test]
+    fn merge_resolved_config_reaches_a_retired_registry_key_env_can_still_override() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
+        let dir = testkit::TempDir::new("aeon-conf-jitter");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_SUMMON_JITTER"),
+            "TYPE=string\nGROUP=summon\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # no default, matches the real registry entry\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+
+        let mut snap = crate::seam::Snapshot::default();
+        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]));
+
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        match saved_jitter {
+            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
+            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
+        }
+
+        assert_eq!(
+            snap.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str),
+            Some("0"),
+            "SPIRA_SUMMON_JITTER is set in the environment handed to merge_resolved_config but never reaches snap.vars"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

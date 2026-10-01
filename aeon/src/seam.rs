@@ -12,6 +12,12 @@
 //! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
 //! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
 //! no longer shell into this seam for it at all — not even through a lib.sh shim.
+//!
+//! `_aeon_capacity_paused`, `capacity_reset_at` and `capacity_pause_set` are dropped the
+//! same way (wave 4.26, family K → `capacity.rs`): `run.rs`/`sweep.rs`/`escape.rs`/
+//! `teardown.rs` call that module in-process now, and `lib.sh`'s own `capacity_*`
+//! functions are one-line shims onto `aeon capacity <verb>` for the one bash caller left
+//! (`capacity.sh`) — not reached through this seam at all.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -27,13 +33,13 @@ IFS= read -r -d '' __aeon_fn || exit 96
 __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
-    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|\
+    _aeon_snapshot|_aeon_rebase|\
     _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
-    bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|land_state|\
+    bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|\
+    land_state|\
     land_mark|bead_is_work_type|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
@@ -59,11 +65,6 @@ _aeon_snapshot() {
     printf '__AEON_EXCLUDE__\0'
     printf '%s\0' "$(fayth_exclude "$FAYTH" "${FAYTH_EXCLUDE_LABELS:-}")"
 }
-_aeon_capacity_paused() {
-    capacity_paused >&2; local __rc=$?
-    printf '%s' "${SPIRA_CAPACITY_LEFT:-}"
-    return $__rc
-}
 _aeon_world_gate() {
     world_gate "$FAYTH" "$1" >&2; local __rc=$?
     return $__rc
@@ -87,28 +88,65 @@ _aeon_thrash_meta() {
 "$__aeon_fn" "${__aeon_args[@]}"
 "#;
 
-/// The shell variables captured once at startup (exported or not). FAYTH_* come from the
-/// sourced fayth file; everything else is conf.sh's resolution.
+/// The shell variables captured once at startup (exported or not), still read through the
+/// bash seam. FAYTH_* come from the sourced fayth file; LANDSTATE/LAND_EVICTION_REASONS are
+/// lib.sh's own derived values (family S, a later wave4 bead); SPIRA_HOME/SPIRA_REPO/
+/// SPIRA_REPO_DERIVED are per-copy facts `spira_config::resolve()` never produces (see that
+/// module's `ResolveInput` doc); the rest here (SPIRA_WORLD_STOP_SKIP, SPIRA_TOML_FILE,
+/// SPIRA_MEMORIES_CMD, SPIRA_ALLOW_PROD_DIRTY, SPIRA_CLOSE_REASON_OVERRIDE,
+/// SPIRA_WORKFLOW_RUN_CONSIDERED, BD_TIMEOUT, SPIRA_BDQ_CONN_RETRIES, SPIRA_BDJSON_FIXTURE,
+/// SPIRA_TRACE_MARK, SPIRA_SUMMON, PATH, HOME, DB) have no `spira/conf.d/<KEY>` entry at
+/// all — ad hoc overrides or lib.sh literals, never conf.sh's.
+///
+/// UNTIL WAVE 4.8 this list also carried every name conf.sh's own registry resolves
+/// (SPIRA_RUN, SPIRA_DB, SPIRA_BD, SPIRA_WIKI, SPIRA_ASK_LABEL, SPIRA_MAX_AEONS, ...): `_aeon_snapshot`
+/// read each one back out of the bash process that had just sourced conf.sh, a second,
+/// bash-shaped derivation of values `main.rs`'s `merge_resolved_config` now computes
+/// in-process and merges into `Snapshot.vars` after this seam call returns — see that
+/// function's own doc for the list and for why SPIRA_HOME/SPIRA_REPO/SPIRA_REPO_DERIVED are
+/// still inserted explicitly.
 pub const SNAPSHOT_VARS: &[&str] = &[
-    "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
-    "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
-    "SPIRA_WORLD_STOP_SKIP", "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
-    "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_REPO_DERIVED", "SPIRA_HOME_REPO", "LANDSTATE", "SPIRA_THRASH_MINUTES",
-    "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
-    "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
-    "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",
-    "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_MEMORIES_CMD", "SPIRA_AGENT",
-    "SPIRA_LIFECYCLE_ENFORCE",
-    "SPIRA_TOML_FILE", "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
+    "SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "LANDSTATE",
+    "SPIRA_WORLD_STOP_SKIP",
+    "SPIRA_MEMORIES_CMD",
+    "SPIRA_TOML_FILE",
     "SPIRA_ALLOW_PROD_DIRTY", "SPIRA_CLOSE_REASON_OVERRIDE", "SPIRA_WORKFLOW_RUN_CONSIDERED",
-    "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
-    "SPIRA_CLAIM_RETRY_DELAY_S", "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
-    "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "SPIRA_SUMMON_JITTER", "PATH", "HOME", "DB",
+    "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
+    "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "PATH", "HOME", "DB",
     "FAYTH_NAME", "FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS", "FAYTH_MAX_CONCURRENT",
     "FAYTH_ELASTIC", "FAYTH_LEASE_MINUTES", "FAYTH_HEARTBEAT_SECONDS", "FAYTH_TIMEOUT_SECONDS",
     "FAYTH_MEMORY_PREFIXES", "FAYTH_STATUTE_CORE", "FAYTH_TOOLS", "FAYTH_PROJECT_INSTRUCTIONS",
     "FAYTH_SYSTEM_PROMPT", "FAYTH_SOP_REQUIRED", "FAYTH_GROOM_ESCALATION_CHECK",
     "FAYTH_GRAPH_ONLY",
+];
+
+/// Every `SNAPSHOT_VARS` name wave 4.8 retired from the bash seam call, resolved
+/// in-process instead (`main.rs`'s `merge_resolved_config`) — kept as its own list so a
+/// parity check can diff this crate's old and new answers key by key.
+pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
+    "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
+    "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
+    "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
+    "SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_THRASH_MINUTES",
+    "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
+    "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
+    "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",
+    "SPIRA_MEMORIES_CACHE_AGE", "SPIRA_AGENT",
+    "SPIRA_LIFECYCLE_ENFORCE",
+    "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
+    "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
+    "SPIRA_CLAIM_RETRY_DELAY_S",
+    // sp-1cdgq (landed after this bead branched) added SPIRA_SUMMON_JITTER to the bash
+    // SNAPSHOT_VARS list to fix a real bug: aeon_sh's own `conf.n(JITTER_ENV, ...)` fell
+    // back to its 20s default forever because this registry key (spira/conf.d's own —
+    // string-typed, no generated default, resolves empty unless set via the environment
+    // or the resolved config document) was never on the allowlist `_aeon_snapshot` was
+    // asked for. Superseded
+    // here rather than ported: resolve() already reads it correctly from either source
+    // (verified: env override and a toml `summon_jitter` field both reach it), so it
+    // belongs with every other registry key resolved in-process, not back in the bash
+    // seam's own arg list.
+    "SPIRA_SUMMON_JITTER",
 ];
 
 /// conf.sh's resolution, captured once (DESIGN.md §3).
@@ -258,29 +296,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// sp-1cdgq: SPIRA_SUMMON_JITTER must be in SNAPSHOT_VARS, or no value a caller sets —
-    /// env, the resolved config file, a test's own override — ever reaches `Conf` at all: `Conf::new`
-    /// builds its map from `snap.vars` (the allowlisted subset `_aeon_snapshot` was asked
-    /// for), never from `snap.env` (the unfiltered `env -0` dump also on the wire). A knob
-    /// missing from this list is not "defaulted" — it is unreachable, silently, with no
-    /// error anywhere: `conf.n(JITTER_ENV, JITTER_DEFAULT)` falls back to 20 even when the
-    /// caller is certain it set it to 0 (test-thrash-teardown.sh's Case 3, seen red: the
-    /// suite's own `export SPIRA_SUMMON_JITTER=0` in testlib.sh had no effect at all).
+    /// sp-1cdgq found SPIRA_SUMMON_JITTER unreachable because it was missing from
+    /// SNAPSHOT_VARS (this seam's own bash allowlist). Wave 4.8 moves the fix: the name
+    /// is deliberately NOT in SNAPSHOT_VARS any more (it is a `RETIRED_SNAPSHOT_VARS`
+    /// registry key now, resolved in-process — see that list's own doc), so the seam
+    /// call itself must no longer carry it; `conf::tests::merge_resolved_config_reaches_
+    /// a_retired_registry_key_env_can_still_override` (conf.rs) is the test that now
+    /// proves the end-to-end guarantee sp-1cdgq's own test proved for the bash path.
     #[test]
-    fn summon_jitter_env_var_reaches_the_snapshot() {
-        let dir = testkit::TempDir::new("aeon-seam-jitter");
-        let lib = dir.join("lib.sh");
-        std::fs::write(&lib, "READY_ARGS=()\nfayth_exclude() { :; }\n").unwrap();
-        std::fs::write(dir.join("b.fayth"), "FAYTH_LABELS=spira,plan\n").unwrap();
-        let mut orig = BTreeMap::new();
-        orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        orig.insert("SPIRA_SUMMON_JITTER".to_string(), "0".to_string());
-        let env = Env::new(orig, BTreeMap::new());
-        let seam = BashSeam { lib: lib.clone(), fayth_file: dir.join("b.fayth"), fayth: "builder".into(), env: &env };
-        let vars: Vec<String> = SNAPSHOT_VARS.iter().map(|s| s.to_string()).collect();
-        let o = seam.call("_aeon_snapshot", &vars);
-        let s = parse_snapshot(&o.stdout).unwrap();
-        assert_eq!(s.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str), Some("0"), "SPIRA_SUMMON_JITTER is set in the environment but SNAPSHOT_VARS drops it before Conf ever sees it");
-        let _ = std::fs::remove_dir_all(&dir);
+    fn summon_jitter_is_no_longer_asked_of_the_bash_seam() {
+        assert!(
+            !SNAPSHOT_VARS.contains(&"SPIRA_SUMMON_JITTER"),
+            "SPIRA_SUMMON_JITTER is resolved in-process now (RETIRED_SNAPSHOT_VARS) — asking the bash seam for it too would just mean two sources of truth"
+        );
+        assert!(RETIRED_SNAPSHOT_VARS.contains(&"SPIRA_SUMMON_JITTER"));
     }
 }

@@ -5,9 +5,42 @@
 //! fixture or a fake binary already on `PATH` for the bash suites works unmodified against
 //! this binary (parity evidence in the delivery report).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// The keys `resolve()` computes (or this process itself derives) that [`bootstrap_config`]
+/// deliberately never sets into THIS process's own environment, even though the `compgen
+/// -v` dump it replaces used to (wave4-decomposition.md row (b): "Hazard: this exports
+/// SPIRA_HOME, SPIRA_REPO, SPIRA_REPO_MAP and SPIRA_FAYTHS to every child cockpit-collect
+/// spawns. That is exactly what conf.sh forbids" — conf.sh's own comment: an inherited
+/// SPIRA_HOME/SPIRA_REPO is "the seam every test suite drives a fixture through", and
+/// letting it leak to a child that was just told, by argument, to source a DIFFERENT
+/// lib.sh (`lib_call`'s own `home` parameter) would have that child's nested conf.sh
+/// silently keep the parent's stale value instead of deriving its own from the file it
+/// was just pointed at). [`SPIRA_MAX_AEONS`] joins this set for a narrower reason: it is
+/// host policy, never exported by conf.sh itself (`law-gates-run-in-a-clean-environment`'s
+/// own scar is `SPIRA_FAYTHS` leaking into a test's own sentinel the same way).
+///
+/// Anything this crate still needs from this set is read through [`Boot`]/[`boot_repo_registry_inputs`]/
+/// [`max_aeons`], never `std::env::var`.
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+
+/// [`bootstrap_config`]'s own answer, cached in-process (never in `std::env`) for the two
+/// call sites that still need a [`NEVER_EXPORTED`] value: [`repo_registry`] and
+/// [`max_aeons`]. Unset outside `main()` — every unit test that exercises those two
+/// functions directly (never calling `bootstrap_config` first) falls back to reading this
+/// process's own environment exactly as it did before this bead, so no test needed
+/// rewiring for a hazard that only matters once this binary starts spawning children.
+struct Boot {
+    repo_registry_env: BTreeMap<String, String>,
+    repo_map_text: Option<String>,
+    max_aeons: String,
+}
+
+static BOOT: OnceLock<Boot> = OnceLock::new();
 
 pub fn now() -> i64 {
     SystemTime::now()
@@ -36,63 +69,111 @@ pub fn home_dir() -> PathBuf {
 /// process's environment. (`config-fence` flags naming the config file's name even in a
 /// comment — this crate never opens it, only benefits from `conf.sh`'s own resolution, so
 /// the file is described rather than named here.) Every `*_keys` function then read those as plain `${VAR:-...}`,
-/// for free. This binary calls `lib.sh` functions one at a time through [`lib_call`], each
-/// in its own short-lived bash subprocess — so without this bootstrap, none of that
-/// cascade ever reaches THIS process's environment, and every config-default read here
-/// would see an unset var where the bash saw a resolved one (found via parity testing
-/// against the retired bash: `statute_keys`'s `SP_STATUTE_PAGE_N` read `?` here and a real
-/// count there, because `SPIRA_WIKI` was never resolved).
+/// for free.
 ///
-/// Runs once at process start (`main()`, before any subcommand): source `lib.sh` in a
-/// bash subprocess that inherits this process's own environment, dump the result, and
-/// import every key back. `conf.sh`'s own `${VAR:=default}` pattern means a variable this
-/// process already set (explicitly, by a caller or a test) is never overwritten — the
-/// subprocess sees it as already-set and leaves it alone — so this only ever *adds*
-/// resolved defaults, never overrides an explicit value. Best-effort: a missing `lib.sh`,
-/// an unreadable config, or any other failure leaves the environment exactly as it was
-/// (the same as every `lib_call` already tolerates a bash failure returning `None`).
+/// UNTIL WAVE 4.8, this ran a `bash -c '. lib.sh; compgen -v ...'` subprocess once at
+/// startup and imported its dump — a re-import seam: conf.sh's own resolution had already
+/// moved to `spira_config::resolve()` (sp-eekjm/sp-ubcgo), so this was shelling out purely
+/// to re-derive, in bash, values a Rust call can compute directly. It also leaked
+/// [`NEVER_EXPORTED`] to this process's own environment, and so to every child this crate
+/// spawns (`lib_call`'s own nested `. lib.sh`, `bd`, `git`) — exactly the hazard that set's
+/// own doc explains.
+///
+/// NOW: [`spira_config::resolve::resolve_for_process`] in-process, using this crate's own
+/// [`home_dir`] and [`spira_config::resolve::derive_home_repo`]/[`derive_repo_filesystem`]
+/// for the two per-copy facts `resolve()` itself never self-locates. Every OTHER resolved
+/// key is imported into this process's own environment exactly as before (`conf.sh`'s own
+/// `${VAR:=default}` pattern means a variable this process already set — explicitly, by a
+/// caller or a test — is never overwritten, so this only ever *adds* resolved defaults,
+/// never overrides an explicit value); [`NEVER_EXPORTED`] keys are cached in [`BOOT`]
+/// instead, read back only by [`repo_registry`] and [`max_aeons`]. Best-effort: a missing
+/// config document/registry or any other resolution failure leaves the environment
+/// exactly as it was (the same as every `lib_call` already tolerates a bash failure
+/// returning `None`).
 pub fn bootstrap_config() {
-    // `env -0` alone is not enough: `conf.sh` sets most of `SPIRA_CONF_KEYS` via a plain
-    // `: "${VAR:=default}"`, with NO `export` (only a named subset — `SPIRA_WIKI`,
-    // `SPIRA_ASK_LABEL`, `SPIRA_CI_PARK_MAX`, about 70 of the ~230 keys — ever gets
-    // exported; `SPIRA_QUEUE_BATCH_MAX` and most queue/suite/batch keys do not). Those
-    // reach `cockpit.sh`'s own code anyway because sourcing (`.`) shares the same shell's
-    // variable table — no export needed for that. `compgen -v` + indirect expansion
-    // (`${!_v}`) dumps every shell variable, exported or not, so this binary's `std::env`
-    // sees the same values `cockpit.sh`'s bash code did, not only the ones bash would have
-    // handed to a grandchild process.
-    const SKIP: &str = "_|_v|PWD|OLDPWD|SHLVL|IFS|PS1|PS2|PS4|PROMPT_COMMAND|GROUPS|HOSTNAME|HOSTTYPE|MACHTYPE|OSTYPE|RANDOM|SECONDS|UID|EUID|PPID|LINENO|OPTIND|SHELLOPTS|PIPESTATUS|FUNCNAME|BASHPID|BASH|BASHOPTS|COMP_WORDBREAKS|BASH_ARGC|BASH_ARGV|BASH_LINENO|BASH_SOURCE|BASH_VERSINFO|BASH_VERSION|BASH_SUBSHELL|BASH_COMMAND";
-    const SNIPPET: &str = r#"set -uo pipefail
-. "$1/lib.sh" >/dev/null 2>&1 || exit 96
-set +u
-for _v in $(compgen -v); do
-    case "|$2|" in *"|$_v|"*) continue ;; esac
-    printf '%s\0' "${_v}=${!_v}" 2>/dev/null
-done
-"#;
     let home = home_dir();
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(SNIPPET)
-        .arg("cockpit-collect-bootstrap")
-        .arg(&home)
-        .arg(SKIP)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output();
-    let Ok(out) = out else { return };
-    if !out.status.success() {
-        return;
+    let env_map: BTreeMap<String, String> = std::env::vars().collect();
+    let repo_derived = spira_config::resolve::derive_repo_filesystem(&home, &env_map);
+    let repo = env_map
+        .get("SPIRA_REPO")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| repo_derived.clone());
+
+    let home_repo_default = env_map.get("SPIRA_HOME").filter(|s| !s.is_empty()).cloned().unwrap_or_else(|| home.to_string_lossy().into_owned());
+    let mut repo_registry_env = env_map.clone();
+    repo_registry_env.insert("SPIRA_HOME".into(), home_repo_default);
+    repo_registry_env.insert("SPIRA_REPO".into(), repo.to_string_lossy().into_owned());
+    repo_registry_env.insert("SPIRA_REPO_DERIVED".into(), repo_derived.to_string_lossy().into_owned());
+
+    let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &env_map).ok();
+
+    let map_text = resolved
+        .as_ref()
+        .and_then(|r| {
+            let p = r.get("SPIRA_REPO_MAP");
+            (!p.is_empty()).then(|| p.to_string())
+        })
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    let max_aeons = resolved.as_ref().map(|r| r.get("SPIRA_MAX_AEONS").to_string()).unwrap_or_default();
+    if let Some(r) = &resolved {
+        repo_registry_env.insert("SPIRA_HOME_REPO".into(), r.get("SPIRA_HOME_REPO").to_string());
+        repo_registry_env.insert("SPIRA_REPO_MAP".into(), r.get("SPIRA_REPO_MAP").to_string());
     }
-    for entry in out.stdout.split(|b| *b == 0) {
-        if entry.is_empty() {
-            continue;
-        }
-        let Ok(s) = std::str::from_utf8(entry) else { continue };
-        let Some((k, v)) = s.split_once('=') else { continue };
-        if std::env::var_os(k).is_none() {
-            std::env::set_var(k, v);
-        }
+    let _ = BOOT.set(Boot { repo_registry_env, repo_map_text: map_text, max_aeons });
+
+    let Some(resolved) = resolved else { return };
+    for (k, v) in importable(&resolved, &env_map) {
+        std::env::set_var(k, v);
+    }
+}
+
+/// The pure core of [`bootstrap_config`]'s import rule — every resolved key EXCEPT
+/// [`NEVER_EXPORTED`] and one already present in `already_set` (conf.sh's own
+/// `${VAR:=default}` pattern: a variable this process already had, explicitly, is never
+/// overwritten). Split out as a `BTreeMap`-in-`BTreeMap`-out function, rather than inlined
+/// into a loop over live `std::env` calls, so a unit test can check the rule itself without
+/// mutating this process's real environment.
+fn importable(resolved: &spira_config::resolve::Resolved, already_set: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    resolved
+        .values
+        .iter()
+        .filter(|(k, _)| !NEVER_EXPORTED.contains(&k.as_str()))
+        .filter(|(k, _)| !already_set.contains_key(k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// The repo registry (`spira_config::repos`, sp-37rmg "wave 4.11") — [`Boot`]'s cached
+/// answer, or, for a unit test that exercises this function without ever calling
+/// [`bootstrap_config`], this process's own environment, exactly as this read it before
+/// this bead (see [`BOOT`]'s own doc). Replaces four of this crate's own `lib_call` round
+/// trips (one bash subprocess each) with one file read — the repo registry is the
+/// most-called family in the whole wave4 decomposition.
+pub fn repo_registry() -> spira_config::repos::Registry {
+    let home = home_dir();
+    match BOOT.get() {
+        // `Boot.repo_registry_env` already carries all four registry keys, correctly
+        // resolved by `bootstrap_config` (which ran once, in-process, via
+        // `resolve_for_process` — no bash at all) — `Registry::new` here is safe
+        // (`#[doc(hidden)]`, test-only elsewhere) only because this specific caller
+        // supplies an already-complete snapshot, not a bare environment.
+        Some(b) => spira_config::repos::Registry::new(b.repo_map_text.as_deref(), &b.repo_registry_env, &home),
+        // Never ran bootstrap_config (a unit test exercising this function alone):
+        // Registry::from_env resolves the four keys in-process itself, the same one
+        // production door every other crate uses now (sp-k6lku, following the
+        // structural fix for sp-z3eyk).
+        None => spira_config::repos::Registry::from_env(std::env::vars().collect(), &home),
+    }
+}
+
+/// `SPIRA_MAX_AEONS`, from [`Boot`] when [`bootstrap_config`] has run, else this process's
+/// own environment (unit tests of [`crate::probes::slots_keys`] never call
+/// `bootstrap_config`; see [`BOOT`]'s own doc).
+pub fn max_aeons() -> String {
+    match BOOT.get() {
+        Some(b) => b.max_aeons.clone(),
+        None => std::env::var("SPIRA_MAX_AEONS").unwrap_or_default(),
     }
 }
 
@@ -139,7 +220,7 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
 
-    let mut attempt = 1;
+    let mut attempt: u32 = 1;
     loop {
         let out = Command::new("timeout")
             .arg(&timeout_s)
@@ -157,7 +238,10 @@ pub fn bdq(args: &[&str]) -> Option<String> {
             return Some(String::from_utf8_lossy(&out.stdout).into_owned());
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if attempt >= tries || !stderr.contains("invalid connection") {
+        let rc = out.status.code().unwrap_or(1);
+        // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the same retry
+        // decision bdq's own binary makes, rather than a second copy of it here.
+        if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
             return None;
         }
         attempt += 1;
@@ -165,27 +249,14 @@ pub fn bdq(args: &[&str]) -> Option<String> {
 }
 
 /// `json_only`: `sed -n '/^[[{]/,$p'` — drop any banner/warning lines a wrapper printed to
-/// stdout before the first line that actually starts a JSON value.
+/// stdout before the first line that actually starts a JSON value. Collapsed onto
+/// `bead::bdq::json_only` (sp-pwmlj, wave 4.15): this crate's own copy tolerated leading
+/// whitespace before the `[`/`{` (`line.trim_start()` then `starts_with`), which `sed -n
+/// '/^[[{]/,$p'` — and `bdq`'s own fence — do not; an indented JSON-looking line would have
+/// been treated as the payload start here and correctly skipped by the real `bdq`/`bdjson`,
+/// a real divergence this collapse fixes rather than a feature to keep.
 pub fn json_only(s: &str) -> &str {
-    let mut started = None;
-    for (i, line) in s.split('\n').enumerate() {
-        let t = line.trim_start();
-        if t.starts_with('[') || t.starts_with('{') {
-            started = Some(i);
-            break;
-        }
-    }
-    match started {
-        None => "",
-        Some(i) => {
-            let byte_off: usize = s
-                .split('\n')
-                .take(i)
-                .map(|l| l.len() + 1)
-                .sum();
-            &s[byte_off..]
-        }
-    }
+    bead::bdq::json_only(s)
 }
 
 /// `bdjson <args>` == `bdq <args> --json 2>/dev/null | json_only`.
@@ -208,23 +279,6 @@ pub fn bd_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
         serde_json::Value::Array(a) => a,
         other => vec![other],
     })
-}
-
-/// The repo registry (`spira_config::repos`, sp-37rmg "wave 4.11"), built in-process from
-/// THIS process's own environment — safe only because [`bootstrap_config`] has already
-/// imported every shell variable `conf.sh`/`lib.sh` would have resolved (`SPIRA_HOME_REPO`,
-/// `SPIRA_REPO`, `SPIRA_REPO_DERIVED`, `SPIRA_REPO_MAP`), exactly as `spira_repos`/
-/// `repo_root`/`repo_land`/`spira_home_repo` read them in bash. Replaces four of this
-/// crate's own `lib_call` round trips (one bash subprocess each, previously) with one file
-/// read — the repo registry is the most-called family in the whole wave4 decomposition.
-pub fn repo_registry() -> spira_config::repos::Registry {
-    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-    let home = home_dir();
-    let map_text = env_map
-        .get("SPIRA_REPO_MAP")
-        .filter(|p| !p.is_empty())
-        .and_then(|p| std::fs::read_to_string(p).ok());
-    spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &home)
 }
 
 /// Generic bridge to a `lib.sh` function, the same seam `gate-run`'s `Real` uses for
@@ -423,6 +477,13 @@ mod tests {
         assert_eq!(json_only(""), "");
     }
 
+    // Pins the sp-pwmlj collapse: before it, this function's own copy tolerated leading
+    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` (and bdq's real fence) do not.
+    #[test]
+    fn json_only_requires_column_one_same_as_the_real_fence() {
+        assert_eq!(json_only("  [1]\n"), "");
+    }
+
     #[test]
     fn bd_rows_distinguishes_refusal_from_empty_array() {
         assert!(bd_rows(None).is_none());
@@ -433,5 +494,82 @@ mod tests {
             bd_rows(Some(r#"{"id":"sp-1"}"#.to_string())).map(|v| v.len()),
             Some(1)
         );
+    }
+
+    fn resolved_with(pairs: &[(&str, &str)]) -> spira_config::resolve::Resolved {
+        spira_config::resolve::Resolved {
+            values: pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            warnings: vec![],
+        }
+    }
+
+    #[test]
+    fn importable_never_exports_the_forbidden_keys_even_when_resolved() {
+        let r = resolved_with(&[
+            ("SPIRA_HOME", "/should-never-leak"),
+            ("SPIRA_REPO", "/should-never-leak"),
+            ("SPIRA_REPO_DERIVED", "/should-never-leak"),
+            ("SPIRA_REPO_MAP", "/should-never-leak"),
+            ("SPIRA_FAYTHS", "builder groomer"),
+            ("SPIRA_MAX_AEONS", "12"),
+            ("SPIRA_WIKI", "/var/spira/wiki"),
+        ]);
+        let got = importable(&r, &BTreeMap::new());
+        for forbidden in NEVER_EXPORTED {
+            assert!(!got.contains_key(*forbidden), "{forbidden} leaked: {got:?}");
+        }
+        assert_eq!(got.get("SPIRA_WIKI"), Some(&"/var/spira/wiki".to_string()));
+    }
+
+    #[test]
+    fn importable_never_overrides_an_already_set_key() {
+        let r = resolved_with(&[("SPIRA_ASK_LABEL", "from-resolve")]);
+        let already = BTreeMap::from([("SPIRA_ASK_LABEL".to_string(), "from-a-test-fixture".to_string())]);
+        let got = importable(&r, &already);
+        assert!(!got.contains_key("SPIRA_ASK_LABEL"), "{got:?}");
+    }
+
+    #[test]
+    fn importable_passes_through_every_other_resolved_key() {
+        let r = resolved_with(&[("SPIRA_ASK_LABEL", "needs-ryan"), ("SPIRA_CI_PARK_MAX", "5")]);
+        let got = importable(&r, &BTreeMap::new());
+        assert_eq!(got.get("SPIRA_ASK_LABEL"), Some(&"needs-ryan".to_string()));
+        assert_eq!(got.get("SPIRA_CI_PARK_MAX"), Some(&"5".to_string()));
+    }
+
+    #[test]
+    fn repo_registry_reads_live_env_when_boot_never_ran() {
+        // BOOT is a process-global OnceLock that only bootstrap_config() (main() only,
+        // never a test) ever sets, so every test in this binary — this one included —
+        // takes the fallback branch. That fallback must still read a live SPIRA_REPO_MAP
+        // exactly as repo_registry() did before this bead (probes::unsent's own
+        // missing_run_dir_renders_unsent_zero_not_refusal depends on the same thing).
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
+        assert!(BOOT.get().is_none(), "a prior test in this binary must have called bootstrap_config()");
+        let dir = testkit::TempDir::new("cc-io-repo-registry-fallback");
+        let map = dir.join("repomap");
+        std::fs::write(&map, "x|/some/path\n").unwrap();
+        let saved = std::env::var("SPIRA_REPO_MAP").ok();
+        std::env::set_var("SPIRA_REPO_MAP", &map);
+        let reg = repo_registry();
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+            None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+        assert!(reg.map_present(), "repo_registry() did not pick up the live SPIRA_REPO_MAP");
+    }
+
+    #[test]
+    fn max_aeons_falls_back_to_live_env_when_boot_never_ran() {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
+        assert!(BOOT.get().is_none());
+        let saved = std::env::var("SPIRA_MAX_AEONS").ok();
+        std::env::set_var("SPIRA_MAX_AEONS", "7");
+        let got = max_aeons();
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_MAX_AEONS", v),
+            None => std::env::remove_var("SPIRA_MAX_AEONS"),
+        }
+        assert_eq!(got, "7");
     }
 }

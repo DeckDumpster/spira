@@ -1,7 +1,8 @@
-//! The impure boundary: lib.sh's capacity machinery (shared, cross-process state this
-//! crate must not re-derive — `aeon.sh` reads and writes the same pause file), the three
-//! external tools archivist.sh always shelled out to (`ctx-meter.sh`, `archive.sh`,
-//! `mail`), and the agent process itself. Production shells out for real; every test
+//! The impure boundary: the capacity pause (shared, cross-process state this crate must
+//! not re-derive — `aeon` reads and writes the same pause file, `aeon::capacity` is now
+//! both crates' shared implementation, wave 4.26), the three external tools archivist.sh
+//! always shelled out to (`ctx-meter.sh`, `archive.sh`, `mail`), and the agent process
+//! itself. Production shells out for real (except capacity, in-process now); every test
 //! in this crate runs against a recording `FakeSeam`.
 
 use std::collections::HashMap;
@@ -65,6 +66,23 @@ pub struct RealSeam {
 }
 
 impl RealSeam {
+    /// `SPIRA_CAPACITY_PAUSE`/`SPIRA_CAPACITY_BACKOFF`/`SPIRA_TRACE_MARK`: lib.sh
+    /// literals, not spira-config registry keys (wave4-decomposition.md (b)), so they
+    /// come from `conf()` (still a bash round trip — `RealSeam`'s wider "retire conf
+    /// re-import seams" is bead 8, not this one) with the same defaults lib.sh always
+    /// applied.
+    fn capacity_pause_file(&self, run: &str) -> PathBuf {
+        let v = self.conf("SPIRA_CAPACITY_PAUSE");
+        if v.is_empty() { PathBuf::from(run).join("capacity-pause") } else { PathBuf::from(v) }
+    }
+    fn capacity_backoff(&self) -> i64 {
+        self.conf("SPIRA_CAPACITY_BACKOFF").trim().parse().unwrap_or(900)
+    }
+    fn trace_mark(&self) -> String {
+        let v = self.conf("SPIRA_TRACE_MARK");
+        if v.is_empty() { "=== spira attempt".to_string() } else { v }
+    }
+
     fn lib_call(&self, body: &str) -> Result<(bool, String), String> {
         // Sourcing's own stdout goes to OUR stderr (never silently dropped — conf.sh's
         // deprecation warnings live here, e.g. SPIRA_CLAUDE) and is inherited so it
@@ -84,23 +102,34 @@ impl RealSeam {
 }
 
 impl Seam for RealSeam {
+    // wave 4.26: family K (capacity pause) moved to `aeon::capacity`, called in-process
+    // here instead of shelling into lib.sh. aeon is the probe's one owner now
+    // (wave4-decomposition.md (c)3) — this is a pure READ (never `capacity_probe_maybe`,
+    // never a file removal), so a refusal archivist's own session hits still gets
+    // recorded (`capacity_pause_set`, below — recording evidence is not probing), but the
+    // early-lift probe itself runs only from aeon's own call sites.
     fn capacity_paused(&self) -> Option<i64> {
-        // `capacity_paused`'s own exit code is absorbed by the `||`, so the answer lives
-        // in stdout ("PAUSED <n>" or "OK"), never in the script's exit status.
-        let (_, out) = self.lib_call(r#"capacity_paused && printf 'PAUSED %s' "$SPIRA_CAPACITY_LEFT" || printf 'OK'"#).ok()?;
-        out.strip_prefix("PAUSED ").and_then(|s| s.trim().parse().ok())
+        let run = self.conf("SPIRA_RUN");
+        let now = aeon::util::now_epoch();
+        match aeon::capacity::pause_state(&self.capacity_pause_file(&run)) {
+            aeon::capacity::PauseState::Paused { until, .. } if until > now => Some(until - now),
+            // Fail closed (never "OK"/None on an unreadable file — wave4-decomposition.md
+            // (c)3): treat as paused for at least one backoff interval, never as open.
+            aeon::capacity::PauseState::Unknown => Some(self.capacity_backoff()),
+            _ => None,
+        }
     }
 
     fn capacity_pause_set(&self, at: i64, why: &str) {
-        let _ = self.lib_call(&format!("capacity_pause_set {at} {}", shell_quote(why)));
+        let run = self.conf("SPIRA_RUN");
+        let pause = self.capacity_pause_file(&run);
+        let ledger = PathBuf::from(&run).join("aeon-ledger.log");
+        let now = aeon::util::now_epoch();
+        let _ = aeon::capacity::pause_set(&pause, &ledger, now, self.capacity_backoff(), at, why);
     }
 
     fn capacity_reset_at(&self, logfile: &Path) -> Option<i64> {
-        let (ok, out) = self.lib_call(&format!("capacity_reset_at {}", shell_quote(&logfile.to_string_lossy()))).ok()?;
-        if !ok {
-            return None;
-        }
-        out.trim().parse().ok()
+        aeon::capacity::reset_at(logfile, &self.trace_mark())
     }
 
     fn conf(&self, key: &str) -> String {
@@ -208,10 +237,6 @@ impl Seam for RealSeam {
             .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
             .unwrap_or_default()
     }
-}
-
-fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// `SPIRA_HOME` from the environment, else the first directory holding `lib.sh` among

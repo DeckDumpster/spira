@@ -117,7 +117,6 @@ impl Seam for FakeSeam {
         match func {
             "aeon_count" => Out::ok("0"),
             "fayth_free" => Out::ok("1"),
-            "_aeon_capacity_paused" => Out::fail(1, ""),
             "aeon_name_take" => Out::ok("ifrit"),
             "_aeon_rebase" => Out::ok(""),
             "_aeon_thrash_meta" => Out::ok("\n\n\n"),
@@ -139,7 +138,7 @@ impl Seam for FakeSeam {
                     Out::fail(1, "")
                 }
             }
-            "land_state" | "capacity_reset_at" | "lc_bead_verified" => Out::fail(1, ""),
+            "land_state" | "lc_bead_verified" => Out::fail(1, ""),
             "requeues_of" => Out::ok("1"),
             _ => Out::ok(""),
         }
@@ -376,11 +375,13 @@ fn halted_draining_and_paused_decline_in_order() {
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[3], "awake builder halted", "halted is checked before draining");
     let f2 = fx("paused");
-    let mut a = BTreeMap::new();
-    a.insert("_aeon_capacity_paused", Out::ok("321"));
-    let o = go(&f2, "spira,plan", &[], false, Mode::Claim, a, no_session());
+    // In-process now (wave 4.26): a real pause file replaces the old FakeSeam stub for
+    // `_aeon_capacity_paused`.
+    let now = crate::util::now_epoch();
+    std::fs::write(f2.run.join("capacity-pause"), format!("{} iso why\n", now + 321)).unwrap();
+    let o = go(&f2, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[1], "awake builder paused");
-    assert!(o.log.contains("out of capacity for another 321s — claiming nothing"));
+    assert!(o.log.contains("out of capacity for another 321s — claiming nothing"), "{}", o.log);
 }
 
 #[test]

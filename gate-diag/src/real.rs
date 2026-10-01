@@ -7,6 +7,37 @@ use std::path::{Path, PathBuf};
 
 pub struct Real;
 
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
+/// inside [`resolved_config`]'s own init, which must not call back into [`env`] (that
+/// would recurse into `resolved_config()` while it is still being built).
+fn raw_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read
+/// SPIRA_SUITE_TIMEOUT (and SPIRA_BATCH_TAIL_LINES) straight out of its own process
+/// environment, with no snapshot and no config document load at all (wave4-decomposition.md
+/// row (b) names gate-diag by file). `spira_config::resolve_for_process`, using `home` —
+/// the SAME `--home`/`SPIRA_HOME`/release-relative value `main.rs`'s own `run()` already
+/// resolved once and threads through every `World` call, never recomputed independently
+/// here (a `--home` override must reach this too) — and
+/// `spira_config::resolve::derive_home_repo`. Computed fresh each call rather than cached:
+/// [`Real::batch_tail_lines`]/[`Real::suite_timeout_default`] are each called exactly once
+/// per process, so there is no hot loop to amortise against, and a cache keyed on nothing
+/// would go stale the moment two different `home`s were ever in play (as two different
+/// test fixtures would be). A resolution failure yields an empty
+/// [`spira_config::resolve::Resolved`] — [`env`]'s own callers see exactly the behaviour
+/// this crate had before this bead, never a panic.
+fn env(home: &Path, name: &str) -> Option<String> {
+    raw_env(name).or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let repo = spira_config::resolve::derive_home_repo(home, &env_map);
+        let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map).unwrap_or_default();
+        let v = resolved.get(name);
+        (!v.is_empty()).then(|| v.to_string())
+    })
+}
+
 fn sorted_glob(dir: &Path, ext: &str) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let Ok(entries) = fs::read_dir(dir) else { return out };
@@ -101,16 +132,57 @@ impl World for Real {
         std::env::var_os("GITHUB_STEP_SUMMARY").filter(|v| !v.is_empty()).map(PathBuf::from)
     }
 
-    fn batch_tail_lines(&self) -> usize {
-        std::env::var("SPIRA_BATCH_TAIL_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(50)
+    fn batch_tail_lines(&self, home: &Path) -> usize {
+        env(home, "SPIRA_BATCH_TAIL_LINES").and_then(|v| v.parse().ok()).unwrap_or(50)
     }
 
-    fn suite_timeout_default(&self) -> u64 {
-        std::env::var("SPIRA_SUITE_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(600)
+    fn suite_timeout_default(&self, home: &Path) -> u64 {
+        env(home, "SPIRA_SUITE_TIMEOUT").and_then(|v| v.parse().ok()).unwrap_or(600)
     }
 
     fn print(&self, s: &str) {
         print!("{s}");
         let _ = std::io::stdout().flush();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the
+    // same hazard): `env()`'s own `resolve_for_process` discovers the config document from
+    // THIS PROCESS's real environment (SPIRA_TOML/HOME/XDG_CONFIG_HOME), never from `home`
+    // alone — this test takes a lock and pins SPIRA_TOML to a nonexistent path so it
+    // never depends on a real operator config document on the machine running this suite.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `home`, not any OTHER process-global state, decides which registry this reads —
+    /// `--home` reaches `env()` through it rather than a recomputed default.
+    #[test]
+    fn env_falls_back_to_the_registry_then_the_callers_default() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved = std::env::var("SPIRA_TOML").ok();
+        let dir = testkit::TempDir::new("gate-diag-real-env");
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_SUITE_TIMEOUT"),
+            "TYPE=u32\nGROUP=gate\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_SUITE_TIMEOUT:=600}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+
+        let got_timeout = env(&home, "SPIRA_SUITE_TIMEOUT");
+        let got_missing = env(&home, "SPIRA_NO_SUCH_KEY_AT_ALL_EVER");
+
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(got_timeout, Some("600".to_string()), "a registry default must reach env() without an env override");
+        assert_eq!(got_missing, None);
     }
 }

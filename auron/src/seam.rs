@@ -10,6 +10,27 @@
 //! no fayth of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
 //! aeon's, for the same reason: a bead body can be arbitrarily long and an argv has a
 //! kernel ceiling (law-payloads-go-on-stdin).
+//!
+//! NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+//! rejected, not overlooked). `_auron_bdq` has no Rust-side logic of its own to retire: it
+//! sources `lib.sh`, whose own `bdq`/`_bdq_check_*`/`json_only` are already one-line shims
+//! onto `bead::bdq` (sp-w3h16, wave 4.14), so every call through this seam already reaches
+//! the one real implementation — this file is in sp-pwmlj's scope as a bridge to verify,
+//! not a copy to fix.
+//!
+//! The hard blocker this used to have is gone: `main.rs` no longer needs this seam to
+//! resolve configuration at all (sp-mz7dn, wave 4.8, landed the same day as this bead —
+//! `_auron_snapshot` is retired outright, replaced by `spira_config::resolve_for_process`
+//! in-process, which this seam's own `FIXED` script no longer even lists in its allowlist).
+//! That resolution already carries everything `bead::bdq`'s create-time fences would need
+//! in-process (the repository map's fields, `SPIRA_ASK_LABEL`, `SPIRA_DB`). What is left on
+//! this seam is narrower than before: only `_auron_bdq` (the actual `bd` mutation —
+//! `bdops::create`/`update`/`close`/`label_*`) and `_auron_bead_reopen` (not yet ported,
+//! landstate withdrawal rules live in `lib.sh` only). Switching `bdops::create` et al. onto
+//! a direct `bdq`-binary call fed from `main.rs`'s already-resolved config is now a small,
+//! well-scoped follow-on rather than the exec-boundary hazard it would have been before
+//! sp-mz7dn — left to its own bead (`law-decompose-by-deliverable`) rather than folded into
+//! this one, since it touches `bdops.rs`'s construction, not just this seam.
 
 use std::path::PathBuf;
 
@@ -21,16 +42,12 @@ IFS= read -r -d '' __auron_fn || exit 96
 __auron_args=()
 while IFS= read -r -d '' __auron_a; do __auron_args+=("$__auron_a"); done
 case "$__auron_fn" in
-    _auron_bdq|_auron_bead_reopen|_auron_snapshot) ;;
+    _auron_bdq|_auron_bead_reopen) ;;
     *) printf 'auron seam: %s is not on the allowlist\n' "$__auron_fn" >&2; exit 97 ;;
 esac
 . "$__auron_lib" || exit 98
 _auron_bdq() { bdq "$@"; }
 _auron_bead_reopen() { bead_reopen "$@"; }
-# conf.sh's resolution, dumped whole: auron reads SPIRA_RUN, SPIRA_DB, SPIRA_REPO,
-# SPIRA_EXPORTER, SPIRA_SYSTEMCTL, SPIRA_INSTANCE, SPIRA_TZ, BD_TIMEOUT and PATH out of
-# this, exactly as auron.sh had them after sourcing lib.sh (and so conf.sh) itself.
-_auron_snapshot() { env -0; }
 "$__auron_fn" "${__auron_args[@]}"
 "#;
 
@@ -77,21 +94,6 @@ pub fn bead_reopen(seam: &dyn Seam, id: &str, cause: &str, note: &str) -> Out {
     seam.call("_auron_bead_reopen", &[id.to_string(), cause.to_string(), note.to_string()])
 }
 
-/// conf.sh's resolution (lib.sh + conf.sh sourced once, `env -0`), as a map.
-pub fn snapshot(seam: &dyn Seam) -> Result<std::collections::BTreeMap<String, String>, Out> {
-    let o = seam.call("_auron_snapshot", &[]);
-    if !o.success() {
-        return Err(o);
-    }
-    let mut env = std::collections::BTreeMap::new();
-    for rec in o.stdout.split('\0') {
-        if let Some((k, v)) = rec.split_once('=') {
-            env.insert(k.to_string(), v.to_string());
-        }
-    }
-    Ok(env)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,17 +125,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Wave 4.8 retired `_auron_snapshot`/`snapshot()`: it had exactly one caller
+    /// (main.rs), and that caller's need — conf.sh's resolution — moved to
+    /// `spira_config::resolve_for_process` in-process. The allowlist must refuse it
+    /// rather than silently accept a name nothing defines any more.
     #[test]
-    fn snapshot_captures_libsh_resolved_vars() {
-        let dir = testkit::TempDir::new("auron-seam-snap");
-        let lib = dir.join("lib.sh");
-        std::fs::write(&lib, "SPIRA_RUN=/resolved/run\nexport SPIRA_RUN\nSPIRA_DB=/resolved/db\nexport SPIRA_DB\n").unwrap();
-        let mut env = std::collections::BTreeMap::new();
-        env.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
-        let seam = BashSeam { lib, env: &env };
-        let snap = snapshot(&seam).unwrap();
-        assert_eq!(snap.get("SPIRA_RUN").map(|s| s.as_str()), Some("/resolved/run"));
-        assert_eq!(snap.get("SPIRA_DB").map(|s| s.as_str()), Some("/resolved/db"));
-        let _ = std::fs::remove_dir_all(&dir);
+    fn snapshot_is_off_the_allowlist() {
+        assert!(!FIXED.contains("_auron_snapshot"));
     }
 }

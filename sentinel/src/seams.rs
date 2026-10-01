@@ -20,19 +20,32 @@ pub fn script(body: &str) -> String {
 }
 
 /// S0 — the context probe. Read-only: the environment conf.sh resolved, the fixed list of
-/// lib.sh variables the binary needs, the roster, and (audit) the repositories. lib.sh's
-/// own chatter goes to stderr so stdout stays the NUL-separated record stream.
+/// lib.sh variables the binary needs, and the roster. lib.sh's own chatter goes to stderr
+/// so stdout stays the NUL-separated record stream.
+///
+/// UNTIL WAVE 4.8 this `@vars` section was `for _v in $(compgen -v SPIRA_); do ...`: every
+/// SPIRA_* shell variable, exported or not (conf.sh/lib.sh set many without exporting them
+/// — SPIRA_REPO, SPIRA_HOME, SPIRA_GH, the CPU quota — and `env -0` above sees only
+/// exported ones). That compgen dump is RETIRED (wave4-decomposition.md row (b),
+/// "sentinel PROBE @vars"): `crate::probe` (main.rs) now merges `spira_config::resolve()`'s
+/// own in-process answer into the parsed `Context.vars` after this script returns, instead
+/// of re-deriving the same values by shelling out a second time. `@vars` stays a section
+/// header (now carrying only `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE`, still lib.sh's
+/// own, not conf.sh's) rather than disappearing outright, so `Context::parse` and every
+/// existing fixture that names the section order keep working unchanged.
+///
+/// The repositories (audit's own need) are ALSO no longer this script's job (sp-k6lku,
+/// "wave 4.13"): once `main::probe` has merged the resolved config above, `Context.vars`
+/// carries `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` correctly
+/// resolved, and `main::resolve_repos` builds a `spira_config::repos::Registry` from that
+/// same snapshot in-process instead of this script shelling into `repo_root`/
+/// `spira_landrefs`/`repo_land_queued`/`spira_repos` (themselves, since sp-37rmg/sp-o88bx,
+/// lib.sh shims that only re-shelled into the `spira-config` binary) once per mapped
+/// repository.
 pub const PROBE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
 env -0
 printf '@vars\0'
-# EVERY SPIRA_* SHELL VARIABLE, EXPORTED OR NOT. conf.sh and lib.sh set many keys without
-# exporting them (SPIRA_REPO, SPIRA_HOME, SPIRA_GH, the CPU quota…),
-# and `env -0` above sees only exported ones — so a fixed list here silently dropped them and
-# the binary fell back to defaults.
-for _v in $(compgen -v SPIRA_); do
-    printf '%s=%s\0' "$_v" "${!_v:-}"
-done
 printf 'SPIRA_HOME_REPO_RESOLVED=%s\0' "$(spira_home_repo)"
 printf 'SPIRA_TOML_FILE=%s\0' "${SPIRA_TOML_FILE:-}"
 printf '@fayths\0'
@@ -43,27 +56,17 @@ printf '@partitions\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_partitions)
 printf '@chamber\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_names)
-if [ "${SENTINEL_PROBE_REPOS:-0}" = 1 ]; then
-    printf '@repos\0'
-    while IFS= read -r _r; do
-        [ -n "$_r" ] || continue
-        _root="$(repo_root "$_r" 2>/dev/null)" || _root=""
-        _refs=""
-        [ -n "$_root" ] && { _refs="$(spira_landrefs "$_root" 2>/dev/null)" || _refs=""; }
-        _q=0; repo_land_queued "$_r" && _q=1
-        printf '%s\t%s\t%s\t%s\0' "$_r" "$_root" "$_refs" "$_q"
-    done < <(spira_repos 2>/dev/null)
-fi
 printf '@end\0'
 "#;
 
-/// S1 — summon-only's gate: the world (halt/drain) and the account's capacity window.
-/// Exit 0 = go on; the seam logs its own reason for stopping.
+/// S1 — summon-only's gate: the world (halt/drain). Exit 0 = go on; the seam logs its own
+/// reason for stopping. The capacity window used to be checked here too
+/// (`capacity_paused`), but that call also ran `capacity_probe_maybe` and could delete
+/// the pause file — a second probe owner alongside aeon's own (wave4-decomposition.md
+/// (c)3: "if both callers' ports each probe, the cost doubles"). Wave 4.26 moves the
+/// capacity check to `summon.rs`'s own in-process read (`aeon::capacity::pause_state`,
+/// never mutating, never probing) right after this seam call returns.
 pub const SUMMON_GATE: &str = r#"world_gate fleet summon-only || exit 1
-if capacity_paused; then
-    log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"
-    exit 1
-fi
 exit 0"#;
 
 /// S2 — CHECK 7: the lane-then-pool summon loop under summon.lock.
@@ -112,10 +115,15 @@ mod tests {
         assert!(PROBE.contains("printf '@end\\0'"));
     }
 
-    /// The probe reports SPIRA_* variables lib.sh SETS BUT DOES NOT EXPORT: `env -0` alone
-    /// dropped SPIRA_REPO and SPIRA_GH, and the binary fell back to defaults.
+    /// Wave 4.8 retired the `compgen -v SPIRA_` dump: `@vars` now carries only
+    /// `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE` from the script itself —
+    /// `crate::probe` (main.rs) merges `spira_config::resolve()`'s own answer into
+    /// `Context.vars` afterward, in-process, rather than this script re-deriving it a
+    /// second time by shelling out. See `main.rs`'s own
+    /// `probe_merges_resolved_config_into_vars_without_shelling_a_second_time` for that
+    /// merge's own test.
     #[test]
-    fn probe_reports_unexported_spira_variables() {
+    fn vars_section_no_longer_dumps_the_whole_shell() {
         let d = testkit::TempDir::new("sentinel-probe");
         std::fs::write(
             d.join("lib.sh"),
@@ -131,8 +139,9 @@ mod tests {
             .unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let vars = out.split("@vars\0").nth(1).unwrap_or("");
-        assert!(vars.contains("SPIRA_REPO=/the/repo\0"), "{out:?}");
-        assert!(vars.contains("SPIRA_GH=/the/gh-app.sh\0"), "{out:?}");
+        assert!(vars.starts_with("SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE="), "{out:?}");
+        assert!(!vars.contains("SPIRA_REPO=/the/repo\0"), "the bash dump must no longer carry conf vars: {out:?}");
+        assert!(!vars.contains("SPIRA_GH=/the/gh-app.sh\0"), "{out:?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

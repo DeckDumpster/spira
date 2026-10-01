@@ -266,6 +266,9 @@ pub struct Cfg {
     pub roster_stamp: PathBuf,
     /// OFF mode's CHECK 2 protection label (the retired SPIRA_RECLAIM_SKIP_LABEL).
     pub reclaim_skip_label: String,
+    /// The capacity pause file (family K, wave 4.26 — owned by `aeon`; this is a pure
+    /// read, never a probe: `aeon::capacity::pause_state`).
+    pub capacity_pause: PathBuf,
     /// For the systemd-run --setenv lists: the raw values, "" when unset.
     pub raw: BTreeMap<String, String>,
 }
@@ -392,6 +395,7 @@ impl Cfg {
             roster_stamp: dir("SPIRA_ROSTER_WARN_STAMP", "roster-warn.stamp"),
             // literal-ok: conf.sh's default before sp-i2m7y retired the key
             reclaim_skip_label: or("SPIRA_RECLAIM_SKIP_LABEL", "spira-waiting-operator"),
+            capacity_pause: dir("SPIRA_CAPACITY_PAUSE", "capacity-pause"),
             raw,
             home,
         }

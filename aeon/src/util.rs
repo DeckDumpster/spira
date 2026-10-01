@@ -208,19 +208,11 @@ pub fn strip_bd_hints(text: &str) -> String {
         .join("\n")
 }
 
-/// `json_only`: drop anything before the first line starting with `[` or `{`.
+/// `json_only`: drop anything before the first line starting with `[` or `{`. Collapsed
+/// onto `bead::bdq::json_only` (sp-pwmlj, wave 4.15) — same logic, kept as a `String`-
+/// returning shim here only so this crate's many existing call sites need no change.
 pub fn json_only(text: &str) -> String {
-    let mut out = Vec::new();
-    let mut on = false;
-    for l in text.split_inclusive('\n') {
-        if !on && (l.starts_with('[') || l.starts_with('{')) {
-            on = true;
-        }
-        if on {
-            out.push(l);
-        }
-    }
-    out.concat()
+    bead::bdq::json_only(text).to_string()
 }
 
 /// Python's `round()` (half to even) of a float, as an integer.
