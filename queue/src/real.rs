@@ -1,6 +1,7 @@
 //! The ports against the host: git, bd, the lib.sh seam, the harness scripts, the forge,
 //! spira-lc, the config (spira-config library only), the clock, the environment, stdio.
 
+use std::collections::BTreeMap;
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io::{Read, Write};
@@ -209,6 +210,40 @@ fn lifecycle_env(c: &mut Command, lc_off: bool) {
     }
 }
 
+/// The registry's inputs — `SPIRA_REPO_MAP`, `SPIRA_HOME_REPO`, `SPIRA_REPO`,
+/// `SPIRA_REPO_DERIVED` — filled in when this process's environment lacks them. conf.sh
+/// resolves all four but exports none, and queue runs from a unit or a shell that never
+/// sourced it, so reading the bare environment found no map, no `spira` row, and no landing
+/// ref: every land-local refused (sp-z3eyk). Resolve them in-process exactly as conf.sh
+/// would; a key the environment already sets wins, and a failed resolve leaves the
+/// environment as it was, so the lookup still refuses rather than guessing.
+pub fn registry_env(mut env: BTreeMap<String, String>, home: &Path) -> BTreeMap<String, String> {
+    const KEYS: [&str; 4] = ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_REPO", "SPIRA_REPO_DERIVED"];
+    if KEYS.iter().all(|k| env.get(*k).is_some_and(|v| !v.is_empty())) {
+        return env;
+    }
+    let repo = env
+        .get("SPIRA_REPO")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    let doc = spira_config::locate::locate(None)
+        .found()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|t| spira_config::validate(&t).ok());
+    let conf_d = spira_config::resolve::default_conf_d(home);
+    let input = spira_config::resolve::ResolveInput { env: &env, home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d };
+    if let Ok(r) = spira_config::resolve::resolve(input) {
+        for k in KEYS {
+            if env.get(k).is_none_or(|v| v.is_empty()) && !r.get(k).is_empty() {
+                env.insert(k.to_string(), r.get(k).to_string());
+            }
+        }
+    }
+    env
+}
+
 // ------------------------------------------------------------------------------- lib seam
 
 pub struct RealLib {
@@ -227,7 +262,7 @@ impl RealLib {
     /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` — same inputs `aeon::conf::Conf`
     /// and `cockpit_collect::io::repo_registry` already use.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let env_map = registry_env(std::env::vars().collect(), &self.home);
         let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
         spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
     }
@@ -764,6 +799,35 @@ impl Emit for StdEmit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sp-z3eyk: conf.sh resolves the repo map but never exports it, so queue's own
+    /// environment lacks it. The registry must still find it, resolved in-process.
+    #[test]
+    fn registry_env_resolves_the_map_conf_sh_never_exports() {
+        let t = testkit::TempDir::new("queue-registry-env");
+        let xdg = t.path().join("xdg");
+        fs::create_dir_all(xdg.join("spira")).unwrap();
+        fs::write(xdg.join("spira/repo-map"), "spira|/nowhere|local|local/main\n").unwrap();
+        fs::write(xdg.join("spira/spira.conf"), "").unwrap();
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let mut env = BTreeMap::new();
+        env.insert("HOME".to_string(), t.path().display().to_string());
+        env.insert("XDG_CONFIG_HOME".to_string(), xdg.display().to_string());
+        env.insert("SPIRA_REPO".to_string(), t.path().display().to_string());
+        env.insert("SPIRA_CONF".to_string(), xdg.join("spira/spira.conf").display().to_string());
+        let out = registry_env(env, &home);
+        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(xdg.join("spira/repo-map").to_str().unwrap()), "{out:?}");
+    }
+
+    #[test]
+    fn registry_env_keeps_what_the_environment_already_sets() {
+        let mut env = BTreeMap::new();
+        for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0")] {
+            env.insert(k.to_string(), v.to_string());
+        }
+        let out = registry_env(env.clone(), Path::new("/nonexistent/spira"));
+        assert_eq!(out, env);
+    }
 
     #[test]
     fn utc_stamp_matches_date() {
