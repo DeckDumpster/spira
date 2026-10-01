@@ -129,6 +129,13 @@ impl Harness {
         self.root.join("spira").join(name)
     }
 
+    /// A compiled binary this release ships at `bin/<name>` — resolved the same way a suite
+    /// itself finds it (bare name, launcher PATH = `bin/` first). Used for identity hashing:
+    /// `read_file_bytes` on this path, not a hardcoded guess at where cargo put a debug build.
+    pub fn bin(&self, name: &str) -> PathBuf {
+        self.root.join("bin").join(name)
+    }
+
     /// SPIRA_TESTENV_HARNESS, else the nearest ancestor of the executable that holds
     /// [`crate::container::HARNESS_MARKER`] (a checkout's `target/<p>/testenv`, a release's
     /// `bin/testenv`).
@@ -913,7 +920,14 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     };
     let mut identity = deps.runner_identity.clone();
-    identity.extend(read_file_bytes(&deps.harness.script("suite-covers.sh")));
+    // suite-covers.sh is retired (wave 4.36, sp-bobsp): testlib.sh, testenv-guard.sh,
+    // plan-lint.sh, suite-coverage-json.sh and escape-classify.sh now read a suite's header
+    // by shelling out to the `suite-select` binary, which is NOT linked into this runner
+    // executable (unlike the in-process `select`/`gate`/`budget` paths, which are — hence
+    // `runner_identity` alone already covers those). A change to that binary changes what a
+    // suite observes without changing testenv's own exe bytes, so its bytes go into the
+    // identity explicitly, the same way suite-covers.sh's did before it.
+    identity.extend(read_file_bytes(&deps.harness.bin("suite-select")));
     let key_inputs = KeyInputs {
         repo_name: repo.name.clone(),
         tree: tree.clone(),

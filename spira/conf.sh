@@ -620,66 +620,19 @@ SPIRA_BD="$SPIRA_BD" SPIRA_DB="${SPIRA_DB:-}" SPIRA_RUN="${SPIRA_RUN:-}" \
 # defaults it was written to check.
 
 # --------------------------------------------------------------------------------------
-# THE EXIT STATUS THAT MEANS "NO VERDICT", as opposed to "failed". The landing gate withholds
-# a verdict when it cannot obtain the tree it judges in, and a caller that reads that as a red
-# gate charges a queue to the branch — reopening a finished bead as having "failed the landing
-# gate", three of which poison it and escalate to the operator over a lock it never contended
-# for. It is a shared constant rather than a literal in the gate and again in its caller,
-# because two programs that disagree about this number fail in exactly that direction.
+# THE GATE OUTCOME PROTOCOL (wave4-decomposition.md row C5; bead sp-wqj3o, "wave 4.10: small
+# conf.sh families") — SPIRA_GATE_NOVERDICT/SPIRA_GATE_BASEFAIL now come from the DERIVED
+# DEFAULTS eval below (`spira_config::resolve()`, which computes them as FIXED values —
+# never settable, by the same rule this comment used to state here: a configurable
+# NO_VERDICT could be set to 0, turning every withheld verdict into a pass). See that
+# module's doc for the four outcomes and why BASE_FAIL/NO_VERDICT may never reopen a bead or
+# charge an attempt (sp-p4rl, sp-d21, sp-io5j, sp-snyj, sp-1aex).
 #
-# DELIBERATELY NOT SETTABLE, and so not in SPIRA_CONF_KEYS: it is the protocol between the
-# gate and whoever runs it, not a fact about a host. A configurable one could be set to 0,
-# which would turn every withheld verdict into a pass. 75 is EX_TEMPFAIL — "try again" —
-# and is outside the range a gate command of its own would return.
-SPIRA_GATE_NOVERDICT=75
-
-# FOUR OUTCOMES, AND WHOSE FAULT EACH ONE IS. Every judgement in this harness returns exactly
-# one of these, and the caller's whole decision follows from which. Before this there were
-# two — 0 and "non-zero" — so a gate that timed out, a gate that could not find its own
-# worktree, and a repository whose suites fail on its own base were all delivered to the
-# landing pass as "this branch is broken". Each was then fixed by adding one more special
-# case at the caller, and the shape recurred five times in two days (sp-p4rl, sp-d21,
-# sp-io5j, sp-snyj, sp-1aex).
-#
-#   PASS       0   judged, and good                     -> land it
-#   FAIL       1   judged, and bad                      -> the BRANCH is at fault
-#   BASE_FAIL 76   the same suites fail on the base     -> the BASE is at fault
-#   NO_VERDICT 75  not judged at all                    -> the MACHINERY is at fault
-#
-# THE RULE THAT MATTERS: BASE_FAIL and NO_VERDICT may never reopen a bead and never charge an
-# attempt. Three charged attempts poison a bead and escalate to the operator, so a lock, a
-# timeout or somebody else's red main could — and repeatedly did — walk finished work to
-# poison and then report it as the branch's failure.
-#
-# A JUDGEMENT WITH NO EVIDENCE IS NO_VERDICT BY CONSTRUCTION. A gate killed at its deadline
-# printed an empty `tail -20`, which arrived as a bare "failed" with nothing in it to act on
-# (sp-p4rl); the one refusal path that printed nothing at all did the same (sp-io5j). FAIL
-# has to be able to show its work or it is not a FAIL.
-#
-# 76 is EX_UNAVAILABLE — "the service is not available" — which is precisely the claim: the
-# base this branch must merge into is not in a fit state to judge against.
-SPIRA_GATE_BASEFAIL=76
-
-# The names, for logs and for the bead notes a human reads. Keyed by status so that a caller
-# that has a number can always render the word, and one place decides the wording.
-spira_gate_outcome() {   # spira_gate_outcome <status> -> PASS|FAIL|BASE_FAIL|NO_VERDICT
-    case "${1:-}" in
-        0)  echo PASS ;;
-        75) echo NO_VERDICT ;;
-        76) echo BASE_FAIL ;;
-        *)  echo FAIL ;;
-    esac
-}
-
-# Does this outcome say the BRANCH is at fault? The one question every caller actually asks,
-# in one place, so that "may I reopen the bead and charge an attempt?" cannot drift between
-# the landing pass, the sentinel and any future caller.
-spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the branch is at fault
-    case "${1:-}" in
-        0|75|76) return 1 ;;
-        *)       return 0 ;;
-    esac
-}
+# spira_gate_outcome/spira_gate_blames_branch ARE RETIRED, NOT PORTED: yield.sh was their
+# only remaining bash caller (grepped across the whole tree twice) — every other caller
+# ported its own copy of this same logic to Rust already (gate::engine::outcome,
+# landing-pass::model::GateOutcome, queue::ops::simple::gate_outcome). yield.sh now carries
+# these two functions itself.
 
 # --------------------------------------------------------------------------------------
 # SPIRA_ID_PREFIX and every SPIRA_MAIL* key joined this list for sp-ooh1k: `mail` is a
@@ -781,81 +734,47 @@ export COCKPIT_BOTTOM_PCT \
 #
 # `spira_require` is cheap enough to call at the top of anything — it is a `command -v` —
 # and it is the only reason a fresh box gets a sentence instead of a shell error.
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config deps require`, which does the
+# `command -v` search and prints the same diagnostic itself, in-process. SPIRA_HOME and
+# SPIRA_CONF_FILE are passed on THIS ONE CALL'S OWN ENVIRONMENT, not by exporting them first
+# — same reasoning as every other `spira-config` call this file already makes.
 # --------------------------------------------------------------------------------------
 spira_require() {        # spira_require <bin> [<bin>...] -> 0, or 1 having named each one
-    local b missing=""
-    for b in "$@"; do command -v "$b" >/dev/null 2>&1 || missing="$missing $b"; done
-    [ -z "$missing" ] && return 0
-    for b in $missing; do
-        printf 'spira: required program not found on PATH: %s — %s\n' \
-            "$b" "$(spira_bin_purpose "$b")" >&2
-    done
-    printf 'spira: PATH is %s\n' "$PATH" >&2
-    printf 'spira: if it is installed elsewhere, set SPIRA_PATH in %s\n' \
-        "${SPIRA_CONF_FILE:-spira.conf}" >&2
-    return 1
+    SPIRA_HOME="$SPIRA_HOME" SPIRA_CONF_FILE="${SPIRA_CONF_FILE:-spira.conf}" \
+        spira-config deps require "$@"
 }
 
 # --------------------------------------------------------------------------------------
-# THE DEPENDENCY MANIFEST — three functions backed by deps.toml.
+# THE DEPENDENCY MANIFEST — four functions, now one-line shims onto `spira-config deps`
+# (wave4-decomposition.md row C7; bead sp-wqj3o, "wave 4.10: small conf.sh families").
 #
 #   spira_bin_purpose <bin>   what it is for
 #   spira_bin_tier    <bin>   runtime | optional | dev | operator
 #   spira_bin_absent  <bin>   what actually happens on a box without it
 #   spira_deps_list [tier]    emit all known program names, optionally filtered
 #
-# The data lives in deps.toml (same directory as this file), loaded once at
-# source time into per-program shell variables. doctor reads from these
-# rather than carrying its own hardcoded lists.
+# RETIRED RATHER THAN PORTED: the `python3 -c 'import tomllib'` subshell that used to parse
+# deps.toml into `_spira_dep_*` shell variables at EVERY source of this file, guarded by
+# `command -v python3` — a box without python3 silently lost this whole family. `spira-
+# config deps` (`spira-config/src/deps.rs`) parses deps.toml itself (the `toml` crate,
+# already a dependency of this binary) and reads it lazily, only when one of these four is
+# actually called, so nothing here depends on python3 at all now.
 # --------------------------------------------------------------------------------------
-
-_SPIRA_DEPS="$SPIRA_HOME/deps.toml"
-_spira_dep_names=""
-
-# Load all dep fields from deps.toml with one python3 call.
-if [ -f "$_SPIRA_DEPS" ] && command -v python3 >/dev/null 2>&1; then
-    _spira_deps_raw="$(python3 - "$_SPIRA_DEPS" 2>/dev/null <<'_DEPS_PY'
-import sys, tomllib, shlex
-with open(sys.argv[1], "rb") as f:
-    data = tomllib.load(f)
-names = []
-for d in data.get("dep", []):
-    n = d["name"].replace("-", "_")
-    names.append(d["name"])
-    print(f"_spira_dep_tier_{n}={shlex.quote(d.get('tier', 'optional'))}")
-    print(f"_spira_dep_purpose_{n}={shlex.quote(d.get('purpose', 'required by the harness'))}")
-    print(f"_spira_dep_absent_{n}={shlex.quote(d.get('absent', ''))}")
-print(f"_spira_dep_names={shlex.quote(' '.join(names))}")
-_DEPS_PY
-)"
-    while IFS= read -r _spira_deps_line; do
-        eval "$_spira_deps_line"
-    done <<< "$_spira_deps_raw"
-    unset _spira_deps_raw _spira_deps_line
-fi
-
-spira_deps_list() {
-    local _tier="${1:-}" _b
-    for _b in $_spira_dep_names; do
-        if [ -z "$_tier" ]; then
-            printf '%s\n' "$_b"
-        else
-            local _k="_spira_dep_tier_${_b//-/_}"
-            [ "${!_k:-optional}" = "$_tier" ] && printf '%s\n' "$_b"
-        fi
-    done
+spira_deps_list() {      # spira_deps_list [tier] -> every declared program, optionally filtered
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps list "$@"
 }
 
-spira_bin_tier() {
-    local _k="_spira_dep_tier_${1//-/_}"; echo "${!_k:-optional}"
+spira_bin_tier() {        # spira_bin_tier <bin> -> its deps.toml tier, or 'optional'
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps tier "$1"
 }
 
-spira_bin_purpose() {
-    local _k="_spira_dep_purpose_${1//-/_}"; echo "${!_k:-required by the harness}"
+spira_bin_purpose() {     # spira_bin_purpose <bin> -> its deps.toml purpose, or the fallback sentence
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps purpose "$1"
 }
 
-spira_bin_absent() {
-    local _k="_spira_dep_absent_${1//-/_}"; echo "${!_k:-}"
+spira_bin_absent() {      # spira_bin_absent <bin> -> what happens on a box without it, or empty
+    SPIRA_HOME="$SPIRA_HOME" spira-config deps absent "$1"
 }
 
 # watch_unit_name <watcher-name> -> the installed systemd unit name for a daemon watcher.
@@ -866,7 +785,10 @@ spira_bin_absent() {
 # returns 'inactive', so a stopped watcher and a running watcher are indistinguishable.
 # Every caller that queries or restarts a watcher unit goes through this function so the two
 # cannot drift.
-watch_unit_name() { printf 'spira-watch-%s-%s.service' "$1" "${SPIRA_INSTANCE:-prod}"; }
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config unit --watch` (pure string
+# formatting in Rust now; see spira-config/src/unit.rs — no systemctl call either side).
+watch_unit_name() { SPIRA_INSTANCE="${SPIRA_INSTANCE:-}" spira-config unit --watch "$1"; }
 
 # spira_unit <base> [service|timer] -> the unit name for this installation.
 # Tries the instance-qualified form first (spira-<base>-<instance>.<type>); if that
@@ -877,20 +799,14 @@ watch_unit_name() { printf 'spira-watch-%s-%s.service' "$1" "${SPIRA_INSTANCE:-p
 #
 # This is the same resolution the TIMER_BASES loop in world.sh uses, extracted so that
 # every caller agrees on which name to address rather than each hard-coding one form.
+#
+# WAVE 4.10 (sp-wqj3o): one-line shim onto `spira-config unit`, which runs the same
+# `systemctl --user is-enabled|is-active` queries in-process (spira-config/src/unit.rs).
+# cockpit-collect, the one in-process Rust caller, calls that module directly rather than
+# through this shim or a bash bridge (its own `unit_active_key`).
 spira_unit() {
-    local base="$1" t="${2:-service}"
-    local SC="${SPIRA_SYSTEMCTL:-systemctl}"
-    local inst="spira-${base}${SPIRA_INSTANCE:+-$SPIRA_INSTANCE}.${t}"
-    local plain="spira-${base}.${t}"
-    if "$SC" --user is-enabled "$inst" >/dev/null 2>&1 ||
-       "$SC" --user is-active  "$inst" >/dev/null 2>&1; then
-        printf '%s' "$inst"
-    elif "$SC" --user is-enabled "$plain" >/dev/null 2>&1 ||
-         "$SC" --user is-active  "$plain" >/dev/null 2>&1; then
-        printf '%s' "$plain"
-    else
-        printf '?'
-    fi
+    SPIRA_INSTANCE="${SPIRA_INSTANCE:-}" SPIRA_SYSTEMCTL="${SPIRA_SYSTEMCTL:-}" \
+        spira-config unit "$1" "${2:-service}"
 }
 
 # conf_changed <path> <mtime0> -> 0 if <path>'s mtime now differs from <mtime0>, 1 otherwise.
