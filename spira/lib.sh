@@ -6122,8 +6122,18 @@ spira_holder_witnesses() {
 # salvage <label> <worktree-path> -> 0 saved or nothing to save. Ported to Rust (sp-9envm);
 # see `sending::reap::salvage` for the untracked-file-by-content and timestamped-filename
 # rationale. $SALVAGED is dropped: nothing outside this file ever read it.
+SALVAGED=""
 salvage() {
-    sending salvage "$1" "$2"
+    SALVAGED=""
+    local _out _rc
+    _out="$(sending salvage "$1" "$2")"; _rc=$?
+    # `sending salvage` prints lib.sh's own old line verbatim on success-with-content
+    # ("  salvaged uncommitted changes to <path>"), nothing when there was nothing to
+    # save. $SALVAGED is kept for spira-world's slay, the one caller that reads it.
+    case "$_out" in
+        *"salvaged uncommitted changes to "*) SALVAGED="${_out#*salvaged uncommitted changes to }" ;;
+    esac
+    return "$_rc"
 }
 
 # spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove. Ported
