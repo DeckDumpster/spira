@@ -33,7 +33,7 @@ mod tests;
 
 use std::path::{Path, PathBuf};
 
-use cfg::{lifecycle_enforce, Context};
+use cfg::{lifecycle_enforce, Context, Repo};
 use host::{Clock, Host, Io, RealClock, RealRunner, RealSink, Runner, Spec};
 use pass::{Mode, Sentinel};
 
@@ -54,18 +54,18 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
     .map(|c| c.canonicalize().unwrap_or(c))
 }
 
-/// S0 — the context probe, run with this process's own environment.
+/// S0 — the context probe, run with this process's own environment. `repos` (audit's own
+/// need, CHECK5) no longer widens the bash script (sp-k6lku, "wave 4.13") — it now gates
+/// [`resolve_repos`], which reads the probe's own `@vars` section (already every `SPIRA_*`
+/// key, exported or not) to build a `spira_config::repos::Registry` in-process.
 pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String> {
-    let mut s = Spec::args_owned(
+    let s = Spec::args_owned(
         "bash",
         vec!["-c".into(), seams::PROBE.into(), "sentinel-probe".into()],
     )
     .env("SENTINEL_LIB", home.join("lib.sh").to_string_lossy())
     .out(Io::Capture)
     .err(Io::Inherit);
-    if repos {
-        s = s.env("SENTINEL_PROBE_REPOS", "1");
-    }
     let o = r.run(&s);
     if !o.ok() {
         return Err(format!(
@@ -74,7 +74,33 @@ pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String
             home.join("lib.sh").display()
         ));
     }
-    Context::parse(o.stdout.as_bytes())
+    let mut ctx = Context::parse(o.stdout.as_bytes())?;
+    if repos {
+        ctx.repos = resolve_repos(&ctx.vars, home);
+    }
+    Ok(ctx)
+}
+
+/// `spira_repos` (every mapped repository, home first), then per repository `repo_root`/
+/// `spira_landrefs`/`repo_land_queued` — in-process via `spira_config::repos` instead of
+/// the bash `@repos` block this replaced (sp-k6lku, "wave 4.13"). `vars` is the probe's own
+/// `@vars` section: `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`
+/// travel through it already, so this needs no seam call of its own.
+fn resolve_repos(vars: &std::collections::BTreeMap<String, String>, home: &Path) -> Vec<Repo> {
+    let map_text = vars.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+    let reg = spira_config::repos::Registry::new(map_text.as_deref(), vars, home);
+    reg.all()
+        .into_iter()
+        .map(|name| {
+            let root = reg.root(&name);
+            let landrefs = root
+                .as_deref()
+                .and_then(|r| spira_config::repos::landrefs(&reg, r))
+                .map(|(base, local)| std::iter::once(base).chain(local).collect())
+                .unwrap_or_default();
+            Repo { name: name.clone(), root, landrefs, queued: reg.land_queued(&name) }
+        })
+        .collect()
 }
 
 fn hostname() -> String {

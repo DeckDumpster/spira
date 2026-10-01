@@ -20,8 +20,14 @@ pub fn script(body: &str) -> String {
 }
 
 /// S0 — the context probe. Read-only: the environment conf.sh resolved, the fixed list of
-/// lib.sh variables the binary needs, the roster, and (audit) the repositories. lib.sh's
-/// own chatter goes to stderr so stdout stays the NUL-separated record stream.
+/// lib.sh variables the binary needs, and the roster. lib.sh's own chatter goes to stderr
+/// so stdout stays the NUL-separated record stream. The repositories (audit's own need) are
+/// no longer this script's job (sp-k6lku, "wave 4.13"): `@vars` already carries every
+/// `SPIRA_*` key — `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`
+/// included — so `main::probe` builds a `spira_config::repos::Registry` from that same
+/// snapshot in-process instead of this script shelling into `repo_root`/`spira_landrefs`/
+/// `repo_land_queued`/`spira_repos` (themselves, since sp-37rmg/sp-o88bx, lib.sh shims that
+/// only re-shelled into the `spira-config` binary) once per mapped repository.
 pub const PROBE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
 env -0
@@ -43,17 +49,6 @@ printf '@partitions\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_partitions)
 printf '@chamber\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_names)
-if [ "${SENTINEL_PROBE_REPOS:-0}" = 1 ]; then
-    printf '@repos\0'
-    while IFS= read -r _r; do
-        [ -n "$_r" ] || continue
-        _root="$(repo_root "$_r" 2>/dev/null)" || _root=""
-        _refs=""
-        [ -n "$_root" ] && { _refs="$(spira_landrefs "$_root" 2>/dev/null)" || _refs=""; }
-        _q=0; repo_land_queued "$_r" && _q=1
-        printf '%s\t%s\t%s\t%s\0' "$_r" "$_root" "$_refs" "$_q"
-    done < <(spira_repos 2>/dev/null)
-fi
 printf '@end\0'
 "#;
 
