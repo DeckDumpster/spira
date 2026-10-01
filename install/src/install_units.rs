@@ -13,6 +13,7 @@ use std::fs;
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::process::Command;
 
 /// What the caller must supply beyond the manifest and host values: the control-plane
 /// suspension predicate (`ctrl.sh`, read once by the caller) and whether the world is halted.
@@ -123,11 +124,34 @@ pub fn diff(ctx: &Ctx) -> Result<Vec<String>, String> {
         let dest = ctx.unit_dir.join(&inst);
         match fs::read_to_string(&dest) {
             Err(_) => lines.push(format!("MISSING  {inst} (not installed)")),
-            Ok(installed) if installed != text => lines.push(format!("DIFFERS  {inst}")),
+            Ok(installed) if installed != text => {
+                lines.push(format!("DIFFERS  {inst}"));
+                lines.extend(unified_diff(&text, &dest));
+            }
             Ok(_) => {}
         }
     }
     Ok(lines)
+}
+
+/// `diff -u <rendered> <installed>`, indented four spaces — systemd/install.sh's own
+/// `diff -u "$TMP/$inst" "$DEST/$inst" | sed 's/^/    /'`, dropped by this crate's rewrite
+/// (sp-31dm0): `--diff` reported which unit differed but never what changed, so an operator
+/// staring at "DIFFERS some.service" had to go find both files and diff them by hand.
+/// Caught live by testenv's test-unit-drift.sh (sp-al35q). Best-effort: a `diff` failure
+/// (binary missing, write failure) is swallowed — the bare DIFFERS line above already said
+/// the one thing that must never be silent.
+fn unified_diff(rendered: &str, installed_path: &Path) -> Vec<String> {
+    let tmp = std::env::temp_dir().join(format!("units-install-diff-{}-{}", std::process::id(), installed_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()));
+    if fs::write(&tmp, rendered).is_err() {
+        return Vec::new();
+    }
+    let out = Command::new("diff").arg("-u").arg(&tmp).arg(installed_path).output();
+    let _ = fs::remove_file(&tmp);
+    match out {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).lines().map(|l| format!("    {l}")).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// The full install: render, write what changed, migrate legacy names and cockpit state,
@@ -454,6 +478,34 @@ mod tests {
         assert!(r.errors.is_empty(), "{:?}", r.errors);
         assert!(sc.restarts.borrow().contains(&"spira-sentinel-prod.timer".to_string()));
         assert!(matches!(r.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Restart));
+    }
+
+    /// `--diff` must show WHAT changed, not just that it did (sp-al35q, caught by testenv's
+    /// test-unit-drift.sh): systemd/install.sh's own `diff -u ... | sed 's/^/    /'` carried
+    /// the actual line-level change; this crate's rewrite dropped it, leaving an operator
+    /// staring at a bare "DIFFERS some.service" with no way to see what moved.
+    #[test]
+    fn diff_shows_the_changed_line_not_just_that_something_differs() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        // Rendered content will be "[Service]\nExecStart=/bin/true\n"; the installed copy
+        // carries a planted line the render never produces.
+        fs::write(unit_dir.join("spira-sentinel-prod.service"), "[Service]\nExecStart=/bin/true\n# stale modification by test fixture\n").unwrap();
+        fs::write(unit_dir.join("spira-sentinel-prod.timer"), "[Unit]\nUnit=spira-sentinel-prod.service\n[Timer]\nOnCalendar=*:0/5\n").unwrap();
+
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+
+        let lines = diff(&ctx).unwrap();
+        assert!(lines.iter().any(|l| l.contains("DIFFERS") && l.contains("spira-sentinel-prod.service")), "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("stale modification")), "{lines:?}");
     }
 
     fn tempdir() -> testkit::TempDir {
