@@ -18,7 +18,7 @@
 #           test-cockpit-landed.sh; coverage row 10)
 #
 # defect: sp-a5ga sp-884p
-# covers: spira/cockpit.sh cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 # scar: closed beads with a branch but no landstate were invisible; UNLND is now QUEUE. The
 #       worked/landed row once counted all-time under a 24h header, producing nonsense
 #       against scoped counts, and a body mention was once enough to mark a bead landed.
@@ -93,7 +93,7 @@ cat > "$TMP/beads.json" <<JSON
 ]
 JSON
 
-# Run cockpit.sh unsent — the probe's own subcommand (unsent_keys carries this
+# Run cockpit-collect probe unsent — the probe's own subcommand (unsent_keys carries this
 # classification too), with bd reads answered from a canned-JSON fixture rather than a
 # live store.
 unlanded() {    # unlanded <fixture-file>
@@ -103,7 +103,7 @@ unlanded() {    # unlanded <fixture-file>
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_BDJSON_FIXTURE="$1" \
-        cockpit.sh unsent 2>/dev/null
+        cockpit-collect probe unsent 2>/dev/null
 }
 
 out="$(unlanded "$TMP/beads.json")"

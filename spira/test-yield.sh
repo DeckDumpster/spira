@@ -30,7 +30,7 @@
 #
 # defect: sp-1xb0
 # tier: T1
-# covers: spira/yield.sh spira/gate.sh spira/watchtower.sh cockpit/ops/src/health.rs UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24
+# covers: spira/yield.sh spira/gate.sh cockpit-collect/src/* UC-gate-verdict-22 UC-gate-verdict-23 UC-gate-verdict-24 cockpit/ops/src/health.rs watchtower/src/*
 # scar: yield.sh was absent; gate faults landed in the wrong column and no count existed, so the gate's cost-vs-catch ratio was unmeasured.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -354,7 +354,7 @@ snap() {
         SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_REPO="$REPO" SPIRA_RUN="$RUN" \
         SPIRA_DB="$SPIRA_DB_NONE" SPIRA_YIELD="$YDIR" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_YIELD_WINDOW="$WINDOW" \
-        watchtower.sh --show 2>/dev/null
+        watchtower --show 2>/dev/null
 }
 S="$(snap)"
 want "the sweep carries the reds"          "gate reds, last 2h" "$S"
@@ -385,8 +385,9 @@ echo "and the pane renders it without inventing a number:"
 # a snapshot written by a service and driving it here would be a test of tmux. What can go
 # wrong silently is the pair drifting — the collector emitting a key the pane does not read —
 # and that is what this compares. `health` is a binary now (sp-llbmi); the "read by the
-# pane" half checks its Rust source instead of grepping the compiled binary.
-COCK="$HERE/cockpit.sh"
+# pane" half checks its Rust source instead of grepping the compiled binary. The collector
+# is cockpit-collect now too (sp-kt4l3); "written by" checks its Rust source the same way.
+COCK="$HERE/../cockpit-collect/src/probes/unsent.rs"
 PANE_SRC="$HERE/../cockpit/ops/src/health/sections.rs"
 for k in SP_YIELD_REDS SP_YIELD_DEFECT SP_YIELD_FAULT SP_YIELD_UNKNOWN; do
     if grep -q "$k" "$COCK" 2>/dev/null && grep -q "$k" "$PANE_SRC" 2>/dev/null; then

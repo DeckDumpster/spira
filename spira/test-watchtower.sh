@@ -40,19 +40,19 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: spira/watchtower.sh landing-pass/src/* spira/cockpit.sh spira/lib.sh aeon/src/*
+# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh aeon/src/* watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-echo "test-watchtower.sh"
+echo "test-watchtower"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 NOW="$(date +%s)"
 GATE_WINDOW=3600         # deliberately not the shipped 21600
 
 # FAST MOCK FOR suites.sh status. suites.sh status calls host-check.sh twice (~3.5s each),
-# and every wt() / wt_file_multi() call invokes watchtower.sh which calls suites.sh status.
+# and every wt() / wt_file_multi() call invokes watchtower which calls suites.sh status.
 # At ~40 total invocations that is ~280s before any actual test logic runs. The mock returns
 # a minimal but structurally valid block in under 1ms so the suite completes in a few minutes
 # instead of running into the per-suite gate timeout. It still says "suites in the tree"
@@ -103,7 +103,7 @@ wt() {                   # wt [VAR=val ...] -> the snapshot
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
-        "$@" watchtower.sh --show 2>/dev/null
+        "$@" watchtower --show 2>/dev/null
 }
 # THE LABEL IS MATCHED LITERALLY, never with a `.*`. The value is separated from the label
 # by run of spaces, so a greedy wildcard in the label happily swallows the value too and
@@ -151,7 +151,7 @@ if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
     [ "$lastb" != 0a ] && ok "the record ends WITHOUT a newline" \
         || bad "the record ends WITHOUT a newline" "the writer now terminates it — this fixture no longer reproduces the defect"
 
-    # THE DEFECT, REPRODUCED. This is the idiom watchtower.sh used to carry, run verbatim
+    # THE DEFECT, REPRODUCED. This is the idiom watchtower used to carry, run verbatim
     # over the file the real writer just produced. It must find nothing — and if a later
     # change to the writer makes it find something, the control fails and says so rather
     # than letting the reader's tolerance go quietly untested.
@@ -292,7 +292,7 @@ echo "the strand ledger is reported by class, not by size:"
 # a dead worker and a sweep spent four commands hunting for a holder that never existed.
 #
 # THE FIXTURE GOES THROUGH THE REAL COLLECTOR (law-prefer-the-real-dependency). The classifier
-# under test is `cockpit.sh strands`, the same function probe calls, and its output IS the
+# under test is `cockpit-collect probe strands`, the same function probe calls, and its output IS the
 # snapshot the renderer then reads — so the seam between the two programs is exercised rather
 # than imagined. Writing a cockpit.env by hand here would assert against whichever key names
 # the test author remembered, which is exactly the drift the split was made to stop.
@@ -300,7 +300,7 @@ ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        cockpit.sh strands 2>/dev/null
+        cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
     printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
@@ -357,7 +357,7 @@ k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
 k="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        cockpit.sh strands 2>/dev/null)"
+        cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
 # A SNAPSHOT FROM A COLLECTOR PREDATING THE SPLIT RENDERS `?`. The two halves are briefly
@@ -412,7 +412,7 @@ echo
 echo "a halted world shows the halt in --show and files nothing:"
 # ======================================================================================
 # THE SEAM THIS COVERS. cockpit/health.sh reads world.halted directly to avoid a stale
-# snapshot masking a halt; watchtower.sh must do the same. The positive control here is
+# snapshot masking a halt; watchtower must do the same. The positive control here is
 # the running path — asserting only the halted case would leave the alarm the watchtower
 # exists for untested (law-absence-needs-a-positive-control).
 #
@@ -431,7 +431,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_PATH="$DF_CLEAN" SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 
 fresh
@@ -565,7 +565,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 # wt_sinexempt_multi: like wt_file_multi but captures SPIRA_SIN_EXEMPT (UC-ops-detection-
 # remediation-07) alongside the subject, one "<subject>|<SPIRA_SIN_EXEMPT>" line per
@@ -582,7 +582,7 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 # wt_refs_multi: like wt_file_multi but captures SPIRA_INCIDENT_REF (the actual dedupe key)
 # rather than the incident subject. Used to verify two passes with different measured values
@@ -598,7 +598,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted escalation body to $TMP/inc-unadopted-body
     local mock="$TMP/mock-inc-unadopted-body.sh"
@@ -612,7 +612,7 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
         SPIRA_SUITES_SH="$MOCK_SUITES" SPIRA_SYSTEMCTL="$SYSTEMCTL_CLEAN" \
         SPIRA_INCIDENT_SH="$mock" \
-        "$@" watchtower.sh 2>/dev/null
+        "$@" watchtower 2>/dev/null
 }
 
 # Below threshold: the prompt file is written, but no drain escalation incident is filed.
@@ -676,7 +676,7 @@ nowant "and no routine sweep bead"          "Spira sweep" "$subjects"
 echo
 echo "the repo-label vital signs render from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh repo_labels computes SP_REPO_UNMAPPED and SP_REPO_ABSENT;
+# THE SEAM THIS COVERS. cockpit-collect probe repo_labels computes SP_REPO_UNMAPPED and SP_REPO_ABSENT;
 # watchtower.sh reads them from the snapshot and renders them in 'The graph' section.
 # Tests here drive the renderer through a hand-written cockpit.env, the same pattern used
 # for the strand ledger — no database query is made from inside watchtower.
@@ -713,7 +713,7 @@ nowant "and the absent zero is not ?" "absent ?" "$snap"
 echo
 echo "the Sending vital signs render from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh writes SP_UNSENT, SP_UNSENT_OLDEST_H, SP_UNADOPTED and
+# THE SEAM THIS COVERS. cockpit-collect writes SP_UNSENT, SP_UNSENT_OLDEST_H, SP_UNADOPTED and
 # SP_SENT_FAILED into cockpit.env; watchtower.sh reads them and renders them in 'The Sending'
 # section. Missing keys must render `?` (an unread probe is not a clean probe), and zero must
 # render as zero (a system with no unsent work should say so, not report unknown).
@@ -957,7 +957,7 @@ echo "unadopted escalation body names the branches from SP_UNADOPTED_NAMES:"
 # THE SEAM THIS COVERS. The original body carried a listing command using the tag-dereference
 # form %(*refname:short) which appends ^{} to every branch name, and `bd show` without
 # -C SPIRA_DB — two independent defects each producing 100% false positives (sp-gjpc).
-# The collector (cockpit.sh) already knows which branches are unadopted when it counts
+# The collector (cockpit-collect) already knows which branches are unadopted when it counts
 # SP_UNADOPTED; those names are now emitted as SP_UNADOPTED_NAMES. The body must report
 # what the collector measured, not re-derive it from a separate command.
 #
@@ -994,7 +994,7 @@ want "body falls back to (unavailable) when key absent" "unavailable" "$body"
 echo
 echo "the duplicate-ref vital sign renders from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh writes SP_DUP_REFS and SP_DUP_BEADS into cockpit.env;
+# THE SEAM THIS COVERS. cockpit-collect writes SP_DUP_REFS and SP_DUP_BEADS into cockpit.env;
 # watchtower.sh reads them and renders them in 'The graph' section. Missing keys must render
 # '?' (a failed probe must not displace the suspicion), and zero must render as zero (a clean
 # dedup path should say so, not report unknown).
@@ -1124,7 +1124,7 @@ nowant "drain prevents nominal skip" \
 
 # A STALE SNAPSHOT PREVENTS NOMINAL. snap_age >= SNAP_AGE_MAX means the collector has
 # not run recently; the pipeline picture is too old to trust as an all-clear.
-# Use 700s which exceeds the 60s SPIRA_SNAP_STALE_S default shipped in watchtower.sh.
+# Use 700s which exceeds the 60s SPIRA_SNAP_STALE_S default shipped in watchtower.
 fresh
 mkdir -p "$TMP/run/landstate"
 printf "SP_AT=%s\n" "$(( NOW - 700 ))" > "$TMP/run/cockpit.env"
@@ -1205,137 +1205,24 @@ nowant "low memory prevents nominal skip" \
        "SWEEP:NOMINAL" "$(head -1 "$TMP/ops-prompt" 2>/dev/null || echo "")"
 
 # ======================================================================================
-echo
-echo "collect_disk_mem() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower.sh must define it
-without running the sweep, and calling it directly must render the exact figures the T2 tests
-above just proved via a full subprocess run — same stub, same thresholds, in-process instead
-of forked:"
+# T1 SEAMS RETIRED (sp-lnmbq). Four blocks used to live here — collect_disk_mem(),
+# collect_czar_block(), collect_landing_field(), collect_gate_wait() — each sourcing
+# watchtower.sh directly (`. ./watchtower.sh; collect_xxx`) so the property could be
+# checked in-process instead of forking a whole run. That trick needed a bash script to
+# source; watchtower is a compiled binary now, so it cannot be sourced at all. Every one
+# of those properties is now a Rust unit test, run without forking anything:
+#   disk_mem::tests::{render_flags_breach_only_at_or_over_the_disk_threshold,
+#     render_flags_mem_breach_strictly_below_threshold, render_is_unknown_never_zero_on_a_failed_read}
+#   sweep::collect::tests::{czar_block_renders_unset_classes_as_unknown_throughout,
+#     czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched}
+#   landstate::tests::last_landed_picks_the_newest_landed_record,
+#     throttle::tests::minutes_since_last_landed_{is_none_with_no_landed_record,picks_the_newest_landed_record}
+#   gate_wait::tests::{picks_the_longest_wait_inside_the_window,
+#     rows_outside_the_window_are_excluded,no_rows_in_window_renders_unknown_not_zero,
+#     window_label_switches_from_minutes_to_hours}
+# The T2 behaviour these T1 seams cross-checked (same figures via a full `wt`/`wt_file`
+# subprocess run) is untouched, above and below this comment in this same suite.
 # ======================================================================================
-disk_mem_t1() {           # disk_mem_t1 [VAR=val ...] -> "$_disk_disp|$_mem_disp|$_disk_breach|$_mem_breach"
-    ( cd "$HERE" && env -i HOME="$TMP" PATH="$DF_CLEAN:$PATH" SPIRA_CONF=/nonexistent SPIRA_PATH="$DF_CLEAN" \
-        SPIRA_MEMINFO_PATH="$MEMINFO_CLEAN" "$@" \
-        bash -c 'set -uo pipefail
-                 . ./watchtower.sh
-                 collect_disk_mem
-                 printf "%s|%s|%s|%s" "$_disk_disp" "$_mem_disp" "$_disk_breach" "$_mem_breach"' )
-}
-
-fresh
-rm -f "$TMP/ops-prompt"
-disk_mem_t1 >/dev/null
-[ ! -e "$TMP/ops-prompt" ] \
-    && ok "sourcing watchtower.sh for collect_disk_mem files no sweep" \
-    || bad "sourcing watchtower.sh for collect_disk_mem files no sweep" "ops-prompt was written"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1)"
-is "T1: ordinary disk usage renders the plain percentage" "12%" "$t1_disk"
-is "T1: ordinary disk usage is not a breach"               "0"  "$t1_diskb"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 WT_DISK_PCT=97)"
-is "T1: disk at or above the warn threshold is a FAULT" "FAULT (97%, warn at 90%)" "$t1_disk"
-is "T1: ...and is flagged as a breach"                  "1" "$t1_diskb"
-
-IFS='|' read -r t1_disk t1_mem t1_diskb t1_memb <<<"$(disk_mem_t1 SPIRA_MEMINFO_PATH="$LOW_MEM")"
-is "T1: memory below the warn threshold is a FAULT" "FAULT (500MB, warn below 1500MB)" "$t1_mem"
-is "T1: ...and is flagged as a breach"              "1" "$t1_memb"
-
-# ======================================================================================
-echo
-echo "collect_czar_block() (UC-26, sp-m0qeh) is a T1 seam: sourcing watchtower.sh must define
-it without running the sweep, and it must render each of the four trigger classes from the
-SP_CZAR_* variables the same way cockpit.env's eval leaves them, missing keys included:"
-# ======================================================================================
-czar_block_t1() {   # czar_block_t1 [VAR=val ...] -> $czar_block
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent "$@" \
-        bash -c 'set -uo pipefail
-                 . ./watchtower.sh
-                 collect_czar_block
-                 printf "%s" "$czar_block"' )
-}
-czar_row() { printf '%s\n' "$1" | grep -F "$2"; }
-
-fresh
-rm -f "$TMP/ops-prompt"
-czar_block_t1 >/dev/null
-[ ! -e "$TMP/ops-prompt" ] \
-    && ok "sourcing watchtower.sh for collect_czar_block files no sweep" \
-    || bad "sourcing watchtower.sh for collect_czar_block files no sweep" "ops-prompt was written"
-
-block="$(czar_block_t1)"
-row="$(czar_row "$block" deadlock)"
-want "T1: a class with no SP_CZAR_* keys set renders ? throughout" \
-     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
-
-block="$(czar_block_t1 SP_CZAR_DEADLOCK_FIRED=2026-09-20T10:00Z SP_CZAR_DEADLOCK_BY=aeon-fake SP_CZAR_DEADLOCK_OUTCOME=pending)"
-row="$(czar_row "$block" deadlock)"
-nowant "T1: a fired class does not fall back to ?" "?" "$row"
-want "T1: ...and carries who handled it through"    "aeon-fake" "$(printf '%s\n' "$row" | awk '{print $3}')"
-
-row="$(czar_row "$block" loop-stalled)"
-want "T1: an unrelated class is untouched by another class's keys" \
-     "?" "$(printf '%s\n' "$row" | awk '{print $2}')"
-
-# ======================================================================================
-echo
-echo "collect_landing_field() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower.sh must
-define it without running the sweep, and calling it directly must render the same figures
-the T2 tests above proved via a full subprocess run, in-process instead of forked:"
-# ======================================================================================
-landing_field_t1() {   # landing_field_t1 [VAR=val ...] -> "$last_land_id|$since_land"
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        WT_NOW="$NOW" "$@" \
-        bash -c 'set -uo pipefail
-                 now="$WT_NOW"
-                 . ./watchtower.sh
-                 collect_landing_field
-                 printf "%s|%s" "$last_land_id" "$since_land"' )
-}
-
-fresh
-land_mark_at sp-land LANDED cafe1 "$(( NOW - 600 ))"
-IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
-is "T1: a LANDED record names the bead that landed" "sp-land" "$t1_id"
-is "T1: ...and renders its age in minutes"           "10"      "$t1_since"
-
-fresh
-land_mark sp-red1 RED cafe2 gate
-IFS='|' read -r t1_id t1_since <<<"$(landing_field_t1)"
-# last_land_id's own sentinel is "" (empty), not "?" — the heredoc's
-# ${last_land_id:-none recorded} is what turns it into words for the reader.
-is "T1: only RED leaves the bead id unset" ""  "$t1_id"
-is "T1: ...and renders the age as ?"       "?" "$t1_since"
-
-# ======================================================================================
-echo
-echo "collect_gate_wait() (UC-26, sp-fhzib) is a T1 seam: sourcing watchtower.sh must
-define it without running the sweep, and calling it directly must bound the wait by TIME,
-not by row count, and render ? rather than 0 when nothing qualifies:"
-# ======================================================================================
-gate_wait_t1() {  # gate_wait_t1 [VAR=val ...] -> "$gate_wait_disp|$oldest_br|$gate_win_label"
-    ( cd "$HERE" && env -i HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        WT_NOW="$NOW" "$@" \
-        bash -c 'set -uo pipefail
-                 now="$WT_NOW"
-                 . ./watchtower.sh
-                 collect_gate_wait
-                 printf "%s|%s|%s" "$gate_wait_disp" "$oldest_br" "$gate_win_label"' )
-}
-
-fresh
-{ row 90000 spira/sp-ancient 1584; row 600 spira/sp-recent 7; } > "$TMP/run/gate.log"
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
-is "T1: a row inside the window is reported" "7s"        "$t1_disp"
-is "T1: ...and names its branch"             "spira/sp-recent" "$t1_br"
-is "T1: ...and the window is named in the field" "last 6h" "$t1_lbl"
-
-fresh
-{ row 90000 spira/sp-ancient 1584; row 80000 spira/sp-older 900; } > "$TMP/run/gate.log"
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1)"
-is "T1: nothing inside the window renders ?, never a bare zero" "?" "$t1_disp"
-
-fresh
-IFS='|' read -r t1_disp t1_br t1_lbl <<<"$(gate_wait_t1 SPIRA_WATCH_GATE_WINDOW=172800)"
-is "T1: the window is genuinely read from configuration" "last 48h" "$t1_lbl"
 
 # ======================================================================================
 echo

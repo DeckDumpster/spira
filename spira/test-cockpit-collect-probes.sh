@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
 #
-# test-cockpit-collect-probes.sh — collect.sh probe registry integrity.
+# test-cockpit-collect-probes.sh — the real queue probe's keys reach cockpit.env through
+# the fragment/merge path.
 #
-# Verifies that every probe cockpit.sh's probe() calls is registered in
-# collect.sh's PROBES, and that the real queue probe's keys reach cockpit.env
-# through the fragment/merge path. The generic ok/never fragment cases are
-# test-cockpit-tiered-collector.sh's job (cluster 6, docs/test-plan/cockpit-observability.md).
+# sp-kt4l3: the registry-integrity half ("every probe cockpit.sh's probe() calls is
+# registered in collect.sh's PROBES") is retired here. It extracted the `PROBES=()` array
+# literal from bash source at runtime by regex, which cockpit-collect has nothing
+# equivalent to parse — PROBES is a real Rust `const` array now, checked directly and far
+# more completely by `cockpit-collect`'s own unit test `probes_registry_is_well_formed`
+# (18 entries, no duplicate names, every interval a declared tier, no malformed rows, at
+# least one timeout shorter than its interval) plus `due_probes_caps_slow_tier_concurrency_
+# cumulatively_within_one_tick`. What remains here — a real probe's keys surviving the
+# fragment write and the merge into cockpit.env — has no Rust-unit equivalent (it is this
+# binary's own subprocess/file-IO boundary) and stays a black-box suite over the compiled
+# binary. The generic ok/never fragment cases are test-cockpit-tiered-collector.sh's job
+# (cluster 6, docs/test-plan/cockpit-observability.md).
 #
-# covers: spira/collect.sh spira/cockpit.sh
-
-# covers: spira/collect.sh spira/cockpit.sh
+# covers: cockpit-collect/src/supervisor.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-# host-reason: collect.sh and cockpit.sh dispatch; no shared state or timed services.
+# host-reason: cockpit-collect dispatch; no shared state or timed services.
 
 TMP="$(mktemp -d)"
 trap 'chmod -R +w "$TMP" 2>/dev/null || true; rm -rf "$TMP"' EXIT
@@ -22,30 +29,7 @@ SNAP="$TMP/cockpit.env"
 mkdir -p "$FRAG_DIR"
 BASE_PATH="$PATH"
 
-# Extract PROBES from collect.sh: lines matching "name:interval:timeout:cmd" inside PROBES=().
-collect_probes() {
-    python3 - "$HERE/collect.sh" <<'PY'
-import sys, re
-in_probes = False
-probes = []
-for line in open(sys.argv[1], errors="replace"):
-    s = line.strip()
-    if re.match(r'PROBES=\(', s):
-        in_probes = True
-    if in_probes:
-        m = re.search(r'"([^":]+):', s)
-        if m:
-            probes.append(m.group(1))
-        if s == ')':
-            break
-for p in probes:
-    print(p)
-PY
-}
-
-PROBES_LIST="$(collect_probes)"
-
-# Merge fixture fragments through the real collect.sh, not a copy of its logic. The
+# Merge fixture fragments through the real cockpit-collect, not a copy of its logic. The
 # generic ok/never fragment cases live in test-cockpit-tiered-collector.sh (cluster 6,
 # docs/test-plan/cockpit-observability.md); this suite only needs the merge to prove the
 # real `queue` probe's keys reach cockpit.env.
@@ -55,25 +39,13 @@ run_merge() {
         SPIRA_RUN="$TMP" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_COCKPIT="$TMP" FRAG_DIR="$FRAG_DIR" \
-        collect.sh merge 2>/dev/null
+        cockpit-collect merge 2>/dev/null
 }
 
 # ============================================================
-echo "1. probe registry: required probes present in collect.sh PROBES:"
+echo "queue keys reach cockpit.env via _probe_body_test:"
 
-for probe in queue statute; do
-    if printf '%s\n' "$PROBES_LIST" | grep -qx "$probe"; then
-        ok "collect.sh PROBES contains '$probe'"
-    else
-        bad "collect.sh PROBES missing '$probe'" "add ${probe}:<interval>:<timeout>:${probe} to PROBES"
-    fi
-done
-
-# ============================================================
-echo
-echo "2. queue keys reach cockpit.env via _probe_body_test:"
-
-# Build a mock cockpit.sh that emits known SP_QUEUE_* keys.
+# Build a mock cockpit-collect probe that emits known SP_QUEUE_* keys.
 MOCK_COCK="$TMP/mock-cockpit.sh"
 cat > "$MOCK_COCK" <<'MOCK'
 #!/usr/bin/env bash
@@ -92,7 +64,7 @@ env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
     FRAG_DIR="$FRAG_DIR" COCK="$MOCK_COCK" \
-    collect.sh _probe_body_test queue 10 queue 2>/dev/null || true
+    cockpit-collect _probe_body_test queue 10 queue 2>/dev/null || true
 
 frag="$(cat "$FRAG_DIR/queue.env" 2>/dev/null)"
 want "_probe_body_test: fragment has _PROBE_STATUS=ok"  "_PROBE_STATUS=ok"  "$frag"

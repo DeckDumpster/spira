@@ -40,7 +40,7 @@
 #
 # defect: sp-5ll6
 # tier: T2
-# covers: spira/incident.sh spira/watchtower.sh incident/*
+# covers: spira/incident.sh watchtower/src/* incident/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

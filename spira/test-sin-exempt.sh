@@ -28,7 +28,7 @@
 # call), so the whole sequence — create, recur, recur, escalate — runs against it exactly as
 # it would against real bd, without a fixture database at all.
 #
-# The DRAINING-escalation exemption claim ("watchtower.sh sets SPIRA_SIN_EXEMPT=1") is
+# The DRAINING-escalation exemption claim ("watchtower sets SPIRA_SIN_EXEMPT=1") is
 # SOURCE-GREPPED from test-watchtower.sh instead of here, which already captures the
 # incident env on that call site.
 #

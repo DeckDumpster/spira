@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 #
 # test-watchtower-czar-outcome.sh — one bd round-trip proving the real query feeds
-#   watchtower-czar-outcome.py correctly; every classification permutation is
-#   test-watchtower-czar-outcome-classify.sh (T1, no bd).
+#   watchtower's czar_outcome::classify correctly (sp-lnmbq inlined the classifier from
+#   watchtower-czar-outcome.py, now deleted; every classification permutation that suite's
+#   own test-watchtower-czar-outcome-classify.sh covered — now retired — is
+#   czar_outcome::tests in the watchtower crate, table-tested against the same fixtures).
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# watchtower-czar-outcome.py never sees a label — the query `bd list --label czar-trigger`
-# does that filtering before any JSON reaches it. So the two things worth a real bd are:
-# that the query's own scoping and the shell glue around it (SPIRA_INCIDENT_REF
-# construction, the world.halted early exit) work end to end. Every UNCLAIMED/NOT_CLEARED
-# decision itself is the classifier's own T1 suite's job.
+# classify() never sees a label — the query `bd list --label czar-trigger` does that
+# filtering before any JSON reaches it. So the two things worth a real bd are: that the
+# query's own scoping and the glue around it (SPIRA_INCIDENT_REF construction, the
+# world.halted early exit) work end to end. Every UNCLAIMED/NOT_CLEARED decision itself is
+# the classifier's own unit tests' job.
 #
 # TEST AGAINST THE REAL DEPENDENCY (law-prefer-the-real-dependency). Beads are written
 # through bd import and queried through bd list --json, exactly as the production path
@@ -18,7 +20,7 @@
 # remembered; the seam between writer and reader is what the test exists to cover.
 #
 # tier: T2
-# covers: spira/watchtower.sh spira/watchtower-czar-outcome.py spira/conf.sh
+# covers: watchtower/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -57,7 +59,7 @@ wt_co() {   # wt_co [VAR=val ...]
         SPIRA_BD="$SPIRA_BD" \
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_INCIDENT_SH="$MOCK_INC" \
-        "$@" watchtower.sh --czar-outcome-check 2>/dev/null
+        "$@" watchtower --czar-outcome-check 2>/dev/null
 }
 
 # ======================================================================================

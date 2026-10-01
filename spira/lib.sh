@@ -2308,7 +2308,7 @@ check2_reclaim_stale() {
 #
 # A PARTY MEMBER SHOULD ALWAYS BE PRESENT, which is the part that is not in this file: Ops
 # is only summoned when an incident bead is waiting, so a quiet hour means the healer is not
-# in the party at all and the role exists only on paper. watchtower.sh is what keeps it
+# in the party at all and the role exists only on paper. The watchtower binary is what keeps it
 # seated — it hands Ops the pipeline's vital signs on a timer whether or not anything has
 # crashed, so the persistent role has something to be persistent about. Until now it was a documented, validated
 # configuration key that NOTHING READ — no default, no enforcement, unset on this host — so

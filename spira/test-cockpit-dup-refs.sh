@@ -25,9 +25,9 @@
 # shape itself — that this label pair and the lookback filter reach the real store correctly
 # — is covered once in test-cockpit-bd-contract.sh, against real bd.
 #
-# COVERS: spira/cockpit.sh spira/watchtower.sh spira/incident.sh
+# COVERS: cockpit-collect/src/* spira/incident.sh incident/* watchtower/src/*
 # tier: T2
-# covers: spira/cockpit.sh spira/watchtower.sh spira/incident.sh incident/*
+# covers: cockpit-collect/src/* spira/incident.sh incident/* watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -36,7 +36,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "test-cockpit-dup-refs.sh"
 
-# Run cockpit.sh dup_refs — the probe's own subcommand, not a full `once` — with bd reads
+# Run cockpit-collect probe dup_refs — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 dup_refs() {    # dup_refs <fixture-file>
     env -i PATH="$PATH" HOME="$HOME" \
@@ -44,7 +44,7 @@ dup_refs() {    # dup_refs <fixture-file>
         SPIRA_DB="$TMP/nodb" \
         SPIRA_RUN="$TMP" \
         SPIRA_BDJSON_FIXTURE="$1" \
-        cockpit.sh dup_refs 2>/dev/null
+        cockpit-collect probe dup_refs 2>/dev/null
 }
 key() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

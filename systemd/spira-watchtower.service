@@ -1,6 +1,6 @@
 [Unit]
 Description=Spira watchtower — hand Ops the state of the pipeline
-Documentation=file://@SPIRA_HOME@/watchtower.sh
+Documentation=file://@SPIRA_PROD_ROOT@/watchtower/DESIGN.md
 
 [Service]
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): the release this unit runs, and PATH built
@@ -10,7 +10,7 @@ Documentation=file://@SPIRA_HOME@/watchtower.sh
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/watchtower.sh
+ExecStart=@SPIRA_PROD_ROOT@/bin/watchtower
 TimeoutStartSec=120
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@

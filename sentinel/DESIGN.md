@@ -240,7 +240,7 @@ Dead ones are deleted, as `aeon_count` does.
 | CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
 | CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
-| CHECK 6 | `bash $SPIRA_HOME/watchtower.sh --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (only when the file is readable; each 2>/dev/null) | ignored |
+| CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
 | CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
 | tsd | `tsd-write --family sentinel-phase --root $SPIRA_RUN --field-str pass=<id> --field-str check=<name> --field secs=<n>` | best-effort |
@@ -307,7 +307,7 @@ source commits it was recovered from are named.
 **Children.** The switch reaches everything this process starts:
 
 - Every child gets `SPIRA_LIFECYCLE_ENFORCE=0|1`. That covers seams, strand,
-  pilgrimage.sh, sending, watchtower.sh, incident.sh and reflect.sh.
+  pilgrimage.sh, sending, watchtower, incident.sh and reflect.sh.
 - Both systemd-run workers get it as `--setenv`. The audit worker resolves the same mode
   from it.
 - That switch is the whole of OFF (sp-gypjk). No child is handed a poisoned tool path;
@@ -887,7 +887,7 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | # | file:line | current | replacement |
 |---|---|---|---|
 | 19 | `spira/sentinel.sh` | the component | delete |
-| 20 | `spira/ready-bucket.py` | — | **keep**: `bulk_ready_by_fayth` still feeds watchtower.sh. The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
+| 20 | `spira/ready-bucket.py` | — | **keep**: `bulk_ready_by_fayth` still feeds the watchtower crate's `--show`/sweep (idle-while-ready, via `seams::pipeline_probe`, sp-lnmbq). The sentinel buckets the cache in Rust (`summon::bucket`, a port of it). |
 
 **Bash tests to repoint or retire.** Each is either repointed at the binary
 (`"$SPIRA_SENTINEL_BIN"` for `bash "$SH/sentinel.sh"`, with a fixture that also puts the

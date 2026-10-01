@@ -12,7 +12,7 @@
 # WHAT IS UNDER TEST (sp-p0xyt)
 # ------------------------------
 #   law-synth.sh guarded the database path but not its content: a store with .beads and zero
-#   law- memories passed the check and overwrote 112 statutes with 3. cockpit.sh's
+#   law- memories passed the check and overwrote 112 statutes with 3. cockpit-collect's
 #   SP_STATUTE_SKEW is where the operator actually sees the mismatch (law-cron.sh wrote a log
 #   file nobody read).
 #
@@ -20,7 +20,7 @@
 # case so silence from the negative case looks like failure, not peace.
 #
 # tier: T2
-# covers: rule.sh spira/law-synth.sh spira/cockpit.sh UC-operator-channel-43
+# covers: rule.sh spira/law-synth.sh cockpit-collect/src/* UC-operator-channel-43
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -110,9 +110,9 @@ out_synth_force=$(run_synth_override); rc_synth_force=$?
 is "law-synth: LAW_SYNTH_OVERRIDE=1 overrides floor check" "0" "$rc_synth_force"
 
 echo
-echo "=== cockpit.sh statute_keys: SP_STATUTE_SKEW against a real mismatch ==="
+echo "=== cockpit-collect statute_keys: SP_STATUTE_SKEW against a real mismatch ==="
 
-run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" cockpit.sh statute 2>/dev/null; }
+run_statute_keys() { SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" cockpit-collect probe statute 2>/dev/null; }
 
 # POSITIVE CONTROL: fixture db has 3 law- entries (from the floor test above); the committed
 # page has 10 ### headings. 3 < 10/2 → MISMATCH.

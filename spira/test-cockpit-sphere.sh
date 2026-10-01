@@ -4,7 +4,7 @@
 #
 #   ./test-cockpit-sphere.sh
 #
-# THE DEFECT THIS SUITE EXISTS FOR (sp-b3ub). cockpit.sh computed SP_POISON inside the
+# THE DEFECT THIS SUITE EXISTS FOR (sp-b3ub). cockpit-collect computed SP_POISON inside the
 # spira,plan-scoped sphere-grid block. Poison is applied only by aeon.sh's closing rule
 # when SOP_REQUIRED=1 — which fires for ops and qa personas whose beads carry `incident`,
 # not `plan`. So the filter and the population were disjoint by construction, and SP_POISON
@@ -28,7 +28,7 @@
 #
 # defect: sp-b3ub
 # tier: T2
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -46,7 +46,7 @@ sphere() {    # sphere <fixture-file>
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
         SPIRA_SCOPE_LABEL="$SCOPE_LABEL" \
         SPIRA_ASK_LABEL=needs-ryan \
-        cockpit.sh sphere 2>/dev/null
+        cockpit-collect probe sphere 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

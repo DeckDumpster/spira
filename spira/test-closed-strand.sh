@@ -16,7 +16,7 @@
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
-# covers: landing-pass/* spira/lib.sh spira/cockpit.sh cockpit/ops/src/health.rs
+# covers: landing-pass/* spira/lib.sh cockpit-collect/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -178,7 +178,7 @@ rm -f "$RUN/landstate/sp-kept"
 echo
 echo "SCENARIO 3: ANOMALY SPLIT — SP_STRANDED_N vs SP_AWAITING_N:"
 # ======================================================================================
-# This scenario invokes cockpit.sh directly (like test-cockpit-unlanded.sh).
+# This scenario invokes cockpit-collect directly (like test-cockpit-unlanded.sh).
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd 2>/dev/null)"
 if [ -z "$REAL_BD" ]; then
     echo "SKIP strand-anomaly-split: no bd binary" >&2
@@ -224,7 +224,7 @@ JSONL2
         SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
-        cockpit.sh once 2>/dev/null)"
+        cockpit-collect once 2>/dev/null)"
 
     cval() { printf '%s' "$cout" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 

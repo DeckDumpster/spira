@@ -4,7 +4,7 @@ area = "cockpit-observability"
 [[use_case]]
 id = "UC-cockpit-observability-01"
 tier = "T1"
-statement = "the collector writes `cockpit.env` only when it is the supervised unit or `SPIRA_COCKPIT_FORCE=1` (recorded as `SP_WRITER=force`), otherwise prints keys to stdout; `cockpit.sh loop`/`collect.sh loop` refuse to run unsupervised"
+statement = "the collector writes `cockpit.env` only when it is the supervised unit or `SPIRA_COCKPIT_FORCE=1` (recorded as `SP_WRITER=force`), otherwise prints keys to stdout; `cockpit-collect once`/`cockpit-collect collect` (sp-kt4l3, formerly `cockpit.sh once`/`collect.sh loop`) refuse to run unsupervised"
 
 [[use_case]]
 id = "UC-cockpit-observability-02"
@@ -14,7 +14,7 @@ statement = "`SP_AT` is stamped before any section data; `SP_WINDOW_HOURS`, `SP_
 [[use_case]]
 id = "UC-cockpit-observability-03"
 tier = "T0"
-statement = "every probe a reader depends on is registered in `collect.sh PROBES`"
+statement = "every probe a reader depends on is registered in `cockpit-collect`'s `PROBES` registry (sp-kt4l3, formerly `collect.sh PROBES`)"
 
 [[use_case]]
 id = "UC-cockpit-observability-04"
@@ -29,7 +29,7 @@ statement = "a probe that times out writes `status=timeout`, logs its name, incr
 [[use_case]]
 id = "UC-cockpit-observability-06"
 tier = "T2"
-statement = "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` temp, re-raises (exits 128+signo), and never disturbs the published `cockpit.env`; orphan temps are swept at startup for both `cockpit.sh` and `collect.sh`"
+statement = "a collector pass killed by TERM/INT/HUP removes its `.cockpit.*` temp, re-raises (exits 128+signo), and never disturbs the published `cockpit.env`; orphan temps are swept at startup by `cockpit-collect` (sp-kt4l3, formerly swept separately by `cockpit.sh` and `collect.sh`)"
 
 [[use_case]]
 id = "UC-cockpit-observability-07"
@@ -124,7 +124,7 @@ statement = "NOW rows come from `trace_stats`/`trace_tail`: turns are distinct m
 [[use_case]]
 id = "UC-cockpit-observability-24"
 tier = "T1"
-statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower.sh` and `doctor.sh`"
+statement = "DRAINING (minutes and resume hint) and STOPPED are independent banners; a stale snapshot is STALE (naming probe and kill count) when its core probe timed out, FAULT (age) otherwise; the threshold `SPIRA_SNAP_STALE_S` is shared with `watchtower` and `doctor.sh`"
 
 [[use_case]]
 id = "UC-cockpit-observability-25"

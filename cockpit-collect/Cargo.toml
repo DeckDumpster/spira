@@ -1,0 +1,21 @@
+[package]
+name = "cockpit-collect"
+version = "1.0.0"
+edition = "2021"
+description = "cockpit-collect — Spira's own cockpit collector: tiered probe supervisor and probe library, replacing spira/cockpit.sh and spira/collect.sh (sp-kt4l3)."
+
+[[bin]]
+name = "cockpit-collect"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

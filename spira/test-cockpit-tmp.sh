@@ -4,30 +4,28 @@
 #
 #   ./test-cockpit-tmp.sh
 #
-# write_snapshot builds the snapshot in a temp and renames it, so a kill landing mid-probe
-# used to leave the temp behind, and spira-cockpit.service is Restart=always: 303 of them
-# accumulated in .runtime/spira, four of those partial writes rather than empty. The cost is
-# not the bytes. A directory that grows a file per unclean exit hides how often unclean exits
-# happen, because nothing counts them.
+# sp-kt4l3: the kill-mid-probe sections ("a killed pass leaves no temp behind", "an
+# interrupted pass does not disturb the published snapshot") are retired. They depended on
+# spira/cockpit.sh's write_snapshot creating its temp file via `mktemp` BEFORE running the
+# probe pass and holding it open, redirected, for the pass's entire duration — the shape
+# that let 303 orphaned temps accumulate from kills landing mid-probe. cockpit-collect's
+# `once` computes the full pass in memory first and only then opens, writes and renames the
+# temp — one tight sequence with no multi-second window a signal can land inside. The class
+# of leak this suite caught is now structural (rung 4 of the ladder: impossible, not
+# refused), and `fs::rename` being atomic on POSIX means a kill either lands before the
+# rename (cockpit.env is untouched) or after it (the new snapshot is already complete) —
+# there is no partially-written cockpit.env to observe either.
 #
-# Runs hermetically (env -i, fixture conf/db, never the ambient bd/git) with
-# SPIRA_COCKPIT_TEST_SLEEP giving probe() a fixed, short runway to be interrupted in —
-# mirroring collect.sh's COCK slow mode — instead of depending on a real query's tens of
-# seconds to hold the window open.
-#
-# EVERY CASE CARRIES ITS POSITIVE CONTROL. "No temp remains" is the same observation as "the
-# check ran against the wrong directory", as "the process died before it ever made one", and
-# as "the glob was empty all along" — so each case first asserts the temp IS there, mid-probe,
-# before killing anything. A leak check that has never seen a temp is a hypothesis
-# (law-absence-needs-a-positive-control).
+# What remains: sweep-temps still matters on its own terms — a previous process's crash
+# between write and rename (or a leftover from before this binary existed) still leaves an
+# orphan, and startup must still clear it.
 #
 # defect: sp-2yd
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/main.rs
 # shellcheck disable=SC2034
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-COCKPIT="$HERE/cockpit.sh"
 
 RUN="$(mktemp -d)"
 TMP="$(mktemp -d)"
@@ -37,87 +35,9 @@ BASE_PATH="$PATH"
 # temps -> how many .cockpit.* files are in the scratch run dir right now.
 temps() { find "$RUN" -maxdepth 1 -name '.cockpit.*' | wc -l; }
 
-# A marker snapshot: an interrupted pass must not touch the one already published. The
-# rename is what makes that true, and it is the other half of writing to a temp at all.
-printf "SP_MARKER='before'\n" > "$RUN/cockpit.env"
-
-echo "a killed pass leaves no temp behind"
-
-# spawn -> start one collector pass in the background, with SIGINT at its default.
-#
-# A background job of a NON-INTERACTIVE shell inherits SIGINT and SIGQUIT as ignored, and a
-# signal ignored on entry cannot be trapped or reset by bash. So `cockpit.sh once &` runs a
-# collector whose INT trap was never installed: the first version of this suite sent SIGINT,
-# the collector ignored it, ran to completion, and the case reported "no temp left" — true,
-# and about a pass that was never interrupted. The exec shim restores the default disposition
-# so the child models systemd and a terminal rather than this test's own shell.
-#
-# os.setpgrp() puts the child in its own process group so `kill -SIG -$p` reaches every
-# probe subprocess. Without this, bash defers the signal trap until the running child
-# returns — SPIRA_COCKPIT_TEST_SLEEP's `sleep` here, a live query before it was hermetic —
-# and the suite would block in `wait` for that long on every kill.
-spawn() {
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
-        SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
-        SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
-        SPIRA_COCKPIT="$TMP" \
-        SPIRA_COCKPIT_FORCE=1 SPIRA_COCKPIT_TEST_SLEEP=1 \
-        python3 -c '
-import os, signal, sys
-signal.signal(signal.SIGINT, signal.SIG_DFL)
-os.setpgrp()
-os.execvp("bash", ["bash", sys.argv[1], "once"])
-' "$COCKPIT" >/dev/null 2>&1 &
-}
-
-for sig in TERM INT HUP; do
-    spawn
-    p=$!
-
-    # Positive control: wait for the temp to exist. It is created before probing starts, so
-    # its absence after several seconds means the collector never reached the window under
-    # test — not that the window is clean.
-    seen=0
-    for _ in $(seq 1 100); do
-        if [ "$(temps)" -gt 0 ]; then seen=1; break; fi
-        kill -0 "$p" 2>/dev/null || break
-        sleep 0.1
-    done
-    if [ "$seen" -eq 0 ]; then
-        kill -KILL "-$p" 2>/dev/null; wait "$p" 2>/dev/null
-        echo "SKIP: cockpit.sh never created a temp — probe cannot start here (bd/git missing?)" >&2
-        exit 77
-    fi
-    ok "$sig: temp present mid-probe (control)"
-
-    # Kill the process group so probe's subprocesses also receive the signal: bash defers
-    # its signal trap until the current foreground child returns, and probe's bd/python3
-    # children have no trap — they exit immediately, unblocking bash's own trap.
-    kill -"$sig" "-$p" 2>/dev/null
-    wait "$p" 2>/dev/null; rc=$?
-
-    # The signal is re-raised after cleanup rather than swallowed for a made-up status, so
-    # the caller — systemd on a restart — still sees the death it sent. 128+signo.
-    want=$((128 + $(kill -l "$sig")))
-    [ "$rc" -eq "$want" ] && ok "$sig: died of the signal it was sent (rc=$rc)" \
-                          || bad "$sig: expected rc $want, got $rc"
-
-    n="$(temps)"
-    [ "$n" -eq 0 ] && ok "$sig: no temp left" || bad "$sig: $n temp(s) left behind"
-done
-
-echo
-echo "an interrupted pass does not disturb the published snapshot"
-got="$(. "$RUN/cockpit.env" 2>/dev/null; printf '%s' "${SP_MARKER:-}")"
-[ "$got" = "before" ] && ok "cockpit.env untouched by three killed passes" \
-                      || bad "cockpit.env: marker is [$got], expected [before]"
-
-echo
 echo "sweep_stale_tmps clears pre-existing orphaned temps at startup"
-# Called synchronously as its own subcommand (cockpit.sh sweep-temps) rather than through a
-# backgrounded 'once' — sweep_stale_tmps runs to completion before that call returns, so the
-# property is asserted directly with no poll and no kill.
+# Called synchronously as its own subcommand (cockpit-collect sweep-temps) — it runs to
+# completion before that call returns, so the property is asserted directly, no poll, no kill.
 touch "$RUN/.cockpit.99999" "$RUN/.cockpit.orphan"
 [ "$(temps)" -eq 2 ] && ok "two orphaned temps present before the sweep (control)" \
                       || bad "expected 2 orphaned temps staged, found $(temps)"
@@ -127,7 +47,7 @@ env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
     SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=t \
     SPIRA_COCKPIT="$TMP" \
-    "$COCKPIT" sweep-temps >/dev/null 2>&1
+    cockpit-collect sweep-temps >/dev/null 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && ok "sweep-temps exited 0" || bad "sweep-temps exited $rc"
 
