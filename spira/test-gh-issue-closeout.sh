@@ -210,7 +210,7 @@ fi
 
 printf '\n7. answering the tracking ask lets the scan write the durable marker instead of re-asking:\n'
 ASK_SUBJ="Close GitHub issue github:fixture/testrepo#3 for bead sp-scan1"
-ASK_ID="$(bdjson list --status open --label needs-operator --limit 0 2>/dev/null | python3 -c '
+ASK_ID="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" list --status open --label needs-operator --limit 0 --json 2>/dev/null | python3 -c '
 import sys, json
 d = json.load(sys.stdin); rows = d if isinstance(d, list) else [d]
 want = sys.argv[1]
