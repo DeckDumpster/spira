@@ -45,10 +45,13 @@ echo
 echo "all 7 SPIRA_CZAR_STAGE_* keys in SPIRA_CONF_KEYS allowlist"
 # ==========================================================================================
 conf_sh="$HERE/conf.sh"
+# sp-g3uwp: conf.sh no longer carries its allowlist as literal text — a key's membership
+# is now the existence of its own file under conf.d/, which conf-gen.sh derives the
+# allowlist from directly.
 if [ -f "$conf_sh" ]; then
     for sfx in DEADLOCK ATTRIBUTION_FAILED SORT_FAILED LOOP_STALLED CI_STALLED STARVED CI_RED; do
         key="SPIRA_CZAR_STAGE_${sfx}"
-        grep -q "$key" "$conf_sh" 2>/dev/null \
+        [ -f "$HERE/conf.d/$key" ] \
             && ok "$key in SPIRA_CONF_KEYS" \
             || bad "$key missing from SPIRA_CONF_KEYS" ""
     done

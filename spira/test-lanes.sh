@@ -30,9 +30,11 @@ nowant "ops.fayth no longer uses FAYTH_ROLE=party" "FAYTH_ROLE=party" "$(grep -v
 
 # The real-roster split (ops in lane fayths, builder in task fayths) is a test-fayth.sh row.
 
-# The ops lane is declared in conf.sh's key list (SPIRA_CONF_KEYS) and defaults.
-want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(cat "$HERE/conf.sh")"
-want "ops is in the SPIRA_LANES default"    "ops"          "$(grep 'SPIRA_LANES:=' "$HERE/conf.sh")"
+# The ops lane is declared in the config key registry (sp-g3uwp: conf.sh's key list and
+# defaults are generated from spira/conf.d/, one file per key, rather than carried as
+# literal text in conf.sh itself).
+want "SPIRA_LANES is a recognised conf key" "SPIRA_LANES" "$(ls "$HERE/conf.d")"
+want "ops is in the SPIRA_LANES default"    "ops"          "$(grep 'SPIRA_LANES:=' "$HERE/conf.d/SPIRA_LANES")"
 
 # The sentinel handles lane fayths in a separate loop, inside the summon pass it shares with
 # --summon-only (sp-0y2av): the sentinel binary calls ck7_summon_pass through its seam S2.

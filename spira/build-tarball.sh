@@ -258,8 +258,15 @@ for pkg in meta['packages']:
     # actually takes. Generate here, into the still-writable staging tree, so the shipped
     # tarball already carries fresh output and the lazy regenerate in conf.sh only ever fires
     # for a developer's own working checkout.
-    bash "$stage/spira/conf-gen.sh" \
-        || { echo "build-tarball.sh: conf-gen.sh failed against the staged tree — refusing to pack a release with no generated config" >&2; return 1; }
+    #
+    # CONDITIONAL ON THE FILE EXISTING: this function also packages trees with no spira/ at
+    # all (test-workspace-dist.sh's synthetic Rust-workspace fixtures) — a repository this
+    # harness never ships from, but one build-tarball.sh's generic packaging must still
+    # handle without assuming every caller is the harness's own release.
+    if [ -f "$stage/spira/conf-gen.sh" ]; then
+        bash "$stage/spira/conf-gen.sh" \
+            || { echo "build-tarball.sh: conf-gen.sh failed against the staged tree — refusing to pack a release with no generated config" >&2; return 1; }
+    fi
 
     # Add prebuilt binaries under bin/.
     local _i
