@@ -1,8 +1,10 @@
-//! The boundary `real.rs` implements: `spira_home_repo`/`repo_root`/`spira_landref` (in-process
-//! via `spira_config::repos::Registry`) and `detect_invalid_closed` (still the `lib.sh` seam —
-//! DESIGN.md "Non-goals"), `bd` directly (the bash calls `bd create`, not `bdq` — DESIGN.md
-//! "Decisions"), `git log`, and — in-process since wave 4.35, sp-kelr2, row V —
-//! `spira_open_trigger_count`/`spira_lane_admitted`/`spira_repo_lanes` (`crate::lanes`).
+//! The boundary `real.rs` implements: `spira_home_repo`/`repo_root`/`spira_landref`
+//! in-process via `spira_config::repos::Registry`; `spira_lane_admitted`/
+//! `spira_open_trigger_count`/`spira_repo_lanes` in-process via `crate::lanes` (wave 4.35,
+//! sp-kelr2, row V); `detect_invalid_closed` in-process via `strand::detectors` (wave 4.29,
+//! sp-8ofmt, row T) — none of the old six-function `lib.sh` seam DESIGN.md's "Non-goals"
+//! once named is still a seam; `bd` directly (the bash calls `bd create`, not `bdq` —
+//! DESIGN.md "Decisions"); and `git log`.
 
 use std::path::{Path, PathBuf};
 

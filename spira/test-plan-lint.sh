@@ -11,15 +11,16 @@
 # (SEEN GREEN).
 #
 # THE WHOLE-TREE WALK IS OVER A SCRATCH REPOSITORY — plan-lint.sh resolves
-# its ROOT via git from its own location, so copying it (with suite-covers.sh,
-# suite-coverage-json.sh) into a throwaway git repo is
-# enough to isolate every assertion from the real, not-yet-migrated spira/
-# corpus. test-plan is the real tree's own binary, by name on the suite's PATH.
+# its ROOT via git from its own location, so copying it (with suite-coverage-json.sh)
+# into a throwaway git repo is enough to isolate every assertion from the real,
+# not-yet-migrated spira/ corpus. test-plan and suite-select are the real tree's own
+# binaries, by name on the suite's PATH (plan-lint.sh calls `suite-select header ...`
+# for its tier/covers/UC reads since wave 4.36, sp-bobsp).
 #
 # host-reason: reads suite source and scratch git repos only; no database, no systemd
 #
 # tier: T1
-# covers: spira/plan-lint.sh spira/suite-covers.sh spira/suite-coverage-json.sh
+# covers: spira/plan-lint.sh spira/suite-coverage-json.sh suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 REAL_ROOT="$(cd "$HERE/.." && pwd -P)"

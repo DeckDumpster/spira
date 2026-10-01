@@ -15,11 +15,20 @@ pub struct Real {
     pub repo_map: Option<PathBuf>,
     pub lane_labels: LaneLabels,
     registry: OnceCell<spira_config::repos::Registry>,
+    strand_cfg: OnceCell<strand::config::Config>,
 }
 
 impl Real {
     pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>, lane_labels: LaneLabels) -> Real {
-        Real { home, run, db, bd, repo_map, lane_labels, registry: OnceCell::new() }
+        Real { home, run, db, bd, repo_map, lane_labels, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+    }
+
+    /// `strand::config::Config`, resolved once per process the same way `strand`'s own
+    /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
+    /// the detectors moved there (wave 4.29, sp-8ofmt) and are reached in-process instead
+    /// of through the `lib.sh` seam.
+    fn strand_cfg(&self) -> &strand::config::Config {
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -39,25 +48,6 @@ impl Real {
             Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
             None => String::new(),
         }
-    }
-
-    /// The `lib.sh` seam (same pattern as `gate-check/src/real.rs`): source `lib.sh`, then
-    /// run `body` with `args` as positional parameters, capturing trimmed stdout.
-    fn seam(&self, body: &str, args: &[&str]) -> String {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(self.home.join("lib.sh"))
-            .args(args)
-            .env("SPIRA_HOME", &self.home)
-            .env("SPIRA_DB", &self.db)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        out.ok()
-            .map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string())
-            .unwrap_or_default()
     }
 
     fn read_epoch_file(&self, name: &str) -> i64 {
@@ -148,7 +138,7 @@ impl World for Real {
     }
 
     fn detect_invalid_closed(&self) -> String {
-        self.seam("detect_invalid_closed 2>/dev/null", &[])
+        strand::detectors::detect_invalid_closed(self.strand_cfg())
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {

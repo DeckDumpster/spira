@@ -22,7 +22,13 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
     return 1 2>/dev/null || exit 1
 }
 . "$_spira_lib_dir/conf.sh"
-. "$_spira_lib_dir/suite-covers.sh"
+# suite-covers.sh is NOT sourced here (wave 4.36, sp-bobsp): nothing in lib.sh calls its
+# accessors, and the five scripts that do (plan-lint.sh, suite-coverage-json.sh,
+# escape-classify.sh, testenv-guard.sh, testlib.sh) now call `suite-select header ...`
+# instead — the one Rust parser (suite-select/src/header.rs) that spira-lint and
+# batcher-cut already read. The bash file itself is left on disk, unsourced: dozens of
+# install/lib fixtures still `cp`/`ln -s` it alongside lib.sh/conf.sh from before this
+# change, and none of them need editing since nothing reads the copy either.
 # FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
 # one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
 # binary's own subprocess, which inherits only the real process environment — not this
@@ -143,57 +149,12 @@ json_only() { command bdq __json_only; }
 
 bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 
-# ask_already_open <subject> -> 0 when an OPEN operator ask already carries that subject.
-#
-# THE STRONGEST DEDUPE IS "IS IT ALREADY IN FRONT OF HIM", not a clock and not a stamp file.
-# A clock re-asks a question already on his screen — land_escalate was rate limited to once
-# an hour, which over one day put NINE identical "Spira is landing nothing" decisions in the
-# operator's pane; he closed eight and the ninth arrived anyway. A stamp file is better but
-# still answers a question about this box's memory rather than about his queue, and it is
-# lost whenever $SPIRA_RUN is cleared.
-#
-# The database is the queue, so ask the database. An ask he has ALREADY CLOSED does not
-# suppress a new one: a closed ask is an answered question, and the condition recurring after
-# an answer is new information (law-alerts-must-be-actionable).
-ask_already_open() {     # ask_already_open <subject>
-    local subject="$1" hits
-    [ -n "$subject" ] || return 1
-    hits="$(bdjson list --status open --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
-        | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-want = sys.argv[1]
-print(sum(1 for i in rows if want in (i.get("title") or "")))' "$subject" 2>/dev/null)"
-    [ "${hits:-0}" -gt 0 ] 2>/dev/null
-}
-
-# ask_closed_subject <subject> -> prints the id of a CLOSED operator ask carrying that
-# subject, or nothing.
-#
-# NOT EVERY ASK'S ANSWER IS "NEW INFORMATION" ON RECURRENCE. ask_already_open's own
-# comment is right for most callers — an alert whose condition returns after being
-# closed is telling him something changed. gh_issue_ask_unlanded's condition ("this
-# bead's commit is not yet on the base") does not change just because he closed the
-# ask; closing it IS the answer, and a caller whose only dedupe is "no ask is open"
-# re-files the identical ask every pass forever. This finds that already-answered ask
-# so the caller can write a durable marker instead of re-asking.
-ask_closed_subject() {   # ask_closed_subject <subject>
-    local subject="$1"
-    [ -n "$subject" ] || return 1
-    bdjson list --status closed --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
-        | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-want = sys.argv[1]
-for i in rows:
-    if want in (i.get("title") or ""):
-        print(i.get("id") or "")
-        break' "$subject" 2>/dev/null
-}
+# ask_already_open/ask_closed_subject retired (sp-j3fim, wave 4.31, family AB): both
+# ported natively into gh-intake/src/closeout.rs — the GitHub-closeout family (AB) was
+# the last bash caller left after sp-31hjr (wave 4.30) ported family C's own callers, so
+# no bash form remains anywhere in the tree. `gh-intake closeout`/`unlanded-scan`/
+# `backfill` carry the dedupe logic now; sentinel and landing-pass each keep their own
+# separate native copy (sp-31hjr), not shared with this one — same reasoning as there.
 
 # spira_ask_machinery, spira_ask_machinery_class, spira_land_noverdict,
 # spira_is_generated_file, spira_ask_rebase_loop, spira_ask_red_recurring,
@@ -203,8 +164,8 @@ for i in rows:
 # No caller remained in bash — landing-pass's own lib.sh seam was the only one, and
 # it calls the Rust versions in-process now. `landing-pass noverdict ...` and
 # `sentinel --land-escalate` drive the native versions standalone for the
-# real-sender suites. ask_already_open stays (the GitHub-closeout family, not yet
-# ported, still calls it directly).
+# real-sender suites. ask_already_open itself retired with the GitHub-closeout family
+# (sp-j3fim, wave 4.31) — see the note above json_only.
 
 # How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
 # is one line, and a warning printed before it would be counted as a row.
@@ -367,8 +328,10 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
 # three is named in this bead's scope, each still has live bash callers outside family F
 # (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
-# fleet-status.sh calls ready_count; detect_unclaimable_ready — family T, a later bead —
-# calls ready_raw_args), and routing them through a `spira-claim` subprocess at lib.sh
+# fleet-status.sh calls ready_count; detect_unclaimable_ready called ready_raw_args here
+# too, until wave 4.28 (sp-fbqsv) ported it — its own fallback now calls
+# `store::ready_raw_args` in-process, the Rust mirror of this same function), and routing
+# them through a `spira-claim` subprocess at lib.sh
 # SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
 # `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
 # call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
@@ -540,250 +503,34 @@ ck7_fill_cap() {
     printf continue
 }
 
-# mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
-# is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
-#
-# bd considers a dep resolved once the blocker is closed, so the dependent appears in
-# `bd ready`. In queue mode, CLOSED ≠ LANDED — the work is not yet on base. This label
-# keeps fayth_ready from counting those beads until the blocker's landstate reaches LANDED.
-#
-# Same-repo work-bead blockers release earlier (at CERTIFIED) under the stacked-dependents
-# rule (stack_max_depth) — see wiki/projects/spira/designs/stacked-dependents-2026-09-28.md.
-# This label still governs cross-repo and non-work blockers, which wait for LANDED.
-#
-# A closed blocker with tip="none" (design, diagnosis, superseded) has no commit and will
-# never reach LANDED via the queue path; it counts as satisfied regardless of landstate.
-#
-# All label decisions are made in a single pass over the union of labeled and ready beads
-# using consistent dep data, preventing the clear-then-apply flip-flop that occurs when
-# the release and apply steps disagree on which deps are visible.
+# mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
+# beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
+# and close out a labeled bead whose landstate already reads LANDED (it never got a branch
+# to land, so the normal close-on-land path never visited it). PERMANENT (wave4-decomposition
+# row H): the lifecycle-flip plan keeps this family even once lc.sh's own calls are gone —
+# stacked dependents still read the label. Ported to Rust (sp-fbqsv, "wave 4.28"); see
+# `sentinel::waiters` for the one-pass decision (no release-then-apply flip-flop) and the
+# landstate scan (now in-process, no per-file awk fork).
 mark_queue_waiters() {
-    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
-    [ -n "$label" ] || return 0
-    local landstate_dir="$SPIRA_RUN/landstate"
-    local id state tip qblockers=""
-
-    # Active queue blockers: CERTIFIED or BATCHED beads with a real commit tip.
-    # tip="none" means no commit was recorded (design, diagnosis, superseded bead);
-    # such a bead will never reach LANDED and is treated as already satisfied.
-    #
-    # ONE AWK FOR THE WHOLE DIRECTORY, not a per-file loop forking two awks apiece — 546
-    # landstate files forked ~1,092 processes to read two fields each (sp-bo67y). A single
-    # invocation over every filename argument resets FNR at each file boundary, so one call
-    # still prints exactly one "<path> <state> <tip>" line per file.
-    if [ -d "$landstate_dir" ]; then
-        local -a _mq_all=("$landstate_dir"/*) _mq_files=() _mq_sf
-        for _mq_sf in "${_mq_all[@]}"; do [ -f "$_mq_sf" ] && _mq_files+=("$_mq_sf"); done
-        if [ "${#_mq_files[@]}" -gt 0 ]; then
-            while IFS=' ' read -r sf state tip; do
-                [ -n "$sf" ] || continue
-                id="${sf##*/}"
-                case "$state" in
-                    CERTIFIED|BATCHED)
-                        [ -n "$tip" ] && [ "$tip" != "none" ] \
-                            && qblockers="${qblockers}${id} "
-                        ;;
-                esac
-            done < <(awk 'FNR==1{print FILENAME, $1, $2}' "${_mq_files[@]}" 2>/dev/null)
-        fi
-    fi
-
-    # Collect labeled beads and ready beads, then decide each bead's label state
-    # once — no separate release and apply passes that can clear for one blocker
-    # and re-apply for another in the same run.
-    local labeled_json ready_json
-    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
-        || labeled_json=""
-    ready_json=""
-    if [ -n "$qblockers" ]; then
-        # SPIRA_READY_SNAPSHOT, WHEN SET, IS THE BROADER ready_raw_args SUPERSET (no
-        # SPIRA_SCOPE_LABEL filter) that sentinel.sh's full pass fetches once (sp-bo67y).
-        # READY_ARGS itself narrows to scope, so the python below re-applies that one
-        # restriction rather than asking bd again for an identical, narrower query.
-        if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
-            ready_json="$(SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
-import json, os, sys
-scope = os.environ.get("SPIRA_SCOPE_LABEL", "")
-try: d = json.load(sys.stdin)
-except Exception: d = []
-d = d if isinstance(d, list) else [d]
-if scope:
-    d = [b for b in d if scope in (b.get("labels") or [])]
-print(json.dumps(d))
-' < "$SPIRA_READY_SNAPSHOT" 2>/dev/null)" || ready_json=""
-        else
-            ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
-        fi
-    fi
-
-    # labeled_json goes in a temp file, ready_json on stdin — neither through the
-    # environment or argv (law-payloads-go-on-stdin): both scale with queue size, unbounded.
-    local _lqf; _lqf="$(mktemp)" || return 1
-    printf '%s' "${labeled_json:-[]}" > "$_lqf"
-    QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" \
-    LABELED_FILE="$_lqf" python3 -c '
-import json, sys, os
-
-active = set(os.environ.get("QUEUE_BLOCKERS", "").split())
-label  = os.environ["QUEUE_LABEL"]
-
-def parse(s):
-    if not s: return []
-    try: d = json.loads(s); return d if isinstance(d, list) else [d]
-    except Exception: return []
-
-with open(os.environ["LABELED_FILE"]) as f:
-    labeled = {b["id"]: b for b in parse(f.read()) if b.get("id")}
-ready   = {b["id"]: b for b in parse(sys.stdin.read()) if b.get("id")}
-
-def blocks_active(bead):
-    return any(
-        (dep.get("dependency_type") or dep.get("type")) == "blocks"
-        and dep.get("depends_on_id") in active
-        for dep in (bead.get("dependencies") or [])
-    )
-
-# ready dep data is authoritative; labeled-only beads (in_progress, extra blockers)
-# get no dep check — removing the label is safe since the bead is not claimable.
-for bid, bead in ready.items():
-    currently = bid in labeled
-    want = bool(active) and blocks_active(bead)
-    if want and not currently: print("add", bid)
-    elif not want and currently: print("remove", bid)
-
-for bid in labeled:
-    if bid not in ready:
-        print("remove", bid)
-' <<< "${ready_json:-[]}" 2>/dev/null \
-    | while IFS=' ' read -r action id; do
-        [ -n "$id" ] || continue
-        case "$action" in
-            add)
-                bdq label add "$id" "$label" >/dev/null 2>&1 || true
-                # Dual-written, not a replace (sp-ki12s precedent): fayth_ready still reads
-                # the label, not this hold, until CHECK 3b's reader is cut over in the round.
-                spira-lc hold "$id" wait "blocker certified or batched, not yet landed" sentinel || true
-                log "mark_queue_waiters: $id — queue-wait applied"
-                ;;
-            remove)
-                bdq label remove "$id" "$label" >/dev/null 2>&1 || true
-                spira-lc unhold "$id" wait sentinel || true
-                log "mark_queue_waiters: $id — blocker landed, cleared"
-                ;;
-        esac
-    done
-    rm -f "$_lqf"
+    sentinel --mark-queue-waiters
 }
-
-# close_landed_queue_waiters — close any open bead carrying SPIRA_QUEUE_WAIT_LABEL whose
-# landstate file records LANDED. These beads never leave the label on their own because the
-# normal close path runs when the branch lands; a bead with no branch or an empty branch has
-# nothing to land and is never visited by that path.
 close_landed_queue_waiters() {
-    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
-    [ -n "$label" ] || return 0
-    local landstate_dir="$SPIRA_RUN/landstate"
-    local labeled_json _id _state _ls
-    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
-        || labeled_json=""
-    [ -n "$labeled_json" ] || return 0
-    while IFS= read -r _id; do
-        [ -n "$_id" ] || continue
-        _ls="$landstate_dir/$_id"
-        [ -f "$_ls" ] || continue
-        _state=""
-        { read -r _state _ < "$_ls"; } 2>/dev/null || continue
-        if [ "$_state" = "LANDED" ]; then
-            bdq label remove "$_id" "$label" >/dev/null 2>&1 || true
-            spira-lc unhold "$_id" wait sentinel || true
-            bdq close "$_id" \
-                --reason "Content already on main (landstate=LANDED); no branch remained to land." \
-                >/dev/null 2>&1 || true
-            log "close_landed_queue_waiters: $_id — closed (LANDED, no branch)"
-        fi
-    done < <(printf '%s\n' "$labeled_json" | python3 -c '
-import sys, json
-try:
-    rows = json.loads(sys.stdin.read())
-    if not isinstance(rows, list): rows = [rows]
-    for r in rows:
-        bid = r.get("id", "")
-        if bid: print(bid)
-except Exception:
-    pass
-' 2>/dev/null)
+    sentinel --close-landed-queue-waiters
 }
 
 # mark_open_children is CHECK 3c in the sentinel binary (sentinel/src/open_children.rs,
 # sp-du8bv): it decides from the pass's one store snapshot instead of one `bd children` per
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
-# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon can claim it.
-#
-# <suites>, when given, is a comma-separated list of suites this withdrawal is known to have
-# reddened. Written to $LANDSTATE/<id>.ejected — the sidecar gate.sh already reads
-# unconditionally — so the next certification forces them via SPIRA_GATE_EJECTED_SUITES
-# instead of running fences-only and rediscovering the same red (law-a-retry-must-change-an-input).
-#
-# REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any
-# bead that has one even though `bd ready` lists it — so a bead reopened by the landing
-# pass (a rebase conflict, a red gate) or by the aeon's own closed-without-commit check went
-# back into the graph wearing a dead aeon's name and was never claimed again. Seven sat that
-# way for four to eight hours at P0 while aeons took P1 work around them, and every one of
-# the 23 reopens the landing log holds had the same defect. Clearing the assignee is what
-# makes a reopen a reopen; it is done here so no site can forget it.
-#
-# RETURNS NON-ZERO IF ANY SUB-OPERATION FAILED, so a caller that needs to know — verdict.sh's
-# _attr_eject, which must not report an ejection that never reopened the bead (sp-vjfv6) —
-# can branch on it. Every other call site fires this under `set -e` and does not check the
-# return, so each is suffixed `|| true`: a bd refusal must not abort the caller partway,
-# leaving a bead reopened with no record of WHY. bd's refusal is reported on stderr where the
-# harness log keeps it either way.
-#
-# <cause> is a stable slug (gate-red, rebase-conflict, closed-without-commit, …) written
-# as a harness event row so census can break sp-reopen into classified subclasses.
-# It is written AFTER bd's own `reopened` event, under event_type='reopen', so the two
-# rows are distinct and the census never double-counts a harness reopen.
+# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
+# can claim it: withdraws a CERTIFIED landstate (unless <cause> is admission-exempt — see
+# _census_deliberate_reopen_causes below), writes the <suites> sidecar, reopens, strips the
+# submitted label, releases the claim and records the cause. Ported to spira-claim (wave
+# 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
+# and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
+# bdq reopen, release_claim or the note each separately failed.
 bead_reopen() {
-    local id="$1" cause="${2:-unrecorded}" note="${3:-}" suites="${4:-}" rc=0
-    # A CERTIFIED bead reopened here must stop being admissible: the batch builder
-    # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
-    # reopen goes through this one function, so this is the one place that can't
-    # be skipped by a caller that forgot.
-    #
-    # EXCEPT THE SUBMITTED CONVERSION (sp-qsona). aeon.sh's teardown "reopens" a work bead
-    # its own session closed only to carry SPIRA_SUBMITTED_LABEL until the landing pass
-    # closes it — the work is done and certification proceeds from submitted, so a
-    # CERTIFIED record written moments earlier (the session's own queue.sh submit, or
-    # aeon.sh's self-certify, sp-u9f82) must stay admissible. Withdrawing it here would
-    # strand every converted bead: open, submitted, and never batched. This is the only
-    # cause admission-exempt in _census_deliberate_reopen_causes (below): eject is also
-    # deliberate for census, but a CERTIFIED-unbatched eject still needs to withdraw.
-    local _wd_st _wd_tip
-    read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    if [ "${_wd_st:-}" = CERTIFIED ] && ! _census_reopen_admission_exempt "$cause"; then
-        local _wd_reason="$cause"
-        [ -n "$suites" ] && _wd_reason="$cause suites=$suites"
-        land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$_wd_reason"
-    fi
-    if [ -n "$suites" ]; then
-        printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
-            && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
-    fi
-    bdq reopen "$id" >/dev/null 2>&1 || rc=1
-    # A REOPEN MEANS REWORK, so a submitted bead stops being submitted. SPIRA_SUBMITTED_LABEL
-    # is excluded from every claim (fayth_exclude), so a bead the landing pass reopens for a
-    # conflict or a red gate while it still carries the label is open, unclaimable and never
-    # landed — stranded. The submitted conversion itself (work-close-converted) is the one
-    # reopen that ADDS the label, right after this call, and is left alone.
-    if ! _census_reopen_admission_exempt "$cause"; then
-        bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
-    fi
-    release_claim "$id" || rc=1
-    _bump_write_event "$id" reopen "$cause" || rc=1
-    [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
-    [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
-    return "$rc"
+    spira-claim reopen "$@"
 }
 
 # --------------------------------------------------------------------------------------
@@ -804,7 +551,7 @@ bead_reopen() {
 # correct one, and --force is how a sweep robs a live worker.
 # --------------------------------------------------------------------------------------
 release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
-    bdq assign "$1" "" >/dev/null 2>&1
+    spira-claim release "$1"
 }
 
 # ---- lifecycle: the bead machine, via spira-lc (design §3.1.1, §3.5) -----------------
@@ -1787,40 +1534,30 @@ _census_class_fold_map() {
 # line — the single declared list of reopen causes that are the system working, not a
 # fault (law-a-deliberate-state-is-not-a-fault): firing queue.sh eject, or converting a
 # closed work bead to submitted, is a correct outcome, so census must count these but
-# never rank them for a Maechen remedy (sp-eiatd). Kept adjacent to _census_class_fold_map
-# above, the same way that fold is kept adjacent to the SQL that uses it — both
-# bead_reopen (below) and _census_events_sql/_census_deliberate_sql read this one list.
-#
-# <admission-exempt> marks the one behavior specific to work-close-converted: whether the
-# CERTIFIED landstate and the submitted label survive the reopen. work-close-converted is
-# bookkeeping (aeon.sh's teardown carrying a finished bead to the landing pass), not
-# rework, so it alone stays admissible. Every other deliberate cause — eject withdraws a
-# CERTIFIED-but-unbatched bead that DOES need rework — still needs WITHDRAWN written and
-# the label stripped, or batch.sh's second line of defence (its own comment: "every eject
-# strips the label") would re-admit a bead the operator just pulled from the queue.
+# never rank them for a Maechen remedy (sp-eiatd). Both bead_reopen and
+# _census_events_sql/_census_deliberate_sql read this one list; it now lives in
+# spira-claim (wave 4.19, sp-3wfcb, row I) since bead_reopen does — this and
+# _census_reopen_admission_exempt are shims so row M's SQL producers below see the exact
+# same declared set without a second copy to drift (see spira-claim/src/reopen.rs).
 _census_deliberate_reopen_causes() {
-    printf 'work-close-converted 1\n'
-    printf 'eject 0\n'
+    spira-claim deliberate-causes
 }
 
 # _census_reopen_admission_exempt <cause> -> 0 (stays CERTIFIED/submitted) or 1 (does not)
 _census_reopen_admission_exempt() {
-    local _c _exempt
-    while read -r _c _exempt; do
-        [ "$_c" = "$1" ] && [ "$_exempt" = 1 ] && return 0
-    done <<< "$(_census_deliberate_reopen_causes)"
-    return 1
+    spira-claim deliberate-exempt "$1"
 }
 
 # _census_deliberate_causes_sql_list -> a quoted, comma-separated SQL IN-list of every
 # deliberate cause's name.
 #
-# PORTED (wave 4.35, sp-kelr2, row M) onto `census sql deliberate-causes` — the Rust side
-# duplicates the two cause NAMES as a constant (census/src/sql.rs's own doc explains why:
-# the admission-exemption flag _census_deliberate_reopen_causes also carries is row I's
-# business, a separate, not-yet-landed bead, so this is the one duplication row M's port
-# could not avoid). This shim exists for symmetry with the rest of row M; grepped the whole
-# tree and found no caller, bash or Rust, of this name specifically.
+# PORTED (wave 4.35, sp-kelr2, row M) onto `census sql deliberate-causes`. No second copy
+# of the cause list: census's own Real fetches the names from `spira-claim
+# deliberate-causes` (row I, sp-3wfcb — the canonical list is
+# spira_claim::reopen::DELIBERATE_CAUSES now) the same way this file's own
+# _census_deliberate_reopen_causes shim does, above. This shim exists for symmetry with
+# the rest of row M; grepped the whole tree and found no caller, bash or Rust, of this name
+# specifically.
 _census_deliberate_causes_sql_list() {
     census sql deliberate-causes
 }
@@ -2194,270 +1931,42 @@ system_prompt_split() {
 # question — what CAN be claimed right now — and applies exclusions to answer it; this
 # answers "whose is it", which a poisoned or asked-about bead still is. groomer.sh's
 # `deadlocked` and any future census over the full board read this, not the claimable set.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::all_partition_members`.
 all_partition_members() {
-    local labels exclude
-    while IFS=$'\t' read -r labels exclude; do
-        [ -n "$labels" ] || continue
-        bdjson list --status open,in_progress --limit 0 --label "$labels" 2>/dev/null \
-            | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]): print(i["id"])' 2>/dev/null
-    done < <(fayth_partitions) | awk 'NF && !seen[$0]++'
-    return 0
+    strand all-partition-members
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.
+# file_unclaimable_incidents <detect_unclaimable_ready output> -> one P1 incident per line,
+# filed into the Groomer partition (idempotent: incident.sh dedupes on unclaimable:<id>).
+# detect_branch_collisions -> one COLLISION line per open bead whose recorded branch is
+# checked out in a DIFFERENT bead's canonical worktree. park_branch_collisions <that output>
+# frees a closed-clean-unheld squatter, cuts an inherited branch: label, or parks the rest
+# with SPIRA_ASK_LABEL/overseer.
 #
-# THE ALARM THIS CHECK FIRES ON IS DISTINCT FROM AN IDLE QUEUE. "nothing ready" and "a
-# ready bead nobody can claim" look identical to CHECK 7: every partition reports 0, a
-# genuinely empty queue reports 0, and the pass ends with the same log line either way.
-# This check reads the raw ready set — no partition filter — and tests each bead against
-# the full chamber. The empty-queue case finds no beads; the unclaimable case finds them.
-#
-# THE ARITHMETIC MIRRORS bead.sh's claimers(). Not called from there because bead.sh lives
-# in the brain repo and this runs in the harness; porting keeps the harness self-contained.
-# Both derive from the same chamber files, so they agree by construction.
-#
-# EXCLUSION SET IS THE PERSONA'S OWN FAYTH_EXCLUDE_LABELS ONLY. The `fayth:<other-persona>`
-# terms that fayth_exclude() appends to each `bd ready --exclude-label` call are already
-# handled here by the preference check: when a bead carries `fayth:ops`, pref={ops} and
-# only ops is tested — no other persona enters the loop at all. Duplicating fayth: terms
-# into the exclusion set would be correct but redundant.
-#
-# OUTPUT NAMES THE BEAD, ITS PREFERENCE AND THE REJECTION REASON so the fix is one label.
-# Format: UNCLAIMABLE <id> — <reason>
+# Ported to Rust (sp-fbqsv, "wave 4.28"); see `sentinel::detect` for the full rationale
+# each of these carried (the fifteen-hour fayth:-preference strand, the unclaimable-
+# reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
+# `detect_unclaimable_ready` still classifies through `spira/unclaimable.py`, unchanged and
+# untouched — split out on purpose so a fixture-JSON table (test-unclaimable.sh) and
+# cockpit-collect's own cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17) can drive
+# it directly; this bead only ports the bash orchestration around it. The bash-only re-exec
+# that used to re-source lib.sh from the production checkout when called from a worktree
+# (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no
+# persistent, correctly-resolved context across calls, and this binary resolves its config
+# once at startup the same way for every check in the pass (law-a-binary-resolves-the-
+# config-it-reads) — see test-unclaimable-worktree.sh for the suite kept to prove this.
 detect_unclaimable_ready() {
-    # Config must come from the production checkout — not from a worktree whose
-    # conf.sh carries a different SPIRA_PLAN_LABEL or other partition label.
-    # _spira_gitstore returns the shared .git dir; its parent is the main worktree.
-    # If that differs from our SPIRA_REPO, re-run via the main checkout with the
-    # label vars unset so the production conf.sh defaults take effect.
-    local _duc_gcd _duc_prod_root
-    _duc_gcd="$(_spira_gitstore "$SPIRA_HOME")" || _duc_gcd=""
-    if [ -n "$_duc_gcd" ]; then
-        _duc_prod_root="$(cd "$_duc_gcd/.." 2>/dev/null && pwd -P)" || _duc_prod_root=""
-        if [ -n "$_duc_prod_root" ] && [ "$_duc_prod_root" != "$SPIRA_REPO" ]; then
-            local _duc_prod_home="$_duc_prod_root/${SPIRA_HOME#$SPIRA_REPO/}"
-            if [ -f "$_duc_prod_home/lib.sh" ]; then
-                env -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
-                    -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
-                    -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
-                    -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
-                    -u SPIRA_GROOM_ASK_LABEL \
-                    -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
-                    -u SPIRA_READY_SNAPSHOT -u SPIRA_LIST_SNAPSHOT -u SPIRA_READY_CACHE \
-                    SPIRA_HOME="$_duc_prod_home" \
-                    bash -c ". \"$_duc_prod_home/lib.sh\"; detect_unclaimable_ready"
-                return $?
-            fi
-        fi
-    fi
-
-    local parts="" all_parts="" f inc exc
-    for f in $(spira_fayths); do
-        inc="$(fayth_get "$f" FAYTH_LABELS)"
-        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-        [ -n "$inc" ] && parts="${parts}${f}|${inc}|${exc}"$'\n'
-    done
-    [ -n "$parts" ] || return 0
-
-    # ALL_PARTS: the full chamber, including fayths the active roster omits. Used to
-    # distinguish a parked partition (bead claimable by a chamber fayth not in SPIRA_FAYTHS)
-    # from a real mislabelling (bead claimable by nobody, full chamber included).
-    for f in $(fayth_names); do
-        inc="$(fayth_get "$f" FAYTH_LABELS)"
-        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-        [ -n "$inc" ] && all_parts="${all_parts}${f}|${inc}|${exc}"$'\n'
-    done
-
-    # SPIRA_READY_SNAPSHOT is exactly this query (ready_raw_args), fetched once for the whole
-    # pass (sp-bo67y) — read it instead of asking bd again when the caller has one ready.
-    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
-        cat "$SPIRA_READY_SNAPSHOT"
-    else
-        local _det_args; mapfile -t _det_args < <(ready_raw_args)
-        bdjson "${_det_args[@]}" 2>/dev/null
-    fi \
-    | PARTS="$parts" ALL_PARTS="$all_parts" unclaimable.py 2>/dev/null
+    sentinel --detect-unclaimable
 }
-
-# file_unclaimable_incidents — for each UNCLAIMABLE line in detect_unclaimable_ready output,
-# file a P1 incident in the Groomer partition so the Groomer can claim and fix the label.
-#
-# THE GROOMER IS THE TERMINUS. Only the Groomer can discharge an UNCLAIMABLE finding: it can
-# add the scope label, correct the fayth:, or close the row. Ops cannot do any of these and
-# must not be the sole recipient. The incident is filed with SPIRA_GROOMER_LABEL.
-#
-# THE CALL IS IDEMPOTENT. incident.sh dedupes on the unclaimable:<id> ref, so a
-# bead that is still unclaimable on the next sentinel pass bumps the recurrence counter
-# rather than filing a duplicate.
-#
-# SPIRA_INCIDENT_SH overrides incident.sh (found by name on PATH). Test suites inject a
-# mock here; production uses the default.
 file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimable_ready output>
-    local line bid reason inc
-    inc="${SPIRA_INCIDENT_SH:-incident.sh}"
-    while IFS= read -r line; do
-        case "$line" in UNCLAIMABLE\ *) ;; *) continue ;; esac
-        bid="${line#UNCLAIMABLE }"; bid="${bid%% —*}"
-        reason="${line#*— }"
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_INCIDENT_TYPE=task \
-        SPIRA_INCIDENT_PRIORITY=1 \
-        SPIRA_INCIDENT_ACTOR=sentinel \
-        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:-spira},${SPIRA_GROOMER_LABEL:-groom}" \
-        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
-        SPIRA_INCIDENT_REF="unclaimable:$bid" \
-        SPIRA_INCIDENT_CAUSE=unclaimable \
-        bash "$inc" file "UNCLAIMABLE: $bid — fix the fayth: or partition label" \
-            - <<< "$reason" >/dev/null 2>&1 || true
-    done <<< "$1"
+    sentinel --file-unclaimable <<< "$1"
 }
-
-# detect_branch_collisions -> "COLLISION <id> <repo> <branch> <holder-id> <holder-path>" for
-# every open bead whose recorded branch is checked out in a DIFFERENT bead's canonical
-# worktree ($SPIRA_RUN/worktree/<id>). The branch label is read from the `bd list` JSON
-# already fetched above, not with a per-bead `bd state` call (sp-nsxhd) — bd stores state as
-# a `branch:<value>` label (`bd set-state`), so it is already sitting in `labels`.
-#
-# aeon.sh's worktree-attach guard (law-one-aeon-one-worktree) reacts correctly once a bead is
-# claimed — it self-corrects a mislabeled child onto a fresh branch of its own, or dies naming
-# the true holder — but reacting is not preventing: nothing in the store changes between
-# failed claims, so dispatch re-derives the identical collision every cycle
-# (law-a-retry-must-change-an-input). A bead whose own DEFAULT branch is the one squatted (a
-# parent shadowed by a child that inherited its name before groomer.sh stopped copying it) can
-# never self-correct at all, because its own default IS the squatted name. Read here, before
-# a claim is spent, rather than at aeon.sh's refusal.
-#
-# Already-parked beads (carrying SPIRA_ASK_LABEL) are excluded so a repeat sentinel pass
-# stays silent once a bead has been escalated — the point is ONE escalation, not one per pass.
 detect_branch_collisions() {
-    local _bc_raw _bc_ids
-    _bc_raw="$(bdjson list --status open --limit 0 --exclude-type epic,event 2>/dev/null)"
-    [ -n "$_bc_raw" ] || return 0
-    _bc_ids="$(printf '%s' "$_bc_raw" | SPIRA_ASK_LABEL="${SPIRA_ASK_LABEL:-}" python3 -c '
-import json, os, sys
-ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-try: d = json.load(sys.stdin)
-except Exception: d = []
-for i in (d if isinstance(d, list) else [d]):
-    labels = i.get("labels") or []
-    if ask in labels:
-        continue
-    repo = next((l[5:] for l in labels if l.startswith("repo:")), "")
-    branch = next((l[7:] for l in labels if l.startswith("branch:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, branch))
-' 2>/dev/null)"
-    [ -n "$_bc_ids" ] || return 0
-
-    local -A _bc_maps
-    local _bc_id _bc_repo _bc_branch _bc_root _bc_br _bc_holder _bc_holder_id
-    while IFS=$'\t' read -r _bc_id _bc_repo _bc_branch; do
-        [ -n "$_bc_id" ] || continue
-        _bc_repo="${_bc_repo:-$(spira_home_repo)}"
-        if [ -z "${_bc_maps[$_bc_repo]+x}" ]; then
-            _bc_root="$(repo_root "$_bc_repo" 2>/dev/null)"
-            if [ -n "$_bc_root" ] && { [ -d "$_bc_root/.git" ] || [ -f "$_bc_root/.git" ]; }; then
-                _bc_maps[$_bc_repo]="$(git -C "$_bc_root" worktree list --porcelain 2>/dev/null \
-                    | awk '/^worktree /{w=$2} /^branch /{print $2"\t"w}')"
-            else
-                _bc_maps[$_bc_repo]=""
-            fi
-        fi
-        [ -n "${_bc_maps[$_bc_repo]}" ] || continue
-        _bc_br="${_bc_branch:-spira/$_bc_id}"
-        _bc_holder="$(awk -v b="refs/heads/$_bc_br" -F'\t' '$1==b{print $2; exit}' <<< "${_bc_maps[$_bc_repo]}")"
-        [ -n "$_bc_holder" ] || continue
-        case "$_bc_holder" in
-            "$SPIRA_RUN/worktree/"*) _bc_holder_id="${_bc_holder#"$SPIRA_RUN/worktree/"}" ;;
-            *) continue ;;
-        esac
-        [ "$_bc_holder_id" != "$_bc_id" ] || continue
-        printf 'COLLISION %s %s %s %s %s\n' "$_bc_id" "$_bc_repo" "$_bc_br" "$_bc_holder_id" "$_bc_holder"
-    done <<< "$_bc_ids"
+    sentinel --detect-collisions
 }
-
-# park_branch_collisions <detect_branch_collisions output> — labels each COLLISION bead
-# $SPIRA_ASK_LABEL and overseer, once, so dispatch stops spending a claim on a condition that
-# cannot change until a human frees the holder or corrects the branch: label. Idempotent
-# (re-checks the label directly) so calling this on stale output does not re-note a bead
-# detect_branch_collisions itself would already have excluded.
-#
-# AN INHERITED LABEL IS NOT A COLLISION FOR RYAN (sp-ln4ke). `bd create --parent` copies
-# every label onto a child, so a split child can carry the parent's branch:spira/<parent>
-# untouched — the child never chose that branch, it cut no branch of its own, and Ryan has
-# no decision to make about it. Checked BEFORE the closed/clean free below: even if the
-# named bead happens to be closed and clean right now, the label itself is still wrong and
-# would send this bead onto that branch on its next claim (the exact incident this fixes —
-# two split children committed onto their parent's branch before being parked by hand). The
-# fix is mechanical, so it needs no human (law-deterministic-before-inference): strip the
-# label so the bead falls back to its own derived default (spira/<id>; the old lib.sh
-# bead_branch reader that did this lookup was retired dead at sp-27hsi, aeon resolves the
-# state itself now), and note whatever commits it
-# already made under the wrong name so they are not silently stranded. Prints "UNLABELED
-# <id> <repo> <branch> <other-id>".
-#
-# BUT A CLOSED, CLEAN, UNHELD SQUATTER NEEDS NO HUMAN EITHER (sp-vcxmz): its aeon already
-# finished and left, so nothing but a stale worktree registration stands between the
-# blocked bead and a claim. Freed through the one destruction chokepoint
-# (spira_destroy_worktree) rather than a bare `git worktree remove` — same salvage and
-# liveness fence every other reap goes through, even though salvage will find nothing
-# because the clean check already ran. The branch and its commits are never touched.
-# Prints "FREED <id> <repo> <branch> <holder-id> <holder-path>" for each one freed, so a
-# caller can log and count it apart from what still parks. Open, dirty or live holders
-# fall through to the park below unchanged.
-park_branch_collisions() {
-    local line id repo branch holder_id holder_path labels
-    local holder_status holder_dirty holder_repo_root
-    local inherited_from inherited_commits pc_sha pc_subj
-    while IFS= read -r line; do
-        case "$line" in COLLISION\ *) ;; *) continue ;; esac
-        read -r _ id repo branch holder_id holder_path <<< "$line"
-        labels="$(bdq label list "$id" 2>/dev/null)"
-        case "$labels" in *"${SPIRA_ASK_LABEL}"*) continue ;; esac
-
-        inherited_from="${branch#spira/}"
-        if [ "$inherited_from" != "$branch" ] && [ -n "$inherited_from" ] \
-           && [ "$inherited_from" != "$id" ] && bdq show "$inherited_from" --json >/dev/null 2>&1; then
-            case "$labels" in
-                *"branch:$branch"*)
-                    inherited_commits="$(git -C "$holder_path" log --format='%h%x09%s' --grep="$id:" -F 2>/dev/null \
-                        | while IFS=$'\t' read -r pc_sha pc_subj; do
-                              case "$pc_subj" in "$id":*) printf '%s %s\n' "$pc_sha" "$pc_subj" ;; esac
-                          done)"
-                    bdq label remove "$id" "branch:$branch" >/dev/null 2>&1 || true
-                    if [ -n "$inherited_commits" ]; then
-                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch. This bead has its own commit(s) sitting unlanded on $branch, made before this label was removed: $inherited_commits" >/dev/null 2>&1 || true
-                    else
-                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch." >/dev/null 2>&1 || true
-                    fi
-                    printf 'UNLABELED %s %s %s %s\n' "$id" "$repo" "$branch" "$inherited_from"
-                    ;;
-            esac
-            continue
-        fi
-
-        holder_status="$(spira_bead_status "$holder_id")"
-        if [ "$holder_status" = closed ] && ! holder_alive "$holder_id"; then
-            if holder_dirty="$(git -C "$holder_path" status --porcelain 2>/dev/null)" \
-               && [ -z "$holder_dirty" ] \
-               && holder_repo_root="$(repo_root "$repo" 2>/dev/null)" && [ -n "$holder_repo_root" ] \
-               && spira_destroy_worktree "$holder_id" "$holder_path" "$holder_repo_root" \
-                      "branch collision: $holder_id is closed and clean, squatting $branch, blocking $id"; then
-                printf 'FREED %s %s %s %s %s\n' "$id" "$repo" "$branch" "$holder_id" "$holder_path"
-                continue
-            fi
-        fi
-
-        bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-        bdq label add "$id" "overseer" >/dev/null 2>&1 || true
-        # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
-        # fayth's dispatch exclusion reads until that reader is cut over in the same round.
-        spira-lc hold "$id" ask "branch $branch squatted by $holder_id's worktree at $holder_path" sentinel || true
-        bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
-    done <<< "$1"
+park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
+    sentinel --park-collisions <<< "$1"
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.
@@ -2495,111 +2004,9 @@ park_branch_collisions() {
 #
 # A FAILED QUERY RETURNS NOTHING AND EXITS 0 (law-absence-needs-a-positive-control is
 # handled by the caller: livelock_keys emits SP_LIVELOCKED=? when this returns nothing).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_livelocked`.
 detect_livelocked() {
-    # ---- unclaimable: reuse detect_unclaimable_ready output, prefixed as LIVELOCK ----
-    local unc
-    unc="$(detect_unclaimable_ready 2>/dev/null)"
-    if [ -n "$unc" ]; then
-        printf '%s\n' "$unc" | while IFS= read -r line; do
-            # detect_unclaimable_ready prints "UNCLAIMABLE <id> — <reason>"
-            # rewrite to "LIVELOCK <id> unclaimable — <reason>"
-            case "$line" in UNCLAIMABLE\ *)
-                rest="${line#UNCLAIMABLE }"
-                bid="${rest%% *}"
-                reason="${rest#* — }"
-                printf 'LIVELOCK %s unclaimable — %s\n' "$bid" "$reason"
-            ;; esac
-        done
-    fi
-
-    # ---- ask-no-overseer: open beads with SPIRA_ASK_LABEL but without overseer ----
-    # The decisions pane selects on `overseer`; without it, the bead is invisible to the operator.
-    # The loop excludes SPIRA_ASK_LABEL from every predicate, so no aeon can claim it either.
-    local _nr_raw
-    _nr_raw="$(bdjson list --limit 0 --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" 2>/dev/null)"
-    if [ -n "$_nr_raw" ]; then
-        printf '%s\n' "$_nr_raw" | python3 -c '
-import os, sys, json, re
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-for i in (d if isinstance(d, list) else [d]):
-    L = set(i.get("labels") or [])
-    if ask_label not in L:
-        continue
-    if "overseer" in L:
-        continue
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    print("LIVELOCK %s ask-no-overseer — missing overseer label; "
-          "the decisions pane cannot see this bead and no aeon can claim it; "
-          "add overseer label. title: %s" % (i["id"], title))
-' 2>/dev/null
-    fi
-
-    # ---- ci-stuck: awaiting-ci beads in a repo whose land mode is not `pr` ----
-    local _ci_raw
-    _ci_raw="$(bdjson list --all --limit 0 --label "$SPIRA_CI_LABEL" 2>/dev/null)"
-    if [ -n "$_ci_raw" ]; then
-        printf '%s\n' "$_ci_raw" | python3 -c '
-import sys, json, re
-home = sys.argv[1]
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") == "closed":
-        continue
-    repo = next((l[5:] for l in (i.get("labels") or []) if l.startswith("repo:")), home)
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    # Report all awaiting-ci beads; the shell below checks the land mode.
-    print("%s\t%s\t%s" % (i["id"], repo, title))
-' "$(spira_home_repo)" 2>/dev/null | while IFS=$'\t' read -r _cid _crepo _ctitle; do
-            [ -n "$_cid" ] || continue
-            # We only want the STRUCTURAL case: the repo's land mode is not `pr` so no run
-            # will ever report back. The old lib.sh spira_ci_park_state (retired dead at
-            # sp-27hsi — nothing called it) also checked timing and exited 2 on an empty
-            # timestamp, which would have tripped a careless `|| _state=no-ci` even for a
-            # pr-mode repo. Use repo_land directly — it is the one test that names the
-            # structural fault.
-            _land="$(repo_land "$_crepo" 2>/dev/null)"
-            if [ "${_land:-push}" != pr ]; then
-                printf 'LIVELOCK %s ci-stuck — repo %s land mode is not pr; %s will never clear; strip the label or change the repo land mode. title: %s\n' \
-                    "$_cid" "$_crepo" "$SPIRA_CI_LABEL" "$_ctitle"
-            fi
-        done
-    fi
-
-    # ---- unmapped-repo: open beads with repo: label not in the repo-map ----
-    if [ -r "${SPIRA_REPO_MAP:-}" ]; then
-        local _valid_names _open_raw
-        _valid_names="$(awk 'BEGIN{FS="|"} /^[ \t]*#/{next}
-            {n=$1; gsub(/^[ \t]+|[ \t]+$/,"",n); if(n!=""&&NF>1) print n}' \
-            "$SPIRA_REPO_MAP" 2>/dev/null)"
-        _open_raw="$(bdjson list --limit 0 2>/dev/null)"
-        if [ -n "$_open_raw" ]; then
-            printf '%s\n' "$_open_raw" | VALID_NAMES="$_valid_names" python3 -c '
-import os, sys, json, re
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-valid = set(os.environ.get("VALID_NAMES", "").split())
-ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-groom_ask_label = os.environ.get("SPIRA_GROOM_ASK_LABEL", "groom-asked")  # literal-ok: Python fallback for direct invocation without conf.sh
-for i in (d if isinstance(d, list) else [d]):
-    L = i.get("labels") or []
-    # Skip beads already handled by the unclaimable, needs-ryan or groom-ask checks.
-    if ask_label in L or groom_ask_label in L or "spira-poison" in L:
-        continue
-    repo_labels = [l[5:] for l in L if l.startswith("repo:")]
-    if not repo_labels:
-        continue
-    bad = [r for r in repo_labels if r not in valid]
-    if not bad:
-        continue
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    print("LIVELOCK %s unmapped-repo — repo:%s not in repo-map; aeon.sh refuses to claim it; "
-          "fix the label or add the repo to repo-map. title: %s" % (i["id"], ", ".join(bad), title))
-' 2>/dev/null
-        fi
-    fi
+    strand detect-livelocked
 }
 
 # detect_landed_but_open -> "STATE <id> landed-but-open — <evidence>" for every open or
@@ -2607,34 +2014,9 @@ for i in (d if isinstance(d, list) else [d]):
 # base already carries a commit landing it. A bead's landed-but-open state does not depend
 # on which partition it happens to carry, so a scan bounded to one partition cannot see one
 # filed under another (sp-0qp7s: the groomer's scan read only its own trigger partition).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_landed_but_open`.
 detect_landed_but_open() {
-    local raw home
-    home="$(spira_home_repo)"
-    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
-import json, os, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
-home = sys.argv[1]
-for i in (d if isinstance(d, list) else [d]):
-    if (i.get("issue_type") or "") not in work_types:
-        continue
-    L = i.get("labels") or []
-    repo = next((l[5:] for l in L if l.startswith("repo:")), home)
-    print("%s\t%s" % (i["id"], repo))
-' "$home" 2>/dev/null | while IFS=$'\t' read -r id repo; do
-        [ -n "$id" ] || continue
-        local r_path sha
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        if landed "$id" "$r_path" 2>/dev/null; then
-            sha="$(landed_sha "$id" "$r_path" 2>/dev/null)"
-            printf 'STATE %s landed-but-open — %s names it on %s'"'"'s base; close it\n' \
-                "$id" "${sha:-a commit}" "$repo"
-        fi
-    done
+    strand detect-landed-but-open
 }
 
 # detect_closed_unlanded_states -> one STATE line per closed work bead, across every
@@ -2653,61 +2035,9 @@ for i in (d if isinstance(d, list) else [d]):
 # This is the same exclusion set sentinel.sh CHECK 5 applies before filing an Ops incident —
 # CHECK 5 reports; this classifies for the groomer to act on with judgement (reopen for
 # rebase, or reopen as batch-ready).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_closed_unlanded_states`.
 detect_closed_unlanded_states() {
-    local labels exclude home
-    home="$(spira_home_repo)"
-    {
-        while IFS=$'\t' read -r labels exclude; do
-            [ -n "$labels" ] || continue
-            bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null \
-            | SPIRA_EXCL="$exclude" WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
-import json, os, sys
-excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
-work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") != "closed":
-        continue
-    if (i.get("issue_type") or "") not in work_types:
-        continue
-    L = i.get("labels") or []
-    if excl & set(L):
-        continue
-    if any(l.startswith("delivers:") for l in L):
-        continue
-    if "spira-dropped" in L or "content-landed" in L:
-        continue
-    if any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (i.get("dependencies") or [])):
-        continue
-    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
-    br = next((l[7:] for l in L if l.startswith("branch:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, br))
-' 2>/dev/null
-        done < <(fayth_partitions)
-    } | awk -F'\t' '!seen[$1]++' | while IFS=$'\t' read -r id repo br; do
-        [ -n "$id" ] || continue
-        local r_path refs base
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        landed "$id" "$r_path" 2>/dev/null && continue
-        if [ -z "$br" ] || ! git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null; then
-            printf 'STATE %s closed-no-branch — repo %s%s; nothing committed, no landing record\n' \
-                "$id" "${repo:-$home}" "${br:+ (branch: label $br names no ref)}"
-            continue
-        fi
-        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || refs=""
-        base="${refs%% *}"
-        [ -n "$base" ] || continue
-        content_landed "$r_path" "$br" "$base" 2>/dev/null && continue
-        if git -C "$r_path" merge-tree --write-tree "$base" "$br" >/dev/null 2>&1; then
-            printf 'STATE %s closed-never-landed batch-ready %s %s %s — merges cleanly, ready to requeue\n' \
-                "$id" "${repo:-$home}" "$br" "$base"
-        else
-            printf 'STATE %s closed-never-landed conflict %s %s %s — does not merge, needs a rebase\n' \
-                "$id" "${repo:-$home}" "$br" "$base"
-        fi
-    done
+    strand detect-closed-unlanded-states
 }
 
 # detect_false_blockers <blocker-ids> -> "STATE <id> blocked-by-unlanded <blocker> — <evidence>"
@@ -2717,22 +2047,9 @@ for i in (d if isinstance(d, list) else [d]):
 # dependents sit correctly-blocked forever on a false premise (sp-jzfog blocking sp-vsob2).
 # The remedy is the blocker's own — reopening it (task 2) is what clears this — so this
 # function only makes the false block visible on the bead it was holding shut.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_false_blockers`.
 detect_false_blockers() {
-    local blockers="${1:-}" raw
-    [ -n "$blockers" ] || return 0
-    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | BLOCKERS="$blockers" python3 -c '
-import json, os, sys
-blockers = set((os.environ.get("BLOCKERS") or "").split())
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    deps = [x.get("depends_on_id") for x in (i.get("dependencies") or [])
-            if (x.get("dependency_type") or x.get("type")) == "blocks"]
-    for b in blockers.intersection(deps):
-        print("STATE %s blocked-by-unlanded %s — depends on %s, which is closed but its work never landed" % (i["id"], b, b))
-' 2>/dev/null
+    strand detect-false-blockers "$@"
 }
 
 # detect_incident_needs_builder -> "STATE <id> incident-is-code — <evidence>" for every open
@@ -2747,37 +2064,9 @@ for i in (d if isinstance(d, list) else [d]):
 # never Ops's own work. It exists only if code was already written for this bead under some
 # other persona — which is exactly "the remaining work is a code change", fully computable,
 # with nothing left to a model's judgment.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_incident_needs_builder`.
 detect_incident_needs_builder() {
-    local raw home inc
-    home="$(spira_home_repo)"
-    inc="${SPIRA_INCIDENT_LABEL:?SPIRA_INCIDENT_LABEL is unset — source conf.sh}"
-    raw="$(bdjson list --status open,in_progress --label "$inc" --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    L = i.get("labels") or []
-    br = next((l[7:] for l in L if l.startswith("branch:")), "")
-    if not br:
-        continue
-    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, br))
-' 2>/dev/null | while IFS=$'\t' read -r id repo br; do
-        [ -n "$id" ] || continue
-        local r_path refs base ahead
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null || continue
-        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || continue
-        base="${refs%% *}"
-        [ -n "$base" ] || continue
-        ahead="$(git -C "$r_path" rev-list --count "$base..$br" 2>/dev/null)" || continue
-        [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
-        printf 'STATE %s incident-is-code — %s commit(s) already on %s ahead of %s; remaining work is a code change, not operational\n' \
-            "$id" "$ahead" "$br" "$base"
-    done
+    strand detect-incident-needs-builder
 }
 
 # detect_invalid_closed -> INVALID-CLOSED and UNFILED-FOLLOW lines for closed beads whose
@@ -2797,69 +2086,9 @@ for i in (d if isinstance(d, list) else [d]):
 # and landed. Measure the property (remainder exists and has no tracking), not the word.
 #
 # OUTPUT: "INVALID-CLOSED <id> — <reason>" or "UNFILED-FOLLOW <id> — <reason>"
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_invalid_closed`.
 detect_invalid_closed() {
-    local _closed_raw
-    if [ -n "${SPIRA_SCOPE_LABEL:-}" ]; then
-        _closed_raw="$(bdjson list --status closed --label "$SPIRA_SCOPE_LABEL" --limit 0 2>/dev/null)"
-    else
-        _closed_raw="$(bdjson list --status closed --limit 0 2>/dev/null)"
-    fi
-    [ -n "$_closed_raw" ] || return 0
-    printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" SPIRA_RUN="${SPIRA_RUN:-}" python3 -c '
-import sys, json, re, os
-
-# Load detect_close_reason and check_unfiled_follow from the shared helper. The detector
-# uses detect_close_reason (raw scan, no masking) so all occurrences reach Maechen;
-# check_close_reason (quote-masked) belongs to the close-time fence in aeon.sh.
-_flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
-try:
-    _ns = {"re": re, "__name__": ""}
-    exec(open(_flags_path).read(), _ns)
-    check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
-    check_unfiled_follow = _ns["check_unfiled_follow"]
-except Exception:
-    check_close_reason = lambda r: None
-    check_unfiled_follow = lambda r, id_prefix="sp": None
-
-_id_prefix = os.environ.get("SPIRA_ID_PREFIX", "sp")
-
-# ALLOWLIST. Beads whose id appears in $SPIRA_RUN/invalid-closed.allow are reported
-# as ALLOWED-IC (not counted) rather than as INVALID-CLOSED or UNFILED-FOLLOW. Each
-# line in the allowlist is "<id> <reason>" — the reason is what Maechen recorded when
-# it judged the row a false positive (quotation) or resolved it (follow-up filed).
-allowlist = {}
-_run = os.environ.get("SPIRA_RUN", "")
-_allow_path = os.path.join(_run, "invalid-closed.allow") if _run else ""
-if _allow_path and os.path.isfile(_allow_path):
-    with open(_allow_path) as _af:
-        for _line in _af:
-            _parts = _line.strip().split(None, 1)
-            if _parts and re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", _parts[0]):
-                allowlist[_parts[0]] = _parts[1] if len(_parts) > 1 else ""
-
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-for i in (d if isinstance(d, list) else [d]):
-    bid = i["id"]
-    reason = i.get("close_reason") or ""
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
-
-    if bid in allowlist:
-        print("ALLOWED-IC %s — %s" % (bid, allowlist[bid]))
-        continue
-
-    hit = check_close_reason(reason)
-    if hit:
-        print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
-            bid, hit, reason_short, title))
-        continue
-
-    follow_hit = check_unfiled_follow(reason, _id_prefix)
-    if follow_hit:
-        print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
-            bid, follow_hit, reason_short, title))
-' 2>/dev/null
+    strand detect-invalid-closed
 }
 
 # --------------------------------------------------------------------------------------
@@ -3614,64 +2843,9 @@ queue_sort_rows() {
     return "$_rc"
 }
 
-# gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
-#
-# The write-back complement to gh-intake's one-way ingest. Intake holds no
-# credential; this runs only from the credentialed landing path. The comment
-# cites commit sha and subject — both public on the repo — and a link. No bead
-# notes, bodies or internal judgement reach the public tracker
-# (law-beads-is-never-public).
-#
-# Idempotent: a closed issue is recorded and skipped; $SPIRA_RUN/gh-closed/<id>
-# prevents a second attempt even if the issue is re-opened.
-gh_issue_closeout() {  # gh_issue_closeout <bead-id> <landed-sha> <repo-path>
-    local id="$1" sha="$2" repo_path="$3"
-    local ext_ref gh_part gh_repo issue_n sha_short subject comment_body st
-    local closed_mark="${SPIRA_RUN:?}/gh-closed/$id"
-
-    [ -e "$closed_mark" ] && return 0
-
-    ext_ref="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-d = d if isinstance(d, list) else [d]
-if d: print(d[0].get("external_ref") or "")' 2>/dev/null)" || ext_ref=""
-
-    case "${ext_ref:-}" in github:*) ;; *) return 0 ;; esac
-
-    gh_part="${ext_ref#github:}"
-    gh_repo="${gh_part%%#*}"
-    issue_n="${gh_part##*#}"
-    case "$issue_n" in
-        ''|*[!0-9]*) log "gh-closeout $id: malformed external_ref $ext_ref — skipping"; return 0 ;;
-    esac
-
-    st="$(ghq issue view "$issue_n" --repo "$gh_repo" --json state -q .state 2>/dev/null)" \
-        || st=""
-    if [ "${st:-}" = CLOSED ]; then
-        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
-        : > "$closed_mark"
-        return 0
-    fi
-
-    sha_short="$(git -C "$repo_path" rev-parse --short "$sha" 2>/dev/null)" \
-        || sha_short="${sha:0:7}"
-    subject="$(git -C "$repo_path" log --format='%s' -1 "$sha" 2>/dev/null)" || subject=""
-
-    comment_body="$(printf 'Fixed in %s%s\n\nhttps://github.com/%s/commit/%s' \
-        "$sha_short" "${subject:+ ($subject)}" "$gh_repo" "$sha")"
-
-    if ghq issue comment "$issue_n" --repo "$gh_repo" --body "$comment_body" >/dev/null 2>&1 \
-    && ghq issue close   "$issue_n" --repo "$gh_repo"                        >/dev/null 2>&1
-    then
-        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
-        : > "$closed_mark"
-        log "gh-closeout $id: closed $ext_ref as $sha_short"
-    else
-        log "gh-closeout $id: could not comment or close $ext_ref"
-    fi
-}
+# gh_issue_closeout retired (sp-j3fim, wave 4.31, family AB): ported natively into
+# gh-intake/src/closeout.rs. landing-pass and queue shell to "gh-intake closeout <id>
+# <sha> <repo>" directly now -- no lib.sh seam call left for this family.
 
 # bead_is_work_type <issue-type> -> 0 if it is one of SPIRA_WORK_CLOSE_TYPES (task bug
 # feature by default) — the types a builder's own close is converted to submitted instead
@@ -3709,278 +2883,11 @@ bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
     landing-pass close-on-land "$1" "${2:-}" || true
 }
 
-# _gh_close_ask_unblock — backfill: convert any blocking "Close GitHub issue" ask
-# for a work bead to dep relate. One log line per conversion.
-_gh_close_ask_unblock() {  # _gh_close_ask_unblock <subject> <work-bead-id>
-    local _subj="$1" _id="$2" _ask_id _blocks
-    [ -n "${SPIRA_DB:-}" ] || return 0
-    _ask_id="$(bdjson list --status open \
-        --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
-        | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-want = sys.argv[1]
-for r in rows:
-    if want == (r.get("title") or ""):
-        print(r.get("id", ""))
-        break
-' "$_subj" 2>/dev/null)"
-    [ -z "$_ask_id" ] && return 0
-    _blocks="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" show "$_id" --json 2>/dev/null \
-        | sed -n '/^[[{]/,$p' \
-        | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-d = d if isinstance(d, list) else [d]
-ask = sys.argv[1]
-deps = d[0].get("dependencies") or []
-print("yes" if any(
-    (dep.get("dependency_type") or "") == "blocks"
-    and (dep.get("id") or "") == ask
-    for dep in deps
-) else "")' "$_ask_id" 2>/dev/null)"
-    [ "$_blocks" != "yes" ] && return 0
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep remove "$_id" "$_ask_id" >/dev/null 2>&1 || true
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" dep relate "$_ask_id" "$_id" >/dev/null 2>&1 || true
-    log "gh-closeout $_id: converted blocking ask $_ask_id to relates_to"
-}
-
-# gh_issue_ask_unlanded — ask the operator what to do about a GitHub issue whose
-# bead closed without a commit landing on the base branch.
-#
-# One ask per issue, deduped through ask_already_open while it is still open — and
-# through ask_closed_subject once he has answered it (writes gh-closed/<id> so
-# answering sticks). Wired with dep relate, never dep add, so a reopened bead is
-# not stranded behind the ask.
-gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [draft]
-    local id="$1" ext_ref="$2" draft="${3:-}"
-    local _subj _dflt gh_part gh_repo issue_n _st _err _rc _answered
-
-    gh_part="${ext_ref#github:}"
-    gh_repo="${gh_part%%#*}"
-    issue_n="${gh_part##*#}"
-    case "$issue_n" in ''|*[!0-9]*) return 0 ;; esac
-
-    local closed_mark="${SPIRA_RUN:?}/gh-closed/$id"
-    [ -e "$closed_mark" ] && return 0
-
-    # Issue already closed on the forge: write the marker so future scans skip it.
-    _st="$(ghq issue view "$issue_n" --repo "$gh_repo" --json state -q .state 2>/dev/null)" \
-        || _st=""
-    if [ "${_st:-}" = CLOSED ]; then
-        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
-        : > "$closed_mark"
-        log "gh-closeout $id: $ext_ref already closed on forge — skipping"
-        return 0
-    fi
-
-    _subj="Close GitHub issue $ext_ref for bead $id"
-    # Backfill: if an existing ask blocks this work bead, convert to relates_to.
-    _gh_close_ask_unblock "$_subj" "$id"
-    ask_already_open "$_subj" && return 0
-
-    _answered="$(ask_closed_subject "$_subj")"
-    if [ -n "$_answered" ]; then
-        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
-        : > "$closed_mark"
-        log "gh-closeout $id: ask $_answered already answered — marker written, no re-ask"
-        return 0
-    fi
-
-    _dflt="${draft:-post a comment explaining the resolution and close the issue}"
-
-    _err="$(mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" \
-        --bead "$id" <<MAILEOF 2>&1 >/dev/null
-## Question
-$_subj
-
-## Default
-${_dflt}
-
-$id was closed without a commit landing on the base branch, but it links to GitHub issue $ext_ref which is still open.
-
-Suggested public reply: "${_dflt}"
-MAILEOF
-    )"; _rc=$?
-    if [ "$_rc" -eq 0 ]; then
-        log "gh-closeout $id: asked operator about $ext_ref"
-    elif [ -n "${_err:-}" ]; then
-        log "gh-closeout $id: ask refused (${_err})"
-    else
-        log "gh-closeout $id: ask refused — probe fault: mail produced no reason"
-    fi
-}
-
-# _gh_resolve_stale_asks — an open "Close GitHub issue" ask whose issue is now CLOSED
-# (by gh_issue_closeout above, or by a human directly) is an answered question still
-# sitting in the operator's queue. ask_already_open only checks whether one is open;
-# nothing else ever closed it (law-close-the-loop-on-confirmation).
-_gh_resolve_stale_asks() {
-    local _tmp _ask_id _ext _bid _gh_part _gh_repo _issue_n _st
-    _tmp="$(mktemp)" || return 0
-    bdjson list --status open --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" --limit 0 2>/dev/null \
-        | python3 -c '
-import sys, json, re
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-pat = re.compile(r"^Close GitHub issue (\S+) for bead (\S+)$")
-for r in rows:
-    m = pat.match(r.get("title") or "")
-    if not m: continue
-    aid = r.get("id", "")
-    if not aid: continue
-    print(f"{aid}\t{m.group(1)}\t{m.group(2)}")
-' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
-
-    while IFS=$'\t' read -r _ask_id _ext _bid; do
-        [ -n "$_ask_id" ] || continue
-        _gh_part="${_ext#github:}"
-        _gh_repo="${_gh_part%%#*}"
-        _issue_n="${_gh_part##*#}"
-        case "$_issue_n" in ''|*[!0-9]*) continue ;; esac
-        _st="$(ghq issue view "$_issue_n" --repo "$_gh_repo" --json state -q .state 2>/dev/null)" || _st=""
-        [ "${_st:-}" = CLOSED ] || continue
-        mkdir -p "${SPIRA_RUN}/gh-closed" 2>/dev/null || true
-        : > "${SPIRA_RUN}/gh-closed/$_bid"
-        printf '%s is closed on GitHub — resolved automatically; nothing further for the operator.\n' "$_ext" \
-            | bdq close "$_ask_id" --reason-file - >/dev/null 2>&1
-        log "gh-closeout $_bid: $_ext found closed — resolved stale ask $_ask_id"
-    done < "$_tmp"
-    rm -f "$_tmp"
-}
-
-# _gh_unlanded_scan — run at the end of a landing pass to ask about GitHub issues
-# whose beads closed without a landing. Called once per pass; one ask per issue
-# via ask_already_open (and ask_closed_subject once answered).
-#
-# THE GRAPH IS CONSULTED BEFORE THE LANDSTATE FILE, NEVER THE OTHER WAY. landstate is
-# a record of the last branch seen for a bead id, and a second, later branch for the
-# SAME id that goes RED against the base overwrites a correct LANDED entry with a
-# wrong one — the file then contradicts the commit graph rather than merely lagging
-# it. landed_sha() answers the only question that matters — is a commit naming this
-# id an ancestor of the repository's own land ref, for the bead or for its superseder —
-# and when it can, that answer wins over whatever landstate says.
-_gh_unlanded_scan() {
-    local _tmp _id _ext _superseder _repo_label _repo_path _land_sha _closed_at
-    local _ls_file _ls_st _sup_ls _sup_st _sup_sha _draft
-    local _wait_dir _wait_file _now _last _age _grace
-
-    _gh_resolve_stale_asks
-
-    _tmp="$(mktemp)" || return 0
-    _wait_dir="${SPIRA_RUN:-/tmp}/gh-wait-log"
-    # \x01-SEPARATED, NOT TAB. bash's `read` treats tab as IFS WHITESPACE regardless of
-    # what IFS is set to, so a run of them — an empty field followed by a non-empty one,
-    # e.g. no superseder but a repo: label — collapses and every field after the gap
-    # shifts left. \x01 is not whitespace to `read`, so an empty field stays a field.
-    bdjson list --all --limit 0 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit(0)
-rows = d if isinstance(d, list) else [d]
-for r in rows:
-    if r.get("status") != "closed": continue
-    ext = r.get("external_ref") or ""
-    if not ext.startswith("github:"): continue
-    bid = r.get("id", "")
-    if not bid: continue
-    superseder = ""
-    for dep in (r.get("dependencies") or []):
-        if (dep.get("dependency_type") or dep.get("type")) == "supersedes":
-            superseder = dep.get("id") or dep.get("blocked_by") or ""
-            break
-    repo_label = ""
-    for l in (r.get("labels") or []):
-        if l.startswith("repo:"):
-            repo_label = l[5:]; break
-    ca = r.get("closed_at") or ""
-    print(f"{bid}\x01{ext}\x01{superseder}\x01{repo_label}\x01{ca}")
-' 2>/dev/null > "$_tmp" || { rm -f "$_tmp"; return 0; }
-
-    while IFS=$'\x01' read -r _id _ext _superseder _repo_label _closed_at; do
-        [ -n "$_id" ] || continue
-        [ -e "${SPIRA_RUN}/gh-closed/$_id" ] && continue
-
-        _repo_path="$(repo_root "$_repo_label" 2>/dev/null)" || _repo_path=""
-        if [ -n "$_repo_path" ]; then
-            _land_sha="$(landed_sha "$_id" "$_repo_path" 2>/dev/null)"
-            if [ -n "$_land_sha" ]; then
-                gh_issue_closeout "$_id" "$_land_sha" "$_repo_path" || true
-                continue
-            fi
-            if [ -n "${_superseder:-}" ]; then
-                _land_sha="$(landed_sha "$_superseder" "$_repo_path" 2>/dev/null)"
-                if [ -n "$_land_sha" ]; then
-                    gh_issue_closeout "$_id" "$_land_sha" "$_repo_path" || true
-                    continue
-                fi
-            fi
-        fi
-
-        # Repo unresolvable, or the commit graph plainly does not have it: landstate is
-        # the fallback, not the first word — a cache can be stale in the other direction
-        # too (written LANDED for a squash whose subject grep missed), but only when the
-        # commit graph itself could not be asked.
-        _ls_file="$SPIRA_RUN/landstate/$_id"
-        _ls_st=""
-        [ -r "$_ls_file" ] && { read -r _ls_st _ < "$_ls_file" 2>/dev/null || true; }
-        [ "${_ls_st:-}" = LANDED ] && continue
-
-        # In-flight: commit is on its way; ask only when it genuinely needs attention.
-        case "${_ls_st:-}" in
-            CERTIFIED|BATCHED|GATED|REBASED|CONTENT)
-                _wait_file="$_wait_dir/$_id"
-                _now="$(date +%s)"
-                _last=""
-                [ -f "$_wait_file" ] && { read -r _last _ < "$_wait_file" 2>/dev/null || true; }
-                if [ -z "${_last:-}" ] || [ "$(( _now - _last ))" -gt 3600 ]; then
-                    log "gh-closeout $_id: $_ext in flight (${_ls_st}) — waiting on landing"
-                    mkdir -p "$_wait_dir" 2>/dev/null || true
-                    printf '%s\n' "$_now" > "$_wait_file"
-                fi
-                continue
-                ;;
-        esac
-
-        _draft=""
-        if [ -n "${_superseder:-}" ]; then
-            _sup_ls="$SPIRA_RUN/landstate/$_superseder"
-            if [ -r "$_sup_ls" ]; then
-                _sup_st=""; _sup_sha=""
-                read -r _sup_st _sup_sha _ < "$_sup_ls" 2>/dev/null || true
-                [ "${_sup_st:-}" = LANDED ] \
-                    && _draft="This issue was fixed by $_superseder (${_sup_sha:0:8})"
-            fi
-        fi
-
-        # GRACE PERIOD. Closing the bead and landing its commit are separate passes; a
-        # bead closed a moment ago has simply not had its turn yet, and asking about it
-        # immediately is the same false alarm as trusting a stale landstate — just on a
-        # clock instead of a cache. Only once no landing has shown up for a while does
-        # "closed, no commit on the base" become a fact worth the operator's attention
-        # rather than a timing artifact.
-        _grace="${SPIRA_GH_ASK_GRACE_SECS:-3600}"
-        if [ -n "${_closed_at:-}" ]; then
-            _now="$(date -u +%s)"
-            _last="$(date -u -d "$_closed_at" +%s 2>/dev/null)" || _last=""
-            if [ -n "$_last" ]; then
-                _age=$(( _now - _last ))
-                [ "$_age" -lt "$_grace" ] && continue
-            fi
-        fi
-
-        gh_issue_ask_unlanded "$_id" "$_ext" "${_draft:-}" || true
-    done < "$_tmp"
-    rm -f "$_tmp"
-}
+# _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan
+# retired (sp-j3fim, wave 4.31, family AB): ported natively into gh-intake/src/closeout.rs
+# as gh_close_ask_unblock/gh_issue_ask_unlanded/gh_resolve_stale_asks/gh_unlanded_scan.
+# "gh-intake unlanded-scan" drives the whole family now (landing-pass's and queue's own
+# seams call the binary directly); "gh-intake backfill" replaces gh-issue-backfill.sh.
 
 # spira_git_push <repo> [push-args...] — push with GitHub App identity when configured.
 # When SPIRA_GH_APP_ID and SPIRA_GH_APP_INSTALLATION_ID are set, routes the push over

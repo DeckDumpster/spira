@@ -17,15 +17,14 @@
 //! Every string below was checked byte-for-byte against the live bash functions' own
 //! output (several since-epoch values, with and without a watermark) before being ported —
 //! see this bead's report for the exact transcript.
-
-/// The deliberate-cause list — `_census_deliberate_reopen_causes` in lib.sh, DUPLICATED
-/// here as names only (the admission-exemption flag that list also carries is row I's
-/// business, `bead_reopen`'s, not this query's, and row I is a separate bead, not yet
-/// landed as of this one). Kept adjacent to [`deliberate_causes_sql_list`], exactly as the
-/// bash kept its own two functions adjacent: a cause added to one must be added to the
-/// other (law-bake-rules-into-tools). This is the one duplication row M's port could not
-/// avoid without reaching into row I's family.
-const DELIBERATE_CAUSES: &[&str] = &["work-close-converted", "eject"];
+//!
+//! THE DELIBERATE-CAUSE LIST IS NOT DUPLICATED HERE. `_census_deliberate_reopen_causes`
+//! moved to `spira-claim` under row I (`bead_reopen`'s own admission-exemption decision,
+//! sp-3wfcb, landed alongside this bead) before this module needed it, so
+//! [`deliberate_causes_sql_list`]/[`events_sql`]/[`deliberate_sql`] take the cause names as
+//! a parameter — fetched once, in `real.rs`, from `spira-claim deliberate-causes` (the same
+//! CLI door `lib.sh`'s own `_census_deliberate_reopen_causes` shim now calls) — rather than
+//! keeping a second copy that could drift from it (law-bake-rules-into-tools).
 
 fn since_clause(since_formatted: Option<&str>) -> String {
     match since_formatted {
@@ -34,20 +33,23 @@ fn since_clause(since_formatted: Option<&str>) -> String {
     }
 }
 
-/// `_census_deliberate_causes_sql_list` -> a quoted, comma-separated SQL IN-list.
-pub fn deliberate_causes_sql_list() -> String {
-    DELIBERATE_CAUSES.iter().map(|c| format!("'{c}'")).collect::<Vec<_>>().join(", ")
+/// `_census_deliberate_causes_sql_list` -> a quoted, comma-separated SQL IN-list, `causes`
+/// already resolved by the caller. Escapes an embedded `'` the same way the bash's `sed
+/// "s/'/''/g"` did — belt and suspenders, since every cause name today is a bare
+/// identifier, but the escaping is cheap and was part of the original contract.
+pub fn deliberate_causes_sql_list(causes: &[String]) -> String {
+    causes.iter().map(|c| format!("'{}'", c.replace('\'', "''"))).collect::<Vec<_>>().join(", ")
 }
 
 /// `_census_events_sql [since_epoch_s]`.
-pub fn events_sql(since_formatted: Option<&str>) -> String {
+pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
     let conflict_fold = "(event_type = 'requeued' AND new_value = 'merge-conflict')";
     let rebase_aeon_fold = "(event_type = 'requeued' AND new_value = 'rebase-conflict')";
     let eviction_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')";
     let prod_dirty_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty')";
     let unfinished_fold = "(event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason')";
     let reopen_timing_exclude = "(event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence'))";
-    let deliberate_fold = format!("(event_type = 'reopen' AND new_value IN ({}))", deliberate_causes_sql_list());
+    let deliberate_fold = format!("(event_type = 'reopen' AND new_value IN ({}))", deliberate_causes_sql_list(causes));
     let actor_filter = "(actor = 'harness' OR actor LIKE 'aeon-%')";
     let sc = since_clause(since_formatted);
 
@@ -62,10 +64,10 @@ pub fn handwritten_sql() -> String {
 }
 
 /// `_census_deliberate_sql [since_epoch_s]`.
-pub fn deliberate_sql(since_formatted: Option<&str>) -> String {
+pub fn deliberate_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
     format!(
         "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' AND new_value IN ({}){} GROUP BY event_type, new_value ORDER BY 3 DESC",
-        deliberate_causes_sql_list(),
+        deliberate_causes_sql_list(causes),
         since_clause(since_formatted)
     )
 }
@@ -93,11 +95,23 @@ mod tests {
 
     // Ground truth captured from the live bash functions (sourced lib.sh, same repo,
     // 2026-10-01) — see this bead's report for the exact transcript these were checked
-    // against before being pasted in as the expected strings here.
+    // against before being pasted in as the expected strings here. `causes()` stands in
+    // for the `spira-claim deliberate-causes` fetch `real.rs` does in production — the
+    // two deliberate causes as of this writing (sp-3wfcb, row I, landed alongside this
+    // bead); `spira_claim::reopen::DELIBERATE_CAUSES` is the canonical source now.
+    fn causes() -> Vec<String> {
+        vec!["work-close-converted".to_string(), "eject".to_string()]
+    }
+
+    #[test]
+    fn deliberate_causes_sql_list_escapes_an_embedded_quote() {
+        let out = deliberate_causes_sql_list(&["o'brien".to_string()]);
+        assert_eq!(out, "'o''brien'");
+    }
 
     #[test]
     fn deliberate_causes_sql_list_matches_the_bash() {
-        assert_eq!(deliberate_causes_sql_list(), "'work-close-converted', 'eject'");
+        assert_eq!(deliberate_causes_sql_list(&causes()), "'work-close-converted', 'eject'");
     }
 
     #[test]
@@ -111,7 +125,7 @@ mod tests {
     #[test]
     fn deliberate_sql_with_no_watermark_matches_the_bash() {
         assert_eq!(
-            deliberate_sql(None),
+            deliberate_sql(None, &causes()),
             "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject') GROUP BY event_type, new_value ORDER BY 3 DESC"
         );
     }
@@ -119,7 +133,7 @@ mod tests {
     #[test]
     fn deliberate_sql_with_a_watermark_matches_the_bash() {
         assert_eq!(
-            deliberate_sql(Some("2023-11-14 22:13:20")),
+            deliberate_sql(Some("2023-11-14 22:13:20"), &causes()),
             "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject') AND created_at > '2023-11-14 22:13:20' GROUP BY event_type, new_value ORDER BY 3 DESC"
         );
     }
@@ -127,7 +141,7 @@ mod tests {
     #[test]
     fn events_sql_with_no_watermark_matches_the_bash() {
         assert_eq!(
-            events_sql(None),
+            events_sql(None, &causes()),
             "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT (event_type = 'requeued' AND new_value = 'rebase-conflict') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND NOT (event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence')) AND NOT (event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject')) AND (actor = 'harness' OR actor LIKE 'aeon-%') GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict') OR (event_type = 'requeued' AND new_value = 'rebase-conflict')) AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND (actor = 'harness' OR actor LIKE 'aeon-%') AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR (event_type = 'requeued' AND new_value = 'merge-conflict'))) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC"
         );
     }
@@ -135,7 +149,7 @@ mod tests {
     #[test]
     fn events_sql_with_a_watermark_matches_the_bash() {
         assert_eq!(
-            events_sql(Some("2023-11-14 22:13:20")),
+            events_sql(Some("2023-11-14 22:13:20"), &causes()),
             "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT (event_type = 'requeued' AND new_value = 'rebase-conflict') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND NOT (event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence')) AND NOT (event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject')) AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict') OR (event_type = 'requeued' AND new_value = 'rebase-conflict')) AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR (event_type = 'requeued' AND new_value = 'merge-conflict')) AND created_at > '2023-11-14 22:13:20') HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC"
         );
     }

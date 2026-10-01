@@ -97,7 +97,7 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
     };
     match args.first().map(String::as_str) {
         Some("events") => {
-            println!("{}", census::sql::events_sql(since_formatted(1).as_deref()));
+            println!("{}", census::sql::events_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names()));
             0
         }
         Some("handwritten") => {
@@ -105,7 +105,7 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
             0
         }
         Some("deliberate") => {
-            println!("{}", census::sql::deliberate_sql(since_formatted(1).as_deref()));
+            println!("{}", census::sql::deliberate_sql(since_formatted(1).as_deref(), &w.deliberate_cause_names()));
             0
         }
         Some("class-fold-map") => {
@@ -113,7 +113,7 @@ fn cmd_sql(w: &dyn census::ports::World, args: &[String]) -> i32 {
             0
         }
         Some("deliberate-causes") => {
-            println!("{}", census::sql::deliberate_causes_sql_list());
+            println!("{}", census::sql::deliberate_causes_sql_list(&w.deliberate_cause_names()));
             0
         }
         // The retry-aware RUNNERS — `census_events_run_sql`/`census_handwritten_run_sql`/

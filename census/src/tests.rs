@@ -94,6 +94,9 @@ impl World for Fake {
     fn census_class_fold_map(&self) -> String {
         self.fold_map.borrow().clone()
     }
+    fn deliberate_cause_names(&self) -> Vec<String> {
+        vec!["work-close-converted".to_string(), "eject".to_string()]
+    }
     fn repo_root(&self) -> Option<String> {
         self.repo_root.borrow().clone()
     }

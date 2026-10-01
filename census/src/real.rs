@@ -108,7 +108,7 @@ impl World for Real {
     /// moves here rather than into `crate::sql`.
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        let query = crate::sql::events_sql(since_formatted.as_deref());
+        let query = crate::sql::events_sql(since_formatted.as_deref(), &self.deliberate_cause_names());
         let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
         let mut last_stderr = String::new();
         for attempt in 1..=3 {
@@ -129,10 +129,19 @@ impl World for Real {
     }
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String {
         let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
-        self.run_bd_sql(&crate::sql::deliberate_sql(since_formatted.as_deref())).1
+        self.run_bd_sql(&crate::sql::deliberate_sql(since_formatted.as_deref(), &self.deliberate_cause_names())).1
     }
     fn census_class_fold_map(&self) -> String {
         crate::sql::class_fold_map().trim_end_matches('\n').to_string()
+    }
+    fn deliberate_cause_names(&self) -> Vec<String> {
+        let out = Command::new("spira-claim").arg("deliberate-causes").stdin(Stdio::null()).stderr(Stdio::null()).output();
+        match out {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).lines().filter_map(|l| l.split_whitespace().next()).map(str::to_string).collect()
+            }
+            _ => Vec::new(),
+        }
     }
     fn repo_root(&self) -> Option<String> {
         let out = self.seam("repo_root 2>/dev/null", &[]);

@@ -802,13 +802,13 @@ counter semantics lib.sh functions had when they ran in-process.
 | S1 | summon-gate | `world_gate fleet summon-only \|\| exit 1; if capacity_paused; then log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"; exit 1; fi` | — | inherited (log) |
 | S2 | ck7 | `ck7_summon_pass` | — | inherited |
 | S3 | ~~land-escalate~~ | **retired (sp-31hjr):** `land_escalate` (and the `ask_already_open` dedupe it leans on) is native Rust now — `dispatch.rs::land_escalate`/`pass.rs::ask_already_open`, called in-process from CHECK 6. `sentinel --land-escalate` (stdin: line 1 = why, rest = evidence) drives it alone for the real-sender suites that used to source lib.sh directly. | — | — |
-| S4 | check3b | `mark_queue_waiters 2>/dev/null \|\| true; close_landed_queue_waiters 2>/dev/null \|\| true` (`mark_open_children` is CHECK 3c, in Rust) | — | inherited |
+| S4 | ~~check3b~~ | **retired (sp-fbqsv, wave 4.28):** `mark_queue_waiters`/`close_landed_queue_waiters` are native Rust now — `waiters.rs`, called in-process from `full()` with the pass's own broad ready snapshot already in memory (no `$SPIRA_READY_SNAPSHOT` temp-file round trip). `sentinel --mark-queue-waiters`/`--close-landed-queue-waiters` drive each alone for lib.sh's own shims. (`mark_open_children` is CHECK 3c, also in Rust.) | — | — |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
 | S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `aeon::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
-| S7 | detect-unclaimable | `detect_unclaimable_ready 2>/dev/null` | — | captured |
-| S8 | file-unclaimable | `file_unclaimable_incidents "$(cat)"` | S7's output | inherited |
-| S9 | detect-collisions | `detect_branch_collisions 2>/dev/null` | — | captured |
-| S10 | park-collisions | `park_branch_collisions "$(cat)"` | S9's output | captured |
+| S7 | ~~detect-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `detect_unclaimable_ready` is native Rust now — `detect.rs`, called in-process from CHECK 7c. It still shells to `unclaimable.py` for the classification itself (kept as the one shared, independently-tested classifier — cockpit-collect's own suite cross-checks against it); this seam only carried the bash orchestration around that call. `sentinel --detect-unclaimable` drives it alone. | — | — |
+| S8 | ~~file-unclaimable~~ | **retired (sp-fbqsv, wave 4.28):** `file_unclaimable_incidents` is native Rust now — `detect.rs`. `sentinel --file-unclaimable` (stdin: S7's output) drives it alone. | — | — |
+| S9 | ~~detect-collisions~~ | **retired (sp-fbqsv, wave 4.28):** `detect_branch_collisions` is native Rust now — `detect.rs`, called in-process from CHECK 7d. `sentinel --detect-collisions` drives it alone. | — | — |
+| S10 | ~~park-collisions~~ | **retired (sp-fbqsv, wave 4.28):** `park_branch_collisions` is native Rust now — `detect.rs`. `sentinel --park-collisions` (stdin: S9's output) drives it alone. | — | — |
 
 Retire each seam when the function behind it gets its own crate. S0's roster half retires
 when spira-config's persona table carries labels and exclusions, the same condition as

@@ -17,6 +17,12 @@ pub trait World {
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String;
     /// `_census_class_fold_map` -> "<alias> <canonical>" lines.
     fn census_class_fold_map(&self) -> String;
+    /// `_census_deliberate_reopen_causes`'s cause NAMES alone (the admission-exemption
+    /// flag that function also carries is row I's business, `bead_reopen`'s, not this
+    /// query's) — `spira-claim deliberate-causes` is the one declared list now (sp-3wfcb,
+    /// row I); empty on any failure to reach it (fails toward an empty IN-list, matching
+    /// every other census SQL field).
+    fn deliberate_cause_names(&self) -> Vec<String>;
     /// `repo_root` with no argument — the default repository census's own closed-remedy
     /// check reads git branches from.
     fn repo_root(&self) -> Option<String>;

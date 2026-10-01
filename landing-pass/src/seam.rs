@@ -17,6 +17,9 @@
 /// (sp-81t4d, "wave 4.17": family R, landed verification) — `conflict_reopen_note`,
 /// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and `bead_close_on_land` are all
 /// native now (`land_verify.rs`), reached through `RealLib` directly, never this seam.
+/// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
+/// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;
+/// `RealLib` shells to the compiled `gh-intake closeout`/`unlanded-scan` binary instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
@@ -32,9 +35,7 @@ pub enum Op {
     DeliverDelivered,
     DeliverRequeued,
     DeliverReturned,
-    Closeout,
     PruneWorktrees,
-    GhUnlandedScan,
     /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>` (lc-delivery.sh until sp-arpjt).
     DeliverPrMerged,
     /// `spira-lc deliver pr-closed <id>`.
@@ -58,9 +59,7 @@ pub const ALL: &[Op] = &[
     Op::DeliverDelivered,
     Op::DeliverRequeued,
     Op::DeliverReturned,
-    Op::Closeout,
     Op::PruneWorktrees,
-    Op::GhUnlandedScan,
     Op::DeliverPrMerged,
     Op::DeliverPrClosed,
     Op::ForcePush,
@@ -160,9 +159,7 @@ fn body(op: Op) -> &'static str {
         Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\" || true\nexit 0\n",
         Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\" || true\nexit 0\n",
         Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\" || true\nexit 0\n",
-        Op::Closeout => "gh_issue_closeout \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
-        Op::GhUnlandedScan => "_gh_unlanded_scan || true\nexit 0\n",
         Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
         Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\" || true\nexit 0\n",
         Op::ForcePush => "__e=\"$(spira_git_push \"$1\" -q --force-with-lease -u \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
