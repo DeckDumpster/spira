@@ -30,6 +30,7 @@ pub mod locate;
 pub mod registry;
 pub mod repos;
 pub mod resolve;
+pub mod writeback;
 
 pub use locate::LocateOutcome;
 

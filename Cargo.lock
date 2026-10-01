@@ -14,6 +14,7 @@ dependencies = [
  "sha2",
  "signal-hook",
  "spira-config",
+ "strand",
  "testkit",
 ]
 
@@ -131,6 +132,7 @@ dependencies = [
  "regex",
  "serde_json",
  "spira-config",
+ "strand",
  "testkit",
 ]
 
@@ -201,6 +203,7 @@ dependencies = [
  "serde_json",
  "spira-claim",
  "spira-config",
+ "strand",
  "testkit",
 ]
 
@@ -599,6 +602,7 @@ name = "landing-pass"
 version = "2.0.0"
 dependencies = [
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",
@@ -1317,8 +1321,8 @@ dependencies = [
 name = "strand"
 version = "1.0.0"
 dependencies = [
- "bead",
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",

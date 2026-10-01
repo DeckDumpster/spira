@@ -279,25 +279,29 @@ gets written into the cooldown file, but the `events.log` line's own timestamp c
 from a separate, fresh `$(date -u '+%Y-%m-%dT%H:%M:%SZ')` call — the real wall clock, even
 under a test's `SPIRA_NOW` override. `bead::event::emit` keeps the same split: its `now`
 parameter governs the cooldown math and file; `wall_clock_now()` (a real `SystemTime::now()`,
-never reading `SPIRA_NOW`) stamps the log line. **Found and fixed in the same bead:**
-`strand/src/check.rs`'s own prior Rust port of this function (written before this family had
-an owning crate — see below) used its one `now` for both, which is indistinguishable from
-correct in production (`SPIRA_NOW` is never set outside a test) and wrong only under a
-clock-seam test that neither suite ever asserted the timestamp column's value, so it was
-never caught.
+never reading `SPIRA_NOW`) stamps the log line. **Found and fixed independently in both
+copies by this same bead** (see next paragraph for why there are still two):
+`strand/src/check.rs`'s own prior Rust port of this function used its one `now` for both,
+which is indistinguishable from correct in production (`SPIRA_NOW` is never set outside a
+test) and wrong only under a clock-seam test that neither suite ever asserted the timestamp
+column's value, so it was never caught; `strand`'s copy now has its own `wall_clock_now()`
+too.
 
-**`strand`'s own duplicate now calls through here instead of keeping a second copy.**
-`strand/src/check.rs` wrote a complete, independently-tested native port of `spira_event`
-(its own `pub fn spira_event(cfg, kind, target, title, detail)`, using its own
-`src/timefmt.rs`) to emit `branch.reclaimed`, predating this family's assignment to an
-owning crate. Two writers of the same `events.log`/`events/<key>` file shapes is exactly the
-drift this bead exists to retire — census/tsd/cockpit readers parse what either one writes,
-so a hand-kept second copy is a second thing to drift the day one of them changes. `strand`
-now depends on `bead` as a library and `spira_event` is a thin wrapper: same name, same call
-site (`strand/src/check.rs:299`, `spira_event(cfg, "branch.reclaimed", id, ...)`, which is
-also spira-lint's `event-taxonomy` WIRED needle for that kind — untouched, so the rule still
-finds it), body now `bead::event::emit(run_dir, cfg.event_cooldown, now, kind, target, title,
-detail)`.
+**`strand`'s own duplicate is NOT collapsed onto this crate — a dependency cycle, found at
+merge time, not before.** `strand/src/check.rs` carries a complete, independently-tested
+native port of `spira_event` (`pub fn spira_event(cfg, kind, target, title, detail)`, using
+its own `src/timefmt.rs`) to emit `branch.reclaimed`, predating this family's assignment to
+an owning crate. The first draft of this bead had `strand` depend on `bead` and delegate to
+`bead::event::emit` — until merging `local/main` landed a concurrent bead that added
+`bead -> strand` (`bead/src/main.rs`'s `cmd_amend`'s liveness check now calls
+`strand::probe::aeon_alive` instead of its own copy). `strand -> bead` the other way would
+make a cycle Cargo refuses to build, and this bead has no mandate to re-architect that
+landed dependency to make room for its own. Reverted to two independent copies, each with
+its own `wall_clock_now()` fix. **Follow-up, not done here:** break the cycle with a third,
+lower crate (or move `aeon_alive` out of `strand` into something both can depend on) before
+actually collapsing `spira_event` onto one writer; until then, the call site `strand/src/
+check.rs:299`, `spira_event(cfg, "branch.reclaimed", id, ...)` — also spira-lint's
+`event-taxonomy` WIRED needle for that kind — is untouched by this bead either way.
 
 **A second, small `civil_from_days`/`utc_stamp`/`utc_hhmm` copy, not a shared crate.**
 `strand/src/timefmt.rs` already has these (plus RFC 3339 parsing and a local-time variant
