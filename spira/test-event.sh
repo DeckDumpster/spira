@@ -36,6 +36,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 SH="$TMP/spira"; RUN="$TMP/run"; mkdir -p "$SH" "$RUN"
 # conf.sh travels with lib.sh, which refuses to run without it.
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # In a subshell, never sourced here: lib.sh overwrites PATH outright, as it must to run under
 # systemd, and a suite that inherited that would be testing the harness's PATH as well.

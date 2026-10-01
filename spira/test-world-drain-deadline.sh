@@ -42,6 +42,7 @@ WORLD_BIN="$(command -v world || true)"
 [ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-drain-deadline.sh: the world binary is not on PATH" >&2; exit 1; }
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # Stub systemctl: answers inactive for everything so halt/drain banner checks stay quiet.
 printf '#!/usr/bin/env bash\necho inactive\nexit 3\n' > "$TMP/systemctl"

@@ -36,6 +36,7 @@ git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # The forge fixture sleeps on check-status — the FIRST call the verdict makes after
 # taking the per-repo lock (queue/src/ops/verdict.rs forge_pass locks, then process reads

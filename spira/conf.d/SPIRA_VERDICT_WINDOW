@@ -1,0 +1,12 @@
+TYPE=u32
+GROUP=verdict
+DOC=HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
+    # that names this bead?" The bound must be the same in both places: aeon.sh walks the
+    # branch (and the landing refs when the branch walk finds nothing); the sentinel walks
+    # the landing refs directly. If the two use different values they give different answers
+    # about a bead whose commit landed many sessions ago. 400 is large enough to span an
+    # active repository's daily output many times over, cheap enough to run on every bead.
+    : "${SPIRA_VERDICT_WINDOW:=400}"
+SPIRA_CONF_DEFAULT_EOF

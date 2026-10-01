@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=loop
+DOC=HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
+    # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
+    : "${SPIRA_LOOP_STALL_SECS:=3000}"
+SPIRA_CONF_DEFAULT_EOF

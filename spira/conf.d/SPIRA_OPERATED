@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=operated
+DOC=Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
+    # treats missing operator tools as FAIL. Set to 0 in spira.conf for a headless fixture
+    # or a CI box where no operator is reading escalations; doctor.sh downgrades to WARN.
+    : "${SPIRA_OPERATED:=1}"
+SPIRA_CONF_DEFAULT_EOF

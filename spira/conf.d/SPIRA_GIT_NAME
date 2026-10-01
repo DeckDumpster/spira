@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=git
+DOC=.invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
+    : "${SPIRA_GIT_NAME:=spira}"
+SPIRA_CONF_DEFAULT_EOF

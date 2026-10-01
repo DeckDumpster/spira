@@ -25,6 +25,7 @@ trap cleanup EXIT INT TERM
 # one" by construction; see cockpit/ops/DESIGN.md "Configuration").
 ROOT="$TMP/root"; mkdir -p "$ROOT/spira" "$ROOT/cockpit" "$ROOT/bin" "$TMP/bin"
 cp "$HERE/conf.sh" "$ROOT/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$ROOT/spira/"
 cp "$HERE/../cockpit/tmux-env.sh" "$ROOT/cockpit/"
 cp "$(command -v layout)" "$ROOT/bin/layout"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"

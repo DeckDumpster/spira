@@ -50,6 +50,7 @@ git -C "$REPO" remote set-head origin main
 mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # THE RUST SENTINEL (sentinel.sh is gone): the binaries are invoked by name from the tree's build on PATH
 # resolves them for THIS tree, and passed explicitly, because the fixture's own SPIRA_REPO is
 # not the tree that built them.

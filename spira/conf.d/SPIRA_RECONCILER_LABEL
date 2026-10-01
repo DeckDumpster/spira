@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=reconciler
+DOC=THE RECONCILER PARTITION LABEL — the label on structural-gap escalation beads the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE RECONCILER PARTITION LABEL — the label on structural-gap escalation beads the
+    # reconciler files once a gap outlasts its grace period with no deterministic remedy,
+    # or a remedy that did not close it (sp-ocmes).
+    : "${SPIRA_RECONCILER_LABEL:=reconciler-gap}"
+SPIRA_CONF_DEFAULT_EOF

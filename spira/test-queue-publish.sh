@@ -33,6 +33,7 @@ echo "test-queue-publish.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
 chmod +x "$SH"/*.sh 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }

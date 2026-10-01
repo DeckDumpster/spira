@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=chamber
+DOC=WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
+    # survives the harness's own releases instead of being reverted by the next one. Same
+    # directory family as SPIRA_PREFIX_MAP, for the same reason: operator state beside the
+    # repo-map, never inside the checkout a `spira: land` push can overwrite.
+    : "${SPIRA_CHAMBER_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/chamber}"
+SPIRA_CONF_DEFAULT_EOF

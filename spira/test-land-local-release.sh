@@ -34,6 +34,7 @@ echo "test-land-local-release.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 cat > "$SH/mail.sh" <<'EOFM'
 #!/usr/bin/env bash
 [ "${1:-}" = send ] || exit 0

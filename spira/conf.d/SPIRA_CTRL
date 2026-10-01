@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=ctrl
+DOC=THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
+    # that lives outside source control and survives install.sh, pull, and reset.
+    # Defaults to the gitignored runtime directory so no git operation ever touches it.
+    # An operator who wants it elsewhere (e.g. truly outside the repository directory)
+    # sets this key.
+    : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
+SPIRA_CONF_DEFAULT_EOF

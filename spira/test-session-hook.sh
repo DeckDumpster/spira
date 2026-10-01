@@ -59,6 +59,7 @@ command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
 cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/mail.sh" "$CLONE/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$CLONE/spira/"
 cp "$HERE/inbox-triage.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 

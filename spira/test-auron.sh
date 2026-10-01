@@ -66,6 +66,7 @@ testdb_up auron || { echo "test-auron: could not build a fixture database"; exit
 
 SH="$TMP/spira"; RUN="$TMP/run"; mkdir -p "$SH" "$RUN"
 cp "$HERE/auron-classify.py" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # ITS OWN SPIRA_HOME AND ITS OWN repo-map. Without one, SPIRA_HOME falls back to the
 # INSTALLED harness directory and this suite would read the operator's real repositories.
 printf 'brain | %s | push | origin/main | |\n' "$TMP/repo" > "$SH/repo-map"

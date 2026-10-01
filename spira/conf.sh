@@ -60,324 +60,55 @@ SPIRA_CONF_LOADED=1
 # installed copy, so the gate would test the code already in force instead of the code being
 # judged, and pass. The environment may still override both: that is the seam every suite
 # drives a fixture through, and it is explicit rather than ambient.
-SPIRA_CONF_KEYS="
-SPIRA_HOME_REPO SPIRA_DB SPIRA_RUN
-SPIRA_PATH SPIRA_WORKSPACES SPIRA_REPO_MAP SPIRA_PREFIX_MAP SPIRA_CHAMBER SPIRA_CHAMBER_OVERLAY SPIRA_WATCHERS SPIRA_WATCHERS_OVERLAY SPIRA_OVERRIDES
-SPIRA_ACTIONABLE SPIRA_ID_PREFIX SPIRA_HEALTH_TIMEOUT SPIRA_NOTIFY_AGE SPIRA_WAKE
-SPIRA_CLIENT_SETTINGS SPIRA_CTRL
-SPIRA_MAIL SPIRA_MAIL_KINDS SPIRA_MAIL_READERS SPIRA_MAIL_UNREAD_AGE SPIRA_MAIL_SETTLE SPIRA_MAIL_SESSION_MAILBOX SPIRA_MAIL_REPEAT_WINDOW SPIRA_MAIL_TIDY_FRESH SPIRA_MAIL_WAKE_BACKOFF SPIRA_MAIL_INDEX SPIRA_MAIL_MUTE
-SPIRA_CONCIERGE_INBOX SPIRA_CONCIERGE_INBOX_DEDUP SPIRA_CONCIERGE_INBOX_STALL SPIRA_CONCIERGE_INBOX_BACKOFF SPIRA_MAIL_SETTLE_EVENT
-SPIRA_COCKPIT SPIRA_COCKPIT_TRACE_LINES SPIRA_SNAP_STALE_S SPIRA_NOTIFY SPIRA_OPERATOR SPIRA_OPERATOR_ACTOR SPIRA_TZ SPIRA_ASK_LABEL SPIRA_VERIFY_TIMEOUT SPIRA_RECLAIM_GRACE_SECS SPIRA_OPERATED
-SPIRA_CI_LABEL SPIRA_CI_PARK_MAX SPIRA_WORLD_STOP_LABEL
-SPIRA_LAND_MAXSEC SPIRA_LAND_GATE_RESERVE SPIRA_CERTIFY_PAR SPIRA_CERTIFY_SUITES SPIRA_CERTIFY_ALWAYS_COVERS SPIRA_VERDICT_TTL SPIRA_REBASE_ESCALATE_AT SPIRA_EVICTION_ESCALATE_AT SPIRA_VERDICT_WINDOW SPIRA_CHECK5_MAX_FILE SPIRA_CHECK5_MAX_RESOLVE SPIRA_REMEDY_WINDOW SPIRA_PR_STALL_MINS SPIRA_DEFERRAL_ESCALATE_AT SPIRA_CUTOVER_ROUND_LABEL
-SPIRA_COMPILE_PAR SPIRA_TEST_PAR SPIRA_SUMMON_JITTER
-SPIRA_BROKER_ENABLE SPIRA_BROKER_GH_CONFIG_DIR SPIRA_BROKER_GH_TOKEN
-SPIRA_LOOM_ADDR SPIRA_LOOM_BUDGET_MS SPIRA_LOOM_CACHE_S SPIRA_LOOM_READY_GRACE
-SPIRA_FLOW_WINDOW_HOURS SPIRA_FLOW_BASELINE_HOURS SPIRA_FLOW_GRACE_SECS SPIRA_FLOW_UNOBSERVABLE_GRACE_SECS SPIRA_DESIRED_DIR
-SPIRA_GH SPIRA_GH_APP_CONFIG SPIRA_GH_ASK_GRACE_SECS
-SPIRA_SPIKE_LABEL SPIRA_SPIKE_DIR SPIRA_SPIKE_PATHS
-SPIRA_GROOMER_LABEL SPIRA_GROOM_THRESHOLD SPIRA_GROOM_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_PLAN_LABEL SPIRA_INCIDENT_LABEL SPIRA_CZAR_LABEL SPIRA_NO_LOOP_LABEL SPIRA_EXPRESS_LABEL SPIRA_RECONCILER_LABEL SPIRA_RECONCILER_GRACE_SECS SPIRA_DISK_FLOOR_PCT
-SPIRA_CZAR_STAGE_DEADLOCK SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED SPIRA_CZAR_STAGE_SORT_FAILED SPIRA_CZAR_STAGE_LOOP_STALLED SPIRA_CZAR_STAGE_CI_STALLED SPIRA_CZAR_STAGE_STARVED SPIRA_CZAR_STAGE_CI_RED SPIRA_CZAR_STAGE_BASE_RED
-SPIRA_MAECHEN_LABEL SPIRA_MAECHEN_LANDING_INTERVAL SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_MAX_BEADS SPIRA_MAECHEN_REMEDY_LABEL SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S
-COCKPIT_DB COCKPIT_BOTTOM_PCT COCKPIT_MAIL COCKPIT_RIGHT_PCT COCKPIT_MOUSE COCKPIT_CLIPBOARD COCKPIT_CWD COCKPIT_SESSIONS COCKPIT_HOST
-SPIRA_TOWN SPIRA_MIRROR SPIRA_EXPORTER SPIRA_DESIGN SPIRA_WIKI SPIRA_WIKI_HOOK SPIRA_DOLT_DATA
-SPIRA_VIEW SPIRA_VIEW_SESSION
-SPIRA_ALERT_GLOB
-SPIRA_BD SPIRA_BD_PIN SPIRA_BD_TAG
-SPIRA_FAYTHS SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LANES SPIRA_LANES_MAX_LIVE SPIRA_QA_DEPTH SPIRA_THRASH_MINUTES SPIRA_THRASH_STREAK_CAP SPIRA_RAPID_RECUR_THRESHOLD SPIRA_BRIEF_KEEP_RECURRENCES SPIRA_BRIEF_NOTES_MAX_CHARS SPIRA_SUMMON_LOCK_WAIT SPIRA_STACK_MAX_DEPTH
-SPIRA_CLAIM_RETRIES SPIRA_CLAIM_RETRY_DELAY_S
-SPIRA_TOKEN_WINDOW_H SPIRA_TOKEN_PROJECTS SPIRA_CTX_WARN SPIRA_CTX_HIGH SPIRA_CTX_LIMIT
-SPIRA_ARCHIVE
-SPIRA_ARCHIVIST_EVERY SPIRA_ARCHIVIST_IDLE SPIRA_ARCHIVIST_MODEL SPIRA_ARCHIVIST_TIMEOUT
-SPIRA_ARCHIVIST_PER_PASS SPIRA_ARCHIVIST_TIMEOUT_RETRIES
-SPIRA_TESTDB_LIB SPIRA_TESTDB_BD SPIRA_TESTDB_DATA SPIRA_TESTDB_PORT
-SPIRA_TESTENV_REGISTRY SPIRA_TESTENV_MAX_CONCURRENT SPIRA_TESTENV_QUEUE_TIMEOUT SPIRA_TESTENV_QUEUE_POLL SPIRA_GH_INTAKE_REPO SPIRA_GH_INTAKE_PRIORITY SPIRA_GH_INTAKE_BEAD_REPO SPIRA_FLAKY_GH_REPO SPIRA_RELEASE_REPO SPIRA_RELEASE_RUST_TOOLCHAIN
-SPIRA_GATE_TIMEOUT SPIRA_GATE_BUDGET SPIRA_GATE_SELECT_CAP SPIRA_GATE_LOCK_WAIT
-SPIRA_GATE_SUITES SPIRA_SUITE_STATE_FILE SPIRA_SUITES_STATE SPIRA_SUITE_TIMEOUT SPIRA_BATCH_MAXPAR SPIRA_SUITES_BUDGET SPIRA_ATTRIBUTE_MAXPAR
-SPIRA_TIER_BUDGET_T0_MS SPIRA_TIER_BUDGET_T1_MS SPIRA_TIER_BUDGET_T2_MS SPIRA_TIER_BUDGET_T3_MS SPIRA_TIER_BUDGET_WINDOW SPIRA_TIER_ALLOWLIST_MARGIN_PCT SPIRA_TIER_ALLOWLIST SPIRA_TIER_AREA_ALLOWLIST SPIRA_BATCH_MAXPAR_CEILING
-SPIRA_BATCH_MEM_RESERVE_MIB SPIRA_BATCH_MEM_PER_SUITE_MIB SPIRA_BATCH_MEM_AVAIL_MIB SPIRA_BATCH_PSI_THRESHOLD SPIRA_BATCH_ORPHAN_MIN_AGE SPIRA_BATCH_BINS_TTL
-SPIRA_BATCH_PEAK_WARN_FRAC
-SPIRA_BATCH_ARTIFACT_DAYS SPIRA_BATCH_TAIL_LINES SPIRA_SUITE_TIMES_LOG SPIRA_BATCH_LEDGER
-SPIRA_SUITES_PRIORITY SPIRA_SUITES_STALE SPIRA_SELF_TEST SPIRA_INCIDENT_PRIORITY SPIRA_WATCHER_INTERVAL_S
-SPIRA_FLAKE_QUARANTINE_AT SPIRA_FLAKE_WINDOW SPIRA_QUARANTINE_CLEAN_RUNS SPIRA_QUARANTINE_MAX_AGE
-SPIRA_QUEUE_BATCH_MAX SPIRA_QUEUE_BATCH_WAIT SPIRA_QUEUE_CI_MAXSEC SPIRA_QUEUE_CI_IDLE_SEC SPIRA_CI_QUEUED_MAX_SECS SPIRA_LOOP_STALL_SECS SPIRA_CI_RED_MAX_SECS SPIRA_BASE_CI_UNREADABLE_GRACE_SECS SPIRA_PREFLIGHT_WALL_SECS SPIRA_BATCHER_WALL_SECS SPIRA_PREFLIGHT_SUITE_MAX_SECS SPIRA_QUEUE_INFRA_RETRIES SPIRA_QUEUE_STUCK_AGE SPIRA_QUEUE_DIR SPIRA_FORGE SPIRA_FORGE_REPO SPIRA_PUBLISH_REMOTE SPIRA_LOCAL_BACKLOG_COUNT SPIRA_LOCAL_BACKLOG_AGE SPIRA_QUEUE_WAIT_LABEL SPIRA_QUEUE_ACTIONS_APP_ID SPIRA_EXPRESS_LABEL SPIRA_CERT_IDLE_SKIP SPIRA_BATCHER_ENABLE SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_QUEUE_LOCK_WAIT SPIRA_QUEUE_LOCK_STARVE_MAX
-SPIRA_QUEUE_REPRO_CI_POLLSEC SPIRA_QUEUE_REPRO_CI_MAXSEC SPIRA_QUEUE_TRANSITION_POLLSEC SPIRA_QUEUE_TRANSITION_MAXSEC
-SPIRA_SUBMITTED_LABEL SPIRA_WORK_CLOSE_TYPES SPIRA_OPEN_CHILDREN_LABEL
-SPIRA_QUEUE_THROTTLE_DEPTH_AT SPIRA_QUEUE_THROTTLE_RELEASE_AT SPIRA_QUEUE_THROTTLE_STALL_MINS SPIRA_QUEUE_THROTTLE_OVERRIDE
-SPIRA_AURON_RESTARTS SPIRA_AURON_RESTART_WINDOW
-SPIRA_PROD SPIRA_INSTANCE
-SPIRA_RELEASES SPIRA_RELEASES_KEEP SPIRA_GH_REPO
-SPIRA_REVIEWER_MODEL SPIRA_REVIEWER_VERDICTS SPIRA_REVIEWER_TIMEOUT SPIRA_REVIEWER_DIFF_LIMIT
-SPIRA_REVIEW_LABEL
-SPIRA_ROUND_VM_STATE_DIR SPIRA_ROUND_VM_PROVIDER SPIRA_ROUND_VM_SSH_USER SPIRA_ROUND_VM_SSH_PORT SPIRA_ROUND_VM_HOST_KEY SPIRA_ROUND_VM_HOST_PUBKEY SPIRA_ROUND_VM_HOST_ADDR SPIRA_ROUND_VM_VCPUS SPIRA_ROUND_VM_MAXPAR SPIRA_ROUND_VM_MAX_RETRIES SPIRA_ROUND_VM_RETRY_INTERVAL SPIRA_ROUND_VM_MIRROR_PORT
-SPIRA_CAPACITY_PROBE_MODEL SPIRA_CAPACITY_PROBE_INTERVAL SPIRA_CAPACITY_PROBE_WINDOW SPIRA_CAPACITY_PROBE_TIMEOUT
-SPIRA_LIVENESS_MODEL SPIRA_REFLECT_MODEL
-SPIRA_SELF_WINDOW
-SPIRA_DELIVERS_CHECK_TIMEOUT
-SPIRA_CERT_WINDOW_MINS
-SPIRA_AGENT
-SPIRA_ALERT_GLOB
-SPIRA_ARCHIVE
-SPIRA_ARCHIVIST_EVERY
-SPIRA_ARCHIVIST_IDLE
-SPIRA_ARCHIVIST_MODEL
-SPIRA_ARCHIVIST_PER_PASS
-SPIRA_ARCHIVIST_TIMEOUT
-SPIRA_ARCHIVIST_TIMEOUT_RETRIES
-SPIRA_ASK_LABEL
-SPIRA_ATTRIBUTE_MAXPAR
-SPIRA_AURON_RESTARTS
-SPIRA_AURON_RESTART_WINDOW
-SPIRA_BASE_CI_UNREADABLE_GRACE_SECS
-SPIRA_BATCH_ARTIFACT_DAYS
-SPIRA_BATCH_BINS_TTL
-SPIRA_BATCH_JUDGEMENT_LABEL
-SPIRA_BATCH_LEDGER
-SPIRA_BATCH_MAXPAR
-SPIRA_BATCH_MAXPAR_CEILING
-SPIRA_BATCH_MEM_AVAIL_MIB
-SPIRA_BATCH_MEM_PER_SUITE_MIB
-SPIRA_BATCH_MEM_RESERVE_MIB
-SPIRA_BATCH_ORPHAN_MIN_AGE
-SPIRA_BATCH_PEAK_WARN_FRAC
-SPIRA_BATCH_PSI_THRESHOLD
-SPIRA_BATCH_TAIL_LINES
-SPIRA_BD
-SPIRA_BD_PIN
-SPIRA_BD_TAG
-SPIRA_BRIEF_KEEP_RECURRENCES
-SPIRA_BRIEF_NOTES_MAX_CHARS
-SPIRA_BROKER_GH_CONFIG_DIR
-SPIRA_BROKER_GH_TOKEN
-SPIRA_CAPACITY_PROBE_INTERVAL
-SPIRA_CAPACITY_PROBE_MODEL
-SPIRA_CAPACITY_PROBE_TIMEOUT
-SPIRA_CAPACITY_PROBE_WINDOW
-SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S
-SPIRA_CERT_IDLE_SKIP
-SPIRA_CERTIFY_ALWAYS_COVERS
-SPIRA_CERTIFY_PAR
-SPIRA_CERTIFY_SUITES
-SPIRA_CERT_WINDOW_MINS
-SPIRA_CHAMBER
-SPIRA_CHAMBER_OVERLAY
-SPIRA_CHECK5_MAX_FILE
-SPIRA_CHECK5_MAX_RESOLVE
-SPIRA_CI_LABEL
-SPIRA_CI_PARK_MAX
-SPIRA_CI_QUEUED_MAX_SECS
-SPIRA_CI_RED_MAX_SECS
-SPIRA_CLAIM_RETRIES
-SPIRA_CLAIM_RETRY_DELAY_S
-SPIRA_CLIENT_SETTINGS
-SPIRA_COCKPIT
-SPIRA_COCKPIT_TRACE_LINES
-SPIRA_CTRL
-SPIRA_CTX_HIGH
-SPIRA_CTX_LIMIT
-SPIRA_CTX_WARN
-SPIRA_CUTOVER_ROUND_LABEL
-SPIRA_CZAR_LABEL
-SPIRA_CZAR_STAGE_ATTRIBUTION_FAILED
-SPIRA_CZAR_STAGE_BASE_RED
-SPIRA_CZAR_STAGE_CI_RED
-SPIRA_CZAR_STAGE_CI_STALLED
-SPIRA_CZAR_STAGE_DEADLOCK
-SPIRA_CZAR_STAGE_LOOP_STALLED
-SPIRA_CZAR_STAGE_SORT_FAILED
-SPIRA_CZAR_STAGE_STARVED
-SPIRA_DB
-SPIRA_DEFERRAL_ESCALATE_AT
-SPIRA_DELIVERS_CHECK_TIMEOUT
-SPIRA_DESIGN
-SPIRA_DESIRED_DIR
-SPIRA_DISK_FLOOR_PCT
-SPIRA_DOLT_DATA
-SPIRA_EVICTION_ESCALATE_AT
-SPIRA_EXPORTER
-SPIRA_EXPRESS_LABEL
-SPIRA_FAYTHS
-SPIRA_FLAKE_QUARANTINE_AT
-SPIRA_FLAKE_WINDOW
-SPIRA_FLAKY_GH_REPO
-SPIRA_FLOW_BASELINE_HOURS
-SPIRA_FLOW_GRACE_SECS
-SPIRA_FLOW_WINDOW_HOURS
-SPIRA_FORGE
-SPIRA_FORGE_REPO
-SPIRA_GATE_BUDGET
-SPIRA_GATE_LOCK_WAIT
-SPIRA_GATE_SELECT_CAP
-SPIRA_GATE_SUITES
-SPIRA_GATE_TIMEOUT
-SPIRA_GH
-SPIRA_GH_APP_CONFIG
-SPIRA_GH_APP_ID
-SPIRA_GH_APP_INSTALLATION_ID
-SPIRA_GH_APP_KEY
-SPIRA_GH_APP_PRIVATE_KEY
-SPIRA_GH_ASK_GRACE_SECS
-SPIRA_GH_INTAKE_BEAD_REPO
-SPIRA_GH_INTAKE_PRIORITY
-SPIRA_GH_INTAKE_REPO
-SPIRA_GH_REPO
-SPIRA_GIT_EMAIL
-SPIRA_GIT_NAME
-SPIRA_GROOM_ASK_LABEL
-SPIRA_GROOMER_LABEL
-SPIRA_GROOM_THRESHOLD
-SPIRA_HEALTH_TIMEOUT
-SPIRA_HOME_REPO
-SPIRA_ID_PREFIX
-SPIRA_INCIDENT_LABEL
-SPIRA_INCIDENT_PRIORITY
-SPIRA_INSTANCE
-SPIRA_LAND_GATE_RESERVE
-SPIRA_LAND_MAXSEC
-SPIRA_LANES
-SPIRA_LANES_MAX_LIVE
-SPIRA_LIFECYCLE_ENFORCE
-SPIRA_LOOM_ADDR
-SPIRA_LOOM_BUDGET_MS
-SPIRA_LOOM_CACHE_S
-SPIRA_LOOM_READY_GRACE
-SPIRA_LOOP_STALL_SECS
-SPIRA_MAECHEN_LABEL
-SPIRA_MAECHEN_LANDING_INTERVAL
-SPIRA_MAECHEN_MAX_BEADS
-SPIRA_MAECHEN_MAX_GAP_SECONDS
-SPIRA_MAECHEN_REMEDY_LABEL
-SPIRA_MAIL
-SPIRA_MAIL_INDEX
-SPIRA_MAIL_KINDS
-SPIRA_MAIL_READERS
-SPIRA_MAIL_REPEAT_WINDOW
-SPIRA_MAIL_SESSION_MAILBOX
-SPIRA_MAIL_SETTLE
-SPIRA_MAIL_TIDY_FRESH
-SPIRA_MAIL_UNREAD_AGE
-SPIRA_MAIL_WAKE_BACKOFF
-SPIRA_MAX_AEONS
-SPIRA_MAX_LIVE_AEONS
-SPIRA_MIRROR
-SPIRA_NO_LOOP_LABEL
-SPIRA_NOTIFY
-SPIRA_NOTIFY_AGE
-SPIRA_OPERATED
-SPIRA_OPERATOR
-SPIRA_OPERATOR_ACTOR
-SPIRA_OVERRIDES
-SPIRA_PATH
-SPIRA_PLAN_LABEL
-SPIRA_PREFIX_MAP
-SPIRA_PREFLIGHT_SUITE_MAX_SECS
-SPIRA_PREFLIGHT_WALL_SECS
-SPIRA_PROD
-SPIRA_PR_STALL_MINS
-SPIRA_PVE_ENV
-SPIRA_QA_DEPTH
-SPIRA_QUARANTINE_CLEAN_RUNS
-SPIRA_QUARANTINE_MAX_AGE
-SPIRA_QUEUE_ACTIONS_APP_ID
-SPIRA_QUEUE_BATCH_MAX
-SPIRA_QUEUE_BATCH_WAIT
-SPIRA_QUEUE_CI_IDLE_SEC
-SPIRA_QUEUE_CI_MAXSEC
-SPIRA_QUEUE_DIR
-SPIRA_QUEUE_INFRA_RETRIES
-SPIRA_QUEUE_LOCK_STARVE_MAX
-SPIRA_QUEUE_LOCK_WAIT
-SPIRA_QUEUE_REPRO_CI_MAXSEC
-SPIRA_QUEUE_REPRO_CI_POLLSEC
-SPIRA_QUEUE_STUCK_AGE
-SPIRA_QUEUE_THROTTLE_DEPTH_AT
-SPIRA_QUEUE_THROTTLE_OVERRIDE
-SPIRA_QUEUE_THROTTLE_RELEASE_AT
-SPIRA_QUEUE_THROTTLE_STALL_MINS
-SPIRA_QUEUE_WAIT_LABEL
-SPIRA_RAPID_RECUR_THRESHOLD
-SPIRA_REBASE_ESCALATE_AT
-SPIRA_REBASE_STALE_LOG
-SPIRA_RECLAIM_GRACE_SECS
-SPIRA_RECONCILER_GRACE_SECS
-SPIRA_RECONCILER_LABEL
-SPIRA_RELEASE_REPO
-SPIRA_RELEASE_RUST_TOOLCHAIN
-SPIRA_RELEASES
-SPIRA_RELEASES_KEEP
-SPIRA_REMEDY_WINDOW
-SPIRA_REPO_MAP
-SPIRA_REVIEWER_DIFF_LIMIT
-SPIRA_REVIEWER_MODEL
-SPIRA_REVIEWER_TIMEOUT
-SPIRA_REVIEWER_VERDICTS
-SPIRA_REVIEW_LABEL
-SPIRA_ROUND_VM_HOST_ADDR
-SPIRA_ROUND_VM_HOST_KEY
-SPIRA_ROUND_VM_HOST_PUBKEY
-SPIRA_ROUND_VM_MAXPAR
-SPIRA_ROUND_VM_MAX_RETRIES
-SPIRA_ROUND_VM_MIRROR_PORT
-SPIRA_ROUND_VM_PROVIDER
-SPIRA_ROUND_VM_RETRY_INTERVAL
-SPIRA_ROUND_VM_SSH_PORT
-SPIRA_ROUND_VM_SSH_USER
-SPIRA_ROUND_VM_STATE_DIR
-SPIRA_ROUND_VM_VCPUS
-SPIRA_RUN
-SPIRA_SCOPE_LABEL
-SPIRA_SELF_TEST
-SPIRA_SELF_WINDOW
-SPIRA_SNAP_STALE_S
-SPIRA_SPIKE_DIR
-SPIRA_SPIKE_LABEL
-SPIRA_SPIKE_PATHS
-SPIRA_STATUTE_CORE
-SPIRA_SUBMITTED_LABEL
-SPIRA_SUITES_BUDGET
-SPIRA_SUITES_PRIORITY
-SPIRA_SUITES_STALE
-SPIRA_SUITES_STATE
-SPIRA_SUITE_STATE_FILE
-SPIRA_SUITE_TIMEOUT
-SPIRA_SUITE_TIMES_LOG
-SPIRA_TESTDB_BD
-SPIRA_TESTDB_DATA
-SPIRA_TESTDB_LIB
-SPIRA_TESTDB_PORT
-SPIRA_TESTENV_MAX_CONCURRENT
-SPIRA_TESTENV_QUEUE_POLL
-SPIRA_TESTENV_QUEUE_TIMEOUT
-SPIRA_TESTENV_REGISTRY
-SPIRA_THRASH_MINUTES
-SPIRA_THRASH_STREAK_CAP
-SPIRA_TIER_ALLOWLIST
-SPIRA_TIER_ALLOWLIST_MARGIN_PCT
-SPIRA_TIER_AREA_ALLOWLIST
-SPIRA_TIER_BUDGET_T0_MS
-SPIRA_TIER_BUDGET_T1_MS
-SPIRA_TIER_BUDGET_T2_MS
-SPIRA_TIER_BUDGET_T3_MS
-SPIRA_TIER_BUDGET_WINDOW
-SPIRA_TOKEN_PROJECTS
-SPIRA_TOKEN_WINDOW_H
-SPIRA_TOWN
-SPIRA_TZ
-SPIRA_VERDICT_TTL
-SPIRA_VERDICT_WINDOW
-SPIRA_VERIFY_TIMEOUT
-SPIRA_VIEW
-SPIRA_VIEW_SESSION
-SPIRA_WAKE
-SPIRA_WATCHER_INTERVAL_S
-SPIRA_WATCHERS
-SPIRA_WATCHERS_OVERLAY
-SPIRA_WIKI
-SPIRA_WIKI_HOOK
-SPIRA_WORK_CLOSE_TYPES
-SPIRA_WORKSPACES
-SPIRA_WORLD_STOP_LABEL SPIRA_WORKFLOW_ONLY_PATHS SPIRA_GH_API
-"
+# --------------------------------------------------------------------------------------
+# GENERATED (sp-g3uwp). This used to be ~250 keys hand-grouped across dozens of lines plus
+# a second, alphabetized one-per-line copy appended by sp-wjkj6 — and by the time this bead
+# started, three keys (SPIRA_EXPRESS_LABEL among them) were declared twice across the two
+# copies, and eleven keys with a real default elsewhere in this file were missing from this
+# list entirely (SPIRA_LC_SOCKET, SPIRA_REBASE_DECOMPOSE_FILES, ...). Both failure modes are
+# now impossible by construction: spira/conf.d/ is one file per key — adding a key adds a
+# file, which cannot conflict with another branch's own new file — and conf-gen.sh derives
+# this allowlist from exactly that directory listing, so the registry and the allowlist
+# cannot disagree about which keys exist.
+#
+# NEVER EDIT spira/conf.d.keys.generated.sh BY HAND. Add, rename, or remove a key by adding,
+# renaming, or removing its file under spira/conf.d/, then let _spira_conf_gen_ensure (below)
+# or `bash spira/conf-gen.sh` regenerate it.
+#
+# SELF-CONTAINED, not a global set once and read later: this is called a second time from
+# spira_conf_defaults() (to source conf.d.defaults.generated.sh), far below and in a
+# different function's scope, so it recomputes its own directory every call rather than
+# trusting a variable some earlier, unrelated code path might have unset in between.
+#
+# RESOLVES THE SYMLINK, unlike SPIRA_HOME's own derivation below. Dozens of suites
+# (test-conf.sh among them) `ln -s "$HERE/conf.sh" "$FIXTURE/spira/conf.sh"` to make conf.sh
+# believe it is running from a synthetic tree — that is SPIRA_HOME's whole point, and this
+# function must not disturb it. But conf.d/ and conf-gen.sh live beside conf.sh's REAL file,
+# not beside wherever a test symlinked it, so this one path is read with the link followed;
+# `dirname "${BASH_SOURCE[0]}"` alone resolved to the fixture's empty spira/ directory and
+# refused every such suite with "conf-gen.sh failed to regenerate" (caught by test-conf.sh,
+# test-conf-toml.sh and test-conf-writeback.sh — 76 assertions, first attempt at this fix).
+_spira_conf_gen_ensure() {   # _spira_conf_gen_ensure <keys|defaults> -> sources the named
+                             # generated fragment, regenerating first if it is stale
+    local _dir _which="${1:?_spira_conf_gen_ensure needs keys or defaults}" _gen _src _stale="" _real
+    _real="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null)" || _real="${BASH_SOURCE[0]}"
+    _dir="$(cd "$(dirname "$_real")" && pwd -P)"
+    _gen="$_dir/conf.d.$_which.generated.sh"
+    [ -f "$_gen" ] || _stale=1
+    if [ -z "$_stale" ]; then
+        for _src in "$_dir"/conf.d/* "$_dir/conf-gen.sh"; do
+            [ -e "$_src" ] || continue
+            [ "$_src" -nt "$_gen" ] && { _stale=1; break; }
+        done
+    fi
+    if [ -n "$_stale" ]; then
+        bash "$_dir/conf-gen.sh" \
+            || { echo "spira: conf-gen.sh failed to regenerate conf.d.*.generated.sh — refusing to run with a stale or missing generated file" >&2; return 1; }
+    fi
+    # shellcheck disable=SC1090
+    . "$_gen"
+}
+_spira_conf_gen_ensure keys || return 1
 
 # --------------------------------------------------------------------------------------
 # Where we are. SPIRA_HOME is the directory holding this file; everything else can be
@@ -792,61 +523,12 @@ spira_conf_defaults() {
     # path that no longer exists, silently, on whichever caller still took this fallback.
     # XDG_DATA_HOME every time, writable checkout or not.
     : "${SPIRA_RUN:=${XDG_DATA_HOME:-$HOME/.local/share}/spira${_spira_inst_sfx}/run}"
-    # THE OPERATIONAL CONTROL PLANE FILE. Durable state — suspensions, pauses, drains —
-    # that lives outside source control and survives install.sh, pull, and reset.
-    # Defaults to the gitignored runtime directory so no git operation ever touches it.
-    # An operator who wants it elsewhere (e.g. truly outside the repository directory)
-    # sets this key.
-    : "${SPIRA_CTRL:=$SPIRA_RUN/control}"
     # MEMORIES CACHE. render_memories writes the memories JSON here on a live read so
     # subsequent calls (concierge launch, aeon summon) hit local disk. rule.sh enact/retire
     # delete it so the next render sees fresh data. Empty (not unset) disables caching,
     # which is why this key uses `=` not `:=` — an explicitly empty value is an answer.
     : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
     : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
-    : "${SPIRA_MAIL:=$SPIRA_RUN/mail}"
-    # MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
-    # `new/`, so it is recorded but wakes no reader. Replaces the local-overrides tracked
-    # edit to spira/mail.sh (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
-    # config key instead of an uncommitted patch to a checked-out file. Off by default: mail
-    # flows normally unless an operator sets it, in spira.toml or the environment.
-    : "${SPIRA_MAIL_MUTE:=0}"
-    : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
-    # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
-    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh
-    # Monitor is what reaches the session, so a burst of mail can never land mid-keystroke in
-    # the operator's own half-written message the way a keystroke wake could. An operator who
-    # wants the old keystroke-wake reader back for another mailbox still sets
-    # SPIRA_MAIL_READERS themselves; this default covers `concierge` alone.
-    : "${SPIRA_MAIL_READERS:=concierge=inbox-append.sh}"
-    : "${SPIRA_MAIL_UNREAD_AGE:=1800}"
-    : "${SPIRA_MAIL_SETTLE:=2}"
-    # A MACHINE EVENT (a watcher's own kind: event mail — PR transitions among them) gets its
-    # own, near-zero settle: SPIRA_MAIL_SETTLE batches a burst of the OPERATOR's own replies,
-    # which is the wrong wait to make a live PR/watcher event sit through
-    # (law-alerts-must-be-actionable; UC-operator-channel-38's liveness requirement).
-    : "${SPIRA_MAIL_SETTLE_EVENT:=0}"
-    # HOW LONG BETWEEN WAKE RETRIES while a mailbox stays unread, in seconds, one step per
-    # attempt; the last step repeats forever. A wake is a tmux keystroke with no ack of its
-    # own, so a dropped one looks identical to a delivered one until something asks again.
-    : "${SPIRA_MAIL_WAKE_BACKOFF:=15 60 300 900}"
-    : "${SPIRA_MAIL_SESSION_MAILBOX:=concierge}"
-    : "${SPIRA_MAIL_REPEAT_WINDOW:=14400}"
-    : "${SPIRA_MAIL_TIDY_FRESH:=86400}"
-    : "${SPIRA_MAIL_INDEX:=$SPIRA_MAIL/index}"
-    # THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
-    # (inbox-append.sh); the concierge's inbox-triage.sh Monitor tails it, drops echoes and
-    # duplicates, and passes what needs action — never a keystroke into the pane.
-    : "${SPIRA_CONCIERGE_INBOX:=$SPIRA_RUN/watchd/concierge-inbox.log}"
-    # DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
-    : "${SPIRA_CONCIERGE_INBOX_DEDUP:=600}"
-    # THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
-    # SPIRA_CONCIERGE_INBOX_STALL seconds while the inbox holds lines it has not seen, the
-    # keeper re-arms with ONE wake (held by concierge.sh wake until the input line is empty),
-    # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.
-    : "${SPIRA_CONCIERGE_INBOX_STALL:=600}"
-    : "${SPIRA_CONCIERGE_INBOX_BACKOFF:=3600}"
-    : "${SPIRA_PATH:=}"
     # Git checkout: workspaces is the parent of SPIRA_REPO. Artifact deployment: SPIRA_REPO
     # is a release dir inside the releases directory, so workspaces is two levels up — one
     # level would land inside the releases dir and double SPIRA_RELEASES. dirname returns "/"
@@ -856,33 +538,6 @@ spira_conf_defaults() {
     else
         : "${SPIRA_WORKSPACES:=$(dirname "$(dirname "$SPIRA_REPO")")}"
     fi
-    # OPERATOR-OWNED CONFIGURATION THAT BELONGS BESIDE THE REPO-MAP, not inside the harness
-    # tree. An operator whose harness lives in a repository they did not write would otherwise
-    # have to keep this file in the checkout — where a push might share it — or remember to
-    # set SPIRA_PREFIX_MAP on every box. ~/.config/spira is where repo-map already lives.
-    : "${SPIRA_PREFIX_MAP:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/prefix-map}"
-    : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
-    # WHERE AN OPERATOR'S OWN COPY OF A BRIEF LIVES, so a hand edit to what an aeon is told
-    # survives the harness's own releases instead of being reverted by the next one. Same
-    # directory family as SPIRA_PREFIX_MAP, for the same reason: operator state beside the
-    # repo-map, never inside the checkout a `spira: land` push can overwrite.
-    : "${SPIRA_CHAMBER_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/chamber}"
-    # DECLARED OPERATOR OVERRIDES held against a production checkout — a hand edit that must
-    # survive `skew.sh refresh` until the bead that makes it permanent lands. Same directory
-    # family as SPIRA_CHAMBER_OVERLAY and for the same reason: operator state beside the
-    # repo-map, never inside a checkout `spira: land` can overwrite.
-    : "${SPIRA_OVERRIDES:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides}"
-    # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
-    # file decides what `install.sh` enables; pointing the key elsewhere is how an operator
-    # keeps their own rows out of a checkout they may push.
-    : "${SPIRA_WATCHERS:=$SPIRA_HOME/watchers}"
-    # THE OPERATOR'S OWN ROWS, same family as SPIRA_CHAMBER_OVERLAY and for the same reason:
-    # operator state beside the repo-map, never inside a checkout a `spira: land` push can
-    # overwrite. Every `*.watchers` file here is read like SPIRA_WATCHERS itself and merged
-    # into the one manifest, so a watcher the Concierge or an operator owns survives a session
-    # the same way a harness watcher does — as a unit, not an in-session Monitor that dies with
-    # the session that started it.
-    : "${SPIRA_WATCHERS_OVERLAY:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/watchers.d}"
     # WHICH OF A WATCHER'S LINES A READER IS SHOWN BY DEFAULT — an extended regular expression
     # matched against the whole line by `watchd.sh drain` and `watchd.sh tail`, which share it
     # so that the command a session hook advertises and the command a session latches with
@@ -908,112 +563,9 @@ spira_conf_defaults() {
     # refuses it and names `--all` — because as a regular expression an empty pattern matches
     # every line, and turning the filter off is a thing to ask for rather than to fall into.
     : "${SPIRA_ACTIONABLE=ANSWERED|COMMENTED|ESCALAT|STRANDED|POISON|DEGRADED|BLOCKED|UNREACHABLE|FAIL|ERROR|LANDED|⚠ BRANCH}"
-    # THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
-    # assertion looks for to prove a watcher is reading THIS database and not one that was
-    # retired underneath it.
-    #
-    # WHY ABSENCE AND NOT PRESENCE IS THE TEST, which is the whole reason this key exists.
-    # A database here legitimately holds beads imported under other prefixes, so an assertion
-    # keyed on "names a foreign prefix" passes on a watcher that is entirely blind — measured
-    # once at 145 of 1825 rows carrying the local prefix. What proves the wrong database is
-    # that NOT ONE local id appears. This generalises the guard the mirror exporter carries.
-    #
-    # WRITTEN IN, NEVER DERIVED (sp-k6m1m). It used to be cut from the goal epic's id; the
-    # goal is retired (Spira works the whole backlog), and `spira-config validate` (doctor,
-    # the release's pre-activate) refuses a [spira] table without `id_prefix`. Unset here
-    # means no config file named one.
-    : "${SPIRA_ID_PREFIX:=}"
-    # HOW LONG A HEALTH COMMAND MAY RUN, in seconds. A probe is an operator-supplied command
-    # run by `watchd.sh status`, and `status` is what a session hook runs at every start — so
-    # an unbounded one hangs the opening of a context window rather than merely being slow.
-    # A probe that runs out of time is DEGRADED, which is the honest reading: it did not
-    # prove the watcher is seeing anything.
-    : "${SPIRA_HEALTH_TIMEOUT:=10}"
-    # THE CODING AGENT'S OWN SETTINGS FILE — the one the client reads, not one of ours. The
-    # session hook is registered in it, and it is the only file in this harness that belongs
-    # to a program the harness does not ship. It is a key rather than a literal for one
-    # reason above all: a suite that asserted against the real path would edit the operator's
-    # live client configuration on every run.
-    : "${SPIRA_CLIENT_SETTINGS:=$HOME/.claude/settings.json}"
-    : "${SPIRA_COCKPIT:=$(dirname "$SPIRA_HOME")/cockpit}"
-    # HOW MANY TRAILING MOMENTS THE COLLECTOR RECORDS PER AEON. Each one becomes a key
-    # in the snapshot and a row on the pane. 0 restores the single-line behaviour.
-    #
-    # TWO, NOT THREE. Every live aeon spends this many rows, so it is the figure that decides
-    # how much of the column is left for everything else when three aeons are awake — and the
-    # third moment was the one paying least: "what led here" is answered by the moment before
-    # the current one, and the one before that is history the trace file already holds. The
-    # row it gave back is what INFLOW is built on.
-    : "${SPIRA_COCKPIT_TRACE_LINES:=2}"
-    # Snapshot age measures merge cadence, not probe duration. The supervisor loop calls
-    # _merge_fragments on every tick (~5s), so a healthy box always has a fresh snapshot.
-    # 60s = 12 ticks: enough slack for a slow merge under load, short enough that a dead
-    # supervisor loop is visible within a minute.
-    : "${SPIRA_SNAP_STALE_S:=60}"
-    # HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
-    # channel that needs no session, in seconds. `watchd.sh notify` is what enforces it.
-    #
-    # WHY THERE IS A POLL HERE AT ALL. A session hook fires at a SESSION BOUNDARY, which is a
-    # property of one client: when an answer is given while nothing is running, nothing fires
-    # until the next session opens, and for a headless agent that is never. The escalation is
-    # the only path that does not require a reader to exist.
-    #
-    # WHY IT IS THIS LONG. The window has to be comfortably longer than an ordinary gap
-    # between a watcher emitting and somebody latching, because every escalation inside that
-    # gap is a false alarm — and a false alarm is a real cost, not a harmless one
-    # (law-alerts-must-be-actionable). It has to be far shorter than the hours a nobody-is-
-    # running interval actually lasts. Half an hour is between those, and it is a key rather
-    # than a literal because which one an operator's watchers deserve is theirs to say.
-    : "${SPIRA_NOTIFY_AGE:=1800}"
     # The command a watcher runs to prompt the reading session; empty disables waking.
     [ -x "$SPIRA_REPO/concierge.sh" ] && : "${SPIRA_WAKE=$SPIRA_REPO/concierge.sh wake}"
     : "${SPIRA_WAKE:=}"
-    # THE LABEL THAT MEANS "WAITING ON THE OPERATOR". It is the one the escalation gate defers
-    # on, the one every persona's predicate excludes, and the one the attention panel reads,
-    # so all of those must agree on it — which is why it is one key and not five literals.
-    # Changing it on a live installation orphans every bead already carrying the old value.
-    : "${SPIRA_ASK_LABEL:=needs-operator}"
-    # HOW LONG AN ASK'S OWN VERIFY: COMMAND MAY RUN before cockpit/verify-asks.sh kills it and
-    # counts the ask as still open. A seam, not just a constant: a suite proving the kill
-    # happens at all cannot afford to wait out the real default.
-    : "${SPIRA_VERIFY_TIMEOUT:=120}"
-    # HOW LONG A WORKING BEAD'S LEASE MAY SIT EXPIRED BEFORE CHECK 2 CALLS THE WORKER DEAD,
-    # in seconds. ~2x a plausible lease TTL, so a briefly paused worker is not robbed of live
-    # work. When an aeon exits because its bead's only open dep carries the ask label,
-    # check2_protect_waiting holds the bead (spira-lc "wait") so the reaper skips it
-    # regardless of this window; the hold releases once the dep closes.
-    : "${SPIRA_RECLAIM_GRACE_SECS:=10800}"
-    # THE LABEL THAT MEANS "PARKED ON A CI RUN". An aeon puts it on a bead whose pull request
-    # is open so nothing pays for a session to sit and watch a test suite; the CI sweep takes
-    # it off again when the run resolves. Every predicate that decides what an aeon may claim
-    # excludes it, and so does the stalled-work report — which is what stops parked work
-    # looking abandoned, and is also why a park applied where no run exists is permanent AND
-    # invisible. One key rather than five literals, for the same reason as the ask label: the
-    # sweep, the personas, the report and the panel must agree on it or the panel is the half
-    # nobody notices is wrong, because it simply shows fewer.
-    : "${SPIRA_CI_LABEL:=awaiting-ci}"
-    # HOW LONG A PARK MAY LAST BEFORE IT IS TREATED AS LOST, in seconds. A park is a promise
-    # that something else is watching; past the longest plausible run that promise is false,
-    # and the bead should be back in the report that would have found it rather than excluded
-    # from it. Ninety minutes is longer than any run this was written against — raise it if
-    # your CI is slower, and set it to 0 to disable the deadline, which reinstates the
-    # permanent invisible park and should be a deliberate choice.
-    : "${SPIRA_CI_PARK_MAX:=5400}"
-    # THE LABEL THAT MEANS "THIS BEAD NEEDS THE WORLD HALTED WHILE IT RUNS". An aeon that
-    # claims such a bead must drain the live pool and call world.sh stop before starting its
-    # session, then world.sh start after — whether or not the session succeeds. The fence in
-    # aeon.sh refuses the claim when live aeons are present and SPIRA_WORLD_STOP_SKIP is unset.
-    : "${SPIRA_WORLD_STOP_LABEL:=world-stop}"
-    # THE TEST FIXTURE SERVER, which is deliberately NOT the one holding real data. Fixtures
-    # on the production server leaked into it, slowed it as they piled up, and made their own
-    # cleanup a storm; a fixture build measured 6s against an empty server and 84s against
-    # production. This store is disposable — wiping it costs nothing but the next build.
-    # DERIVED, never a literal. A hardcoded operator path here is refused by
-    # inventory.sh, which the landing gate runs first and independently of the suites — so
-    # one literal default made origin/main refuse every branch, including the branches
-    # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
-    : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
-    : "${SPIRA_TESTDB_PORT:=3308}"
     # A THIRD, disposable Dolt server, for spira_lifecycle's container-tier tests only —
     # same reasoning as SPIRA_TESTDB_DATA/PORT above (its own store, its own port, never
     # the box's real dolt-beads.service), and a distinct one from it because that fixture
@@ -1027,38 +579,6 @@ spira_conf_defaults() {
     : "${SPIRA_LC_UNIX_USER:=spira-lc}"
     : "${SPIRA_LC_UNIX_GROUP:=spira}"
     : "${SPIRA_LC_SOCKET:=/run/spira-lc/sock}"
-    # Whether an aeon takes the lifecycle semantic layer at all (design §3.5). Default off:
-    # `work` and `spira-lc` are on every release's PATH, and their presence alone must not
-    # flip an aeon onto the restricted path. EXPORTED (sp-arpjt): the lifecycle calls a
-    # script makes are `spira-lc` caller verbs now, children that read the switch from their
-    # own environment — exporting the value this file resolved keeps them agreeing with the
-    # shell that sourced it, as the sourced lc.sh functions did by construction.
-    : "${SPIRA_LIFECYCLE_ENFORCE:=0}"
-    # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
-    # never reach the network, which is the right default: the registry is somebody's
-    # account, and a harness that reached for one by default would fail on every machine
-    # whose operator has not got that account.
-    #
-    # WHY THIS IS WORTH CONFIGURING. The image is ~1.8 GB and its build downloads a Go
-    # toolchain, compiles bd from source and installs a Rust toolchain. A machine that
-    # keeps the image between runs pays that once. A machine created for a single CI run
-    # and destroyed afterwards pays it every run, which is most of the wall clock.
-    #
-    # PULLING IS AS SAFE AS BUILDING, and for the same reason: the tag is the hash of the
-    # build closure, so an image built from different inputs has a different name and a
-    # stale one is unreachable rather than merely unlikely. Set this to the repository
-    # prefix only -- the tag comes from the closure and is never written by hand.
-    : "${SPIRA_TESTENV_REGISTRY:=}"
-    # HOW MANY testenv containers may run at once, host-wide, across every caller
-    # (a lone `testenv container up`, batch.sh, an accept or debug session). Each running
-    # container's systemd holds inotify instances, keyring entries and pids for as long
-    # as it lives, all three charged against this real UID's single, shared budget — so a
-    # box oversubscribed on containers fails them outright rather than slowing down
-    # (sp-cvle7). 0 disables the gate for a box known to have more headroom.
-    : "${SPIRA_TESTENV_MAX_CONCURRENT:=8}"
-    # HOW LONG `up` queues for a free slot before giving up, and how often it re-checks.
-    : "${SPIRA_TESTENV_QUEUE_TIMEOUT:=900}"
-    : "${SPIRA_TESTENV_QUEUE_POLL:=5}"
     # WHICH TRACKER gh-intake ingests from, as "owner/repo". Empty means there is
     # no inbox and intake refuses to guess: a default pointing at somebody else's
     # repository would quietly file their reports into this operator's graph.
@@ -1077,97 +597,7 @@ spira_conf_defaults() {
     if [ -z "$SPIRA_RELEASE_REPO" ] && [ -f "$SPIRA_REPO/MANIFEST" ]; then
         SPIRA_RELEASE_REPO="$(awk '$1=="release-repo"{print $2; exit}' "$SPIRA_REPO/MANIFEST" 2>/dev/null)" || true
     fi
-    # THE TOOLCHAIN release.yml PINS ("Install Rust <version>", asserted exactly). Read by
-    # acceptance-local.sh so a local rehearsal builds under the same compiler the release job
-    # would use, not whatever `cargo` happens to resolve to on the machine running it — the
-    # two must never independently drift, or a rehearsal can pass on a tree the real release
-    # job would fail to build.
-    : "${SPIRA_RELEASE_RUST_TOOLCHAIN:=1.82.0}"
-    # WHICH GITHUB ORG/REPO the gate watcher scans for completed runs carrying "flaky suite"
-    # annotations. Empty means no scan. Format: "owner/repo".
-    : "${SPIRA_FLAKY_GH_REPO:=}"
-    # WHAT AN INGESTED ISSUE IS WORTH. A report from outside names something broken for
-    # somebody who is not this machine, so it enters ABOVE the band the harness files its own
-    # findings in. Left at the tracker default it entered below them, and the loop — which
-    # takes work in priority order — reached every self-observed defect first, indefinitely.
-    : "${SPIRA_GH_INTAKE_PRIORITY:=1}"
-    # WHICH REPOSITORY LABEL to put on ingested beads. Default is the tracker name.
-    : "${SPIRA_GH_INTAKE_BEAD_REPO:=}"
-    # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
-    # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
-    # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next
-    # aeon hunts a test failure that never happened. The default was 900 until the spira gate
-    # suite sweep measured ~1860s on a cold worktree with a shared Dolt server (sp-p4rl); 2700
-    # covers that with margin and is the value observed to pass unchanged branches that 900
-    # killed mid-sweep (sp-gys, sp-snyj).
-    : "${SPIRA_GATE_TIMEOUT:=2700}"
-    # NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
-    # are retired (sp-b4oct, law-isolate-greedy-work-in-vms); the OS schedules them.
-    # THE GATE'S TIME BUDGET, in seconds. gate-touched.sh trims coverage-based suite
-    # selection to fit inside it (gate-budget-select.sh), most-specific-first, and the
-    # Rust gate passes it to testenv as `--deadline`. The mechanism exists because the
-    # previous 43-suite gate was not built in a day: each suite was individually
-    # justified while the total grew to 17 minutes unchecked. A budget is the only thing
-    # that makes that argument explicit. Set against a measurement taken when this key
-    # was added (2026-09-08, ~210s); 300 gives headroom while still bounding the next
-    # suite added without argument. (gate-spira.sh's own overrun bead-filing — a second,
-    # separate mechanism — was retired with it, sp-hyc3a/sp-nhid0: no caller since
-    # sp-b99nj, 2026-09-26, and no analog before this change either.)
-    : "${SPIRA_GATE_BUDGET:=300}"
-    # HOW MANY SUITES THE LANDING GATE MAY SELECT. 0 = no cap. When the
-    # coverage-based selection exceeds this, ejected suites are kept and
-    # covered suites fill the remaining slots; excluded suites are logged.
-    : "${SPIRA_GATE_SELECT_CAP:=0}"
-    # HOW LONG A LANDING PASS MAY RUN, and how much of that it keeps in reserve so it never
-    # begins a gate it cannot finish. Settable because the right number is a fact about this
-    # host's gate: 3600 was correct until the gate budget was raised to 2700 to cover the
-    # suite sweep, after which a 1200s reserve would let the pass start a gate it could not
-    # finish — the same shape as the four consecutive kills at 1800.
-    : "${SPIRA_LAND_MAXSEC:=5400}"
-    # THE RESERVE MATCHES THE GATE BUDGET. A pass that starts a gate with fewer seconds left
-    # than the gate is allowed to run will be killed mid-gate by RuntimeMaxSec, which is the
-    # "four consecutive passes killed mid-gate" scar. The reserve is at least SPIRA_GATE_TIMEOUT
-    # so a gate that is started can finish.
-    : "${SPIRA_LAND_GATE_RESERVE:=2700}"
-    # HOW MANY CERTIFICATION GATES THE LANDING PASS MAY RUN AT ONCE. When unset,
-    # derived per-pass from the box: min(nproc/4, free-memory/400MiB), at least 1.
-    # Set to 1 to restore serial behaviour.
-    : "${SPIRA_CERTIFY_PAR:=}"
     : "${SPIRA_CERTIFY_SUITES:=on}"   # off: queue-mode certification runs fences only; CI runs the suites
-    # WHAT SPIRA_CERTIFY_SUITES=off STILL RUNS. Turning suites off at certification stopped
-    # thirty RED-on-timeout closed beads in 48 hours (sp-a5jpo scar, see SPIRA_CERTIFY_SUITES),
-    # but it also let a change to the harness's own shared library reach a batch unverified —
-    # a red there costs every branch riding with it, not just the one that broke it. Suites
-    # covering a glob in this list still run at certification, suites off or not; everything
-    # else waits for the batch's CI run as before. Space-separated globs.
-    : "${SPIRA_CERTIFY_ALWAYS_COVERS:=spira/lib.sh}"
-    # CONSECUTIVE BUDGET-CUT PASSES BEFORE A DEFERRED BRANCH ESCALATES.
-    : "${SPIRA_DEFERRAL_ESCALATE_AT:=5}"
-    # HOW LONG A GATE VERDICT MAY BE REUSED, in seconds. The gate computes each verdict once
-    # and keys it by everything the verdict depends on that it can name — the tree, the base,
-    # the changed file list, the repository's gate command and this harness — so a reused
-    # verdict is never about a different question. What the key CANNOT name is the box: the
-    # toolchain the command ran under, what was installed beside it, what the network
-    # answered. Those drift while the key stands still, which makes a verdict a claim about a
-    # moment as well as about a tree. A day bounds that drift and still spans the whole of a
-    # branch's life from an aeon's own gate to its landing, which is the reuse worth having.
-    #
-    # 0 disables reuse entirely: every entry reads as expired and every gate runs its suites.
-    : "${SPIRA_VERDICT_TTL:=86400}"
-    # HOW MANY REBASE-CONFLICT REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD. A bead reopened
-    # this many times for a rebase conflict is not learning from the reopen, and repeating it
-    # cycles the machinery while an aeon session is spent on every turn. At this threshold the
-    # landing pass sends the Concierge a machine event rather than reopening again — never
-    # Ryan (law-a-rebase-loop-is-sequenced-not-split).
-    : "${SPIRA_REBASE_ESCALATE_AT:=3}"
-    # WHERE the rebase-stale binary RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
-    # one line per call — the measure sp-oxwvc asks for: how much of the rework rate a
-    # mechanical resolver actually removes.
-    : "${SPIRA_REBASE_STALE_LOG:=$SPIRA_RUN/rebase-stale.log}"
-    # HOW MANY EVICTION-RACE REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD, mirroring
-    # SPIRA_REBASE_ESCALATE_AT above: a bead whose eviction-race reopen keeps firing is not
-    # recertifying itself, and nothing else names an actor who would.
-    : "${SPIRA_EVICTION_ESCALATE_AT:=3}"
     # HOW MANY FILES A REBASE-LOOP ESCALATION CALLS "SEVERAL HOT FILES" — past this, the
     # branch is not unlucky, its scope is racing every landing that touches the same files.
     # A re-cut that cannot clear the conflict tells the Concierge to split the bead, not
@@ -1176,215 +606,6 @@ spira_conf_defaults() {
     # FILES A REBASE-LOOP EVENT NAMES AS GENERATED — regenerate, never hand-merge
     # (law-regenerate-derived-summaries). Path substrings, space-separated.
     : "${SPIRA_REBASE_GENERATED_FILES:=coverage.json COVERAGE.md standard-operating-procedures.md spira-config/schema}"
-    # THE CUTOVER-ROUND LABEL. A branch whose bead carries it lands only in the cutover round
-    # (sp-sa8pn) assembles by hand, never through the ordinary landing pass — so certification,
-    # rebase and the repeat/escalation machinery all leave it exactly as its aeon left it.
-    # Judging it here produces RED no-rebase marks and repeat-refused asks about a branch that
-    # was never going to land this way in the first place.
-    : "${SPIRA_CUTOVER_ROUND_LABEL:=cutover-round}"
-    # .invalid: not a real domain. @spira.local trips is_aeon_email in branch-guard.sh.
-    : "${SPIRA_GIT_NAME:=spira}"
-    : "${SPIRA_GIT_EMAIL:=spira@spira.invalid}"
-    : "${SPIRA_GH_APP_ID:=}"
-    : "${SPIRA_GH_APP_INSTALLATION_ID:=}"
-    : "${SPIRA_GH_APP_KEY:=}"
-    : "${SPIRA_GH_APP_PRIVATE_KEY:=}"
-    : "${SPIRA_GH_APP_CONFIG:=}"
-    # HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
-    # that names this bead?" The bound must be the same in both places: aeon.sh walks the
-    # branch (and the landing refs when the branch walk finds nothing); the sentinel walks
-    # the landing refs directly. If the two use different values they give different answers
-    # about a bead whose commit landed many sessions ago. 400 is large enough to span an
-    # active repository's daily output many times over, cheap enough to run on every bead.
-    : "${SPIRA_VERDICT_WINDOW:=400}"
-    # AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS PER SENTINEL PASS (CHECK 5). Each costs
-    # an incident.sh run; the rest are counted and named in one log line and wait for the
-    # next pass. Unbounded, a wrong reading of the evidence filed 138 in 30 minutes and pushed
-    # the pass past its TimeoutStartSec, which stopped dispatch.
-    : "${SPIRA_CHECK5_MAX_FILE:=5}"
-    # AT MOST THIS MANY "CLOSED NOT LANDED" INCIDENTS RESOLVED PER SENTINEL PASS (CHECK 5).
-    # A resolve costs one `bd close`, ~1s, now that the lookup behind it is one map read per
-    # pass rather than one query per bead — so this cap can sit far above SPIRA_CHECK5_MAX_FILE
-    # without approaching TimeoutStartSec; 5 let 33 proven-landed incidents pile up unresolved.
-    : "${SPIRA_CHECK5_MAX_RESOLVE:=50}"
-    : "${SPIRA_REMEDY_WINDOW:=30}"
-    # MINUTES A PR-MODE BRANCH MAY SIT IN REBASED/pr-open BEFORE THE STALL DETECTOR FIRES.
-    # Default 60 — long enough to let CI complete without false positives, short enough to catch
-    # a repo with allow_auto_merge=false before the operator notices the queue is not moving.
-    : "${SPIRA_PR_STALL_MINS:=60}"
-    # HOW MANY AEONS MAY RUN AT ONCE, ACROSS EVERY PERSONA. Until 2026-09-07 this key was
-    # validated, documented and read by nothing: each persona had a private cap and no pool
-    # coordinated them, so the box's real ceiling was whatever the caps happened to sum to.
-    # Four is the sum of what the two shipped personas declared, so this default changes
-    # nothing on a host that was already running them and starts enforcing an order.
-    : "${SPIRA_MAX_AEONS:=4}"
-    # DEEPEST A DEPENDENT'S STACK MAY GO (stacked-dependents-2026-09-28 §1) BEFORE A CLAIM
-    # NAMING IT IS REFUSED. Hard ceiling 4 — spira-config's schema rejects a larger value,
-    # so raising it is a design change, not a config edit (per Ryan 2026-09-28: "4 is a good
-    # place to start, no higher"). 0 reproduces today's behaviour: no stacking at all.
-    : "${SPIRA_STACK_MAX_DEPTH:=4}"
-    # HOW MANY TIMES A CLAIM QUERY IS RETRIED BEFORE BEING TREATED AS A REAL FAILURE. Aeons
-    # summoned seconds apart contend for the same store; a claim that errors under that
-    # contention is not the same fact as a claim that succeeded and returned zero rows, and
-    # only the retries exhausted case may be reported as a failure (sp-3ntca).
-    : "${SPIRA_CLAIM_RETRIES:=3}"
-    : "${SPIRA_CLAIM_RETRY_DELAY_S:=1}"
-    # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
-    # SPIRA_MAX_AEONS. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
-    # the pool, so the pool can be fully occupied by builders while the lane fayth still has
-    # room. This is what "ops cannot be starved by builders" has always meant; SPIRA_LANES
-    # makes it declared configuration rather than a property implied by FAYTH_ROLE=party.
-    # A new lane is added here and given a name; fayths join it with FAYTH_LANE=<name>.
-    # The ops and groomer lanes are declared by default because ops.fayth and groomer.fayth
-    # ship using them. The qa lane is declared alongside them because qa.fayth ships using it.
-    # The maechen lane is declared because maechen.fayth ships using it.
-    # The czar lane is declared because czar.fayth ships using it.
-    # A lane fayth still functions if its lane name is absent from this list (the mechanism is
-    # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
-    # reading SPIRA_LANES for the list of scheduled partitions.
-    : "${SPIRA_LANES:=ops groomer qa maechen czar}"
-    # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
-    # SPIRA_MAX_AEONS is the task pool and a lane draws outside it, so the two of them
-    # together are the box's real ceiling (pool + one per lane) and neither one alone is the
-    # answer to "how many aeons run at once". That is correct while the constraint is cores.
-    # It is wrong while the constraint is a single shared account, which every aeon draws on
-    # and which the operator's own sessions draw on too.
-    #
-    # EMPTY BY DEFAULT, meaning no ceiling and exactly the behaviour that shipped: a host
-    # constrained by cores rather than by an account must not acquire this by upgrading.
-    : "${SPIRA_MAX_LIVE_AEONS:=}"
-    # THE COLLECTIVE LANE CAP — how many fleet slots lanes may hold at once.
-    # When set with SPIRA_MAX_LIVE_AEONS, the last fleet slot prefers a lane: a task fayth
-    # is held back when any lane has ready work and lanes are below this cap. Empty by
-    # default: no collective cap and no preference rule.
-    : "${SPIRA_LANES_MAX_LIVE:=}"
-    # HOW LONG THE DELIVERABLE-PROGRESS WALL GIVES AN AEON BEFORE REQUEUEING IT. The wall
-    # trips when the aeon's deliverable (commits ahead of the base ref + file writes in its
-    # worktree) has not moved for this many minutes while turns still advance. 20 minutes is
-    # the default; the case that motivated this would have been freed at ~20 rather than 76.
-    # A gate suppresses the fuse, so a correct mid-review aeon is never tripped.
-    : "${SPIRA_THRASH_MINUTES:=20}"
-    # HOW MANY CONSECUTIVE thrash requeues at an UNCHANGED branch tip a bead tolerates
-    # before the requeue stops being free. A thrash requeue charges no attempt (the aeon
-    # was killed for stalling, not judged on its work), and that exemption is unbounded
-    # unless something notices the branch never moved between them — sp-gs24i got five
-    # summons across seven hours the same way, none of them charged. At this count the
-    # requeue is charged as an attempt instead, same as any other failed session, so the
-    # ordinary poison threshold eventually reaches a bead that keeps thrashing on the
-    # same commit.
-    : "${SPIRA_THRASH_STREAK_CAP:=2}"
-    # HOW MANY CONSECUTIVE sub-10s aeon runs on one bead trigger the rapid-recur alert.
-    # Three in quick succession is already a setup loop; lower means earlier but noisier.
-    : "${SPIRA_RAPID_RECUR_THRESHOLD:=3}"
-    # HOW MANY OF A RECURRING INCIDENT'S NEWEST "Recurrence N at ..." notes an aeon brief
-    # keeps verbatim; everything older is folded into one count line. A recurring incident
-    # (incident.sh) appends one such note per recurrence and never trims — sp-kogm reached
-    # 404 of them and ~216k tokens, over the context window of every aeon summoned for it.
-    : "${SPIRA_BRIEF_KEEP_RECURRENCES:=5}"
-    # THE HARD CEILING ON A BEAD'S NOTES TEXT IN A BRIEF, in characters, applied after the
-    # recurrence fold above (or directly, for a bead whose notes carry no recurrence
-    # markers at all). Whatever exceeds it is cut from the front — the newest text is what
-    # the aeon needs, and truncation says so rather than silently rendering a partial note.
-    : "${SPIRA_BRIEF_NOTES_MAX_CHARS:=8000}"
-    # DEPTH OF THE QA SWEEP — controls how wide the periodic QA pass looks.
-    # Three settings, each a strict superset of the one before it:
-    #
-    #   scars    released defects and incidents only — the default. One pass over a small,
-    #            authoritative set: every defect that got through is a candidate assertion.
-    #
-    #   modules  the above, plus modules ranked by how often they appear in a reopen or
-    #            an incident. Bounded by the ranking rather than exhaustive.
-    #
-    #   wide     the above, plus changed code that no assertion touches, and unasserted
-    #            end-to-end properties. The expensive setting; expect noise, which is the
-    #            point — discrimination is Ryan's to adjust by moving this slider.
-    #
-    # This is a configured operator choice, never a judgement in a brief.
-    : "${SPIRA_QA_DEPTH:=scars}"
-    # ---- THE READ SURFACE OVER THE LIVE GRAPH ------------------------------------------
-    # Where Loom listens. Localhost is the default because a bead carries internal working
-    # notes and the operator's own judgement, so the address it is reachable at is a
-    # deliberate choice rather than something a default should make on anyone's behalf.
-    : "${SPIRA_LOOM_ADDR:=127.0.0.1:8788}"
-    # The deadline on ONE `bd` query behind that endpoint, in milliseconds. A query per
-    # request is the simple choice and it is the right one only while it stays cheap; this is
-    # the number that says when it has stopped being. Over it the request is refused rather
-    # than served late, because a refusal that quietly degrades to stale data is a signal
-    # nobody ever sees. The shipped value is a measured p95 INSIDE the CPUQuota=20% fence
-    # the unit sets — an unfenced calibration is not a calibration. If you change CPUQuota,
-    # re-measure and update this number to match; 500ms was the original unfenced p95 and it
-    # broke every request once the fence landed.
-    : "${SPIRA_LOOM_BUDGET_MS:=1500}"
-    # How long a parsed snapshot is held, in seconds. This bounds the cost by TIME rather
-    # than by viewer, so ten open tabs cost one query instead of ten. It is a cache and not a
-    # background job: nothing runs when nobody is looking, and 0 disables it.
-    : "${SPIRA_LOOM_CACHE_S:=15}"
-    # A freshly started Loom answers its first request slowly (a cold `bd` query), so
-    # ready.sh retries an unanswered probe for this many seconds before failing it. A slow
-    # ANSWER is still judged against SPIRA_LOOM_BUDGET_MS above, not this grace.
-    : "${SPIRA_LOOM_READY_GRACE:=20}"
-    # THE SPIKE PARTITION, in one place because it is read in four: the spike fayth's
-    # predicate, the brief handed to a spike aeon, the confinement check the landing worker
-    # runs, and whatever files the bead. A literal in four files is how four programs come to
-    # disagree, and the half nobody notices is wrong is the one that simply matches less.
-    : "${SPIRA_SPIKE_LABEL:=spike}"
-    # Where a spike writes its document, relative to the root of whatever repository its bead
-    # names. A spike's deliverable is a document, so it needs somewhere to put one that is
-    # true of a repository this harness has never seen; a colleague who keeps notes elsewhere
-    # moves it here rather than in a prompt.
-    : "${SPIRA_SPIKE_DIR:=docs/spikes}"
-    # The path prefixes a spike branch is allowed to LAND, space-separated. Everything a
-    # spike learns belongs in its document and beside it; a proof of concept is evidence FOR
-    # that document rather than a change to the repository, so it lives on a branch of its own
-    # and is named in the document. Two prefixes rather than one because the sources a spike
-    # preserved need not sit under the document — set it to the trees your own notes use.
-    : "${SPIRA_SPIKE_PATHS:=$SPIRA_SPIKE_DIR}"
-    # THE GROOMER PARTITION, mirroring the spike partition: read by groomer.fayth's predicate
-    # and by any scanner that queries for groom trigger beads. One definition keeps the label
-    # name consistent across fayth, scanner and anything else that files trigger beads.
-    : "${SPIRA_GROOMER_LABEL:=groom}"
-    # SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
-    # below which the trigger short-circuits without filing. When the graph is settled the
-    # pass would cost a context to report "Actions: none".
-    : "${SPIRA_GROOM_THRESHOLD:=5}"
-    # THE LABEL APPLIED TO A BEAD WHEN THE GROOMER HAS ESCALATED IT. A bead carrying this
-    # label is skipped on subsequent passes — an operator answer is pending. Without the
-    # label, every pass after the first escalation files a second note rather than waiting.
-    : "${SPIRA_GROOM_ASK_LABEL:=groom-asked}"
-    # SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
-    # below which the trigger short-circuits without filing. When the graph is settled the
-    # pass would cost a context to report "Actions: none".
-    : "${SPIRA_GROOM_THRESHOLD:=5}"
-    # THE MAECHEN PARTITION AND TUNING KNOBS. Maechen is the retrospective persona: it reads
-    # the failure distribution, names recurring classes, and cuts remedy beads.
-    #
-    # SPIRA_MAECHEN_LABEL — the sweep label that wakes Maechen. Read by maechen.fayth's
-    # predicate and by whatever trigger files sweep beads (sp-emzov). One definition keeps
-    # them consistent.
-    : "${SPIRA_MAECHEN_LABEL:=maechen-sweep}"
-    #
-    # SPIRA_MAECHEN_REMEDY_LABEL — the label applied to every bead Maechen cuts. The
-    # admissibility check (sp-ymwz5) and the flatline measurement query by this label.
-    : "${SPIRA_MAECHEN_REMEDY_LABEL:=maechen-remedy}"
-    #
-    # SPIRA_MAECHEN_LANDING_INTERVAL — how many landings trigger a pass (counted from the
-    # commit graph, not from bead status). At the 2026-09-11 rate of ~6/hour, 25 landings
-    # takes ~4h, so the 3h gap ceiling binds and this is the volume floor.
-    : "${SPIRA_MAECHEN_LANDING_INTERVAL:=25}"
-    #
-    # SPIRA_MAECHEN_MAX_GAP_SECONDS — maximum gap between passes. Even if the landing volume
-    # threshold has not been reached, a pass fires after this many seconds. 3h = 10800.
-    : "${SPIRA_MAECHEN_MAX_GAP_SECONDS:=10800}"
-    #
-    # SPIRA_MAECHEN_MAX_BEADS — output bound per pass. A retrospective that files twelve
-    # findings has not prioritised; it has flooded. Three is the default: enough to address
-    # the top class with its test and its guard, not enough to flood the board.
-    : "${SPIRA_MAECHEN_MAX_BEADS:=3}"
-    #
-    # SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S — census.sh compares the substrate's own NOW() to
-    # UTC_TIMESTAMP() before trusting a windowed ranking (sp-ohd6h); beyond this many seconds
-    # of disagreement it refuses rather than report a blinded pass as a quiet one.
-    : "${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:=120}"
     # THE SCOPE LABEL prepended to every persona's partition. Every fayth predicate reads
     # this key rather than the literal "spira", so the fleet's work scope is a runtime choice.
     # Two values matter: a non-empty string (scope restriction; only beads carrying that label
@@ -1401,40 +622,6 @@ spira_conf_defaults() {
     # when it is empty. Empty is a valid and meaningful value here (no scope restriction), and
     # the colon form would silently promote it back, defeating the feature.
     : "${SPIRA_SCOPE_LABEL=$SPIRA_HOME_REPO}"
-    # THE PLAN PARTITION LABEL — the label that marks a bead as ready plan work for a builder.
-    # Declared here so the fayth predicate, the sentinel, and any other reader that needs to
-    # say "plan bead" all read the same value. A literal in multiple files is how those
-    # multiple programs come to disagree (law-schema-over-code). The default is "plan" — the
-    # value the store has always used — so upgrading a clean install changes nothing.
-    : "${SPIRA_PLAN_LABEL:=plan}"
-    : "${SPIRA_INCIDENT_LABEL:=incident}"
-    : "${SPIRA_EXPRESS_LABEL:=express}"
-    # NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
-    # fayth_ready and detect_unclaimable_ready never see it. Without this label, a bead that
-    # must not be worked can only be expressed by accident; the unclaimable detector then files
-    # a remedy to make it claimable. Empty string disables the feature entirely.
-    : "${SPIRA_NO_LOOP_LABEL:=no-loop}"
-    # THE CZAR PARTITION LABEL — the label on queue-state escalation beads. Watchtower
-    # attaches this label instead of SPIRA_INCIDENT_LABEL to the queue-check incidents it
-    # files, routing them to the czar rather than to ops. One definition keeps czar.fayth,
-    # watchtower, and any other reader in agreement on which label means "queue event for the
-    # czar" (law-schema-over-code). The labels are mutually exclusive by design: a bead that
-    # carries both would be claimable by both ops and czar, which is a race condition.
-    : "${SPIRA_CZAR_LABEL:=czar-trigger}"
-    # THE RECONCILER PARTITION LABEL — the label on structural-gap escalation beads the
-    # reconciler files once a gap outlasts its grace period with no deterministic remedy,
-    # or a remedy that did not close it (sp-ocmes).
-    : "${SPIRA_RECONCILER_LABEL:=reconciler-gap}"
-    # GRACE PERIOD: minutes a structural invariant may sit unsatisfied before the
-    # reconciler acts. Ryan's default, 2026-09-25: five minutes — long enough that an
-    # ordinary blip (a timer mid-restart, a lock mid-acquire) never fires, short enough
-    # that "we knew we should be seeing 8 aeons" does not go unnoticed for hours.
-    : "${SPIRA_RECONCILER_GRACE_SECS:=300}"
-    # DISK FLOOR: the free-space percentage the reconciler's Disk invariant defends on
-    # every path it checks, when no Composite DiskSpec names one. 15% (sp-lkfto.3): the
-    # incident this invariant exists for was noticed at 2.6 GB free of 62 GB — 4% — with
-    # every suite already running 2x slower from the IO pressure well before that.
-    : "${SPIRA_DISK_FLOOR_PCT:=15}"
     # OUTCOME WINDOW: minutes after a czar-trigger bead closes before checking if the
     # condition that fired it has cleared. A new bead for the same class within this
     # window means the czar's action did not hold (law-measure-the-outcome).
@@ -1443,69 +630,9 @@ spira_conf_defaults() {
     # escalates it as unclaimed. The czar has a 5-minute summoning budget; this window
     # is wider to allow for sentinel cadence and rate-limit pauses.
     : "${SPIRA_CZAR_UNCLAIMED_MINS:=10}"
-    # The name the operator's OWN comments are recorded under, so the attention panel can tell
-    # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
-    # panel that cannot separate them announces the agent's own comment back to it as an answer.
-    : "${SPIRA_OPERATOR_ACTOR:=operator}"
-    : "${SPIRA_BROKER_ENABLE:=0}"
-    # THE BATCHER'S CUT, on or off (sp-gypjk). 1: queue cuts rounds with the release's
-    # `batcher`. 0: it cuts none (the operator cuts rounds by hand). This replaces the
-    # retired `batcher_bin = "/bin/true"` idiom — a switch is a switch, not a binary path.
-    : "${SPIRA_BATCHER_ENABLE:=1}"
-    # SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
-    # Set to <spira>/spira/gh-app.sh to have all harness gh calls act as the
-    # GitHub App rather than as the operator's personal account.
-    : "${SPIRA_GH:=}"
-    # SPIRA_GH_APP_CONFIG: path to the GitHub App credential env file.
-    # Read by broker token to discover App ID, installation ID, and key path
-    # when those are not already set in the process environment. Empty falls
-    # back to ~/.config/spira/github-app.env.
-    : "${SPIRA_GH_APP_CONFIG:=}"
-    # How long a closed bead with an open GitHub issue and no landing evidence gets before
-    # the unlanded scan asks about it — closing and landing are separate passes, so a bead
-    # closed this instant is not yet stuck, it is just early (law-landed-is-content).
-    : "${SPIRA_GH_ASK_GRACE_SECS:=3600}"
-    : "${SPIRA_OPERATOR:=the operator}"
-    # The timezone dates are written in. Empty means the host's own, which is right until
-    # the host is a server in one zone and the operator reads its output in another — the
-    # case where an evening's work lands under tomorrow's date and a chronological log
-    # quietly stops being chronological.
-    : "${SPIRA_TZ:=}"
-    : "${SPIRA_WIKI:=}"
-    : "${COCKPIT_DB:=$SPIRA_DB}"
-    : "${COCKPIT_BOTTOM_PCT:=28}"
-    # Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
-    # treats missing operator tools as FAIL. Set to 0 in spira.conf for a headless fixture
-    # or a CI box where no operator is reading escalations; doctor.sh downgrades to WARN.
-    : "${SPIRA_OPERATED:=1}"
     # The mail client in the cockpit's bottom-left pane; empty, or not on PATH, means no pane.
     : "${COCKPIT_MAIL=aerc}"
-    # How wide the ops column is, as a percentage of the window. The dashboard is a
-    # FULL-HEIGHT right column, so this is the only dimension it has; COCKPIT_BOTTOM_PCT
-    # divides the left column between the session and the mail pane and no longer touches it.
-    : "${COCKPIT_RIGHT_PCT:=33}"
 
-    # MOUSE MODE, ON BY DEFAULT. The cockpit is panes the operator clicks into --
-    # the attention panel especially -- and with mouse off a click does nothing at
-    # all: no error, no focus change, so it reads as a dead panel rather than as a
-    # setting. tmux defaults it off and there need not be a ~/.tmux.conf on the box,
-    # so the cockpit sets it itself rather than depending on one.
-    #
-    # THE TRADE IT MAKES. With mouse on, dragging selects into tmux's copy-mode
-    # instead of the terminal's own selection, so a terminal-native copy needs Shift
-    # held down. That is the whole cost, it is per-operator, and it is why this is a
-    # key and not a constant: set COCKPIT_MOUSE = off to keep native selection.
-    : "${COCKPIT_MOUSE:=on}"
-    # RELAYS A MOUSE COPY OUT OF THE NESTED CONCIERGE CLIENT TO THE OPERATOR'S TERMINAL, via
-    # tmux's OSC 52 forwarding. tmux defaults set-clipboard off; see cockpit/layout.sh
-    # apply_clipboard_mode for the mechanism and concierge.sh's tmux PATH shim for the other
-    # half. off/no/0 leaves the server default alone.
-    : "${COCKPIT_CLIPBOARD:=on}"
-    # WHERE THE COCKPIT'S PANES OPEN. The top pane holds the operator's own session, so its
-    # working directory decides which project's instructions that session loads — not a
-    # cosmetic choice. It defaults to the wiki when one is configured, because an operator
-    # who keeps notes works there rather than in the harness they are merely running.
-    : "${COCKPIT_CWD:=${SPIRA_WIKI:-$SPIRA_REPO}}"
     # HOW LONG A CLIENT MAY BE IDLE BEFORE ensure DETACHES IT. Ghost clients — terminals
     # whose PTY is no longer actively used but remain attached to the tmux server — drive the
     # window-size flap: with window-size latest, a ghost becomes "latest" whenever its session
@@ -1513,40 +640,6 @@ spira_conf_defaults() {
     # operator's client regains "latest". Detaching them eliminates the root cause.
     # Default is 6 hours (21600 s); set to 0 to disable detachment.
     : "${COCKPIT_CLIENT_IDLE_SECS:=21600}"
-    # Optional, and EMPTY IS THE DEFAULT for every one of them. Each names something a
-    # colleague does not have — a Gas Town, a wiki, a design document — and every caller
-    # must treat empty as "skip this", never as "guess". That is rule 2 of the boundary:
-    # an optional call is not a dependency, a hard path is.
-    : "${SPIRA_TOWN:=}"
-    : "${SPIRA_MIRROR:=}"
-    : "${SPIRA_EXPORTER:=}"
-    : "${SPIRA_DESIGN:=}"
-    # OVERRIDES rule.sh's default synth hook (spira/law-synth.sh), which needs no config of
-    # its own — it already writes to SPIRA_WIKI. Set this only to run some other program in
-    # its place.
-    : "${SPIRA_WIKI_HOOK:=}"
-    # THE VIEW FOLLOWER: the program that keeps the attention surface pointed at whatever the
-    # operator should be looking at right now. Empty means this installation has none, and the
-    # optional manifest row that would watch it is dropped rather than run against a path that
-    # is not there. It is a key rather than a shipped script because the surface it steers is
-    # the operator's — a terminal multiplexer here, something else elsewhere.
-    #
-    # THE CONTRACT IT MUST MEET, so the manifest can both run it and judge it:
-    #   <prog> watch    a loop that enacts the state; this is what the unit starts
-    #   <prog> status   prints `want: <session>` — the multiplexer session that SHOULD be
-    #                   visible. That one line is what makes blindness measurable, because
-    #                   the view it is steering can be read independently.
-    : "${SPIRA_VIEW:=}"
-    # The multiplexer session whose visible window the follower steers. Only ever consulted
-    # when SPIRA_VIEW names something, so it costs an installation without one nothing.
-    : "${SPIRA_VIEW_SESSION:=cockpit}"
-    # THE SESSIONS rebuild.sh CREATES WHEN BUILDING A COCKPIT FROM NOTHING. brain and hunk
-    # are structural — the cockpit LINKS their windows. Any additional names are convenience
-    # sessions recreated alongside them. Override in spira.conf to match your own workflow.
-    : "${COCKPIT_SESSIONS:=brain hunk chat}"
-    # THE HOST THE LAPTOP DIALER CONNECTS TO. No default: a wrong default silently dials
-    # somebody else's box. Set in spira.conf on the laptop, or export it in the environment.
-    : "${COCKPIT_HOST:=}"
     # The Dolt server's own data directory, which is NOT the beads project directory: `bd -C`
     # is pointed at the latter, and the former is where the server keeps every database it
     # serves. Empty means this installation does not manage the server (dolt is run another
@@ -1555,82 +648,9 @@ spira_conf_defaults() {
     # NO-COLON FORM: an explicit empty value from a config file or env is preserved as-is —
     # the colon form would replace it with the derived default, defeating the opt-out.
     : "${SPIRA_DOLT_DATA=${XDG_DATA_HOME:-$HOME/.local/share}/spira/dolt}"
-    # The alert units whose failure should be filed as an incident bead, as a find(1) name
-    # pattern. Empty means none: these are the operator's own unit names and nothing here can
-    # guess them, so `release intake install` says so rather than wiring whatever matches.
-    : "${SPIRA_ALERT_GLOB:=}"
 
-    # ---- WHAT THE ACCOUNT SPENDS -------------------------------------------------------
-    # The rate limit is charged against a rolling window, and every figure the token meter
-    # reports is "inside the window" — so this number decides what the dashboard means. It is
-    # a fact about the operator's PLAN, not about this box, which is why it is a key: a
-    # colleague on a different plan reads a window of a different length.
-    : "${SPIRA_TOKEN_WINDOW_H:=5}"
-    # Where the interactive sessions write their transcripts. The aeons' own traces are found
-    # under SPIRA_RUN and need no key, because the harness put them there; this directory
-    # belongs to the client, and a client that moves it would otherwise make the session half
-    # of the split silently read zero — which is the reading that looks like good news.
-    : "${SPIRA_TOKEN_PROJECTS:=$HOME/.claude/projects}"
-    # THE THRESHOLDS A LIVE SESSION IS MEASURED AGAINST, shared by the status line and the
-    # dashboard so that the two cannot disagree about how close to the edge a session is. The
-    # defaults are what this context window actually costs: a session opens near 50,000, and
-    # every long one ends up pinned near the ceiling, re-reading all of it on every turn.
-    : "${SPIRA_CTX_WARN:=200000}"
-    : "${SPIRA_CTX_HIGH:=400000}"
-    : "${SPIRA_CTX_LIMIT:=1000000}"
 
-    # WHERE THE TRANSCRIPTS ARE KEPT. The client's own directory is unversioned, on whatever
-    # volume the home directory sits on, and promises nothing about retention — so this is a
-    # copy of it that outlives both. It defaults under the runtime directory because that is
-    # gitignored: the bodies carry paths, credentials read aloud and everything anyone ever
-    # said, and a default inside a shared checkout is one `git add -A` away from publishing
-    # all of it. Point it at whichever volume has the room; nothing here ever deletes.
-    : "${SPIRA_ARCHIVE:=$SPIRA_RUN/archive}"
-    # WHERE THE BD BINARY PIN LIVES. A pin file records which bd is installed —
-    # its migration count, version string, sha256, and build flags — so doctor.sh
-    # can detect an unannounced rebuild before the loop tries to run. Default is
-    # machine-local (under SPIRA_RUN, which is gitignored), not in the harness tree.
-    # Populate it after every bd install with: spira/bd-pin.sh write
-    : "${SPIRA_BD_PIN:=$SPIRA_RUN/bd-pin}"
-    # THE RELEASE TAG THIS HARNESS EXPECTS TO BE RUNNING. Both build-bd.sh (which builds
-    # or downloads the binary) and doctor.sh (which checks the running binary) read this
-    # value, so the two cannot disagree about which version is correct. Changing it here
-    # changes what doctor.sh refuses and what build-bd.sh targets.
-    : "${SPIRA_BD_TAG:=v1.2.1}"
 
-    # ---- THE ARCHIVIST: WHEN A FULL SESSION GETS ITS UNFINISHED BUSINESS RESCUED ---------
-    # HOW MANY TURNS BETWEEN SWEEPS. The timer fires every five minutes; on each pass, a
-    # session whose turn count has advanced by at least this delta since the last successful
-    # archive is swept. A session nobody has typed in costs a stat and a measurement; one that
-    # has moved 40 turns gets an archivist. Context depth is not in the trigger at all — a
-    # 74k session that has moved 40 turns is swept, a 900k session that has moved none is not
-    # — because what the archivist covers is TURNS, and its cost is proportional to them.
-    : "${SPIRA_ARCHIVIST_EVERY:=40}"
-    # HOW RECENTLY A TRANSCRIPT MUST HAVE BEEN WRITTEN TO COUNT AS LIVE. Everything the
-    # archivist rescues is rescued so that the session can be cleared, which only matters
-    # while somebody is still sitting in it. Far too short and a session that pauses to read
-    # is declared over; far too long and every transcript on the disk is swept on every pass,
-    # which is the unbounded fan-out this box already has a scar from.
-    : "${SPIRA_ARCHIVIST_IDLE:=1800}"
-    # A KEY BECAUSE THE JUDGEMENT IS THE PRODUCT. What is being asked for is which of a
-    # thousand turns was a question nobody answered and which verdict generalises into law —
-    # not a summary. That is worth the strong model here, and a colleague running mostly
-    # routine sessions may reasonably disagree, which is what makes it configuration.
-    : "${SPIRA_ARCHIVIST_MODEL:=claude-opus-5}"
-    # A HARD CEILING, unlike an aeon's. An aeon has none because a clock cannot tell slow from
-    # stuck and its heartbeat can; this has no heartbeat and no lease, and it holds the sweep
-    # while it runs, so an archivist wedged on a huge transcript would stop every other session
-    # from ever being looked at.
-    : "${SPIRA_ARCHIVIST_TIMEOUT:=900}"
-    # HOW MANY SESSIONS ONE SWEEP MAY ARCHIVE. Serial-and-unbounded is what turns a quiet
-    # morning into a 20-minute pass when several sessions drift past the threshold together;
-    # with a budget the work still drains — drift does not disappear — but at a rate the
-    # account window can absorb, and the timer is the throttle rather than the session count.
-    : "${SPIRA_ARCHIVIST_PER_PASS:=1}"
-    # HOW MANY TIMES A TIMED-OUT RUN IS RETRIED BEFORE BEING MARKED FAILED. rc=124 is distinct
-    # from a crash: it means the session outgrew the timeout window, not that the code is broken.
-    # Each retry gets a scaled timeout; after this many retries the session becomes failed.
-    : "${SPIRA_ARCHIVIST_TIMEOUT_RETRIES:=3}"
     # WHERE A REPOSITORY'S TEST-FIXTURE LIBRARY SITS, relative to that repository's ROOT.
     # An aeon builds one fixture at summon for a repository that has one and exports it, so
     # every suite the session runs resets that fixture instead of building its own — measured
@@ -1646,238 +666,7 @@ spira_conf_defaults() {
     # no configuration at all.
     local _tdb; _tdb="$(basename "$SPIRA_HOME")"
     : "${SPIRA_TESTDB_LIB:=$_tdb/testdb.sh}"
-    # THE EMBEDDED bd BINARY used by test fixtures. Fixtures need a CGO-enabled build for
-    # embedded Dolt; the production binary (the one aeons and the sentinel use) may be the
-    # CGO_ENABLED=0 build, which is incompatible. A separate binary avoids a schema-mismatch
-    # forced on the production database when the two share different migration counts.
-    # The default name `bd-embedded` is a sibling of `bd` on PATH; an operator whose main
-    # binary already has CGO support can set this to `bd` to consolidate.
-    : "${SPIRA_TESTDB_BD:=bd-embedded}"
 
-    # WHICH SUITES THE LANDING GATE RUNS, as a file of repository-relative paths, one per
-    # line. suites.sh reads it to run everything the `spira/test-*.sh` glob finds that this
-    # file does NOT name — so the gated set and the timed set are complements by construction
-    # and no suite can fall between them. That is the whole defect the file exists to close:
-    # the list used to live inside gate-spira.sh where nothing else could read it, and five of
-    # nine suites were running nowhere at all before anybody compared the two by hand.
-    #
-    # THE GATE ITSELF IGNORES THIS KEY and reads the copy beside it in the tree under trial,
-    # which is not a disagreement but the same rule as SPIRA_HOME: the gate extracts a branch
-    # to a scratch tree and must judge THAT tree, so a configured path would point it back at
-    # the installed copy and it would test the code already in force. In every real
-    # installation the two resolve to the same file. What the key buys is a fixture that can
-    # pin it somewhere disposable, which is what stops a suite asserting against the shipped
-    # list and passing just as well with the list written back into the code.
-    : "${SPIRA_GATE_SUITES:=$SPIRA_HOME/gate-suites}"
-    # WHERE suites.sh's QUARANTINE MACHINERY RECORDS STATE — flake-observation windows,
-    # clean-run counts, max-age mail flags. list/status read the same directory for whatever
-    # a suite's last real run left behind.
-    : "${SPIRA_SUITES_STATE:=$SPIRA_RUN/suites}"
-    # HOW LONG ANY ONE SUITE MAY RUN, in seconds, across every caller — the gate, testenv-
-    # batch.sh, and suites.sh's own filing paths. One key for all of them, because a suite
-    # that is affordable in one and not another is a suite whose cost nobody has decided.
-    : "${SPIRA_SUITE_TIMEOUT:=600}"
-    : "${SPIRA_BATCH_LEDGER:=$SPIRA_RUN/batch-timing.tsv}"
-    # PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
-    # plan §4.1). An untagged suite is judged as T1. The gate's budget cut (suite-select) costs an
-    # unmeasured suite at its tier's value here.
-    : "${SPIRA_TIER_BUDGET_T0_MS:=1000}"
-    : "${SPIRA_TIER_BUDGET_T1_MS:=1000}"
-    : "${SPIRA_TIER_BUDGET_T2_MS:=10000}"
-    : "${SPIRA_TIER_BUDGET_T3_MS:=60000}"
-    # HOW MANY TRAILING tsd ROWS a per-suite budget median spans (tier-budget.sh's, retired sp-wx2tw). A single sample
-    # is noisy; a median across recent runs is what tells a slow box from a slow suite.
-    : "${SPIRA_TIER_BUDGET_WINDOW:=20}"
-    # HOW FAR AN ALLOWLISTED SUITE MAY DRIFT ABOVE ITS RECORDED TIME before it fails, as a
-    # percent. The allowlist itself may only shrink (spira-lint tier-budget-allowlist);
-    # this margin is what still catches a violator getting worse while grandfathered in.
-    : "${SPIRA_TIER_ALLOWLIST_MARGIN_PCT:=20}"
-    # THE CHECKED-IN RATCHET: today's budget violators and the time each was measured at.
-    # Only shrinking it is legal — every other write is a lint failure.
-    : "${SPIRA_TIER_ALLOWLIST:=$SPIRA_HOME/tier-budget-allowlist}"
-    # THE SAME RATCHET, for areas (UC-<area>) with more than one T3 suite today. Shrink-only,
-    # same as SPIRA_TIER_ALLOWLIST above; consolidating an area's T3 coverage removes/lowers
-    # its line.
-    : "${SPIRA_TIER_AREA_ALLOWLIST:=$SPIRA_HOME/tier-budget-area-allowlist}"
-    # THE PRIORITY A RED FROM THE TIMED PASS IS FILED AT. Routine by default: the timed pass
-    # blocks nothing and reopens nothing, and by law-reversibility-outranks-coverage a failure
-    # caught twenty minutes after landing is fine when a revert undoes it. A suite that covers
-    # something where that is not true says so ITSELF, with a `# priority: N` line beside its
-    # `# covers:` line — the priority of what a suite covers is a claim only the suite's author
-    # can make, and a central table of it would be a second list to keep in step with the glob.
-    # ROUTINE IS P3, NOT P2. A red suite is the harness reporting on itself, and self-reported
-    # defects filed above the band that outside bug reports arrive in is a priority inversion:
-    # with one aeon, 123 P2 suite reds in three days kept 22 reported bugs from ever being
-    # reached. A suite whose subject genuinely outranks a user's bug says so itself.
-    : "${SPIRA_SUITES_PRIORITY:=3}"
-    # WHAT A MACHINE-OBSERVED INCIDENT IS WORTH BY DEFAULT. This was a bare 1 inside
-    # incident.sh: every condition the harness noticed about itself opened at the most urgent
-    # band, whether or not anything was broken for anyone. The callers that mean P1 — a dead
-    # canary, a wedged landing, the watchtower's blockage checks — say so on the call, and are
-    # unaffected. What moves is everything that never chose, which is what filled the band.
-    : "${SPIRA_INCIDENT_PRIORITY:=3}"
-    # HOW OFTEN A WATCHER FIRES, in seconds. Used by incident.sh to distinguish
-    # a bead closed while its condition was still live (closed within one interval
-    # before the next filing) from a genuine recurrence after a real fix.
-    # Default matches the observed 30-minute watchtower cadence.
-    : "${SPIRA_WATCHER_INTERVAL_S:=1800}"
-    # AURON RESTART-LOOP DETECTION thresholds. A Restart=always unit never reaches
-    # 'failed', so incident intake misses it; Auron detects it by watching NRestarts.
-    # RESTARTS: how many restarts within the window trigger an alert.
-    # RESTART_WINDOW: the measurement window in seconds; the baseline resets at expiry
-    # so a loop that stopped more than this long ago does not continue to fire.
-    : "${SPIRA_AURON_RESTARTS:=5}"
-    : "${SPIRA_AURON_RESTART_WINDOW:=3600}"
-    # HOW OLD A SUITE'S RESULT MAY BE BEFORE IT IS NO LONGER EVIDENCE, in seconds. Past this
-    # the watchtower reports the suite as unrun rather than as green, because a stale pass and
-    # a runner that has stopped are the same silence from outside. Longer than the interval at
-    # which the sweep names the scan, so an ordinary quiet hour does not read as a fault.
-    : "${SPIRA_SUITES_STALE:=21600}"
-    # THE SUITE LIFECYCLE STATE FILE — path relative to the repository root.
-    # Read from the TREE UNDER TEST so the gate, CI and the hourly run judge the
-    # tree they carry rather than the installed copy. Transitions are written by
-    # suites.sh quarantine|disable|activate, which commit the file on a branch.
-    : "${SPIRA_SUITE_STATE_FILE:=spira/suite-state}"
-    # FLAKE-REPORT THRESHOLD. suites.sh observe-flake files a bead once a suite has
-    # SPIRA_FLAKE_QUARANTINE_AT flake observations within SPIRA_FLAKE_WINDOW seconds. It never
-    # writes suite-state itself — only a human-driven `suites.sh quarantine` does that.
-    : "${SPIRA_FLAKE_QUARANTINE_AT:=2}"
-    : "${SPIRA_FLAKE_WINDOW:=604800}"
-    # HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift a hand-placed quarantine, and how
-    # long one may stand before the operator is mailed.
-    : "${SPIRA_QUARANTINE_CLEAN_RUNS:=10}"
-    : "${SPIRA_QUARANTINE_MAX_AGE:=604800}"
-    # ---- MERGE QUEUE (queue land mode) -------------------------------------------------
-    # THE QUEUE-DEPTH THROTTLE'S OWN SCALE (sp-h3g55). The batcher crate no longer caps a
-    # round's size on this — its own pool target is adaptive (sp-vsob2) — so this key now
-    # only sizes SPIRA_QUEUE_THROTTLE_DEPTH_AT/RELEASE_AT below and the cockpit's display.
-    : "${SPIRA_QUEUE_BATCH_MAX:=8}"
-    # HOW LONG WITH NOTHING NEW CERTIFIED before the batcher cuts an under-full round
-    # rather than keep waiting (measured from the most recently certified arrival, not
-    # the oldest). In seconds.
-    : "${SPIRA_QUEUE_BATCH_WAIT:=1800}"
-    # THE BATCHER PERSONA'S PARTITION LABEL (sp-47kq1). A round the batcher-cut binary
-    # cannot resolve mechanically — a local double-red, or a CI-only red on a batcher-owned
-    # batch PR (sp-lomk3) — is filed through bead.sh --for batcher, which reads this label
-    # from batcher.fayth's own FAYTH_LABELS. A literal here is the same disagreement risk
-    # SPIRA_PLAN_LABEL exists to close (law-schema-over-code).
-    : "${SPIRA_BATCH_JUDGEMENT_LABEL:=batch-judgement}"
-    # HOW LONG A CI RUN MAY RUN before it is a candidate for the stuck check.
-    # Per-repository override: SPIRA_QUEUE_CI_MAXSEC_<NAME> where <NAME> is the
-    # repo-map name uppercased with hyphens replaced by underscores.
-    : "${SPIRA_QUEUE_CI_MAXSEC:=3600}"
-    # HOW LONG WITH NO RUN ACTIVITY before a run is treated as hung and re-queued.
-    # Per-repository override: SPIRA_QUEUE_CI_IDLE_SEC_<NAME>.
-    : "${SPIRA_QUEUE_CI_IDLE_SEC:=600}"
-    # HOW OFTEN VERDICT.SH POLLS A DISPATCHED ATTRIBUTION RUN (per-member red-batch
-    # reproduction, sp-2hee5) for a conclusion. In seconds.
-    : "${SPIRA_QUEUE_REPRO_CI_POLLSEC:=15}"
-    # HOW LONG AN ATTRIBUTION RUN MAY STAY PENDING before its poll gives up and
-    # reports a harness fault rather than blocking the batch forever. In seconds.
-    : "${SPIRA_QUEUE_REPRO_CI_MAXSEC:=1800}"
-    # HOW OFTEN queue.sh to-forge POLLS ITS OWN FINAL PUBLISH for a settled verdict. In seconds.
-    : "${SPIRA_QUEUE_TRANSITION_POLLSEC:=5}"
-    # HOW LONG THE FINAL PUBLISH MAY STAY PENDING before queue.sh to-forge gives up and
-    # refuses the transition — the publish PR is left open for the normal cadence to settle.
-    # In seconds.
-    : "${SPIRA_QUEUE_TRANSITION_MAXSEC:=1800}"
-    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar-pass --pass
-    # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
-    # cancels the stuck run and re-dispatches the whole workflow. In seconds.
-    : "${SPIRA_CI_QUEUED_MAX_SECS:=600}"
-    # HOW LONG WITHOUT A LANDING PASS COMPLETING before czar-pass --pass fires loop-stalled.
-    # Above the 2700s local-gate timeout so an ordinary batch gate does not trigger it.
-    : "${SPIRA_LOOP_STALL_SECS:=3000}"
-    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar-pass
-    # --pass fires ci-red (verdict not acting on a red result). In seconds.
-    : "${SPIRA_CI_RED_MAX_SECS:=600}"
-    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar-pass --pass
-    # treats it as unreadable rather than a momentary gap between a push landing and
-    # GitHub creating the run object for it. In seconds; base-red RED itself fires with
-    # no grace — that half is urgency, not a race with GitHub's own bookkeeping.
-    : "${SPIRA_BASE_CI_UNREADABLE_GRACE_SECS:=120}"
-    # HOW MANY TIMES THE BATCH BUILDER RE-RUNS A WORKFLOW before mailing the operator.
-    : "${SPIRA_QUEUE_INFRA_RETRIES:=2}"
-    # HOW OLD THE OLDEST CERTIFIED BRANCH MAY BE before the batch builder is considered
-    # stuck and an alert is filed.
-    : "${SPIRA_QUEUE_STUCK_AGE:=7200}"
-    # WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
-    : "${SPIRA_QUEUE_DIR:=$SPIRA_RUN/queue}"
-    # THE FORGE SEAM — the executable batch.sh calls to open pull requests. Empty means use
-    # `forge` (the Rust binary, sp-t4y60; replaces forge.sh), by name on PATH. A fixture sets
-    # this to a local script so the suite never reaches the real forge.
-    : "${SPIRA_FORGE:=forge}"
-    # THE GITHUB REPOSITORY deploy.sh targets when making gh release calls. deploy.sh
-    # passes this as --repo so it works from an extracted tarball with no .git checkout.
-    # Format: "owner/repo". Empty means deploy.sh derives it from git remote origin.
-    : "${SPIRA_FORGE_REPO:=}"
-    # THE GIT REMOTE a queue.local repository's publish queue pushes to and fast-forwards
-    # on a green publish (spira_publish_forge). Per-repo: SPIRA_PUBLISH_REMOTE_<NAME>.
-    : "${SPIRA_PUBLISH_REMOTE:=origin}"
-    # THE UNPUBLISHED-BACKLOG ALARM (publish-backlog.sh, row 5 of the local/main design):
-    # a queue.local repo's local/main is alarmed to the concierge when it holds more than
-    # this many commits the publish queue has not yet pushed to the forge.
-    : "${SPIRA_LOCAL_BACKLOG_COUNT:=50}"
-    # ...or when the OLDEST of those unpublished commits is older than this many seconds.
-    # Either threshold alone is enough to alarm — a burst of small commits and one commit
-    # stuck behind a red publish are both "the publish queue is falling behind."
-    : "${SPIRA_LOCAL_BACKLOG_AGE:=10800}"
-    # LABEL APPLIED TO A BEAD THAT IS READY BUT HAS A CLOSED BLOCKER IN A QUEUE-MODE
-    # REPOSITORY WHOSE LANDSTATE HAS NOT YET REACHED LANDED. Excludes the bead from
-    # fayth_ready so it is not summoned until the blocker's change is pushed to base.
-    : "${SPIRA_QUEUE_WAIT_LABEL:=spira-queue-waiting}"
-    # LABEL MARKING A WORK BEAD SUBMITTED BUT NOT YET LANDED. aeon.sh writes it, at session
-    # teardown, converting a builder's own close of a bead whose type is in
-    # SPIRA_WORK_CLOSE_TYPES back to open instead of leaving it closed; bead_close_on_land
-    # (lib.sh) closes the bead for real, citing the merge commit, once its batch lands.
-    # Carried in fayth_exclude so a submitted bead is not reclaimed while it is mid-flight
-    # through certification.
-    : "${SPIRA_SUBMITTED_LABEL:=spira-submitted}"
-    # LABEL APPLIED TO A BEAD THAT HAS AN OPEN PARENT-CHILD-LINKED CHILD. bd refuses a
-    # parent-blocks-child dependency (it would cascade the block to every descendant, and
-    # they would never close), so a coordination bead whose deliverable lives entirely in
-    # its children would otherwise read as ready with none of that work done. mark_open_children
-    # (lib.sh) applies and clears this via ready_shared_exclude, the same seam
-    # SPIRA_QUEUE_WAIT_LABEL uses for a predicate bd itself cannot express as a dependency.
-    : "${SPIRA_OPEN_CHILDREN_LABEL:=spira-open-children}"
-    # ISSUE TYPES WHOSE CLOSE ROUTES THROUGH SPIRA_SUBMITTED_LABEL rather than a direct bd
-    # close. Everything else (spike, ask, insight, investigation, event, chore, epic) still
-    # closes by the agent's own hand — its deliverable is not a landed commit.
-    : "${SPIRA_WORK_CLOSE_TYPES:=task bug feature}"
-    # LABEL THAT MARKS A BEAD AS EXPRESS — a certified express branch cuts a batch
-    # immediately, before BATCH_MAX or the age-out, at the cost of one CI run per bead.
-    : "${SPIRA_EXPRESS_LABEL:=express}"
-    # THE GITHUB ACTIONS APP ID used in the required-status-checks rule set by queue.sh
-    # protect. Omitting it (or setting it to -1) lets the source be inferred from history,
-    # which admits a hand-posted commit status that bypasses gate enforcement. 15368 is the
-    # GitHub Actions app. Must be a non-negative integer.
-    : "${SPIRA_QUEUE_ACTIONS_APP_ID:=15368}"
-    # HOW LONG queue verdict AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
-    # Must be well under the timer interval (OnUnitActiveSec=2min) so a waiting run
-    # completes before the next tick fires, preventing concurrent runs.
-    : "${SPIRA_QUEUE_LOCK_WAIT:=90}"
-    # HOW MANY CONSECUTIVE TIMER TICKS may be skipped (lock held longer than LOCK_WAIT)
-    # before a starvation signal is emitted. Fires exactly once per gridlock event.
-    : "${SPIRA_QUEUE_LOCK_STARVE_MAX:=5}"
-    # THE ADMISSION THROTTLE (sp-h7zzx) — Little's Law with a rework feedback term.
-    # Two conditions, two outcomes:
-    #   depth >= DEPTH_AT AND drain active → throttle new builders; queue is over capacity
-    #   depth >= DEPTH_AT AND drain zero  → escalate, do not throttle; queue is stalled
-    # Throttling a stalled queue delays repairs rather than reducing load.
-    #
-    # SPIRA_QUEUE_THROTTLE_DEPTH_AT: engage when CERTIFIED depth reaches this many branches.
-    # Default is two batches; tune up if the queue recovers faster than builders refill it.
-    : "${SPIRA_QUEUE_THROTTLE_DEPTH_AT:=$(( ${SPIRA_QUEUE_BATCH_MAX:-8} * 2 ))}"
-    # SPIRA_QUEUE_THROTTLE_RELEASE_AT: lift when depth drops to this. Hysteresis gap prevents
-    # oscillation; set below DEPTH_AT so lifting does not immediately re-engage.
-    : "${SPIRA_QUEUE_THROTTLE_RELEASE_AT:=${SPIRA_QUEUE_BATCH_MAX:-8}}"
-    # SPIRA_QUEUE_THROTTLE_STALL_MINS: if nothing has landed in this many minutes, the queue
-    # is stalled rather than busy. Stall → escalate, not throttle.
-    # Matches the loop-stall threshold by default (SPIRA_LOOP_STALL_SECS / 60 = 50m).
-    : "${SPIRA_QUEUE_THROTTLE_STALL_MINS:=50}"
-    # SPIRA_QUEUE_THROTTLE_OVERRIDE: set to 'off' to pin the automated throttle disabled.
-    # The stamp file is never written while this is 'off'; pool follows SPIRA_MAX_AEONS alone.
-    : "${SPIRA_QUEUE_THROTTLE_OVERRIDE:=}"
 
     # ---- RELEASE ACTIVATION (release install-tarball) -----------------------------------------------
     # WHERE RELEASE TARBALLS ARE UNPACKED. Each activation unpacks a tarball into a
@@ -1888,18 +677,6 @@ spira_conf_defaults() {
     # DERIVED FROM SPIRA_WORKSPACES; _spira_join prevents double slashes when SPIRA_WORKSPACES
     # is "/" (a container root).
     : "${SPIRA_RELEASES:=$(_spira_join "$SPIRA_WORKSPACES" spira-releases)}"
-    # HOW MANY RELEASES TO KEEP. Old releases beyond this count are pruned after each
-    # activation (best-effort; a prune failure never fails the activation). Each release
-    # directory is the unpacked contents of one tarball — about 1.4 MB — so 100 releases
-    # total roughly 140 MB. Per Ryan: "They're tiny. make it 100."
-    : "${SPIRA_RELEASES_KEEP:=100}"
-    # THE GITHUB REPOSITORY this harness's releases are published to, as "owner/repo".
-    # Set this in spira.conf on artifact deployments — those run from an extracted tarball
-    # with no .git, so gh cannot infer the repository from the working directory.
-    # When set, deploy.sh exports it as GH_REPO before any gh call.
-    # Empty by default: a source checkout lets gh infer the repository, and a default
-    # pointing at somebody else's account would silently fetch their releases.
-    : "${SPIRA_GH_REPO:=}"
 
     # THE ACTIVATED RELEASE — the ONLY directory systemd executes. release install-tarball swaps
     # the 'current' symlink here atomically on each deployment; ExecStart= paths resolve
@@ -1910,70 +687,10 @@ spira_conf_defaults() {
     # NO-COLON FORM preserves SPIRA_PROD= for single-checkout mode.
     : "${SPIRA_PROD=$(_spira_join "$SPIRA_RELEASES" current/spira)}"
 
-    # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
-    # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
-    # interactions, and irreversible changes — the class of defect per-change review is worst
-    # at. A cheaper model here misses the findings the gate cannot catch.
-    # Verify the model id answers on this box before deploying: an id the CLI rejects does
-    # not fail loudly — the process exits non-zero, review.sh exits 2, and promote.sh refuses
-    # to promote the unreviewed unit (which is the safe failure mode).
-    : "${SPIRA_REVIEWER_MODEL:=claude-fable-5-1}"
-    # WHERE VERDICTS ARE WRITTEN. One file per release tag, named <tag>.verdict. The file
-    # carries verdict, cost, token counts and finding count so the reviewer's per-unit cost
-    # is readable without re-parsing the trace.
-    : "${SPIRA_REVIEWER_VERDICTS:=$SPIRA_RUN/review-verdicts}"
-    # HOW LONG ONE REVIEW MAY RUN, in seconds. A review that exceeds this exits 2 (error);
-    # promote.sh refuses to promote an unreviewed unit, so the unit waits for a successful run.
-    : "${SPIRA_REVIEWER_TIMEOUT:=300}"
-    # HOW MUCH OF A DIFF THE REVIEWER READS. Diffs larger than this are truncated with a
-    # note in the prompt; the reviewer still runs and may find what it can within the window.
-    : "${SPIRA_REVIEWER_DIFF_LIMIT:=80000}"
-    # THE LABEL APPLIED TO FINDING BEADS. The deployment controller (sp-gsmx.5) and the
-    # groomer query on this label to find open findings for a release unit.
-    : "${SPIRA_REVIEW_LABEL:=review-finding}"
 
-    # WORKFLOW-RUN FENCE — scripts that only a workflow executes. A branch that changes
-    # any of these, or any .github/workflows/ file, must cite a dispatched run URL
-    # (law-a-workflow-lands-on-its-own-run). SPIRA_GH_API is the GitHub REST API base; set
-    # it to a local stub in tests to avoid live network calls.
-    : "${SPIRA_WORKFLOW_ONLY_PATHS:=spira/acceptance-ci.sh spira/acceptance-agent.sh spira/build-tarball.sh}"
-    : "${SPIRA_GH_API:=https://api.github.com}"
 
-    # CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness
-    # probes the account to detect early recovery. These keys gate that probe.
-    #
-    # PROBE_MODEL matches the builder persona's model: a probe that the builder's model
-    # cannot answer is evidence the account is genuinely out for builders. An operator
-    # whose pool uses a different model sets this key. Probe with the cheapest capable
-    # model — a refused probe costs nothing; a served one costs one minimal request.
-    #
-    # NO `:=` DEFAULT HERE. A literal default would fix this at conf.sh-sourcing time and
-    # could never track a builder model changed later — capacity_probe() (lib.sh) resolves
-    # the default itself, via persona_model builder, at the moment it actually probes. Left
-    # unset, this key stays purely an operator override.
-    # PROBE_INTERVAL: minimum seconds between probes. One per hour is enough — the reset
-    # time from a refusal is typically several hours, so a probe that keeps the pause for
-    # an hour costs nothing and one that lifts it early unblocks the whole queue.
-    : "${SPIRA_CAPACITY_PROBE_INTERVAL:=3600}"
-    # PROBE_WINDOW: horizon threshold beyond which probing makes sense, in seconds.
-    # A pause with less than this remaining is likely about to expire on its own; probing
-    # it costs a request and saves at most a few minutes. Default is one five-hour window.
-    : "${SPIRA_CAPACITY_PROBE_WINDOW:=18000}"
-    # PROBE_TIMEOUT: seconds allowed for one probe request. A probe that times out is
-    # treated as refused — conservative, because a non-answering API is not evidence the
-    # account is open.
-    : "${SPIRA_CAPACITY_PROBE_TIMEOUT:=30}"
 
-    # SELF-MONITORING WINDOW: how many minutes back cockpit-metrics.py looks when deciding
-    # what is "repeating now" and whether a stillborn or stall alert is in force. Narrow
-    # enough to suppress a burst that ended hours ago; wide enough to cover the ~2-minute
-    # sentinel cadence across a meaningful run of passes.
-    : "${SPIRA_SELF_WINDOW:=60}"
 
-    # DELIVERS:CHECK TIMEOUT: seconds allowed for one delivers:check:<command> to run in
-    # CHECK 5. A hanging command must not stall the whole sentinel pass behind it; a timeout
-    # is scored the same as a non-zero exit — not yet — rather than left to hang.
-    : "${SPIRA_DELIVERS_CHECK_TIMEOUT:=60}"
 
     # THE AGENT CLI BINARY. Named once so every tool that invokes it reads the same setting.
     # The invocation shape (-p --output-format stream-json --verbose --model ...) is NOT
@@ -1988,20 +705,7 @@ spira_conf_defaults() {
     fi
     : "${SPIRA_AGENT:=claude}"
 
-    # THE TWO REMAINING MODELS THAT WERE A LITERAL IN THE CODE RATHER THAN AN OPERATOR KEY:
-    # the stall-vs-waiting liveness judge (lib.sh's still_waiting) and reflect.sh's inference
-    # tier. Both are cheap, infrequent, single-purpose calls — not a persona with a fayth of
-    # its own — so a plain [spira] key is enough; they do not need persona_model's resolver.
-    : "${SPIRA_LIVENESS_MODEL:=claude-haiku-4-5-20251001}"
-    : "${SPIRA_REFLECT_MODEL:=claude-opus-5}"
 
-    # WHICH STATUTES GET FULL TEXT AT SUMMON. render_memories renders these in complete
-    # paragraph form; everything else is rendered as a slug-only index line. Seeded from
-    # citation frequency in commits and bead text (measured 2026-09-11): those cited most
-    # often are the ones a violation costs most to miss. Being wrongly in core costs ~88
-    # words; being wrongly out costs an untraced violation. The default is generous.
-    # CSV of slug names, without the leading path — e.g. "law-foo,law-bar".
-    : "${SPIRA_STATUTE_CORE:=law-absence-needs-a-positive-control,law-fence-loops-on-shared-hardware,law-alerts-must-be-actionable,law-prefer-the-real-dependency,law-gates-run-in-a-clean-environment,law-closed-is-not-landed,law-a-regression-test-must-be-seen-to-fail,law-guard-binds-the-caller,law-verify-nothing-was-dropped,law-gate-earns-its-place,law-arm-before-you-retire,law-hand-land-the-unblocker,law-no-close-reason-admits-unfinished}"
 
     # THE MAP FALLS BACK TO THE EXAMPLE, and that is what makes a clean clone runnable at
     # all. The real map is one operator's inventory of checkouts and does not ship; the
@@ -2014,6 +718,21 @@ spira_conf_defaults() {
         SPIRA_REPO_MAP="$(_spira_repo_map_candidate)"
         : "${SPIRA_REPO_MAP:=$SPIRA_HOME/repo-map}"
     fi
+
+    # --------------------------------------------------------------------------------
+    # GENERATED DEFAULTS (sp-g3uwp). Everything below this point used to be hundreds of
+    # individual `: "${KEY:=default}"` lines, hand-maintained beside the allowlist above
+    # and prone to exactly the drift this bead measured: duplicate statements for the same
+    # key (SPIRA_EXPRESS_LABEL, SPIRA_GH_APP_CONFIG, SPIRA_GROOM_THRESHOLD all had two),
+    # and keys with a real default that never made it into SPIRA_CONF_KEYS above. Both are
+    # now impossible by construction: spira/conf.d/ is one file per key, and conf-gen.sh
+    # regenerates this block (and the allowlist) from it. A key with ordering constraints
+    # relative to this line (a guard, a local-variable dependency, a reader elsewhere in
+    # this function) stays inline above, deliberately not migrated; its conf.d file says so.
+    #
+    # NEVER EDIT spira/conf.d.defaults.generated.sh BY HAND — fix the conf.d/<KEY> file and
+    # let _spira_conf_gen_ensure regenerate it (or run spira/conf-gen.sh yourself).
+    _spira_conf_gen_ensure defaults
 }
 
 # --------------------------------------------------------------------------------------

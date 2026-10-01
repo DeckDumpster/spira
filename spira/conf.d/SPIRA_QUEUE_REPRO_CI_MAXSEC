@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG AN ATTRIBUTION RUN MAY STAY PENDING before its poll gives up and
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG AN ATTRIBUTION RUN MAY STAY PENDING before its poll gives up and
+    # reports a harness fault rather than blocking the batch forever. In seconds.
+    : "${SPIRA_QUEUE_REPRO_CI_MAXSEC:=1800}"
+SPIRA_CONF_DEFAULT_EOF

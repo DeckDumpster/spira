@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=liveness
+DOC=THE TWO REMAINING MODELS THAT WERE A LITERAL IN THE CODE RATHER THAN AN OPERATOR KEY:
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE TWO REMAINING MODELS THAT WERE A LITERAL IN THE CODE RATHER THAN AN OPERATOR KEY:
+    # the stall-vs-waiting liveness judge (lib.sh's still_waiting) and reflect.sh's inference
+    # tier. Both are cheap, infrequent, single-purpose calls — not a persona with a fayth of
+    # its own — so a plain [spira] key is enough; they do not need persona_model's resolver.
+    : "${SPIRA_LIVENESS_MODEL:=claude-haiku-4-5-20251001}"
+SPIRA_CONF_DEFAULT_EOF

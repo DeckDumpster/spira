@@ -1,0 +1,18 @@
+TYPE=u32
+GROUP=gate
+DOC=NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO CPU QUOTA FOR AEONS OR THE LANDING UNIT: SPIRA_AEON_CPU_QUOTA and SPIRA_LAND_CPU_QUOTA
+    # are retired (sp-b4oct, law-isolate-greedy-work-in-vms); the OS schedules them.
+    # THE GATE'S TIME BUDGET, in seconds. gate-touched.sh trims coverage-based suite
+    # selection to fit inside it (gate-budget-select.sh), most-specific-first, and the
+    # Rust gate passes it to testenv as `--deadline`. The mechanism exists because the
+    # previous 43-suite gate was not built in a day: each suite was individually
+    # justified while the total grew to 17 minutes unchecked. A budget is the only thing
+    # that makes that argument explicit. Set against a measurement taken when this key
+    # was added (2026-09-08, ~210s); 300 gives headroom while still bounding the next
+    # suite added without argument. (gate-spira.sh's own overrun bead-filing — a second,
+    # separate mechanism — was retired with it, sp-hyc3a/sp-nhid0: no caller since
+    # sp-b99nj, 2026-09-26, and no analog before this change either.)
+    : "${SPIRA_GATE_BUDGET:=300}"
+SPIRA_CONF_DEFAULT_EOF

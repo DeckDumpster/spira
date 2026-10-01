@@ -39,6 +39,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 HARNESS="$TMP/harness"
 mkdir -p "$HARNESS/spira"
 cp "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HARNESS/spira/"
 cp "$HERE/lib.sh"  "$HARNESS/spira/lib.sh"
 printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"

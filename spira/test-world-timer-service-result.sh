@@ -41,6 +41,7 @@ WORLD_BIN="$(command -v world || true)"
 [ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-timer-service-result.sh: the world binary is not on PATH" >&2; exit 1; }
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
 
 # write_sc ACTIVE_TIMER SVC_RESULT

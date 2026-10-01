@@ -44,6 +44,7 @@ mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
    "$HERE/skew.sh" "$HERE/suite-covers.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'

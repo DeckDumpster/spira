@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=gh
+DOC=SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SPIRA_GH: which gh-like binary ghq() calls. Empty means the system gh.
+    # Set to <spira>/spira/gh-app.sh to have all harness gh calls act as the
+    # GitHub App rather than as the operator's personal account.
+    : "${SPIRA_GH:=}"
+SPIRA_CONF_DEFAULT_EOF

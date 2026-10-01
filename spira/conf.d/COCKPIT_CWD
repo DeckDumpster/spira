@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=cwd
+DOC=WHERE THE COCKPIT'S PANES OPEN. The top pane holds the operator's own session, so its
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE COCKPIT'S PANES OPEN. The top pane holds the operator's own session, so its
+    # working directory decides which project's instructions that session loads — not a
+    # cosmetic choice. It defaults to the wiki when one is configured, because an operator
+    # who keeps notes works there rather than in the harness they are merely running.
+    : "${COCKPIT_CWD:=${SPIRA_WIKI:-$SPIRA_REPO}}"
+SPIRA_CONF_DEFAULT_EOF

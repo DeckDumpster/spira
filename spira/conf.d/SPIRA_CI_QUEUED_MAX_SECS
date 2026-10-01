@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=ci
+DOC=HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar-pass --pass
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A CI JOB MAY BE IN QUEUED STATUS (no runner assigned) before czar-pass --pass
+    # fires ci-stalled. A queued job with a torn-down VM label will never start; the czar
+    # cancels the stuck run and re-dispatches the whole workflow. In seconds.
+    : "${SPIRA_CI_QUEUED_MAX_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

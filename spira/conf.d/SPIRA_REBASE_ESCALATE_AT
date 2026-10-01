@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=rebase
+DOC=HOW MANY REBASE-CONFLICT REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD. A bead reopened
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY REBASE-CONFLICT REOPENS BEFORE THE BEAD IS ESCALATED INSTEAD. A bead reopened
+    # this many times for a rebase conflict is not learning from the reopen, and repeating it
+    # cycles the machinery while an aeon session is spent on every turn. At this threshold the
+    # landing pass sends the Concierge a machine event rather than reopening again — never
+    # Ryan (law-a-rebase-loop-is-sequenced-not-split).
+    : "${SPIRA_REBASE_ESCALATE_AT:=3}"
+SPIRA_CONF_DEFAULT_EOF

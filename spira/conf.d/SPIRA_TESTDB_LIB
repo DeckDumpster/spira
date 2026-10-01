@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=testdb
+DOC=Depends on the function-local basename of SPIRA_HOME; see spira_conf_defaults() in spira/conf.sh.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PROCEDURAL — this key's default has ordering constraints (a guard, a local-
+    # variable dependency, or a reader elsewhere in the function that runs before any
+    # safe single insertion point) that made automatic extraction unsafe. It is NOT
+    # migrated: spira/conf.sh's spira_conf_defaults() still sets it inline, in its
+    # original position. This file exists so the registry still names every key in
+    # SPIRA_CONF_KEYS — conf-gen.sh contributes this key to the allowlist only, no
+    # generated default statement.
+SPIRA_CONF_DEFAULT_EOF

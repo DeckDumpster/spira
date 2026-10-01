@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW OLD THE OLDEST CERTIFIED BRANCH MAY BE before the batch builder is considered
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW OLD THE OLDEST CERTIFIED BRANCH MAY BE before the batch builder is considered
+    # stuck and an alert is filed.
+    : "${SPIRA_QUEUE_STUCK_AGE:=7200}"
+SPIRA_CONF_DEFAULT_EOF

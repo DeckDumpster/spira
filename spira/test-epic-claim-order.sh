@@ -259,6 +259,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 
 AEON_HOME="$TMP/aeonhome"; mkdir -p "$AEON_HOME/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$AEON_HOME/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$AEON_HOME/"
 cp -r "$HERE/actors" "$AEON_HOME/" 2>/dev/null || true
 AEON_RUN="$TMP/aeonrun"; mkdir -p "$AEON_RUN"
 AEON_REPO_MAP="$TMP/repo-map"

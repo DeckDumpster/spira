@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=tz
+DOC=The timezone dates are written in. Empty means the host's own, which is right until
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The timezone dates are written in. Empty means the host's own, which is right until
+    # the host is a server in one zone and the operator reads its output in another — the
+    # case where an evening's work lands under tomorrow's date and a chronological log
+    # quietly stops being chronological.
+    : "${SPIRA_TZ:=}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=archivist
+DOC=HOW MANY TIMES A TIMED-OUT RUN IS RETRIED BEFORE BEING MARKED FAILED. rc=124 is distinct
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY TIMES A TIMED-OUT RUN IS RETRIED BEFORE BEING MARKED FAILED. rc=124 is distinct
+    # from a crash: it means the session outgrew the timeout window, not that the code is broken.
+    # Each retry gets a scaled timeout; after this many retries the session becomes failed.
+    : "${SPIRA_ARCHIVIST_TIMEOUT_RETRIES:=3}"
+SPIRA_CONF_DEFAULT_EOF

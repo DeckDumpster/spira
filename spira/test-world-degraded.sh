@@ -35,6 +35,7 @@ WORLD_BIN="$(command -v world || true)"
 [ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-degraded.sh: the world binary is not on PATH" >&2; exit 1; }
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 CALLS="$TMP/sc-calls"
 DISABLED_TIMERS=""   # comma-separated TIMER_PRIORITY bases (e.g. "spira-sentinel") to report disabled

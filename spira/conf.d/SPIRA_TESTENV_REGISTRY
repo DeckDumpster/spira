@@ -1,0 +1,20 @@
+TYPE=string
+GROUP=testenv
+DOC=WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE TEST IMAGE IS PUBLISHED, if anywhere. Empty means build it locally and
+    # never reach the network, which is the right default: the registry is somebody's
+    # account, and a harness that reached for one by default would fail on every machine
+    # whose operator has not got that account.
+    #
+    # WHY THIS IS WORTH CONFIGURING. The image is ~1.8 GB and its build downloads a Go
+    # toolchain, compiles bd from source and installs a Rust toolchain. A machine that
+    # keeps the image between runs pays that once. A machine created for a single CI run
+    # and destroyed afterwards pays it every run, which is most of the wall clock.
+    #
+    # PULLING IS AS SAFE AS BUILDING, and for the same reason: the tag is the hash of the
+    # build closure, so an image built from different inputs has a different name and a
+    # stale one is unreachable rather than merely unlikely. Set this to the repository
+    # prefix only -- the tag comes from the closure and is never written by hand.
+    : "${SPIRA_TESTENV_REGISTRY:=}"
+SPIRA_CONF_DEFAULT_EOF

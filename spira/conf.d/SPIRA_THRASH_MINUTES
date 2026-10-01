@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=thrash
+DOC=HOW LONG THE DELIVERABLE-PROGRESS WALL GIVES AN AEON BEFORE REQUEUEING IT. The wall
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG THE DELIVERABLE-PROGRESS WALL GIVES AN AEON BEFORE REQUEUEING IT. The wall
+    # trips when the aeon's deliverable (commits ahead of the base ref + file writes in its
+    # worktree) has not moved for this many minutes while turns still advance. 20 minutes is
+    # the default; the case that motivated this would have been freed at ~20 rather than 76.
+    # A gate suppresses the fuse, so a correct mid-review aeon is never tripped.
+    : "${SPIRA_THRASH_MINUTES:=20}"
+SPIRA_CONF_DEFAULT_EOF

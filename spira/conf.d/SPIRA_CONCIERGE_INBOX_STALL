@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=concierge
+DOC=THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
+    # SPIRA_CONCIERGE_INBOX_STALL seconds while the inbox holds lines it has not seen, the
+    # keeper re-arms with ONE wake (held by concierge.sh wake until the input line is empty),
+    # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.
+    : "${SPIRA_CONCIERGE_INBOX_STALL:=600}"
+SPIRA_CONF_DEFAULT_EOF

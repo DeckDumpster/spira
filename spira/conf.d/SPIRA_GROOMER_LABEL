@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=groomer
+DOC=THE GROOMER PARTITION, mirroring the spike partition: read by groomer.fayth's predicate
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE GROOMER PARTITION, mirroring the spike partition: read by groomer.fayth's predicate
+    # and by any scanner that queries for groom trigger beads. One definition keeps the label
+    # name consistent across fayth, scanner and anything else that files trigger beads.
+    : "${SPIRA_GROOMER_LABEL:=groom}"
+SPIRA_CONF_DEFAULT_EOF

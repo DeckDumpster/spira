@@ -37,6 +37,7 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 SH="$TMP/spira"; RUN="$TMP/run"; WS="$TMP/ws"
 mkdir -p "$SH" "$RUN" "$WS"
 cp "$HERE/conf.sh" "$HERE/lib.sh" "$HERE/exclude.sh" "$HERE/skew.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # The harness signature is three files together. This suite plants them using the real
 # exclude.sh matcher so a change to the signature fails here rather than passing here

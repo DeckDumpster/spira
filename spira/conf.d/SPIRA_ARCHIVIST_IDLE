@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=archivist
+DOC=HOW RECENTLY A TRANSCRIPT MUST HAVE BEEN WRITTEN TO COUNT AS LIVE. Everything the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW RECENTLY A TRANSCRIPT MUST HAVE BEEN WRITTEN TO COUNT AS LIVE. Everything the
+    # archivist rescues is rescued so that the session can be cleared, which only matters
+    # while somebody is still sitting in it. Far too short and a session that pauses to read
+    # is declared over; far too long and every transcript on the disk is swept on every pass,
+    # which is the unbounded fan-out this box already has a scar from.
+    : "${SPIRA_ARCHIVIST_IDLE:=1800}"
+SPIRA_CONF_DEFAULT_EOF

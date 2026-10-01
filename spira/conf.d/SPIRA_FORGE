@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=forge
+DOC=THE FORGE SEAM — the executable batch.sh calls to open pull requests. Empty means use
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE FORGE SEAM — the executable batch.sh calls to open pull requests. Empty means use
+    # `forge` (the Rust binary, sp-t4y60; replaces forge.sh), by name on PATH. A fixture sets
+    # this to a local script so the suite never reaches the real forge.
+    : "${SPIRA_FORGE:=forge}"
+SPIRA_CONF_DEFAULT_EOF

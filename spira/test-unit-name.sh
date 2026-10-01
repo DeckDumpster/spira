@@ -47,6 +47,7 @@ mkdir -p "$SH" "$RUN"
 
 # Copy the files under test so edits to the source are tested.
 cp "$HERE/conf.sh" "$HERE/lib.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # STUB SYSTEMCTL. Behaviour is controlled by two variables exported into the subshell:
 #   SC_ENABLED  — unit name that is-enabled should confirm (empty = none)

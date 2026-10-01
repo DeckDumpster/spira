@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=client
+DOC=THE CODING AGENT'S OWN SETTINGS FILE — the one the client reads, not one of ours. The
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CODING AGENT'S OWN SETTINGS FILE — the one the client reads, not one of ours. The
+    # session hook is registered in it, and it is the only file in this harness that belongs
+    # to a program the harness does not ship. It is a key rather than a literal for one
+    # reason above all: a suite that asserted against the real path would edit the operator's
+    # live client configuration on every run.
+    : "${SPIRA_CLIENT_SETTINGS:=$HOME/.claude/settings.json}"
+SPIRA_CONF_DEFAULT_EOF

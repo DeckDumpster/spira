@@ -176,6 +176,7 @@ git -C "$REPO" push -q origin main 2>/dev/null
 SH="$T/home"; mkdir -p "$SH/chamber"
 cp "$HARNESS/spira/lib.sh" "$HARNESS/spira/conf.sh" \
    "$HARNESS/spira/suite-covers.sh" "$SH/" 2>/dev/null
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "2>/dev/null/"
 cp -r "$HARNESS/spira/actors" "$SH/" 2>/dev/null || true
 cat > "$SH/chamber/builder.fayth" <<'FAYTH'
 FAYTH_NAME=builder

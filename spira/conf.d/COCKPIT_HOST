@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=host
+DOC=THE HOST THE LAPTOP DIALER CONNECTS TO. No default: a wrong default silently dials
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE HOST THE LAPTOP DIALER CONNECTS TO. No default: a wrong default silently dials
+    # somebody else's box. Set in spira.conf on the laptop, or export it in the environment.
+    : "${COCKPIT_HOST:=}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=loom
+DOC=A freshly started Loom answers its first request slowly (a cold `bd` query), so
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A freshly started Loom answers its first request slowly (a cold `bd` query), so
+    # ready.sh retries an unanswered probe for this many seconds before failing it. A slow
+    # ANSWER is still judged against SPIRA_LOOM_BUDGET_MS above, not this grace.
+    : "${SPIRA_LOOM_READY_GRACE:=20}"
+SPIRA_CONF_DEFAULT_EOF

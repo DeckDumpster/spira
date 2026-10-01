@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=prefix
+DOC=OPERATOR-OWNED CONFIGURATION THAT BELONGS BESIDE THE REPO-MAP, not inside the harness
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # OPERATOR-OWNED CONFIGURATION THAT BELONGS BESIDE THE REPO-MAP, not inside the harness
+    # tree. An operator whose harness lives in a repository they did not write would otherwise
+    # have to keep this file in the checkout — where a push might share it — or remember to
+    # set SPIRA_PREFIX_MAP on every box. ~/.config/spira is where repo-map already lives.
+    : "${SPIRA_PREFIX_MAP:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/prefix-map}"
+SPIRA_CONF_DEFAULT_EOF

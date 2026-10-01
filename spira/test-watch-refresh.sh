@@ -54,6 +54,7 @@ REAL_MKDIR="$(command -v mkdir)"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira" "$CLONE/cockpit"
 cp "$HERE"/*.sh "$CLONE/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$CLONE/spira/"
 
 # EVERY CONFIGURED VALUE PINNED TO A NON-DEFAULT. SPIRA_COCKPIT would derive to
 # $CLONE/cockpit and SPIRA_RUN to $CLONE/.runtime/spira; both are moved somewhere unrelated,

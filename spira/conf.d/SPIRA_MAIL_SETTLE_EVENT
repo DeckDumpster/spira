@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=mail
+DOC=A MACHINE EVENT (a watcher's own kind: event mail — PR transitions among them) gets its
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A MACHINE EVENT (a watcher's own kind: event mail — PR transitions among them) gets its
+    # own, near-zero settle: SPIRA_MAIL_SETTLE batches a burst of the OPERATOR's own replies,
+    # which is the wrong wait to make a live PR/watcher event sit through
+    # (law-alerts-must-be-actionable; UC-operator-channel-38's liveness requirement).
+    : "${SPIRA_MAIL_SETTLE_EVENT:=0}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=queue
+DOC=SPIRA_QUEUE_THROTTLE_OVERRIDE: set to 'off' to pin the automated throttle disabled.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SPIRA_QUEUE_THROTTLE_OVERRIDE: set to 'off' to pin the automated throttle disabled.
+    # The stamp file is never written while this is 'off'; pool follows SPIRA_MAX_AEONS alone.
+    : "${SPIRA_QUEUE_THROTTLE_OVERRIDE:=}"
+SPIRA_CONF_DEFAULT_EOF

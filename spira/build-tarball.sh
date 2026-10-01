@@ -248,6 +248,19 @@ for pkg in meta['packages']:
     # Extract all tracked files at this commit.
     git -C "$repo" archive "$sha" | tar -x -C "$stage"
 
+    # sp-g3uwp: spira/conf.d.keys.generated.sh and spira/conf.d.defaults.generated.sh are
+    # NEVER committed — generated state checked into git is a second copy of the registry
+    # to drift from it (law-regenerate-derived-summaries) — so `git archive` above did not
+    # stage them. conf.sh's own _spira_conf_gen_ensure WOULD regenerate them lazily on first
+    # source, but a released install.sh target is read-only once activated (law, "the
+    # mistake is impossible, not refused" — an installed release should not need a writable
+    # tree just to read its own config), so that lazy path must never be the one production
+    # actually takes. Generate here, into the still-writable staging tree, so the shipped
+    # tarball already carries fresh output and the lazy regenerate in conf.sh only ever fires
+    # for a developer's own working checkout.
+    bash "$stage/spira/conf-gen.sh" \
+        || { echo "build-tarball.sh: conf-gen.sh failed against the staged tree — refusing to pack a release with no generated config" >&2; return 1; }
+
     # Add prebuilt binaries under bin/.
     local _i
     for _i in "${!_bin_names[@]}"; do

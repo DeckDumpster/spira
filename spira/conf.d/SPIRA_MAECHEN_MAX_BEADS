@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=maechen
+DOC=SPIRA_MAECHEN_MAX_BEADS — output bound per pass. A retrospective that files twelve
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_MAECHEN_MAX_BEADS — output bound per pass. A retrospective that files twelve
+    # findings has not prioritised; it has flooded. Three is the default: enough to address
+    # the top class with its test and its guard, not enough to flood the board.
+    : "${SPIRA_MAECHEN_MAX_BEADS:=3}"
+SPIRA_CONF_DEFAULT_EOF

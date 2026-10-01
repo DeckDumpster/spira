@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=mail
+DOC=SPIRA_MAIL_KINDS (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
+SPIRA_CONF_DEFAULT_EOF

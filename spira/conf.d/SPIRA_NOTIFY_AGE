@@ -1,0 +1,20 @@
+TYPE=u32
+GROUP=notify
+DOC=HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG AN ACTIONABLE EVENT MAY WAIT WITH NO READER before it is escalated through a
+    # channel that needs no session, in seconds. `watchd.sh notify` is what enforces it.
+    #
+    # WHY THERE IS A POLL HERE AT ALL. A session hook fires at a SESSION BOUNDARY, which is a
+    # property of one client: when an answer is given while nothing is running, nothing fires
+    # until the next session opens, and for a headless agent that is never. The escalation is
+    # the only path that does not require a reader to exist.
+    #
+    # WHY IT IS THIS LONG. The window has to be comfortably longer than an ordinary gap
+    # between a watcher emitting and somebody latching, because every escalation inside that
+    # gap is a false alarm — and a false alarm is a real cost, not a harmless one
+    # (law-alerts-must-be-actionable). It has to be far shorter than the hours a nobody-is-
+    # running interval actually lasts. Half an hour is between those, and it is a key rather
+    # than a literal because which one an operator's watchers deserve is theirs to say.
+    : "${SPIRA_NOTIFY_AGE:=1800}"
+SPIRA_CONF_DEFAULT_EOF

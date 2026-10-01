@@ -61,6 +61,7 @@ export SPIRA_GH="$TMP/bin/gh"
 SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 # Minimal repo-map for backfill: one repo named "fixture" at the git fixture path.
 printf 'fixture | %s\n' "$REPO" > "$SH/repo-map"

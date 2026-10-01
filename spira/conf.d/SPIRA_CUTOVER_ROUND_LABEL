@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=cutover
+DOC=THE CUTOVER-ROUND LABEL. A branch whose bead carries it lands only in the cutover round
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CUTOVER-ROUND LABEL. A branch whose bead carries it lands only in the cutover round
+    # (sp-sa8pn) assembles by hand, never through the ordinary landing pass — so certification,
+    # rebase and the repeat/escalation machinery all leave it exactly as its aeon left it.
+    # Judging it here produces RED no-rebase marks and repeat-refused asks about a branch that
+    # was never going to land this way in the first place.
+    : "${SPIRA_CUTOVER_ROUND_LABEL:=cutover-round}"
+SPIRA_CONF_DEFAULT_EOF

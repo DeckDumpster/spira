@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=ci
+DOC=HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar-pass
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A BATCH OPEN FILE MAY SIT AFTER ITS CI RUN COMPLETES RED before czar-pass
+    # --pass fires ci-red (verdict not acting on a red result). In seconds.
+    : "${SPIRA_CI_RED_MAX_SECS:=600}"
+SPIRA_CONF_DEFAULT_EOF

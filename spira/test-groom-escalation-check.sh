@@ -102,6 +102,7 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 
 HOMEDIR="$TMP/home"; mkdir -p "$HOMEDIR/chamber"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HOMEDIR/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HOMEDIR/"
 cp -r "$HERE/actors" "$HOMEDIR/" 2>/dev/null || true
 RUN="$TMP/run"; mkdir -p "$RUN"
 GROOM_LOG="$RUN/groom.log"

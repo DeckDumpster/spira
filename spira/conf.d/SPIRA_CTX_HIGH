@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=ctx
+DOC=SPIRA_CTX_HIGH (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CTX_HIGH:=400000}"
+SPIRA_CONF_DEFAULT_EOF

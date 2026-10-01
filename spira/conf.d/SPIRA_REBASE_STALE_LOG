@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=rebase
+DOC=WHERE the rebase-stale binary RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE the rebase-stale binary RECORDS EVERY ATTEMPT (mechanical / clean / conflict / gate-red),
+    # one line per call — the measure sp-oxwvc asks for: how much of the rework rate a
+    # mechanical resolver actually removes.
+    : "${SPIRA_REBASE_STALE_LOG:=$SPIRA_RUN/rebase-stale.log}"
+SPIRA_CONF_DEFAULT_EOF

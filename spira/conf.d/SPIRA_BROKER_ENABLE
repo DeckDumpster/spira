@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=broker
+DOC=SPIRA_BROKER_ENABLE (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_BROKER_ENABLE:=0}"
+SPIRA_CONF_DEFAULT_EOF

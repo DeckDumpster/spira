@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=snap
+DOC=Snapshot age measures merge cadence, not probe duration. The supervisor loop calls
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Snapshot age measures merge cadence, not probe duration. The supervisor loop calls
+    # _merge_fragments on every tick (~5s), so a healthy box always has a fresh snapshot.
+    # 60s = 12 ticks: enough slack for a slow merge under load, short enough that a dead
+    # supervisor loop is visible within a minute.
+    : "${SPIRA_SNAP_STALE_S:=60}"
+SPIRA_CONF_DEFAULT_EOF

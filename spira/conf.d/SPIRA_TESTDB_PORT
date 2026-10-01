@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=testdb
+DOC=SPIRA_TESTDB_PORT (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TESTDB_PORT:=3308}"
+SPIRA_CONF_DEFAULT_EOF

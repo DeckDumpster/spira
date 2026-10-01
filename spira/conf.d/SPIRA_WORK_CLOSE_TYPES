@@ -1,0 +1,9 @@
+TYPE=list
+GROUP=work
+DOC=ISSUE TYPES WHOSE CLOSE ROUTES THROUGH SPIRA_SUBMITTED_LABEL rather than a direct bd
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ISSUE TYPES WHOSE CLOSE ROUTES THROUGH SPIRA_SUBMITTED_LABEL rather than a direct bd
+    # close. Everything else (spike, ask, insight, investigation, event, chore, epic) still
+    # closes by the agent's own hand — its deliverable is not a landed commit.
+    : "${SPIRA_WORK_CLOSE_TYPES:=task bug feature}"
+SPIRA_CONF_DEFAULT_EOF

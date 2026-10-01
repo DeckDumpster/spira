@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=mail
+DOC=MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
+    # `new/`, so it is recorded but wakes no reader. Replaces the local-overrides tracked
+    # edit to spira/mail.sh (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
+    # config key instead of an uncommitted patch to a checked-out file. Off by default: mail
+    # flows normally unless an operator sets it, in spira.toml or the environment.
+    : "${SPIRA_MAIL_MUTE:=0}"
+SPIRA_CONF_DEFAULT_EOF

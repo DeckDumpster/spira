@@ -40,6 +40,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 cp -r "$HERE/mail" "$SH/mail"
 
 cat > "$SH/repo-map" <<RMAP

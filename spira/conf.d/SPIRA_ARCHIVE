@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=archive
+DOC=WHERE THE TRANSCRIPTS ARE KEPT. The client's own directory is unversioned, on whatever
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE TRANSCRIPTS ARE KEPT. The client's own directory is unversioned, on whatever
+    # volume the home directory sits on, and promises nothing about retention — so this is a
+    # copy of it that outlives both. It defaults under the runtime directory because that is
+    # gitignored: the bodies carry paths, credentials read aloud and everything anyone ever
+    # said, and a default inside a shared checkout is one `git add -A` away from publishing
+    # all of it. Point it at whichever volume has the room; nothing here ever deletes.
+    : "${SPIRA_ARCHIVE:=$SPIRA_RUN/archive}"
+SPIRA_CONF_DEFAULT_EOF

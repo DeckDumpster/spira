@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=maechen
+DOC=SPIRA_MAECHEN_MAX_GAP_SECONDS — maximum gap between passes. Even if the landing volume
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_MAECHEN_MAX_GAP_SECONDS — maximum gap between passes. Even if the landing volume
+    # threshold has not been reached, a pass fires after this many seconds. 3h = 10800.
+    : "${SPIRA_MAECHEN_MAX_GAP_SECONDS:=10800}"
+SPIRA_CONF_DEFAULT_EOF
