@@ -53,9 +53,9 @@ fn die2(msg: &str) -> ExitCode {
 }
 
 /// The config `rebase-branch`/`recut-onto` need: just `SPIRA_RUN`, the identity and the
-/// reaplog — no bd, no queue, no repo-map lookup, because the caller (today, lib.sh's own
-/// shim) has already resolved the repo path/name and, for `rebase-branch`, the formatter
-/// command.
+/// reaplog — no bd, no queue, no repository lookup of their own, because the caller (today,
+/// lib.sh's own shim) has already resolved the repo path/name and, for `rebase-branch`, the
+/// formatter command.
 fn branch_config() -> Result<BranchConfig, String> {
     let keys = Keys::load();
     let run = keys.get("SPIRA_RUN", |s| s.run.clone()).map(PathBuf::from).ok_or_else(|| "SPIRA_RUN is not set".to_string())?;
