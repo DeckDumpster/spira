@@ -3,6 +3,8 @@
 //! use).
 
 use crate::ports::World;
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,11 +12,40 @@ use std::process::{Command, Stdio};
 pub struct Real {
     pub home: PathBuf,
     pub db: Option<String>,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
     pub fn new(home: PathBuf, db: Option<String>) -> Real {
-        Real { home, db }
+        Real { home, db, registry: OnceCell::new() }
+    }
+
+    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), built once per
+    /// process from a single `. lib.sh` snapshot — replaces a fresh `bash -c '. lib.sh;
+    /// <fn>'` subprocess per `repo_names`/`repo_land`/`repo_root`/`home_repo` call.
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| {
+            let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
+                for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
+                printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
+            let out = Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .arg(self.home.join("lib.sh"))
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+            let mut env: BTreeMap<String, String> = BTreeMap::new();
+            if let Ok(o) = out {
+                for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
+                    if let Some((k, v)) = rec.split_once('=') {
+                        env.insert(k.to_string(), v.to_string());
+                    }
+                }
+            }
+            let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+            spira_config::repos::Registry::new(map_text.as_deref(), &env, &self.home)
+        })
     }
 
     fn bd(&self) -> Command {
@@ -48,20 +79,19 @@ impl Real {
 
 impl World for Real {
     fn repo_names(&self) -> Vec<String> {
-        self.seam("repo_names", &[]).lines().map(String::from).collect()
+        self.registry().names()
     }
 
     fn repo_land(&self, name: &str) -> String {
-        self.seam("repo_land \"$1\"", &[name])
+        self.registry().land(name)
     }
 
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
-        let out = self.seam("repo_root \"$1\" 2>/dev/null", &[name]);
-        if out.is_empty() { None } else { Some(PathBuf::from(out)) }
+        self.registry().root(name).map(PathBuf::from)
     }
 
     fn home_repo(&self) -> String {
-        self.seam("spira_home_repo", &[])
+        self.registry().home_repo().to_string()
     }
 
     fn bd_gate_list_json(&self) -> String {

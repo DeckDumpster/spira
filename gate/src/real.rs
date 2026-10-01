@@ -34,6 +34,9 @@ pub fn install_signal_handlers() {
 /// The variables read after `. lib.sh` (DESIGN.md "Environment it reads").
 const VARS: &[&str] = &[
     "SPIRA_REPO_MAP",
+    "SPIRA_HOME_REPO",
+    "SPIRA_REPO",
+    "SPIRA_REPO_DERIVED",
     "SPIRA_RUN",
     "SPIRA_GATE_LOG",
     "SPIRA_VERDICTS",
@@ -66,15 +69,9 @@ const CONTEXT: &str = r#"set -uo pipefail
 HERE="$1"; RN="$2"; shift 2
 . "$HERE/lib.sh" >/dev/null || exit 96
 __kv() { printf '%s=%s\0' "$1" "$2"; }
-[ -n "$RN" ] || RN="$(spira_home_repo)"
 __kv repo_name "$RN"
 for __v in "$@"; do __kv "$__v" "${!__v-}"; done
 __kv host_cores "$(host_cores)"
-if [ -r "${SPIRA_REPO_MAP:-/nonexistent}" ] && __r="$(repo_root "$RN")"; then
-    __kv repo_root "$__r"
-    __b="$(spira_landref "$__r")" && __kv landref "$__b"
-    __kv gate_cmd "$(repo_gate "$RN")"
-fi
 exit 0
 "#;
 
@@ -157,18 +154,31 @@ impl World for Real {
                 o.status.code().unwrap_or(-1)
             ));
         }
-        let mut kv: HashMap<String, String> = HashMap::new();
+        let mut snap: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
         for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
             if let Some((k, v)) = rec.split_once('=') {
-                kv.insert(k.to_string(), v.to_string());
+                snap.insert(k.to_string(), v.to_string());
             }
         }
-        let mut take = |k: &str| kv.remove(k);
-        let repo_name = take("repo_name").unwrap_or_default();
-        let repo_root = take("repo_root").filter(|s| !s.is_empty());
-        let landref = take("landref").filter(|s| !s.is_empty());
-        let gate_cmd = take("gate_cmd").unwrap_or_default();
+        let mut take = |k: &str| snap.remove(k);
+        let raw_repo_name = take("repo_name").unwrap_or_default();
         let host_cores = take("host_cores").unwrap_or_else(|| "1".into());
+
+        // spira_config::repos (sp-37rmg/sp-o88bx, in-process here since sp-k6lku, "wave
+        // 4.13"): repo_root/spira_landref/repo_gate/spira_home_repo no longer a bash seam
+        // call — the CONTEXT script above only sources lib.sh now for VARS and host_cores.
+        let map_text = snap.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
+        let reg = spira_config::repos::Registry::new(map_text.as_deref(), &snap, &self.home);
+        let repo_name = if raw_repo_name.is_empty() { reg.home_repo().to_string() } else { raw_repo_name };
+        let (repo_root, landref, gate_cmd) = match reg.root(&repo_name) {
+            Some(root) => {
+                let landref = spira_config::repos::landref(&reg, &root);
+                (Some(root), landref, reg.gate(&repo_name).unwrap_or_default())
+            }
+            None => (None, None, String::new()),
+        };
+
+        let kv: HashMap<String, String> = snap.into_iter().collect();
         Ok(Ctx {
             repo_name,
             vars: kv,
