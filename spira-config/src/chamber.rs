@@ -1,5 +1,5 @@
-//! The chamber / fayth registry — spira/lib.sh family D (wave 4, sp-r5zd2; see
-//! `/home/ryan/spira/run/wave4-decomposition.md` row D). lib.sh's own `fayth_names`,
+//! The chamber / fayth registry — spira/lib.sh family D (wave 4 decomposition, row D;
+//! sp-r5zd2). lib.sh's own `fayth_names`,
 //! `spira_fayths` (and its `spira_task_fayths`/`spira_lane_fayths` splits), `fayth_get`,
 //! `fayth_partitions`, `fayths_for_labels` and `persona_model` all move here; lib.sh keeps
 //! one-line shims onto the `spira-config fayth ...` CLI this module backs (see `main.rs`),
