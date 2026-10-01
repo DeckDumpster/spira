@@ -2,8 +2,10 @@
 #
 # test-aeon-eviction-race.sh — a bead closed while its landstate carries a live batch-
 #   eviction record is reopened; a gate-red, a stale tip or a record past the reopen cap is
-#   not. eviction_reopen (lib.sh) is the pure decision (reopen/stale/cap/none); aeon.sh's own
-#   block is only the side effects (idempotence sidecar, the reopen/escalate calls).
+#   not. The pure decision (reopen/stale/cap/none) is aeon::decide::eviction_reopen
+#   (aeon/src/decide.rs) — eviction_reopen (lib.sh) retired dead (sp-j89pd, wave 4.2: zero
+#   live callers); its T1 table is deleted with it. aeon's own block is only the side
+#   effects (idempotence sidecar, the reopen/escalate calls), proved below by T3.
 #
 # THE ORIGINAL DEFECT (sp-htw4r). A batch eviction writes landstate=RED/EJECTED and calls
 # bead_reopen. An aeon still in flight does not see the reopen — it closes the bead after
@@ -31,42 +33,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-aeon-eviction-race.sh"
-
-# ===========================================================================================
-echo
-echo "T1: eviction_reopen <land-state> <cur-tip> <recent> -> reopen|stale|cap|none"
-# ===========================================================================================
-# POSITIVE CONTROL FIRST (law-absence-needs-a-positive-control): row 3 (reopen) proves the
-# function fires at all before the "none" rows below are trusted to mean anything.
-
-evr() {   # evr <land-state-string> <cur-tip> <recent> [escalate_at] -> eviction_reopen's output
-    local ls="$1" cur="$2" recent="$3" esc="${4:-}"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        ${esc:+SPIRA_EVICTION_ESCALATE_AT="$esc"} \
-        bash -c '. "$1"/lib.sh; eviction_reopen "$2" "$3" "$4"' _ "$HERE" "$ls" "$cur" "$recent" 2>/dev/null
-}
-
-# name|land-state|cur-tip|recent|escalate_at (empty = default 3)|want
-ROWS=(
-    "(a) RED reason=gate at current tip stays closed|RED tipX 111 gate|tipX|0||none"
-    "(b) RED reason=ejected at a stale tip stays closed|RED tipOld 111 ejected|tipNew|0||stale"
-    "(c) RED reason=ejected at current tip reopens|RED tipX 111 ejected|tipX|0||reopen"
-    "EJECTED at current tip reopens (no reason needed)|EJECTED tipX 111|tipX|0||reopen"
-    "EJECTED with no recorded tip (none) is never stale|EJECTED none 111|tipX|0||reopen"
-    "no landstate at all stays closed|EMPTY|tipX|0||none"
-    "CERTIFIED stays closed (positive control)|CERTIFIED tipX 111 certified|tipX|0||none"
-    "RED no-rebase@<sha> stays closed (landing.sh owns this)|RED tipX 111 no-rebase@deadbeef|tipX|0||none"
-    "below the cap (non-default escalate_at=2) still reopens|RED tipX 111 ejected|tipX|1|2|reopen"
-    "at the cap (non-default escalate_at=2) escalates instead|RED tipX 111 ejected|tipX|2|2|cap"
-)
-
-for row in "${ROWS[@]}"; do
-    IFS='|' read -r name ls cur recent esc want <<<"$row"
-    [ "$ls" = "EMPTY" ] && ls=""
-    got="$(evr "$ls" "$cur" "$recent" "$esc")"
-    is "$name" "$want" "$got"
-done
 
 # ===========================================================================================
 echo

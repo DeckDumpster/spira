@@ -8,18 +8,20 @@
 # 2. Custom value: builder predicate becomes that value + plan; spira,plan is NOT the predicate.
 # 3. Empty value: builder predicate is plan alone; no predicate contains an empty label
 #    (a leading comma would match nothing, looking exactly like "no work ready").
-# 4. fayth_fenced passes when the scope label is present, fails when it is absent,
-#    and passes unconditionally when the scope label is empty.
 #
 # THE POSITIVE CONTROL (item 2) IS CRITICAL. A predicate that ignores the key entirely
 # still passes "default=spira,plan" and "custom label is claimable". Only the second
 # half of item 2 — "spira,plan is NOT the predicate under a custom key" — distinguishes
 # a working implementation from a no-op.
 #
+# RETIRED (sp-j89pd, wave 4.2): fayth_fenced (lib.sh) had zero live callers — it is now
+# aeon::conf::fayth_fenced (aeon/src/conf.rs) and release::stage (release/src/stage.rs).
+# Its "scope label present/absent/empty" table, item 4 of this suite, is deleted with it.
+#
 # defect: law-scope-is-a-runtime-key (sp-9xsjm), sp-4mpy6
 # tier: T1
 # covers: spira/conf.sh spira/lib.sh spira/chamber/*.fayth
-# hermetic-ok: no database, no systemd; fayth_get and fayth_fenced are tested from lib.sh
+# hermetic-ok: no database, no systemd; fayth_get is tested from lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -101,47 +103,6 @@ lack "builder FAYTH_LABELS with scope= has no spira"   "spira" "$got"
 
 got="$(fayth_get_with_scope "" ops FAYTH_LABELS)"
 is   "ops FAYTH_LABELS with scope= is just incident" "incident" "$got"
-
-# ==========================================================================================
-echo
-echo "fayth_fenced — scope label present: pass; absent: fail; scope empty: pass"
-# ==========================================================================================
-# Source lib.sh once for the fayth_fenced calls below.
-export SPIRA_HOME="$HERE"
-export SPIRA_RUN="$T/run"
-export SPIRA_CONF="$T/no-such.conf"
-# shellcheck disable=SC1090
-. "$HERE/lib.sh"
-
-# Scope=spira; label contains spira: pass.
-SPIRA_SCOPE_LABEL=spira fayth_fenced test-persona "spira,plan" 2>/dev/null \
-    && ok "fayth_fenced passes when scope label is present in predicate" \
-    || bad "fayth_fenced passes when scope label is present in predicate" "returned non-zero"
-
-# Scope=spira; label does NOT contain spira: fail.
-SPIRA_SCOPE_LABEL=spira fayth_fenced test-persona "plan" 2>/dev/null \
-    && bad "fayth_fenced fails when scope label is absent from predicate" "returned zero" \
-    || ok  "fayth_fenced fails when scope label is absent from predicate"
-
-# Scope=other; label contains other: pass.
-SPIRA_SCOPE_LABEL=other fayth_fenced test-persona "other,plan" 2>/dev/null \
-    && ok "fayth_fenced passes when custom scope label is present" \
-    || bad "fayth_fenced passes when custom scope label is present" "returned non-zero"
-
-# Scope=other; label contains spira but not other: fail.
-SPIRA_SCOPE_LABEL=other fayth_fenced test-persona "spira,plan" 2>/dev/null \
-    && bad "fayth_fenced fails when predicate has old scope label, not new one" "returned zero" \
-    || ok  "fayth_fenced fails when predicate has old scope label, not new one"
-
-# Scope= (empty): any non-empty predicate passes, no scope to enforce.
-SPIRA_SCOPE_LABEL="" fayth_fenced test-persona "plan" 2>/dev/null \
-    && ok "fayth_fenced passes when scope label is empty (unrestricted)" \
-    || bad "fayth_fenced passes when scope label is empty (unrestricted)" "returned non-zero"
-
-# Empty predicate still fails even when scope is empty.
-SPIRA_SCOPE_LABEL="" fayth_fenced test-persona "" 2>/dev/null \
-    && bad "fayth_fenced fails on empty FAYTH_LABELS even with empty scope" "returned zero" \
-    || ok  "fayth_fenced fails on empty FAYTH_LABELS even with empty scope"
 
 echo
 tl_summary
