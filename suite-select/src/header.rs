@@ -72,6 +72,51 @@ pub fn selects_on_of(text: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `suite_requires_of`: the `# requires:` tokens (commas or blanks separate them, so both
+/// "claude, bd" and "claude bd" work). Empty when undeclared — the suite runs unconditionally.
+pub fn requires_of(text: &str) -> Vec<String> {
+    directive(text, "requires")
+        .map(|v| {
+            v.split(|c: char| c == ',' || c.is_whitespace())
+                .filter(|t| !t.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// `suite_exclusive_of`: the `# exclusive:` reason string, or `None` when not exclusive.
+pub fn exclusive_of(text: &str) -> Option<String> {
+    directive(text, "exclusive")
+}
+
+/// `suite_uc_of`: the `UC-<area>-NN` tokens on the `# covers:` line — path globs never take
+/// this shape, so filtering `covers_of` picks out exactly the use-case ids.
+pub fn uc_of(text: &str) -> Vec<String> {
+    covers_of(text).into_iter().flatten().filter(|t| is_uc_token(t)).collect()
+}
+
+/// `case "$_tok" in UC-*-[0-9][0-9]) ;; esac`: starts with `UC-`, ends with two digits
+/// preceded by a `-` that is NOT the same character as the prefix's own `-` (so the
+/// minimum match is 6 bytes, e.g. `UC--00`; `UC-01` at 5 bytes does not match).
+fn is_uc_token(tok: &str) -> bool {
+    let b = tok.as_bytes();
+    b.len() >= 6
+        && tok.starts_with("UC-")
+        && b[b.len() - 3] == b'-'
+        && b[b.len() - 2].is_ascii_digit()
+        && b[b.len() - 1].is_ascii_digit()
+}
+
+/// `suite_testenv_unmet`: true iff the suite declares `# requires: testenv` and the caller
+/// is NOT both inside the test container (structural evidence) AND has set
+/// `SPIRA_IN_TESTENV=1`. `requires` is this suite's own `requires_of(text)`; `in_testenv` and
+/// `in_container` are the caller's environment evidence (kept out of this pure module —
+/// see `suite_in_container`'s own doc for why a variable alone is never enough).
+pub fn testenv_unmet(requires: &[String], in_testenv: bool, in_container: bool) -> bool {
+    requires.iter().any(|r| r == "testenv") && !(in_testenv && in_container)
+}
+
 /// A declared tier. An undeclared tier is `None` at the call site, never a `Tier`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
@@ -139,5 +184,56 @@ mod tests {
         assert_eq!(Tier::parse("t1"), None);
         assert_eq!(Tier::parse("T5"), None);
         assert_eq!(Tier::T4.as_str(), "T4");
+    }
+
+    // Mirrors spira/test-requires.sh Part A: requires_of parses, comma or blank delimited,
+    // empty when undeclared, and stops at `set -` like every other directive.
+    #[test]
+    fn requires_parses_commas_and_blanks_and_stops_at_set_dash() {
+        assert_eq!(requires_of("# requires: claude, bd\n"), ["claude", "bd"]);
+        assert_eq!(requires_of("# requires: claude bd\n"), ["claude", "bd"]);
+        assert!(requires_of("#!/bin/bash\nset -u\n").is_empty());
+        let spoof = "set -u\ncat <<X\n# requires: testenv\nX\n";
+        assert!(requires_of(spoof).is_empty());
+    }
+
+    // Mirrors spira/test-dummy.sh's exclusive_of coverage and the "stops at set -" guard
+    // suite_exclusive_of shares with suite_requires_of / suite_selects_on_of.
+    #[test]
+    fn exclusive_is_the_reason_string_or_none() {
+        assert_eq!(exclusive_of("# exclusive: touches the live store\n").as_deref(), Some("touches the live store"));
+        assert_eq!(exclusive_of("# tier: T1\n"), None);
+        let spoof = "set -u\ncat <<X\n# exclusive: spoofed\nX\n";
+        assert_eq!(exclusive_of(spoof), None);
+    }
+
+    // Mirrors plan-lint.sh's suite_uc_of use: UC ids on # covers:, path globs never match.
+    #[test]
+    fn uc_of_picks_only_uc_shaped_tokens_off_covers() {
+        let t = "# covers: a.sh b/*.sh UC-covers-01 UC-plan-02\n";
+        assert_eq!(uc_of(t), ["UC-covers-01", "UC-plan-02"]);
+        assert!(uc_of("# covers: a.sh *.sh\n").is_empty());
+        assert!(uc_of("# tier: T1\n").is_empty());
+        // UC-01 is 5 bytes: "UC-" + "*" + "-DD" needs >= 6, so this does NOT match, exactly
+        // as the bash glob `UC-*-[0-9][0-9]` would not match it either.
+        assert!(!is_uc_token("UC-01"));
+        assert!(is_uc_token("UC--00"));
+        assert!(is_uc_token("UC-covers-01"));
+        assert!(!is_uc_token("UCX-01-02"));
+    }
+
+    // Mirrors spira/test-testenv-guard.sh Part A: testenv_unmet is the AND/NOT composition
+    // of "declares requires: testenv" with the caller's own (in_testenv, in_container) pair.
+    #[test]
+    fn testenv_unmet_is_the_and_not_of_requires_and_evidence() {
+        let reqs = requires_of("# requires: testenv\n");
+        assert!(testenv_unmet(&reqs, false, false));
+        assert!(testenv_unmet(&reqs, true, false));
+        assert!(testenv_unmet(&reqs, false, true));
+        assert!(!testenv_unmet(&reqs, true, true));
+        let other = requires_of("# requires: claude\n");
+        assert!(!testenv_unmet(&other, false, false));
+        let none = requires_of("# tier: T1\n");
+        assert!(!testenv_unmet(&none, false, false));
     }
 }

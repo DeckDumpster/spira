@@ -1,7 +1,10 @@
-//! The boundary `real.rs` implements: the `lib.sh` repository/trigger seam (`spira_home_repo`,
-//! `repo_root`, `spira_landref`, `spira_lane_admitted`, `spira_open_trigger_count`,
-//! `detect_invalid_closed` — none of those six are ported, DESIGN.md "Non-goals"), `bd`
-//! directly (the bash calls `bd create`, not `bdq` — DESIGN.md "Decisions"), and `git log`.
+//! The boundary `real.rs` implements: the `lib.sh` repository/trigger seam
+//! (`spira_home_repo`, `repo_root`, `spira_landref`, `spira_lane_admitted`,
+//! `spira_open_trigger_count` — none of those four are ported, DESIGN.md "Non-goals"),
+//! `bd` directly (the bash calls `bd create`, not `bdq` — DESIGN.md "Decisions"), and `git
+//! log`. `detect_invalid_closed` WAS one of the six (DESIGN.md's "Non-goals" predates it);
+//! it moved to `strand::detectors` (wave 4.29, sp-8ofmt) and `real.rs` now calls that
+//! in-process instead of the lib.sh seam.
 
 use std::path::{Path, PathBuf};
 

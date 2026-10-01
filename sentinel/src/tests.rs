@@ -253,11 +253,19 @@ pub fn run_mode<'a>(
     );
     let rc = s.run();
     if lc == Lifecycle::Off {
-        // OFF never invokes spira-lc — not directly, and no child is handed a path to it.
+        // OFF never invokes spira-lc for a lifecycle-gated decision — not directly, and no
+        // child is handed a path to it. The one standing exception (sp-ki12s precedent,
+        // predates the OFF/ON split): mark_queue_waiters/close_landed_queue_waiters/
+        // park_branch_collisions (waiters.rs, detect.rs) dual-write a `hold`/`unhold` verb
+        // call unconditionally, in both lc modes — `spira-lc` itself answers "cannot tell"
+        // from `off()` without touching a socket when the switch is off, exactly the `||
+        // true` shape lib.sh used before any of this was ported, so it costs nothing and
+        // changes nothing in OFF. Every OTHER spira-lc verb (`list`, `show`, `event`, …)
+        // stays gated on `self.lc` and must never appear here.
         assert_eq!(
-            r.count(|s| s.prog == "spira-lc"),
+            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold"))),
             0,
-            "OFF called spira-lc: {:#?}",
+            "OFF called spira-lc for something other than the dual-written hold/unhold: {:#?}",
             r.lines()
         );
         // ...and OFF is SPIRA_LIFECYCLE_ENFORCE=0 alone: no child is handed a tool path.
@@ -352,7 +360,15 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     // CK7 runs in-process now (wave 4.27): `fayth_ready` reaches `spira-claim` directly;
     // left unstubbed here it answers "0" (the fixture's point is the ONE bulk read, not
     // a summon), so CHECK 7 contributes no action this pass.
-    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None), 0);
+    //
+    // Queue waiters (wave 4.28, sp-fbqsv) are native now too and run unconditionally
+    // inside the full pass; disabled here (empty label) because this test is about the
+    // store snapshot, not queue-wait behavior — that is waiters.rs's own module tests
+    // plus test-dependents.sh.
+    assert_eq!(
+        run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_QUEUE_WAIT_LABEL", "")], None),
+        0
+    );
     assert_eq!(r.count(|s| is_bd(s, "list")), 1, "{:#?}", r.lines());
     assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
     // lifecycle_enforce OFF (the default here): no lifecycle read at all — run_mode asserts
@@ -362,10 +378,12 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
     assert!(sink.has("ACT escalated 1 stranded item(s)"));
-    // the seams ran in order — CK7 is no longer one of them (in-process now).
+    // No seams run at all any more: CK7 (wave 4.27) and CHECK 3b's
+    // mark_queue_waiters/close_landed_queue_waiters (wave 4.28) are both native now.
     let seams: Vec<String> = r.calls.borrow().iter().filter_map(seam_name).collect();
-    assert_eq!(seams, vec!["sentinel-check3b"]);
-    // strand 2 acts (1 progress); CHECK 8 does not fire with ready plan work.
+    assert_eq!(seams, Vec::<String>::new());
+    // strand's 2 acts (1 progress) are the only ones; CHECK 8 does not fire with ready
+    // plan work.
     assert!(
         sink.has("spira: pass complete — 2 action(s), 1 progress"),
         "{}",
@@ -1331,9 +1349,28 @@ fn check5_cap_bounds_filing() {
 // ---------------------------------------------------------------------------------------
 // CHECK 6b / 7c / 7d (audit)
 
+/// CHECK 7c/7d are native now (wave 4.28, sp-fbqsv): no more bash seams S7-S10 to mock by
+/// name, so this drives the real underlying calls (bd list/show/label, git, spira-config,
+/// sending) instead. Three collisions, one of each disposition (FREED/UNLABELED/parked) —
+/// the same three dispositions the old canned-text version asserted.
 #[test]
 fn sending_7c_7d_count_what_their_seams_report() {
+    const COLLISIONS: &str = r#"[
+      {"id":"sp-c1","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c1"]},
+      {"id":"sp-c2","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-other"]},
+      {"id":"sp-c3","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]}
+    ]"#;
     let (w, r, sink, clock) = setup("tail");
+    // `detect_branch_collisions` checks `<root>/.git` exists on the real filesystem before
+    // trusting a repo's worktree listing — give it a real directory to find.
+    let repo_root = w.dir.join("repo");
+    std::fs::create_dir_all(repo_root.join(".git")).unwrap();
+    let repo_root_str = repo_root.to_string_lossy().into_owned();
+    let wt = |id: &str| w.run.join("worktree").join(id).to_string_lossy().into_owned();
+    let porcelain = format!(
+        "worktree {}\nHEAD a1\nbranch refs/heads/spira/sp-c1\n\nworktree {}\nHEAD a2\nbranch refs/heads/spira/sp-other\n\nworktree {}\nHEAD a3\nbranch refs/heads/spira/sp-c3\n",
+        wt("sp-h1"), wt("sp-h2"), wt("sp-h3")
+    );
     r.on(|s| {
         if s.prog == "sending" && s.args == ["--skip-queue"] {
             ok("SENT sp-a  spira spira/sp-a  merged\nFAILED sp-b  refused\n")
@@ -1348,14 +1385,69 @@ fn sending_7c_7d_count_what_their_seams_report() {
             None
         }
     });
-    r.on(|s| match seam_name(s).as_deref() {
-        Some("sentinel-detect-unclaimable") => ok("UNCLAIMABLE sp-u — no persona\n"),
-        Some("sentinel-detect-collisions") => {
-            ok("COLLISION sp-c1\nCOLLISION sp-c2\nCOLLISION sp-c3\n")
+    // detect_branch_collisions's own bd list query (--exclude-type disambiguates it from
+    // the pass's bulk `list --all`, already mocked broadly by `standard()`/`store_is`).
+    r.on(move |s| {
+        if is_bd(s, "list") && s.args.iter().any(|a| a == "--exclude-type") {
+            ok(COLLISIONS)
+        } else {
+            None
         }
-        Some("sentinel-park-collisions") => ok("FREED sp-c1\nUNLABELED sp-c2\n"),
+    });
+    r.on(move |s| {
+        if s.prog == "spira-config" && s.args == ["repo", "root", "spira"] {
+            ok(&format!("{repo_root_str}\n"))
+        } else {
+            None
+        }
+    });
+    let porcelain2 = porcelain.clone();
+    r.on(move |s| {
+        if s.prog != "git" {
+            return None;
+        }
+        if s.args.iter().any(|a| a == "worktree") {
+            ok(&porcelain2)
+        } else if s.args.iter().any(|a| a == "status" || a == "log") {
+            // "status": every holder's worktree is clean. "log": no inherited commits on
+            // sp-c2's holder worktree.
+            ok("")
+        } else {
+            None
+        }
+    });
+    // bd label list <id>: only sp-c2 still carries the inherited branch: label.
+    r.on(|s| {
+        if is_bd(s, "label") && s.args.get(3).map(String::as_str) == Some("list") {
+            return match s.args.get(4).map(String::as_str) {
+                Some("sp-c2") => ok("branch:spira/sp-other\nspira\n"),
+                _ => ok(""),
+            };
+        }
+        None
+    });
+    // bd show: sp-h1 (sp-c1's holder) is closed; sp-h3 (sp-c3's holder) is open (never
+    // freed); sp-other (sp-c2's inherited-from bead) exists.
+    r.on(|s| {
+        if !is_bd(s, "show") {
+            return None;
+        }
+        if s.args.iter().any(|a| a == "sp-h1") {
+            ok(r#"[{"id":"sp-h1","status":"closed"}]"#)
+        } else if s.args.iter().any(|a| a == "sp-h3") {
+            ok(r#"[{"id":"sp-h3","status":"open"}]"#)
+        } else if s.args.iter().any(|a| a == "sp-other") {
+            ok(r#"[{"id":"sp-other","status":"open"}]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| match s.prog.as_str() {
+        "sending" if s.args.first().map(String::as_str) == Some("holder-alive") => fail(1), // nobody home
+        "sending" if s.args.first().map(String::as_str) == Some("destroy-worktree") => ok(""),
         _ => None,
     });
+    r.on(|s| if s.prog == "unclaimable.py" { ok("UNCLAIMABLE sp-u — no persona\n") } else { None });
     run_mode(
         &w,
         &r,
@@ -1372,16 +1464,23 @@ fn sending_7c_7d_count_what_their_seams_report() {
         "spira=abc\n"
     );
     let file = r
-        .find(|s| seam_name(s).as_deref() == Some("sentinel-file-unclaimable"))
+        .find(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file"))
         .unwrap();
-    assert_eq!(
-        file.stdin.unwrap(),
-        b"UNCLAIMABLE sp-u \xe2\x80\x94 no persona".to_vec()
-    );
+    assert_eq!(file.stdin.unwrap(), b"no persona".to_vec());
     assert!(sink.has("ACT surfaced 1 unclaimable ready bead(s)"));
+    assert!(sink.has(&format!("COLLISION sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
+    assert!(sink.has(&format!("FREED sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
+    assert!(sink.has("UNLABELED sp-c2 spira spira/sp-other sp-other"));
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
     assert!(sink.has("CHECK7d: 1 bead(s) whose recorded branch is held by another bead's worktree — parking with needs-operator")); // literal-ok: asserts log text built from the fixture
+    assert!(
+        r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "add", "sp-c3", "needs-operator"]) // literal-ok: the fixture's SPIRA_ASK_LABEL default
+            .is_some(),
+        "sp-c3 (no free, no inherited label) is parked: {:#?}",
+        r.lines()
+    );
+    assert!(r.find(|s| s.prog == "sending" && s.args.first().map(String::as_str) == Some("destroy-worktree")).is_some());
 
     // the next audit finds every base unchanged and does not walk
     let sink2 = FakeSink::default();
@@ -1893,7 +1992,13 @@ fn open_children_world(r: &FakeRunner) {
 fn full_pass_marks_open_children_from_the_snapshot_without_bd_children() {
     let (w, r, sink, clock) = setup("oc-full");
     open_children_world(&r);
-    let extra = [("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children")];
+    // Queue waiters (wave 4.28, sp-fbqsv) disabled here: this test is about CHECK 3c, not
+    // CHECK 3b, and the fixture's `list` mock answers any query the same way, which would
+    // otherwise feed every id in it to the (unrelated) queue-wait decision too.
+    let extra = [
+        ("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children"),
+        ("SPIRA_QUEUE_WAIT_LABEL", ""),
+    ];
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &extra, None);
     assert_eq!(r.count(|s| is_bd(s, "children")), 0, "{:#?}", r.lines());
     assert_eq!(r.count(|s| is_bd(s, "list")), 1, "still one store read per pass");

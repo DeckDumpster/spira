@@ -57,6 +57,24 @@ impl<'a> SeamRunner<'a> {
     }
 }
 
+/// Run a harness binary by bare name (sp-gypjk's convention), relaying its stdout through
+/// `out.raw` line by line exactly as a lib.sh seam call's own log lines were, and its
+/// stderr (if any) as one line — `gh-intake closeout`/`unlanded-scan` (sp-j3fim, "wave
+/// 4.31") are the first callers that need this outside the seam itself.
+fn run_bin(out: &Reporter, bin: &str, args: &[&str]) {
+    let mut c = command(bin);
+    c.args(args);
+    let (_rc, stdout, stderr) = run_capture(c);
+    for line in String::from_utf8_lossy(&stdout).lines() {
+        out.raw(line);
+    }
+    let stderr = String::from_utf8_lossy(&stderr);
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        out.raw(&format!("{bin}: {stderr}"));
+    }
+}
+
 /// Resolve settings and every repository through lib.sh (seam S1): the one resolver.
 pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRow>), String> {
     let sr = SeamRunner { home: home.to_path_buf(), out };
@@ -410,14 +428,23 @@ impl<'a> Lib for RealLib<'a> {
     fn requeues_of(&self, id: &str) -> u32 {
         self.seam.call(Op::RequeuesOf, &[id]).1.trim().parse().unwrap_or(0)
     }
+    /// lib.sh `conflict_reopen_note` — ported natively (sp-81t4d, "wave 4.17": family R;
+    /// was the S10 seam). `args`: `<repo> <br> <base> <name> <conflicts> <actor> [rq_n]`,
+    /// exactly `push.rs`'s own call shape.
     fn conflict_note(&self, args: &[&str]) -> String {
-        self.seam.call(Op::ConflictNote, args).1
+        let get = |i: usize| args.get(i).copied().unwrap_or("");
+        let rq_n = args.get(6).copied().filter(|s| !s.is_empty()).unwrap_or("1");
+        crate::land_verify::conflict_reopen_note(&RealGit, Path::new(get(0)), get(1), get(2), get(3), get(4), get(5), rq_n)
     }
+    /// lib.sh `other_beads_on_conflicts` — ported natively (sp-81t4d, "wave 4.17": family
+    /// R; was the S10 seam).
     fn other_beads(&self, repo: &Path, branch: &str, base: &str, files: &str) -> String {
-        self.seam.call(Op::OtherBeads, &[&p(repo), branch, base, files]).1
+        crate::land_verify::other_beads_on_conflicts(&RealGit, repo, branch, base, files)
     }
+    /// lib.sh `pr_merged` — ported natively (sp-81t4d, "wave 4.17": family R; was the S11
+    /// seam). Reaches the network directly (`ghq`), the same program the seam shelled into.
     fn pr_merged(&self, repo: &Path, branch: &str) -> bool {
-        self.seam.call(Op::PrMerged, &[&p(repo), branch]).0 == 0
+        crate::land_verify::pr_merged(repo, branch)
     }
     fn note(&self, id: &str, text: &str) {
         self.seam.call(Op::Note, &[id, text]);
@@ -426,9 +453,18 @@ impl<'a> Lib for RealLib<'a> {
         let (rc, err) = self.seam.call(Op::Push, &[&p(tree), remote, refspec]);
         if rc == 0 { Ok(()) } else { Err(err) }
     }
+    /// lib.sh `land_subject` — ported natively (sp-81t4d, "wave 4.17": family R; was the
+    /// S14 seam). The bead's title comes from this crate's own bd read, not a second
+    /// subprocess.
     fn land_subject(&self, id: &str) -> String {
-        let s = self.seam.call(Op::LandSubject, &[id]).1;
-        if s.is_empty() { format!("spira: land {id}") } else { s }
+        let title = self
+            .beads
+            .show(&[id.to_string()])
+            .ok()
+            .and_then(|rows| rows.into_iter().next())
+            .map(|r| crate::land_verify::collapse_title(&r.title))
+            .unwrap_or_default();
+        crate::land_verify::land_subject(id, &title)
     }
     fn deliver_delivered(&self, id: &str, sha: &str) {
         self.seam.call(Op::DeliverDelivered, &[id, sha]);
@@ -439,17 +475,27 @@ impl<'a> Lib for RealLib<'a> {
     fn deliver_returned(&self, id: &str, reason: &str) {
         self.seam.call(Op::DeliverReturned, &[id, reason]);
     }
+    /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
+    /// moved natively into gh-intake; this crate shells to the compiled binary by bare
+    /// name now, the same way `land_mark` shells to `landing-pass` itself rather than the
+    /// lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
+    /// through this pass's own `Reporter::raw`, exactly as the seam's own log lines were.
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
-        self.seam.call(Op::Closeout, &[id, sha, &p(repo)]);
+        run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
+    /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
+    /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
-        self.seam.call(Op::CloseOnLand, &[id, sha]);
+        let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
+        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.run, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
     }
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
     }
+    /// `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31"): `_gh_unlanded_scan` moved
+    /// natively into gh-intake; no lib.sh snippet backs this any more.
     fn gh_unlanded_scan(&self) {
-        self.seam.call(Op::GhUnlandedScan, &[]);
+        run_bin(self.seam.out, "gh-intake", &["unlanded-scan"]);
     }
     /// lib.sh `spira_ask_refresh_loop` — ported natively (sp-31hjr; was the S19 seam).
     /// Deduped on the bead id ("<id> refresh cap"), not the branch — one alert per cap.
@@ -709,6 +755,36 @@ impl Git for RealGit {
         let mut c = git(repo);
         c.args(["rev-list", "--count", range]);
         git_out(c).and_then(|s| s.trim().parse().ok())
+    }
+    /// lib.sh `landed`/`landed_sha`'s one search: `--grep` only narrows to candidates; the
+    /// subject is what `land_verify::landed` trusts (law-a-matcher-reads-code-not-prose).
+    fn log_grep(&self, repo: &Path, grep: &str, refs: &[String]) -> Option<String> {
+        if refs.is_empty() {
+            return None;
+        }
+        let mut c = git(repo);
+        c.args(["log", "--format=%H%x09%s", &format!("--grep={grep}"), "-F"]);
+        c.args(refs);
+        git_out(c)
+    }
+    fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["merge-base", a, b]);
+        git_out(c).map(|s| s.trim().to_string())
+    }
+    fn log_subjects(&self, repo: &Path, range: &str, paths: &[&str]) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["log", "--format=%s", range]);
+        if !paths.is_empty() {
+            c.arg("--");
+            c.args(paths);
+        }
+        git_out(c)
+    }
+    fn commit_body(&self, repo: &Path, sha: &str) -> Option<String> {
+        let mut c = git(repo);
+        c.args(["log", "-1", "--format=%B", &format!("{sha}^{{commit}}")]);
+        git_out(c)
     }
     fn fetch(&self, repo: &Path, remote: &str) {
         let mut c = git(repo);

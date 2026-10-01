@@ -30,13 +30,11 @@
 # by grepping markdown. Per-suite header presence stays a bash string check:
 # it is about a suite file, not the catalogue.
 #
-# covers: spira/suite-covers.sh spira/plan-lint.sh spira/suite-coverage-json.sh docs/test-plan/*.toml
+# covers: spira/plan-lint.sh spira/suite-coverage-json.sh docs/test-plan/*.toml suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
-[ -r "$HERE/suite-covers.sh" ] || { printf 'plan-lint: suite-covers.sh is missing\n' >&2; exit 1; }
-. "$HERE/suite-covers.sh"
 DOCS_DIR="$ROOT/docs/test-plan"
 
 # catalogue_ucs -> "<uc-id> <tier>" one pair per line, from every docs/test-plan/*.toml
@@ -50,8 +48,8 @@ catalogue_ucs() {
 # lint_one <file> <relpath> <catalogue-file> -> 0 clean, 1 violation (prints each to stdout)
 lint_one() {
     local f="$1" rel="$2" cat="$3" tier cov uc bad=0
-    tier="$(suite_tier_of "$f")"
-    cov="$(suite_covers_of "$f")"
+    tier="$(suite-select header tier "$f")"
+    cov="$(suite-select header covers "$f")"
     if [ -z "$tier" ]; then
         printf '%s: missing # tier:\n' "$rel"
         bad=1
@@ -60,7 +58,7 @@ lint_one() {
         printf '%s: missing # covers:\n' "$rel"
         bad=1
     fi
-    for uc in $(suite_uc_of "$f"); do
+    for uc in $(suite-select header uc "$f"); do
         if ! grep -qxF "$uc" <(cut -d' ' -f1 "$cat" 2>/dev/null); then
             printf '%s: unknown UC id on # covers: %s\n' "$rel" "$uc"
             bad=1
@@ -100,7 +98,7 @@ case "${1:-}" in
     suites=("$HERE"/test-*.sh)
     _covered_ucs=""
     for f in "${suites[@]}"; do
-        _covered_ucs="$_covered_ucs $(suite_uc_of "$f")"
+        _covered_ucs="$_covered_ucs $(suite-select header uc "$f")"
     done
     _gaps=0
     while read -r _uc _tier; do

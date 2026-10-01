@@ -34,6 +34,20 @@ pub enum Mode {
     /// `ck7_summon_pass` alone, under its own flock — lib.sh's shim target, and the way a
     /// bash fixture now proves the lock serializes two real contenders without a database.
     SummonPass,
+    /// lib.sh `mark_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
+    MarkQueueWaiters,
+    /// lib.sh `close_landed_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
+    CloseLandedQueueWaiters,
+    /// lib.sh `detect_unclaimable_ready`'s shim target (wave 4.28, sp-fbqsv).
+    DetectUnclaimable,
+    /// lib.sh `file_unclaimable_incidents`'s shim target; stdin is detect's output
+    /// (wave 4.28, sp-fbqsv).
+    FileUnclaimable,
+    /// lib.sh `detect_branch_collisions`'s shim target (wave 4.28, sp-fbqsv).
+    DetectCollisions,
+    /// lib.sh `park_branch_collisions`'s shim target; stdin is detect's output
+    /// (wave 4.28, sp-fbqsv).
+    ParkCollisions,
 }
 
 impl Mode {
@@ -45,6 +59,12 @@ impl Mode {
             Some("--audit") => Mode::Audit,
             Some("--open-children") => Mode::OpenChildren { dry: false },
             Some("--land-escalate") => Mode::LandEscalate,
+            Some("--mark-queue-waiters") => Mode::MarkQueueWaiters,
+            Some("--close-landed-queue-waiters") => Mode::CloseLandedQueueWaiters,
+            Some("--detect-unclaimable") => Mode::DetectUnclaimable,
+            Some("--file-unclaimable") => Mode::FileUnclaimable,
+            Some("--detect-collisions") => Mode::DetectCollisions,
+            Some("--park-collisions") => Mode::ParkCollisions,
             _ => Mode::Pass,
         }
     }
@@ -353,6 +373,37 @@ impl<'a> Sentinel<'a> {
             Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
             Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
             Mode::SummonPass => self.ck7_summon_pass(),
+            Mode::MarkQueueWaiters => {
+                self.mark_queue_waiters(None);
+                0
+            }
+            Mode::CloseLandedQueueWaiters => {
+                self.close_landed_queue_waiters();
+                0
+            }
+            Mode::DetectUnclaimable => {
+                self.h.print(&self.detect_unclaimable_ready(None));
+                0
+            }
+            Mode::FileUnclaimable => {
+                self.file_unclaimable_incidents(&read_stdin());
+                0
+            }
+            Mode::DetectCollisions => {
+                let cs = self.detect_branch_collisions();
+                let text: Vec<String> = cs.iter().map(crate::detect::Collision::line).collect();
+                self.h.print(&text.join("\n"));
+                0
+            }
+            Mode::ParkCollisions => {
+                let input = read_stdin();
+                let cs: Vec<crate::detect::Collision> =
+                    input.lines().filter_map(crate::detect::Collision::parse_line).collect();
+                let outs = self.park_branch_collisions(&cs);
+                let text: Vec<String> = outs.iter().map(crate::detect::ParkOutcome::line).collect();
+                self.h.print(&text.join("\n"));
+                0
+            }
             _ => self.full(),
         }
     }
@@ -507,14 +558,11 @@ impl<'a> Sentinel<'a> {
         self.phase("CHECK6");
         self.check6();
         self.phase("CHECK3b");
-        self.seam(
-            "check3b",
-            seams::CHECK3B,
-            None,
-            Io::Inherit,
-            Io::Inherit,
-            true,
-        );
+        // S4 is retired (wave 4.28, sp-fbqsv): mark_queue_waiters/close_landed_queue_waiters
+        // are native now, reading the pass's own broad ready snapshot already in memory
+        // rather than round-tripping through $SPIRA_READY_SNAPSHOT's temp file.
+        self.mark_queue_waiters(snap.ready.as_deref());
+        self.close_landed_queue_waiters();
         // CHECK 3c from the snapshot: one walk in memory, never one `bd children` per
         // candidate (sp-du8bv: that loop was 91% of every pass).
         self.phase("CHECK3c");
@@ -547,7 +595,7 @@ impl<'a> Sentinel<'a> {
         }
         self.check6b();
         if !self.cfg.skip_reclaim {
-            self.check7c();
+            self.check7c(snap);
             self.check7d();
         }
         let _ = std::fs::write(
@@ -762,6 +810,15 @@ pub fn is_aeon_cmdline(c: &[u8]) -> bool {
     let argv0 = c.split(|b| *b == 0).next().unwrap_or(&[]);
     let argv0 = String::from_utf8_lossy(argv0);
     String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+}
+
+/// All of stdin, for the standalone CLI modes whose shim passes along another function's
+/// output (`file_unclaimable_incidents "$(cat)"`, `park_branch_collisions "$(cat)"`).
+pub fn read_stdin() -> String {
+    use std::io::Read;
+    let mut s = String::new();
+    let _ = std::io::stdin().read_to_string(&mut s);
+    s
 }
 
 pub fn append_line(p: &Path, line: &str) {

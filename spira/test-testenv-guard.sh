@@ -3,9 +3,11 @@
 # its own code runs when SPIRA_IN_TESTENV is not 1, and proceeds when it is.
 #
 # WHAT THIS PROVES (sp-nxvjm)
-#   A. suite_testenv_unmet (suite-covers.sh): true only for a suite declaring
-#      `# requires: testenv` with SPIRA_IN_TESTENV unset or not "1"; false once
-#      SPIRA_IN_TESTENV=1, and false for a suite with no such declaration.
+#   A. testenv_unmet's predicate logic (requires: testenv AND NOT(in_testenv AND
+#      in_container), including the "variable alone is forgeable" case) is
+#      suite-select/src/header.rs's own unit tests now (wave 4.36, sp-bobsp:
+#      testenv_unmet_is_the_and_not_of_requires_and_evidence) — `cargo test -p
+#      suite-select`, not this suite.
 #   B. testlib.sh: sourcing it from a fixture suite that declares `# requires: testenv`
 #      refuses (non-zero exit, "Bail out!") before the suite's own body runs — proved by
 #      a stub systemctl on PATH recording zero invocations — and, with SPIRA_IN_TESTENV=1,
@@ -21,84 +23,13 @@
 # host-reason: fixture suites are invoked directly with `bash`, never through
 # testenv-batch.sh or a container — that IS the scenario under test (run by hand).
 # tier: T1
-# covers: spira/testlib.sh spira/suite-covers.sh spira/testenv-guard.sh testenv/src/*
+# covers: spira/testlib.sh spira/testenv-guard.sh testenv/src/* suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
-. "$HERE/suite-covers.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
-
-# ---------------------------------------------------------------------------
-# PART A — suite_testenv_unmet predicate, no subprocess needed.
-# ---------------------------------------------------------------------------
-cat > "$TMP/fx-req-testenv.sh" <<'EOF'
-#!/usr/bin/env bash
-# requires: testenv
-exit 0
-EOF
-cat > "$TMP/fx-req-other.sh" <<'EOF'
-#!/usr/bin/env bash
-# requires: bash
-exit 0
-EOF
-cat > "$TMP/fx-no-req.sh" <<'EOF'
-#!/usr/bin/env bash
-# covers: some/file.sh
-exit 0
-EOF
-
-# NOT run in a subshell: testlib's pass/fail counters are plain shell globals, and a
-# subshell's increments vanish when it exits, letting a "bad" inside it print to stdout
-# while tl_summary never sees it — a false green.  SPIRA_IN_TESTENV is toggled in-place
-# instead (set to empty rather than unset, since `set -u` is active).
-SPIRA_IN_TESTENV=
-if suite_testenv_unmet "$TMP/fx-req-testenv.sh"; then
-    ok "A1: requires:testenv + no SPIRA_IN_TESTENV -> unmet"
-else
-    bad "A1: requires:testenv + no SPIRA_IN_TESTENV -> unmet" "returned false"
-fi
-
-SPIRA_IN_TESTENV=1
-if suite_testenv_unmet "$TMP/fx-req-testenv.sh"; then
-    bad "A2: requires:testenv + SPIRA_IN_TESTENV=1 -> met" "returned true"
-else
-    ok "A2: requires:testenv + SPIRA_IN_TESTENV=1 -> met"
-fi
-
-# A-FORGED. The aeon that wrote this guard set SPIRA_IN_TESTENV=1 by hand ON THE HOST
-# (2026-09-25 08:03 UTC) and stopped the live bead database. The variable is forgeable, so
-# the guard also needs structural evidence of the container. Simulate "not in a container"
-# by overriding the detection FUNCTION — not by setting a variable, which is the point.
-eval "_real_$(declare -f suite_in_container)"
-suite_in_container() { return 1; }
-SPIRA_IN_TESTENV=1
-if suite_testenv_unmet "$TMP/fx-req-testenv.sh"; then
-    ok "A-FORGED: SPIRA_IN_TESTENV=1 on a host (no container evidence) -> still refused"
-else
-    bad "A-FORGED: SPIRA_IN_TESTENV=1 on a host (no container evidence) -> still refused" "returned met"
-fi
-eval "$(declare -f _real_suite_in_container | sed '1s/_real_suite_in_container/suite_in_container/')"
-if suite_in_container; then
-    ok "A-CONTAINER: this suite runs inside the test container (positive control)"
-else
-    bad "A-CONTAINER: this suite runs inside the test container (positive control)" "no /run/.containerenv or /.dockerenv"
-fi
-
-SPIRA_IN_TESTENV=
-if suite_testenv_unmet "$TMP/fx-req-other.sh"; then
-    bad "A3: requires:bash (no testenv token) -> never unmet" "returned true"
-else
-    ok "A3: requires:bash (no testenv token) -> never unmet"
-fi
-
-if suite_testenv_unmet "$TMP/fx-no-req.sh"; then
-    bad "A4: no requires: line -> never unmet" "returned true"
-else
-    ok "A4: no requires: line -> never unmet"
-fi
-unset SPIRA_IN_TESTENV
 
 # ---------------------------------------------------------------------------
 # Shared fixture plumbing for parts B and C: a stub systemctl on PATH that

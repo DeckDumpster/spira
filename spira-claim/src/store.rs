@@ -166,6 +166,15 @@ impl Store {
         c.arg("list");
         run(c, self.timeout).map_err(|e| format!("spira-lc list: {e}"))
     }
+
+    /// lib.sh `release_claim <id>` (wave 4.19, row I): `bd assign <id> ""`. `bd assign`
+    /// refuses to overwrite another actor's LIVE in_progress claim unless forced, which is
+    /// the safety property — this runs from callers racing a database aeons are claiming
+    /// out of concurrently, and the primitive that loses a race harmlessly is the correct
+    /// one. Never `bd unclaim --force`, which by definition does not lose that race.
+    pub fn release_claim(&self, id: &str) -> Result<(), String> {
+        self.bd(&["assign", id, ""]).map(|_| ())
+    }
 }
 
 pub fn sql_quote(s: &str) -> String {

@@ -211,9 +211,9 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_AEON_N", i.to_string());
 
-    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key(&home, "sentinel", "timer"));
+    push(&mut out, "SP_SENTINEL_TIMER", unit_active_key("sentinel", "timer"));
     push(&mut out, "SP_SENTINEL_AGE", age_of(&run.join("sentinel.log")));
-    push(&mut out, "SP_OPS_TIMER", unit_active_key(&home, "ops", "timer"));
+    push(&mut out, "SP_OPS_TIMER", unit_active_key("ops", "timer"));
 
     let mut ops_age = age_of(&run.join("ops.log"));
     if let Ok(entries) = std::fs::read_dir(&run) {
@@ -228,7 +228,7 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_OPS_AGE", ops_age);
 
-    push(&mut out, "SP_AURON_TIMER", unit_active_key(&home, "auron", "timer"));
+    push(&mut out, "SP_AURON_TIMER", unit_active_key("auron", "timer"));
     push(&mut out, "SP_AURON_AGE", age_of(&run.join("auron.status")));
     let auron_status = run.join("auron.status");
     if auron_status.is_file() {
@@ -397,8 +397,15 @@ fn gate_run_scan(run: &Path) -> (Vec<(String, String, String, String)>, usize, u
     (rows, n, live)
 }
 
-fn unit_active_key(home: &Path, fayth: &str, kind: &str) -> String {
-    let unit = io::lib_call(home, "spira_unit", &[fayth, kind]).unwrap_or_else(|| "?".to_string());
+/// `spira_unit` (wave 4.10, sp-wqj3o: family C7's home is `spira_config::unit`, read
+/// in-process here instead of shelling into lib.sh via `io::lib_call` — the one bash bridge
+/// this bead names explicitly). `SPIRA_INSTANCE`/`SPIRA_SYSTEMCTL` are read straight from
+/// the environment, the same per-copy-fact reading every other direct env reader in this
+/// crate already does (see `capacity_pause_file`, above).
+fn unit_active_key(fayth: &str, kind: &str) -> String {
+    let instance = std::env::var("SPIRA_INSTANCE").unwrap_or_default();
+    let systemctl = std::env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
+    let unit = spira_config::unit::resolve_unit(fayth, kind, &instance, &systemctl);
     match io::unit_active(&unit) {
         Some(true) => "1".to_string(),
         Some(false) => "0".to_string(),
@@ -694,14 +701,22 @@ pub fn dup_refs_keys() -> Kv {
 }
 
 // ---------------------------------------------------------------------------------------
-// livelock_keys — delegates the detection itself to lib.sh (`detect_livelocked`,
-// `detect_invalid_closed`); this only classifies refusal-vs-empty and formats rows.
+// livelock_keys — delegates the detection itself to `strand::detectors` (wave 4.29,
+// sp-8ofmt: `detect_livelocked`, `detect_invalid_closed`, called in-process instead of
+// through the `lib.sh` bridge); this only classifies refusal-vs-empty and formats rows.
 // ---------------------------------------------------------------------------------------
+
+/// `strand::config::Config`, resolved fresh per call — a probe call is already a fresh
+/// process-equivalent pass (DESIGN.md: data fetching goes through `io` each time), and
+/// `groomer`/`maechen-trigger` resolve their own copy the same independent way.
+fn strand_cfg() -> strand::config::Config {
+    strand::config::Config::resolve(&strand::config::Live::load())
+}
 
 pub fn livelock_keys() -> Kv {
     let mut out = Kv::new();
-    let home = io::home_dir();
-    let ll_out = io::lib_call(&home, "detect_livelocked", &[]).unwrap_or_default();
+    let cfg = strand_cfg();
+    let ll_out = strand::detectors::detect_livelocked(&cfg);
     if ll_out.is_empty() && io::bdjson(&["list", "--limit", "1"]).is_none() {
         push(&mut out, "SP_LIVELOCKED", "?");
         push(&mut out, "SP_LIVELOCK_N", "?");
@@ -723,12 +738,12 @@ pub fn livelock_keys() -> Kv {
         push(&mut out, "SP_LIVELOCK_N", n.to_string());
     }
 
-    // `detect_invalid_closed` (lib.sh) emits three row shapes: `INVALID-CLOSED <id> — ...`,
+    // `detect_invalid_closed` emits three row shapes: `INVALID-CLOSED <id> — ...`,
     // `UNFILED-FOLLOW <id> — ...` and `ALLOWED-IC <id> — ...` (a bead on
     // $SPIRA_RUN/invalid-closed.allow, reported but not counted as either). None of the
     // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
-    let ic_out = io::lib_call(&home, "detect_invalid_closed", &[]).unwrap_or_default();
+    let ic_out = strand::detectors::detect_invalid_closed(&cfg);
     if ic_out.is_empty() && io::bdjson(&["list", "--status", "closed", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");

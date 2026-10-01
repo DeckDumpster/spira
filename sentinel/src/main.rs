@@ -10,11 +10,21 @@
 //!                            production probe with --dry-run)
 //!   sentinel --land-escalate land_escalate alone, stdin `<why>\n<evidence>` (sp-31hjr;
 //!                            the real-sender suites' way in, no whole pass)
+//!   sentinel --mark-queue-waiters / --close-landed-queue-waiters
+//!                            CHECK 3b's two halves alone (wave 4.28, sp-fbqsv): the
+//!                            lib.sh shims' way in for suites that call them directly
+//!   sentinel --detect-unclaimable / --file-unclaimable
+//!                            CHECK 7c alone; --file-unclaimable reads detect's output
+//!                            on stdin (wave 4.28, sp-fbqsv)
+//!   sentinel --detect-collisions / --park-collisions
+//!                            CHECK 7d alone; --park-collisions reads detect's output
+//!                            on stdin (wave 4.28, sp-fbqsv)
 
 mod audit;
 mod cfg;
 mod check4;
 mod check5;
+mod detect;
 mod dispatch;
 mod fresh;
 mod host;
@@ -28,6 +38,7 @@ mod seams;
 mod store;
 mod summon;
 mod temps;
+mod waiters;
 #[cfg(test)]
 mod tests;
 

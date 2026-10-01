@@ -107,11 +107,17 @@ echo "counter labels deleted — structural properties:"
 # restates the implementation agrees with it about everything, including its mistakes.
 #
 # So: run the query against a fixture holding one of each event shape and assert the NUMBER.
-body_sql="$(sed -n '/^_attempts_sql_query()/,/^}/p' "$HERE/lib.sh" 2>/dev/null)"
-is "attempts counts an aeon claim" "1" \
-   "$(grep -c "event_type='claimed'" <<<"$body_sql" || true)"
-is "attempts also counts a hand-driven in_progress transition" "1" \
-   "$(grep -c 'status_changed' <<<"$body_sql" || true)"
+#
+# _attempts_sql_query (lib.sh) was PORTED to spira-claim at wave 4.18 (sp-sn1re):
+# attempts_of is now a one-line shim onto `spira-claim attempts`, so there is no SQL
+# source text left in lib.sh to grep for 'claimed'/'status_changed' — the same body-text
+# trap this comment already warns about, now for the shim itself. The NUMBER this section
+# promised to assert instead of the query string is covered behaviourally: an aeon claim
+# (event_type='claimed') by test-attempts-sql.sh's b4 ("three claims, never closed" = 3
+# attempts) and a hand-driven in_progress transition (event_type='status_changed') by its
+# sp-ev2 ("one in_progress transition is one attempt"); both event kinds are matched
+# explicitly in spira-claim's own EventKind::of (events.rs), unit-tested by
+# `cargo test -p spira-claim events::tests`.
 
 # THE b1..b8 FIXTURE (hand-rolled dolt schema, one row per attempt-counting scenario:
 # harness-requeue vs genuine failure, thrash pairs, unjudged deaths) moved to

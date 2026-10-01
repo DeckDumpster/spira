@@ -66,22 +66,12 @@ printf '@end\0'
 /// are one-line shims onto `sentinel --world-gate`/`--summon`/`--summon-argv`/
 /// `--named-unit-stop`, kept only for `aeon --escape`'s seam and `acceptance-local.sh`.
 
-/// S4 — CHECK 3b: queue-mode dependents. (CHECK 3c, open children, is Rust: open_children.rs.)
-pub const CHECK3B: &str = r#"mark_queue_waiters 2>/dev/null || true
-close_landed_queue_waiters 2>/dev/null || true"#;
+// S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
+// detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.
 
 /// S5 — spira_event: four NUL-terminated fields on stdin (kind, target, title, detail).
 pub const EVENT: &str = r#"IFS= read -r -d '' _k; IFS= read -r -d '' _t; IFS= read -r -d '' _ti; IFS= read -r -d '' _de
 spira_event "$_k" "$_t" "$_ti" "$_de" || true"#;
-
-/// S7 — CHECK 7c's detector.
-pub const DETECT_UNCLAIMABLE: &str = "detect_unclaimable_ready 2>/dev/null";
-/// S8 — one incident per unclaimable bead; S7's output on stdin.
-pub const FILE_UNCLAIMABLE: &str = r#"file_unclaimable_incidents "$(cat)""#;
-/// S9 — CHECK 7d's detector.
-pub const DETECT_COLLISIONS: &str = "detect_branch_collisions 2>/dev/null";
-/// S10 — free, un-label or park each collision; S9's output on stdin.
-pub const PARK_COLLISIONS: &str = r#"park_branch_collisions "$(cat)""#;
 
 #[cfg(test)]
 mod tests {
@@ -90,14 +80,7 @@ mod tests {
     /// G9: no seam interpolates a Rust value; every one is a constant with the prelude.
     #[test]
     fn seams_are_constants_with_the_prelude() {
-        for body in [
-            CHECK3B,
-            EVENT,
-            DETECT_UNCLAIMABLE,
-            FILE_UNCLAIMABLE,
-            DETECT_COLLISIONS,
-            PARK_COLLISIONS,
-        ] {
+        for body in [EVENT] {
             let s = script(body);
             assert!(
                 s.starts_with("set -uo pipefail\n. \"$SENTINEL_LIB\" >/dev/null 2>&1 || exit 97")

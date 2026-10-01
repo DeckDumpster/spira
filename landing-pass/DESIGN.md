@@ -282,7 +282,7 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 8. **Queue step, after**: `queue late: <line>`.
 9. `skew refresh <path>` for push and queue(forge) repositories (queue.local's base is
    local; its refresh belongs to land-local, as before).
-10. `_gh_unlanded_scan` (seam). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
+10. `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31" — `_gh_unlanded_scan` moved natively into gh-intake, no seam call left). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
 11. The pass-complete line; status file; remove `landing.run`/`landing.containers`.
 
 ### 4.1 Per repository: enumerate, scan, order
@@ -427,15 +427,15 @@ are values like any other.
 | S7 | ~~`ask_*`~~ | **retired (sp-31hjr):** `spira_ask_rebase_loop` / `_red_recurring` / `_rebase_refused` / `_budget_deferred` are native — `Lib::ask_*` in `real.rs`, text in `ask.rs`. `landing-pass ask-rebase-loop …` drives the first standalone. |
 | S8 `rebase` / `recut` | `rebase_branch`, `recut_onto` (+ their globals) | scratch worktrees, salvage, formatter |
 | S9 `requeue` | `bump_requeue <id> merge-conflict`; `requeues_of <id>` | events table |
-| S10 `conflict_note` / `other_beads` | `conflict_reopen_note`, `other_beads_on_conflicts` | shared with `pr_branch` (sp-t4y60; was pr-pass-branch.sh) |
-| S11 `pr_merged` | `pr_merged <repo> <br>` | ghq wiring |
+| S10 | ~~`conflict_note` / `other_beads`~~ | **retired (sp-81t4d, "wave 4.17": family R):** `conflict_reopen_note`/`other_beads_on_conflicts` are native — `Lib::conflict_note`/`Lib::other_beads` in `real.rs`, logic in `land_verify.rs`. `landing-pass conflict-note …`/`landing-pass other-beads …` are lib.sh's own shims now. |
+| S11 | ~~`pr_merged`~~ | **retired (sp-81t4d):** native — `Lib::pr_merged` calls `land_verify::pr_merged` (still shells to `ghq` directly, just not through this seam). `landing-pass pr-merged <repo> <br>` is the shim target. |
 | S12 `note` | `bdq note <id> <text>` | bdq retry/czar/fixture |
 | S13 `push` | `spira_git_push <tree> -q <remote> <refspec>` (stderr returned) | GitHub App credentials |
-| S14 `land_subject` | `land_subject <id>` | merge subject with title |
+| S14 | ~~`land_subject`~~ | **retired (sp-81t4d):** native — `Lib::land_subject` reads the title through this crate's own `Beads::show`, no second bd subprocess. `landing-pass land-subject <id>` is the shim target. |
 | S15 `deliver_*` | `spira-lc deliver push-delivered / push-requeued / push-returned` (lc-delivery.sh's `lc_deliver_push_*` until sp-arpjt) | delivery CAS |
-| S16 `closeout` | `gh_issue_closeout`; `bead_close_on_land` | issue close + close + reap |
+| S16 | ~~`closeout` / `close_on_land`~~ | **both retired:** `gh_issue_closeout` moved natively into gh-intake (sp-j3fim, "wave 4.31") — this crate shells to `gh-intake closeout <id> <sha> <repo>` by bare name now, stdout relayed through `Reporter::raw`. `bead_close_on_land` is native too (sp-81t4d, "wave 4.17": family R) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `sending reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target for the latter. |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
-| S18 `gh_unlanded_scan` | `_gh_unlanded_scan` | GitHub asks |
+| S18 | ~~`gh_unlanded_scan`~~ | **retired (sp-j3fim, wave 4.31):** `_gh_unlanded_scan` moved natively into gh-intake; this crate shells to `gh-intake unlanded-scan` by bare name now. |
 | S19 | ~~`ask_refresh_loop`~~ (sp-t4y60) | **retired (sp-31hjr):** `spira_ask_refresh_loop` is native — `Lib::ask_refresh_loop` in `real.rs`, text in `ask.rs`; `needs_refresh`'s own escalation, distinct from the rebase-loop ask. |
 | S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `spira-lc deliver pr-merged` / `pr-closed` (lc-delivery.sh's `lc_deliver_pr_*` until sp-arpjt) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
 | S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |
@@ -447,11 +447,20 @@ mapping (`spira_gate_outcome`/`spira_gate_blames_branch`), `gate_fits`, `gate_lo
 deferral files, the prune, `halt`, `sweep-red`, the verdict-cache prune, the push merge loop
 (git), the pr pass's per-repo walk (§8 D1-D2) **and now its per-branch worker too**
 (`pr_branch`, sp-t4y60: rebase-or-reopen, confine, needs_refresh, land_pr's dedup scan and PR
-open/create/automerge via `forge`, the merged/closed exits). What stayed bash for pr_branch
-is exactly what stayed bash for push/hold: `rebase_branch`, `bead_reopen`, `spira_event`,
-the asks, `conflict_reopen_note`/`other_beads_on_conflicts`, `spira_git_push`, and (new
-here) `lc_deliver_pr_merged`/`lc_deliver_pr_closed` — reached through S8–S10, S15's pr-mode
-siblings (S20), S21, exactly as §6's mechanism intends.
+open/create/automerge via `forge`, the merged/closed exits), **and now landed verification
+too** (sp-81t4d, "wave 4.17" — family R: `land_subject`, `landed`/`landed_sha`,
+`bead_cited_commit_on_base`, `pr_merged`, `conflict_reopen_note`/`other_beads_on_conflicts`,
+`bead_is_work_type`, `bead_close_on_land` — `land_verify.rs`; `content_landed` was already
+native). What stayed bash for pr_branch (and for push/hold) is now only: `rebase_branch`,
+`bead_reopen`, `spira_event`, the asks, `spira_git_push`, and `lc_deliver_pr_merged`/
+`lc_deliver_pr_closed` — reached through S8, S9, S12, S13, S15's pr-mode siblings (S20),
+S21, exactly as §6's mechanism intends. `landed`/`landed_sha` have no production caller
+left anywhere in the tree (census.sh/slay.sh, the two bash scripts the wave4 inventory
+named, are themselves already retired) — they are ported and shimmed anyway, because the
+family's decomposition names them and three test suites
+(`test-landed-search.sh`/`test-land-commit-contract.sh`) exercise the bash function
+directly; a caller that needs them in-process can call `land_verify::landed` instead of
+shelling to the binary.
 
 ## 7. Cutover
 
@@ -692,9 +701,12 @@ build or locate the binary — the testenv container already builds the workspac
   grep found that was no longer true: this crate's own seam calls were the ONLY caller of
   `spira_land_noverdict`, `spira_ask_rebase_loop`, `_red_recurring`, `_rebase_refused`,
   `_budget_deferred` and `_refresh_loop` (`land_escalate` likewise, sentinel's only caller —
-  moved there, not here). `ask_already_open` stays bash: the GitHub-closeout family (AB,
-  not yet in this wave) still calls it directly, so it is the one function in the group left
-  as-is rather than shimmed. The mail-composition text moved into `src/ask.rs` (pure,
+  moved there, not here). `ask_already_open` stayed bash at the time: the GitHub-closeout
+  family (AB, not yet in this wave) still called it directly, so it was the one function in
+  the group left as-is rather than shimmed. (Closed out by sp-j3fim, "wave 4.31": AB moved
+  into gh-intake with its own third native copy of `ask_already_open`, and lib.sh's bash
+  form retired outright — no caller was left anywhere.) The mail-composition text moved
+  into `src/ask.rs` (pure,
   unit-tested against the bash output byte-for-byte except `bead_context`'s `P9999` vs
   python's `PNone` on a priority-less bead, named there); the subprocess wiring (`bd`,
   `git`, `mail`) moved into `src/real.rs`. `landing-pass noverdict …` and `landing-pass
@@ -702,6 +714,29 @@ build or locate the binary — the testenv container already builds the workspac
   functions directly (test-noverdict-class.sh, test-rebase-escalation.sh) keep driving the
   real send path rather than a Rust-level fake — the same shape as sentinel's
   `--land-escalate`.
+
+- **D17 — landed verification, revisited (sp-81t4d, "wave 4.17" — family R).** `land_subject`,
+  `landed`/`landed_sha`, `bead_cited_commit_on_base`, `pr_merged`,
+  `conflict_reopen_note`/`other_beads_on_conflicts`, `bead_is_work_type` and
+  `bead_close_on_land` move into `src/land_verify.rs`; `content_landed` was already native
+  (`Git::content_landed`). Callers outside this crate (`aeon` for
+  `bead_cited_commit_on_base`/`other_beads_on_conflicts`/`bead_is_work_type`, `batcher-cut`
+  for `land_subject`) are untouched — each already shells into the bash *name*, which is now
+  a one-line shim onto this crate's own binary (`landing-pass land-subject` /
+  `landing-pass other-beads` / …), exactly how `land_mark`/`land_state` shims serve every
+  caller but this crate since sp-cnnt6. `sending`'s own `Git::landed`/`Git::content_landed`
+  (`sending/src/git.rs`, predating this bead) are a pre-existing, independent native copy —
+  left alone; unifying the two is not this bead's scope. **Kept, not dropped:** `landed`'s
+  optional `<repo>` argument (defaults to `repo_root()`) — the shim computes the default in
+  bash (where `repo_root` already lives) and always hands the binary an explicit path, so
+  no caller's behaviour changes even though the binary itself requires the argument.
+  **Three-way status read for `bead_close_on_land`** (`closed` / `submitted` / neither) uses
+  `BeadRow::raw_status` + the submitted label directly, not `BeadRow::status` (which already
+  folds a submitted label into `"closed"` for every other reader) — the two states must stay
+  distinguishable here or a bead already closed for real would be re-closed.
+  `bead_close_on_land`'s reap step calls `sending reap-landed-branch` as a direct
+  subprocess (bare name on PATH), the same program `spira_reap_landed_branch`'s own shim
+  already execs — never a second lib.sh seam hop.
 
 ## 9. Lifecycle switch
 

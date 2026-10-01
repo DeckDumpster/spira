@@ -14,8 +14,17 @@
 //!
 //!   strand aeon-alive <pidfile>            strand aeons-live-total
 //!   strand aeon-count <fayth> [exclude]     strand aeons-live-lanes
+//!
+//! lib.sh family T-b (wave 4.29, sp-8ofmt) — the stranded-work detectors its now-shimmed
+//! functions call, plus the direct target for `groomer`/`maechen-trigger`/`cockpit-collect`
+//! (they use this crate in-process instead):
+//!
+//!   strand detect-livelocked               strand detect-false-blockers <ids…>
+//!   strand detect-landed-but-open          strand detect-incident-needs-builder
+//!   strand detect-closed-unlanded-states    strand detect-invalid-closed
+//!   strand all-partition-members
 
-use strand::{check, config, probe};
+use strand::{check, config, detectors, probe};
 
 use std::io::Read;
 
@@ -126,6 +135,95 @@ fn cmd_aeons_live_lanes(args: Vec<String>) -> i32 {
     0
 }
 
+/// Every detector prints its rows newline-terminated (bash: one `printf '...\n'` per row)
+/// and nothing at all when there are none — never a bare trailing blank line.
+fn print_lines(s: &str) {
+    if !s.is_empty() {
+        println!("{s}");
+    }
+}
+
+/// `detect_livelocked` (lib.sh family T-b, wave 4.29, sp-8ofmt): one `LIVELOCK …` line per row.
+fn cmd_detect_livelocked(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("detect-livelocked");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print_lines(&detectors::detect_livelocked(&cfg));
+    0
+}
+
+/// `detect_landed_but_open` (lib.sh): one `STATE … landed-but-open …` line per row.
+fn cmd_detect_landed_but_open(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("detect-landed-but-open");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print_lines(&detectors::detect_landed_but_open(&cfg));
+    0
+}
+
+/// `detect_closed_unlanded_states` (lib.sh): `closed-no-branch` / `closed-never-landed
+/// conflict|batch-ready` STATE lines.
+fn cmd_detect_closed_unlanded_states(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("detect-closed-unlanded-states");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print_lines(&detectors::detect_closed_unlanded_states(&cfg));
+    0
+}
+
+/// `detect_false_blockers <blocker-ids…>` (lib.sh took one positional carrying a
+/// whitespace-separated list; the shim passes `"$@"` through, so every argv word is
+/// rejoined with a space — the same string the bash function would have received).
+fn cmd_detect_false_blockers(args: Vec<String>) -> i32 {
+    let cfg = config::Config::resolve(&config::Live::load());
+    let blockers = args.join(" ");
+    print_lines(&detectors::detect_false_blockers(&cfg, &blockers));
+    0
+}
+
+/// `detect_incident_needs_builder` (lib.sh): dies when `SPIRA_INCIDENT_LABEL` is unset,
+/// exactly as the bash `${SPIRA_INCIDENT_LABEL:?…}` did.
+fn cmd_detect_incident_needs_builder(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("detect-incident-needs-builder");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    match detectors::detect_incident_needs_builder(&cfg) {
+        Ok(s) => {
+            print_lines(&s);
+            0
+        }
+        Err(e) => {
+            check::warn(&format!("FATAL {e}"));
+            1
+        }
+    }
+}
+
+/// `detect_invalid_closed` (lib.sh): `INVALID-CLOSED`/`UNFILED-FOLLOW`/`ALLOWED-IC` lines.
+fn cmd_detect_invalid_closed(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("detect-invalid-closed");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print_lines(&detectors::detect_invalid_closed(&cfg));
+    0
+}
+
+/// `all_partition_members` (lib.sh): every open/in_progress bead any partition's own
+/// labels match, every exclusion dropped.
+fn cmd_all_partition_members(args: Vec<String>) -> i32 {
+    if !args.is_empty() {
+        return die("all-partition-members");
+    }
+    let cfg = config::Config::resolve(&config::Live::load());
+    print_lines(&detectors::all_partition_members(&cfg));
+    0
+}
+
 fn main() {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     if let Some(verb) = argv.first().cloned() {
@@ -135,6 +233,13 @@ fn main() {
             "aeon-count" => Some(cmd_aeon_count(rest())),
             "aeons-live-total" => Some(cmd_aeons_live_total(rest())),
             "aeons-live-lanes" => Some(cmd_aeons_live_lanes(rest())),
+            "detect-livelocked" => Some(cmd_detect_livelocked(rest())),
+            "detect-landed-but-open" => Some(cmd_detect_landed_but_open(rest())),
+            "detect-closed-unlanded-states" => Some(cmd_detect_closed_unlanded_states(rest())),
+            "detect-false-blockers" => Some(cmd_detect_false_blockers(rest())),
+            "detect-incident-needs-builder" => Some(cmd_detect_incident_needs_builder(rest())),
+            "detect-invalid-closed" => Some(cmd_detect_invalid_closed(rest())),
+            "all-partition-members" => Some(cmd_all_partition_members(rest())),
             _ => None,
         };
         if let Some(rc) = rc {
