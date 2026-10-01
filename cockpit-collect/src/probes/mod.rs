@@ -14,7 +14,15 @@ mod unsent;
 use crate::io;
 use crate::quoting::{sanitize, sanitize_title};
 use serde_json::Value;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// The capacity pause file's path (wave 4.26: family K's home is `aeon::capacity`, read
+/// in-process here instead of shelling into lib.sh via `io::lib_call`). `SPIRA_CAPACITY_PAUSE`
+/// is a lib.sh literal, never a spira-config registry key, so an operator override is read
+/// straight from the environment — the same ad hoc path every other reader of this key uses.
+fn capacity_pause_file(run: &Path) -> PathBuf {
+    std::env::var("SPIRA_CAPACITY_PAUSE").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| run.join("capacity-pause"))
+}
 
 pub type Kv = Vec<(String, String)>;
 
@@ -163,11 +171,12 @@ pub fn now_keys() -> Kv {
             push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());
 
             // aeon_fuse_minutes (wave 4.34, sp-27d3d): ported to aeon::trace, called
-            // in-process. `base` (family W, base refs — not yet ported) still reaches
-            // lib.sh's spira_landref through the generic bridge; the commit-ahead
-            // timestamp and everything else is native.
+            // in-process. `base` (family W, base refs) is in-process too now (sp-k6lku,
+            // "wave 4.13") through the same `io::repo_registry()` unsent.rs/queue.rs
+            // already use, not the generic lib.sh bridge — the commit-ahead timestamp and
+            // everything else is native.
             let wt = run.join("worktree").join(bead);
-            let commit_ahead_ts = io::lib_call(&home, "spira_landref", &[&repo_name])
+            let commit_ahead_ts = spira_config::repos::landref(&io::repo_registry(), &repo_name)
                 .filter(|b| !b.is_empty())
                 .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
                 .and_then(|t| t.trim().parse::<i64>().ok());
@@ -266,20 +275,29 @@ pub fn now_keys() -> Kv {
     }
     push(&mut out, "SP_AEONS", live_aeons.to_string());
 
-    let cap_at: i64 = io::lib_call(&home, "capacity_pause_until", &[])
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
     let cap_now = io::now();
-    if cap_at > cap_now {
-        push(&mut out, "SP_CAPACITY_PAUSED", "1");
-        push(&mut out, "SP_CAPACITY_LEFT", (cap_at - cap_now).to_string());
-        push(&mut out, "SP_CAPACITY_AT", fmt_hm(cap_at));
-        push(&mut out, "SP_CAPACITY_WHY", io::lib_call(&home, "capacity_pause_why", &[]).unwrap_or_default());
-    } else {
-        push(&mut out, "SP_CAPACITY_PAUSED", "0");
-        push(&mut out, "SP_CAPACITY_LEFT", "0");
-        push(&mut out, "SP_CAPACITY_AT", "");
-        push(&mut out, "SP_CAPACITY_WHY", "");
+    match aeon::capacity::pause_state(&capacity_pause_file(&run)) {
+        aeon::capacity::PauseState::Paused { until, why } if until > cap_now => {
+            push(&mut out, "SP_CAPACITY_PAUSED", "1");
+            push(&mut out, "SP_CAPACITY_LEFT", (until - cap_now).to_string());
+            push(&mut out, "SP_CAPACITY_AT", fmt_hm(until));
+            push(&mut out, "SP_CAPACITY_WHY", why);
+        }
+        aeon::capacity::PauseState::Unknown => {
+            // Fail closed (wave4-decomposition.md (c)3): an unreadable or corrupt pause
+            // file must never render as "0"/open on the dashboard — `?`, never a claim
+            // this probe cannot back.
+            push(&mut out, "SP_CAPACITY_PAUSED", "?");
+            push(&mut out, "SP_CAPACITY_LEFT", "?");
+            push(&mut out, "SP_CAPACITY_AT", "?");
+            push(&mut out, "SP_CAPACITY_WHY", "?");
+        }
+        _ => {
+            push(&mut out, "SP_CAPACITY_PAUSED", "0");
+            push(&mut out, "SP_CAPACITY_LEFT", "0");
+            push(&mut out, "SP_CAPACITY_AT", "");
+            push(&mut out, "SP_CAPACITY_WHY", "");
+        }
     }
 
     out
@@ -515,8 +533,15 @@ pub fn slots_keys() -> Kv {
         .unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_READY", ready);
 
-    let cap_at: i64 = io::lib_call(&home, "capacity_pause_until", &[]).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-    push(&mut out, "SP_SLOTS_CAPACITY_PAUSED", if cap_at > io::now() { "1" } else { "0" });
+    let run = io::run_dir();
+    let cap_now = io::now();
+    let capacity_paused = match aeon::capacity::pause_state(&capacity_pause_file(&run)) {
+        aeon::capacity::PauseState::Paused { until, .. } if until > cap_now => "1",
+        // Fail closed: never "0"/open on an unreadable file (wave4-decomposition.md (c)3).
+        aeon::capacity::PauseState::Unknown => "?",
+        _ => "0",
+    };
+    push(&mut out, "SP_SLOTS_CAPACITY_PAUSED", capacity_paused);
     out
 }
 

@@ -3,6 +3,7 @@
 //! use).
 
 use crate::ports::World;
+use std::cell::OnceCell;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -10,11 +11,23 @@ use std::process::{Command, Stdio};
 pub struct Real {
     pub home: PathBuf,
     pub db: Option<String>,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
     pub fn new(home: PathBuf, db: Option<String>) -> Real {
-        Real { home, db }
+        Real { home, db, registry: OnceCell::new() }
+    }
+
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"), built once per process, in-process — no `bash -c '. lib.sh; <fn>'`
+    /// subprocess per `repo_names`/`repo_land`/`repo_root`/`home_repo` call, and no
+    /// one-shot snapshot subprocess either: `from_env` resolves
+    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
+    /// conf.sh does, in-process, when this (bare, unit-launched) process's own
+    /// environment lacks them (sp-z3eyk).
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
     }
 
     fn bd(&self) -> Command {
@@ -48,20 +61,19 @@ impl Real {
 
 impl World for Real {
     fn repo_names(&self) -> Vec<String> {
-        self.seam("repo_names", &[]).lines().map(String::from).collect()
+        self.registry().names()
     }
 
     fn repo_land(&self, name: &str) -> String {
-        self.seam("repo_land \"$1\"", &[name])
+        self.registry().land(name)
     }
 
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
-        let out = self.seam("repo_root \"$1\" 2>/dev/null", &[name]);
-        if out.is_empty() { None } else { Some(PathBuf::from(out)) }
+        self.registry().root(name).map(PathBuf::from)
     }
 
     fn home_repo(&self) -> String {
-        self.seam("spira_home_repo", &[])
+        self.registry().home_repo().to_string()
     }
 
     fn bd_gate_list_json(&self) -> String {

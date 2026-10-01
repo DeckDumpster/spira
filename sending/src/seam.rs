@@ -9,10 +9,13 @@
 //! from `real.rs` now, not through here. Base (family W — `spira_landref`/`spira_landrefs`/
 //! `ref_remote`) moved too (sp-o88bx, "wave 4.12"): `real.rs`'s `base()` calls
 //! `spira_config::repos` directly, no `Op::Base` seam left to retire-rather-than-port
-//! around. What is LEFT going through bash is only what has not moved yet: context
-//! (family U, repo registry), the bead's own record and the two bd questions the liveness
-//! witness still needs (`spira_bead_status`/`spira_db_reachable`, family A/B) — and the
-//! label mutations, which are one-line bdq calls not worth a Rust reimplementation yet.
+//! around. Context's own repository list (family U: `spira_repos`/`repo_root`/
+//! `repo_land_queued`) moved the same way (sp-k6lku, "wave 4.13") — `Real::new` builds it
+//! from `repo_registry()`, not this seam. What is LEFT going through bash is only what has
+//! not moved yet: context's plain settings, the bead's own record and the two bd questions
+//! the liveness witness still needs (`spira_bead_status`/`spira_db_reachable`, family
+//! A/B) — and the label mutations, which are one-line bdq calls not worth a Rust
+//! reimplementation yet.
 
 /// Precedes a seam's machine-readable answer on stdout; everything before it is lib.sh's
 /// own output (its `log` lines, salvage notes), passed through to ours.
@@ -50,18 +53,16 @@ progress() { log "$*"; }
 act() { log "$*"; }
 "#;
 
-/// Settings, then one record per repository: `name FIELD has-root FIELD root FIELD queued`.
+/// Settings only — the repository list (family U: `spira_repos`/`repo_root`/
+/// `repo_land_queued`) moved in-process (sp-k6lku, "wave 4.13"): `Real::new` builds it from
+/// `repo_registry()` after this seam call instead of this script's own loop, which paid one
+/// extra lib.sh-shim subprocess fork per mapped repository.
 const CONTEXT: &str = r#"printf '\036'
 printf 'run=%s\0' "${SPIRA_RUN:-}"
 printf 'reaplog=%s\0' "${SPIRA_REAPLOG:-}"
 printf 'submitted=%s\0' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"
 printf 'gh=%s\0' "${SPIRA_GH:-gh}"
 printf 'gh_timeout=%s\0' "${GH_TIMEOUT:-120}"
-for __n in $(spira_repos); do
-    __h=1; __p="$(repo_root "$__n" 2>/dev/null)" || { __h=0; __p=""; }
-    __q=0; repo_land_queued "$__n" && __q=1
-    printf 'repo=%s\035%s\035%s\035%s\0' "$__n" "$__h" "$__p" "$__q"
-done
 exit 0
 "#;
 

@@ -93,17 +93,22 @@ fn extract_braced(s: &str, start: usize) -> Option<&str> {
 /// in [A-Z_]*` guard — a directory holding `.gitkeep` or similar must not become a spurious
 /// key.
 ///
-/// A MISSING OR EMPTY DIRECTORY is not an error: it returns an empty registry. The caller
-/// (`resolve`) still has the ~29 hand-written keys to fall back to, so a release that has not
-/// shipped `conf.d` yet (or a test fixture that only cares about those) keeps working rather
-/// than refusing outright — `conf-gen.sh` itself is the one place absence is fatal (it would
-/// otherwise regenerate an empty allowlist).
+/// A MISSING DIRECTORY IS A NAMED ERROR, NOT AN EMPTY REGISTRY (sp-1cdgq round 3). It used
+/// to return `Ok(empty)` so the caller (`resolve`) could fall back to its ~29 hand-written
+/// keys alone — meant for "a release that has not shipped `conf.d` yet" but in practice hit
+/// by a test fixture's `--home` that simply forgot to copy `conf.d` in, twice
+/// (sp-8qm8g, then sp-1cdgq itself): the whole generic registry pass silently resolved to
+/// nothing, with no error anywhere, and a config knob the fixture's own `export` believed it
+/// had set (`SPIRA_MAX_AEONS`, `SPIRA_SUMMON_JITTER`) never reached `Conf`. Production always
+/// ships `conf.d` beside the release's binaries, so this changes nothing real — it only turns
+/// a silently-degraded test fixture into a named failure the first time it is run, which is
+/// the whole point. An EXISTING-but-empty directory is still not an error (conf-gen.sh itself
+/// is the one place that is fatal, since it would otherwise regenerate an empty allowlist);
+/// only a directory `read_dir` cannot open at all — missing, or something else wrong with it —
+/// is refused.
 pub fn load(dir: &Path) -> Result<BTreeMap<String, RegistryKey>, String> {
     let mut out = BTreeMap::new();
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Ok(out),
-    };
+    let entries = fs::read_dir(dir).map_err(|_| format!("no config registry at {}", dir.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = entry.path();
@@ -214,11 +219,28 @@ mod tests {
         }
     }
 
+    /// sp-1cdgq round 3: a missing directory is now a NAMED error, not a silent empty
+    /// registry — this is the test that used to assert the opposite. Two base reds
+    /// (sp-8qm8g, sp-1cdgq) came from a test fixture's `--home` lacking `conf.d`, and
+    /// `resolve()` quietly proceeding on the ~29 hand-written keys alone masked both until
+    /// something that specifically needed a registry-resolved key went looking.
     #[test]
-    fn missing_directory_is_an_empty_registry_not_an_error() {
+    fn missing_directory_is_a_named_error_not_an_empty_registry() {
         let dir = testkit::TempDir::new("spira-config-registry-missing");
         let missing = dir.join("does-not-exist");
-        assert_eq!(load(&missing).unwrap(), BTreeMap::new());
+        let err = load(&missing).unwrap_err();
+        assert_eq!(err, format!("no config registry at {}", missing.display()));
+    }
+
+    /// An EXISTING but empty directory is still not an error — a release that genuinely
+    /// ships zero registry files (or a fixture that only cares about the hand-written keys)
+    /// keeps working. Only "cannot even read this path" is refused.
+    #[test]
+    fn existing_empty_directory_is_still_an_empty_registry() {
+        let dir = testkit::TempDir::new("spira-config-registry-empty");
+        let empty = dir.join("conf.d");
+        std::fs::create_dir_all(&empty).unwrap();
+        assert_eq!(load(&empty).unwrap(), BTreeMap::new());
     }
 
     #[test]

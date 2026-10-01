@@ -57,6 +57,16 @@ git -C "$REPO" add f; git -C "$REPO" commit -qm seed; git -C "$REPO" push -q ori
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh,
+# test-aeon-elastic-concurrency.sh, ...): since wave 4.8 (sp-mz7dn), aeon resolves every
+# RETIRED_SNAPSHOT_VARS key (SPIRA_SUMMON_JITTER among them, sp-1cdgq) through the in-process
+# spira_config::resolve() registry pass (aeon::conf::merge_resolved_config), which derives
+# conf.d from THIS --home, not — the way the old bash seam's conf.sh derived it — from
+# wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves the whole generic
+# registry to nothing, so SPIRA_SUMMON_JITTER=0 (exported above) never reaches aeon's Conf
+# despite being set in the environment: the jitter falls back to its 20s default regardless,
+# reopening sp-1cdgq's own regression through the config seam instead of the bash allowlist.
+cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"

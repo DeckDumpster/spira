@@ -115,7 +115,14 @@ pub fn bootstrap_config() {
             (!p.is_empty()).then(|| p.to_string())
         })
         .and_then(|p| std::fs::read_to_string(p).ok());
-    let max_aeons = resolved.as_ref().map(|r| r.get("SPIRA_MAX_AEONS").to_string()).unwrap_or_default();
+    // SPIRA_MAX_AEONS is never a key `resolve()` itself computes (unlike SPIRA_REPO_MAP,
+    // which IS one of its hand-written keys, just withheld from EXPORT_KEYS) — it is host
+    // policy read in-process, straight off this process's own environment, exactly like
+    // `home_repo_default`/`repo` above. `resolved.get("SPIRA_MAX_AEONS")` always answered
+    // "" (the key is simply absent from `values`), so the task-pool ceiling this cached for
+    // [`max_aeons`] — and therefore `slots_keys`' `SP_SLOTS_CEILING` — was silently 0
+    // whenever `bootstrap_config` ran, regardless of what the operator actually set.
+    let max_aeons = env_map.get("SPIRA_MAX_AEONS").cloned().unwrap_or_default();
     if let Some(r) = &resolved {
         repo_registry_env.insert("SPIRA_HOME_REPO".into(), r.get("SPIRA_HOME_REPO").to_string());
         repo_registry_env.insert("SPIRA_REPO_MAP".into(), r.get("SPIRA_REPO_MAP").to_string());
@@ -153,15 +160,17 @@ fn importable(resolved: &spira_config::resolve::Resolved, already_set: &BTreeMap
 pub fn repo_registry() -> spira_config::repos::Registry {
     let home = home_dir();
     match BOOT.get() {
+        // `Boot.repo_registry_env` already carries all four registry keys, correctly
+        // resolved by `bootstrap_config` (which ran once, in-process, via
+        // `resolve_for_process` — no bash at all) — `Registry::new` here is safe
+        // (`#[doc(hidden)]`, test-only elsewhere) only because this specific caller
+        // supplies an already-complete snapshot, not a bare environment.
         Some(b) => spira_config::repos::Registry::new(b.repo_map_text.as_deref(), &b.repo_registry_env, &home),
-        None => {
-            let env_map: BTreeMap<String, String> = std::env::vars().collect();
-            let map_text = env_map
-                .get("SPIRA_REPO_MAP")
-                .filter(|p| !p.is_empty())
-                .and_then(|p| std::fs::read_to_string(p).ok());
-            spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &home)
-        }
+        // Never ran bootstrap_config (a unit test exercising this function alone):
+        // Registry::from_env resolves the four keys in-process itself, the same one
+        // production door every other crate uses now (sp-k6lku, following the
+        // structural fix for sp-z3eyk).
+        None => spira_config::repos::Registry::from_env(std::env::vars().collect(), &home),
     }
 }
 

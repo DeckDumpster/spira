@@ -98,17 +98,20 @@ fn parse() -> Result<Opts, String> {
 /// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so `push_branch`/
 /// `force_push_branch` can refuse to guess at it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
-    let mode = io::lib_call(env_, "repo_land", [name])?.trim().to_string();
+    // spira_config::repos (sp-k6lku, "wave 4.13") in-process, instead of three separate
+    // repo_land/repo_root/spira_landref bash seam calls.
+    let reg = io::registry(env_);
+    let mode = reg.land(name);
     let land = match mode.as_str() {
         "queue" => Land::Forge,
         "queue.local" => Land::Local,
         other => return Err(format!("{name}: mode is {other:?}, not queue or queue.local")),
     };
-    let path = io::lib_call(env_, "repo_root", [name])?.trim().to_string();
+    let path = reg.root(name).unwrap_or_default();
     if path.is_empty() {
         return Err(format!("{name}: repo_root returned nothing — no repo-map entry"));
     }
-    let base = io::lib_call(env_, "spira_landref", [name])?.trim().to_string();
+    let base = spira_config::repos::landref(&reg, name).unwrap_or_default();
     if base.is_empty() {
         return Err(format!("{name}: spira_landref could not resolve a base ref"));
     }
@@ -178,6 +181,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
+        landing_pass_bin: PathBuf::from("landing-pass"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's

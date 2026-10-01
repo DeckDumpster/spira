@@ -660,13 +660,14 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     let home = fx.root.join("home");
     let out = fx.root.join("calls");
     // A stand-in lib.sh / queue / bd: each records its argv, one per line, and any stdin.
+    // land_mark is NOT here (sp-cnnt6, "wave 4.16" — landing-pass owns that write now, a
+    // stand-in landing-pass binary below records it instead).
     write(
         &home.join("lib.sh"),
         &format!(
             "rec() {{ printf '%s|' \"$@\" >> '{o}'; echo >> '{o}'; }}\n\
              bead_reopen() {{ rec bead_reopen \"$@\"; }}\n\
              bdq() {{ rec bdq \"$@\"; }}\n\
-             land_mark() {{ rec land_mark \"$@\"; }}\n\
              repo_root() {{ printf '/r/%s' \"$1\"; }}\n\
              spira_landref() {{ printf 'local/main'; }}\n",
             o = out.display()
@@ -676,11 +677,14 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     // testkit::write_exe, never write + chmod: a write descriptor held while another test
     // thread forks makes the exec fail with ETXTBSY (testkit/DESIGN.md).
     testkit::write_exe(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
+    let landing_pass = home.join("landing-pass");
+    testkit::write_exe(&landing_pass, &format!("#!/bin/sh\nprintf '%s|' \"$@\" >> '{o}'; echo >> '{o}'\n", o = out.display()));
     let bd = fx.root.join("bd");
     testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
 
-    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into());
+    let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into(), fx.run.clone());
     s.queue_bin = queue;
+    s.landing_pass_bin = landing_pass;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
     s.note("sp-1", "hello");
@@ -688,7 +692,7 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     let calls = std::fs::read_to_string(&out).unwrap();
     assert!(calls.contains(&format!("bead_reopen|sp-1|rebase-conflict|{note}|")), "{calls}");
     assert!(calls.contains("bdq|note|sp-1|hello|"), "{calls}");
-    assert!(calls.contains("land_mark|sp-1|RED|abc|no-rebase@def|"), "{calls}");
+    assert!(calls.contains("mark|sp-1|RED|abc|no-rebase@def|"), "landing-pass mark got the right argv: {calls}");
 
     let info = s.repo("fixture").unwrap();
     assert_eq!((info.path, info.landref.as_str()), (PathBuf::from("/r/fixture"), "local/main"));
@@ -697,6 +701,6 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
 
     assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("in_progress".into()));
     assert_eq!(s.bead_status("sp-unknown"), BeadStatus::Known(String::new()));
-    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into());
+    let dead = LibSeam::new(home, Some(fx.root.to_path_buf()), "/nonexistent/bd".into(), fx.run.clone());
     assert_eq!(dead.bead_status("sp-ip"), BeadStatus::Unreachable, "no positive control, no absence");
 }

@@ -17,11 +17,12 @@
 //! `home/chamber/<fayth>.fayth` test every mode uses). Its partition must have ready
 //! work. The account must have API capacity. The bead must not be poisoned. The fayth's
 //! own FAYTH_MAX_CONCURRENT is enforced by the summoned aeon internally. All of that
-//! still applies — `world_gate`, `capacity_paused`, `fayth_ready` and `summon_argv` are
-//! reached exactly as `summon_fayth` reaches them, through lib.sh (§5's seam), because
-//! they carry real side effects (a capacity probe can clear the pause file; a drain past
-//! its TTL is lifted and logged) that a Rust reimplementation would have to duplicate
-//! exactly or drift from.
+//! still applies — `world_gate` and `fayth_ready`/`summon_argv` are reached exactly as
+//! `summon_fayth` reaches them, through lib.sh (§5's seam), because a drain past its TTL
+//! being lifted and logged is family G's (not this bead's) to port. The capacity check is
+//! in-process now (`capacity::check_and_probe`, wave 4.26 — family K's home is this
+//! crate, and aeon is its probe's one owner), so a probe that clears the pause file early
+//! happens exactly once no matter how many of this crate's own entry points ask.
 //!
 //! WHEN NOT TO USE. Normal scheduling is observable, coordinated, and lower-cost. Reserve
 //! this for a scheduler that is demonstrably failing to summon a fayth that has ready work.
@@ -31,6 +32,7 @@
 
 use std::path::Path;
 
+use crate::conf::Conf;
 use crate::ports::{Env, Exec, Seam};
 use crate::util::{self, Sink};
 
@@ -109,22 +111,30 @@ pub fn build_argv(fayth: &str, home: &Path, aeon_path: &str, summon_argv: &[Stri
 
 /// The full orchestration: gathers the facts through the seam, decides, and (unless
 /// merely deciding) spawns `systemd-run`. Returns the process exit code.
-pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, summon_bin: &str, home: &Path, fayth: &str, dry_run: bool, now: i64) -> i32 {
+pub fn run(seam: &dyn Seam, exec: &dyn Exec, env: &Env, sink: &dyn Sink, conf: &Conf, summon_bin: &str, home: &Path, fayth: &str, dry_run: bool, now: i64) -> i32 {
     let wg = seam.call("_aeon_world_gate", &["escape.sh".to_string()]);
     for l in wg.stderr.lines() {
         sink.out(l);
     }
-    let cp = seam.call("_aeon_capacity_paused", &[]);
-    for l in cp.stderr.lines() {
-        sink.out(l);
+    let cv = crate::capacity::check_and_probe(conf, exec, now);
+    for l in &cv.log {
+        sink.out(&util::log_line(now, l));
     }
+    if cv.clear_file {
+        let _ = std::fs::remove_file(conf.capacity_pause());
+    }
+    let capacity_left = match cv.state {
+        crate::capacity::Paused::Open => None,
+        crate::capacity::Paused::Paused(n) => Some(n.to_string()),
+        crate::capacity::Paused::Unknown => Some("?".to_string()),
+    };
     let fr = seam.call("_aeon_fayth_ready", &[]);
     let path = env.child().get("PATH").cloned().unwrap_or_default();
     let aeon_path = find_on_path(&path, "aeon", |p| is_executable(p));
 
     let facts = Facts {
         world_gate_ok: wg.code == 0,
-        capacity_left: (cp.code == 0).then(|| cp.stdout.clone()),
+        capacity_left,
         ready: if fr.code == 0 { fr.stdout.trim().parse::<i64>().map_err(|_| ()) } else { Err(()) },
         aeon_path: aeon_path.clone(),
     };
@@ -240,8 +250,6 @@ mod tests {
 
     struct FakeSeam {
         world_gate_rc: i32,
-        capacity_paused_rc: i32,
-        capacity_left: String,
         ready: String,
         ready_rc: i32,
         summon_argv: String,
@@ -250,12 +258,22 @@ mod tests {
         fn call(&self, func: &str, _args: &[String]) -> util::Out {
             match func {
                 "_aeon_world_gate" => util::Out { code: self.world_gate_rc, stdout: String::new(), stderr: String::new() },
-                "_aeon_capacity_paused" => util::Out { code: self.capacity_paused_rc, stdout: self.capacity_left.clone(), stderr: String::new() },
                 "_aeon_fayth_ready" => util::Out { code: self.ready_rc, stdout: self.ready.clone(), stderr: String::new() },
                 "_aeon_summon_argv" => util::Out::ok(self.summon_argv.clone()),
                 other => panic!("unexpected seam call: {other}"),
             }
         }
+    }
+
+    /// A `Conf` whose capacity pause file lives under `run` — real-file-driven now that
+    /// family K is in-process (wave 4.26), replacing the old FakeSeam's
+    /// `_aeon_capacity_paused` stub.
+    fn conf_at(run: &Path) -> Conf {
+        let snap = crate::seam::Snapshot {
+            vars: std::collections::BTreeMap::from([("SPIRA_RUN".to_string(), run.display().to_string())]),
+            ..Default::default()
+        };
+        Conf::new(&snap, Path::new("/home/spira"))
     }
     struct FakeExec(std::sync::Mutex<Option<(String, Vec<String>)>>);
     impl Exec for FakeExec {
@@ -278,10 +296,11 @@ mod tests {
         std::fs::write(&aeon_bin, "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&aeon_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let env = env_with_aeon_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, capacity_paused_rc: 1, capacity_left: String::new(), ready: "0".into(), ready_rc: 0, summon_argv: String::new() };
+        let seam = FakeSeam { world_gate_rc: 0, ready: "0".into(), ready_rc: 0, summon_argv: String::new() };
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let rc = run(&seam, &exec, &env, &sink, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
+        let conf = conf_at(&dir);
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 0);
         assert!(exec.0.lock().unwrap().is_none(), "nothing ready must not summon");
         assert!(sink.all().contains("nothing ready in its partition"));
@@ -294,10 +313,11 @@ mod tests {
         std::fs::write(&aeon_bin, "#!/bin/sh\n").unwrap();
         std::fs::set_permissions(&aeon_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
         let env = env_with_aeon_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, capacity_paused_rc: 1, capacity_left: String::new(), ready: "4".into(), ready_rc: 0, summon_argv: "--setenv=HOME=/h\n--property=TimeoutStartSec=3600".into() };
+        let seam = FakeSeam { world_gate_rc: 0, ready: "4".into(), ready_rc: 0, summon_argv: "--setenv=HOME=/h\n--property=TimeoutStartSec=3600".into() };
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let rc = run(&seam, &exec, &env, &sink, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
+        let conf = conf_at(&dir);
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 0);
         let (prog, args) = exec.0.lock().unwrap().clone().expect("summoned");
         assert_eq!(prog, "systemd-run");
@@ -312,10 +332,11 @@ mod tests {
     fn run_halted_does_not_summon_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
         let env = env_with_aeon_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 1, capacity_paused_rc: 1, capacity_left: String::new(), ready: "4".into(), ready_rc: 0, summon_argv: String::new() };
+        let seam = FakeSeam { world_gate_rc: 1, ready: "4".into(), ready_rc: 0, summon_argv: String::new() };
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let rc = run(&seam, &exec, &env, &sink, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
+        let conf = conf_at(&dir);
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
     }
@@ -324,10 +345,13 @@ mod tests {
     fn run_capacity_paused_does_not_summon_and_exits_1() {
         let dir = testkit::TempDir::new("escape-run");
         let env = env_with_aeon_on_path(&dir);
-        let seam = FakeSeam { world_gate_rc: 0, capacity_paused_rc: 0, capacity_left: "120".into(), ready: "4".into(), ready_rc: 0, summon_argv: String::new() };
+        let seam = FakeSeam { world_gate_rc: 0, ready: "4".into(), ready_rc: 0, summon_argv: String::new() };
         let exec = FakeExec(std::sync::Mutex::new(None));
         let sink = util::MemSink::default();
-        let rc = run(&seam, &exec, &env, &sink, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
+        let conf = conf_at(&dir);
+        // In-process now (wave 4.26): a real pause file replaces the old FakeSeam stub.
+        std::fs::write(dir.join("capacity-pause"), "1120 iso why\n").unwrap();
+        let rc = run(&seam, &exec, &env, &sink, &conf, "systemd-run", Path::new("/home/spira"), "stretchy", false, 1000);
         assert_eq!(rc, 1);
         assert!(exec.0.lock().unwrap().is_none());
         assert!(sink.all().contains("account out of capacity for another 120s"));

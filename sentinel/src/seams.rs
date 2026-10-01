@@ -20,8 +20,8 @@ pub fn script(body: &str) -> String {
 }
 
 /// S0 — the context probe. Read-only: the environment conf.sh resolved, the fixed list of
-/// lib.sh variables the binary needs, the roster, and (audit) the repositories. lib.sh's
-/// own chatter goes to stderr so stdout stays the NUL-separated record stream.
+/// lib.sh variables the binary needs, and the roster. lib.sh's own chatter goes to stderr
+/// so stdout stays the NUL-separated record stream.
 ///
 /// UNTIL WAVE 4.8 this `@vars` section was `for _v in $(compgen -v SPIRA_); do ...`: every
 /// SPIRA_* shell variable, exported or not (conf.sh/lib.sh set many without exporting them
@@ -33,6 +33,15 @@ pub fn script(body: &str) -> String {
 /// header (now carrying only `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE`, still lib.sh's
 /// own, not conf.sh's) rather than disappearing outright, so `Context::parse` and every
 /// existing fixture that names the section order keep working unchanged.
+///
+/// The repositories (audit's own need) are ALSO no longer this script's job (sp-k6lku,
+/// "wave 4.13"): once `main::probe` has merged the resolved config above, `Context.vars`
+/// carries `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` correctly
+/// resolved, and `main::resolve_repos` builds a `spira_config::repos::Registry` from that
+/// same snapshot in-process instead of this script shelling into `repo_root`/
+/// `spira_landrefs`/`repo_land_queued`/`spira_repos` (themselves, since sp-37rmg/sp-o88bx,
+/// lib.sh shims that only re-shelled into the `spira-config` binary) once per mapped
+/// repository.
 pub const PROBE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
 env -0
@@ -47,27 +56,17 @@ printf '@partitions\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_partitions)
 printf '@chamber\0'
 while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_names)
-if [ "${SENTINEL_PROBE_REPOS:-0}" = 1 ]; then
-    printf '@repos\0'
-    while IFS= read -r _r; do
-        [ -n "$_r" ] || continue
-        _root="$(repo_root "$_r" 2>/dev/null)" || _root=""
-        _refs=""
-        [ -n "$_root" ] && { _refs="$(spira_landrefs "$_root" 2>/dev/null)" || _refs=""; }
-        _q=0; repo_land_queued "$_r" && _q=1
-        printf '%s\t%s\t%s\t%s\0' "$_r" "$_root" "$_refs" "$_q"
-    done < <(spira_repos 2>/dev/null)
-fi
 printf '@end\0'
 "#;
 
-/// S1 — summon-only's gate: the world (halt/drain) and the account's capacity window.
-/// Exit 0 = go on; the seam logs its own reason for stopping.
+/// S1 — summon-only's gate: the world (halt/drain). Exit 0 = go on; the seam logs its own
+/// reason for stopping. The capacity window used to be checked here too
+/// (`capacity_paused`), but that call also ran `capacity_probe_maybe` and could delete
+/// the pause file — a second probe owner alongside aeon's own (wave4-decomposition.md
+/// (c)3: "if both callers' ports each probe, the cost doubles"). Wave 4.26 moves the
+/// capacity check to `summon.rs`'s own in-process read (`aeon::capacity::pause_state`,
+/// never mutating, never probing) right after this seam call returns.
 pub const SUMMON_GATE: &str = r#"world_gate fleet summon-only || exit 1
-if capacity_paused; then
-    log "summon-only: account out of capacity for another ${SPIRA_CAPACITY_LEFT}s — not summoning"
-    exit 1
-fi
 exit 0"#;
 
 /// S2 — CHECK 7: the lane-then-pool summon loop under summon.lock.

@@ -227,6 +227,16 @@ tmux -L "$HERE_SOCK" kill-server 2>/dev/null || true
 # POSITIVE CONTROL: with no session, here calls start → compose_brief → fails (no brief for
 # a fixture persona with no chamber here). The failure names the missing brief, confirming
 # the code path reaches start.
+#
+# SPIRA_HOME MUST EXIST, even with no chamber under it: conf.sh derives SPIRA_REPO from
+# SPIRA_HOME when `git -C` finds no checkout there, by `cd`-ing to its parent (sp-eekjm/
+# sp-ubcgo's `spira-config resolve --sh-all` now hard-refuses with no SPIRA_REPO at all,
+# where the bash-only conf.sh used to tolerate it) — and `cd nonexistent/..` fails, same as
+# any other missing directory. A SPIRA_HOME that was never mkdir'd broke that derivation
+# before compose_brief ever ran, surfacing as "spira_require: command not found" instead of
+# this test's own "no brief at" (sp-wm2a3). The sibling fixture below (CONV_EMPTY) already
+# gets this right via `mktemp -d`.
+mkdir -p "$TMP/empty-chamber"
 here_nostart="$(SPIRA_HOME="$TMP/empty-chamber" CONCIERGE_FAYTH=concierge \
     SPIRA_RUN="$TMP" SPIRA_WIKI="$TMP/fakebrain" SPIRA_CONF="$TMP/no.conf" \
     CONCIERGE_SOCKET="$HERE_SOCK" CONCIERGE_SESSION="$HERE_SOCK" \
