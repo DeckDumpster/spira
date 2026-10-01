@@ -509,11 +509,11 @@ aeons_live_lanes() {
 # there are no fixed fayths, lives in spira-config/src/chamber.rs; this file keeps the
 # names so the ~50 bash sourcers that call them need no change.
 fayth_names() {          # every persona defined in the chamber, one per line
-    spira-config fayth names
+    _spira_config_fayth names
 }
 
 spira_fayths() {         # the personas this harness runs, space separated, IN PRIORITY ORDER
-    spira-config fayth roster
+    _spira_config_fayth roster
 }
 
 # spira_task_fayths -> the personas the sentinel's pool summons: everything that is not a
@@ -529,7 +529,7 @@ spira_fayths() {         # the personas this harness runs, space separated, IN P
 # alias so an operator's custom fayth still works after upgrading. Both say the same thing:
 # this persona is not drawn from SPIRA_MAX_AEONS.
 spira_task_fayths() {
-    spira-config fayth task
+    _spira_config_fayth task
 }
 
 # spira_lane_fayths -> the personas that belong to a declared lane (FAYTH_LANE set).
@@ -544,7 +544,7 @@ spira_task_fayths() {
 # functions, because the mechanism (FAYTH_LANE present → not a task fayth) does not
 # require the name to be on the list.
 spira_lane_fayths() {
-    spira-config fayth lane
+    _spira_config_fayth lane
 }
 
 # persona_model <fayth> [default] -> the model this persona launches under.
@@ -563,11 +563,11 @@ spira_lane_fayths() {
 # (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
 # mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    spira-config fayth model "$1" "${2:-}"
+    _spira_config_fayth model "$1" "${2:-}"
 }
 
 fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a fayth
-    spira-config fayth get "$1" "$2" "${3:-}"
+    _spira_config_fayth get "$1" "$2" "${3:-}"
 }
 
 # READY_ARGS — the ONE definition of "a bead an aeon can take". Everything that counts
@@ -1516,12 +1516,12 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
 # sweep that silently watches nothing is indistinguishable from one that found nothing
 # (law-absence-needs-a-positive-control).
 fayth_partitions() {
-    spira-config fayth partitions
+    _spira_config_fayth partitions
     return 0
 }
 
 fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partition IS <labels>
-    spira-config fayth for-labels "$1"
+    _spira_config_fayth for-labels "$1"
     return 0
 }
 
@@ -3866,6 +3866,14 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # comment on SPIRA_REPO_DERIVED says why) — a bare `spira-config repo ...` run from a
 # function below would see none of them, so every shim threads them through explicitly
 # instead of trusting export.
+# _spira_config_fayth <verb> ... -> `spira-config fayth <verb> ...` with the two values it reads
+# passed per call. conf.sh deliberately never exports SPIRA_HOME or SPIRA_FAYTHS, and a bare
+# exec saw neither: in production the roster came back EMPTY (sp-nki5w), which on world start
+# summons no one. Same shape as _spira_config_repo below.
+_spira_config_fayth() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" spira-config fayth "$@"
+}
+
 _spira_config_repo() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
     SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
