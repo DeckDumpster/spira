@@ -13,11 +13,14 @@
 #      and NOT plan (the end-to-end predicate check).
 #   4. builder.fayth FAYTH_LABELS does NOT contain czar-trigger — partitions are disjoint.
 #
-# WHAT THIS SUITE DOES NOT USE. No bd, no systemd, no network. ready_count is stubbed.
+# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready`
+# (wave 4.25, sp-obhv6: a one-line shim onto `spira-claim fayth-ready`) is exercised end to
+# end against a fake `$SPIRA_BD` that records its own argv, same technique
+# test-builder-qa-proposed.sh and test-sentinel-store-reads.sh use.
 #
 # tier: T1
-# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh
-# hermetic-ok: no database, no systemd; ready_count and SPIRA_SUMMON are stubs
+# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/*
+# hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
@@ -54,17 +57,20 @@ lack "czar FAYTH_LABELS does not contain incident" "incident" "$czar_labels"
 echo
 echo "fayth_ready czar — czar-trigger appears in the include argument to ready_count"
 # ==========================================================================================
-INCL_FILE="$T/observed-incl"
-MOCK_READY=0
-ready_count() {
-    # $1 = include labels, $2 = exclude labels
-    printf '%s' "$1" > "$INCL_FILE"
-    printf '%d' "$MOCK_READY"
-}
-aeon_count() { printf '0'; }
+BD_ARGS_FILE="$T/observed-bd-args"
+FAKE_BD="$T/fake-bd"
+cat > "$FAKE_BD" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$BD_ARGS_FILE"
+echo '[]'
+EOF
+chmod +x "$FAKE_BD"
 
-fayth_ready czar >/dev/null 2>&1 || true
-observed_incl="$(cat "$INCL_FILE" 2>/dev/null)"
+SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" fayth_ready czar >/dev/null 2>&1 || true
+observed_bd_args="$(cat "$BD_ARGS_FILE" 2>/dev/null)"
+# `--label <FAYTH_LABELS> --exclude-label ...` — czar-trigger must be the INCLUDE value,
+# never buried in the exclude list, so this checks the token right after `--label`.
+observed_incl="$(printf '%s' "$observed_bd_args" | sed -n 's/.*--label \([^ ]*\).*/\1/p')"
 want "fayth_ready czar passes czar-trigger in the include arg" \
     "${SPIRA_CZAR_LABEL:-czar-trigger}" "$observed_incl"
 lack "fayth_ready czar does NOT pass plan in the include arg" "plan" "$observed_incl"

@@ -77,11 +77,25 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
     Ok(serde_json::from_str(&stdout).unwrap_or_default())
 }
 
-fn rm_memories_cache() {
-    if let Ok(p) = std::env::var("SPIRA_MEMORIES_CACHE") {
-        if !p.is_empty() {
-            let _ = std::fs::remove_file(p);
-        }
+/// `SPIRA_MEMORIES_CACHE`, resolved in-process via `spira_config::resolve::resolve_for_process`
+/// (wave 4.9, sp-k80sa). `rule.sh` used to `export` this across the `exec` boundary because
+/// its derived default (`$SPIRA_RUN/memories-cache.json`) is deliberately not in
+/// `spira_config::resolve::EXPORT_KEYS` — the same "read in-process, never exported to a
+/// child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller that no longer
+/// re-exports it must resolve it itself instead.
+fn memories_cache_path(home: &str) -> Option<String> {
+    let home_path = std::path::Path::new(home);
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let repo = spira_config::resolve::derive_home_repo(home_path, &env);
+    spira_config::resolve::resolve_for_process(home_path, &repo, &env)
+        .ok()
+        .and_then(|r| r.values.get("SPIRA_MEMORIES_CACHE").cloned())
+        .filter(|p| !p.is_empty())
+}
+
+fn rm_memories_cache(home: &str) {
+    if let Some(p) = memories_cache_path(home) {
+        let _ = std::fs::remove_file(p);
     }
 }
 
@@ -211,7 +225,7 @@ fn cmd_enact(db: &str, home: &str, rest: &[String]) -> i32 {
         eprintln!("rule: failed to write {key} to the statute book at {db}: {stderr}");
         return 1;
     }
-    rm_memories_cache();
+    rm_memories_cache(home);
     println!("enacted {key} ({words} words)");
 
     finish_write(
@@ -249,7 +263,7 @@ fn cmd_retire(db: &str, home: &str, rest: &[String]) -> i32 {
         return 1;
     }
     println!("forgot {key}");
-    rm_memories_cache();
+    rm_memories_cache(home);
 
     finish_write(
         home,

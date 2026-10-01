@@ -7,6 +7,7 @@ mod deadlock;
 mod decide;
 mod events;
 mod rank;
+mod ready;
 mod store;
 mod unpoison;
 
@@ -49,6 +50,13 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim select --fayth NAME [--ready F] [--epics F] [--resumable F] [--top-tier|--count|--json]
                           [--blockers bd|machine] [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
+       spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
+       spira-claim shared-exclude                                            (ready_shared_exclude)
+       spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
+       spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
+       spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; needs $SPIRA_HOME, $SPIRA_FAYTHS)
+       spira-claim fayth-ready <fayth>                                      (fayth_ready; ditto, plus $SPIRA_READY_CACHE)
+       spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; plus $SPIRA_READY_SNAPSHOT)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
@@ -65,7 +73,9 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
         stack also 3 = not claimable (its own JSON still names the reason);
         deadlocked also 3 = a candidate was refused or a lift did not verify;
-        write-event also 1 = could not write (a no-op on an empty bead/event-type is 0)";
+        write-event also 1 = could not write (a no-op on an empty bead/event-type is 0);
+        fayth-ready also exits 2 (no fayth in the chamber) or 1 (query failed) — stdout is
+        '0' in both cases, matching fayth_ready's own historic contract (sp-3ntca)";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
@@ -75,7 +85,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply", "--raw"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
@@ -174,6 +184,13 @@ const THRESH: &[&str] = &["--poison-at", "--requeue-at", "--reclaim-at"];
 
 pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
     let Some(verb) = raw.first() else { return Outcome::usage("missing verb") };
+    // `claim-retry` takes ARBITRARY bd query argv (claim_retry "${READY_ARGS[@]}" ... in
+    // bash) — flags meant for bd (`--label`, `--claim`, ...) cannot be told apart from
+    // spira-claim's own by the generic `Args` parser, so this verb bypasses it entirely and
+    // takes `raw[1..]` as the literal bd argv, never parsed here.
+    if verb == "claim-retry" {
+        return cmd_claim_retry(&raw[1..], &store::load_config());
+    }
     let a = match Args::parse(&raw[1..]) {
         Ok(a) => a,
         Err(e) => return Outcome::usage(e),
@@ -190,6 +207,12 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "epics" => cmd_epics(&a, &mut env),
         "select" => cmd_select(&a, &mut env),
         "stack" => cmd_stack(&a, &mut env),
+        "ready-args" => cmd_ready_args(&a, &mut env),
+        "shared-exclude" => cmd_shared_exclude(&a, &env),
+        "ready-count" => cmd_ready_count(&a, &mut env),
+        "fayth-exclude" => cmd_fayth_exclude(&a, &mut env),
+        "fayth-ready" => cmd_fayth_ready(&a, &mut env),
+        "bulk-ready-by-fayth" => cmd_bulk_ready_by_fayth(&a, &mut env),
         "unpoison" => cmd_unpoison(&a, &env),
         "audit" => cmd_audit(&a, &mut env),
         "deadlocked" => cmd_deadlocked(&a, &mut env),
@@ -579,6 +602,336 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
             err: String::new(),
         },
     }
+}
+
+// =========================================================================================
+// ready / claim (wave 4.25, sp-obhv6, row F): READY_ARGS, ready_count, claim_retry,
+// fayth_exclude, fayth_ready, bulk_ready_by_fayth. See ready.rs for the pure predicate
+// logic and store.rs for the bd calls; this is env/flag wiring only, same split as the
+// rest of this file.
+// =========================================================================================
+
+/// `$SPIRA_HOME`, or the refusal every fayth-reading verb prints and fails on — the
+/// chamber lives at `<home>/chamber`, and every lib.sh caller already has `SPIRA_HOME` set
+/// by the time it calls one of these shims (conf.sh resolves it before lib.sh is sourced);
+/// an unset value here means the shim did not thread it through the exec boundary, not
+/// "use a guess" (same contract as `spira-config fayth`'s own `fayth_home`).
+fn fayth_home() -> Result<std::path::PathBuf, String> {
+    match std::env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => Ok(std::path::PathBuf::from(h)),
+        _ => Err("SPIRA_HOME is not set".to_string()),
+    }
+}
+
+/// `flag` (a CLI override, mainly for tests) if given, else `toml` (spira-config's
+/// `resolve()`, read in-process — the correct source for a key conf.sh never exports:
+/// `SPIRA_QUEUE_WAIT_LABEL`/`SPIRA_OPEN_CHILDREN_LABEL`/`SPIRA_CLAIM_RETRIES`/
+/// `SPIRA_CLAIM_RETRY_DELAY_S` are all in this boat), else `env_key` (several of these ARE
+/// exported by conf.sh — `SPIRA_SCOPE_LABEL`, `SPIRA_NO_LOOP_LABEL`, `SPIRA_SUBMITTED_LABEL`
+/// — so reading them straight from the environment is correct there too, and harmless as a
+/// fallback for the others), else `default` (the conf.d-documented default).
+fn resolved_label(flag: Option<&str>, toml: Option<&str>, env_key: &str, default: &str) -> String {
+    if let Some(v) = flag.filter(|v| !v.is_empty()) {
+        return v.to_string();
+    }
+    if let Some(v) = toml.filter(|v| !v.is_empty()) {
+        return v.to_string();
+    }
+    if let Ok(v) = std::env::var(env_key) {
+        if !v.is_empty() {
+            return v;
+        }
+    }
+    default.to_string()
+}
+
+// EVERY default below is "", NOT the conf.d-documented value (e.g. "no-loop",
+// "spira-queue-waiting") — matching each bash original's own bare `${VAR:-}` fallback
+// (READY_ARGS, ready_raw_args, ready_shared_exclude never hardcode a default themselves;
+// only conf.sh's *derivation* does, and conf.sh running is a precondition this port cannot
+// observe). The lib.sh shims thread the caller's CURRENT value of the unexported ones
+// (`_spira_claim`'s own env prefix) explicitly across the exec boundary, so this process
+// sees exactly what the calling shell held — empty if conf.sh never ran (every suite that
+// sources lib.sh alone), derived if it did (production) — never a value of this port's own
+// invention. A direct caller that skips the shim (a test, or a future Rust caller) still
+// gets spira.toml's value when one is configured, and "" otherwise — the same "no
+// restriction" default the bash functions themselves fall back to.
+fn no_loop_label(a: &Args, env: &Env) -> String {
+    resolved_label(a.get("--noloop-label"), env.config.no_loop_label.as_deref(), "SPIRA_NO_LOOP_LABEL", "")
+}
+
+fn scope_label(a: &Args, env: &Env) -> String {
+    resolved_label(a.get("--scope-label"), env.config.scope_label.as_deref(), "SPIRA_SCOPE_LABEL", "")
+}
+
+fn queue_wait_label(env: &Env) -> String {
+    resolved_label(None, env.config.queue_wait_label.as_deref(), "SPIRA_QUEUE_WAIT_LABEL", "")
+}
+
+fn open_children_label(env: &Env) -> String {
+    resolved_label(None, env.config.open_children_label.as_deref(), "SPIRA_OPEN_CHILDREN_LABEL", "")
+}
+
+/// `ready_shared_exclude`'s own reading of `SPIRA_SUBMITTED_LABEL` (bare `${VAR:-}`) —
+/// distinct from [`submitted_label`], which backs `epics`/`select` and matches
+/// `epic_parent_lookup`'s own `${SPIRA_SUBMITTED_LABEL:-spira-submitted}` fallback. The same
+/// key, two different bash functions, two different embedded defaults — both kept exactly.
+fn submitted_label_f(env: &Env) -> String {
+    resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "")
+}
+
+/// `READY_ARGS`, resolved from this call's flags/config/environment.
+fn ready_args_for(a: &Args, env: &Env) -> Vec<String> {
+    ready::ready_args(&scope_label(a, env), &no_loop_label(a, env))
+}
+
+fn first_line(s: &str) -> &str {
+    s.lines().next().unwrap_or("")
+}
+
+fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--raw", "--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    let args =
+        if a.has("--raw") { ready::ready_raw_args(&no_loop_label(a, env)) } else { ready_args_for(a, env) };
+    Outcome::ok(args.into_iter().fold(String::new(), |mut s, t| {
+        s.push_str(&t);
+        s.push('\n');
+        s
+    }))
+}
+
+/// `ready-count <labels> [<exclude-labels>]`: `ready_count` (lib.sh:459). A failed query
+/// still prints '0' to stdout (the historic contract — every existing caller reads only
+/// stdout), rc 1, the failure on stderr.
+fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    let (labels, exclude) = match a.pos.as_slice() {
+        [l, e] => (l.as_str(), e.as_str()),
+        [l] => (l.as_str(), ""),
+        _ => return Outcome::usage("ready-count needs <labels> [<exclude-labels>]"),
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    let args = ready_args_for(a, env);
+    match st.ready_count(&args, labels, exclude) {
+        Ok(n) => Outcome::ok(n.to_string()),
+        Err(e) => Outcome {
+            code: 1,
+            out: "0".into(),
+            err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
+        },
+    }
+}
+
+/// bd query argv, retried (lib.sh:609 `claim_retry`). Dispatched from `dispatch()` before
+/// `Args::parse` ever sees the argv — see the comment there.
+/// `cfg`'s toml value, else `$<env_key>` (bash's own `${VAR:-default}` reads this
+/// unconditionally — a test, or an operator's own shell, that exports it must still win),
+/// else `default`.
+fn resolved_u32(cfg: Option<u32>, env_key: &str, default: u32) -> u32 {
+    if let Some(v) = cfg {
+        return v;
+    }
+    if let Ok(v) = std::env::var(env_key) {
+        if let Ok(n) = v.trim().parse() {
+            return n;
+        }
+    }
+    default
+}
+
+fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
+    if bd_args.is_empty() {
+        return Outcome::usage("claim-retry needs bd query arguments");
+    }
+    let tries = resolved_u32(cfg.claim_retries, "SPIRA_CLAIM_RETRIES", 3).max(1);
+    let delay = std::time::Duration::from_secs(resolved_u32(cfg.claim_retry_delay_s, "SPIRA_CLAIM_RETRY_DELAY_S", 1) as u64);
+    let st = Store::new(None, 60, cfg);
+    let mut args: Vec<&str> = bd_args.iter().map(String::as_str).collect();
+    args.push("--json");
+    let mut last = String::new();
+    for attempt in 1..=tries {
+        match st.bd(&args) {
+            Ok(out) => return Outcome::ok(bead::bdq::json_only(&out).to_string()),
+            Err(e) => {
+                last = e;
+                if attempt < tries {
+                    std::thread::sleep(delay);
+                }
+            }
+        }
+    }
+    Outcome {
+        code: 1,
+        out: String::new(),
+        err: format!("spira-claim: claim_retry: query failed after {tries} attempt(s): {}", first_line(&last)),
+    }
+}
+
+/// `spira_fayths`'s roster, as a `Vec<String>` — `fayth-exclude`/`fayth-ready`/
+/// `bulk-ready-by-fayth` all need it, and `SPIRA_FAYTHS` (host policy, unexported by
+/// design) must be threaded through the environment, same as `SPIRA_HOME`.
+fn roster(home: &std::path::Path) -> Vec<String> {
+    spira_config::chamber::spira_fayths(home, std::env::var("SPIRA_FAYTHS").ok().as_deref())
+        .split_whitespace()
+        .map(str::to_string)
+        .collect()
+}
+
+fn fayth_exclude_str(env: &Env, home: &std::path::Path, me: &str, own: &str) -> String {
+    let shared = ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env));
+    ready::fayth_exclude(me, own, &roster(home), &shared)
+}
+
+/// `fayth-exclude <fayth> [own-exclusions]`: `fayth_exclude` (lib.sh:666).
+fn cmd_fayth_exclude(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let me = match a.pos.first() {
+        Some(m) if !m.is_empty() => m.clone(),
+        _ => return Outcome::usage("fayth-exclude needs <fayth> [own-exclusions]"),
+    };
+    let own = a.pos.get(1).map(String::as_str).unwrap_or("");
+    let home = match fayth_home() {
+        Ok(h) => h,
+        Err(e) => return Outcome::cannot_tell(format!("fayth-exclude: {e}")),
+    };
+    Outcome::ok(fayth_exclude_str(env, &home, &me, own))
+}
+
+/// `shared-exclude`: `ready_shared_exclude` (lib.sh:652) — the three labels every "is this
+/// claimable" predicate excludes regardless of caller. `fayth_exclude`/`fayth-exclude`
+/// folds this in already; this verb exists only because `test-dispatch-open-children.sh`
+/// calls `ready_shared_exclude` directly, not through `fayth_exclude`.
+fn cmd_shared_exclude(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    Outcome::ok(ready::shared_exclude3(&queue_wait_label(env), &submitted_label_f(env), &open_children_label(env)))
+}
+
+/// `SPIRA_READY_CACHE`'s own lookup (`awk -v f="$f" '$1==f{print $2} END{...}'`): the
+/// first matching line's second field, or 0 when the fayth has no line at all — never an
+/// error, because sentinel's `export_ready_cache` never writes an empty-but-existing file
+/// for a nonempty roster.
+fn ready_cache_lookup(text: &str, me: &str) -> u64 {
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        if it.next() == Some(me) {
+            return it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+        }
+    }
+    0
+}
+
+/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of two things
+/// failed (sp-3ntca): 2 = no such fayth file; 1 = the file exists but the query failed; 0 =
+/// a real count, zero included. Stdout is '0' in every case but a real count — callers
+/// read only stdout, never the exit code, for the number itself.
+///
+/// DROPPED DELIBERATELY: nothing. `SPIRA_READY_CACHE` (sentinel's `export_ready_cache`,
+/// still live — it sets this for the bash child it shells into for unported dispatch
+/// logic) is kept; it is read straight from the environment because it is a per-pass
+/// signal file path, not a config key, and sentinel genuinely exports it.
+fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    let me = match a.pos.first() {
+        Some(m) if !m.is_empty() => m.clone(),
+        _ => return Outcome::usage("fayth-ready needs <fayth>"),
+    };
+    let home = match fayth_home() {
+        Ok(h) => h,
+        Err(e) => return Outcome { code: 2, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
+    };
+    let file = spira_config::chamber::chamber_dir(&home).join(format!("{me}.fayth"));
+    if !file.is_file() {
+        return Outcome {
+            code: 2,
+            out: "0".into(),
+            err: format!("spira-claim: fayth_ready: no fayth in the chamber: {}", file.display()),
+        };
+    }
+    if let Ok(cache) = std::env::var("SPIRA_READY_CACHE") {
+        if !cache.is_empty() {
+            if let Ok(text) = std::fs::read_to_string(&cache) {
+                return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
+            }
+        }
+    }
+    let labels = spira_config::chamber::fayth_get(&home, &me, "FAYTH_LABELS", "");
+    let own = spira_config::chamber::fayth_get(&home, &me, "FAYTH_EXCLUDE_LABELS", "");
+    let exclude = fayth_exclude_str(env, &home, &me, &own);
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    let args = ready_args_for(a, env);
+    match st.ready_count(&args, &labels, &exclude) {
+        Ok(n) => Outcome::ok(n.to_string()),
+        Err(e) => Outcome {
+            code: 1,
+            out: "0".into(),
+            err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
+        },
+    }
+}
+
+/// `bulk-ready-by-fayth`: `bulk_ready_by_fayth` (lib.sh:734) plus `ready-bucket.py`'s own
+/// bucketing ([`ready::bucket`]). `SPIRA_READY_SNAPSHOT`, read straight from the
+/// environment for the same reason as `SPIRA_READY_CACHE` (a per-pass signal, not config),
+/// replaces the live fetch when it names a readable file.
+fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+        return Outcome::usage(e);
+    }
+    let home = match fayth_home() {
+        Ok(h) => h,
+        Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {e}")),
+    };
+    let mut parts = Vec::new();
+    for f in roster(&home) {
+        let inc = spira_config::chamber::fayth_get(&home, &f, "FAYTH_LABELS", "");
+        if inc.is_empty() {
+            continue; // bulk_ready_by_fayth's own `[ -n "$inc" ] || continue`
+        }
+        let exc = spira_config::chamber::fayth_get(&home, &f, "FAYTH_EXCLUDE_LABELS", "");
+        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&inc), exc: ready::split_csv(&exc) });
+    }
+    if parts.is_empty() {
+        return Outcome::ok(String::new());
+    }
+    let raw = match std::env::var("SPIRA_READY_SNAPSHOT").ok().filter(|p| !p.is_empty()) {
+        Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+        None => {
+            let st = match store(a, &env.config) {
+                Ok(s) => s,
+                Err(e) => return Outcome::usage(e),
+            };
+            let args = ready_args_for(a, env);
+            // A failed live fetch is a silent, empty superset here, exactly as bash's own
+            // `raw="$(bdjson ... 2>/dev/null)"` (no `$?` check) — not this verb's failure.
+            st.ready_json(&args).unwrap_or_default()
+        }
+    };
+    if raw.trim().is_empty() {
+        return Outcome::ok(String::new());
+    }
+    // ready-bucket.py: any parse exception is `d = []`, never a hard failure.
+    let rows = rank::parse_ready(&raw).unwrap_or_default();
+    let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
+    Outcome::ok(counts.into_iter().fold(String::new(), |mut s, (name, n)| {
+        s.push_str(&format!("{name} {n}\n"));
+        s
+    }))
 }
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).

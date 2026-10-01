@@ -41,13 +41,18 @@
 #
 # `exec -a "$0"` keeps this script's path in the process's argv.
 #
-# RE-EXPORT WHAT conf.sh DERIVES BUT DOES NOT EXPORT (bead.sh's shim carries the full
-# explanation). SPIRA_MEMORIES_CACHE's derived default (`$SPIRA_RUN/memories-cache.json`)
-# is a plain shell variable in conf.sh, harmless to the same-process bash `rule.sh` this
-# replaces but invisible across `exec` into the binary unless re-exported here.
+# THE RE-EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa). This file
+# used to `export SPIRA_DB SPIRA_MEMORIES_CACHE SPIRA_WIKI SPIRA_WIKI_HOOK` here. Three of
+# the four needed no help: `conf.sh`'s own generic export list (`spira-config resolve`'s
+# `EXPORT_KEYS`, applied in `conf.sh` after its `eval`) already exports `SPIRA_DB`,
+# `SPIRA_WIKI` and `SPIRA_WIKI_HOOK` — this line was redundant for those three the moment
+# `conf.sh` became an eval of `spira-config resolve` (wave 4.5). `SPIRA_MEMORIES_CACHE` is
+# the one real holdout: its derived default is deliberately NOT in `EXPORT_KEYS` (the same
+# "read in-process, never exported to a child" category as `SPIRA_REPO_MAP`/`SPIRA_FAYTHS`),
+# so the `rule` binary now resolves it itself via `spira_config::resolve::resolve_for_process`
+# (see `memories_cache_path` there) rather than depending on this shim to carry it.
 SPIRA_HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/spira" && pwd -P)"
 . "$SPIRA_HOME_DIR/conf.sh"
-export SPIRA_DB SPIRA_MEMORIES_CACHE SPIRA_WIKI SPIRA_WIKI_HOOK
 if ! command -v rule >/dev/null 2>&1; then
     printf 'rule: rule is not on PATH (the launcher sets PATH to a release) — refusing.\n' >&2
     exit 75

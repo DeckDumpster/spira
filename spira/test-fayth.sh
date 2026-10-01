@@ -31,7 +31,7 @@
 #
 # defect: sp-fayth-predicate sp-czsf4 sp-xrkuu
 # tier: T1
-# covers: spira/lib.sh sentinel/src/* spira/schema.sh spira/conf.sh doctor/src/* spira/chamber/*.fayth UC-dispatch-07 UC-dispatch-08
+# covers: spira/lib.sh sentinel/src/* spira/schema.sh spira/conf.sh doctor/src/* spira/chamber/*.fayth spira-claim/* UC-dispatch-07 UC-dispatch-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -51,19 +51,28 @@ export SPIRA_TOML="$T/no-such.toml"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-# Labels file: ready_count writes here from inside a subshell (fayth_ready's (...) call)
-# so the parent can observe which predicate was asked. A subshell variable assignment
-# cannot reach the parent, so the file is the channel.
-LABELS_FILE="$T/observed-labels"
-
-# Override ready_count AFTER sourcing lib.sh. bash subshells inherit the calling shell's
-# functions, so fayth_ready — which invokes ready_count inside a (...) subshell — picks
-# this override up rather than the real one.
-MOCK_READY=0
-ready_count() {
-    printf '%s' "$1" > "$LABELS_FILE"
-    printf '%d' "$MOCK_READY"
-}
+# fayth_ready (wave 4.25, sp-obhv6) is now a one-line shim onto `spira-claim fayth-ready`,
+# which calls bd directly rather than the bash `ready_count` function — a bash-level
+# override of `ready_count` is no longer in that path at all. A fake `$SPIRA_BD` that
+# records its own argv, one layer lower, replaces it (same technique
+# test-sentinel-store-reads.sh and test-builder-qa-proposed.sh use): `observed_label` reads
+# the `--label` token off the LAST captured bd call, and `set_mock_ready N` controls how
+# many rows the fake bd hands back, standing in for `ready_count`'s own count.
+LABELS_FILE="$T/observed-bd-args"
+FAKE_BD="$T/fake-bd"
+MOCK_READY_FILE="$T/mock-ready"
+cat > "$FAKE_BD" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$LABELS_FILE"
+n="\$(cat "$MOCK_READY_FILE" 2>/dev/null || echo 0)"
+python3 -c 'import json,sys; print(json.dumps(list(range(int(sys.argv[1])))))' "\$n"
+EOF
+chmod +x "$FAKE_BD"
+export SPIRA_BD="$FAKE_BD"
+export SPIRA_DB="/fake/db"
+set_mock_ready() { printf '%s' "$1" > "$MOCK_READY_FILE"; }
+observed_label() { tail -1 "$LABELS_FILE" 2>/dev/null | sed -n 's/.*--label \([^ ]*\).*/\1/p'; }
+set_mock_ready 0
 
 # Stub aeon_count so no running aeons are reported: fayth_free would otherwise see a
 # live slot and return 0, blocking the summon path before ready_count is called.
@@ -97,18 +106,18 @@ want "ops FAYTH_LABELS contains its own partition"     "incident"   "$ops_labels
 # ==========================================================================================
 # summon_fayth — ops uses ITS OWN predicate, not the builder's
 # ==========================================================================================
-MOCK_READY=1; rm -f "$LABELS_FILE"
+set_mock_ready 1; rm -f "$LABELS_FILE"
 summon_fayth ops >/dev/null 2>&1 || true
-observed="$(cat "$LABELS_FILE" 2>/dev/null)"
+observed="$(observed_label)"
 nowant "ops did NOT ask for spira,plan beads" "spira,plan" " $observed "
 want "ops asked for its own incident beads" "incident"   "$observed"
 
 # ==========================================================================================
 # summon_fayth — builder uses ITS OWN predicate
 # ==========================================================================================
-MOCK_READY=1; rm -f "$LABELS_FILE"
+set_mock_ready 1; rm -f "$LABELS_FILE"
 summon_fayth builder >/dev/null 2>&1 || true
-observed="$(cat "$LABELS_FILE" 2>/dev/null)"
+observed="$(observed_label)"
 is "builder asked for its own partition beads" \
    "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" "$observed"
 
@@ -120,13 +129,13 @@ is "builder asked for its own partition beads" \
 #   if [ "$ready" -gt 0 ]; then             # gates ALL personas, including ops
 #       for f in $FAYTHS; do summon_fayth "$f"; done
 #   fi
-MOCK_READY=0
+set_mock_ready 0
 plan_ready="$(ready_count "spira,plan" "")"
 is "old code: plan_ready=0 (no plan work)" "0" "$plan_ready"
 
-MOCK_READY=1; rm -f "$LABELS_FILE"
+set_mock_ready 1; rm -f "$LABELS_FILE"
 summon_fayth ops >/dev/null 2>&1 || true
-observed="$(cat "$LABELS_FILE" 2>/dev/null)"
+observed="$(observed_label)"
 want "ops predicate was asked even when plan_ready=0" "incident" "$observed"
 
 # ==========================================================================================
@@ -146,12 +155,12 @@ chmod +x "$MOCK_QUOTA"
 # started under an express grant cannot claim a non-express bead.
 export SPIRA_SUMMON="$MOCK_QUOTA"
 
-MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+set_mock_ready 1; rm -f "$ARGS_FILE" "$LABELS_FILE"
 summon_fayth builder 1 >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 nowant "no require-label: SPIRA_REQUIRE_LABEL is absent from args" "SPIRA_REQUIRE_LABEL" "$args"
 
-MOCK_READY=1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+set_mock_ready 1; rm -f "$ARGS_FILE" "$LABELS_FILE"
 summon_fayth builder 1 express >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 want "express grant: SPIRA_REQUIRE_LABEL=express appears in args" \

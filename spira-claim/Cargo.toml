@@ -4,7 +4,12 @@ version = "1.0.0"
 edition = "2021"
 description = "spira-claim — bead attempt accounting, the CHECK 4 poison decision, and epic-first claim selection (stacked-dependents aware), and `unpoison` — the one verb that writes (DESIGN.md §8)."
 
+[lib]
+name = "spira_claim"
+path = "src/lib.rs"
+
 [dependencies]
+bead = { path = "../bead" }
 lifecycle = { path = "../lifecycle" }
 spira-config = { path = "../spira-config" }
 serde = { version = "1", features = ["derive"] }
