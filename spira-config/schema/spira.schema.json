@@ -1651,6 +1651,13 @@
             "null"
           ]
         },
+        "round_vm_cache_home": {
+          "description": "sp-xjnzl-2: the VM-side `CARGO_HOME` every round-vm round and template build points `sccache` at — read once here (never the caller's ambient `CARGO_HOME`, `law-a-binary-resolves-the-config-it-reads`) so an operator sets it once in `spira.toml` rather than exporting it into every systemd unit that calls `round-vm`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "round_vm_host_addr": {
           "type": [
             "string",

@@ -43,7 +43,13 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
 
 1. Preflight, each exiting **2** with a message naming what is wrong: `<tree-dir>` is not
    a git checkout (the path is named); `SPIRA_ROUND_VM_HOST_ADDR` is unset (the variable is
-   named); `SPIRA_ROUND_VM_HOST_KEY` is unreadable (the path is named).
+   named); `SPIRA_ROUND_VM_HOST_KEY` is unreadable (the path is named);
+   `SPIRA_ROUND_VM_CACHE_HOME` is unset (sp-xjnzl's own follow-up, sp-xjnzl-2: this binary
+   resolves its OWN config for the VM-side `CARGO_HOME`, never the caller's ambient
+   `CARGO_HOME` — a systemd unit, unlike an interactive shell, never sets one, and a
+   production sweep run that way faulted the moment it defaulted to the VM's own ambient
+   `/root/.cargo`, which does not match where the template actually installed `sccache`;
+   `law-a-binary-resolves-the-config-it-reads`).
 2. Update the read-only bare mirror `<state>/mirror.git` so its `round` branch (and a
    symbolic `HEAD`) is `<tree-dir>`'s HEAD. Make sure an anonymous read-only `git daemon`
    serves `<state>` on `SPIRA_ROUND_VM_MIRROR_PORT`.
@@ -146,7 +152,10 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
 `pve.env` is the operator's infrastructure change, and so is destroying the old template.
 
 1. Preflight (exit 2): `<tree-dir>` is a git checkout; `SPIRA_ROUND_VM_HOST_PUBKEY` and
-   `SPIRA_ROUND_VM_HOST_KEY` are readable.
+   `SPIRA_ROUND_VM_HOST_KEY` are readable; `SPIRA_ROUND_VM_CACHE_HOME` is set (sp-xjnzl-2:
+   the template it builds must agree with every round cloned from it on where `CARGO_HOME`
+   lives, or §2.2's own preflight refuses every round the moment it is run the way
+   production actually runs it — with no ambient `CARGO_HOME` to fall back to at all).
 2. VMID: `--vmid N` if given (templates belong in their own range; nextid lands in the band
    round clones use), else the hypervisor's nextid.
 3. **Linked** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` — the
