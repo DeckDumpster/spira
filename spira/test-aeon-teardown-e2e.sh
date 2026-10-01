@@ -3,10 +3,11 @@
 # test-aeon-teardown-e2e.sh — one shared full-aeon fixture (full-aeon-fixture.sh), one row
 # per open-bead teardown path that only a real aeon.sh run can prove. Everything that does
 # NOT need a live session — the disposition precedence table, the spend parser, the
-# yield-headless phrasing table — already lives at T1 in test-aeon-disposition.sh,
-# test-session-result-fields.sh and test-session-yield-headless.sh. What is left here is the
-# WIRING: that aeon.sh's own marks, mail's own marker, and attempts_of's own SQL agree
-# with what those T1 tables predict.
+# yield-headless phrasing table, open_ask_blocker's table — already lives as Rust unit tests
+# in the aeon crate (decide::tests::{disposition_table, session_yield_headless_table,
+# open_ask_blocker_table}, ledger::tests::session_fields_sum_and_last; `cargo test -p aeon`).
+# What is left here is the WIRING: that aeon's own marks, mail's own marker, and
+# attempts_of's own SQL agree with what those tables predict.
 #
 # Replaces seven suites (docs/test-plan/aeon-execution.md D8, D12, D15 — sp-g44ke):
 # test-aeon-decision-blocked.sh, test-aeon-operator-wait.sh, test-requeue.sh,
@@ -149,9 +150,10 @@ nowant "note does not say Unlanded" "Unlanded" "$notes2"
 want "ledger says decision-blocked" "decision-blocked" "$(fa_ledger_line sp-db-2)"
 
 # The sp-dvsqc defect (an ask-labelled dep via a relates-to edge treated as a blocker) does
-# not get a row here: open_ask_blocker (lib.sh), the dependency read this row's own
-# decision-blocked branch feeds on, was pulled out pure and is a table in
-# test-aeon-disposition.sh instead — no live session needed, no cost against this file's cap.
+# not get a row here: open_ask_blocker (aeon::decide::open_ask_blocker), the dependency read
+# this row's own decision-blocked branch feeds on, is pure and is a table in
+# aeon/src/decide.rs instead (`cargo test -p aeon decide::tests::open_ask_blocker_table`) —
+# no live session needed, no cost against this file's cap.
 
 # ==========================================================================================
 echo
@@ -351,9 +353,11 @@ is   "two pre-session entries in the ledger" "2" "$_count"
 
 # The rapid-recur park (a third consecutive sub-10s death labels and parks the bead so a
 # fourth summon cannot repeat the same futile retry — SPIRA_RAPID_RECUR_THRESHOLD) does not
-# get rows here: rapid_recur_check needs only a ledger file and one bd bead, no live aeon.sh
-# session, so it is test-rapid-recur.sh's instead — two fewer real aeon runs against this
-# file's cap for a park behaviour distinct from the FATAL/charge/loop story this row proves.
+# get rows here: rapid_recur_check (aeon::run::Run::rapid_recur_check) needs only a ledger
+# file and one fake bd bead, no live aeon.sh session, so it is aeon/src/tests.rs's
+# rapid_recur_* tests instead (`cargo test -p aeon tests::rapid_recur`) — two fewer real aeon
+# runs against this file's cap for a park behaviour distinct from the FATAL/charge/loop story
+# this row proves.
 
 # RESTORE the shared repo-map — every row after this one uses FA_REPO again.
 export SPIRA_REPO_MAP="$FA_REPO_MAP"

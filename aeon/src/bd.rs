@@ -98,6 +98,19 @@ pub struct Dep {
     pub dependency_type: Option<String>,
     #[serde(default, rename = "type")]
     pub typ: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub labels: Option<Vec<String>>,
+    #[serde(default)]
+    pub title: Option<String>,
+}
+
+impl Dep {
+    /// Either spelling `bd show`/`bd list` use for the dependency type.
+    pub fn kind(&self) -> Option<&str> {
+        self.dependency_type.as_deref().filter(|s| !s.is_empty()).or(self.typ.as_deref())
+    }
 }
 
 impl BeadRow {
@@ -111,10 +124,7 @@ impl BeadRow {
         self.labels().iter().find_map(|l| l.strip_prefix(prefix).map(|v| v.to_string()))
     }
     pub fn superseded(&self) -> bool {
-        self.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| {
-            let t = d.dependency_type.as_deref().filter(|s| !s.is_empty()).or(d.typ.as_deref());
-            t == Some("supersedes")
-        })
+        self.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| d.kind() == Some("supersedes"))
     }
     /// Every `delivers:TYPE` joined with `;` (the verdict's `delivers`).
     pub fn delivers(&self) -> String {
@@ -141,6 +151,21 @@ pub fn first_row(json: &str) -> Option<BeadRow> {
 /// `bd show <id> --json`, first row.
 pub fn show(bd: &dyn Bd, id: &str) -> Option<BeadRow> {
     first_row(&json(bd, &["show", id]))
+}
+
+/// `delivers:beads`' own check: how many of `bd children <id> --json`'s rows are real work,
+/// not a bare event record (an aeon's own state-change log is not a deliverable). Unparseable
+/// or empty input counts as zero, never an error — the caller treats zero as "not satisfied".
+pub fn child_work_count(json: &str) -> i64 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(json.trim()) else { return 0 };
+    let rows: Vec<serde_json::Value> = match v {
+        serde_json::Value::Array(a) => a,
+        o @ serde_json::Value::Object(_) => vec![o],
+        _ => return 0,
+    };
+    rows.iter()
+        .filter(|r| r.get("id").and_then(|i| i.as_str()).is_some_and(|s| !s.is_empty()) && r.get("issue_type").and_then(|t| t.as_str()) != Some("event"))
+        .count() as i64
 }
 
 /// `bdq note <id> <text> >/dev/null 2>&1`.
@@ -173,6 +198,16 @@ mod tests {
         let r = first_row(r#"{"id":"a","labels":["delivers:note","x","delivers:beads"]}"#).unwrap();
         assert_eq!(r.delivers(), "note;beads");
         assert_eq!(r.label_value("delivers:").as_deref(), Some("note"));
+    }
+
+    #[test]
+    fn child_work_count_excludes_event_records() {
+        let j = r#"[{"id":"sp-a","issue_type":"task"},{"id":"sp-b","issue_type":"event"},{"id":"","issue_type":"task"}]"#;
+        assert_eq!(child_work_count(j), 1);
+        assert_eq!(child_work_count("[]"), 0);
+        assert_eq!(child_work_count(""), 0);
+        assert_eq!(child_work_count("not json"), 0);
+        assert_eq!(child_work_count(r#"{"id":"sp-a","issue_type":"task"}"#), 1);
     }
 
     #[test]

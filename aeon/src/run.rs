@@ -175,7 +175,51 @@ impl<'a> Run<'a> {
         let fields = ledger::session_result_fields(self.s.logf.as_deref(), &self.conf.trace_mark());
         self.ledger.done(self.now(), self.f(), &self.s.bead, rc, status, &fields);
         self.sdo("_tsd_aeon_session", &s(&[&self.s.bead, self.f(), &rc.to_string(), status, &fields.render()]));
-        self.sdo("_aeon_rapid_recur", &s(&[&self.s.bead, &self.conf.ledger().display().to_string()]));
+        self.rapid_recur_check();
+    }
+
+    /// `rapid_recur_check`: three (SPIRA_RAPID_RECUR_THRESHOLD) consecutive sub-10s `done`
+    /// lines for this bead are a setup loop that recurs identically on every retry
+    /// (law-a-retry-must-change-an-input) — park with the ask label and `overseer` rather
+    /// than keep re-summoning into the same fault. Reads the ledger the `done` line above
+    /// just wrote.
+    fn rapid_recur_check(&self) {
+        let id = self.s.bead.clone();
+        if id.is_empty() {
+            return;
+        }
+        let threshold = self.conf.n("SPIRA_RAPID_RECUR_THRESHOLD", 3).max(0) as usize;
+        if threshold == 0 {
+            return;
+        }
+        let Ok(text) = std::fs::read_to_string(self.conf.ledger()) else { return };
+        let needle = regex::Regex::new(&format!(r" done \S+ {} ", regex::escape(&id))).unwrap();
+        let matches: Vec<&str> = text.lines().filter(|l| needle.is_match(l)).collect();
+        let tail = &matches[matches.len().saturating_sub(threshold)..];
+        let count = decide::rapid_recur_streak(tail);
+        if count < threshold as i64 {
+            return;
+        }
+        let ask = self.conf.ask_label();
+        if self.d.bd.bd(&s(&["label", "list", &id])).text().contains(&ask) {
+            return;
+        }
+        self.log(&format!("{}: {id} RAPID-RECUR: {count} consecutive sub-10s runs — parking, a setup loop cannot be learned from a retry", self.f()));
+        let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
+        let _ = self.d.bd.bd(&s(&["label", "add", &id, "overseer"]));
+        // spira-lc's caller verb, as in verdict.rs's eviction-race escalation.
+        let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("rapid-recur: {count} consecutive sub-10s aeon summons"), self.f()]), None, None);
+        bd::note(
+            self.d.bd,
+            &id,
+            &format!(
+                "RAPID-RECUR: {count} consecutive sub-10s aeon runs on {id}. Each summon dies before meaningful work, suggesting a setup loop — the defect recurs identically on every retry. Parked with {ask} and overseer instead of only annotated: a fourth summon cannot learn anything the third did not. Check: worktree path, conflicting branches, or box state. Details in aeon-ledger."
+            ),
+        );
+        self.sdo(
+            "spira_event",
+            &s(&["aeon.rapid", &id, &format!("Rapid-recur: {id} — {count} consecutive sub-10s aeon summons (setup loop) — parked")]),
+        );
     }
 
     fn check_stop(&self) -> Result<(), Abort> {

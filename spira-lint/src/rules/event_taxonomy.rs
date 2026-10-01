@@ -96,7 +96,27 @@ impl Rule for EventTaxonomy {
                 }
             }
         }
-        if !any_site {
+        // The WIRED check below proves the matcher is not measuring nothing just as well as a
+        // shell `spira_event <kind>` call does — and, as the wave-4 Rust rewrite peels function
+        // families out of lib.sh one at a time, every shell call site is eventually retired on
+        // purpose (sp-8kqww: rapid_recur_check's `spira_event aeon.rapid` was the last one in
+        // spira/*.sh). Scoping the positive control to shell-only made it fire on a retirement
+        // that had nothing to do with the taxonomy itself.
+        let mut any_wired = false;
+        for (file, k) in WIRED {
+            let needle = if file.ends_with(".rs") { format!("\"{k}\"") } else { format!("spira_event {k} ") };
+            if tree.text_of(file).is_some_and(|t| t.contains(&needle)) {
+                any_wired = true;
+            } else {
+                out.push(Finding {
+                    rule: NAME,
+                    path: file.to_string(),
+                    line: None,
+                    message: format!("no call site emits {k} (expected {needle:?})"),
+                });
+            }
+        }
+        if !any_site && !any_wired {
             // The positive control: a matcher that finds no call site measures itself.
             return Err(LintError::EmptyScope);
         }
@@ -107,17 +127,6 @@ impl Rule for EventTaxonomy {
             }
             if let Err(why) = kind_valid(k) {
                 out.push(Finding { rule: NAME, path: KINDS_FILE.into(), line: Some(i + 1), message: format!("kind '{k}': {why}") });
-            }
-        }
-        for (file, k) in WIRED {
-            let needle = if file.ends_with(".rs") { format!("\"{k}\"") } else { format!("spira_event {k} ") };
-            if !tree.text_of(file).is_some_and(|t| t.contains(&needle)) {
-                out.push(Finding {
-                    rule: NAME,
-                    path: file.to_string(),
-                    line: None,
-                    message: format!("no call site emits {k} (expected {needle:?})"),
-                });
             }
         }
         Ok(out)
@@ -200,6 +209,27 @@ mod tests {
             run(&t, files, &[]).unwrap(),
             vec!["event-taxonomy: strand/src/check.rs: no call site emits branch.reclaimed (expected \"\\\"branch.reclaimed\\\"\")"]
         );
+    }
+
+    // sp-8kqww (wave 4.33): rapid_recur_check's `spira_event aeon.rapid` was the last literal
+    // shell call site anywhere in spira/*.sh — every other family the wave peels out of
+    // lib.sh will eventually retire its own shell call sites the same way. The positive
+    // control must not fire just because the shell side of the taxonomy went fully native;
+    // the WIRED Rust sites prove the matcher measures something on their own.
+    #[test]
+    fn wired_rust_sites_alone_satisfy_the_positive_control() {
+        let t = TempDir::new("ev-rust-only");
+        t.write(KINDS_FILE, KINDS);
+        // A spira/*.sh direct child exists (so the rule's own file-scope is non-empty, as it
+        // always is on the real tree — hundreds of them), but none of them calls
+        // `spira_event` any more: the shell side of the taxonomy is fully retired.
+        t.write("spira/unrelated.sh", "echo hi\n");
+        t.write("gate-check/src/main.rs", "world.spira_event(\"ci.failed\", &blocked, &summary, esc);\n");
+        t.write("sentinel/src/check4.rs", "emit(\"bead.poisoned\");\n");
+        t.write("strand/src/check.rs", "emit(\"branch.reclaimed\");\n");
+        t.write("landing-pass/src/push.rs", "emit(\"bead.landed\"); emit(\"bead.reopened\");\n");
+        let files = vec!["spira/unrelated.sh".into(), "gate-check/src/main.rs".into(), "sentinel/src/check4.rs".into(), "strand/src/check.rs".into(), "landing-pass/src/push.rs".into()];
+        assert_eq!(run(&t, files, &[]), Ok(vec![]));
     }
 
     #[test]
