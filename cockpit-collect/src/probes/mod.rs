@@ -163,11 +163,12 @@ pub fn now_keys() -> Kv {
             push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());
 
             // aeon_fuse_minutes (wave 4.34, sp-27d3d): ported to aeon::trace, called
-            // in-process. `base` (family W, base refs — not yet ported) still reaches
-            // lib.sh's spira_landref through the generic bridge; the commit-ahead
-            // timestamp and everything else is native.
+            // in-process. `base` (family W, base refs) is in-process too now (sp-k6lku,
+            // "wave 4.13") through the same `io::repo_registry()` unsent.rs/queue.rs
+            // already use, not the generic lib.sh bridge — the commit-ahead timestamp and
+            // everything else is native.
             let wt = run.join("worktree").join(bead);
-            let commit_ahead_ts = io::lib_call(&home, "spira_landref", &[&repo_name])
+            let commit_ahead_ts = spira_config::repos::landref(&io::repo_registry(), &repo_name)
                 .filter(|b| !b.is_empty())
                 .and_then(|base| io::git(&wt, &["log", "--format=%ct", "-1", &format!("{base}..HEAD")]))
                 .and_then(|t| t.trim().parse::<i64>().ok());
@@ -473,7 +474,9 @@ pub fn slots_keys() -> Kv {
     let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live);
 
-    let pool: i64 = std::env::var("SPIRA_MAX_AEONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    // SPIRA_MAX_AEONS is never set into this process's own environment (io::NEVER_EXPORTED)
+    // — read io::max_aeons() instead of std::env::var directly.
+    let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
     let lane_fayths = io::lib_call(&home, "spira_lane_fayths", &[]).unwrap_or_default();
     let mut lt = 0i64;
     for f in lane_fayths.split_whitespace() {

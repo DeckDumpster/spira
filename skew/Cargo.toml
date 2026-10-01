@@ -13,6 +13,7 @@ name = "skew"
 path = "src/main.rs"
 
 [dependencies]
+spira-config = { path = "../spira-config" }
 
 [profile.release]
 opt-level = "z"

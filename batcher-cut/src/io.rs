@@ -103,6 +103,18 @@ fn run_status(cmd: &mut Command) -> bool {
     cmd.status().map(|s| s.success()).unwrap_or(false)
 }
 
+/// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave 4.13"),
+/// resolved once, in-process — no `bash -c '. lib.sh; ...'` subprocess at all now: the
+/// three separate `repo_land`/`repo_root`/`spira_landref` bash subprocesses `find_repo`
+/// used to shell out to, one per lookup, are gone, and so is the one-shot snapshot
+/// subprocess that replaced them, since `from_env` resolves
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the same way
+/// conf.sh does when this (bare, unit-launched) process's own environment lacks them
+/// (sp-z3eyk).
+pub fn registry(env: &Env) -> spira_config::repos::Registry {
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), &env.home)
+}
+
 // ---------------------------------------------------------------------------------------
 // lib.sh dispatch — reuse the tested shell functions for bd/landstate mutations rather than
 // re-deriving their side effects (release_claim, the requeue event, the TSD dual-write).

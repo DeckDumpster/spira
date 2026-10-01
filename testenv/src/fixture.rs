@@ -452,6 +452,11 @@ impl<'a> Session<'a> {
             kv("SPIRA_INSTALL_FORCE", "1"),
             kv("SPIRA_RUN", self.batch_run()),
             kv("SPIRA_TESTDB_DATA", self.testdb_data()),
+            // sp-e5v53-4: a watcher daemon (pr-notify, inbox-keeper, publish-backlog — every
+            // spira-watch-* unit) reaches outside this container — GitHub, mail, the forge —
+            // which a fixture, by design, cannot; units-install reads this to warn about one
+            // that never reaches active rather than fault a run no watcher is what is tested.
+            kv("SPIRA_IN_TESTENV", "1"),
         ]);
         env.extend(self.release_env());
         // sp-31dm0: systemd/install.sh is retired; the per-instance unit installer is the

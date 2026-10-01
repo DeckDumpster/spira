@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 libc = "0.2"
+spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

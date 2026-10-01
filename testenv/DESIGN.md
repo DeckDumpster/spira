@@ -1104,6 +1104,15 @@ default conf.sh carries — conf.sh is no longer sourced:
   a real directory, gets nothing extra — the existing `up_boots_with_the_label_limit_and_
   volumes_and_records_its_caller` test is the fixture's own positive control that it stays
   that way.
+* **D24 — `install_request` now sets `SPIRA_IN_TESTENV=1` too (sp-e5v53-4).** Previously
+  only `suite_request` set it. A fourth production path left the gate's base trial
+  untestable: `units-install`'s end-state check faulted on `spira-watch-pr-notify`,
+  `spira-watch-inbox-keeper` and `spira-watch-publish-backlog` never reaching active inside
+  the container — daemons that reach outside the box (GitHub, mail, the forge), which a
+  sandboxed fixture cannot, unlike the purely-local `spira-watch-queue-watch`, which was
+  never in the failing set. `units-install` now reads this same flag to tell a watcher
+  that cannot reach active inside a test fixture (named, non-fatal) from everything else
+  (still fatal) — `install::install_units::split_not_active`, DESIGN.md "Decisions" there.
 
 ## Build IO (sp-z61hj)
 

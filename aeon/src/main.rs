@@ -121,10 +121,11 @@ fn main() {
     let boot = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &boot_env };
     let vars: Vec<String> = seam::SNAPSHOT_VARS.iter().map(|s| s.to_string()).collect();
     let raw = aeon::ports::Seam::call(&boot, "_aeon_snapshot", &vars);
-    let snap = match seam::parse_snapshot(&raw.stdout) {
+    let mut snap = match seam::parse_snapshot(&raw.stdout) {
         Ok(s) => s,
         Err(e) => fatal(&format!("{}: {e}: {}", cli.fayth, raw.stderr.lines().next().unwrap_or(""))),
     };
+    conf::merge_resolved_config(&mut snap, &home, &original);
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);
     let fayth = Fayth::from_vars(&cli.fayth, &snap.vars);
