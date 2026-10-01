@@ -2196,23 +2196,15 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
     printf '?'
     return 1
 }
-# requeues_of <id> -> judged, exemption-aware requeue count, or '?' if it cannot be told.
-# PORTED TO spira-claim (wave 4.18, sp-sn1re): this used to be a bare _counter_events_query
-# (a raw COUNT(*) of every 'requeued' row, no exemption at all). It now shims directly to
-# `spira-claim requeues`, the same floored, rebase/harness-return-exempt fold attempts_of
-# uses — a deliberate, already-sanctioned behaviour change (spira-claim/DESIGN.md §6,
-# sp-j1q6o/sp-rfodk), not a new discrepancy. The '?'-on-failure contract is unchanged, so
-# every existing caller (landing-pass's seam, aeon/teardown.rs) still gets a sentinel it
-# recognises rather than a silent zero.
-requeues_of() {
-    local id="${1:-}" out
-    if [ -n "$id" ] && out="$(command spira-claim requeues "$id" --db "$SPIRA_DB" 2>/dev/null)" && [ -n "$out" ]; then
-        printf '%d' "$out"
-        return 0
-    fi
-    printf '?'
-    return 1
-}
+# requeues_of <id> -> raw COUNT(*) of 'requeued' events, or '?' if it cannot be told.
+# NOT the judged, exemption-aware count `spira-claim requeues` answers for CHECK 4's own
+# accounting (DESIGN.md §6) — this stays the bare _counter_events_query census.sh,
+# landing-pass and aeon/teardown.rs already depend on counting EVERY requeue, including
+# a rebase-conflict one that attempts_of exempts (test-census-events.sh sp-9edq8,
+# test-landing-rebase.sh, test-aeon-teardown-e2e.sh all assert exactly that). Tried
+# shimming this onto `spira-claim requeues` first; all three suites went red on that
+# exact distinction, which is the regression this comment now guards against.
+requeues_of() { _counter_events_query "${1:-}" requeued; }
 
 # CENSUS SQL — the query and runner used by census to aggregate failure classes.
 # Kept in lib.sh so that tests can call it directly without parsing census.
