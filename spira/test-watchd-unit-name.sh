@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-watchd-unit-name.sh — watchd.sh queries the same installed unit name that
+# test-watchd-unit-name.sh — watchd queries the same installed unit name that
 # install.sh creates, and they cannot drift.
 #
 #   ./test-watchd-unit-name.sh
@@ -13,7 +13,7 @@
 # 2. POSITIVE CONTROL: the old template form (spira-watch@<name>.service) differs
 #    from the installed form, so the test proves it could have caught the bug before
 #    the fix landed.
-# 3. WATCHD QUERIES THE INSTALLED NAME: watchd.sh's own output when asked about
+# 3. WATCHD QUERIES THE INSTALLED NAME: watchd's own output when asked about
 #    a daemon watcher uses the installed name, not the template form.
 #
 # RUNS WITHOUT SYSTEMD. All assertions are against the naming formula; no unit
@@ -21,7 +21,7 @@
 #
 # tier: T1
 # covers: spira/conf.sh
-# covers: spira/watchd.sh
+# covers: watchd/*
 # covers: systemd/units.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -74,8 +74,8 @@ unset _inst _name got want
 # ---------------------------------------------------------------------------
 # 2. POSITIVE CONTROL — the template form is DIFFERENT from the installed form,
 #    so the test would have caught the pre-fix code.
-#    Pre-fix: watchd.sh built "spira-watch@answers.service".
-#    Post-fix: watchd.sh builds "spira-watch-answers-prod.service".
+#    Pre-fix: watchd built "spira-watch@answers.service".
+#    Post-fix: watchd builds "spira-watch-answers-prod.service".
 # ---------------------------------------------------------------------------
 echo
 echo "POSITIVE CONTROL — template form differs from installed form:"
@@ -89,8 +89,8 @@ installed_form="$(inst_watch_name testview test)"
 ne "template != installed (test)" "$template_form" "$installed_form"
 
 # ---------------------------------------------------------------------------
-# 3. WATCHD QUERIES THE INSTALLED NAME — extract the unit name watchd.sh passes
-#    to systemctl by sourcing conf.sh the same way watchd.sh does.
+# 3. WATCHD QUERIES THE INSTALLED NAME — extract the unit name watchd passes
+#    to systemctl by sourcing conf.sh the same way watchd does.
 # ---------------------------------------------------------------------------
 echo
 echo "WATCHD QUERIES INSTALLED NAME — not the template form:"
@@ -103,7 +103,7 @@ kind=daemon
 target=SPIRA_DB
 CONF
 
-# Stub watchd.sh's rows reader to return a predictable row.
+# Stub watchd's rows reader to return a predictable row.
 # We source conf.sh and call watch_unit_name ourselves, verifying it does NOT
 # produce the template form for any name a daemon row could carry.
 for _name in answers testview cockpit-status; do

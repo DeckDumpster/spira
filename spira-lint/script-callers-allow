@@ -1,0 +1,5 @@
+# script-callers' shrink-only allow list — exact repo-relative paths, like
+# spira-lint/tmp-leak-allow and spira-lint/fence-scripts-allow. A path here already carried
+# this defect when the rule landed; remove the line in the same change that fixes it (every
+# finding the path produces is suppressed while it is listed, not just the one named below).
+#

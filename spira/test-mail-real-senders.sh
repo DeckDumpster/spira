@@ -8,7 +8,7 @@
 # scratch Maildir and with no lint override, so the running message actually clears
 # mail.sh's send path.
 #
-# COVERAGE: land_escalate (lib.sh), watchd.sh's _wd_ask, and skew.sh's escalate are
+# COVERAGE: land_escalate (lib.sh), watchd (the compiled binary) notify path, and skew.sh's escalate are
 # standalone functions reachable without standing up a database or systemd — sourced
 # directly (skew.sh's escalate is extracted with sed rather than sourcing the whole file,
 # because skew.sh has no main guard and runs a real box audit at source time otherwise).
@@ -27,7 +27,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh spira/watchd.sh spira/skew.sh spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh incident/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* spira/skew.sh spira/incident.sh spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh incident/* UC-operator-channel-05 archivist/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -71,17 +71,22 @@ want "land_escalate message names the reason"  "gate keeps failing"  "$body"
 want "land_escalate message carries a Default"  "## Default"          "$body"
 
 echo
-echo "watchd.sh: _wd_ask (question)"
+echo "watchd: notify's escalate/ask (question)"
 
-. "$HERE/watchd.sh"
+# sp-48f6g: watchd.sh rewritten to the compiled binary `watchd`; _wd_ask no longer exists to
+# source and call directly. Drives the real escalation path end to end instead: a one-line
+# manifest, a planted backlog old enough to fire on the first pass, `watchd notify` run for
+# real against this scratch SPIRA_RUN/SPIRA_MAIL/SPIRA_BD — the same "real sender, real
+# mail.sh" contract every other emitter in this suite is held to.
+command -v watchd >/dev/null 2>&1 || bail "watchd is not on PATH"
+WD_WATCHERS="$TMP/watchd-watchers"
+printf 'realsender|log|%s/realsender.log\n' "$SPIRA_RUN" > "$WD_WATCHERS"
+mkdir -p "$SPIRA_RUN/watchd"
+printf '[2000-01-01T00:00:00Z] FAIL planted by the real-sender test\n' > "$SPIRA_RUN/realsender.log"
 before="$(unread)"
-_wd_ask "test-real-sender.escalated" "a fingerprint for the real-sender test" \
-    "Events a watcher produced have reached no reader" \
-    "read them below and act on them here" \
-    "delivery otherwise depends on a session existing to drain them" \
-    "evidence: the real-sender test planted this condition" >/dev/null 2>&1
+SPIRA_WATCHERS="$WD_WATCHERS" SPIRA_NOTIFY_AGE=1 SPIRA_ACTIONABLE='FAIL' watchd notify >/dev/null 2>&1
 after="$(unread)"
-is "_wd_ask delivers exactly one message" "$((before + 1))" "$after"
+is "watchd notify delivers exactly one message" "$((before + 1))" "$after"
 
 echo
 echo "skew.sh: escalate (question)"

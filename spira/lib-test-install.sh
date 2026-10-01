@@ -7,7 +7,7 @@
 # Sourced, never executed.
 #
 # install_fixture_build <fixture-root>
-#   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,watchd.sh,
+#   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,
 #   lib.sh,units.sh,suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
 #   and repo-map.example, a no-op `release` stub (install_fixture_release_stub below;
 #   install.sh finds it by name, so a caller puts <fixture-root>/spira first on PATH), and
@@ -66,7 +66,7 @@ install_fixture_build() {
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
     done
     ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$fixture/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh units.sh suite-covers.sh; do
+    for f in conf.sh lib.sh units.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
@@ -169,7 +169,7 @@ mk_install_fixture() {
     done
     ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$systemd/install.sh"
     ln -sf "$_LIB_INSTALL_SELF/../systemd/units.sh"   "$systemd/units.sh"
-    for f in conf.sh lib.sh watchd.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
     printf '# empty\n' > "$spira/watchers"
@@ -236,7 +236,7 @@ tinstall_fixture() {   # tinstall_fixture <dir>
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
     ln -sf "$src/../systemd/install.sh" "$dir/systemd/install.sh"
-    for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
     printf '# empty — test fixture\n' > "$dir/spira/watchers"

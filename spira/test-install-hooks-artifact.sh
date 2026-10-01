@@ -51,7 +51,6 @@ ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
 ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
-ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
 
 # ctrl: report every unit as suspended, so phase 4's ExecStart-is-executable check
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)
