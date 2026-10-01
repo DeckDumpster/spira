@@ -195,6 +195,15 @@ pub fn session_result_fields(path: Option<&Path>, mark: &str) -> SessionFields {
     }
 }
 
+/// The current attempt's trace segment, decoded as UTF-8 (lossy). `None` when the path is
+/// absent, missing, or not a file — `session_outcome`/`session_yield_headless` read that as
+/// "we cannot tell", never as an empty session (law-absence-needs-a-positive-control).
+/// `cap` bounds the trailing bytes read (0 = unbounded), matching `attempt_trace`.
+pub fn trace_segment(path: Option<&Path>, cap: u64, mark: &str) -> Option<String> {
+    let p = path.filter(|p| p.is_file())?;
+    Some(String::from_utf8_lossy(&attempt_trace(p, cap, mark)).into_owned())
+}
+
 /// `spira_trace_mark <file> <who>`: `<mark> <n+1> aeon=<who> at=<ts> kept=<bytes>`.
 pub fn trace_mark_line(path: &Path, who: &str, mark: &str, now: i64) -> String {
     let kept = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -303,6 +312,16 @@ mod tests {
         std::fs::write(&p, &big).unwrap();
         assert_eq!(attempt_trace(&p, 0, mark), b"=== spira attempt 2 aeon=b\ntail\n");
         assert!(attempt_trace(&d.join("missing"), 0, mark).is_empty());
+    }
+
+    #[test]
+    fn trace_segment_is_none_for_a_missing_or_absent_path() {
+        let d = tmp("seg2");
+        assert_eq!(trace_segment(None, 0, "=== spira attempt"), None);
+        assert_eq!(trace_segment(Some(&d.join("missing")), 0, "=== spira attempt"), None);
+        let p = d.join("a.log");
+        std::fs::write(&p, "hi\n").unwrap();
+        assert_eq!(trace_segment(Some(&p), 0, "=== spira attempt"), Some("hi\n".to_string()));
     }
 
     #[test]

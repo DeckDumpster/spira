@@ -241,11 +241,18 @@ if [ "$MODE" = drop-empty ]; then
         read -r ans
         [[ "$ans" =~ ^[Yy]$ ]] || { printf 'Aborted.\n'; exit 1; }
 
+        # Through the chokepoint (sp-9envm), not a raw `git branch -D`: an EMPTY branch is
+        # the safe case (0 commits ahead, so content_landed's ancestor check holds
+        # trivially), but "safe in practice" is not a reason to skip the holder-witness
+        # check and the reap-log entry every OTHER deletion gets. Empty caller applies the
+        # content fence as a second, independent confirmation.
         for br in "${to_drop[@]}"; do
-            SPIRA_REF_SANCTIONED=1 git -C "$_repo_path" branch -d "$br" 2>/dev/null \
-                || SPIRA_REF_SANCTIONED=1 git -C "$_repo_path" branch -D "$br" \
-                && printf '  deleted %s\n' "$br" \
-                || printf '  FAILED to delete %s\n' "$br"
+            bead_id="${br#spira/}"
+            if spira_destroy_branch "$bead_id" "$br" "$_repo_path" "held.sh --drop-empty"; then
+                printf '  deleted %s\n' "$br"
+            else
+                printf '  FAILED to delete %s: %s\n' "$br" "${SPIRA_DESTROY_ERR:-see $SPIRA_REAPLOG}"
+            fi
         done
     done < <(_hold_repos)
     [ "$any" -eq 0 ] && printf 'No empty branches to drop.\n'

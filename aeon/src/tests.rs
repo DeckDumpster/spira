@@ -139,11 +139,10 @@ impl Seam for FakeSeam {
                 w.status.insert(args[0].clone(), "open".into());
                 Out::ok("")
             }
-            "verdict_committed" => {
-                let o = std::process::Command::new("git").arg("-C").arg(&args[0]).args(["log", "--format=%s", &args[1]]).output().unwrap();
-                Out::ok(if String::from_utf8_lossy(&o.stdout).contains(&args[2]) { "yes" } else { "no" })
-            }
-            "close_verdict" => Out::ok(if args[1] != "closed" || args[4] == "yes" { "keep|committed" } else { "reopen|closed-without-commit|x" }),
+            // spira_landrefs: no landing ref configured in these fixtures — verdict_committed
+            // (now native, aeon/src/verdict.rs) falls back to this only when the branch
+            // itself carries no commit naming the bead; empty means "nothing to walk".
+            "spira_landrefs" => Out::ok(""),
             "bead_is_work_type" => {
                 if ["task", "bug", "feature", "chore"].contains(&args[0].as_str()) {
                     Out::ok("")
@@ -151,8 +150,7 @@ impl Seam for FakeSeam {
                     Out::fail(1, "")
                 }
             }
-            "land_state" | "capacity_reset_at" | "lc_bead_verified" | "open_ask_blocker" | "session_yield_headless" | "repo_land_queued" => Out::fail(1, ""),
-            "session_outcome" => Out::ok("unlanded"),
+            "land_state" | "capacity_reset_at" | "lc_bead_verified" | "repo_land_queued" => Out::fail(1, ""),
             "requeues_of" => Out::ok("1"),
             _ => Out::ok(""),
         }
@@ -642,7 +640,14 @@ fn happy_path_legacy_close_is_converted_to_submitted() {
 fn a_session_that_leaves_the_bead_open_is_unlanded_and_exits_its_rc() {
     let f = fx("unlanded");
     seed(&f, "sp-o");
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    // A believable trace (acted, no API error) so the native session_outcome classifies it
+    // as `unlanded` rather than `refused` — this is the exact shape test-attempts.sh's
+    // "clean.log" fixture asserted against the bash classifier.
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        1
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
     assert_eq!(o.code, 1, "{}", o.log);
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done builder sp-o rc=1 status=in_progress"), "{l:?}");
@@ -667,7 +672,9 @@ fn slain_mid_session_is_free_and_exits_143() {
     assert!(l[2].starts_with("done builder sp-s rc=143 status=slain"), "{l:?}");
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-s", "unjudged-slain"]));
-    assert!(!w.seam_calls.iter().any(|c| c.0 == "verdict_committed"), "the verdict block is skipped, as bash's trap skipped it");
+    // verdict() is native now (no seam call to prove it ran); its first act is always this
+    // exact log line, so its absence proves the whole block was skipped.
+    assert!(!o.log.contains("sp-s status="), "the verdict block is skipped, as bash's trap skipped it");
     assert!(!f.run.join("aeon-builder-sp-s.pid").exists());
 }
 
@@ -738,8 +745,11 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
 fn sweep_runs_without_a_bead() {
     let f = fx("sweep");
     std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    // A believable trace (acted, no API error) so the native session_outcome classifies it
+    // as `unlanded` rather than `refused` — a bare result record with no tool_use is not an
+    // attempt (see decide::tests::session_outcome_table).
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
-        crate::run::append(&spec.log, "{\"type\":\"result\",\"num_turns\":1}\n");
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"num_turns\":1}\n");
         1
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Sweep { prompt: Some("look at X".into()) }, BTreeMap::new(), act);
@@ -806,4 +816,47 @@ fn the_summon_jitter_sleeps_what_it_logs_and_never_more_than_its_bound() {
         assert!(!o.log.contains("summon jitter"));
     }
     assert_eq!(o.seen.len(), 1, "the session still ran");
+}
+
+// test-rapid-recur.sh (sp-fmvtv): three consecutive sub-10s summons on the same bead are a
+// setup loop that recurs identically on every retry — park it instead of re-summoning
+// forever. rapid_recur_check (lib.sh) is retired; this is aeon::run::Run::rapid_recur_check.
+#[test]
+fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
+    let f = fx("rapidrecur");
+    seed(&f, "sp-rr");
+    std::fs::create_dir_all(&f.run).unwrap();
+    std::fs::write(
+        f.run.join("aeon-ledger.log"),
+        "2026-09-27T00:00:00Z done builder sp-rr rc=0 status=unlanded wall_s=1 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n\
+         2026-09-27T00:00:01Z done builder sp-rr rc=0 status=unlanded wall_s=2 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n",
+    )
+    .unwrap();
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    assert_eq!(o.code, 1, "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr"));
+    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("overseer")), "{:?}", w.labels.get("sp-rr"));
+    assert!(w.notes.iter().any(|(id, n)| id == "sp-rr" && n.contains("RAPID-RECUR")), "{:?}", w.notes);
+    assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "{}", o.log);
+    assert!(w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("hold")), "{:?}", w.exec_calls);
+}
+
+// The positive control: two prior real (wall_s>=10) runs never trip the guard, however many
+// sub-10s runs follow.
+#[test]
+fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
+    let f = fx("rapidrecur-ok");
+    seed(&f, "sp-rr2");
+    std::fs::create_dir_all(&f.run).unwrap();
+    std::fs::write(
+        f.run.join("aeon-ledger.log"),
+        "2026-09-27T00:00:00Z done builder sp-rr2 rc=0 status=unlanded wall_s=90 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n\
+         2026-09-27T00:00:01Z done builder sp-rr2 rc=0 status=unlanded wall_s=90 api_s=1 turns=1 in_tok=1 cache_read_tok=0 out_tok=1 think_tok=0 cost_usd=0.01\n",
+    )
+    .unwrap();
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
+    assert_eq!(o.code, 1, "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2"));
 }

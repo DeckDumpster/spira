@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::bd;
 use crate::decide::{self, Eviction, SopVerdict};
-use crate::ports::s;
+use crate::ports::{s, Bd, Exec, Git, Seam};
 use crate::run::Run;
 use crate::util;
 
@@ -32,6 +32,132 @@ pub fn eviction_race_count(ledger_json: &str) -> i64 {
         .and_then(|r| r.as_array())
         .map(|a| a.iter().filter(|r| r.get("cause").and_then(|c| c.as_str()) == Some(EVICTION_RACE)).count() as i64)
         .unwrap_or(0)
+}
+
+/// `verdict_committed <repo> <branch> <id> [window]` -> is a commit naming `id` already on
+/// the branch, or (failing that) on the landing refs? Walks the branch first (this session's
+/// own commits, not yet merged to the base), then the landing refs (commits already on the
+/// base) — same window for both, to match sentinel CHECK5 and `landed()`'s
+/// SPIRA_VERDICT_WINDOW. A bead's commit sits deeper from a rebased branch's tip than from
+/// the base tip (leftover commits from a prior attempt shift the depth), so checking only
+/// one of the two misses real commits in one direction.
+///
+/// `spira_landrefs` (family W) is not yet ported — this still reaches it through the seam.
+pub fn verdict_committed(git: &dyn Git, seam: &dyn Seam, repo: &Path, branch: &str, id: &str, window: i64) -> bool {
+    let subjects = git.git(repo, &["log", "--format=%s%n%b", "-n", &window.to_string(), branch]).stdout;
+    if subjects.contains(id) {
+        return true;
+    }
+    let land_refs = seam.call("spira_landrefs", &s(&[&repo.display().to_string()])).stdout;
+    let refs: Vec<&str> = land_refs.split_whitespace().collect();
+    if refs.is_empty() {
+        return false;
+    }
+    let mut args: Vec<String> = vec!["log".into(), "--format=%s%n%b".into(), "-n".into(), window.to_string()];
+    args.extend(refs.into_iter().map(String::from));
+    let land_subjects = git.git(repo, &args.iter().map(String::as_str).collect::<Vec<_>>()).stdout;
+    land_subjects.contains(id)
+}
+
+/// `delivers_verdict <id> <delivers-string> <since-epoch>` -> (verified?, failure reason).
+/// The one case block for `delivers:TYPE` evidence, shared by the verdict (checking its own
+/// session's work, since-epoch = SESSION_EPOCH) and sentinel CHECK5 (checking a closed
+/// bead's window since started_at) — both get the same verdict for the same evidence by
+/// construction, because it is the same function (now duplicated once, natively, in each
+/// crate, rather than both shelling into one bash copy).
+///
+/// RECOGNISED TYPES: beads (a child bead — not this aeon's own state-change event record —
+/// names id as source), note/report:/abs/path (the file exists and postdates since-epoch; a
+/// path under `.../applied.jsonl` is checked for a record naming id instead, since mtime
+/// alone on that shared ledger is satisfied by any concurrent aeon's own application),
+/// check:<command> (exits 0 within `timeout_s`), action (no machine check — the close reason
+/// is the evidence).
+pub fn delivers_verdict(bd: &dyn Bd, exec: &dyn Exec, timeout_s: u64, id: &str, delivers: &str, since: i64) -> (bool, String) {
+    for item in delivers.split(';').filter(|d| !d.is_empty()) {
+        let (dtype, dval) = item.split_once(':').unwrap_or((item, item));
+        match dtype {
+            "beads" => {
+                let children = bd::json(bd, &["children", id]);
+                if bd::child_work_count(&children) <= 0 {
+                    return (false, format!("delivers:beads declared but no child beads name {id} as source"));
+                }
+            }
+            "note" | "report" => {
+                if dval == dtype {
+                    return (false, format!("delivers:{dtype} has no file path — use delivers:{dtype}:/absolute/path"));
+                }
+                let p = Path::new(dval);
+                if !p.is_file() {
+                    return (false, format!("delivers:{dtype}: {dval} does not exist"));
+                }
+                if dval.ends_with("/applied.jsonl") {
+                    let text = std::fs::read_to_string(p).unwrap_or_default();
+                    let needle = regex::Regex::new(&format!(r#""bead"\s*:\s*"{}""#, regex::escape(id))).unwrap();
+                    if !text.lines().any(|l| needle.is_match(l)) {
+                        return (false, format!("delivers:{dtype}: {dval} has no record naming bead {id}"));
+                    }
+                } else {
+                    let mt = std::fs::metadata(p)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs() as i64)
+                        .unwrap_or(0);
+                    if mt <= since {
+                        return (false, format!("delivers:{dtype}: {dval} exists but predates the window (mtime {mt} <= {since})"));
+                    }
+                }
+            }
+            "check" => {
+                if dval == dtype {
+                    return (false, "delivers:check has no command — use delivers:check:<command>".into());
+                }
+                let o = exec.exec("timeout", &s(&[&timeout_s.to_string(), "bash", "-c", dval]), None, None);
+                if o.code == 124 {
+                    return (false, format!("delivers:check: command timed out after {timeout_s}s: {dval}"));
+                } else if o.code != 0 {
+                    return (false, format!("delivers:check: command exited non-zero: {dval}"));
+                }
+            }
+            "action" => {}
+            other => {
+                return (false, format!("delivers:{other} is not a recognised type (beads, note, report, check, action)"));
+            }
+        }
+    }
+    (true, String::new())
+}
+
+/// `close_verdict <id> <status> <superseded> <delivers> <committed> <since-epoch>` ->
+/// keep|committed, keep|superseded, keep|delivers, reopen|delivers-mismatch or
+/// reopen|closed-without-commit. Not-closed and committed=true both answer keep|committed —
+/// the caller only acts on this after it already knows the bead is closed.
+///
+/// THE GIT WALK IS THE CALLER'S OWN (`verdict_committed`, or CHECK5's landstate-aware walk)
+/// — this only decides a CLOSED, NOT-YET-committed bead's fate given delivers evidence
+/// already available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloseVerdict {
+    pub outcome: String,
+    pub reason: String,
+    pub msg: String,
+}
+
+pub fn close_verdict(bd: &dyn Bd, exec: &dyn Exec, delivers_timeout_s: u64, id: &str, status: &str, superseded: bool, delivers: &str, committed: bool, since: i64) -> CloseVerdict {
+    if status != "closed" || committed {
+        return CloseVerdict { outcome: "keep".into(), reason: "committed".into(), msg: String::new() };
+    }
+    if superseded {
+        return CloseVerdict { outcome: "keep".into(), reason: "superseded".into(), msg: String::new() };
+    }
+    if !delivers.is_empty() {
+        let (ok, fail) = delivers_verdict(bd, exec, delivers_timeout_s, id, delivers, since);
+        if ok {
+            return CloseVerdict { outcome: "keep".into(), reason: "delivers".into(), msg: format!("{delivers} verified") };
+        }
+        return CloseVerdict { outcome: "reopen".into(), reason: "delivers-mismatch".into(), msg: fail };
+    }
+    CloseVerdict { outcome: "reopen".into(), reason: "closed-without-commit".into(), msg: String::new() }
 }
 
 impl Run<'_> {
@@ -93,7 +219,8 @@ impl Run<'_> {
         let superseded = row.as_ref().is_some_and(|r| r.superseded());
         let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
         let issue_type = row.as_ref().and_then(|r| r.issue_type.clone()).unwrap_or_default();
-        let committed = self.sv("verdict_committed", &s(&[&repo, &branch, &id])).text() == "yes";
+        let window = self.conf.n("SPIRA_VERDICT_WINDOW", 400);
+        let committed = verdict_committed(self.d.git, self.d.seam, &self.s.repo, &branch, &id, window);
         self.s.committed = committed;
         let cy = if committed { "yes" } else { "no" };
         let sup = if superseded { "1" } else { "0" };
@@ -153,9 +280,9 @@ impl Run<'_> {
             }
         }
 
-        // ---- close_verdict: shared with sentinel CHECK 5 ----
-        let cv = self.sv("close_verdict", &s(&[&id, &st, sup, &delivers, cy, &self.s.session_epoch.to_string()])).stdout;
-        let cv = decide::parse_close_verdict(&cv);
+        // ---- close_verdict: the same decision sentinel CHECK 5 makes, natively in each crate ----
+        let delivers_timeout = self.conf.n("SPIRA_DELIVERS_CHECK_TIMEOUT", 60).max(1) as u64;
+        let cv = close_verdict(self.d.bd, self.d.exec, delivers_timeout, &id, &st, superseded, &delivers, committed, self.s.session_epoch);
         match (cv.outcome.as_str(), cv.reason.as_str()) {
             ("keep", "delivers") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — {}", cv.msg)),
             ("keep", "superseded") => self.log(&format!("{f}: {id} closed with nothing committed and NOT reopened — superseded, so its work landed under another id")),
@@ -410,6 +537,9 @@ impl Run<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::util::Out;
+    use std::collections::BTreeMap;
+    use std::sync::Mutex;
 
     #[test]
     fn eviction_count_reads_only_eviction_race_returns() {
@@ -417,5 +547,150 @@ mod tests {
         assert_eq!(eviction_race_count(j), 2);
         assert_eq!(eviction_race_count("not json"), 0);
         assert_eq!(eviction_race_count("{}"), 0);
+    }
+
+    // ---- verdict_committed -----------------------------------------------------------
+
+    /// Fakes git log's subject output by ref name: args are `log --format=... -n <window>
+    /// <ref>...`, so everything from index 4 on is the ref list to look up.
+    struct FakeGit(BTreeMap<&'static str, &'static str>);
+    impl Git for FakeGit {
+        fn git(&self, _dir: &Path, args: &[&str]) -> Out {
+            let text: String = args[4..].iter().filter_map(|r| self.0.get(*r)).map(|t| format!("{t}\n")).collect();
+            Out::ok(text)
+        }
+    }
+    struct FakeSeam(&'static str);
+    impl Seam for FakeSeam {
+        fn call(&self, _f: &str, _a: &[String]) -> Out {
+            Out::ok(self.0)
+        }
+    }
+
+    #[test]
+    fn verdict_committed_walks_branch_then_landrefs() {
+        let mut log = BTreeMap::new();
+        log.insert("mybranch", "sp-a — the work");
+        let git = FakeGit(log);
+        let seam = FakeSeam("");
+        assert!(verdict_committed(&git, &seam, Path::new("/repo"), "mybranch", "sp-a", 400), "committed on the branch itself");
+        assert!(!verdict_committed(&git, &seam, Path::new("/repo"), "mybranch", "sp-x", 400), "not committed anywhere");
+
+        let mut log2 = BTreeMap::new();
+        log2.insert("mybranch", "unrelated");
+        log2.insert("local/main", "sp-a — landed earlier");
+        let git2 = FakeGit(log2);
+        let seam2 = FakeSeam("local/main");
+        assert!(verdict_committed(&git2, &seam2, Path::new("/repo"), "mybranch", "sp-a", 400), "not on the branch, but on the landing ref");
+
+        // Empty landrefs short-circuits without a second git call that would need a ref.
+        let seam3 = FakeSeam("");
+        assert!(!verdict_committed(&git2, &seam3, Path::new("/repo"), "mybranch", "sp-a", 400));
+    }
+
+    // ---- delivers_verdict / close_verdict ----------------------------------------------
+
+    struct FakeBd(Mutex<String>);
+    impl Bd for FakeBd {
+        fn bd(&self, _args: &[String]) -> Out {
+            Out::ok(self.0.lock().unwrap().clone())
+        }
+    }
+    struct FakeExec;
+    impl Exec for FakeExec {
+        fn exec(&self, prog: &str, args: &[String], _stdin: Option<Vec<u8>>, _cwd: Option<&Path>) -> Out {
+            assert_eq!(prog, "timeout");
+            match args[3].as_str() {
+                "true" => Out::ok(""),
+                "false" => Out::fail(1, ""),
+                "sleep 999" => Out::fail(124, ""),
+                other => panic!("unexpected check command: {other}"),
+            }
+        }
+    }
+
+    #[test]
+    fn delivers_verdict_beads() {
+        let bd = FakeBd(Mutex::new(r#"[{"id":"sp-child","issue_type":"task"}]"#.into()));
+        let exec = FakeExec;
+        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", "beads", 0);
+        assert!(ok);
+        *bd.0.lock().unwrap() = "[]".into();
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "beads", 0);
+        assert!(!ok);
+        assert!(fail.contains("no child beads name sp-a"), "{fail}");
+    }
+
+    #[test]
+    fn delivers_verdict_note_and_report() {
+        let d = testkit::TempDir::new("aeon-delivers");
+        let bd = FakeBd(Mutex::new(String::new()));
+        let exec = FakeExec;
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "note", 0);
+        assert!(!ok);
+        assert!(fail.contains("has no file path"), "{fail}");
+
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("note:{}/missing", d.display()), 0);
+        assert!(!ok);
+        assert!(fail.contains("does not exist"), "{fail}");
+
+        let p = d.join("report.md");
+        std::fs::write(&p, "x").unwrap();
+        let now = crate::util::now_epoch();
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", p.display()), now + 1000);
+        assert!(!ok, "{fail}");
+        assert!(fail.contains("predates the window"), "{fail}");
+        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", p.display()), now - 1000);
+        assert!(ok);
+
+        let applied = d.join("applied.jsonl");
+        std::fs::write(&applied, "{\"bead\": \"sp-other\"}\n").unwrap();
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", applied.display()), 0);
+        assert!(!ok);
+        assert!(fail.contains("no record naming bead sp-a"), "{fail}");
+        std::fs::write(&applied, "{\"bead\": \"sp-a\"}\n").unwrap();
+        let (ok, _) = delivers_verdict(&bd, &exec, 5, "sp-a", &format!("report:{}", applied.display()), 0);
+        assert!(ok);
+    }
+
+    #[test]
+    fn delivers_verdict_check_and_action() {
+        let bd = FakeBd(Mutex::new(String::new()));
+        let exec = FakeExec;
+        assert!(delivers_verdict(&bd, &exec, 5, "sp-a", "check:true", 0).0);
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "check:false", 0);
+        assert!(!ok);
+        assert!(fail.contains("exited non-zero"), "{fail}");
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "check:sleep 999", 0);
+        assert!(!ok);
+        assert!(fail.contains("timed out"), "{fail}");
+        assert!(delivers_verdict(&bd, &exec, 5, "sp-a", "action", 0).0);
+        let (ok, fail) = delivers_verdict(&bd, &exec, 5, "sp-a", "weird:x", 0);
+        assert!(!ok);
+        assert!(fail.contains("not a recognised type"), "{fail}");
+    }
+
+    #[test]
+    fn close_verdict_precedence() {
+        let bd = FakeBd(Mutex::new(String::new()));
+        let exec = FakeExec;
+        // Not closed, or committed: keep|committed, regardless of anything else.
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "open", false, "", true, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "", true, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "committed"));
+        // Superseded wins over a missing commit.
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", true, "", false, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "superseded"));
+        // No delivers label at all: reopen.
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "", false, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "closed-without-commit"));
+        // delivers:action always verifies.
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "action", false, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("keep", "delivers"));
+        // delivers:check failing: reopen with the failure as the message.
+        let c = close_verdict(&bd, &exec, 5, "sp-a", "closed", false, "check:false", false, 0);
+        assert_eq!((c.outcome.as_str(), c.reason.as_str()), ("reopen", "delivers-mismatch"));
+        assert!(c.msg.contains("exited non-zero"));
     }
 }
