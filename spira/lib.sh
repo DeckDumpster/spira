@@ -350,390 +350,16 @@ for i in rows:
         break' "$subject" 2>/dev/null
 }
 
-# spira_ask_machinery — escalate a judgement that repeatedly could not be made.
-#
-# THE CASE THIS EXISTS FOR. A gate that withholds its verdict is correct to let the branch
-# keep its turn, and the pass is telling the truth every time it says "the next pass takes
-# it". Said eleven times in a row it is also the exact sound of a livelock, and on
-# 2026-09-07 nothing anywhere turned that repetition into a signal: origin/main sat still for
-# fifty minutes while every log line individually read as normal operation.
-#
-# So the escalation is on the REPETITION, not on the occurrence (law-alerts-must-be-actionable
-# — a first lock-timeout is not actionable and paging on it would teach the operator to
-# ignore the channel). It is a decision request, not a problem report: it names the machinery
-# fault, what it is costing, and what to do (law-escalate-decisions-not-problems).
-#
-# Deduped through ask_already_open on the branch name, because the strongest dedupe is "is it
-# already in front of him" rather than a clock — a rate-limited version of this same alert
-# put nine identical decisions in his pane in one day.
-spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <gate output>
-    local id="$1" br="$2" repo="$3" outcome="$4" reason="$5" n="$6" out="$7"
-    ask_already_open "$br cannot be judged" && return 0
-    local _subj="$br cannot be judged: $outcome x$n in a row ($reason)"
-    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`gate.sh $br $repo\` by hand and read the whole output"
-    local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-$_ev
-MAILEOF
-}
-
-# spira_ask_machinery_class — escalate a machinery fault that belongs to no single branch.
-#
-# THE CASE THIS EXISTS FOR. A dead container is not any one branch's problem — every branch
-# gated against it fails the same way — so counting and escalating it per branch produced
-# eight separate asks for one fault, each advising a fix that could not help because the
-# reason string itself was wrong. Escalated by class (repo+reason) instead, this fires once
-# and names every branch the fault touched.
-spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count> <gate output>
-    local repo="$1" reason="$2" branches="$3" outcome="$4" n="$5" out="$6"
-    ask_already_open "$repo cannot be judged: $outcome ($reason)" && return 0
-    local _subj="$repo cannot be judged: $outcome x$n in a day ($reason) — $branches"
-    local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
-    local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-Affected branches: $branches
-
-$_ev
-MAILEOF
-}
-
-# spira_land_noverdict — record one NO_VERDICT occurrence for a branch and escalate when it
-# recurs (law-alerts-must-be-actionable at the machinery level, same as spira_ask_machinery
-# above).
-#
-# A HARNESS-FAULT REASON IS COUNTED AND ESCALATED BY CLASS (repo+reason), not by branch. A
-# dead container makes every branch's gate fail identically, so the count that decides
-# whether this has become a pattern belongs to the fault, and the ask that follows names
-# every branch it has touched instead of filing one ask per branch. Every other NO_VERDICT
-# reason (a lock wait, a missing base ref) is still genuinely per-branch and keeps the old
-# per-branch key.
-#
-# THE CLASS WINDOW RESETS. An .asked marker older than SPIRA_NOVERDICT_CLASS_WINDOW (default
-# a day) is cleared along with its count, so a fault that went away and came back on a later
-# day escalates again rather than being silenced forever by yesterday's ask.
-spira_land_noverdict() {  # <bead> <branch> <repo-name> <reason> <outcome> <gate output>
-    local id="$1" br="$2" name="$3" reason="${4:-unspecified}" outcome="$5" out="$6"
-    local nv_key nv_file nv_n
-
-    if [ "$reason" = harness-fault ]; then
-        nv_key="$(printf '%s' "$name-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-        nv_file="$SPIRA_RUN/noverdict/$nv_key"
-        mkdir -p "$SPIRA_RUN/noverdict"
-        if [ -e "$nv_file.asked" ]; then
-            local _age=$(( $(date +%s) - $(date -r "$nv_file.asked" +%s 2>/dev/null || echo 0) ))
-            if [ "$_age" -ge "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}" ]; then
-                rm -f "$nv_file" "$nv_file.asked" "$nv_file.branches"
-            fi
-        fi
-        nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\n' "$nv_n" > "$nv_file"
-        grep -qxF "$br" "$nv_file.branches" 2>/dev/null || printf '%s\n' "$br" >> "$nv_file.branches"
-        if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-            : > "$nv_file.asked"
-            local _branches; _branches="$(paste -sd, "$nv_file.branches" 2>/dev/null)"
-            spira_ask_machinery_class "$name" "$reason" "${_branches:-$br}" "$outcome" "$nv_n" "$out"
-            progress "escalated $name — $outcome x$nv_n in a day ($reason) across ${_branches:-$br}"
-        fi
-        return 0
-    fi
-
-    nv_key="$(printf '%s' "$br-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-    nv_file="$SPIRA_RUN/noverdict/$nv_key"
-    mkdir -p "$SPIRA_RUN/noverdict"
-    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-    printf '%s\n' "$nv_n" > "$nv_file"
-    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-        : > "$nv_file.asked"
-        spira_ask_machinery "$id" "$br" "$name" "$outcome" "$reason" "$nv_n" "$out"
-        progress "escalated $id — $outcome x$nv_n on $br"
-    fi
-}
-
-# spira_is_generated_file <path> -> 0 if path names a file this harness regenerates whole
-# rather than hand-merges (law-regenerate-derived-summaries). A rebase conflict on one of
-# these is resolved by rerunning its generator, never by reconciling the two hunks by hand.
-# The declared list lives in SPIRA_REBASE_GENERATED_FILES (conf.sh) — a path substring
-# match, since a generated file is named the same regardless of which directory it sits in.
-spira_is_generated_file() {
-    local path="$1" pat
-    for pat in ${SPIRA_REBASE_GENERATED_FILES:-}; do
-        case "$path" in
-            *"$pat"*) return 0 ;;
-        esac
-    done
-    return 1
-}
-
-# spira_ask_rebase_loop — tell the Concierge a bead's rebase keeps failing.
-#
-# Seven reopens on sp-dvlq, each one handing the next aeon "resolve the conflict" against a
-# branch whose correct resolution was "drop it". The repetition is the signal: a bead that
-# cannot rebase N times in a row is not learning from the reopen, and repeating it is
-# machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
-#
-# NEVER RYAN'S DECISION (law-a-rebase-loop-is-sequenced-not-split) — every one of these was
-# resolved by the Concierge with rebase guidance, never by him. So this sends a machine event
-# to the Concierge's mailbox (real time, law-machine-events-wake-in-real-time) — never a
-# --kind question/decision, which would file the same needs-ryan ask under another name.
-spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
-    local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
-    local repo_dir="${7:-}" base_ref="${8:-}"
-    # Fetch bead title and status so the event names the work and its current state.
-    local bead_title bead_status
-    bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print(""); sys.exit()
-d = d if isinstance(d, list) else [d]
-print(d[0].get("title", "") if d else "")' 2>/dev/null)"
-    bead_status="$(spira_bead_status "$id")"
-    # Commits-ahead and branch tip when repo coordinates are available.
-    local tip_short="" ahead=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        tip_short="$(git -C "$repo_dir" rev-parse --short "$br" 2>/dev/null || true)"
-        ahead="$(git -C "$repo_dir" rev-list --count "$base_ref..$br" 2>/dev/null || echo '?')"
-    fi
-    local ctx=""
-    [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
-    # File count over the branch's own diff (not just the conflicted files) — a bead whose
-    # scope spans several hot files cannot win a rebase race it re-enters every few hours;
-    # past SPIRA_REBASE_DECOMPOSE_FILES the answer is decomposition, not another hand rebase.
-    local nfiles=0 decompose_ctx=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        nfiles="$(git -C "$repo_dir" diff --name-only "${base_ref}...${br}" 2>/dev/null | grep -c .)"
-    fi
-    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
-    fi
-    # Subject: title first so the Concierge knows what the work is (law-escalations-lead-with-the-bead).
-    local _subj
-    if [ -n "$bead_title" ]; then
-        _subj="${bead_title}: $br rebase loop x$n in $name"
-    else
-        _subj="$br rebase loop x$n in $name"
-    fi
-    # Per-file listing, one line per conflicted file, flagging any that are GENERATED
-    # (regenerate, don't hand-merge) instead of leaving that judgement to the reader.
-    local _file _files_note="" _gen_note=""
-    for _file in $conflicts; do
-        if spira_is_generated_file "$_file"; then
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file (GENERATED — regenerate it, do not merge it by hand)"
-            _gen_note=1
-        else
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file"
-        fi
-    done
-    [ -n "$_files_note" ] || _files_note="  - ${conflicts:-unknown}"
-    # Suggested action: no empty slots — omit the duplicate clause when others is empty.
-    local _sugg
-    if [ -n "$_gen_note" ]; then
-        _sugg="regenerate the GENERATED file(s) named above via their own generator and rebase again — do not hand-merge them"
-    elif [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        _sugg="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
-    elif [ -n "$others" ]; then
-        _sugg="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
-    else
-        _sugg="rebase $br by hand and push, or close it if the work is already landed"
-    fi
-    # Extra lines for the body: status and branch info.
-    local _extra=""
-    [ -n "$bead_status" ] && _extra="Status: ${bead_status}."
-    if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
-        _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
-    fi
-    mail send concierge \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind note <<MAILEOF >/dev/null 2>&1
-## Note
-
-$_subj
-
-$id has been reopened for a rebase conflict $n times and the loop is not converging. This is
-machinery cycling on itself, not a decision for Ryan (law-a-rebase-loop-is-sequenced-not-split)
-— rebase with explicit guidance and fast-track the bead into a round the moment it certifies.
-
-Conflicting file(s):
-$_files_note
-$ctx$decompose_ctx
-
-Suggested action: $_sugg
-
-$_extra
-MAILEOF
-}
-
-# spira_ask_red_recurring — escalate a bead that has gone RED twice with the same reason class.
-#
-# The second RED with the same reason class means the aeon's work did not fix the root cause.
-# Each reopen costs a full session; repeating it charges work that hits the same wall.
-# Deduped on "$br red recurring $reason_class" so one open ask suppresses re-escalation.
-spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first-red-epoch>
-    local id="$1" br="$2" name="$3" reason_class="$4" first_epoch="${5:-0}"
-    ask_already_open "$br red recurring $reason_class" && return 0
-    local elapsed_h=0
-    [ "${first_epoch:-0}" -gt 0 ] && \
-        elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
-    local _subj="$br red recurring: $reason_class twice on $id in $name"
-    local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id has gone RED twice with the same reason class ($reason_class) on $br in $name. The shas changed between marks, so each reopen charged a session to work that hit the same wall. Elapsed since first RED: ${elapsed_h}h.
-MAILEOF
-}
-
-# spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
-# A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
-spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
-    local id="$1" br="$2" name="$3" reason="$4"
-    ask_already_open "$br rebase refused" && return 0
-    local _subj="$br rebase refused in $name: $reason"
-    local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id is closed; its branch $br cannot be rebased onto the base in $name.
-The failure is not a merge conflict — the work is not being reopened.
-Reason: $reason.
-MAILEOF
-}
-
-# spira_ask_budget_deferred — branch deferred by budget exhaustion N consecutive passes.
-spira_ask_budget_deferred() {  # <branch> <repo> <count>
-    local br="$1" name="$2" n="$3"
-    ask_already_open "$br budget-deferred" && return 0
-    local _subj="$br budget-deferred: $n consecutive passes in $name"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind alert <<MAILEOF >/dev/null 2>&1
-## Alert
-$_subj
-
-Branch $br has been deferred by budget exhaustion $n consecutive landing passes in $name.
-The pass runs out of gate budget before reaching this branch.
-MAILEOF
-}
-
-# spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
-# repeatedly refreshed onto the base.
-#
-# A branch that has been rebased N times and its pull request still has not merged is not
-# a slow landing — it is a stuck one. The obstacle is not staleness; the loop keeps
-# removing that and the PR stays open. An aeon must own the investigation; the bead
-# belongs back on the board at high priority so the next aeon finds it immediately rather
-# than after whatever the queue was already doing.
-#
-# Deduped on the bead id (via ask_already_open) so a stuck branch sends one alert per cap,
-# not one per pass: a monitor that fires every two minutes trains the operator to mute it,
-# which is the failure law-alerts-must-be-actionable names.
-spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" n="$6" behind
-    ask_already_open "$id refresh cap" && return 0
-    behind="$(git -C "$repo" rev-list --count "$br..$base" 2>/dev/null)" || behind="?"
-    local _subj="Spira: $id's pull request has been rebased $n time(s) and still has not merged"
-    local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
-    local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
-         "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-the bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging $br back onto $base every time the base moved, and $n rebases have not got it merged — which means the obstacle is not staleness.
-
-WHAT THIS BEAD IS FOR:
-$_ev
-MAILEOF
-}
-
-# land_escalate — ask the operator once when the landing leg is broken.
-#
-# The escalation is rate limited because a dead landing leg stays dead until someone fixes
-# it, and a check that says so every two minutes is a check the operator learns to scroll past
-# (law-alerts-must-be-actionable).
-land_escalate() {        # land_escalate <subject-tail> <evidence>
-    local why="$1" ev="$2" cd="$SPIRA_RUN/landing.escalated" now last
-    # ALREADY ON HIS SCREEN? THEN DO NOT ASK AGAIN. The clock below is a floor, not the
-    # answer: a dead landing leg stays dead until somebody fixes it, so an hourly re-ask put
-    # NINE identical "Spira is landing nothing" decisions in the operator's pane in one day.
-    # He closed eight of them and the ninth arrived anyway — "why do i keep getting this."
-    # The queue is the database, so ask the database rather than this box's memory of it.
-    ask_already_open "Spira is landing nothing" && return 0
-    now="$(date +%s)"; last=0
-    [ -f "$cd" ] && last="$(cat "$cd" 2>/dev/null || echo 0)"
-    [ $(( now - last )) -lt "${SPIRA_LAND_ESCALATE_EVERY:-3600}" ] && return 0
-    echo "$now" > "$cd"
-    local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`landing-pass land\` by hand to see the failure, then file the fix as a bead"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-every finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch
-
-$ev
-MAILEOF
-    # An escalation is a write, never a movement. Counting a report of paralysis as progress
-    # would mute the one check that notices paralysis.
-    act "escalated: the landing leg is not running"
-}
+# spira_ask_machinery, spira_ask_machinery_class, spira_land_noverdict,
+# spira_is_generated_file, spira_ask_rebase_loop, spira_ask_red_recurring,
+# spira_ask_rebase_refused, spira_ask_budget_deferred, spira_ask_refresh_loop and
+# land_escalate retired (sp-31hjr, wave 4.30, family C): ported natively into
+# landing-pass/src/real.rs + ask.rs (land_escalate into sentinel/src/dispatch.rs).
+# No caller remained in bash — landing-pass's own lib.sh seam was the only one, and
+# it calls the Rust versions in-process now. `landing-pass noverdict ...` and
+# `sentinel --land-escalate` drive the native versions standalone for the
+# real-sender suites. ask_already_open stays (the GitHub-closeout family, not yet
+# ported, still calls it directly).
 
 # How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
 # is one line, and a warning printed before it would be counted as a row.
@@ -3180,46 +2806,10 @@ PY
 }
 
 
-bead_context() {         # bead_context <id> -> a human-readable block
-    local id="$1"
-    [ -n "$id" ] && [ "$id" != "-" ] || { printf '(no single bead — this is about the plan as a whole)'; return 0; }
-    bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json, datetime
-try:
-    d = json.load(sys.stdin)
-    i = (d if isinstance(d, list) else [d])[0]
-except Exception:
-    print("(could not read the bead — say so rather than pretend)"); raise SystemExit
-def age(ts):
-    try:
-        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-        h = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() / 3600
-        return "%dh" % h if h < 48 else "%dd" % (h / 24)
-    except Exception:
-        return "?"
-print("BEAD    %s  [%s, P%s, open %s]" % (i.get("id"), i.get("status"), i.get("priority"), age(i.get("created_at"))))
-print("TITLE   %s" % (i.get("title") or "(none)"))
-labs = ", ".join(i.get("labels") or []) or "(none)"
-print("LABELS  %s" % labs)
-print("")
-print("WHAT THIS BEAD IS FOR")
-print((i.get("description") or "(no description — that is itself the problem)").strip())
-# `notes` is a STRING on these beads, not a list — iterating it yielded one character
-# per "note" and printed "- c", "- h". Normalise before slicing anything.
-notes = i.get("notes")
-if isinstance(notes, str):
-    notes = [n for n in notes.split("\n") if n.strip()]
-elif isinstance(notes, list):
-    notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
-else:
-    notes = []
-if notes:
-    print("")
-    print("MOST RECENT NOTES")
-    for n in notes[-3:]:
-        print("  - %s" % str(n).strip()[:400])
-' 2>/dev/null || printf '(could not read %s)' "$id"
-}
+# bead_context retired (sp-31hjr, family C): ported natively into landing-pass/src/ask.rs
+# (bead_context) + real.rs (RealBeads::context). No caller remained — spira_ask_refresh_loop
+# was the only one, and it's native now too. sentinel's and strand's own `bead_context`
+# (render.rs, check.rs) are separate, pre-existing Rust copies, untouched by this bead.
 
 # land_subject <id> -> "spira: land <id>", or "spira: land <id> — <title>" when the bead
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
@@ -5033,214 +4623,41 @@ spira_prune_worktrees() {
 }
 
 # --------------------------------------------------------------------------------------
-# format_rebased <branch> <onto> <worktree> [repo-name] -> 0 always; the rebase stands
-# whatever the formatter does.
-#
-# A REBASE PRODUCES A TREE NOBODY FORMATTED. git replays hunks; it does not re-run anyone's
-# formatter on the result, so a rebase that resolves perfectly still hands the required
-# check a tree that no human or tool ever laid out. It recurs on exactly the shape a rebase
-# is best at — two branches adding names to the same import list, struct literal or match
-# arm — where each side is individually well-formed and the union is over the line limit.
-# The branch then fails `cargo fmt --all -- --check`, a check it passed before the harness
-# touched it, and the failure is charged to the aeon that wrote correct code.
-#
-# ONLY WHAT THE BRANCH TOUCHED IS COMMITTED. The declared command is repository-wide, because
-# that is the writing form of the repository-wide check it must satisfy — but a repository
-# whose main is already unformatted would otherwise have its entire tree swept into one
-# bead's branch. Against a clean main this restriction changes nothing, since a rebase can
-# only disturb the layout of files the branch itself touched; against a dirty one it is the
-# difference between a format commit and a rewrite.
-#
-# A FORMATTER THAT FAILS CHANGES NOTHING. `cargo fmt` exits non-zero on a tree it cannot
-# parse, and it may have rewritten half of it first. Discard and let the gate render the
-# verdict — a formatter is a convenience, and it must never be able to turn a clean rebase
-# into a branch full of partial edits.
-# --------------------------------------------------------------------------------------
-format_rebased() {
-    local br="$1" onto="$2" wt="$3" name="${4:-}" cmd paths f staged=0
-
-    [ -n "$name" ] || name="$(repo_name_at "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)" || return 0
-    cmd="$(repo_format "$name" 2>/dev/null)"
-    [ -n "$cmd" ] || return 0
-
-    # The formatter sees what a gate command sees and nothing else: an ambient variable that
-    # can change a formatter's output changes what lands (law-gates-run-in-a-clean-environment).
-    # ~/.cargo/bin for the same reason gate.sh names it — lib.sh's PATH is written for
-    # systemd and carries no toolchain.
-    if ! ( cd "$wt" && env -i PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
-             timeout "${SPIRA_FORMAT_TIMEOUT:-300}" bash -c "$cmd" ) >/dev/null 2>&1; then
-        log "format: $name's formatter failed on $br — leaving the rebase unformatted"
-        git -C "$wt" checkout -q -- . 2>/dev/null
-        return 0
-    fi
-
-    # The branch's own files, read from history rather than from the dirty tree: $onto is an
-    # ancestor now, so this diff IS the branch's work. Filtered to paths that still exist,
-    # because a path the branch deleted cannot have been reformatted and `git add` on it is
-    # an error rather than a no-op.
-    paths=()
-    while IFS= read -r -d '' f; do
-        [ -f "$wt/$f" ] && paths+=("$f")
-    done < <(git -C "$wt" diff -z --name-only "$onto" HEAD 2>/dev/null)
-    [ "${#paths[@]}" -gt 0 ] && git -C "$wt" add -- "${paths[@]}" 2>/dev/null
-
-    # Everything the formatter touched outside the branch's own work goes back. Staged paths
-    # are restored from the index, so this only discards the repository-wide remainder.
-    git -C "$wt" checkout -q -- . 2>/dev/null
-    git -C "$wt" diff --cached --quiet 2>/dev/null || staged=1
-    [ "$staged" = 1 ] || return 0
-
-    # The subject names the bead, because for `spira/<id>` branches ${br##*/} IS the id and
-    # that string is the only machine-checkable link between a bead and the commit graph
-    # (law-aeon-commits-name-their-bead). Through stdin, never an argument: a formatter
-    # command containing backticks or $( ) would otherwise be executed by the very quoting
-    # that was meant to quote it (law-commit-messages-via-stdin).
-    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
-spira: re-format ${br##*/} after rebase onto $onto
-
-The rebase replayed cleanly and nothing re-ran $name's formatter on the result, so
-the tree its own check tests was machine-produced. Formatted with: $cmd
-EOF
-    log "format: re-formatted $br after its rebase onto $onto"
-    return 0
-}
-
-# --------------------------------------------------------------------------------------
 # rebase_branch <branch> <onto> [repo] [repo-name] -> 0 if <branch> now contains <onto>, 1
 # if it does not. On failure the branch ref is left EXACTLY as it was and $REBASE_CONFLICTS
-# names the paths that collided. On success, and only when commits were actually replayed,
-# the repository's own formatter runs on the result and is committed as part of the rebase —
-# see format_rebased. The branch tip therefore MOVES on success, and a caller holding a tip
-# from before the call is holding a stale one.
+# names the paths that collided ($REBASE_FAILURE says which of conflict | rebase-refused |
+# no-base | no-branch | no-worktree; $REBASE_REFUSED_REASON is set only for rebase-refused).
+# On success, and only when commits were actually replayed, the repository's own formatter
+# runs on the result and is committed as part of the rebase. The branch tip therefore MOVES
+# on success, and a caller holding a tip from before the call is holding a stale one.
 #
 # THE CALLER MUST HAVE ESTABLISHED THAT NO LIVE AEON HOLDS THE BRANCH. This rewrites
-# commits beneath a working tree; doing that under a running aeon destroys work in flight,
-# which is the one failure here that is not recoverable. `holder_alive` is the precondition.
+# commits beneath a working tree; doing that under a running aeon destroys work in flight.
+# `holder_alive` is the precondition — unchanged; this shim adds no liveness check of its
+# own, exactly as the function it replaces did not.
 #
-# WHY THE BRANCH'S OWN WORKTREE. git refuses to move a ref that a worktree has checked out
-# — `git branch -f` and `git rebase` both — so when a worktree holds the branch it is the
-# only place the rebase can happen. When nothing holds it the rebase still needs SOME
-# working tree, and that tree must never be the shared checkout, whose HEAD an interactive
-# session is using; a detached scratch worktree costs one checkout.
-#
-# A rebase is refused by tracked modifications, and those are routine rather than
-# exceptional here: wiki/tasks.md is a GENERATED file tracked in git and rewritten by a
-# timer, so it is dirty in every worktree within minutes of its creation and would
-# otherwise block every rebase for a reason that has nothing to do with the work. Tracked
-# changes are salvaged to a patch and discarded; untracked files are left alone, because
-# `git diff HEAD` cannot carry their content and discarding them would destroy the one copy.
-#
-# A FAILURE IS NAMED, BECAUSE ONLY ONE OF THEM IS THE BRANCH'S FAULT. Every way this can
-# return 1 used to look the same to a caller — one exit status and an empty $REBASE_CONFLICTS
-# — so a caller that reopens a bead on a rebase failure reopened it for a missing ref, an
-# unresolvable base and a scratch tree it could not build, all with the words "conflicts in
-# unknown". That is a lie about a bead and it costs a session:
-#
-#   21:51:17  landed spira/<id>            <- pass A lands it
-#   21:52:13  landing: starting a pass     <- pass B reads the branch list, <id> still in it
-#   21:52:36  REMOVED branch spira/<id>    <- the Sending reaps it
-#   22:00:55  reopened <id> — does not rebase onto origin/main; conflicts in unknown
-#
-# Pass B held an eight-minute-old list, reached a ref that was gone, and this function said
-# "1" about it. $REBASE_FAILURE now says which:
-#
-#   conflict      the rebase RAN and the commits disagree — the branch's own fault, and the
-#                 only value on which finished work may be put back on the board
-#   no-branch     the ref is gone: reaped, landed, or slain under a stale list
-#   no-base       the ref it lands on does not resolve
-#   no-worktree   no tree to replay in
-#
-# The last three are the pass failing to ask the question, never an answer to it.
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs` for the full
+# rationale this header used to carry (why the branch's own worktree, why failures are
+# named, why a formatter failure changes nothing, why only the branch's own paths are
+# committed). `format_rebased` folded into the port; nothing else called it. Any worktree
+# pruning or pre-reset salvage in the port goes through `sending`'s destruction chokepoint
+# in-process, never a raw git removal.
 # --------------------------------------------------------------------------------------
 REBASE_CONFLICTS=""
 REBASE_FAILURE=""
 REBASE_REFUSED_REASON=""
 rebase_branch() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" wt scratch rc=0
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" fmtcmd out rc
     REBASE_CONFLICTS=""; REBASE_FAILURE=""; REBASE_REFUSED_REASON=""
-    # The repo NAME, for the formatter that runs on the result. Derived from the path only
-    # when the caller did not supply it — both real callers hold it already, having read it
-    # off the bead, and a derived value is a convention that breaks the moment two names
-    # point at one checkout.
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { REBASE_FAILURE=no-base; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { REBASE_FAILURE=no-branch; return 1; }
-    # Already current. This is the common case once branches are cut from the base ref, and
-    # it is what makes running the rebase on every landing pass cheap.
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-
-    wt="$(worktree_of "$br" "$repo")"
-    if [ -z "$wt" ]; then
-        # PER REPOSITORY. One shared `.rebase` tree is registered against exactly one
-        # repository, so a second repo asking for it gets a checkout of somebody else's
-        # history — or, worse, a `git worktree add` that fails because the directory is
-        # already a worktree of another repo, and a rebase that silently never happens.
-        # Named for the checkout's own directory, which is unique by construction: two
-        # repositories cannot share a path.
-        scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-        if [ ! -e "$scratch/.git" ]; then
-            mkdir -p "$(dirname "$scratch")"
-            # Through the chokepoint: a bare prune here would silently unregister any tree
-            # whose `.git` link is broken, including a live aeon's, and free its branch.
-            spira_prune_worktrees "$repo" >/dev/null 2>&1
-            git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-                || { REBASE_FAILURE=no-worktree; return 1; }
-        fi
-        git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-        # A ref that vanished between the check above and here — the reaper runs on its own
-        # timer — is still `no-branch`, not a tree we could not build. The distinction is the
-        # whole point of naming these, so the narrower window gets the narrower name.
-        if ! git -C "$scratch" checkout -q -B "$br" "refs/heads/$br" >/dev/null 2>&1; then
-            git -C "$repo" show-ref --verify -q "refs/heads/$br" \
-                && REBASE_FAILURE=no-worktree || REBASE_FAILURE=no-branch
-            return 1
-        fi
-        wt="$scratch"
+    fmtcmd="$(repo_format "$name" 2>/dev/null)"
+    out="$(rebase-stale rebase-branch "$br" "$onto" "$repo" "$name" "$fmtcmd")"; rc=$?
+    if [ "$rc" != 0 ]; then
+        REBASE_FAILURE="$(sed -n 1p <<<"$out")"
+        REBASE_CONFLICTS="$(sed -n 2p <<<"$out")"
+        REBASE_REFUSED_REASON="$(sed -n 3p <<<"$out")"
     fi
-
-    if ! git -C "$wt" diff --quiet HEAD 2>/dev/null; then
-        # `reset --hard`, not `checkout -- .`: a file STAGED for addition is not restored by
-        # checkout, and `git rebase` refuses outright on "your index contains uncommitted
-        # changes". reset --hard clears index and tracked worktree together and leaves
-        # untracked files exactly where they are.
-        salvage "${br##*/}-prerebase" "$wt" >/dev/null
-        git -C "$wt" reset -q --hard HEAD 2>/dev/null
-    fi
-
-    local _rebase_err
-    _rebase_err="$(mktemp)"
-    if ! git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
-        # Name the collisions BEFORE aborting; after the abort there is nothing to read.
-        REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-        REBASE_CONFLICTS="${REBASE_CONFLICTS% }"
-        git -C "$wt" rebase --abort >/dev/null 2>&1
-        # A non-zero rebase with no unmerged files is not a content conflict — git refused
-        # outright (untracked file collision, locked index, etc.). Only a real content conflict
-        # may reopen a finished bead; a refusal is the pass failing to ask the question.
-        if [ -n "$REBASE_CONFLICTS" ]; then
-            REBASE_FAILURE=conflict
-        else
-            REBASE_FAILURE=rebase-refused
-            REBASE_REFUSED_REASON="$(head -1 "$_rebase_err" 2>/dev/null)"
-        fi
-        rc=1
-    else
-        # THE REBASE ACTUALLY REPLAYED COMMITS, so the tree is machine-produced and nobody
-        # formatted it. This is the only path that reaches here: the already-an-ancestor case
-        # returned above without touching anything, and a formatter run on a branch nothing
-        # rewrote would be a diff the harness invented.
-        format_rebased "$br" "$onto" "$wt" "$name"
-    fi
-    rm -f "$_rebase_err"
-
-    # Let go of the branch. A scratch tree still holding it is not inert: `git branch -D`
-    # refuses a branch a worktree has checked out, which is exactly the defect sending.sh
-    # exists to fix, and it would arrive here by a new route.
-    if [ "$wt" = "${SPIRA_RUN}/worktree/.rebase.$(basename "$repo")" ]; then
-        git -C "$wt" checkout -q --detach >/dev/null 2>&1
-    fi
-    return $rc
+    return "$rc"
 }
 
 # recut_onto — move a branch onto a new base by cherry-picking commits one by one.
@@ -5251,51 +4668,21 @@ rebase_branch() {
 # force-updated to that commit so the merge-base moves forward. When zero commits land
 # the branch ref is left unchanged — moving it to the new base would strip all work and
 # leave a trivially-clean branch that the next pass certifies without any content.
+# $RECUT_CONFLICTS is a real conflict's path list, a git error line, or one of the sentinel
+# words no-base | no-branch | no-worktree | no-merge-base | no-checkout on an early refusal.
 # Returns 0 if all commits applied cleanly, 1 if any conflict remains.
+#
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs`.
+RECUT_CONFLICTS=""
+RECUT_APPLIED_COUNT=0
 recut_onto() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" scratch old_base rc=0 _cp_err new_tip
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" out rc
     RECUT_CONFLICTS=""; RECUT_APPLIED_COUNT=0
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-    scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-    if [ ! -e "$scratch/.git" ]; then
-        mkdir -p "$(dirname "$scratch")"
-        spira_prune_worktrees "$repo" >/dev/null 2>&1
-        git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-            || { RECUT_CONFLICTS="no-worktree"; return 1; }
-    fi
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-base"; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { RECUT_CONFLICTS="no-branch"; return 1; }
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-    old_base="$(git -C "$repo" merge-base "$onto" "refs/heads/$br" 2>/dev/null)" || { RECUT_CONFLICTS="no-merge-base"; return 1; }
-    git -C "$scratch" checkout -q --detach "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-checkout"; return 1; }
-    _cp_err="$(mktemp)"
-    local commit count=0
-    while IFS= read -r commit; do
-        [ -n "$commit" ] || continue
-        if ! git -C "$scratch" \
-                -c "user.name=${SPIRA_GIT_NAME:-spira}" \
-                -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-                cherry-pick "$commit" 2>"$_cp_err"; then
-            RECUT_CONFLICTS="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-            RECUT_CONFLICTS="${RECUT_CONFLICTS% }"
-            [ -n "$RECUT_CONFLICTS" ] || RECUT_CONFLICTS="$(head -1 "$_cp_err" 2>/dev/null)"
-            git -C "$scratch" cherry-pick --abort >/dev/null 2>&1
-            rc=1
-            break
-        fi
-        count=$(( count + 1 ))
-    done < <(git -C "$repo" rev-list --reverse "${old_base}..${br}" 2>/dev/null)
-    rm -f "$_cp_err"
-    RECUT_APPLIED_COUNT=$count
-    new_tip="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)"
-    # Only move the branch when at least one commit landed on the new base.
-    # With zero commits the branch has no work on the new base, and updating it
-    # there strips all content — the next pass would see a trivially clean rebase
-    # and certify an empty branch.
-    [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ] && [ -n "$new_tip" ] && \
-        git -C "$repo" update-ref "refs/heads/$br" "$new_tip" >/dev/null 2>&1
-    git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-    return $rc
+    out="$(rebase-stale recut-onto "$br" "$onto" "$repo" "$name")"; rc=$?
+    RECUT_APPLIED_COUNT="$(sed -n 1p <<<"$out")"
+    RECUT_CONFLICTS="$(sed -n 2p <<<"$out")"
+    return "$rc"
 }
 
 

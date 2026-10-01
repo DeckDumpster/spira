@@ -237,6 +237,9 @@ pub struct Cfg {
     pub land_unit: String,
     pub land_maxsec: String,
     pub land_stale: i64,
+    /// `SPIRA_LAND_ESCALATE_EVERY` (default 3600s): `land_escalate`'s own re-ask floor,
+    /// once the database has already said no ask is open (sp-31hjr — was lib.sh).
+    pub land_escalate_every: i64,
     pub launch: String,
     pub systemctl: String,
     pub summon: String,
@@ -330,6 +333,7 @@ impl Cfg {
                 .get("SPIRA_BDJSON_FIXTURE")
                 .filter(|v| !v.is_empty())
                 .map(str::to_string),
+            land_escalate_every: num("SPIRA_LAND_ESCALATE_EVERY", 3600).max(0),
             scope: s("SPIRA_SCOPE_LABEL"),
             ask: s("SPIRA_ASK_LABEL"),
             no_loop: s("SPIRA_NO_LOOP_LABEL"),

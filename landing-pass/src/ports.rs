@@ -13,6 +13,12 @@ pub trait Beads {
     /// lib.sh `bead_land_status`: `closed` (or submitted-labelled), another status, or `-`
     /// when it cannot be read.
     fn land_status(&self, id: &str) -> String;
+    /// lib.sh `ask_already_open <subject>` (sp-31hjr, family C): true when an OPEN ask
+    /// already carries `subject` in its title. `label` is `SPIRA_ASK_LABEL`.
+    fn ask_open(&self, label: &str, subject: &str) -> bool;
+    /// lib.sh `bead_context <id>` (sp-31hjr): a human-readable block for a mail body.
+    /// `now` is a unix epoch second.
+    fn context(&self, id: &str, now: i64) -> String;
 }
 
 pub trait Git {
