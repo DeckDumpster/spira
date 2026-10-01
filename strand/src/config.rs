@@ -41,6 +41,14 @@ pub struct Config {
     pub capacity_pause: Option<PathBuf>,
     pub throttle_stamp: Option<PathBuf>,
     pub beads_actor: String,
+    /// `SPIRA_INCIDENT_LABEL` (detect_incident_needs_builder, wave 4.29).
+    pub incident_label: String,
+    /// `SPIRA_GROOM_ASK_LABEL` (detect_livelocked's unmapped-repo category).
+    pub groom_ask_label: String,
+    /// `SPIRA_WORK_CLOSE_TYPES` (detect_landed_but_open / detect_closed_unlanded_states).
+    pub work_close_types: String,
+    /// `SPIRA_ID_PREFIX` (detect_invalid_closed's tracking-reference regex).
+    pub id_prefix: String,
 }
 
 /// A lookup source: `env(key)` and `toml(field)`. Split out so tests can supply both.
@@ -137,6 +145,11 @@ impl Config {
             capacity_pause: path("SPIRA_CAPACITY_PAUSE"),
             throttle_stamp: path("SPIRA_THROTTLE_STAMP"),
             beads_actor: nonempty(src.env("BEADS_ACTOR")).unwrap_or_else(|| "harness".into()),
+            // literal-ok: conf.sh's own derived default; this binary cannot source schema.sh
+            incident_label: or("SPIRA_INCIDENT_LABEL", "incident_label", "incident"),
+            groom_ask_label: or("SPIRA_GROOM_ASK_LABEL", "groom_ask_label", "groom-asked"),
+            work_close_types: or("SPIRA_WORK_CLOSE_TYPES", "work_close_types", "task bug feature"),
+            id_prefix: or("SPIRA_ID_PREFIX", "id_prefix", "sp"),
         }
     }
 
@@ -200,6 +213,10 @@ mod tests {
             ]),
         };
         let c = Config::resolve(&f);
+        assert_eq!(c.incident_label, "incident", "default when neither env nor toml sets it");
+        assert_eq!(c.groom_ask_label, "groom-asked");
+        assert_eq!(c.work_close_types, "task bug feature");
+        assert_eq!(c.id_prefix, "sp");
         assert_eq!(c.vocab.ask, "ask-x");
         assert_eq!(c.run, Some(PathBuf::from("/r")));
         assert_eq!(c.db.as_deref(), Some("/db"));

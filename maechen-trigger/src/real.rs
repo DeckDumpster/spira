@@ -13,11 +13,21 @@ pub struct Real {
     pub bd: String,
     pub repo_map: Option<PathBuf>,
     registry: OnceCell<spira_config::repos::Registry>,
+    strand_cfg: OnceCell<strand::config::Config>,
 }
 
 impl Real {
     pub fn new(home: PathBuf, run: PathBuf, db: String, bd: String, repo_map: Option<PathBuf>) -> Real {
-        Real { home, run, db, bd, repo_map, registry: OnceCell::new() }
+        Real { home, run, db, bd, repo_map, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+    }
+
+    /// `strand::config::Config`, resolved once per process the same way `strand`'s own
+    /// binary resolves it (env, then spira.toml, then the conf.sh default) — the detectors
+    /// moved there (wave 4.29, sp-8ofmt) and are reached in-process instead of through the
+    /// `lib.sh` seam [`Real::seam`] still carries for `spira_open_trigger_count`/
+    /// `spira_lane_admitted`.
+    fn strand_cfg(&self) -> &strand::config::Config {
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -146,7 +156,7 @@ impl World for Real {
     }
 
     fn detect_invalid_closed(&self) -> String {
-        self.seam("detect_invalid_closed 2>/dev/null", &[])
+        strand::detectors::detect_invalid_closed(self.strand_cfg())
     }
 
     fn create_bead(&self, title: &str, labels: &str, description: &str) -> Result<(), String> {

@@ -2317,18 +2317,9 @@ system_prompt_split() {
 # question — what CAN be claimed right now — and applies exclusions to answer it; this
 # answers "whose is it", which a poisoned or asked-about bead still is. groomer.sh's
 # `deadlocked` and any future census over the full board read this, not the claimable set.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::all_partition_members`.
 all_partition_members() {
-    local labels exclude
-    while IFS=$'\t' read -r labels exclude; do
-        [ -n "$labels" ] || continue
-        bdjson list --status open,in_progress --limit 0 --label "$labels" 2>/dev/null \
-            | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]): print(i["id"])' 2>/dev/null
-    done < <(fayth_partitions) | awk 'NF && !seen[$0]++'
-    return 0
+    strand all-partition-members
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.
@@ -2618,111 +2609,9 @@ park_branch_collisions() {
 #
 # A FAILED QUERY RETURNS NOTHING AND EXITS 0 (law-absence-needs-a-positive-control is
 # handled by the caller: livelock_keys emits SP_LIVELOCKED=? when this returns nothing).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_livelocked`.
 detect_livelocked() {
-    # ---- unclaimable: reuse detect_unclaimable_ready output, prefixed as LIVELOCK ----
-    local unc
-    unc="$(detect_unclaimable_ready 2>/dev/null)"
-    if [ -n "$unc" ]; then
-        printf '%s\n' "$unc" | while IFS= read -r line; do
-            # detect_unclaimable_ready prints "UNCLAIMABLE <id> — <reason>"
-            # rewrite to "LIVELOCK <id> unclaimable — <reason>"
-            case "$line" in UNCLAIMABLE\ *)
-                rest="${line#UNCLAIMABLE }"
-                bid="${rest%% *}"
-                reason="${rest#* — }"
-                printf 'LIVELOCK %s unclaimable — %s\n' "$bid" "$reason"
-            ;; esac
-        done
-    fi
-
-    # ---- ask-no-overseer: open beads with SPIRA_ASK_LABEL but without overseer ----
-    # The decisions pane selects on `overseer`; without it, the bead is invisible to the operator.
-    # The loop excludes SPIRA_ASK_LABEL from every predicate, so no aeon can claim it either.
-    local _nr_raw
-    _nr_raw="$(bdjson list --limit 0 --label "${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}" 2>/dev/null)"
-    if [ -n "$_nr_raw" ]; then
-        printf '%s\n' "$_nr_raw" | python3 -c '
-import os, sys, json, re
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-for i in (d if isinstance(d, list) else [d]):
-    L = set(i.get("labels") or [])
-    if ask_label not in L:
-        continue
-    if "overseer" in L:
-        continue
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    print("LIVELOCK %s ask-no-overseer — missing overseer label; "
-          "the decisions pane cannot see this bead and no aeon can claim it; "
-          "add overseer label. title: %s" % (i["id"], title))
-' 2>/dev/null
-    fi
-
-    # ---- ci-stuck: awaiting-ci beads in a repo whose land mode is not `pr` ----
-    local _ci_raw
-    _ci_raw="$(bdjson list --all --limit 0 --label "$SPIRA_CI_LABEL" 2>/dev/null)"
-    if [ -n "$_ci_raw" ]; then
-        printf '%s\n' "$_ci_raw" | python3 -c '
-import sys, json, re
-home = sys.argv[1]
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") == "closed":
-        continue
-    repo = next((l[5:] for l in (i.get("labels") or []) if l.startswith("repo:")), home)
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    # Report all awaiting-ci beads; the shell below checks the land mode.
-    print("%s\t%s\t%s" % (i["id"], repo, title))
-' "$(spira_home_repo)" 2>/dev/null | while IFS=$'\t' read -r _cid _crepo _ctitle; do
-            [ -n "$_cid" ] || continue
-            # We only want the STRUCTURAL case: the repo's land mode is not `pr` so no run
-            # will ever report back. The old lib.sh spira_ci_park_state (retired dead at
-            # sp-27hsi — nothing called it) also checked timing and exited 2 on an empty
-            # timestamp, which would have tripped a careless `|| _state=no-ci` even for a
-            # pr-mode repo. Use repo_land directly — it is the one test that names the
-            # structural fault.
-            _land="$(repo_land "$_crepo" 2>/dev/null)"
-            if [ "${_land:-push}" != pr ]; then
-                printf 'LIVELOCK %s ci-stuck — repo %s land mode is not pr; %s will never clear; strip the label or change the repo land mode. title: %s\n' \
-                    "$_cid" "$_crepo" "$SPIRA_CI_LABEL" "$_ctitle"
-            fi
-        done
-    fi
-
-    # ---- unmapped-repo: open beads with repo: label not in the repo-map ----
-    if [ -r "${SPIRA_REPO_MAP:-}" ]; then
-        local _valid_names _open_raw
-        _valid_names="$(awk 'BEGIN{FS="|"} /^[ \t]*#/{next}
-            {n=$1; gsub(/^[ \t]+|[ \t]+$/,"",n); if(n!=""&&NF>1) print n}' \
-            "$SPIRA_REPO_MAP" 2>/dev/null)"
-        _open_raw="$(bdjson list --limit 0 2>/dev/null)"
-        if [ -n "$_open_raw" ]; then
-            printf '%s\n' "$_open_raw" | VALID_NAMES="$_valid_names" python3 -c '
-import os, sys, json, re
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-valid = set(os.environ.get("VALID_NAMES", "").split())
-ask_label = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-groom_ask_label = os.environ.get("SPIRA_GROOM_ASK_LABEL", "groom-asked")  # literal-ok: Python fallback for direct invocation without conf.sh
-for i in (d if isinstance(d, list) else [d]):
-    L = i.get("labels") or []
-    # Skip beads already handled by the unclaimable, needs-ryan or groom-ask checks.
-    if ask_label in L or groom_ask_label in L or "spira-poison" in L:
-        continue
-    repo_labels = [l[5:] for l in L if l.startswith("repo:")]
-    if not repo_labels:
-        continue
-    bad = [r for r in repo_labels if r not in valid]
-    if not bad:
-        continue
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    print("LIVELOCK %s unmapped-repo — repo:%s not in repo-map; aeon.sh refuses to claim it; "
-          "fix the label or add the repo to repo-map. title: %s" % (i["id"], ", ".join(bad), title))
-' 2>/dev/null
-        fi
-    fi
+    strand detect-livelocked
 }
 
 # detect_landed_but_open -> "STATE <id> landed-but-open — <evidence>" for every open or
@@ -2730,34 +2619,9 @@ for i in (d if isinstance(d, list) else [d]):
 # base already carries a commit landing it. A bead's landed-but-open state does not depend
 # on which partition it happens to carry, so a scan bounded to one partition cannot see one
 # filed under another (sp-0qp7s: the groomer's scan read only its own trigger partition).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_landed_but_open`.
 detect_landed_but_open() {
-    local raw home
-    home="$(spira_home_repo)"
-    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
-import json, os, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
-home = sys.argv[1]
-for i in (d if isinstance(d, list) else [d]):
-    if (i.get("issue_type") or "") not in work_types:
-        continue
-    L = i.get("labels") or []
-    repo = next((l[5:] for l in L if l.startswith("repo:")), home)
-    print("%s\t%s" % (i["id"], repo))
-' "$home" 2>/dev/null | while IFS=$'\t' read -r id repo; do
-        [ -n "$id" ] || continue
-        local r_path sha
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        if landed "$id" "$r_path" 2>/dev/null; then
-            sha="$(landed_sha "$id" "$r_path" 2>/dev/null)"
-            printf 'STATE %s landed-but-open — %s names it on %s'"'"'s base; close it\n' \
-                "$id" "${sha:-a commit}" "$repo"
-        fi
-    done
+    strand detect-landed-but-open
 }
 
 # detect_closed_unlanded_states -> one STATE line per closed work bead, across every
@@ -2776,61 +2640,9 @@ for i in (d if isinstance(d, list) else [d]):
 # This is the same exclusion set sentinel.sh CHECK 5 applies before filing an Ops incident —
 # CHECK 5 reports; this classifies for the groomer to act on with judgement (reopen for
 # rebase, or reopen as batch-ready).
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_closed_unlanded_states`.
 detect_closed_unlanded_states() {
-    local labels exclude home
-    home="$(spira_home_repo)"
-    {
-        while IFS=$'\t' read -r labels exclude; do
-            [ -n "$labels" ] || continue
-            bdjson list --limit 0 --label "$labels" --status closed 2>/dev/null \
-            | SPIRA_EXCL="$exclude" WORK_TYPES="${SPIRA_WORK_CLOSE_TYPES:-task bug feature}" python3 -c '
-import json, os, sys
-excl = {x for x in (os.environ.get("SPIRA_EXCL") or "").split(",") if x}
-work_types = set((os.environ.get("WORK_TYPES") or "task bug feature").split())
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    if i.get("status") != "closed":
-        continue
-    if (i.get("issue_type") or "") not in work_types:
-        continue
-    L = i.get("labels") or []
-    if excl & set(L):
-        continue
-    if any(l.startswith("delivers:") for l in L):
-        continue
-    if "spira-dropped" in L or "content-landed" in L:
-        continue
-    if any((x.get("dependency_type") or x.get("type")) == "supersedes" for x in (i.get("dependencies") or [])):
-        continue
-    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
-    br = next((l[7:] for l in L if l.startswith("branch:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, br))
-' 2>/dev/null
-        done < <(fayth_partitions)
-    } | awk -F'\t' '!seen[$1]++' | while IFS=$'\t' read -r id repo br; do
-        [ -n "$id" ] || continue
-        local r_path refs base
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        landed "$id" "$r_path" 2>/dev/null && continue
-        if [ -z "$br" ] || ! git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null; then
-            printf 'STATE %s closed-no-branch — repo %s%s; nothing committed, no landing record\n' \
-                "$id" "${repo:-$home}" "${br:+ (branch: label $br names no ref)}"
-            continue
-        fi
-        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || refs=""
-        base="${refs%% *}"
-        [ -n "$base" ] || continue
-        content_landed "$r_path" "$br" "$base" 2>/dev/null && continue
-        if git -C "$r_path" merge-tree --write-tree "$base" "$br" >/dev/null 2>&1; then
-            printf 'STATE %s closed-never-landed batch-ready %s %s %s — merges cleanly, ready to requeue\n' \
-                "$id" "${repo:-$home}" "$br" "$base"
-        else
-            printf 'STATE %s closed-never-landed conflict %s %s %s — does not merge, needs a rebase\n' \
-                "$id" "${repo:-$home}" "$br" "$base"
-        fi
-    done
+    strand detect-closed-unlanded-states
 }
 
 # detect_false_blockers <blocker-ids> -> "STATE <id> blocked-by-unlanded <blocker> — <evidence>"
@@ -2840,22 +2652,9 @@ for i in (d if isinstance(d, list) else [d]):
 # dependents sit correctly-blocked forever on a false premise (sp-jzfog blocking sp-vsob2).
 # The remedy is the blocker's own — reopening it (task 2) is what clears this — so this
 # function only makes the false block visible on the bead it was holding shut.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_false_blockers`.
 detect_false_blockers() {
-    local blockers="${1:-}" raw
-    [ -n "$blockers" ] || return 0
-    raw="$(bdjson list --status open,in_progress --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | BLOCKERS="$blockers" python3 -c '
-import json, os, sys
-blockers = set((os.environ.get("BLOCKERS") or "").split())
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    deps = [x.get("depends_on_id") for x in (i.get("dependencies") or [])
-            if (x.get("dependency_type") or x.get("type")) == "blocks"]
-    for b in blockers.intersection(deps):
-        print("STATE %s blocked-by-unlanded %s — depends on %s, which is closed but its work never landed" % (i["id"], b, b))
-' 2>/dev/null
+    strand detect-false-blockers "$@"
 }
 
 # detect_incident_needs_builder -> "STATE <id> incident-is-code — <evidence>" for every open
@@ -2870,37 +2669,9 @@ for i in (d if isinstance(d, list) else [d]):
 # never Ops's own work. It exists only if code was already written for this bead under some
 # other persona — which is exactly "the remaining work is a code change", fully computable,
 # with nothing left to a model's judgment.
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_incident_needs_builder`.
 detect_incident_needs_builder() {
-    local raw home inc
-    home="$(spira_home_repo)"
-    inc="${SPIRA_INCIDENT_LABEL:?SPIRA_INCIDENT_LABEL is unset — source conf.sh}"
-    raw="$(bdjson list --status open,in_progress --label "$inc" --limit 0 2>/dev/null)"
-    [ -n "$raw" ] || return 0
-    printf '%s\n' "$raw" | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-for i in (d if isinstance(d, list) else [d]):
-    L = i.get("labels") or []
-    br = next((l[7:] for l in L if l.startswith("branch:")), "")
-    if not br:
-        continue
-    repo = next((l[5:] for l in L if l.startswith("repo:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, br))
-' 2>/dev/null | while IFS=$'\t' read -r id repo br; do
-        [ -n "$id" ] || continue
-        local r_path refs base ahead
-        r_path="$(repo_root "${repo:-$home}" 2>/dev/null)" || continue
-        [ -n "$r_path" ] || continue
-        git -C "$r_path" show-ref --verify -q "refs/heads/$br" 2>/dev/null || continue
-        refs="$(spira_landrefs "$r_path" 2>/dev/null)" || continue
-        base="${refs%% *}"
-        [ -n "$base" ] || continue
-        ahead="$(git -C "$r_path" rev-list --count "$base..$br" 2>/dev/null)" || continue
-        [ "${ahead:-0}" -gt 0 ] 2>/dev/null || continue
-        printf 'STATE %s incident-is-code — %s commit(s) already on %s ahead of %s; remaining work is a code change, not operational\n' \
-            "$id" "$ahead" "$br" "$base"
-    done
+    strand detect-incident-needs-builder
 }
 
 # detect_invalid_closed -> INVALID-CLOSED and UNFILED-FOLLOW lines for closed beads whose
@@ -2920,69 +2691,9 @@ for i in (d if isinstance(d, list) else [d]):
 # and landed. Measure the property (remainder exists and has no tracking), not the word.
 #
 # OUTPUT: "INVALID-CLOSED <id> — <reason>" or "UNFILED-FOLLOW <id> — <reason>"
+# Ported to Rust (sp-8ofmt, "wave 4.29" — family T-b); see `strand::detectors::detect_invalid_closed`.
 detect_invalid_closed() {
-    local _closed_raw
-    if [ -n "${SPIRA_SCOPE_LABEL:-}" ]; then
-        _closed_raw="$(bdjson list --status closed --label "$SPIRA_SCOPE_LABEL" --limit 0 2>/dev/null)"
-    else
-        _closed_raw="$(bdjson list --status closed --limit 0 2>/dev/null)"
-    fi
-    [ -n "$_closed_raw" ] || return 0
-    printf '%s\n' "$_closed_raw" | SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_ID_PREFIX="${SPIRA_ID_PREFIX:-sp}" SPIRA_RUN="${SPIRA_RUN:-}" python3 -c '
-import sys, json, re, os
-
-# Load detect_close_reason and check_unfiled_follow from the shared helper. The detector
-# uses detect_close_reason (raw scan, no masking) so all occurrences reach Maechen;
-# check_close_reason (quote-masked) belongs to the close-time fence in aeon.sh.
-_flags_path = os.path.join(os.environ.get("SPIRA_HOME", ""), "close-reason-flags.py")
-try:
-    _ns = {"re": re, "__name__": ""}
-    exec(open(_flags_path).read(), _ns)
-    check_close_reason = _ns.get("detect_close_reason") or _ns["check_close_reason"]
-    check_unfiled_follow = _ns["check_unfiled_follow"]
-except Exception:
-    check_close_reason = lambda r: None
-    check_unfiled_follow = lambda r, id_prefix="sp": None
-
-_id_prefix = os.environ.get("SPIRA_ID_PREFIX", "sp")
-
-# ALLOWLIST. Beads whose id appears in $SPIRA_RUN/invalid-closed.allow are reported
-# as ALLOWED-IC (not counted) rather than as INVALID-CLOSED or UNFILED-FOLLOW. Each
-# line in the allowlist is "<id> <reason>" — the reason is what Maechen recorded when
-# it judged the row a false positive (quotation) or resolved it (follow-up filed).
-allowlist = {}
-_run = os.environ.get("SPIRA_RUN", "")
-_allow_path = os.path.join(_run, "invalid-closed.allow") if _run else ""
-if _allow_path and os.path.isfile(_allow_path):
-    with open(_allow_path) as _af:
-        for _line in _af:
-            _parts = _line.strip().split(None, 1)
-            if _parts and re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)+$", _parts[0]):
-                allowlist[_parts[0]] = _parts[1] if len(_parts) > 1 else ""
-
-try: d = json.load(sys.stdin)
-except Exception: raise SystemExit
-for i in (d if isinstance(d, list) else [d]):
-    bid = i["id"]
-    reason = i.get("close_reason") or ""
-    title = re.sub(r"[^ A-Za-z0-9._/:,()#+-]", " ", (i.get("title") or ""))[:60]
-    reason_short = re.sub(r"\s+", " ", reason.strip())[:120]
-
-    if bid in allowlist:
-        print("ALLOWED-IC %s — %s" % (bid, allowlist[bid]))
-        continue
-
-    hit = check_close_reason(reason)
-    if hit:
-        print("INVALID-CLOSED %s — close reason contains %r: %s. title: %s" % (
-            bid, hit, reason_short, title))
-        continue
-
-    follow_hit = check_unfiled_follow(reason, _id_prefix)
-    if follow_hit:
-        print("UNFILED-FOLLOW %s — follow-on phrase %r without a tracking reference: %s. title: %s" % (
-            bid, follow_hit, reason_short, title))
-' 2>/dev/null
+    strand detect-invalid-closed
 }
 
 # --------------------------------------------------------------------------------------
