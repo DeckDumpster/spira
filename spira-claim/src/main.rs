@@ -2,6 +2,7 @@
 //! selection. See DESIGN.md for the contract; this file is argument handling only.
 
 mod audit;
+mod counters;
 mod deadlock;
 mod decide;
 mod events;
@@ -52,11 +53,19 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
        spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer's)
+       spira-claim write-event <bead> <event-type> [cause]                 (lib.sh _bump_write_event_try's one INSERT; wave 4.18)
+       spira-claim count-events <bead> <event-type>                        (lib.sh _counter_events_query: raw COUNT(*), no exemption)
+       spira-claim lapse-record <bead> <quiet-s> <last-action> <tip>       (lib.sh write_lapse_record)
+       spira-claim bead-metadata <bead> <key>                              (lib.sh bead_metadata)
+       spira-claim thrash-streak-bump <bead> [tip] [note]                  (lib.sh thrash_streak_bump)
+       spira-claim counter-label <bead> <prefix> <n>                      (lib.sh counter_label)
+       spira-claim ask-clear <bead>                                        (lib.sh poison_asked_clear, retired; unpoison's own step 2)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
   common:     --db PATH  --timeout-s N (60)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
         stack also 3 = not claimable (its own JSON still names the reason);
-        deadlocked also 3 = a candidate was refused or a lift did not verify";
+        deadlocked also 3 = a candidate was refused or a lift did not verify;
+        write-event also 1 = could not write (a no-op on an empty bead/event-type is 0)";
 
 /// Parsed flags and positionals. Flags listed in `BOOL_FLAGS` take no value.
 struct Args {
@@ -184,6 +193,13 @@ pub fn dispatch(raw: &[String], stdin: &mut dyn Read) -> Outcome {
         "unpoison" => cmd_unpoison(&a, &env),
         "audit" => cmd_audit(&a, &mut env),
         "deadlocked" => cmd_deadlocked(&a, &mut env),
+        "write-event" => cmd_write_event(&a, &env),
+        "count-events" => cmd_count_events(&a, &env),
+        "lapse-record" => cmd_lapse_record(&a, &env),
+        "bead-metadata" => cmd_bead_metadata(&a, &env),
+        "thrash-streak-bump" => cmd_thrash_streak_bump(&a, &env),
+        "counter-label" => cmd_counter_label(&a, &env),
+        "ask-clear" => cmd_ask_clear(&a, &env),
         "-h" | "--help" | "help" => Outcome::ok(format!("{USAGE_TEXT}\n")),
         other => Outcome::usage(format!("unknown verb {other}")),
     }
@@ -747,6 +763,153 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
     let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
     let (code, out) = deadlock::run(&o, &candidates, &mut live);
     Outcome { code, out, err: String::new() }
+}
+
+// =========================================================================================
+// wave 4.18 (sp-sn1re) — lib.sh family L's attempt-counter writes and small bd
+// accessors, now one-line shims in lib.sh onto the verbs below. See counters.rs.
+// =========================================================================================
+
+/// `$SPIRA_RUN`, resolved the same way `unpoison`/`deadlocked` resolve it: the
+/// environment wins, then spira-config's `spira.run`.
+fn resolved_run_dir(env: &Env) -> Option<std::path::PathBuf> {
+    env_nonempty("SPIRA_RUN").or_else(|| env.config.run.clone()).map(std::path::PathBuf::from)
+}
+
+fn cmd_write_event(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (id, etype, cause) = match a.pos.as_slice() {
+        [id, etype] => (id.clone(), etype.clone(), "unrecorded".to_string()),
+        [id, etype, cause] => (id.clone(), etype.clone(), cause.clone()),
+        _ => return Outcome::usage("write-event: expected <bead> <event-type> [cause]"),
+    };
+    // `_bump_write_event_try`'s own no-op: an empty bead or event-type writes nothing
+    // and is not a failure (aeon.sh calls bump_requeue bare under `set -e`).
+    if id.is_empty() || etype.is_empty() {
+        return Outcome::ok(String::new());
+    }
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    let actor = env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into());
+    match counters::write_event(&st, &actor, &id, &etype, &cause) {
+        Ok(()) => Outcome::ok(String::new()),
+        Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: write-event: {e}") },
+    }
+}
+
+fn cmd_count_events(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (id, etype) = match a.pos.as_slice() {
+        [id, etype] if !id.is_empty() && !etype.is_empty() => (id.clone(), etype.clone()),
+        _ => return Outcome::usage("count-events: expected <bead> <event-type>"),
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    match counters::count_events(&st, &id, &etype) {
+        Ok(n) => Outcome::ok(format!("{n}\n")),
+        Err(e) => Outcome::cannot_tell(e),
+    }
+}
+
+fn cmd_lapse_record(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (bead, quiet, last, tip) = match a.pos.as_slice() {
+        [b, q, l, t] => (b.clone(), q.clone(), l.clone(), t.clone()),
+        _ => return Outcome::usage("lapse-record: expected <bead> <quiet-s> <last-action> <tip>"),
+    };
+    // Best-effort, same as bash: no SPIRA_RUN/spira.run means nowhere to write, which is
+    // silent rather than an error — a lapse record is a diagnostic, not load-bearing.
+    if let Some(run_dir) = resolved_run_dir(env) {
+        counters::write_lapse_record(&run_dir, &bead, &quiet, &last, &tip);
+    }
+    Outcome::ok(String::new())
+}
+
+fn cmd_bead_metadata(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (id, key) = match a.pos.as_slice() {
+        [id, key] => (id.clone(), key.clone()),
+        _ => return Outcome::usage("bead-metadata: expected <bead> <key>"),
+    };
+    if id.is_empty() || key.is_empty() {
+        return Outcome::ok(String::new());
+    }
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    Outcome::ok(format!("{}\n", counters::bead_metadata(&st, &id, &key)))
+}
+
+fn cmd_thrash_streak_bump(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (id, tip, note) = match a.pos.as_slice() {
+        [id] => (id.clone(), "?".to_string(), String::new()),
+        [id, tip] => (id.clone(), tip.clone(), String::new()),
+        [id, tip, note] => (id.clone(), tip.clone(), note.clone()),
+        _ => return Outcome::usage("thrash-streak-bump: expected <bead> [tip] [note]"),
+    };
+    if id.is_empty() {
+        return Outcome::ok("0".to_string());
+    }
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    Outcome::ok(format!("{}", counters::thrash_streak_bump(&st, &id, &tip, &note)))
+}
+
+fn cmd_counter_label(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let (id, prefix, n) = match a.pos.as_slice() {
+        [id, prefix, n] => (id.clone(), prefix.clone(), n.clone()),
+        _ => return Outcome::usage("counter-label: expected <bead> <prefix> <n>"),
+    };
+    let st = match store(a, &env.config) {
+        Ok(s) => s,
+        Err(e) => return Outcome::usage(e),
+    };
+    let labels = match counters::bead_labels(&st, &id) {
+        Ok(l) => l,
+        Err(e) => return Outcome::cannot_tell(e),
+    };
+    match counters::counter_label(&labels, &prefix, &n) {
+        Some(l) => Outcome::ok(l),
+        None => Outcome { code: 1, out: String::new(), err: String::new() },
+    }
+}
+
+fn cmd_ask_clear(a: &Args, env: &Env) -> Outcome {
+    if let Err(e) = a.check_known(&[]) {
+        return Outcome::usage(e);
+    }
+    let id = match a.pos.as_slice() {
+        [id] if !id.is_empty() => id.clone(),
+        _ => return Outcome::usage("ask-clear: expected <bead>"),
+    };
+    // Best-effort, same as the retired poison_asked_clear's `rm -f ... || true`: no
+    // SPIRA_RUN/spira.run, or a remove that fails, is silent.
+    if let Some(run_dir) = resolved_run_dir(env) {
+        let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(std::path::PathBuf::from).unwrap_or_else(|| run_dir.join("poison-asked"));
+        let _ = std::fs::remove_file(asked_dir.join(&id));
+    }
+    Outcome::ok(String::new())
 }
 
 fn main() {
