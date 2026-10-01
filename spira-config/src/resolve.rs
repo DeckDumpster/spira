@@ -29,12 +29,16 @@
 //! this function, not as a separate call a caller could forget — exactly the property its own
 //! design note asks for.
 //!
-//! WHAT IS DELIBERATELY NOT HERE (later beads, per the plan's dependency chain): the PATH
-//! tail and `SPIRA_BD`/schema-preflight bootstrap (bead sp-kfimz, "6: environment bootstrap"),
-//! the gate-outcome constants and `spira_unit`/deps machinery (bead sp-ubcgo's successor,
-//! "10: small conf.sh families" — these are not even inside `spira_conf_defaults` in bash
-//! today), and config WRITES (`spira_config_set`/`unset`, bead sp-ksrss). None of those are
-//! part of `spira_conf_defaults`'s own contract, so none are ported here.
+//! WHAT IS DELIBERATELY NOT HERE (later beads, per the plan's dependency chain): the gate-
+//! outcome constants and `spira_unit`/deps machinery (bead sp-ubcgo's successor, "10: small
+//! conf.sh families" — these are not even inside `spira_conf_defaults` in bash today), and
+//! config WRITES (`spira_config_set`/`unset`, bead sp-ksrss). None of those are part of
+//! `spira_conf_defaults`'s own contract, so none are ported here. The PATH tail and
+//! `SPIRA_BD`/schema-preflight bootstrap this doc used to list here moved instead, in
+//! sp-kfimz ("wave 4.6"), to [`crate::env_bootstrap`] — a separate module rather than part of
+//! `resolve()` itself, because both are side-effecting (PATH depends on the process's own
+//! ambient PATH, not only `spira.toml`; the schema preflight shells out to `bd` and writes a
+//! cache stamp) where `resolve()` is a pure function of its [`ResolveInput`].
 
 use std::collections::BTreeMap;
 use std::path::Path;

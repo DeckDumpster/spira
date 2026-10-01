@@ -16,6 +16,15 @@
 //!                                       SPIRA_HOME/conf.d — conf.sh's own fix for its
 //!                                       symlink fence, where SPIRA_HOME resolves to a test
 //!                                       fixture but conf.d/ stays beside conf.sh's real file
+//!   spira-config env-bootstrap --sh     the PATH tail + SPIRA_BD resolution conf.sh evals
+//!                                       after `resolve --sh-all` (sp-kfimz, "wave 4.6");
+//!                                       reads PATH, HOME, SPIRA_PATH, SPIRA_BD from this
+//!                                       process's own environment, same as `resolve` reads
+//!                                       SPIRA_HOME/SPIRA_REPO from its own
+//!   spira-config check-bd               the cached bd-schema preflight (sp-kfimz); reads
+//!                                       SPIRA_BD, SPIRA_DB, SPIRA_RUN, SPIRA_DOCTOR,
+//!                                       SPIRA_CONF_FILE; exit 1 means the caller must
+//!                                       `exit 1` outright, never just `return`
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
@@ -311,6 +320,57 @@ fn cmd_resolve_sh(all: bool, file: Option<&str>, conf_d_override: Option<&str>) 
             eprintln!("spira-config resolve: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+/// `env-bootstrap --sh` (sp-kfimz, "wave 4.6") — `conf.sh`'s own `eval` target, run right
+/// after `resolve --sh-all`: the PATH tail ([`spira_config::env_bootstrap::path_tail`]) and
+/// `SPIRA_BD` resolution ([`spira_config::env_bootstrap::resolve_bd`]). `PATH`, `HOME` and
+/// `SPIRA_PATH` are read from this process's own environment — `conf.sh` passes them
+/// explicitly on the call (`PATH="$PATH" HOME="$HOME" SPIRA_PATH="${SPIRA_PATH:-}" ...`)
+/// because neither is `export`ed yet at the point this runs; `resolve --sh-all`'s own output
+/// is still a plain, un-exported shell assignment until `conf.sh`'s later, explicit export
+/// list. `SPIRA_BD` is read the same way, so a value the environment or `spira.toml` already
+/// gave `conf.sh` survives untouched (env/toml outrank derivation, same precedence as every
+/// other key in this file).
+fn cmd_env_bootstrap_sh() -> ExitCode {
+    let current_path = env::var("PATH").unwrap_or_default();
+    let home = env::var("HOME").unwrap_or_default();
+    let spira_path = env::var("SPIRA_PATH").unwrap_or_default();
+    let existing_bd = env::var("SPIRA_BD").unwrap_or_default();
+    print!(
+        "{}",
+        spira_config::env_bootstrap::bootstrap_sh(&current_path, &spira_path, &home, &existing_bd)
+    );
+    ExitCode::SUCCESS
+}
+
+/// `check-bd` (sp-kfimz, "wave 4.6") — the cached bd-schema preflight
+/// ([`spira_config::env_bootstrap::check_bd_schema`]), as a CLI door for `conf.sh`'s own
+/// `spira-config check-bd || exit 1`. `SPIRA_BD`, `SPIRA_DB`, `SPIRA_RUN`, `SPIRA_DOCTOR`
+/// and `SPIRA_CONF_FILE` are read from the environment, passed explicitly by `conf.sh` for
+/// the same not-yet-exported reason `cmd_env_bootstrap_sh` is. Exit code is the whole
+/// contract: 0 means the caller continues (including every tolerated or skipped case — a
+/// missing store, a cache hit, `SPIRA_DOCTOR` tolerating a failure it will itself re-check),
+/// non-zero means `conf.sh` must `exit 1` outright. Every diagnostic line is printed here,
+/// to stderr, so `conf.sh` itself prints nothing further.
+fn cmd_check_bd() -> ExitCode {
+    let bd = env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
+    let db = env::var("SPIRA_DB").unwrap_or_default();
+    let run = env::var("SPIRA_RUN").unwrap_or_default();
+    let doctor = env::var("SPIRA_DOCTOR").map(|v| !v.is_empty()).unwrap_or(false);
+    let conf_file = env::var("SPIRA_CONF_FILE")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| "spira.conf".to_string());
+    let result = spira_config::env_bootstrap::check_bd_schema(&bd, &db, &run, doctor, &conf_file);
+    for m in &result.messages {
+        eprintln!("{m}");
+    }
+    if result.refuse {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
     }
 }
 
@@ -906,6 +966,15 @@ fn main() -> ExitCode {
             }
             cmd_resolve_sh(all, file.as_deref(), conf_d.as_deref())
         }
+        Some("env-bootstrap") => {
+            if args.get(1).map(String::as_str) == Some("--sh") {
+                cmd_env_bootstrap_sh()
+            } else {
+                eprintln!("usage: spira-config env-bootstrap --sh");
+                ExitCode::FAILURE
+            }
+        }
+        Some("check-bd") => cmd_check_bd(),
         Some("convert") => cmd_convert(&args[1..]),
         Some("repo") => cmd_repo(&args[1..]),
         Some("set") => match (args.get(1), args.get(2), args.get(3)) {
@@ -934,13 +1003,16 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|fayth|migrate|repo> ...\n\
+                "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
+                 \x20       convert|set|unset|schema|path-tail|fayth|migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
                  \x20 locate\n\
                  \x20 resolve --sh|--sh-all [--conf-d DIR] [file]\n\
+                 \x20 env-bootstrap --sh\n\
+                 \x20 check-bd\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\
