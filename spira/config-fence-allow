@@ -123,7 +123,6 @@ spira/test-gate-preflight.sh
 spira/test-gate-tree.sh
 spira/test-gate-verdict.sh
 spira/test-gh-intake.sh
-spira/test-gh-issue-closeout.sh
 spira/test-gh-run-gate.sh
 spira/test-groomer-incident-reroute.sh
 spira/test-groomer-state.sh

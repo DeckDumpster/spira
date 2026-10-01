@@ -89,6 +89,21 @@ impl Bd for FakeBd {
         self.closes.borrow_mut().push((id.to_string(), reason.to_string()));
         true
     }
+
+    // The closeout-side methods (sp-j3fim) are exercised through `closeout.rs`'s own
+    // fakes, not through the ingest side's — these are never called from `logic::run`.
+    fn show_json(&self, _id: &str) -> Option<serde_json::Value> {
+        None
+    }
+    fn list_by_label(&self, _status: &str, _label: &str) -> Option<serde_json::Value> {
+        None
+    }
+    fn dep_remove(&self, _id: &str, _other: &str) -> bool {
+        false
+    }
+    fn dep_relate(&self, _from: &str, _to: &str) -> bool {
+        false
+    }
 }
 
 struct FakeRepo {
@@ -97,6 +112,15 @@ struct FakeRepo {
 impl Repo for FakeRepo {
     fn root_with_git(&self, _name: &str) -> Option<String> {
         self.root.clone()
+    }
+    fn all_names(&self) -> Vec<String> {
+        Vec::new()
+    }
+    fn landref(&self, _repo_path: &str) -> Option<String> {
+        None
+    }
+    fn landrefs(&self, _repo_path: &str) -> Vec<String> {
+        Vec::new()
     }
 }
 
@@ -108,6 +132,9 @@ impl Mail for FakeMail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool {
         self.sent.borrow_mut().push((subject.to_string(), String::from_utf8_lossy(body).to_string()));
         true
+    }
+    fn send_question(&self, _from: &str, _subject: &str, _default: &str, _body: &[u8]) -> Result<(), String> {
+        Ok(())
     }
 }
 

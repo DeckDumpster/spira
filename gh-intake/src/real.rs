@@ -1,5 +1,6 @@
-use crate::ports::{Bd, Http, Mail, Repo};
+use crate::ports::{Bd, Gh, Git, Http, Mail, Repo};
 use std::io::Write;
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -114,6 +115,38 @@ impl Bd for RealBd {
             .status();
         matches!(status, Ok(s) if s.success())
     }
+
+    fn show_json(&self, id: &str) -> Option<serde_json::Value> {
+        let out = self.cmd().arg("show").arg(id).arg("--json").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        serde_json::from_slice(&out.stdout).ok()
+    }
+
+    fn list_by_label(&self, status: &str, label: &str) -> Option<serde_json::Value> {
+        let out = self
+            .cmd()
+            .args(["list", "--status", status, "--label", label, "--limit", "0", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        serde_json::from_slice(&out.stdout).ok()
+    }
+
+    fn dep_remove(&self, id: &str, other: &str) -> bool {
+        let status = self.cmd().args(["dep", "remove", id, other]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        matches!(status, Ok(s) if s.success())
+    }
+
+    fn dep_relate(&self, from: &str, to: &str) -> bool {
+        let status = self.cmd().args(["dep", "relate", from, to]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        matches!(status, Ok(s) if s.success())
+    }
 }
 
 /// `repo_root` (family U), in-process via `spira_config::repos` (sp-k6lku, "wave 4.13") —
@@ -140,6 +173,31 @@ impl Repo for RealRepo {
             None
         }
     }
+
+    /// `spira_repos` (sp-j3fim) — in-process, same registry construction as every other
+    /// call here (one-shot binary, no loop to amortise it over).
+    fn all_names(&self) -> Vec<String> {
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
+        reg.all()
+    }
+
+    /// `spira_landref <repo-path>` (family W, sp-j3fim) — in-process.
+    fn landref(&self, repo_path: &str) -> Option<String> {
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
+        spira_config::repos::landref(&reg, repo_path)
+    }
+
+    /// `spira_landrefs <repo-path>` (family W, sp-j3fim) — in-process; flattens the
+    /// (base, local-counterpart) pair `spira_config::repos::landrefs` returns into the
+    /// list of refs `Git::landed_sha` greps.
+    fn landrefs(&self, repo_path: &str) -> Vec<String> {
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
+        match spira_config::repos::landrefs(&reg, repo_path) {
+            Some((base, Some(local))) => vec![base, local],
+            Some((base, None)) => vec![base],
+            None => Vec::new(),
+        }
+    }
 }
 
 pub struct RealMail {
@@ -162,5 +220,143 @@ impl Mail for RealMail {
             let _ = stdin.write_all(body);
         }
         matches!(child.wait(), Ok(status) if status.success())
+    }
+
+    /// lib.sh `gh_issue_ask_unlanded`'s mail call (sp-j3fim): stdout discarded, stderr
+    /// captured as the error text exactly as `_err="$(... 2>&1 >/dev/null)"` did.
+    fn send_question(&self, from: &str, subject: &str, default: &str, body: &[u8]) -> Result<(), String> {
+        let mut child = Command::new(&self.mail_bin)
+            .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(body);
+        }
+        let out = child.wait_with_output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+}
+
+/// `ghq` (bead::bdq's `__ghq`), called by bare name on the launcher PATH — the same
+/// binary every bash family already shells into for `gh` access (sp-j3fim).
+pub struct RealGh {
+    pub ghq_bin: String,
+}
+
+impl Gh for RealGh {
+    fn issue_state(&self, repo: &str, issue_n: &str) -> String {
+        let out = Command::new(&self.ghq_bin)
+            .args(["issue", "view", issue_n, "--repo", repo, "--json", "state", "-q", ".state"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => String::new(),
+        }
+    }
+    fn issue_comment(&self, repo: &str, issue_n: &str, body: &str) -> bool {
+        let status = Command::new(&self.ghq_bin)
+            .args(["issue", "comment", issue_n, "--repo", repo, "--body", body])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        matches!(status, Ok(s) if s.success())
+    }
+    fn issue_close(&self, repo: &str, issue_n: &str) -> bool {
+        let status = Command::new(&self.ghq_bin)
+            .args(["issue", "close", issue_n, "--repo", repo])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        matches!(status, Ok(s) if s.success())
+    }
+}
+
+/// Plain git (sp-j3fim) — every call reads a checkout already on disk; no credential.
+pub struct RealGit;
+
+impl RealGit {
+    fn cmd(repo: &Path) -> Command {
+        let mut c = Command::new("git");
+        c.arg("-C").arg(repo);
+        c
+    }
+}
+
+impl Git for RealGit {
+    fn rev_parse_short(&self, repo: &Path, sha: &str) -> Option<String> {
+        let o = Self::cmd(repo).args(["rev-parse", "--short", sha]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        (!s.is_empty()).then_some(s)
+    }
+
+    fn subject_of(&self, repo: &Path, sha: &str) -> Option<String> {
+        let o = Self::cmd(repo).args(["log", "--format=%s", "-1", sha]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    }
+
+    fn landed_sha(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
+        if refs.is_empty() {
+            return None;
+        }
+        let grep = format!("--grep={id}");
+        let mut args: Vec<&str> = vec!["log", "--format=%H%x09%s", grep.as_str(), "-F"];
+        args.extend(refs.iter().map(String::as_str));
+        let o = Self::cmd(repo).args(&args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        let out = String::from_utf8_lossy(&o.stdout);
+        let land = format!("spira: land {id}");
+        let own = format!("{id}:");
+        for line in out.lines() {
+            let Some((sha, subj)) = line.split_once('\t') else { continue };
+            if subj == land || subj.starts_with(&format!("{land} ")) || subj.starts_with(&own) {
+                return Some(sha.to_string());
+            }
+        }
+        None
+    }
+
+    fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String> {
+        let grep = format!("--grep={id}");
+        let o = Self::cmd(repo)
+            .args(["log", "--format=%H", grep.as_str(), land_ref])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        String::from_utf8_lossy(&o.stdout).lines().next().map(str::to_string).filter(|s| !s.is_empty())
+    }
+
+    fn sha_is_ancestor(&self, repo: &Path, sha: &str, land_ref: &str) -> bool {
+        let exists = Self::cmd(repo).args(["cat-file", "-e", sha]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+        if !exists {
+            return false;
+        }
+        Self::cmd(repo)
+            .args(["merge-base", "--is-ancestor", sha, land_ref])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 }
