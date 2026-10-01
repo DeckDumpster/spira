@@ -1282,6 +1282,7 @@ name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "spira-config",
  "testkit",
 ]
 
