@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-aeon-resume.sh — brief rendering: render_resume_brief / render_slain_brief / (see
-#   test-session-yield-headless.sh and test-session-result-fields.sh for their lib.sh
-#   neighbours). When a
-#   branch carries prior commits, aeon.sh includes a RESUME_BRIEF in the model's prompt so it
-#   resumes the existing work rather than restarting from scratch; when the last commit is a
-#   slay.sh wip salvage, a SLAIN_BRIEF tells it to review that commit first.
+# test-aeon-resume.sh — brief rendering: when a branch carries prior commits, aeon includes
+#   a RESUME_BRIEF in the model's prompt so it resumes the existing work rather than
+#   restarting from scratch; when the last commit is a slay.sh wip salvage, a SLAIN_BRIEF
+#   tells it to review that commit first.
 #
 # THE DEFECT THIS REPRODUCES. When a bead is closed and its branch fails the landing gate,
 # the sentinel reopens the bead and summons a new aeon. That aeon inherits the branch with
@@ -16,8 +14,14 @@
 # EVERY CASE IS A PAIR (law-absence-needs-a-positive-control): the fresh/no-slain case must
 # show the brief is ABSENT, beside the case that shows it PRESENT.
 #
+# RETIRED (sp-j89pd, wave 4.2): render_resume_brief, render_slain_brief and
+# render_deadline_brief (lib.sh) had zero live callers — all three are now aeon::brief
+# (aeon/src/brief.rs). Their direct-call T1 table is deleted with them; T2 (pure git, no
+# brief rendering at all) and T3 (the real `aeon` binary, prompt checked end to end) are
+# unaffected and stay.
+#
 # defect: sp-2e4v
-# covers: aeon/src/* spira/lib.sh landing-pass/src/*
+# covers: aeon/src/* landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -25,81 +29,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-aeon-resume.sh"
-
-rrb() {   # rrb <branch> <work> <count> <log> -> render_resume_brief's own output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; render_resume_brief "$2" "$3" "$4" "$5"' \
-        _ "$HERE" "$1" "$2" "$3" "$4" 2>/dev/null
-}
-rsb() {   # rsb <last-subject> <count> <base> <slay-when> <diffstat> <logf> -> render_slain_brief's output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; render_slain_brief "$2" "$3" "$4" "$5" "$6" "$7"' \
-        _ "$HERE" "$1" "$2" "$3" "$4" "$5" "$6" 2>/dev/null
-}
-rdb() {   # rdb <at> <now> -> render_deadline_brief's output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; render_deadline_brief "$2" "$3"' \
-        _ "$HERE" "$1" "$2" 2>/dev/null
-}
-
-# ===========================================================================================
-echo
-echo "T1: render_resume_brief <branch> <work> <count> <log>"
-# ===========================================================================================
-out="$(rrb spira/sp-x /work 0 '')"
-is   "zero commits: RESUME_BRIEF is empty (positive control)" "" "$out"
-out="$(rrb spira/sp-x /work '?' '')"
-is   "unreadable count ('?'): RESUME_BRIEF is empty" "" "$out"
-
-out="$(rrb spira/sp-x /work 2 '  abc123 sp-x — part 1
-  def456 sp-x — part 2')"
-want "prior commits: RESUME_BRIEF present"        "Prior work on this branch" "$out"
-want "prior commits: branch named"                "\`spira/sp-x\` carries"    "$out"
-want "prior commits: count is 2"                   "**2** commit(s)"          "$out"
-want "prior commits: log block present"             "abc123 sp-x — part 1"     "$out"
-want "prior commits: git log instruction names the worktree" "git -C /work log --oneline" "$out"
-want "prior commits: resume instruction present"    "do not redo work that is already committed" "$out"
-
-out="$(rrb spira/sp-x /work 1 '  abc123 sp-x — only commit')"
-want "one commit: singular form still uses the count" "**1** commit(s)" "$out"
-
-# ===========================================================================================
-echo
-echo "T1: render_slain_brief <last-subject> <count> <base> <slay-when> <diffstat> <logf>"
-# ===========================================================================================
-out="$(rsb 'sp-x — normal commit' 1 main '' '' /tmp/x.log)"
-is   "a regular commit subject: SLAIN_BRIEF is empty (positive control)" "" "$out"
-
-out="$(rsb 'sp-x: wip — salvaged at slay (operator halted the session)' 2 main '2026-09-25 10:00:00' '1 file changed' /tmp/x.log)"
-want "slain subject: SLAIN_BRIEF present"     "A previous attempt was slain" "$out"
-want "slain: why extracted from the subject"  "operator halted the session"   "$out"
-want "slain: when is threaded through"        "2026-09-25 10:00:00"           "$out"
-want "slain: commit count threaded through"   "**2** commit(s) beyond"        "$out"
-want "slain: base named"                      "beyond \`main\`"                "$out"
-want "slain: diffstat included when given"    "(1 file changed)"              "$out"
-want "slain: wip review instruction"          "salvaged wip commit"           "$out"
-want "slain: transcript path present"         "\`/tmp/x.log\`"                 "$out"
-
-out="$(rsb 'sp-x: wip — salvaged at slay (crash)' 1 main '' '' /tmp/x.log)"
-nowant "slain: an empty diffstat adds no stray parentheses" "()" "$out"
-
-# ===========================================================================================
-echo
-echo "T1: render_deadline_brief <at> <now>"
-# ===========================================================================================
-out="$(rdb '' "$(date +%s)")"
-want "no deadline: walless text"    "no wall-clock deadline" "$out"
-nowant "no deadline: no kill time"  "killed at"               "$out"
-
-now=1900000000
-at=$(( now + 600 ))
-out="$(rdb "$at" "$now")"
-want "walled: names the kill mechanism" "killed at" "$out"
-want "walled: seconds remaining"        "600 seconds from now" "$out"
-want "walled: the live-read snippet carries the real epoch" "echo \$(( $at - \$(date +%s) ))" "$out"
 
 # ===========================================================================================
 echo
