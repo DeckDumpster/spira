@@ -27,6 +27,7 @@ groomer correct-lane   <id> --lane <lane>
 groomer depends-on-fix <bug-id> --fix <id> --evidence <text>
 groomer unpoison       <id> --cause <c> --evidence <text>
 groomer triage-poison  <id> --verdict <work-fault|drop> --evidence <text>
+groomer deadlocked     [--apply]
 groomer unwanted       ...                                   REFUSED — exits 2 always
 ```
 
@@ -88,6 +89,22 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
 
 ## Decisions (what was dropped, and why)
 
+- **`deadlocked` was added mid-rewrite, by a different bead, to the bash this crate was
+  already replacing** (sp-rfodk, landed after this wave started: `attempts.sh
+  deadlocked` moved into `spira-claim deadlocked`, with `groomer.sh deadlocked` as its
+  git half — spira-claim/DESIGN.md §9). Ported here (`src/deadlocked.rs`) rather than
+  left behind on the deleted script: it gathers every poisoned bead across the roster
+  (`Seam::all_partition_members`), judges each one's git state exactly as the bash did
+  (repo map lookup, branch existence, land base, a commit naming the bead, a clean
+  merge-tree), and hands the verdicts to `spira-claim deadlocked` as the same bare JSON
+  array on `--merge-status`, unchanged.
+  - **The non-enforce poison check is `contains`, not the landed bash's `grep -qx`
+    (exact whole line).** Checked against a live `bd label list <id>`: the real output is
+    never a bare label per line — `🏷️ Labels for <id>:` then `  - <label>` rows — so an
+    exact-line match can never fire. `groomer.sh`'s own `triage-poison` case already used
+    the substring form for this reason; `deadlocked`'s `grep -qx` looks like a bug in the
+    bash this crate is replacing, not a behaviour to reproduce, and lifecycle_enforce's
+    path (`spira-lc held <id> poison`) is unaffected either way.
 - **`groomer-litter-predicate.py` is gone, not repointed.** It was pure JSON-in,
   judgement-out with no dependency the Rust binary doesn't already have (`serde_json`),
   so keeping it as a subprocess `groomer` shells out to would be paying a process spawn

@@ -29,6 +29,18 @@ pub trait Seam {
     /// A resolved `SPIRA_*` config key, read after sourcing conf.sh/lib.sh (e.g.
     /// `SPIRA_CI_LABEL`, `SPIRA_INCIDENT_LABEL`, `SPIRA_PLAN_LABEL`). Empty if unset.
     fn conf(&self, key: &str) -> Result<String, String>;
+    /// `all_partition_members` — every open/in_progress bead id across every partition
+    /// this roster covers, deduplicated, one per line.
+    fn all_partition_members(&self) -> Result<String, String>;
+    /// `bead_repo <id>` — its `repo:` label, or the home repo if it names none.
+    fn bead_repo(&self, id: &str) -> Result<String, String>;
+    /// `repo_root <name>` — the repo's checkout path, empty if `name` is not in the map.
+    fn repo_root(&self, name: &str) -> Result<String, String>;
+    /// `spira_landrefs <path>`'s first ref — the base a branch in that repo lands on.
+    fn land_base(&self, repo_path: &str) -> Result<String, String>;
+    /// `spira-lc held <id> poison` — whether the lifecycle machine already holds this
+    /// bead's poison lock (lifecycle_enforce path only).
+    fn lc_held_poison(&self, id: &str) -> bool;
 }
 
 pub struct LibSeam {
@@ -108,6 +120,29 @@ impl Seam for LibSeam {
         }
         Ok(String::from_utf8_lossy(&o.stdout).into_owned())
     }
+
+    fn all_partition_members(&self) -> Result<String, String> {
+        self.run(&["all_partition_members"])
+    }
+
+    fn bead_repo(&self, id: &str) -> Result<String, String> {
+        self.run(&["bead_repo", id])
+    }
+
+    fn repo_root(&self, name: &str) -> Result<String, String> {
+        // repo_root exits non-zero for an unmapped name; that is "no path", not an error
+        // this seam should propagate — the caller reads the empty string the same way.
+        Ok(self.run(&["repo_root", name]).unwrap_or_default())
+    }
+
+    fn land_base(&self, repo_path: &str) -> Result<String, String> {
+        let refs = self.run(&["spira_landrefs", repo_path]).unwrap_or_default();
+        Ok(refs.split_whitespace().next().unwrap_or("").to_string())
+    }
+
+    fn lc_held_poison(&self, id: &str) -> bool {
+        Command::new("spira-lc").args(["held", id, "poison"]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
+    }
 }
 
 /// `SPIRA_HOME` from the environment, else the first directory holding `lib.sh` among the
@@ -139,6 +174,11 @@ pub mod fake {
         pub incident_needs_builder: RefCell<String>,
         pub calls: RefCell<Vec<String>>,
         pub confs: RefCell<std::collections::BTreeMap<String, String>>,
+        pub partition_members: RefCell<String>,
+        pub repos: RefCell<std::collections::BTreeMap<String, String>>,
+        pub roots: RefCell<std::collections::BTreeMap<String, String>>,
+        pub bases: RefCell<std::collections::BTreeMap<String, String>>,
+        pub held_poison: RefCell<std::collections::BTreeSet<String>>,
     }
 
     impl FakeSeam {
@@ -194,6 +234,27 @@ pub mod fake {
 
         fn conf(&self, key: &str) -> Result<String, String> {
             Ok(self.confs.borrow().get(key).cloned().unwrap_or_default())
+        }
+
+        fn all_partition_members(&self) -> Result<String, String> {
+            self.calls.borrow_mut().push("all_partition_members".into());
+            Ok(self.partition_members.borrow().clone())
+        }
+
+        fn bead_repo(&self, id: &str) -> Result<String, String> {
+            Ok(self.repos.borrow().get(id).cloned().unwrap_or_default())
+        }
+
+        fn repo_root(&self, name: &str) -> Result<String, String> {
+            Ok(self.roots.borrow().get(name).cloned().unwrap_or_default())
+        }
+
+        fn land_base(&self, repo_path: &str) -> Result<String, String> {
+            Ok(self.bases.borrow().get(repo_path).cloned().unwrap_or_default())
+        }
+
+        fn lc_held_poison(&self, id: &str) -> bool {
+            self.held_poison.borrow().contains(id)
         }
     }
 }

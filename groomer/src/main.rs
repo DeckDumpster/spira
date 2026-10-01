@@ -9,16 +9,17 @@
 //!   groomer depends-on-fix <bug-id> --fix <id> --evidence <text>         link bug to in-flight fix, order accordingly
 //!   groomer unpoison       <id> --cause <c> --evidence <text>            credit a harness-caused attempt, lift spira-poison
 //!   groomer triage-poison  <id> --verdict <work-fault|drop> --evidence <text>  close out a work-caused poison charge
+//!   groomer deadlocked     [--apply]                                      lift poison from finished, landable work (spira-claim/DESIGN.md §9)
 //!   groomer unwanted       ...                                            REFUSED — exits 2 always
 //!
 //! EXIT: 0 success, 1 usage error / missing required argument, 2 refused (groomer policy).
 
 use groomer::bd::RealBd;
 use groomer::seam::{locate_home, LibSeam};
-use groomer::{cmds, litter, sweep, unpoison};
+use groomer::{cmds, deadlocked, litter, sweep, unpoison};
 
 fn usage() -> ! {
-    eprintln!("usage: groomer sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|unwanted ...");
+    eprintln!("usage: groomer sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|unwanted ...");
     std::process::exit(1);
 }
 
@@ -176,6 +177,23 @@ fn main() {
                     std::process::exit(code);
                 }
             }
+        }
+        "deadlocked" => {
+            let apply = rest.iter().any(|a| a == "--apply");
+            for a in &rest {
+                if a != "--apply" {
+                    eprintln!("groomer: deadlocked: unknown option: {a}");
+                    std::process::exit(1);
+                }
+            }
+            let Some(home) = home else {
+                die("cannot find lib.sh (set SPIRA_HOME)");
+            };
+            let seam = LibSeam::new(home.join("lib.sh"));
+            let enforce = matches!(std::env::var("SPIRA_LIFECYCLE_ENFORCE").ok().as_deref(), Some("1") | Some("true"));
+            let (code, out) = deadlocked::run(&bd, &seam, &bd.db, apply, enforce, "spira-claim");
+            print!("{out}");
+            std::process::exit(code);
         }
         "unwanted" => match cmds::unwanted() {
             Err((code, msg)) => {
