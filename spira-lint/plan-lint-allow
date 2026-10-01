@@ -84,7 +84,6 @@ spira/test-queue-protect.sh
 spira/test-queue-sort-large.sh
 spira/test-queue-step-eject-race.sh
 spira/test-queue-submit.sh
-spira/test-queue-sweep-orphan-runs.sh
 spira/test-queue-watch.sh
 spira/test-rebase-branch.sh
 spira/test-rebase-escalation.sh

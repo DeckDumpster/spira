@@ -71,7 +71,7 @@ Each use case is declared once, as the schema in docs/test-plan/README.md requir
 * `UC-landing-merge-queue-23` [T1] — The pass prunes verdict-cache entries older than `SPIRA_VERDICT_TTL` and reports a reused verdict. *(dim: perf, obs; where: cert)*
 * `UC-landing-merge-queue-24` [T2] — `landing.sh halt` stops a running pass: it kills the pass, writes an interrupt record and removes the run state. It deletes orphan `spira/queue/*` branches and keeps the one named by the open record. Dry-run and idle forms exit honestly. *(dim: rec, obs; where: batch)*
 * `UC-landing-merge-queue-25` [T2] — After a land, the post-land step rebuilds a cargo binary when it is absent and its unit is enabled. It never rebuilds without cargo. *(dim: rec, cfg; where: batch)*
-* `UC-landing-merge-queue-26` [T0] — Every land mode declared in the header is handled in `land_repo`. `land_mark`, `land_state` and `land_mark_at` have one implementation (lib.sh). The landing worktree is never rebased. Every fetch uses `--no-write-fetch-head`. *(dim: ctr; where: cert)*
+* `UC-landing-merge-queue-26` [T0] — Every land mode declared in the header is handled in `land_repo`. `land_mark` and `land_state` have one implementation (lib.sh); `land_mark_at` (the explicit-epoch variant) was retired dead at sp-27hsi — no caller survived it, not even the test fixture that used to extract it. The landing worktree is never rebased. Every fetch uses `--no-write-fetch-head`. *(dim: ctr; where: cert)*
 
 ### C. Queue operations (queue.sh, lib.sh)
 

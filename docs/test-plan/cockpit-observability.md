@@ -57,6 +57,8 @@
 
 > **2026-09-26: `test-ci-park.sh` deleted** (sp-0r1lv, law-a-test-that-flips-is-deleted): red in Concierge full-corpus round 24 (2026-09-25), green on the re-run of the same tree — all 35 cases had passed; the RED was a container-runtime timeout in the batch harness itself. `spira_ci_park_state` (`lib.sh`, the pure `watch|no-ci|expired` decision table behind the `$SPIRA_CI_LABEL` park — the mechanism that let one bead reach 22 reclaims while the board read "in CI") is replaced at T1 by `test-ci-park-state.sh`, with no testdb/git/container dependency to catch this class of flake again. Two things it also covered have **no replacement and no coverage**: the `{{PARK}}` section of the brief `aeon.sh` hands out per land mode (`pr` → create a `gh:run` gate, `push`/`hold` → don't), and the ops pane's `SP_AWAITING_N`/`SP_AWAITING_STUCK` rendering of open `gh:run` gates in `cockpit.sh core_detail`. Both need a real `aeon.sh`/`cockpit.sh` run to exercise (T2/T3), so a pure-core replacement was out of scope here; file one if the plan still wants them covered.
 
+> **2026-10-01 (sp-27hsi): `test-ci-park-state.sh` deleted too.** `spira_ci_park_state` itself was re-grepped dead across the whole tree — no bash caller, no Rust seam, not even the `{{PARK}}`/ops-pane halves noted above as uncovered — and retired along with its sole test. The two coverage gaps this note already flagged as having no replacement are unchanged by this: they were never this suite's to lose.
+
 > **2026-09-25 (sp-s088v.11): rows 17, 33, 35, 39, 40 closed.** Row 33: `test-loom-page.sh`'s
 > 12 fixture arms moved into `loom/static/model.test.js`, run under `node --test`; the
 > real-bd arm is now `test-cockpit-bd-contract.sh`'s "loom's model.js parses what the tracker

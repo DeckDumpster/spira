@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 #
 # test-tsd-producers.sh — the run/tsd/ producers sp-69m85 adds: aeon-session (aeon.sh's
-# ledger_done), slots (the cockpit collector), sentinel-phase (sentinel.sh's own CHECK
-# timings) and round (the whitelist behind attribute.sh/testenv-batch.sh's old TIMINGS-ONLY
-# rows, never a state — both scripts are gone, sp-uwhx0/the Rust cutover; see case 3).
+# ledger_done), slots (the cockpit collector) and sentinel-phase (sentinel.sh's own CHECK
+# timings).
+#
+# Case 3, round (_tsd_round_phase and its build/corpus/attribute/rerun/land/publish
+# whitelist), was retired at sp-27hsi: re-grepped dead across the whole tree (no bash or
+# Rust caller left at all, not even the "whitelist itself is what remains to prove" shipped
+# call site this suite used to stand in for), so the whole case is deleted rather than kept
+# as a pure-function check with nothing behind it. _tsd_escape, the tsd-producers family's
+# other whitelist-guarded function, stays live (escape-classify.sh calls it) and is
+# untouched — this suite never covered it anyway.
 #
 # WHAT THIS SUITE CHECKS.
 #   1. aeon-session: ledger_done (aeon.sh) appends a row carrying bead/fayth/rc/status and
@@ -12,14 +19,12 @@
 #   2. slots: _tsd_slots_sample (lib.sh) turns a cockpit-collect fragment into one row, an
 #      absent key renders "?" rather than a silent 0; slots_keys' (cockpit-collect) fleet
 #      ceiling comes from config alone, never a database call.
-#   3. round: _tsd_round_phase (lib.sh) refuses any phase outside build/corpus/attribute/
-#      rerun/land/publish — the whitelist that keeps a round row state-free (design §2a,
-#      "round rows carry no state"). attribute.sh and testenv-batch.sh's own shipped call
-#      sites, once extracted and proven here directly, are both gone now (sp-uwhx0, the
-#      Rust cutover) — the whitelist itself is what remains to prove.
 #   4. sentinel-phase: a real sentinel.sh pass (Dolt fixture) writes one row per CHECK, and
 #      their sum is within 5% of the pass's own measured wall time (the design's acceptance
-#      criterion, verbatim).
+#      criterion, verbatim). The sentinel binary writes this family itself now (pass.rs,
+#      direct tsd-write calls) — _tsd_sentinel_phase (lib.sh) has no caller left either and
+#      is retired alongside _tsd_round_phase, but nothing here called it directly to begin
+#      with, so this case needed no change.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): every refusal is paired with the
 # accepting case, and every empty/absent case is paired with a real write.
@@ -112,38 +117,6 @@ is "slots_keys: ceiling = pool + lane caps (0 here) when SPIRA_MAX_LIVE_AEONS is
    "5" "$(ceiling_of 5 "")"
 is "slots_keys: SPIRA_MAX_LIVE_AEONS overrides the pool+lanes sum" \
    "2" "$(ceiling_of 5 2)"
-
-# ============================================================================================
-printf '\n%s\n' "3. round: TIMINGS ONLY — the phase whitelist keeps a round row state-free"
-# ============================================================================================
-RUN4="$T/run4"; mkdir -p "$RUN4"
-(
-    export SPIRA_RUN="$RUN4"
-    . "$HERE/lib.sh"
-    for p in build corpus attribute rerun land publish; do
-        _tsd_round_phase "batch-1" "$p" 5 3 1
-    done
-    for p in CUT GREEN RED EJECTED LANDED CERTIFIED; do
-        _tsd_round_phase "batch-1" "$p" 5 3 1
-    done
-)
-FAM4="$RUN4/tsd/round.jsonl"
-[ -f "$FAM4" ] && ok "round row appended" || bad "MUST-FAIL CHECK: no round row"
-is "round: every timing phase wrote a row" \
-   "6" "$(jpy "$FAM4" 'sum(1 for r in rows if r["phase"] in ("build","corpus","attribute","rerun","land","publish"))')"
-is "round: no state name ever reaches the family (MUST-FAIL without the whitelist)" \
-   "0" "$(jpy "$FAM4" 'sum(1 for r in rows if r["phase"] in ("CUT","GREEN","RED","EJECTED","LANDED","CERTIFIED"))')"
-is "round: exactly the 6 timing phases landed — the 6 refused ones wrote nothing" \
-   "6" "$(jpy "$FAM4" 'len(rows)')"
-
-# attribute.sh's round-phase call site (phase=attribute) was extracted from its source the
-# same way; attribute.sh is gone (sp-uwhx0, batcher/src/attrib.rs is round attribution now)
-# and that crate has no seam that writes this TIMINGS-ONLY family — the phase whitelist
-# itself (RUN4, above) still proves "attribute" is accepted and state names are refused;
-# there is no shipped call site left to prove wires it.
-
-# testenv-batch.sh's round-phase block was extracted from its source; testenv-batch.sh is gone
-# (the Rust cutover) and testenv's `build` round row is `cargo test -p testenv` (testenv/src/run.rs).
 
 # ============================================================================================
 printf '\n%s\n' "4. sentinel-phase: a real pass's summed CHECK rows are within 5% of its wall time"

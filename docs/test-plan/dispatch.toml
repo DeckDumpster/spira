@@ -76,6 +76,11 @@ id = "UC-dispatch-13"
 tier = "T1"
 statement = "effective lanes are the intersection of `.spira/modes`, repo-map lanes and `SPIRA_FAYTHS`"
 
+[use_case.uncovered]
+reason = "the three-way-intersection-with-named-refusal diagnostic this UC describes was lib.sh's _spira_lane_diag (plus its two helpers _spira_modes_lanes, _spira_fayths_lane_set), re-grepped dead across the whole tree (no Rust seam, no bash caller, only this suite's own direct calls) and retired rather than ported (wave 4.3). The live lane-admission path, maechen-trigger/groom-trigger.sh's spira_lane_admitted, asks a simpler question — is this lane in any repo-map lanes column at all — with no .spira/modes or SPIRA_FAYTHS intersection and no named-refusal diagnostic, and is covered by maechen-trigger's own mocked-port unit tests. No replacement proves the exact behaviour this UC states; file one if the plan still wants the named-refusal diagnostic."
+date = "2026-10-01"
+bead = "sp-27hsi"
+
 [[use_case]]
 id = "UC-dispatch-14"
 tier = "T1"
