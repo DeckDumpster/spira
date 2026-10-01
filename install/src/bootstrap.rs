@@ -106,7 +106,7 @@ pub fn unit_dir() -> PathBuf {
 }
 
 pub fn templates_dir() -> PathBuf {
-    let exe = env::current_exe().ok();
+    let exe = argv0_path();
     templates_dir_from(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), exe.as_deref())
 }
 
@@ -126,6 +126,43 @@ pub fn templates_dir_from(home: Option<String>, repo: Option<String>, exe: Optio
 
 fn systemd_above(exe: &Path) -> Option<PathBuf> {
     exe.ancestors().skip(1).map(|a| a.join("systemd")).find(|d| d.join("spira-sentinel.service").is_file())
+}
+
+/// `argv[0]`, resolved to where it actually sits, but with every symlink component left
+/// exactly as invoked — never `env::current_exe()`'s fully resolved path.
+///
+/// `current_exe()` canonicalizes every symlink in the path; testenv's own release staging
+/// (and the gate's fixture release) link `bin/<tool>` to wherever cargo actually built it
+/// and `systemd/`/`spira/` to the real checkout — two unrelated directories once resolved,
+/// so `systemd_above`'s walk from a `current_exe()` path landed in cargo's own target/
+/// directory, which has no `systemd/` sibling at all, and `templates_dir()` fell through to
+/// a cwd-relative guess (caught live by testenv's test-unit-drift.sh: every unit showed
+/// DIFFERS because the "clean" comparison rendered from the wrong templates, sp-yyk47).
+///
+/// A bare name (no `/`) is NOT already the resolved path the way it is when a shell execs a
+/// PATH-found command: bash rewrites its own `$0` to the full path PATH search landed on
+/// before exec, but a non-shell caller — `env PATH=... units-install --diff`, a direct
+/// `execvp`/`posix_spawnp` — calls `execvp` directly, which resolves the PATH search
+/// internally but passes argv[0] through to the new process completely unchanged.
+fn argv0_path() -> Option<PathBuf> {
+    let arg0 = env::args_os().next()?;
+    let p = PathBuf::from(&arg0);
+    if p.components().count() > 1 {
+        return if p.is_absolute() { Some(p) } else { Some(env::current_dir().ok()?.join(p)) };
+    }
+    let path_var = env::var_os("PATH")?;
+    for dir in env::split_paths(&path_var) {
+        let candidate = dir.join(&arg0);
+        if is_exec(&candidate) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn is_exec(p: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(p).map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0).unwrap_or(false)
 }
 
 /// Build this box's manifest from the environment, printing units.sh's own informational

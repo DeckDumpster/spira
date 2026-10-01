@@ -98,7 +98,9 @@ fn main() -> ExitCode {
 
     // ---- phase 0: preflight -------------------------------------------------------------
     phase("phase 0: preflight");
-    let (rc, out) = tool_output("doctor.sh", &[], &[("SPIRA_DOCTOR_INSTALLING", "1")]);
+    // doctor is a compiled binary now (sp-yyk47, merged on top of this crate's own
+    // sp-31dm0) — was doctor.sh.
+    let (rc, out) = tool_output("doctor", &[], &[("SPIRA_DOCTOR_INSTALLING", "1")]);
     for l in out.lines() {
         println!("  {l}");
     }
