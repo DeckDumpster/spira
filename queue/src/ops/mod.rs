@@ -3,6 +3,7 @@
 
 pub mod batch;
 pub mod deploy;
+pub mod helpers;
 pub mod land;
 pub mod publish;
 pub mod simple;

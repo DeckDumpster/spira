@@ -4076,53 +4076,11 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
     sending reaplog "$1" "$2" "${3:-}"
 }
 
-# queue_notify_concierge <name> <subject-suffix> <body> — mails the concierge mailbox as a
-# machine event for a mutation the owner just made to an open batch (eject, rebuild,
-# force-push, merge). spira-mail-deliver.sh watches every registered mailbox and wakes its
-# reader the moment new mail lands (law-machine-events-wake-in-real-time), so the Concierge
-# learns of it within seconds — never by polling the queue by hand, which is what "nobody
-# was told" meant in practice before this existed.
-queue_notify_concierge() {
-    local name="$1" subject="$2" body="$3"
-    printf '## Alert\n%s\n' "$body" \
-    | mail send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
-        --from "Spira Queue <queue@spira>" \
-        --subject "Merge queue: $name $subject" \
-        --kind alert \
-        >/dev/null 2>&1 || true
-}
-
-# queue_local_check_divergence <name> <repo> <forge-sha> <local-sha> -> 0 when forge-sha is
-# an ancestor of local-sha, 1 otherwise — row 4 of the local/main design. Under queue.local
-# the forge's main moves only by our own publishes; a forge-sha that is not an ancestor of
-# local-sha means something pushed to it outside the publish queue. Mails the concierge
-# naming the foreign commits (local-sha..forge-sha) the first time this exact forge-sha is
-# seen, tracked in queue/<name>/divergence-alarmed — a repeated call against the SAME
-# foreign tip (a retried publish, or a later round build before anyone has fixed it) is
-# silent, so ONE alarm covers one divergence, not one per call. The marker clears the moment
-# the check is healthy again, so a later, different divergence alarms anew. NEVER REBASES:
-# this only detects and alarms, exactly as the design says. Callers decide what "stop
-# publishing" means for them — cmd_publish refuses outright; cmd_land_local (no forge round
-# trip belongs on its critical path) only alarms and lets the round build proceed.
-queue_local_check_divergence() {
-    local name="$1" repo="$2" forge_sha="$3" local_sha="$4"
-    local statefile="${SPIRA_QUEUE_DIR:?}/$name/divergence-alarmed"
-    if git -C "$repo" merge-base --is-ancestor "$forge_sha" "$local_sha" 2>/dev/null; then
-        rm -f "$statefile" 2>/dev/null || true
-        return 0
-    fi
-    local already=""
-    [ -r "$statefile" ] && already="$(cat "$statefile" 2>/dev/null)"
-    if [ "$already" != "$forge_sha" ]; then
-        local foreign
-        foreign="$(git -C "$repo" log --format='%h %s' "${local_sha}..${forge_sha}" 2>/dev/null)"
-        mkdir -p "$(dirname "$statefile")" 2>/dev/null
-        printf '%s\n' "$forge_sha" > "$statefile"
-        queue_notify_concierge "$name" "divergence: forge is not an ancestor of local/main" \
-            "$name's forge target ($forge_sha) is not an ancestor of local/main ($local_sha) — something pushed to the forge outside the publish queue. Foreign commit(s):"$'\n'"${foreign:-<none found>}"$'\n\n'"Publishing is refused until this is reconciled by hand. Never rebase silently."
-    fi
-    return 1
-}
+# queue_notify_concierge and queue_local_check_divergence are RETIRED (sp-hwjsq,
+# "wave 4.32" — queue decomposition row AA): ported in process into the queue crate
+# (queue/src/ops/helpers.rs `notify`/`check_divergence`), called only from queue's own
+# in-process Lib::notify/Lib::divergence. Neither had any caller left outside that seam —
+# no bash script called them by name — so there is no shim here to keep working.
 
 # --------------------------------------------------------------------------------------
 # EVENTS — what the harness DID, in a form that survives the next repaint.
@@ -4489,60 +4447,24 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
 }
 
 
+# Ported to Rust, queue's own crate (sp-hwjsq, "wave 4.32" — queue decomposition row AA):
+# queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,
+# the reconciler's mergeability check, cockpit-collect's "next up" pane) draws from. Kept
+# as a shim: queue-certified-list.sh and cockpit-collect still call this by name.
 queue_certified_list() {
-    local br id f st tip epoch
-    git -C "$1" for-each-ref --format='%(refname:short) %(objectname)' 'refs/heads/spira/*' \
-        2>/dev/null \
-    | while read -r br _; do
-        id="${br#spira/}"
-        f="$SPIRA_RUN/landstate/$id"
-        [ -f "$f" ] || continue
-        st=""; { read -r st tip epoch _ < "$f"; } 2>/dev/null || [ -n "$st" ] || continue
-        [ "$st" = "CERTIFIED" ] || continue
-        printf '%s %s %s\n' "$id" "$tip" "$epoch"
-    done
+    queue certified-list "$1"
 }
 
-# queue_cancel_branch_runs <forge> <repo-dir> <branch> [<log-tag>]
-# Cancels every non-completed Gate run on <branch> and logs each attempt to
-# landing.log. GitHub does not cancel a workflow run when its PR closes, and
-# each batch branch is a fresh spira/queue/<stamp>, so the gate-${ref}
-# concurrency group has no earlier run on that branch to collide with and
-# cancel for free — closing the PR must cancel the run itself.
-# A failed cancel is logged loudly (stderr) rather than swallowed: the run
-# stays non-completed and its PR stays closed, so the next abandon retries it. The old
-# lib.sh orphan-run sweep (queue_sweep_orphan_runs, a periodic backstop for a run orphaned
-# some other way — a hand-closed PR, or one left over from before this cancel existed) was
-# retired dead at sp-27hsi: nothing called it, bash or Rust. No in-process replacement
-# exists; file one if the plan still wants that backstop.
-queue_cancel_branch_runs() {
-    local forge="$1" repo="$2" branch="$3" tag="${4:-QUEUE}"
-    [ -n "$branch" ] || return 0
-    local run_id status rc=0
-    while read -r run_id status; do
-        [ -n "$run_id" ] || continue
-        if "$forge" run-cancel "$repo" "$run_id" >/dev/null 2>&1; then
-            printf '%s RUN_CANCEL %s branch=%s run=%s status=%s\n' \
-                "$tag" "$(date +%s)" "$branch" "$run_id" "$status" \
-                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
-        else
-            rc=1
-            printf '%s RUN_CANCEL_FAILED %s branch=%s run=%s status=%s\n' \
-                "$tag" "$(date +%s)" "$branch" "$run_id" "$status" \
-                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
-            printf 'spira: WARN failed to cancel run %s for %s — will retry\n' \
-                "$run_id" "$branch" >&2
-        fi
-    done < <("$forge" runs-for-branch "$repo" "$branch" 2>/dev/null)
-    return $rc
-}
-
-# queue_is_suite_transition <repo-path> <tip> <base-sha>
-# 0 if the tip modifies SPIRA_SUITE_STATE_FILE relative to base-sha.
-queue_is_suite_transition() {
-    git -C "$1" diff --name-only "$3" "$2" 2>/dev/null \
-        | grep -qF "${SPIRA_SUITE_STATE_FILE:-spira/suite-state}"
-}
+# queue_cancel_branch_runs and queue_is_suite_transition are RETIRED (sp-hwjsq,
+# "wave 4.32" — queue decomposition row AA): ported in process into the queue crate
+# (queue/src/ops/helpers.rs `cancel_branch_runs`, called from queue's own in-process
+# Lib::cancel_runs; `is_suite_transition`, called from the queue_sort_rows port below).
+# Neither had any caller left outside that seam — no bash script called them by name — so
+# there is no shim here to keep working. The old lib.sh orphan-run sweep
+# (queue_sweep_orphan_runs, a periodic backstop for a run orphaned some other way — a
+# hand-closed PR, or one left over from before cancel_branch_runs existed) was retired dead
+# at sp-27hsi: nothing called it, bash or Rust. No in-process replacement exists; file one
+# if the plan still wants that backstop.
 
 # queue_sort_rows <repo-path> <base-sha>
 # Read "<id> <tip> <epoch>" lines from stdin; write sort-key rows sorted by batcher order:
@@ -4552,76 +4474,31 @@ queue_is_suite_transition() {
 # (flag=0) is only a tiebreaker within a priority class (sp-ihxa0: a suite-state edit going
 # stale is already handled at cut time by the conflict check, not by cutting it first).
 # Epoch asc breaks any tie still remaining. This is the canonical batcher sort used by both
-# batch.sh and the cockpit.
+# the batcher and the cockpit.
 #
-# EXPRESS RANKS FIRST, AHEAD OF EVERYTHING ELSE (sp-ebx8b). batch.sh's express trigger only
-# guarantees a cut HAPPENS when an express bead is certified; without an express key here,
-# the sort could still leave that bead out of the cut it triggered, behind older same-priority
-# beads at BATCH_MAX.
+# EXPRESS RANKS FIRST, AHEAD OF EVERYTHING ELSE (sp-ebx8b).
 #
-# PRIO_JSON NEVER REACHES A CHILD PROCESS. Callers pass the full `bd show --json` of every
-# certified bead, and at 40 beads that was 266 KiB -- past Linux's 128 KiB limit on a single
-# environment string. Every exec in here then failed E2BIG, the sort ran under 2>/dev/null,
-# and it returned zero rows: batch.sh cut nothing and the cockpit showed an empty queue for
-# nine hours with 40 branches waiting. A cliff that the stall itself pushes the backlog
-# further over (sp-m5iq3). So the payload goes to a file and is unset before the first exec,
-# here in the callee, where no caller can reintroduce it.
-#
-# AND THE SORT FAILS OPEN. Ranking is an optimisation; dropping every row is the
-# catastrophic outcome. If ranking breaks the rows come out unranked, and it says so.
+# RANKING FAILS OPEN (sp-m5iq3): a 266 KiB PRIO_JSON once blew past Linux's 128 KiB
+# single-environment-string limit, every exec inside the old bash failed E2BIG, and the
+# batcher cut nothing for nine hours with 40 branches certified and waiting. Ported to
+# Rust now (sp-hwjsq, "wave 4.32"), queue/src/ops/helpers.rs `sort_rows` — same ranking,
+# same fail-open contract — called in process from queue's own Lib::sort_rows. Kept as a
+# shim: test-queue-sort-large.sh and cockpit-collect still call this by name. PRIO_JSON is
+# written to a temp file and unset BEFORE this shim execs the `queue` binary, for exactly
+# the reason above: the payload must never cross a process boundary as an environment
+# variable, and an exec is still a process boundary even when the function calling it is
+# this thin.
 queue_sort_rows() {
     local repo="$1" base_sha="$2"
-    # Copied into an unexported local and unset BEFORE anything forks: mktemp is an exec
-    # too, and the first version of this fix called it first and died of the same E2BIG.
-    local _pj="${PRIO_JSON:-[]}" _pjf _out _rc
+    local _pj="${PRIO_JSON:-[]}" _pjf _rc
     unset PRIO_JSON
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-
-    local _elab="${SPIRA_EXPRESS_LABEL:-express}"
-
-    local _id _tip _epoch _is_trans _buf=""
-    while read -r _id _tip _epoch; do
-        _is_trans=0
-        queue_is_suite_transition "$repo" "$_tip" "$base_sha" && _is_trans=1 || true
-        _buf="${_buf}${_id} ${_tip} ${_epoch%% *} ${_is_trans}"$'\n'
-    done
-
-    _out="$(printf '%s' "$_buf" | PRIO_FILE="$_pjf" EXPRESS_LABEL="$_elab" python3 -c "
-import sys, json, os
-try:
-    with open(os.environ['PRIO_FILE']) as f: prios = json.load(f)
-except Exception: sys.exit(1)
-prios = prios if isinstance(prios, list) else [prios]
-lbl = os.environ.get('EXPRESS_LABEL', 'express')
-prio_map = {}
-express_map = {}
-for x in prios:
-    if not isinstance(x, dict) or not x.get('id'): continue
-    try: prio_map[x['id']] = int(x.get('priority', 9))
-    except (TypeError, ValueError): prio_map[x['id']] = 9
-    express_map[x['id']] = int(lbl in (x.get('labels') or []))
-rows = []
-for line in sys.stdin:
-    parts = line.strip().split()
-    if len(parts) < 4: continue
-    bid, tip, epoch, is_trans = parts[0], parts[1], int(parts[2]), int(parts[3])
-    rows.append((1 - express_map.get(bid, 0), prio_map.get(bid, 9), 1 - is_trans, epoch, bid, tip))
-rows.sort()
-for r in rows:
-    print('%d %09d %d %010d %s %s' % r)
-")"
+    queue sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
     _rc=$?
     rm -f "$_pjf"
-
-    if [ "$_rc" -ne 0 ] || { [ -z "$_out" ] && [ -n "$_buf" ]; }; then
-        printf 'queue_sort_rows: ranking failed (rc=%s) -- returning rows unranked\n' "$_rc" >&2
-        printf '%s' "$_buf" | awk 'NF >= 4 { printf "%d %09d %d %010d %s %s\n", 1, 9, 1 - $4, $3, $1, $2 }'
-        return 0
-    fi
-    [ -n "$_out" ] && printf '%s\n' "$_out"
-    return 0
+    return "$_rc"
 }
 
 # gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
@@ -5037,14 +4914,13 @@ for r in rows:
 # When SPIRA_GH_APP_ID and SPIRA_GH_APP_INSTALLATION_ID are set, routes the push over
 # HTTPS using the App installation token as the credential, so pushes are attributed to
 # the App rather than to the operator's SSH key.
+#
+# Ported to Rust, queue's own crate (sp-hwjsq, "wave 4.32" — queue decomposition row AA):
+# queue/src/ops/helpers.rs `git_push_cmd`. Kept as a shim: branch-sweep.sh,
+# test-git-push-app.sh and landing-pass's own separate seam (a different crate, not
+# touched here) still call this by name. Neither this function nor the Rust it calls
+# redirects stdout or stderr — that stays the caller's choice, exactly as before.
 spira_git_push() {
     local repo="$1"; shift
-    if [ -n "${SPIRA_GH_APP_ID:-}" ] && [ -n "${SPIRA_GH_APP_INSTALLATION_ID:-}" ]; then
-        git -C "$repo" \
-            -c "credential.helper=!git-credential-app.sh" \
-            -c "url.https://github.com/.insteadOf=git@github.com:" \
-            push "$@"
-    else
-        git -C "$repo" push "$@"
-    fi
+    queue git-push "$repo" "$@"
 }
