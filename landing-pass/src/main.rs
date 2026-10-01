@@ -9,9 +9,15 @@
 //!                            the real-sender suites' way in, no whole pass)
 //!   landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<dir> <base>]
 //!                            `spira_ask_rebase_loop` alone (sp-31hjr)
+//!   landing-pass mark <id> <state> <tip> [reason] [extra]
+//!                            `land_mark` alone (sp-cnnt6) — reads only $SPIRA_RUN, no
+//!                            lib.sh seam, so every other crate's own land_mark call can
+//!                            shell to this instead of sourcing bash.
+//!   landing-pass state <id>  `land_state` alone (sp-cnnt6), same reasoning.
 
 use landing_pass::cli::{self, Cmd, Reason};
 use landing_pass::halt::{self, HaltArgs, HaltCtx, RealHalt};
+use landing_pass::landstate;
 use landing_pass::model::{RunRecord, StatusFile};
 use landing_pass::pass::Pass;
 use landing_pass::ports::Lib;
@@ -48,6 +54,8 @@ fn main() -> ExitCode {
         Cmd::SweepRed => sweep_red(),
         Cmd::Noverdict { id, branch, repo, reason, outcome } => noverdict_cmd(&id, &branch, &repo, &reason, &outcome),
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
+        Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
+        Cmd::State { id } => state_cmd(&id),
     };
     ExitCode::from(code as u8)
 }
@@ -346,4 +354,38 @@ fn sweep_red() -> i32 {
         eprintln!("{l}");
     }
     rc
+}
+
+/// `$SPIRA_RUN` alone — never the lib.sh seam. `mark`/`state` are the hot path every other
+/// crate's own land_mark/land_state call becomes (sp-cnnt6): shelling to bash just to read
+/// one already-exported variable would reintroduce the per-call cost this wave exists to
+/// cut (wave4-decomposition.md's own cost note).
+fn run_dir() -> Option<PathBuf> {
+    std::env::var_os("SPIRA_RUN").filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
+fn mark_cmd(id: &str, state: &str, tip: &str, reason: &str, extra: &str) -> i32 {
+    let Some(run) = run_dir() else {
+        eprintln!("landing-pass mark: SPIRA_RUN is unset");
+        return 2;
+    };
+    if landstate::land_mark(&run, id, state, tip, reason, extra) {
+        0
+    } else {
+        1
+    }
+}
+
+fn state_cmd(id: &str) -> i32 {
+    let Some(run) = run_dir() else {
+        eprintln!("landing-pass state: SPIRA_RUN is unset");
+        return 2;
+    };
+    match landstate::land_state(&run, id) {
+        Some(s) => {
+            print!("{s}");
+            0
+        }
+        None => 1,
+    }
 }

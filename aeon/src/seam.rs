@@ -12,6 +12,11 @@
 //! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
 //! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
 //! no longer shell into this seam for it at all — not even through a lib.sh shim.
+//!
+//! `land_state` and `land_mark` are dropped the same way (sp-cnnt6, "wave 4.16" — family S,
+//! the landstate ledger, now owned by landing-pass): `verdict.rs`/`teardown.rs` read the
+//! ledger file directly in-process, and the one write (`verdict.rs`'s cited-on-main mark)
+//! goes through `self.d.exec`'s `landing-pass mark`, never this seam.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -33,8 +38,8 @@ case "$__aeon_fn" in
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|land_state|\
-    land_mark|bead_is_work_type|bead_cited_commit_on_base|\
+    capacity_pause_set|\
+    bead_is_work_type|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac

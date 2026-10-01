@@ -15,7 +15,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
-    LandMark,
     Reopen,
     Event,
     Incident,
@@ -47,7 +46,6 @@ pub enum Op {
 
 pub const ALL: &[Op] = &[
     Op::Context,
-    Op::LandMark,
     Op::Reopen,
     Op::Event,
     Op::Incident,
@@ -158,7 +156,6 @@ exit 0
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
-        Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
         Op::Reopen => "bead_reopen \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
         Op::Incident => INCIDENT,

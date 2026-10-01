@@ -147,6 +147,7 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
+        landing_pass_bin: PathBuf::from("landing-pass"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's

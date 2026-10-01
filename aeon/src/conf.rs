@@ -156,6 +156,15 @@ impl Conf {
             None => self.run.join("landstate"),
         }
     }
+
+    /// lib.sh `land_state <id>`, read in-process (sp-cnnt6, "wave 4.16"): landing-pass owns
+    /// the one WRITE (`landstate::mark`, reached here through `landing-pass mark`), but the
+    /// ledger's files are ordinary reads — same contract queue/watchtower already read
+    /// directly. Newlines stripped, matching the bash function's own `tr -d '\n'`; empty
+    /// when the record cannot be read, matching its `return 1` into no stdout.
+    pub fn land_state(&self, id: &str) -> String {
+        std::fs::read_to_string(self.landstate().join(id)).map(|t| t.chars().filter(|c| *c != '\n').collect()).unwrap_or_default()
+    }
 }
 
 /// `lifecycle_enforce`, resolved as conf.sh resolves it: the unit's environment wins (how a

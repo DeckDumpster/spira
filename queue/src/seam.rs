@@ -16,7 +16,6 @@ pub enum Op {
     Repos,
     TomlPath,
     Readback,
-    LandMark,
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
@@ -94,7 +93,6 @@ fn body(op: Op) -> &'static str {
         // in-process through spira_config::repos, rather than paying for an extra
         // spira-config subprocess inside this already-running bash seam call.
         Op::Readback => "printf '\\036%s\\0' \"$(repo_land \"$1\")\"\nexit 0\n",
-        Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",
         Op::ReleaseClaim => "release_claim \"$1\"\nexit $?\n",
@@ -224,7 +222,7 @@ mod tests {
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
-            Op::Context, Op::TomlPath, Op::Readback, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
+            Op::Context, Op::TomlPath, Op::Readback, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Event, Op::Rebase,
             Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug,
@@ -239,13 +237,16 @@ mod tests {
     #[test]
     fn values_travel_on_stdin_with_newlines_and_empties_intact() {
         let _serial = crate::testutil::serial();
-        // The seam's own mechanism, against a stand-in lib.sh that defines land_mark as
+        // The seam's own mechanism, against a stand-in lib.sh that defines bead_reopen as
         // "print my arguments": proves argv is only `bash` and every value arrives whole.
+        // (land_mark is gone from this seam — sp-cnnt6, "wave 4.16" — so BeadReopen is the
+        // stand-in now; its own body hardcodes an empty third positional, which is what
+        // exercises the empty-value case this test is for.)
         let dir = crate::testutil::tmpdir("seam");
-        std::fs::write(dir.join("lib.sh"), "land_mark() { printf '[%s]' \"$@\"; }\n").unwrap();
+        std::fs::write(dir.join("lib.sh"), "bead_reopen() { printf '[%s]' \"$@\"; }\n").unwrap();
         let home = dir.to_str().unwrap();
         let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(&stdin_bytes(Op::LandMark, &[home, "sp-a", "RED", "", "line one\nline $(two) `x`"])).unwrap();
+        child.stdin.take().unwrap().write_all(&stdin_bytes(Op::BeadReopen, &[home, "sp-a", "RED", "line one\nline $(two) `x`"])).unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success());
         assert_eq!(String::from_utf8_lossy(&out.stdout), "[sp-a][RED][][line one\nline $(two) `x`]");

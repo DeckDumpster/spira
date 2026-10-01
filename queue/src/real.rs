@@ -351,8 +351,11 @@ impl Lib for RealLib {
         let landref = spira_config::repos::landref(&self.repo_registry(), name).unwrap_or_default();
         (land, landref)
     }
+    /// landing-pass owns the landstate ledger's one writer now (sp-cnnt6, "wave 4.16"):
+    /// `landing-pass mark`, reading `$SPIRA_RUN` from this process's own environment —
+    /// never the lib.sh seam, which this family dropped.
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        self.call(Op::LandMark, &[id, state, tip, reason], false);
+        let _ = Command::new("landing-pass").args(["mark", id, state, tip, reason]).status();
     }
     fn bead_reopen(&self, id: &str, cause: &str, suites: &str) -> bool {
         self.call(Op::BeadReopen, &[id, cause, suites], false).0 == 0
