@@ -260,8 +260,9 @@ struct FScripts {
     release_rc: RefCell<BTreeMap<String, (i32, String)>>,
     /// What `release build` answers on stdout (absent = the commit it was asked for).
     build_answers: RefCell<Option<String>>,
-    /// Every `release` call: its argv joined, and the SPIRA_DB it was handed.
-    release_calls: RefCell<Vec<(String, String)>>,
+    /// Every `release` call: the bin it was run as, its argv joined, and the SPIRA_DB it
+    /// was handed.
+    release_calls: RefCell<Vec<(String, String, String)>>,
     fence_ok: Cell<bool>,
     calls: RefCell<Vec<String>>,
     /// The lc_off each step child was run with.
@@ -294,8 +295,8 @@ impl Scripts for FScripts {
         self.calls.borrow_mut().push(format!("czar {class}"));
         self.fence_ok.get()
     }
-    fn release(&self, args: &[String], db: &str) -> RunOut {
-        self.release_calls.borrow_mut().push((args.join(" "), db.to_string()));
+    fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
+        self.release_calls.borrow_mut().push((bin.display().to_string(), args.join(" "), db.to_string()));
         self.calls.borrow_mut().push(format!("release {}", args[0]));
         let (rc, err) = self.release_rc.borrow().get(&args[0]).cloned().unwrap_or((0, String::new()));
         let out = if args[0] == "build" && rc == 0 { format!("{}\n", self.build_answers.borrow().clone().unwrap_or_else(|| args[1].clone())) } else { String::new() };
@@ -1475,12 +1476,16 @@ fn release_in_force(t: &T) {
     std::os::unix::fs::symlink(rel.join("r1"), rel.join("current")).unwrap();
 }
 
-/// A round worktree checked out at `tree`, its target/release holding one tested binary.
+/// A round worktree checked out at `tree`, its target/release holding the round's own
+/// tested binaries — including `release` itself (§8 D14, sp-ktgll): a real round build of
+/// the harness carries the release crate too, so land-local's own deploy must run that
+/// binary, never production's.
 fn round_worktree(t: &T, tree: &str) -> PathBuf {
     let wt = t.dir.join("round-wt");
     let bins = wt.join("target/release");
     fs::create_dir_all(&bins).unwrap();
     testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n");
+    testkit::write_exe(bins.join("release"), "#!/bin/sh\n");
     t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
     t.git.trees.borrow_mut().insert("wt-head".into(), tree.into());
     t.git.trees.borrow_mut().insert("h1".into(), T1.into());
@@ -1543,7 +1548,12 @@ fn land_harness(t: &T, wts: &str) -> i32 {
 }
 
 fn release_argv(t: &T) -> Vec<String> {
-    t.scripts.release_calls.borrow().iter().map(|(a, _)| a.clone()).collect()
+    t.scripts.release_calls.borrow().iter().map(|(_, a, _)| a.clone()).collect()
+}
+
+/// The `bin` each `release` call was actually run as (§8 D14, sp-ktgll).
+fn release_bins(t: &T) -> Vec<String> {
+    t.scripts.release_calls.borrow().iter().map(|(bin, _, _)| bin.clone()).collect()
 }
 
 #[test]
@@ -1563,7 +1573,12 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
             format!("activate h1 --repo {REPO} --landed-ref local/main {common}"),
         ]
     );
-    assert!(t.scripts.release_calls.borrow().iter().all(|(_, db)| db == "/db"), "every release child gets SPIRA_DB");
+    assert!(t.scripts.release_calls.borrow().iter().all(|(_, _, db)| db == "/db"), "every release child gets SPIRA_DB");
+    // §8 D14 (sp-ktgll): build, verify and activate all run the round's OWN release
+    // binary, from the --bin-dir it is about to ship — never production's by name on PATH.
+    let want_bin = format!("{wts}/target/release/release");
+    assert_eq!(release_bins(&t), vec![want_bin.clone(), want_bin.clone(), want_bin], "the builder and the build must be the same commit");
+    assert!(!t.err().contains("running PATH's release instead"), "{}", t.err());
     assert!(t.out().contains("queue.sh land-local: activated release h1"), "{}", t.out());
     assert_eq!(t.landed_ref().as_deref(), Some("h1"));
     // The landing is recorded before the (slow) release step starts.
@@ -1571,6 +1586,29 @@ fn land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it() 
     assert!(calls.iter().any(|c| c.starts_with("land_mark sp-a LANDED ta")));
     assert!(calls.iter().any(|c| c.starts_with("close_on_land sp-b h1")));
     assert!(!t.err().contains("LAND DEPLOY FAILED"));
+}
+
+#[test]
+fn land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so() {
+    // Before §8 D14, or whenever a round's own build happens not to carry a `release`
+    // binary: land-local still runs (never a new refusal), but every step falls back to
+    // bare `release` (the launcher's PATH), and that fallback is said aloud rather than
+    // taken silently.
+    let mut t = T::new(LandMode::QueueLocal);
+    t.lib.s.home_repo = "spira".into();
+    local_repo(&t);
+    let wt = t.dir.join("round-wt-no-release");
+    let bins = wt.join("target/release");
+    fs::create_dir_all(&bins).unwrap();
+    testkit::write_exe(bins.join("spira-config"), "#!/bin/sh\n"); // no `release` binary here
+    t.git.refs.borrow_mut().insert("HEAD".into(), "wt-head".into());
+    t.git.trees.borrow_mut().insert("wt-head".into(), T1.into());
+    t.git.trees.borrow_mut().insert("h1".into(), T1.into());
+    release_in_force(&t);
+    assert_eq!(land_harness(&t, &wt.display().to_string()), 0, "{}", t.err());
+    assert_eq!(release_bins(&t), vec!["release".to_string(), "release".to_string(), "release".to_string()]);
+    let want = format!("no release binary at {}/release — running PATH's release instead, not this round's own build", bins.display());
+    assert!(t.err().contains(&want), "{}", t.err());
 }
 
 #[test]

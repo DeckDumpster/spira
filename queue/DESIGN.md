@@ -554,8 +554,9 @@ data, not the code; the refusal is the contract).
      tested build (law-deploy-the-tested-artifacts), never a rebuild`).
   2. **The landing is recorded first:** CAS, round-seq, archive ref, every member LANDED and
      closed — before the slow part, so a killed or failed deploy never loses the record.
-  3. **Then, by name on the launcher's PATH, each with `SPIRA_DB` set** (verify's
-     pre-activate store check needs it) and `--releases $SPIRA_RELEASES --run $SPIRA_RUN`:
+  3. **Then, running the round's own `release` binary (§8 D14), each with `SPIRA_DB` set**
+     (verify's pre-activate store check needs it) and `--releases $SPIRA_RELEASES --run
+     $SPIRA_RUN`:
      `release build <head> --repo <repo> --bin-dir <worktree>/target/release` (must answer
      `<head>`), `release verify <head>`, `release activate <head> --repo <repo> --landed-ref
      <landing ref>`. Activation re-renders the installed units against
@@ -586,6 +587,21 @@ data, not the code; the refusal is the contract).
   cutover's first activation, or build a release nothing runs); keeping the tarball and
   `activate.sh` for local landings (two ways to make a release); reverting the ref on a
   failed activation (the members are already closed; a ref behind its own records is worse).
+- **D14 — the three `release` steps run the round's OWN `release` binary, not
+  production's (sp-ktgll, rounds 133-134 2026-10-01).** D13 ran `release build|verify|activate`
+  by name on the launcher's PATH — production's installed `release` — while shipping the
+  round's freshly built binaries only as `--bin-dir`'s *payload*. A fix to how releases are
+  BUILT (sp-g3uwp added gitignored generated config; sp-5fw50 taught `release build` to
+  generate it) could then never deploy itself: the old builder produced a release that
+  failed pre-activate, and every later landing failed the identical way — a deadlock broken
+  by hand, twice. `deploy::release_bin` now resolves `<bins>/release` (the same `--bin-dir`
+  about to ship) and runs that; only when that bin-dir holds no `release` binary does it
+  fall back to bare `release` on PATH, and it says so on stderr rather than doing it
+  silently. `rollback-local`'s `verify`/`activate` (no `--bin-dir`, nothing to rebuild) are
+  unaffected and still resolve from PATH. **Rejected:** resolving `release` from PATH and
+  comparing its version/hash against the bin-dir's (two readers of "which release is this"
+  that can drift); always refusing when the bin-dir lacks a `release` binary (a repository's
+  round build need not include every harness binary — only the harness's own round must).
 - **Kept deliberately:** every message's `queue.sh <cmd>:` prefix and text (operators and
   one override grep them); `step`'s status 0 on a non-queue.local repo whatever the cut
   returned (a bash `if` without `else`); `submit` falling back to `$SPIRA_REPO` when the map
@@ -616,6 +632,7 @@ from §2.2/§8:
 | land-local: land + archive + members + cached divergence; ff refusal; base/mode; D2; lock-held; stdin members | `land_local_*` (8, each on a certified tree — `local_repo` writes the gate PASS) |
 | land-local certification (D12): refuses an ungated tree; a gate PASS for the tree; a round GREEN for the tree; a PASS for another tree (the pre-merge branch) or another repo does not count; the override lands and records its reason (landstate, landing.log, stderr) | `land_local_refuses_a_tree_no_gate_or_round_certified`, `land_local_accepts_a_gate_pass_for_the_head_tree`, `land_local_accepts_a_round_green_for_the_head_tree`, `land_local_ignores_a_pass_for_another_tree_or_repo`, `land_local_ungated_override_lands_and_records_the_reason`, `land_local_a_pass_from_an_older_gate_binary_still_counts`; `gate::cert::tests` |
 | land-local publishes a release (D13): build `--bin-dir` → verify → activate with `SPIRA_DB`, `--releases`, `--run`, `--landed-ref`, recorded before the release step; a build, verify or activate (hotfix) failure is a deploy fault that leaves current, keeps the landing and exits 1; a build answering another sha; no release in force skips it, loudly, with no worktree needed; the harness needs `--worktree` while a release is in force; another repository never runs it | `land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it`, `land_local_build_failure_leaves_current_alone_keeps_the_landing_and_reports_a_deploy_fault`, `land_local_verify_or_activate_failure_is_a_deploy_fault_too`, `land_local_over_a_standing_hotfix_is_refused_by_release_activate_and_reported`, `land_local_answer_for_another_commit_is_a_fault`, `land_local_with_no_release_in_force_skips_the_release_step_and_needs_no_worktree`, `land_local_of_the_harness_requires_the_round_worktree_while_a_release_is_in_force`, `land_local_of_another_repository_publishes_no_release`; `release::tests::build_with_a_bin_dir_ships_those_binaries_without_cargo_and_still_refuses_a_partial_set`; suite `test-land-local-release.sh` (the real queue and release binaries, a scratch releases dir, a mock systemctl) |
+| land-local's three release steps run the round's own `release` binary from `--bin-dir`, never production's by name on PATH; falling back to PATH (and saying so) only when that bin-dir carries no `release` binary; `rollback-local` (no bin-dir) is unaffected (D14) | `land_local_publishes_the_rounds_tested_build_as_a_release_and_activates_it` (asserts the bin, via `release_bins`), `land_local_falls_back_to_paths_release_when_the_bin_dir_has_none_and_says_so`, `rollback_local_reactivates_the_previous_rounds_release_without_rebuilding` |
 | publish: D4 (reaped landstate), landstate tip, nothing-to-publish, refusals | `publish_*` (4); `publish_range::tests` (6) |
 | transitions: wait/verify refusal, happy path, red, timeout, D5 (4 sources + other repo), agreement, D6 restore, archive ancestry | `to_forge_*` (4), `to_local_*` (2), `transitions_*` (2) |
 | rollback-local | `rollback_local_reactivates_the_previous_rounds_release_without_rebuilding` |

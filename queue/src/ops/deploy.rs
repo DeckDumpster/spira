@@ -1,8 +1,10 @@
-//! land-local's deploy (DESIGN.md §8 D13): a landing of the harness repository publishes a
-//! release. After the fast-forward, `release build <head> --bin-dir <the round's tested
-//! build>` → `release verify <sha>` → `release activate <sha>`. Nothing here edits, builds in
-//! or links into a checkout; the release crate is the only thing that makes, checks or
-//! switches to `spira-releases/<sha>`.
+//! land-local's deploy (DESIGN.md §8 D13/D14): a landing of the harness repository publishes
+//! a release. After the fast-forward, `release build <head> --bin-dir <the round's tested
+//! build>` → `release verify <sha>` → `release activate <sha>` — and each of those three is
+//! run from the round's own `--bin-dir` when it holds a `release` binary (§8 D14), never
+//! production's, so a fix to how releases are built can deploy itself. Nothing here edits,
+//! builds in or links into a checkout; the release crate is the only thing that makes,
+//! checks or switches to `spira-releases/<sha>`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -57,11 +59,30 @@ fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
+/// The `release` binary to run (§8 D14, sp-ktgll): `<bins>/release` when the round's own
+/// bin-dir holds one — the same commit that is about to ship, so a fix to how releases are
+/// BUILT can deploy itself. Else bare `release`, resolved from the launcher's PATH (the
+/// only case before `--bin-dir` exists, or when that bin-dir's build happens not to include
+/// a `release` binary), and that fallback is said aloud rather than taken silently.
+fn release_bin(w: &World, bins: Option<&Path>) -> PathBuf {
+    if let Some(dir) = bins {
+        let candidate = dir.join("release");
+        if super::simple::is_executable(&candidate) {
+            return candidate;
+        }
+        w.err(format!(
+            "queue.sh land-local: no release binary at {} — running PATH's release instead, not this round's own build",
+            candidate.display()
+        ));
+    }
+    PathBuf::from("release")
+}
+
 /// Run one `release` step; forward its stderr (release prefixes its own lines); Err is the
 /// fault text for a non-zero exit.
-fn step(w: &World, plan: &Plan, what: &str, mut a: Vec<String>) -> Result<String, String> {
+fn step(w: &World, plan: &Plan, bin: &Path, what: &str, mut a: Vec<String>) -> Result<String, String> {
     a.extend(plan.common());
-    let r = w.scripts.release(&a, &plan.db);
+    let r = w.scripts.release(bin, &a, &plan.db);
     let err = r.err.trim_end_matches('\n');
     if !err.is_empty() {
         w.err(err);
@@ -78,9 +99,11 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
     let Some(bins) = &plan.bins else {
         return Err("no tested build to publish (--bin-dir)".into());
     };
+    let bin = release_bin(w, Some(bins));
     let out = step(
         w,
         plan,
+        &bin,
         "build",
         args(&["build", head, "--repo", &plan.repo.display().to_string(), "--bin-dir", &bins.display().to_string()]),
     )?;
@@ -88,21 +111,24 @@ pub fn build_and_verify(w: &World, plan: &Plan, head: &str) -> Result<String, St
     if sha != head {
         return Err(format!("release build answered {sha:?} for {head} — not the landed commit"));
     }
-    step(w, plan, "verify", args(&["verify", &sha]))?;
+    step(w, plan, &bin, "verify", args(&["verify", &sha]))?;
     Ok(sha)
 }
 
 /// `release verify <sha>` alone (rollback-local: the release already exists; never rebuilt).
 pub fn verify(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
-    step(w, plan, "verify", args(&["verify", sha])).map(|_| ())
+    let bin = release_bin(w, plan.bins.as_deref());
+    step(w, plan, &bin, "verify", args(&["verify", sha])).map(|_| ())
 }
 
 /// Switch the running system onto `sha` (`release activate`, which applies the hotfix
 /// supersede rule against `--landed-ref`).
 pub fn activate(w: &World, plan: &Plan, sha: &str) -> Result<(), String> {
+    let bin = release_bin(w, plan.bins.as_deref());
     let out = step(
         w,
         plan,
+        &bin,
         "activate",
         args(&["activate", sha, "--repo", &plan.repo.display().to_string(), "--landed-ref", &plan.landref]),
     )?;
