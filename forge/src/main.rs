@@ -62,7 +62,7 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "dispatch" => dispatch_cmd(gh, repo, arg(args, 0), arg(args, 1)),
         "fail-lines" => fail_lines(gh, proc, repo, arg(args, 0), arg(args, 1)),
         "branch-protect" => {
-            let app_id = std::env::var("SPIRA_QUEUE_ACTIONS_APP_ID").ok().filter(|v| !v.is_empty()).unwrap_or_else(|| "15368".into());
+            let app_id = forge::real::env("SPIRA_QUEUE_ACTIONS_APP_ID").unwrap_or_else(|| "15368".into());
             branch_protect(gh, repo, arg(args, 0), &app_id)
         }
         "branch-protection-status" => branch_protection_status(gh, repo, arg(args, 0)),
