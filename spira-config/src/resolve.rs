@@ -1039,16 +1039,17 @@ mod tests {
         assert_eq!(got, want);
     }
 
-    // ENV VARS ARE PROCESS-GLOBAL: the one test here that sets GIT_DIR/GIT_WORK_TREE takes
-    // this lock for its whole body, so it never races another test's own environment.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // ENV VARS ARE PROCESS-GLOBAL: every test below that mutates one takes `crate::ENV_LOCK`
+    // — the ONE crate-wide lock (sp-dh4fv) — for its whole body, never a module-private
+    // lock of its own: two locks that never contend is not a lock at all, exactly the bug
+    // sp-dh4fv fixed in lib.rs/locate.rs.
 
     #[test]
     fn derive_home_repo_scrubs_the_git_hook_environment() {
         // conf.sh's own scar: a git hook runs with GIT_DIR exported, and --show-toplevel
         // under that answers the -C directory itself (<repo>/spira) instead of climbing to
         // <repo> — one level too deep — unless GIT_DIR (and friends) are scrubbed first.
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let ws = testkit::TempDir::new("spira-config-derive-repo-hook");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
@@ -1073,7 +1074,7 @@ mod tests {
         // test gets the same "nothing resolves" answer on every machine, not only one
         // with no real config, the hazard spira-config's own locate.rs tests guard the
         // same way.
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
         let saved: Vec<(&str, Option<String>)> =
             names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
