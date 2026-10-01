@@ -80,7 +80,11 @@ _COCKPIT="${SPIRA_COCKPIT_LAYOUT_SH:-layout}"
 _DOCTOR="${SPIRA_DOCTOR_SH:-doctor}"
 _SKEW="${SPIRA_SKEW_SH:-skew}"
 _SLAY="${SPIRA_SLAY_SH:-slay.sh}"
-_CTRL="${SPIRA_CTRL_SH:-ctrl.sh}"
+# ctrl.sh is now the `ctrl` binary (sp-6onps); world.sh and slay.sh keep their bare .sh
+# names (a release-packaging symlink over the `world`/`slay` binaries) because the
+# Concierge's own persona text and skills call them by that exact name — ctrl.sh had no
+# such prose surface, so it moved with the rest of the fleet.
+_CTRL="${SPIRA_CTRL_SH:-ctrl}"
 
 # Save the pre-deploy production directory; first-deploy rollback restores units here.
 _orig_prod="${SPIRA_PROD:-$SPIRA_HOME}"

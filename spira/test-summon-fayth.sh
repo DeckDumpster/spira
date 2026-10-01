@@ -36,7 +36,7 @@
 # POSITIVE CONTROLS BEFORE EACH REFUSAL (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/lib.sh aeon/src/escape.rs spira/world.sh UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
+# covers: spira/lib.sh aeon/src/escape.rs spira-world/src/bin/world.rs UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -409,7 +409,7 @@ want "and it is loud about that too" "DRAIN EXPIRED" "$out"
 echo
 echo "drain expiry — the seam: world.sh drain WRITES the expiry, and --for sets it"
 rm -f "$DRAIN_STAMP"
-SPIRA_RUN="$SPIRA_RUN" world.sh drain --for 900 --timeout 1 >/dev/null 2>&1
+SPIRA_RUN="$SPIRA_RUN" world drain --for 900 --timeout 1 >/dev/null 2>&1
 if [ -f "$DRAIN_STAMP" ]; then
     exp="$(sed -n 's/^expires \([0-9][0-9]*\)$/\1/p' "$DRAIN_STAMP" | head -1)"
     if [ -n "$exp" ]; then

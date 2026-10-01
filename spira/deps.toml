@@ -218,6 +218,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v aeon)\""
 
 [[dep]]
+name = "aeons"
+tier = "release"
+purpose = "Spira's aeons binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v aeons)\""
+
+[[dep]]
 name = "auron"
 tier = "release"
 purpose = "Spira's auron binary, from the release's bin/ — the watchdog over the loop (replaces spira/auron.sh, sp-zpaq0)"
@@ -258,6 +265,13 @@ tier = "release"
 purpose = "Spira's broker binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v broker)\""
+
+[[dep]]
+name = "ctrl"
+tier = "release"
+purpose = "Spira's ctrl binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v ctrl)\""
 
 [[dep]]
 name = "czar-pass"
@@ -407,6 +421,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v skew)\""
 
 [[dep]]
+name = "slay"
+tier = "release"
+purpose = "Spira's slay binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v slay)\""
+
+[[dep]]
 name = "sop"
 tier = "release"
 purpose = "Spira's sop binary, from the release's bin/"
@@ -517,6 +538,13 @@ tier = "release"
 purpose = "Spira's work binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v work)\""
+
+[[dep]]
+name = "world"
+tier = "release"
+purpose = "Spira's world binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v world)\""
 
 [[dep]]
 name = "health"

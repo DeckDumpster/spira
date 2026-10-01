@@ -22,7 +22,7 @@
 #
 # defect: sp-xfg4
 # tier: T1
-# covers: spira/world.sh spira/conf.sh
+# covers: spira-world/src/bin/world.rs spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -100,7 +100,7 @@ echo
 echo "2. world.sh stop does not stop cockpit or Loom:"
 
 : > "$STOPPED"
-world.sh stop --why "test-work-services-exclusion" > "$TMP/stop.out" 2>&1 || true
+world stop --why "test-work-services-exclusion" > "$TMP/stop.out" 2>&1 || true
 stopped="$(cat "$STOPPED")"
 
 nowant "cockpit-prod not stopped"       "spira-cockpit-prod.service" "$stopped"
@@ -116,8 +116,8 @@ echo
 echo "3. stop/start cycle — cockpit and Loom survive:"
 
 : > "$STOPPED"
-world.sh stop --why "test-cycle-stop"  > "$TMP/stop2.out"  2>&1 || true
-world.sh start                          > "$TMP/start.out"  2>&1 || true
+world stop --why "test-cycle-stop"  > "$TMP/stop2.out"  2>&1 || true
+world start                          > "$TMP/start.out"  2>&1 || true
 stopped2="$(cat "$STOPPED")"
 
 nowant "cockpit-prod absent from cycle-stop list" "spira-cockpit-prod.service" "$stopped2"

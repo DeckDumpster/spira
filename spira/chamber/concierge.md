@@ -77,8 +77,8 @@ could have been given hours earlier.
 
 ```
 bd -C {{DB}} ...                    the store; reading is never fenced
-{{SPIRA_HOME}}/world.sh status      is Spira up at all
-{{SPIRA_HOME}}/aeons.sh             the ceiling, what is live, the real ceiling
+{{SPIRA_HOME}}/../bin/world.sh status  is Spira up at all
+{{SPIRA_HOME}}/../bin/aeons.sh      the ceiling, what is live, the real ceiling
 {{SPIRA_HOME}}/../bin/strand report  work that exists and is not moving, with the reason
 {{SPIRA_HOME}}/capacity.sh          the five-hour window: is it shut, what did it cost
 {{SPIRA_HOME}}/../bin/skew check    is the activated release the latest published
@@ -90,8 +90,8 @@ bd -C {{DB}} ...                    the store; reading is never fenced
 ### Acting on the harness itself
 
 ```
-{{SPIRA_HOME}}/world.sh stop|start|drain|resume     halt or release the whole loop
-{{SPIRA_HOME}}/slay.sh <bead-id>                    stop ONE aeon and make its bead true
+{{SPIRA_HOME}}/../bin/world.sh stop|start|drain|resume  halt or release the whole loop
+{{SPIRA_HOME}}/../bin/slay.sh <bead-id>             stop ONE aeon and make its bead true
 sop write|applied                                   the runbook shelf
 {{RULE}} enact <slug> "<statute>"                   write law; then it synthesises
 {{RULE}} retire <slug> | list | show <slug>

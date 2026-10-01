@@ -420,10 +420,19 @@ impl<'a> Session<'a> {
             kv("SPIRA_RUN", self.batch_run()),
         ];
         env.extend(self.release_env());
-        let ctrl = self.in_release("spira/ctrl.sh");
+        // ctrl.sh is the `ctrl` binary now (sp-6onps): a native executable under bin/, not
+        // a bash script under spira/. Launched through bash -c 'exec "$0" "$@"' rather than
+        // a bare exec of the ELF directly — every other setup step (stage, configure,
+        // install) runs this way, through bash, and this one seam is not the place to find
+        // out whether a direct podman-exec of a freshly built binary needs something a
+        // shell launch already provides for the others. Args travel as bash's own "$0"/"$@",
+        // never interpolated into the script text.
+        let ctrl = self.in_release("bin/ctrl");
         self.setup_as_user(
             &[
                 "bash",
+                "-c",
+                "exec \"$0\" \"$@\"",
                 &ctrl,
                 "suspend",
                 unit,
@@ -562,13 +571,20 @@ impl<'a> Session<'a> {
                     log(&format!("install rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
                     fault(Fault::Install("install failed — harness fault".into()), "install")
                 }
-                other => fault(
-                    Fault::Install(format!(
-                        "ctrl suspend failed for {} — harness fault",
-                        other.strip_prefix("suspend:").unwrap_or(other)
-                    )),
-                    "install",
-                ),
+                other => {
+                    // The other three branches dump their step's own output tail before
+                    // faulting; this one (every "suspend:<unit>" step) did not, which is
+                    // why sp-6onps's "ctrl suspend failed" fault carried no evidence at
+                    // all — this was the one branch that left an operator guessing.
+                    log(&format!("{other} rc={} output tail:\n{}", r.rc, tail(&r.output, 40)));
+                    fault(
+                        Fault::Install(format!(
+                            "ctrl suspend failed for {} — harness fault",
+                            other.strip_prefix("suspend:").unwrap_or(other)
+                        )),
+                        "install",
+                    )
+                }
             });
         }
         if out.rc == RC_DEADLINE {
@@ -1148,11 +1164,11 @@ mod tests {
         rt.execs.lock().unwrap().remove(0);
         assert_eq!(argv[0], vec!["bash", "/tmp/spira-release-abc123/spira/configure.sh"]);
         assert_eq!(
-            argv[1][..4],
-            ["bash", "/tmp/spira-release-abc123/spira/ctrl.sh", "suspend", "spira-loom"]
+            argv[1][..6],
+            ["bash", "-c", "exec \"$0\" \"$@\"", "/tmp/spira-release-abc123/bin/ctrl", "suspend", "spira-loom"]
         );
-        assert_eq!(argv[2][3], "spira-cockpit");
-        assert_eq!(argv[3][3], "spira-watch-queue-watch");
+        assert_eq!(argv[2][5], "spira-cockpit");
+        assert_eq!(argv[3][5], "spira-watch-queue-watch");
         assert_eq!(
             argv[4],
             vec!["bash", "/tmp/spira-release-abc123/systemd/install.sh", "abc123"]
@@ -1251,7 +1267,7 @@ mod tests {
     fn a_failed_step_is_an_install_fault_and_stops() {
         let rt = FakeRuntime::new();
         rt.on(
-            |r| r.argv.get(2).map(String::as_str) == Some("suspend"),
+            |r| r.argv.get(4).map(String::as_str) == Some("suspend"),
             |_| ExecOutcome {
                 rc: 1,
                 output: String::new(),

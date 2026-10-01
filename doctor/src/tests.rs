@@ -199,13 +199,32 @@ fn levels(lines: &[Line]) -> Vec<Level> {
 #[test]
 fn release_tools_all_resolve() {
     let f = Fake::default();
+    // world.sh is the `world` binary now (sp-6onps) -- it comes through deps_list_release,
+    // not a hand-added suffix; gate still comes through deps_list_release too, per the
+    // existing fixture below.
     f.deps_release.borrow_mut().push("gate".into());
+    f.deps_release.borrow_mut().push("world".into());
     f.which.borrow_mut().insert("gate".into(), "/bin/gate".into());
+    f.which.borrow_mut().insert("world".into(), "/bin/world".into());
     f.which.borrow_mut().insert("mail.sh".into(), "/bin/mail.sh".into());
     f.which.borrow_mut().insert("gate.sh".into(), "/bin/gate.sh".into());
-    f.which.borrow_mut().insert("world.sh".into(), "/bin/world.sh".into());
     let out = check_release_tools(&f);
     assert_eq!(levels(&out), vec![Level::Ok]);
+}
+
+/// world.sh is NOT a hand-added suffix any more (sp-6onps) -- a box whose deps.toml
+/// release tier forgets to name `world` must FAIL on "world" missing, never silently pass
+/// because the old hand-written "world.sh" entry papered over it.
+#[test]
+fn release_tools_world_binary_comes_through_deps_list_not_a_hand_added_suffix() {
+    let f = Fake::default();
+    f.which.borrow_mut().insert("mail.sh".into(), "/bin/mail.sh".into());
+    f.which.borrow_mut().insert("gate.sh".into(), "/bin/gate.sh".into());
+    // deps_release is empty -- "world" is deliberately absent from it, and nothing else
+    // in check_release_tools should supply it.
+    let out = check_release_tools(&f);
+    assert_eq!(levels(&out), vec![Level::Ok], "empty deps_release + mail.sh/gate.sh resolved must be clean");
+    assert!(!out.iter().any(|l| l.msg.contains("world")), "{:?}", out);
 }
 
 #[test]

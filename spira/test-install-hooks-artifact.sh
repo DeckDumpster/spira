@@ -19,7 +19,7 @@
 # .hooksPath not set" — this is the install-side sibling of GitHub #315 /
 # sp-bwaxb, which removed the same unconditional assumption from doctor.sh.
 #
-# covers: install.sh systemd/install.sh spira/exclude.sh spira/ctrl.sh
+# covers: install.sh systemd/install.sh spira/exclude.sh spira-ctrl/src/main.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REAL_REPO="$(cd "$HERE/.." && pwd -P)"
@@ -53,22 +53,37 @@ ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
 ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
 
-# ctrl.sh: report every unit as suspended, so phase 4's ExecStart-is-executable check
+# ctrl: report every unit as suspended, so phase 4's ExecStart-is-executable check
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)
 # is skipped for all of them. Phase 4's own correctness is covered elsewhere (e.g.
 # test-units-lint.sh); this fixture only needs it to succeed so execution reaches phase 5.
-# install.sh now sources this under CTRL_LIB=1 (sp-rnps9) instead of running it as a CLI
-# per unit, so the stub must define the two functions that contract requires.
-cat > "$SPIRA_DIR/ctrl.sh" <<'EOF'
+#
+# install.sh reads `ctrl suspended` once now (ctrl.sh is the `ctrl` binary — sp-6onps — and
+# a compiled binary cannot be sourced as a bash library the way CTRL_LIB=1 used to work),
+# so the stub prints a `subject\treason` line for every subject install.sh could possibly
+# check: every unit already staged into $SYSTEMD_DIR above, name stripped to the same
+# `_cs_check` form install.sh itself derives (drop the instance suffix, then the
+# extension) — a real subject list rather than a wildcard, because this binary's protocol
+# is "name what is suspended", not "answer yes to anything asked".
+{
+    for _f in "$SYSTEMD_DIR"/*.service "$SYSTEMD_DIR"/*.timer; do
+        [ -e "$_f" ] || continue
+        _b="$(basename "$_f")"
+        _b="${_b%.service}"; _b="${_b%.timer}"
+        _b="${_b%-prod}"
+        printf '%s\tstub\n' "$_b"
+    done
+} > "$SPIRA_DIR/.ctrl-suspended-fixture"
+cat > "$SPIRA_DIR/ctrl" <<EOF
 #!/usr/bin/env bash
-ctrl_load_suspended() { local -n _a="$1"; _a=(); }
-ctrl_is_suspended() { printf 'stub\n'; return 0; }
-if [ "${CTRL_LIB:-0}" != "1" ]; then
-    [ "${1:-}" = check ] && exit 0
-    exit 1
-fi
+case "\${1:-}" in
+    suspended) cat "$SPIRA_DIR/.ctrl-suspended-fixture" ;;
+    check)     exit 0 ;;
+    *)         exit 1 ;;
+esac
 EOF
-chmod +x "$SPIRA_DIR/ctrl.sh"
+chmod +x "$SPIRA_DIR/ctrl"
+ln -sf "$SPIRA_DIR/ctrl" "$SPIRA_DIR/ctrl.sh"
 printf '# empty\n' > "$SPIRA_DIR/watchers"
 printf '# empty\n' > "$SPIRA_DIR/repo-map.example"
 mkdir -p "$SPIRA_DIR/statutes"
