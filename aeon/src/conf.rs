@@ -156,6 +156,60 @@ impl Conf {
             None => self.run.join("landstate"),
         }
     }
+
+    // ---- capacity pause (family K, wave 4.26) -----------------------------------------
+    //
+    // SPIRA_CAPACITY_PAUSE/_BACKOFF/_PROBE_LAST/_WITHDRAWN are lib.sh literals, not
+    // spira-config registry keys (wave4-decomposition.md (b): "ad hoc overrides... never
+    // conf.sh's"), same footing as SPIRA_TRACE_MARK above. An operator override reaches
+    // `Conf` because `main.rs` merges these four names out of the process environment
+    // explicitly (`merge_capacity_env`) — there is no bash seam round trip to ask for them
+    // any more now that this crate owns the logic.
+
+    pub fn capacity_pause(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_PAUSE").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-pause"))
+    }
+    pub fn capacity_backoff(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_BACKOFF", 900)
+    }
+    pub fn capacity_probe_last(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_PROBE_LAST").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-probe-last"))
+    }
+    pub fn capacity_withdrawn(&self) -> PathBuf {
+        get(&self.v, "SPIRA_CAPACITY_WITHDRAWN").map(PathBuf::from).unwrap_or_else(|| self.run.join("capacity-withdrawn"))
+    }
+    /// SPIRA_CAPACITY_PROBE_WINDOW/_INTERVAL/_TIMEOUT: registered spira-config keys
+    /// (`spira/conf.d/SPIRA_CAPACITY_PROBE_*`), so these DO come through `resolve()`.
+    pub fn capacity_probe_window(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_PROBE_WINDOW", 18_000)
+    }
+    pub fn capacity_probe_interval(&self) -> i64 {
+        self.n("SPIRA_CAPACITY_PROBE_INTERVAL", 3600)
+    }
+    pub fn capacity_probe_timeout(&self) -> u64 {
+        self.n("SPIRA_CAPACITY_PROBE_TIMEOUT", 30).max(1) as u64
+    }
+    /// `capacity_probe`'s own default: no literal fallback — the builder persona's
+    /// resolved model, so a model change never needs a second edit here.
+    pub fn capacity_probe_model(&self) -> String {
+        let m = self.s("SPIRA_CAPACITY_PROBE_MODEL");
+        if !m.is_empty() {
+            return m;
+        }
+        let toml = self.s("SPIRA_TOML_FILE");
+        persona_model("builder", (!toml.is_empty()).then(|| Path::new(&toml)))
+    }
+}
+
+/// Wave 4.26: an explicit env override for the four `SPIRA_CAPACITY_*` lib.sh literals
+/// reaches `Conf` the same way `SPIRA_TRACE_MARK` always has, without asking the bash
+/// seam for them (there is no bash implementation left to ask).
+pub fn merge_capacity_env(snap: &mut crate::seam::Snapshot, env: &BTreeMap<String, String>) {
+    for k in ["SPIRA_CAPACITY_PAUSE", "SPIRA_CAPACITY_BACKOFF", "SPIRA_CAPACITY_PROBE_LAST", "SPIRA_CAPACITY_WITHDRAWN"] {
+        if let Some(v) = env.get(k) {
+            snap.vars.entry(k.to_string()).or_insert_with(|| v.clone());
+        }
+    }
 }
 
 /// `lifecycle_enforce`, resolved as conf.sh resolves it: the unit's environment wins (how a
@@ -279,6 +333,26 @@ mod tests {
         let e = fenced("b", "plan,spirax", "spira").unwrap_err();
         assert_eq!(e.len(), 2);
         assert!(e[0].contains("does not require 'spira'"));
+    }
+
+    /// capacity_probe's own "defaults to the builder's own resolved model" case (wave
+    /// 4.26, moved from test-persona-model.sh's bash source-grep).
+    #[test]
+    fn capacity_probe_model_defaults_to_persona_builder_when_unset() {
+        let dir = testkit::TempDir::new("aeon-conf-capacity-model");
+        let toml = dir.join("spira.toml");
+        std::fs::write(&toml, "[persona.builder]\nmodel = \"toml-override-model\"\n").unwrap();
+        let snap = crate::seam::Snapshot { vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap())]), ..Default::default() };
+        let conf = Conf::new(&snap, &dir);
+        assert_eq!(conf.capacity_probe_model(), "toml-override-model");
+
+        let snap2 = crate::seam::Snapshot {
+            vars: vars(&[("SPIRA_TOML_FILE", toml.to_str().unwrap()), ("SPIRA_CAPACITY_PROBE_MODEL", "operator-override")]),
+            ..Default::default()
+        };
+        let conf2 = Conf::new(&snap2, &dir);
+        assert_eq!(conf2.capacity_probe_model(), "operator-override", "an explicit SPIRA_CAPACITY_PROBE_MODEL wins");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

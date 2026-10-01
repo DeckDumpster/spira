@@ -689,6 +689,32 @@ fn summon_only_gates_then_reads_ready_once() {
     assert!(sink.has("summon-only pass complete — 1 action(s)"));
 }
 
+/// Family K, wave 4.26: sentinel reads the pause file in-process now (never through the
+/// bash `capacity_paused`, which also ran the probe and could delete the file — a second
+/// probe owner alongside aeon's own, wave4-decomposition.md (c)3). This proves the gate
+/// still stops the pass, and that sentinel never touches the file it read.
+#[test]
+fn summon_only_respects_a_capacity_pause_without_probing_or_mutating_the_file() {
+    let (w, r, sink, clock) = setup("summon-cap");
+    std::fs::write(w.run.join("capacity-pause"), format!("{} iso why\n", NOW + 321)).unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "a capacity pause costs no bd call");
+    assert!(sink.has("summon-only: account out of capacity for another 321s — not summoning"));
+    assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file aeon owns");
+}
+
+/// Fail closed (wave4-decomposition.md (c)3): an unreadable/corrupt pause file must gate
+/// summoning, never be read as "open" the way the bash `capacity_pause_until`'s `0` once
+/// did for both "no file" and "cannot parse it".
+#[test]
+fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
+    let (w, r, sink, clock) = setup("summon-cap-unknown");
+    std::fs::write(w.run.join("capacity-pause"), "not-a-number\n").unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "an unreadable pause file must gate, never fail open");
+    assert!(sink.has("summon-only: the capacity pause file could not be read — not summoning (failing closed)"));
+}
+
 // ---------------------------------------------------------------------------------------
 // CHECK 2 / 2c (lifecycle)
 
