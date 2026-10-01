@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=land
+DOC=HOW LONG A LANDING PASS MAY RUN, and how much of that it keeps in reserve so it never
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A LANDING PASS MAY RUN, and how much of that it keeps in reserve so it never
+    # begins a gate it cannot finish. Settable because the right number is a fact about this
+    # host's gate: 3600 was correct until the gate budget was raised to 2700 to cover the
+    # suite sweep, after which a 1200s reserve would let the pass start a gate it could not
+    # finish — the same shape as the four consecutive kills at 1800.
+    : "${SPIRA_LAND_MAXSEC:=5400}"
+SPIRA_CONF_DEFAULT_EOF

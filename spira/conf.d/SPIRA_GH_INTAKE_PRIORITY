@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=gh
+DOC=WHAT AN INGESTED ISSUE IS WORTH. A report from outside names something broken for
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHAT AN INGESTED ISSUE IS WORTH. A report from outside names something broken for
+    # somebody who is not this machine, so it enters ABOVE the band the harness files its own
+    # findings in. Left at the tracker default it entered below them, and the loop — which
+    # takes work in priority order — reached every self-observed defect first, indefinitely.
+    : "${SPIRA_GH_INTAKE_PRIORITY:=1}"
+SPIRA_CONF_DEFAULT_EOF

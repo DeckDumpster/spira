@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=mail
+DOC=THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
+    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh
+    # Monitor is what reaches the session, so a burst of mail can never land mid-keystroke in
+    # the operator's own half-written message the way a keystroke wake could. An operator who
+    # wants the old keystroke-wake reader back for another mailbox still sets
+    # SPIRA_MAIL_READERS themselves; this default covers `concierge` alone.
+    : "${SPIRA_MAIL_READERS:=concierge=inbox-append.sh}"
+SPIRA_CONF_DEFAULT_EOF

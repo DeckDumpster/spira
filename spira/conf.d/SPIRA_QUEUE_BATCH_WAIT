@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG WITH NOTHING NEW CERTIFIED before the batcher cuts an under-full round
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG WITH NOTHING NEW CERTIFIED before the batcher cuts an under-full round
+    # rather than keep waiting (measured from the most recently certified arrival, not
+    # the oldest). In seconds.
+    : "${SPIRA_QUEUE_BATCH_WAIT:=1800}"
+SPIRA_CONF_DEFAULT_EOF

@@ -23,7 +23,7 @@
 #   SPIRA_INSTALL_DB_WAIT — max seconds for the bd probe retry loop (default 30)
 #
 # tier: T1
-# covers: install.sh
+# covers: install/src/bin/install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -184,7 +184,6 @@ for _f in "$HERE/"*.sh; do
 done
 unset _f _bn
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -262,12 +261,11 @@ _flag="$_BREAKER_FLAG"
 _db_name="$_DBNAME2"
 _fake_db="$FAKE_DB"
 case "\$*" in
-    *-C*init*--server*)
-        _db=""
-        while [ \$# -gt 0 ]; do
-            [ "\$1" = "-C" ] && { _db="\$2"; shift 2; continue; }
-            shift
-        done
+    *init*--server*)
+        # cwd == SPIRA_DB, not -C (sp-31dm0: bd init's own remote-less repository is
+        # allowed, and -C makes a fresh init look inside a directory bd refuses to treat
+        # as one; original install.sh: `(cd "\$SPIRA_DB" && ... bd init ...)`, never -C).
+        _db="\$PWD"
         if [ -n "\$_db" ]; then
             mkdir -p "\$_db/.beads"
             printf '{"dolt_mode":"server","dolt_server_port":PORT,"dolt_database":"%s","project_id":"test"}\n' \
@@ -312,7 +310,7 @@ _rendered="$(env -i \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
-    bash "$SYSTEMD_DIR/install.sh" prod --render 2>/dev/null)"
+    units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
     _cur=""
@@ -348,7 +346,7 @@ run_install() {
         "SPIRA_INSTALL_DOLT_WAIT=10" \
         "SPIRA_INSTALL_DOLT_CLOSE_WAIT=3" \
         "SPIRA_INSTALL_DB_WAIT=5" \
-        bash "$FIXTURE/install.sh" prod 2>&1 | tee "$output_file"
+        spira-install prod 2>&1 | tee "$output_file"
     # Return the exit code of install.sh, not tee
     return "${PIPESTATUS[0]}"
 }

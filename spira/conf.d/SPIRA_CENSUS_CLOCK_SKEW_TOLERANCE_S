@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=census
+DOC=SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S — census.sh compares the substrate's own NOW() to
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S — census.sh compares the substrate's own NOW() to
+    # UTC_TIMESTAMP() before trusting a windowed ranking (sp-ohd6h); beyond this many seconds
+    # of disagreement it refuses rather than report a blinded pass as a quiet one.
+    : "${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:=120}"
+SPIRA_CONF_DEFAULT_EOF

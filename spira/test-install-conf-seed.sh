@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-install-conf-seed.sh — systemd/install.sh's _seed_prod_instance, called directly.
+# test-install-conf-seed.sh — install::seed_instance::seed_prod_instance (sp-31dm0: was
+# systemd/install.sh's _seed_prod_instance), called directly via units-install's
+# --seed-prod-instance test seam.
 #
 # _seed_prod_instance writes SPIRA_INSTANCE=<instance> into a separate $SPIRA_PROD
 # checkout's config so a non-prod sentinel's containment fence fires (see install.sh's own
@@ -10,12 +12,9 @@
 # legacy spira.conf or neither file yet. This suite's own PROPERTY 4 is the regression case:
 # a root with only spira.conf must gain a spira.toml, not another line in the .conf.
 #
-# SPIRA_INSTALL_LIB=1 sourcing install.sh defines _seed_prod_instance (alongside
-# _unit_action) and returns before conf.sh, unit rendering or the systemctl apply loop run —
-# but _seed_prod_instance itself now calls conf.sh's own helpers, so each case here also
-# sources a minimal conf.sh fixture (the same harness shape test-conf-writeback.sh and
-# test-conf-toml.sh already build: no .git, so SPIRA_REPO derives to the fixture itself)
-# in the SAME subshell, before calling the function.
+# seed_prod_instance itself calls the real spira-config binary directly (get/set/convert)
+# rather than sourcing conf.sh's bash helpers, so this suite only needs a minimal harness
+# directory (repo-map.example, chamber/) for those calls to resolve against.
 #
 #   ./test-install-conf-seed.sh
 #
@@ -33,7 +32,7 @@
 # too.
 #
 # tier: T1
-# covers: systemd/install.sh spira/conf.sh UC-instance-lifecycle-29
+# covers: install/src/seed_instance.rs spira/conf.sh UC-instance-lifecycle-29
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -54,18 +53,13 @@ printf '# empty\n' > "$HARNESS/spira/repo-map.example"
 printf '# empty\n' > "$HARNESS/spira/watchers"
 FIXHOME="$TMP/home"; mkdir -p "$FIXHOME"
 
-# seed <conf> <toml> <instance> -> stdout+stderr of one _seed_prod_instance call, run in a
-# fresh subshell with conf.sh sourced (for the helpers) after install.sh (for the function).
+# seed <conf> <toml> <instance> -> stdout+stderr of one seed_prod_instance call
+# (sp-31dm0: systemd/install.sh's _seed_prod_instance is install::seed_instance now),
+# via units-install's own --seed-prod-instance test seam.
 seed() {
     local conf="$1" toml="$2" inst="$3"
     env -i PATH="$PATH" HOME="$FIXHOME" \
-        SPIRA_WATCHERS="$HARNESS/spira/watchers" \
-        SPIRA_CONF=/nonexistent SPIRA_TOML=/nonexistent \
-        bash -c "
-            SPIRA_INSTALL_LIB=1 . '$HERE/../systemd/install.sh'
-            . '$HARNESS/spira/conf.sh'
-            _seed_prod_instance '$conf' '$toml' '$inst'
-        " 2>&1
+        units-install --seed-prod-instance "$conf" "$toml" "$inst" "$HARNESS/spira" 2>&1
 }
 
 # ==========================================================================

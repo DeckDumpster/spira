@@ -1,0 +1,15 @@
+TYPE=string
+GROUP=max
+DOC=THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
+    # SPIRA_MAX_AEONS is the task pool and a lane draws outside it, so the two of them
+    # together are the box's real ceiling (pool + one per lane) and neither one alone is the
+    # answer to "how many aeons run at once". That is correct while the constraint is cores.
+    # It is wrong while the constraint is a single shared account, which every aeon draws on
+    # and which the operator's own sessions draw on too.
+    #
+    # EMPTY BY DEFAULT, meaning no ceiling and exactly the behaviour that shipped: a host
+    # constrained by cores rather than by an account must not acquire this by upgrading.
+    : "${SPIRA_MAX_LIVE_AEONS:=}"
+SPIRA_CONF_DEFAULT_EOF

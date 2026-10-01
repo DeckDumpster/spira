@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=archivist
+DOC=HOW MANY SESSIONS ONE SWEEP MAY ARCHIVE. Serial-and-unbounded is what turns a quiet
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY SESSIONS ONE SWEEP MAY ARCHIVE. Serial-and-unbounded is what turns a quiet
+    # morning into a 20-minute pass when several sessions drift past the threshold together;
+    # with a budget the work still drains — drift does not disappear — but at a rate the
+    # account window can absorb, and the timer is the throttle rather than the session count.
+    : "${SPIRA_ARCHIVIST_PER_PASS:=1}"
+SPIRA_CONF_DEFAULT_EOF

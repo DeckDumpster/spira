@@ -51,6 +51,14 @@ wiki/
 docs/test-plan/coverage.json
 docs/test-plan/COVERAGE.md
 
+# sp-g3uwp: conf.sh's allowlist and defaults, generated whole from spira/conf.d/ (one file
+# per key) by spira/conf-gen.sh. Same reasoning as the test-plan matrix above — untracked, it
+# cannot go stale relative to the registry: conf.sh's own _spira_conf_gen_ensure regenerates
+# it on first use whenever it is missing or older than the registry, and build-tarball.sh
+# regenerates it fresh into every release's staging tree before packing.
+spira/conf.d.keys.generated.sh
+spira/conf.d.defaults.generated.sh
+
 # Editor and OS litter.
 *.swp
 *.swo

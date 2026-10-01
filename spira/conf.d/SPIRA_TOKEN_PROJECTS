@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=token
+DOC=Where the interactive sessions write their transcripts. The aeons' own traces are found
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Where the interactive sessions write their transcripts. The aeons' own traces are found
+    # under SPIRA_RUN and need no key, because the harness put them there; this directory
+    # belongs to the client, and a client that moves it would otherwise make the session half
+    # of the split silently read zero — which is the reading that looks like good news.
+    : "${SPIRA_TOKEN_PROJECTS:=$HOME/.claude/projects}"
+SPIRA_CONF_DEFAULT_EOF

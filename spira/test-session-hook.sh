@@ -39,7 +39,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: release/src/session_hook.rs spira/hooks/session.sh watchd/* inbox-triage/* mail/src/* systemd/install.sh systemd/cockpit-ensure.service
+# covers: release/src/session_hook.rs spira/hooks/session.sh watchd/* inbox-triage/* mail/src/* install/src/bin/units_install.rs systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -64,6 +64,7 @@ command -v mail >/dev/null 2>&1 || bail "mail is not on PATH"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
 cp "$HERE/conf.sh" "$CLONE/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 # `watchd`, `inbox-triage` (sp-48f6g) and `mail` (sp-ooh1k) are compiled binaries, not
 # scripts under spira/ to copy — the hook finds them on PATH, same as spira-config above.
@@ -334,8 +335,10 @@ echo "the repair is wired, not merely available"
 # environment, succeeds — and the OLD unwrapped form does not. What is left here is the one
 # thing those tests cannot see: that the CALL SITES in this tree actually invoke it.
 ROOT="$(cd "$HERE/.." && pwd -P)"
+# sp-31dm0: systemd/install.sh is retired; units-install (install/src/bin/units_install.rs)
+# calls `release session-hook install` unconditionally now, in the same place (sp-7jr34).
 has "the installer registers it on a fresh box" \
-    "$(cat "$ROOT/systemd/install.sh")" "release session-hook install"
+    "$(cat "$ROOT/install/src/bin/units_install.rs")" "release session-hook install"
 has "and a timed unit repairs it afterwards" \
     "$(cat "$ROOT/systemd/cockpit-ensure.service")" "release session-hook install"
 

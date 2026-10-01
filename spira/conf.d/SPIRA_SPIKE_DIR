@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=spike
+DOC=Where a spike writes its document, relative to the root of whatever repository its bead
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # Where a spike writes its document, relative to the root of whatever repository its bead
+    # names. A spike's deliverable is a document, so it needs somewhere to put one that is
+    # true of a repository this harness has never seen; a colleague who keeps notes elsewhere
+    # moves it here rather than in a prompt.
+    : "${SPIRA_SPIKE_DIR:=docs/spikes}"
+SPIRA_CONF_DEFAULT_EOF

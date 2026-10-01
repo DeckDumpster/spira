@@ -623,7 +623,7 @@ fn an_install_failure_is_rc_3_and_still_tears_down() {
     let w = World::new("install");
     let rt = runtime();
     rt.on(
-        |r| r.argv.get(1).is_some_and(|a| a.ends_with("/systemd/install.sh")),
+        |r| r.argv.first().is_some_and(|a| a.ends_with("/bin/units-install")),
         |_| ExecOutcome {
             rc: 1,
             output: String::new(),

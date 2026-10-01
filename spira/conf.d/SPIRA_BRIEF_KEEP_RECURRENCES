@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=brief
+DOC=HOW MANY OF A RECURRING INCIDENT'S NEWEST "Recurrence N at ..." notes an aeon brief
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY OF A RECURRING INCIDENT'S NEWEST "Recurrence N at ..." notes an aeon brief
+    # keeps verbatim; everything older is folded into one count line. A recurring incident
+    # (incident.sh) appends one such note per recurrence and never trims — sp-kogm reached
+    # 404 of them and ~216k tokens, over the context window of every aeon summoned for it.
+    : "${SPIRA_BRIEF_KEEP_RECURRENCES:=5}"
+SPIRA_CONF_DEFAULT_EOF

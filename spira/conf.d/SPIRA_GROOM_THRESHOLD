@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=groom
+DOC=SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
+    # below which the trigger short-circuits without filing. When the graph is settled the
+    # pass would cost a context to report "Actions: none".
+    : "${SPIRA_GROOM_THRESHOLD:=5}"
+SPIRA_CONF_DEFAULT_EOF

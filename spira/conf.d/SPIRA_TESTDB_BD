@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=testdb
+DOC=THE EMBEDDED bd BINARY used by test fixtures. Fixtures need a CGO-enabled build for
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE EMBEDDED bd BINARY used by test fixtures. Fixtures need a CGO-enabled build for
+    # embedded Dolt; the production binary (the one aeons and the sentinel use) may be the
+    # CGO_ENABLED=0 build, which is incompatible. A separate binary avoids a schema-mismatch
+    # forced on the production database when the two share different migration counts.
+    # The default name `bd-embedded` is a sibling of `bd` on PATH; an operator whose main
+    # binary already has CGO support can set this to `bd` to consolidate.
+    : "${SPIRA_TESTDB_BD:=bd-embedded}"
+SPIRA_CONF_DEFAULT_EOF

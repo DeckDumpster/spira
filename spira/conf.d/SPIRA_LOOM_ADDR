@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=loom
+DOC=Where Loom listens. Localhost is the default because a bead carries internal working
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ---- THE READ SURFACE OVER THE LIVE GRAPH ------------------------------------------
+    # Where Loom listens. Localhost is the default because a bead carries internal working
+    # notes and the operator's own judgement, so the address it is reachable at is a
+    # deliberate choice rather than something a default should make on anyone's behalf.
+    : "${SPIRA_LOOM_ADDR:=127.0.0.1:8788}"
+SPIRA_CONF_DEFAULT_EOF

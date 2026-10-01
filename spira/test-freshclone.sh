@@ -89,6 +89,7 @@ echo "defaults — conf.sh resolves without any operator config:"
 HARNESS="$TMP/harness"
 mkdir -p "$HARNESS/spira"
 cp "$HERE/conf.sh" "$HARNESS/spira/conf.sh"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HARNESS/spira/"
 
 conf_val() {
     local key="$1"; shift

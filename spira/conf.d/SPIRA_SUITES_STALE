@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=suites
+DOC=HOW OLD A SUITE'S RESULT MAY BE BEFORE IT IS NO LONGER EVIDENCE, in seconds. Past this
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW OLD A SUITE'S RESULT MAY BE BEFORE IT IS NO LONGER EVIDENCE, in seconds. Past this
+    # the watchtower reports the suite as unrun rather than as green, because a stale pass and
+    # a runner that has stopped are the same silence from outside. Longer than the interval at
+    # which the sweep names the scan, so an ordinary quiet hour does not read as a fault.
+    : "${SPIRA_SUITES_STALE:=21600}"
+SPIRA_CONF_DEFAULT_EOF

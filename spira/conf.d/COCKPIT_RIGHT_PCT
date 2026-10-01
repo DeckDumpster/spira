@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=right
+DOC=How wide the ops column is, as a percentage of the window. The dashboard is a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # How wide the ops column is, as a percentage of the window. The dashboard is a
+    # FULL-HEIGHT right column, so this is the only dimension it has; COCKPIT_BOTTOM_PCT
+    # divides the left column between the session and the mail pane and no longer touches it.
+    : "${COCKPIT_RIGHT_PCT:=33}"
+SPIRA_CONF_DEFAULT_EOF

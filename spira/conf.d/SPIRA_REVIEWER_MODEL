@@ -1,0 +1,13 @@
+TYPE=string
+GROUP=reviewer
+DOC=THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # ---- THE REVIEWER: ADVERSARIAL REVIEW AT THE RELEASE-UNIT BOUNDARY -------------------
+    # THE MODEL IS STRONG BY DESIGN. The reviewer looks for intent violations, cross-commit
+    # interactions, and irreversible changes — the class of defect per-change review is worst
+    # at. A cheaper model here misses the findings the gate cannot catch.
+    # Verify the model id answers on this box before deploying: an id the CLI rejects does
+    # not fail loudly — the process exits non-zero, review.sh exits 2, and promote.sh refuses
+    # to promote the unreviewed unit (which is the safe failure mode).
+    : "${SPIRA_REVIEWER_MODEL:=claude-fable-5-1}"
+SPIRA_CONF_DEFAULT_EOF

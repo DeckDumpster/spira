@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=remedy
+DOC=SPIRA_REMEDY_WINDOW (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_REMEDY_WINDOW:=30}"
+SPIRA_CONF_DEFAULT_EOF

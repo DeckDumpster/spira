@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG WITH NO RUN ACTIVITY before a run is treated as hung and re-queued.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG WITH NO RUN ACTIVITY before a run is treated as hung and re-queued.
+    # Per-repository override: SPIRA_QUEUE_CI_IDLE_SEC_<NAME>.
+    : "${SPIRA_QUEUE_CI_IDLE_SEC:=600}"
+SPIRA_CONF_DEFAULT_EOF

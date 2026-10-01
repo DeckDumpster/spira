@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=world
+DOC=THE LABEL THAT MEANS "THIS BEAD NEEDS THE WORLD HALTED WHILE IT RUNS". An aeon that
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL THAT MEANS "THIS BEAD NEEDS THE WORLD HALTED WHILE IT RUNS". An aeon that
+    # claims such a bead must drain the live pool and call world.sh stop before starting its
+    # session, then world.sh start after — whether or not the session succeeds. The fence in
+    # aeon.sh refuses the claim when live aeons are present and SPIRA_WORLD_STOP_SKIP is unset.
+    : "${SPIRA_WORLD_STOP_LABEL:=world-stop}"
+SPIRA_CONF_DEFAULT_EOF

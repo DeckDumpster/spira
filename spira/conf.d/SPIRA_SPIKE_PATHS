@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=spike
+DOC=The path prefixes a spike branch is allowed to LAND, space-separated. Everything a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The path prefixes a spike branch is allowed to LAND, space-separated. Everything a
+    # spike learns belongs in its document and beside it; a proof of concept is evidence FOR
+    # that document rather than a change to the repository, so it lives on a branch of its own
+    # and is named in the document. Two prefixes rather than one because the sources a spike
+    # preserved need not sit under the document — set it to the trees your own notes use.
+    : "${SPIRA_SPIKE_PATHS:=$SPIRA_SPIKE_DIR}"
+SPIRA_CONF_DEFAULT_EOF

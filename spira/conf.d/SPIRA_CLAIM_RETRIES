@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=claim
+DOC=HOW MANY TIMES A CLAIM QUERY IS RETRIED BEFORE BEING TREATED AS A REAL FAILURE. Aeons
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY TIMES A CLAIM QUERY IS RETRIED BEFORE BEING TREATED AS A REAL FAILURE. Aeons
+    # summoned seconds apart contend for the same store; a claim that errors under that
+    # contention is not the same fact as a claim that succeeded and returned zero rows, and
+    # only the retries exhausted case may be reported as a failure (sp-3ntca).
+    : "${SPIRA_CLAIM_RETRIES:=3}"
+SPIRA_CONF_DEFAULT_EOF

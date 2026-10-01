@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=suite
+DOC=HOW LONG ANY ONE SUITE MAY RUN, in seconds, across every caller — the gate, testenv-
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG ANY ONE SUITE MAY RUN, in seconds, across every caller — the gate, testenv-
+    # batch.sh, and suites.sh's own filing paths. One key for all of them, because a suite
+    # that is affordable in one and not another is a suite whose cost nobody has decided.
+    : "${SPIRA_SUITE_TIMEOUT:=600}"
+SPIRA_CONF_DEFAULT_EOF

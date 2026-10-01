@@ -28,6 +28,7 @@ echo "test-queue-land-local.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub mail 'exit 0'
 

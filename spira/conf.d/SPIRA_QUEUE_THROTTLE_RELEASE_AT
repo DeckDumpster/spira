@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=queue
+DOC=SPIRA_QUEUE_THROTTLE_RELEASE_AT: lift when depth drops to this. Hysteresis gap prevents
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SPIRA_QUEUE_THROTTLE_RELEASE_AT: lift when depth drops to this. Hysteresis gap prevents
+    # oscillation; set below DEPTH_AT so lifting does not immediately re-engage.
+    : "${SPIRA_QUEUE_THROTTLE_RELEASE_AT:=${SPIRA_QUEUE_BATCH_MAX:-8}}"
+SPIRA_CONF_DEFAULT_EOF

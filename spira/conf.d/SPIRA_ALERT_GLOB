@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=alert
+DOC=The alert units whose failure should be filed as an incident bead, as a find(1) name
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The alert units whose failure should be filed as an incident bead, as a find(1) name
+    # pattern. Empty means none: these are the operator's own unit names and nothing here can
+    # guess them, so `release intake install` says so rather than wiring whatever matches.
+    : "${SPIRA_ALERT_GLOB:=}"
+SPIRA_CONF_DEFAULT_EOF

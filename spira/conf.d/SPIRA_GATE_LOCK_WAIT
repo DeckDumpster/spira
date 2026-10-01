@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=gate
+DOC=SPIRA_GATE_LOCK_WAIT — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
+    # spira_conf_defaults() today; it resolves to an empty string unless the
+    # environment or spira.toml sets it. Registered here only so the allowlist is
+    # generated from one source — conf-gen.sh contributes the name, nothing else.
+SPIRA_CONF_DEFAULT_EOF

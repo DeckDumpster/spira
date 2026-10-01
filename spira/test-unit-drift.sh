@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/install.sh spira/skew.sh UC-instance-lifecycle-34
+# covers: install/src/bin/units_install.rs spira/skew.sh UC-instance-lifecycle-34
 #
 # test-unit-drift.sh — a landed template change leaves the installed unit stale, and is
 # detected.
@@ -55,7 +55,7 @@ inst() {
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
         SPIRA_TESTDB_DATA="" \
-        bash "$FIXTURE/systemd/install.sh" "$@" 2>&1
+        units-install "$@" 2>&1
 }
 
 # ==========================================================================

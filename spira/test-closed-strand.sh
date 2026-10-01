@@ -43,6 +43,7 @@ mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/incident.sh" "$HERE/skew.sh" "$HERE/suite-covers.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'exit 0'
 stub strand        'exit 0'

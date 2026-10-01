@@ -10,7 +10,7 @@
 # inotifywait (an external program) still gates a unit.
 #
 # tier: T1
-# covers: systemd/units.sh systemd/install.sh systemd/spira-mail-deliver.service systemd/spira-loom.service systemd/spira-broker.service UC-instance-lifecycle-25
+# covers: install/src/manifest.rs install/src/bin/units_install.rs systemd/spira-mail-deliver.service systemd/spira-loom.service systemd/spira-broker.service UC-instance-lifecycle-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -18,37 +18,60 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/run"
 
-# _units <inotify-mode> — source units.sh in a subprocess with that gate set, print its
-# UNITS/OPTIONAL/ENABLE arrays.
-# inotify-mode "without" shadows the `command` builtin so `command -v inotifywait` fails:
-# conf.sh rebuilds PATH itself (unconditionally adding /usr/bin), so hiding a system
-# inotifywait by editing PATH does not work — the shadow is the only reliable lever.
-# env -i prevents any of the three from leaking in from this suite's own environment.
+# _units <inotify-mode> — units-install --list-templates (sp-31dm0: systemd/units.sh is
+# retired; the manifest is install/src/manifest.rs now) in a subprocess with that gate set,
+# reshaped into the UNITS:/OPTIONAL:/ENABLE: lines this suite's assertions read.
+# inotify-mode "without": units-install resolves `inotifywait` with its own raw PATH scan
+# (install::bootstrap::which), not `command -v` — so unlike the old bash (which needed a
+# `command` shadow because conf.sh unconditionally re-added /usr/bin to PATH), a PATH that
+# genuinely excludes inotifywait's directory is enough here. env -i prevents any of the
+# three from leaking in from this suite's own environment.
 _units() {
-    local inotify_mode="$1"
+    local inotify_mode="$1" path="$PATH"
+    if [ "$inotify_mode" = without ]; then
+        # DROPPING WHOLE DIRECTORIES IS NOT ENOUGH, AND BREAKS OTHER THINGS: on a box
+        # where /bin is its own PATH entry alongside /usr/bin (not merely a symlink
+        # collapsed by the shell), inotifywait resolves from both — but /bin and /usr/bin
+        # also carry bash, awk, grep and everything else watchd.sh itself needs, so
+        # removing either directory wholesale breaks the subprocess chain
+        # install::bootstrap::watch_names() depends on, not just inotify detection. Build
+        # a shadow directory of symlinks to everything reachable on the real PATH, minus
+        # the one program, preserving first-match-wins order; use that as the entire PATH
+        # instead of removing real directories.
+        local shadow="$TMP/path-without-inotify" d f b
+        mkdir -p "$shadow"
+        while IFS= read -r d; do
+            [ -n "$d" ] && [ -d "$d" ] || continue
+            for f in "$d"/*; do
+                [ -e "$f" ] || continue
+                b="$(basename "$f")"
+                [ "$b" = inotifywait ] && continue
+                [ -e "$shadow/$b" ] && continue
+                ln -s "$f" "$shadow/$b" 2>/dev/null || true
+            done
+        done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
+        path="$shadow"
+    fi
     env -i \
-        PATH="$PATH" \
+        PATH="$path" \
+        HOME="$HOME" \
         SPIRA_HOME="$HERE" \
+        SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
         SPIRA_INSTANCE=prod \
         SPIRA_DOLT_DATA= \
         SPIRA_TESTDB_DATA= \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" \
-        bash -s -- "$@" 2>"$TMP/notes" <<'SUBSH'
-set -uo pipefail
-if [ "$1" = without ]; then
-    command() {
-        case "$*" in
-            "-v inotifywait"|"--version inotifywait") return 1 ;;
-            *) builtin command "$@" ;;
-        esac
-    }
-fi
-. "$SPIRA_HOME/../systemd/units.sh"
-printf 'UNITS: %s\n' "${UNITS[*]}"
-printf 'OPTIONAL: %s\n' "${OPTIONAL[*]}"
-printf 'ENABLE: %s\n' "${ENABLE[*]}"
-SUBSH
+        units-install --list-templates 2>"$TMP/notes" \
+        | awk '
+            /^UNITS / { units = units " " $2 }
+            /^OPTIONAL / { optional = optional " " $2 }
+            /^ENABLE / { enable = enable " " $2 }
+            END {
+                print "UNITS:" units
+                print "OPTIONAL:" optional
+                print "ENABLE:" enable
+            }'
 }
 
 DEF_INOTIFY=with

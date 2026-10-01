@@ -42,6 +42,7 @@ git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 GATE_COUNT="$TMP/gate-count"
 GATE_RC_FILE="$TMP/gate-rc"

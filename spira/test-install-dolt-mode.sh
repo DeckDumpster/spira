@@ -15,7 +15,7 @@
 #    (Requires nc; skipped if unavailable.)
 #
 # tier: T1
-# covers: install.sh
+# covers: install/src/bin/install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -81,7 +81,6 @@ printf 'layout.sh: stub\n'; exit 0
 EOF
 chmod +x "$COCKPIT_DIR/layout.sh"
 
-ln -s "$REAL_REPO/install.sh" "$FIXTURE/install.sh"
 # Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
 . "$HERE/lib-test-install.sh"
 install_fixture_release_bins "$FIXTURE"
@@ -154,7 +153,7 @@ _rendered="$(env -i \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
-    bash "$SYSTEMD_DIR/install.sh" prod --render 2>/dev/null)"
+    units-install prod --render  2>/dev/null)"
 _render_rc=$?
 if [ "$_render_rc" = 0 ]; then
     _cur=""
@@ -197,7 +196,7 @@ run_install() {
         "SPIRA_BD=$MOCK_BIN/bd" \
         "SPIRA_DB=$FAKE_DB" \
         "${extra_env[@]+"${extra_env[@]}"}" \
-        bash "$FIXTURE/install.sh" "${install_args[@]+"${install_args[@]}"}" 2>&1
+        spira-install "${install_args[@]+"${install_args[@]}"}" 2>&1
 }
 
 # ==========================================================================

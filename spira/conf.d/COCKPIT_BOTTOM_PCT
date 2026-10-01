@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=bottom
+DOC=COCKPIT_BOTTOM_PCT (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${COCKPIT_BOTTOM_PCT:=28}"
+SPIRA_CONF_DEFAULT_EOF

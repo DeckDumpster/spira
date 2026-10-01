@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=quarantine
+DOC=HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift a hand-placed quarantine, and how
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift a hand-placed quarantine, and how
+    # long one may stand before the operator is mailed.
+    : "${SPIRA_QUARANTINE_CLEAN_RUNS:=10}"
+SPIRA_CONF_DEFAULT_EOF

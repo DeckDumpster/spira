@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=pr
+DOC=MINUTES A PR-MODE BRANCH MAY SIT IN REBASED/pr-open BEFORE THE STALL DETECTOR FIRES.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MINUTES A PR-MODE BRANCH MAY SIT IN REBASED/pr-open BEFORE THE STALL DETECTOR FIRES.
+    # Default 60 — long enough to let CI complete without false positives, short enough to catch
+    # a repo with allow_auto_merge=false before the operator notices the queue is not moving.
+    : "${SPIRA_PR_STALL_MINS:=60}"
+SPIRA_CONF_DEFAULT_EOF

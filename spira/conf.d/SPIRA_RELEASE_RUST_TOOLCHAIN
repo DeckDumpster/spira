@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=release
+DOC=THE TOOLCHAIN release.yml PINS ("Install Rust <version>", asserted exactly). Read by
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE TOOLCHAIN release.yml PINS ("Install Rust <version>", asserted exactly). Read by
+    # acceptance-local.sh so a local rehearsal builds under the same compiler the release job
+    # would use, not whatever `cargo` happens to resolve to on the machine running it — the
+    # two must never independently drift, or a rehearsal can pass on a tree the real release
+    # job would fail to build.
+    : "${SPIRA_RELEASE_RUST_TOOLCHAIN:=1.82.0}"
+SPIRA_CONF_DEFAULT_EOF

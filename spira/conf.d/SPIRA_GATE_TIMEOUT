@@ -1,0 +1,13 @@
+TYPE=u32
+GROUP=gate
+DOC=HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
+    # under `timeout` at this budget. A gate killed at the deadline exits 124 and is reported
+    # as a timeout (NO_VERDICT), not a branch fault — but the bead note is empty and the next
+    # aeon hunts a test failure that never happened. The default was 900 until the spira gate
+    # suite sweep measured ~1860s on a cold worktree with a shared Dolt server (sp-p4rl); 2700
+    # covers that with margin and is the value observed to pass unchanged branches that 900
+    # killed mid-sweep (sp-gys, sp-snyj).
+    : "${SPIRA_GATE_TIMEOUT:=2700}"
+SPIRA_CONF_DEFAULT_EOF

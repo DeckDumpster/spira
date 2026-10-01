@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=tier
+DOC=PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
+    # plan §4.1). An untagged suite is judged as T1. The gate's budget cut (suite-select) costs an
+    # unmeasured suite at its tier's value here.
+    : "${SPIRA_TIER_BUDGET_T0_MS:=1000}"
+SPIRA_CONF_DEFAULT_EOF

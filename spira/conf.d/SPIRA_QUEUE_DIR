@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=queue
+DOC=WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE OPEN-BATCH RECORDS ARE KEPT — one file per open batch.
+    : "${SPIRA_QUEUE_DIR:=$SPIRA_RUN/queue}"
+SPIRA_CONF_DEFAULT_EOF

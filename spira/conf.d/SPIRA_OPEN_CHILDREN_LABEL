@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=open
+DOC=LABEL APPLIED TO A BEAD THAT HAS AN OPEN PARENT-CHILD-LINKED CHILD. bd refuses a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # LABEL APPLIED TO A BEAD THAT HAS AN OPEN PARENT-CHILD-LINKED CHILD. bd refuses a
+    # parent-blocks-child dependency (it would cascade the block to every descendant, and
+    # they would never close), so a coordination bead whose deliverable lives entirely in
+    # its children would otherwise read as ready with none of that work done. mark_open_children
+    # (lib.sh) applies and clears this via ready_shared_exclude, the same seam
+    # SPIRA_QUEUE_WAIT_LABEL uses for a predicate bd itself cannot express as a dependency.
+    : "${SPIRA_OPEN_CHILDREN_LABEL:=spira-open-children}"
+SPIRA_CONF_DEFAULT_EOF

@@ -28,7 +28,8 @@
 # sentinel → summon → claim → branch → commit → land path deterministically.
 #
 # TARBALL INSTALL. Phase A downloads the candidate tarball from the draft GitHub
-# release created by release.yml and installs via release install-tarball + install.sh --skip-build.
+# release created by release.yml and installs via release install-tarball + install --skip-build
+# (sp-31dm0: install is a compiled binary now, not a script).
 # On PASS the draft is published (undrafted). On FAIL the draft is deleted and the
 # tag is retracted so no incomplete release is left visible.
 #
@@ -181,7 +182,7 @@ jobs:
         # unset and /run/user/<uid> may not exist. Linger creates the runtime
         # directory and starts the user systemd manager so systemctl --user works.
         # Both variables are written to GITHUB_ENV so every subsequent step,
-        # including subprocesses of install.sh, inherits them without explicit env:.
+        # including subprocesses of install (sp-31dm0), inherits them without explicit env:.
         run: |
           sudo loginctl enable-linger "$USER"
           _xdg="/run/user/$(id -u)"

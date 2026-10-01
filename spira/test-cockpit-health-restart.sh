@@ -105,6 +105,7 @@ ROOT="$TMP/root"; mkdir -p "$ROOT/bin" "$ROOT/cockpit" "$ROOT/spira"
 cp "$(command -v layout)" "$ROOT/bin/layout"
 cp "$COCKPIT_DIR/tmux-env.sh" "$ROOT/cockpit/"
 cp "$HERE/conf.sh" "$ROOT/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$ROOT/spira/"
 printf '#!/usr/bin/env bash\nsleep 300\n' > "$ROOT/bin/health"
 chmod +x "$ROOT/bin/health"
 

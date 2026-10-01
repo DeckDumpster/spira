@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=forge
+DOC=THE GITHUB REPOSITORY deploy.sh targets when making gh release calls. deploy.sh
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE GITHUB REPOSITORY deploy.sh targets when making gh release calls. deploy.sh
+    # passes this as --repo so it works from an extracted tarball with no .git checkout.
+    # Format: "owner/repo". Empty means deploy.sh derives it from git remote origin.
+    : "${SPIRA_FORGE_REPO:=}"
+SPIRA_CONF_DEFAULT_EOF

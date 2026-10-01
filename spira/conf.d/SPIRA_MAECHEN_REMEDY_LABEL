@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=maechen
+DOC=SPIRA_MAECHEN_REMEDY_LABEL — the label applied to every bead Maechen cuts. The
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    #
+    # SPIRA_MAECHEN_REMEDY_LABEL — the label applied to every bead Maechen cuts. The
+    # admissibility check (sp-ymwz5) and the flatline measurement query by this label.
+    : "${SPIRA_MAECHEN_REMEDY_LABEL:=maechen-remedy}"
+SPIRA_CONF_DEFAULT_EOF

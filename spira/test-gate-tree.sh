@@ -45,6 +45,7 @@ mkdir -p "$RUN/worktree" "$HOMEDIR" "$SH"
 # the installed copy must not be what is tested.
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/skew.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"

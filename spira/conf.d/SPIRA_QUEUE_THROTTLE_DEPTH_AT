@@ -1,0 +1,14 @@
+TYPE=string
+GROUP=queue
+DOC=THE ADMISSION THROTTLE (sp-h7zzx) — Little's Law with a rework feedback term.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE ADMISSION THROTTLE (sp-h7zzx) — Little's Law with a rework feedback term.
+    # Two conditions, two outcomes:
+    #   depth >= DEPTH_AT AND drain active → throttle new builders; queue is over capacity
+    #   depth >= DEPTH_AT AND drain zero  → escalate, do not throttle; queue is stalled
+    # Throttling a stalled queue delays repairs rather than reducing load.
+    #
+    # SPIRA_QUEUE_THROTTLE_DEPTH_AT: engage when CERTIFIED depth reaches this many branches.
+    # Default is two batches; tune up if the queue recovers faster than builders refill it.
+    : "${SPIRA_QUEUE_THROTTLE_DEPTH_AT:=$(( ${SPIRA_QUEUE_BATCH_MAX:-8} * 2 ))}"
+SPIRA_CONF_DEFAULT_EOF

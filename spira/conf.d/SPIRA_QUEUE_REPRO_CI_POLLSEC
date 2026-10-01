@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW OFTEN VERDICT.SH POLLS A DISPATCHED ATTRIBUTION RUN (per-member red-batch
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW OFTEN VERDICT.SH POLLS A DISPATCHED ATTRIBUTION RUN (per-member red-batch
+    # reproduction, sp-2hee5) for a conclusion. In seconds.
+    : "${SPIRA_QUEUE_REPRO_CI_POLLSEC:=15}"
+SPIRA_CONF_DEFAULT_EOF

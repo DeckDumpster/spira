@@ -407,6 +407,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v release)\""
 
 [[dep]]
+name = "render-unit"
+tier = "release"
+purpose = "Spira's render-unit binary (sp-31dm0), from the release's bin/ — render.py's drop-in replacement"
+version_min = ""
+version_probe = "readlink -f \"$(command -v render-unit)\""
+
+[[dep]]
 name = "round-vm"
 tier = "release"
 purpose = "Spira's round-vm binary, from the release's bin/"
@@ -461,6 +468,13 @@ tier = "release"
 purpose = "Spira's spira-config binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v spira-config)\""
+
+[[dep]]
+name = "spira-install"
+tier = "release"
+purpose = "Spira's spira-install binary (sp-31dm0), from the release's bin/ — the root installer, replacing install.sh"
+version_min = ""
+version_probe = "readlink -f \"$(command -v spira-install)\""
 
 [[dep]]
 name = "spira-admit"
@@ -538,6 +552,20 @@ tier = "release"
 purpose = "Spira's tsd-write binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v tsd-write)\""
+
+[[dep]]
+name = "unit-ensure"
+tier = "release"
+purpose = "Spira's unit-ensure binary (sp-31dm0), from the release's bin/ — the non-disruptive unit installer, replacing systemd/unit-ensure.sh"
+version_min = ""
+version_probe = "readlink -f \"$(command -v unit-ensure)\""
+
+[[dep]]
+name = "units-install"
+tier = "release"
+purpose = "Spira's units-install binary (sp-31dm0), from the release's bin/ — the per-instance unit renderer/writer, replacing systemd/install.sh"
+version_min = ""
+version_probe = "readlink -f \"$(command -v units-install)\""
 
 [[dep]]
 name = "watchd"

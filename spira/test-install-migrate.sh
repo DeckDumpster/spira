@@ -31,7 +31,7 @@
 # the testenv container as spirauser) or user systemd is not responding.
 #
 # tier: T1
-# covers: systemd/install.sh
+# covers: install/src/bin/units_install.rs
 # requires: testenv
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -131,7 +131,7 @@ inst() {
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD="$PROD" SPIRA_REPO_MAP=/nonexistent \
     SPIRA_INSTALL_FORCE=1 \
-    bash "$HERE/../systemd/install.sh" "$_INST" "$@" 2>&1
+    units-install "$_INST" "$@" 2>&1
 }
 
 # Helper: plant a legacy unit file in DEST and register it with the thin wrapper.

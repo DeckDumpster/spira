@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
-# lib-test-install.sh — the install.sh test fixture every suite in this area hand-built:
-# a symlinked systemd/+spira/ tree, and a cached `--render` so the templates are not
-# recompiled by every suite (and every scenario within a suite) that needs a "nothing
+# lib-test-install.sh — the install/units-install test fixture every suite in this area
+# hand-built: a symlinked systemd/+spira/ tree, and a cached `--render` so the templates are
+# not recompiled by every suite (and every scenario within a suite) that needs a "nothing
 # changed" DEST baseline (cluster 11, docs/test-plan/instance-lifecycle.md).
 #
 # Sourced, never executed.
 #
+# sp-31dm0: install.sh, systemd/install.sh, systemd/unit-ensure.sh and systemd/units.sh are
+# retired; `units-install`/`unit-ensure`/`spira-install` are compiled binaries now, resolved
+# by bare name on PATH (the workspace is always built under testenv — the same convention
+# test-reconciler.sh's `command -v reconciler` already relies on), not symlinked into the
+# fixture. The fixture still symlinks the *templates* (systemd/*.service/.timer/.yaml) and
+# the bash libraries the binaries still shell out to (conf.sh, lib.sh, suite-covers.sh) —
+# everything this crate itself owns now lives in the binary, not the tree. `watchd.sh` is
+# also retired (sp-48f6g: the `watchd` binary); not symlinked for the same reason.
+#
 # install_fixture_build <fixture-root>
-#   Symlinks the real systemd/*.{service,timer,yaml}, install.sh and spira/{conf.sh,
-#   lib.sh,units.sh,suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
-#   and repo-map.example, a no-op `release` stub (install_fixture_release_stub below;
-#   install.sh finds it by name, so a caller puts <fixture-root>/spira first on PATH), and
+#   Symlinks the real systemd/*.{service,timer,yaml} and spira/{conf.sh,lib.sh,
+#   suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
+#   and repo-map.example, a no-op `release` stub (install_fixture_release_stub below; found
+#   by bare name on PATH, so a caller puts <fixture-root>/spira first on it), and
 #   <fixture-root>/bin unit stubs.
 #
-# install_fixture_render <cache-key> <install.sh-invocation...>
-#   Runs "$@" (an install.sh --render call) once and caches its stdout+rc, keyed on a hash
+# install_fixture_render <cache-key> <units-install-invocation...>
+#   Runs "$@" (a `units-install --render` call) once and caches its stdout+rc, keyed on a hash
 #   of the template files plus <cache-key>. A later call with the same templates and
-#   cache-key returns the cached output without re-invoking python3/bash.
+#   cache-key returns the cached output without re-invoking the binary.
 #   CORRECTNESS IS THE CALLER'S: render substitutes SPIRA_HOME, SPIRA_PROD, SPIRA_INSTANCE
 #   and half a dozen other values into the templates, none of which this helper can see
 #   inside "$@"'s own env assignment. <cache-key> must fold in every one of them — an
@@ -31,7 +40,7 @@
 #   the "nothing changed" baseline every suite starts from.
 #
 # mk_install_fixture <fixture-root> <tmp-root>
-#   The root install.sh fixture (not systemd/install.sh's — see install_fixture_build above):
+#   The root `install` fixture (not units-install's — see install_fixture_build above):
 #   <fixture-root>/{systemd,spira,cockpit} symlinked to the real sources, spira/statutes/,
 #   and a fake git origin+repo under <tmp-root> with origin/HEAD set, so the landref check
 #   passes. Sets FAKE_ORIGIN and FAKE_REPO for the caller. Callers still write their own
@@ -58,15 +67,14 @@ _lib_install_hash() {  # stdin -> a short content hash; sha256sum where availabl
 install_fixture_build() {
     local fixture="$1" f
     mkdir -p "$fixture/systemd" "$fixture/spira"
-    # *.yaml: install.sh renders dolt-server{,-test}.yaml whenever SPIRA_{DOLT,TESTDB}_DATA
+    # *.yaml: units-install renders dolt-server{,-test}.yaml whenever SPIRA_{DOLT,TESTDB}_DATA
     # resolve non-empty. suite-covers.sh: lib.sh sources it unconditionally.
     for f in "$_LIB_INSTALL_SELF/../systemd/"*.service "$_LIB_INSTALL_SELF/../systemd/"*.timer \
              "$_LIB_INSTALL_SELF/../systemd/"*.yaml; do
         [ -e "$f" ] || continue
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
     done
-    ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$fixture/systemd/install.sh"
-    for f in conf.sh lib.sh units.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
@@ -91,7 +99,7 @@ EOF
 }
 
 # THE UNIT BINARIES (sp-gypjk). Unit templates ExecStart the release's bin/<tool>
-# (@SPIRA_PROD_ROOT@/bin/<tool>, PROD_ROOT = dirname SPIRA_PROD), and install.sh refuses a unit
+# (@SPIRA_PROD_ROOT@/bin/<tool>, PROD_ROOT = dirname SPIRA_PROD), and units-install refuses a unit
 # whose ExecStart target is not executable. A fixture therefore stages a release-shaped bin/
 # beside the spira/ its SPIRA_PROD names. Nothing here runs them — install only places and
 # starts units against a mock systemctl.
@@ -169,10 +177,10 @@ install_fixture_render() {
     local cache_key="$1" tmpl_hash entry rc out cache_root
     shift
     cache_root="${SPIRA_TEST_INSTALL_CACHE:-${TMP:-${TMPDIR:-/tmp}}/spira-install-render-cache}"
-    tmpl_hash="$(cat "$_LIB_INSTALL_SELF/../systemd/"*.service \
-                     "$_LIB_INSTALL_SELF/../systemd/"*.timer \
-                     "$_LIB_INSTALL_SELF/../systemd/install.sh" \
-                     "$_LIB_INSTALL_SELF/units.sh" 2>/dev/null | _lib_install_hash)"
+    tmpl_hash="$( { cat "$_LIB_INSTALL_SELF/../systemd/"*.service \
+                        "$_LIB_INSTALL_SELF/../systemd/"*.timer 2>/dev/null
+                    command -v units-install | xargs -r cat 2>/dev/null
+                  } | _lib_install_hash )"
     mkdir -p "$cache_root/$tmpl_hash"
     entry="$cache_root/$tmpl_hash/$(printf '%s' "$cache_key" | _lib_install_hash)"
     if [ -f "$entry.rc" ]; then
@@ -194,13 +202,14 @@ mk_install_fixture() {
         [ -e "$f" ] || continue
         ln -sf "$f" "$systemd/$(basename "$f")"
     done
-    ln -sf "$_LIB_INSTALL_SELF/../systemd/install.sh" "$systemd/install.sh"
-    ln -sf "$_LIB_INSTALL_SELF/../systemd/units.sh"   "$systemd/units.sh"
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
+    # Root/spira/cockpit exec targets outside bin/ (concierge.sh, mail.sh, moot-sweep.sh, ...)
+    # are stubbed by install_fixture_release_bins (sp-m6ow8), which every caller of this
+    # fixture also calls — not duplicated here.
 
     FAKE_ORIGIN="$tmp/origin.git"
     FAKE_REPO="$tmp/fakerepo"
@@ -239,9 +248,9 @@ install_fixture_seed_dest() {
 # not a hand-modeled one (law-prefer-the-real-dependency).
 #
 #   tinstall_fixture <dir>                  build a harness tree at <dir> (symlinks to the
-#                                            real systemd/ + spira/ sources) install.sh can
+#                                            real systemd/ + spira/ sources) units-install can
 #                                            render against.
-#   tinstall_render <fixture> <home>        run install.sh --render in a controlled env;
+#   tinstall_render <fixture> <home>        run units-install --render in a controlled env;
 #                                            memoized per (fixture, home) pair for the life
 #                                            of the process, so two call sites asking for
 #                                            the same render in one suite pay for it once.
@@ -262,7 +271,6 @@ tinstall_fixture() {   # tinstall_fixture <dir>
         [ -e "$f" ] || continue
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
-    ln -sf "$src/../systemd/install.sh" "$dir/systemd/install.sh"
     for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
@@ -271,17 +279,18 @@ tinstall_fixture() {   # tinstall_fixture <dir>
 }
 
 tinstall_render() {    # tinstall_render <fixture> <home> -> rendered text (memoized); $? is
-                        # install.sh's own exit code, cached alongside the text.
+                        # units-install's own exit code, cached alongside the text.
     local fixture="$1" home="$2" key
     key="$(printf '%s\x1e%s' "$fixture" "$home" | cksum | cut -d' ' -f1)"
     if [ -z "${_TINSTALL_RENDER_CACHE[$key]+x}" ]; then
         local out rc
         out="$(env -i PATH="$PATH" HOME="$home" \
+            SPIRA_HOME="$fixture/spira" SPIRA_REPO="$fixture" \
             SPIRA_CONF=/nonexistent \
             SPIRA_WATCHERS="$fixture/spira/watchers" \
             SPIRA_DOLT_DATA="" \
             SPIRA_TESTDB_DATA="" \
-            bash "$fixture/systemd/install.sh" --render 2>&1)"; rc=$?
+            units-install --render 2>&1)"; rc=$?
         _TINSTALL_RENDER_CACHE[$key]="$out"
         _TINSTALL_RENDER_RC[$key]="$rc"
     fi

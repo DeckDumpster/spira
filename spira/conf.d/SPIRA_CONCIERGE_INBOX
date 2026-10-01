@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=concierge
+DOC=THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
+    # (inbox-append.sh); the concierge's inbox-triage.sh Monitor tails it, drops echoes and
+    # duplicates, and passes what needs action — never a keystroke into the pane.
+    : "${SPIRA_CONCIERGE_INBOX:=$SPIRA_RUN/watchd/concierge-inbox.log}"
+SPIRA_CONF_DEFAULT_EOF

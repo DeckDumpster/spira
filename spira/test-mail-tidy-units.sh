@@ -5,7 +5,7 @@
 # "unit greps -> T0 unit lint") so a source-text check never pays for a Maildir fixture.
 #
 # tier: T0
-# covers: systemd/spira-mail-tidy.service systemd/spira-mail-tidy.timer systemd/units.sh
+# covers: systemd/spira-mail-tidy.service systemd/spira-mail-tidy.timer install/src/manifest.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -45,11 +45,12 @@ unit_line="$(grep '^Unit=' "$TMR" 2>/dev/null | head -1 | cut -d= -f2-)"
 want "timer names the tidy service" "spira-mail-tidy" "${unit_line:-}"
 
 echo
-echo "=== units.sh: timer in UNITS and _ENABLE_TMPL ==="
+echo "=== manifest: timer in UNITS and ENABLE (sp-31dm0: systemd/units.sh is retired; the" \
+     "manifest is install/src/manifest.rs now) ==="
 
-UNITS_SH="$UNIT_DIR/units.sh"
-units_block="$(awk '/^UNITS=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
-enable_block="$(awk '/_ENABLE_TMPL=\(/{found=1} found{print} found && /\)/{found=0}' "$UNITS_SH")"
+union_out="$(SPIRA_HOME="$UNIT_DIR/../spira" units-install --list-union 2>&1)"
+units_block="$(printf '%s\n' "$union_out" | grep '^UNITS ')"
+enable_block="$(printf '%s\n' "$union_out" | grep '^ENABLE ')"
 
 # POSITIVE CONTROL: a known entry (spira-sentinel.timer) appears in both blocks.
 case "$units_block" in

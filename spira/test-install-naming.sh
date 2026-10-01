@@ -9,7 +9,7 @@
 # sections, which do exercise real systemd.
 #
 # tier: T1
-# covers: systemd/install.sh systemd/units.sh UC-instance-lifecycle-24
+# covers: install/src/bin/units_install.rs install/src/manifest.rs UC-instance-lifecycle-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -26,7 +26,7 @@ rendered="$(env -i \
     SPIRA_RUN="$TMP/run" \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
     SPIRA_PROD= SPIRA_REPO_MAP=/nonexistent \
-    bash "$HERE/../systemd/install.sh" test --render 2>&1)"
+    units-install test --render 2>&1)"
 render_rc=$?
 is "render: install.sh test --render exits 0" "0" "$render_rc"
 
@@ -52,14 +52,15 @@ want "naming: concierge.service present (shared, plain name)" \
 want "naming: beads-push.service present (shared, plain name)" \
      "===== beads-push.service =====" "$rendered"
 
-# ENABLE is the array install.sh's own enable/restart loop reads to decide what to
-# enable — already instance-qualified at units.sh-source time (inst_name applied per
-# _ENABLE_TMPL entry). Sourcing it directly is the T1 way to prove the enable-time
-# name, without a live install run against real systemd.
-enable_arr="$(env -i PATH="$PATH" SPIRA_HOME="$HERE" SPIRA_INSTANCE=test \
+# ENABLE is the array units-install's own enable/restart loop reads to decide what to
+# enable — already instance-qualified (inst_name applied per manifest entry, install/src/
+# manifest.rs, sp-31dm0: systemd/units.sh is retired). `--list-enable` is the T1 way to
+# prove the enable-time name, without a live install run against real systemd.
+enable_arr="$(env -i PATH="$PATH" HOME="$HOME" SPIRA_HOME="$HERE" SPIRA_REPO="$(cd "$HERE/.." && pwd -P)" \
+    SPIRA_INSTANCE=test \
     SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
     SPIRA_WATCHERS="$WATCHERS" \
-    bash -c '. "$SPIRA_HOME/../systemd/units.sh" 2>/dev/null; printf "%s" "${ENABLE[*]}"')"
+    units-install --list-enable 2>/dev/null | tr '\n' ' ')"
 want   "naming: ENABLE includes spira-sentinel-test.timer" "spira-sentinel-test.timer" "$enable_arr"
 nowant "naming: ENABLE does not include plain spira-sentinel.timer" "spira-sentinel.timer" "$enable_arr"
 

@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=chamber
+DOC=SPIRA_CHAMBER (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_CHAMBER:=$SPIRA_HOME/chamber}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=bd
+DOC=THE RELEASE TAG THIS HARNESS EXPECTS TO BE RUNNING. Both build-bd.sh (which builds
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE RELEASE TAG THIS HARNESS EXPECTS TO BE RUNNING. Both build-bd.sh (which builds
+    # or downloads the binary) and doctor.sh (which checks the running binary) read this
+    # value, so the two cannot disagree about which version is correct. Changing it here
+    # changes what doctor.sh refuses and what build-bd.sh targets.
+    : "${SPIRA_BD_TAG:=v1.2.1}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG A CI RUN MAY RUN before it is a candidate for the stuck check.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A CI RUN MAY RUN before it is a candidate for the stuck check.
+    # Per-repository override: SPIRA_QUEUE_CI_MAXSEC_<NAME> where <NAME> is the
+    # repo-map name uppercased with hyphens replaced by underscores.
+    : "${SPIRA_QUEUE_CI_MAXSEC:=3600}"
+SPIRA_CONF_DEFAULT_EOF

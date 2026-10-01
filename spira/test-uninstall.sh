@@ -29,7 +29,7 @@
 # the suite is not trivially green.
 #
 # tier: T2
-# covers: spira/uninstall.sh spira/owned.sh systemd/install.sh UC-instance-lifecycle-38 UC-instance-lifecycle-39
+# covers: spira/uninstall.sh spira/owned.sh install/src/bin/units_install.rs UC-instance-lifecycle-38 UC-instance-lifecycle-39
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -61,8 +61,6 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
-ln -s "$HERE/../systemd/install.sh"  "$FIXTURE/systemd/install.sh"
-ln -s "$HERE/../systemd/units.sh"    "$FIXTURE/systemd/units.sh"
 for f in conf.sh lib.sh owned.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
@@ -185,7 +183,7 @@ _seed_units() {
         SPIRA_DOLT_DATA= SPIRA_TESTDB_DATA= \
         "SPIRA_SYSTEMCTL=$MOCK_BIN/systemctl" \
         "SPIRA_INSTALL_FORCE=1" \
-        bash "$FIXTURE/systemd/install.sh" test --render 2>&1)"
+        units-install test --render 2>&1)"
     rc=$?
     if [ "$rc" != 0 ]; then
         printf 'fixture: install.sh --render failed (rc=%s)\n' "$rc" >&2

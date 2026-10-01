@@ -52,6 +52,7 @@ members = [
     "suite-select",
     "release",
     "forge",
+    "install",
     "watchd",
     "inbox-triage",
     "gh-intake",

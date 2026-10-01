@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=gate
+DOC=HOW MANY SUITES THE LANDING GATE MAY SELECT. 0 = no cap. When the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY SUITES THE LANDING GATE MAY SELECT. 0 = no cap. When the
+    # coverage-based selection exceeds this, ejected suites are kept and
+    # covered suites fill the remaining slots; excluded suites are logged.
+    : "${SPIRA_GATE_SELECT_CAP:=0}"
+SPIRA_CONF_DEFAULT_EOF

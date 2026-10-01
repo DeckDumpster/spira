@@ -183,9 +183,10 @@ fn cmd_export_sh(file: Option<&str>) -> ExitCode {
 /// directories (sp-c7b85, brain `runtime-is-a-release-2026-09-29`): `$SPIRA_PATH` if it is set
 /// (nonempty), else `[spira].path` from the config `discover` finds, else empty. Prints the
 /// tail on stdout and exits 0, or refuses (naming the entry) when a segment resolves inside a
-/// release or a checkout — the one place this check runs, so `render.py`, `install.sh` and
-/// `unit-ensure.sh` (bash and Python, which carry no logic of their own) get it from here
-/// rather than each growing its own copy.
+/// release or a checkout — the one place this check runs. This CLI form remains for bash
+/// callers; the `install` crate (sp-31dm0, which retired `render.py`, `install.sh` and
+/// `unit-ensure.sh`) calls [`tail_refusals`] and [`discover`]/[`load`] directly as a library
+/// instead of spawning this binary.
 fn cmd_path_tail() -> ExitCode {
     let tail = match env::var("SPIRA_PATH") {
         Ok(v) if !v.trim().is_empty() => v,

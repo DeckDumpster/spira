@@ -1,0 +1,14 @@
+TYPE=u32
+GROUP=loom
+DOC=The deadline on ONE `bd` query behind that endpoint, in milliseconds. A query per
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The deadline on ONE `bd` query behind that endpoint, in milliseconds. A query per
+    # request is the simple choice and it is the right one only while it stays cheap; this is
+    # the number that says when it has stopped being. Over it the request is refused rather
+    # than served late, because a refusal that quietly degrades to stale data is a signal
+    # nobody ever sees. The shipped value is a measured p95 INSIDE the CPUQuota=20% fence
+    # the unit sets — an unfenced calibration is not a calibration. If you change CPUQuota,
+    # re-measure and update this number to match; 500ms was the original unfenced p95 and it
+    # broke every request once the fence landed.
+    : "${SPIRA_LOOM_BUDGET_MS:=1500}"
+SPIRA_CONF_DEFAULT_EOF
