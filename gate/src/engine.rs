@@ -1052,8 +1052,22 @@ impl<'w, W: World> Trial<'w, W> {
                     "gate: {name}'s own gate fails against {base} — this branch did not cause it.\ngate: command: {cmd}\ngate: red on {base}: {reds}\n--- {base}'s own output ---\n{}\n--- this branch's output ---\n{}\ngate: fix the repository, or clear that command from {map}.",
                     parse::tail_bytes(&base_out, 8000), parse::tail_bytes(&out, 4000)))
             }
-            Attribution::BaseUntestable => v(NOVERDICT, "base-untestable", format!(
-                "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: and the same command could not be tried against {base}, so whose fault this is\ngate: cannot be established — refusing to charge it to the branch on a guess.")),
+            Attribution::BaseUntestable => {
+                // sp-e5v53-2: name exactly why, from whatever the base side actually
+                // produced — the fences' own failure when base_ran never became true at
+                // all, or the targeted rerun's own fault output (a testenv VERDICT FAULT,
+                // its stderr) when it ran but could not judge. An attempt that produced
+                // nothing at all is said as that, never silently as "cannot be established"
+                // alone — a reader should never have to go read gate.log's phases to learn
+                // whether the base was tried.
+                let why = if base_out.trim().is_empty() {
+                    "gate: the base side produced no output at all — see gate.log's phases for whether it ran.".to_string()
+                } else {
+                    format!("--- {base}'s own attempt ---\n{}", parse::tail_bytes(&base_out, 4000))
+                };
+                v(NOVERDICT, "base-untestable", format!(
+                    "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: and the same command could not be tried against {base}, so whose fault this is\ngate: cannot be established — refusing to charge it to the branch on a guess.\n{why}"))
+            }
         }
     }
 
@@ -1444,8 +1458,21 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
     // against such a tree exited 127 near-instantly, mapped to NO_VERDICT base-untestable
     // — invisible while this path was rare, then most of every red gate once sp-kqger
     // made it the primary one.
+    //
+    // `"$SPIRA_GATE_REPO"` (sp-e5v53-2 fix): the repository gate string always passes
+    // testenv its repo as a second positional argument; this call never did, since sp-hh5h0.
+    // Without it, `resolve_repo` falls back to `$SPIRA_REPO` (never set in the gate
+    // command's `env -i` environment — DESIGN.md "The gate command's environment") or the
+    // harness root, whose basename rarely matches a configured repo, so `landref` finds no
+    // `base` column for it and the whole call faults `VERDICT FAULT rc=2 reason=base-ref`
+    // before a single suite runs — mapped by the case clause below to NO_VERDICT, so
+    // `base_out` never gains the suite's line at all: `BaseUntestable`, indistinguishable
+    // from a rerun that genuinely could not judge. Scar: concierge/sp-g3uwp (red on
+    // test-persona-model.sh) and sp-ooh1k (red on test-install-dolt-*), both after sp-e5v53
+    // had already fixed the bare-`testenv`-name defect — a second, independent omission in
+    // the same pre-existing call.
     format!(
-        "{BASE_RERUN_MARK}_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
+        "{BASE_RERUN_MARK}_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         list.join(",")
     )
 }

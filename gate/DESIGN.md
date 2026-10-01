@@ -963,6 +963,35 @@ scope ending where the destructuring does; a value needed later must be re-deriv
 `Option` it was matched out of (`.as_ref()`, not by value) rather than assumed to still be
 in reach.
 
+### Scar: the rerun never named the repo, so testenv could not resolve its base ref
+
+Found 2026-10-01, hours after the scar above landed: concierge/sp-g3uwp (red on
+`test-persona-model.sh`) and sp-ooh1k (red on `test-install-dolt-*`) both still ended
+`base-untestable` — but `gate.log`'s own `phases=` named a real `base-rerun` wall time (13,
+25, 26 s — not the earlier scar's instant 0-1 s), so the rerun was genuinely attempted this
+time, not skipped. A fault that reaches the rerun, reproduced directly: `testenv --suites
+<suite> <rev>`, no repo argument, no `$SPIRA_REPO` in the environment (never set in the gate
+command's `env -i` — "The gate command's environment" above), faults `VERDICT FAULT rc=2
+reason=base-ref`, "batch: cannot resolve the base ref" — `resolve_repo` falls back to the
+harness root, whose basename matches no configured repository, so `landref` finds no `base`
+column for it. `base_rerun_cmd` has never passed the repo as a second argument, since
+sp-hh5h0 — unlike the repository's own gate string, which always does
+(`"$SPIRA_TESTENV_BIN" --deadline … --suites … "$SPIRA_GATE_BRANCH" "$SPIRA_GATE_REPO"`,
+`gate.steps`). A second, independent omission in the same pre-existing call the first scar
+also lived in — invisible for the same reason: rare before this bead made the rerun the
+primary path, each omission its own failure mode once it was.
+
+**Fix:** `base_rerun_cmd` names `"$SPIRA_GATE_REPO"` as well, in the same position the real
+gate string puts it.
+
+**Also fixed in the same pass: the verdict said nothing about why.** `Attribution::
+BaseUntestable`'s message never included `base_out` at all — a fault that reached the rerun
+(or the base's own fences) left a diagnosis sitting unused in a variable the message simply
+didn't read. It now does: a tail of `base_out` when the base side produced anything, naming
+this exact fault (or whichever one happens next); an explicit "produced no output at all"
+only when it is true. A reader should never have to go read `gate.log`'s phases to learn
+whether the base was even tried.
+
 ## Admission: visible, logged, re-read (sp-q20wb)
 
 Seen 2026-09-30 ~19:05Z: two Concierge landing gates sat 20 minutes behind
