@@ -123,7 +123,7 @@ fn ports(db: String, bd_bin: String, home: String) -> (RealBd, RealGh, RealGit, 
     let mail_bin = env_nonempty("SPIRA_MAIL_BIN").unwrap_or_else(|| "mail".to_string());
     (
         RealBd { bd_bin, db },
-        RealGh { ghq_bin: "ghq".to_string() },
+        RealGh { bdq_bin: "bdq".to_string() },
         RealGit,
         RealRepo { spira_home: home },
         RealMail { mail_bin },

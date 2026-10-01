@@ -88,9 +88,10 @@ pub trait Mail {
     fn send_question(&self, from: &str, subject: &str, default: &str, body: &[u8]) -> Result<(), String>;
 }
 
-/// `ghq` (bead::bdq's `__ghq` subcommand — `timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}"
-/// "$@"`), the one door onto the `gh` CLI every family already shells through. gh-intake's
-/// closeout side (sp-j3fim) is the first caller inside this crate; ingest stays HTTP-only.
+/// lib.sh's `ghq` (`ghq() { command bdq __ghq "$@"; }` — never its own binary): `bdq
+/// __ghq <args>`, which execs `timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"`, the
+/// one door onto the `gh` CLI every family already shells through. gh-intake's closeout
+/// side (sp-j3fim) is the first caller inside this crate; ingest stays HTTP-only.
 pub trait Gh {
     /// `ghq issue view <n> --repo <repo> --json state -q .state`, trimmed. Empty string on
     /// any failure to invoke, a non-zero exit, or empty output — the same `|| _st=""` the

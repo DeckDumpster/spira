@@ -190,9 +190,10 @@ gh-intake backfill [--dry-run]                   replaces spira/gh-issue-backfil
 
 ### 7.3 Ports added (`ports.rs`)
 
-`Gh` (shells to `ghq` — bead::bdq's own `__ghq`, `timeout "${GH_TIMEOUT:-120}"
-"${SPIRA_GH:-gh}" "$@"` — never the `gh` binary directly) and `Git` (plain `git -C`,
-read-only). `Bd` gained `show_json`/`list_by_label`/`dep_remove`/`dep_relate`; `Mail`
+`Gh` (execs `bdq __ghq <args>` — lib.sh's `ghq() { command bdq __ghq "$@"; }` was never
+its own binary, so this is the same `bdq` subcommand every bash family already shells
+through: `timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"`, never the `gh` binary
+directly) and `Git` (plain `git -C`, read-only). `Bd` gained `show_json`/`list_by_label`/`dep_remove`/`dep_relate`; `Mail`
 gained `send_question`. `$SPIRA_RUN`'s own state (`gh-closed/<id>` markers, the
 `landstate/<id>` read, the `gh-wait-log/<id>` throttle) is plain `std::fs` inside
 `closeout.rs`, not behind a port — the same choice `landing-pass/src/landstate.rs` made,

@@ -244,15 +244,27 @@ impl Mail for RealMail {
     }
 }
 
-/// `ghq` (bead::bdq's `__ghq`), called by bare name on the launcher PATH — the same
-/// binary every bash family already shells into for `gh` access (sp-j3fim).
+/// `ghq` is NOT its own binary — lib.sh's shim is `ghq() { command bdq __ghq "$@"; }`,
+/// and that shim was never ported to a standalone executable (bead/src/bin/bdq.rs's
+/// `cmd_ghq` is reached only through `bdq __ghq ...`). This execs `bdq` with that
+/// internal subcommand prepended, by bare name on the launcher PATH, the same door every
+/// bash family already shells through for `gh` access (sp-j3fim).
 pub struct RealGh {
-    pub ghq_bin: String,
+    pub bdq_bin: String,
+}
+
+impl RealGh {
+    fn cmd(&self) -> Command {
+        let mut c = Command::new(&self.bdq_bin);
+        c.arg("__ghq");
+        c
+    }
 }
 
 impl Gh for RealGh {
     fn issue_state(&self, repo: &str, issue_n: &str) -> String {
-        let out = Command::new(&self.ghq_bin)
+        let out = self
+            .cmd()
             .args(["issue", "view", issue_n, "--repo", repo, "--json", "state", "-q", ".state"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -263,7 +275,8 @@ impl Gh for RealGh {
         }
     }
     fn issue_comment(&self, repo: &str, issue_n: &str, body: &str) -> bool {
-        let status = Command::new(&self.ghq_bin)
+        let status = self
+            .cmd()
             .args(["issue", "comment", issue_n, "--repo", repo, "--body", body])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -272,7 +285,8 @@ impl Gh for RealGh {
         matches!(status, Ok(s) if s.success())
     }
     fn issue_close(&self, repo: &str, issue_n: &str) -> bool {
-        let status = Command::new(&self.ghq_bin)
+        let status = self
+            .cmd()
             .args(["issue", "close", issue_n, "--repo", repo])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
