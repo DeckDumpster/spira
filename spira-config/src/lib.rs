@@ -20,9 +20,13 @@ use serde::{Deserialize, Serialize};
 
 pub mod admission;
 pub mod build;
+pub mod containment;
 pub mod convert;
+pub mod eval;
 pub mod legacy_map;
 pub mod locate;
+pub mod registry;
+pub mod resolve;
 
 pub use locate::LocateOutcome;
 
@@ -1068,18 +1072,22 @@ pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
     }
 }
 
-/// Renders `[spira]` as quoted `KEY=value` lines — `spira-config export --sh` — for the
-/// bash callers this schema has not replaced yet. Only scalar and list fields have a bash
-/// shape; tables (`repo`, `persona`) are not exported.
-pub fn export_sh(doc: &SpiraToml) -> String {
+/// `[spira]`'s scalar/list fields as `UPPER_KEY -> value` — the one place a toml field name
+/// becomes the `SPIRA_*`/`COCKPIT_*` key spelling, shared by [`export_sh`] (bash-facing) and
+/// [`resolve::resolve`] (in-process: this IS the "config file" tier of its env > toml >
+/// derived precedence). A `None` field serialises to JSON `null` and is skipped — so a key
+/// present here means the toml document set it, even to an explicit empty string, which is
+/// exactly the "is this key spoken for" test `resolve` needs to tell apart from "unset,
+/// consult the derived default".
+pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
+    let mut out = BTreeMap::new();
     let Some(spira) = &doc.spira else {
-        return String::new();
+        return out;
     };
     let value = serde_json::to_value(spira).unwrap_or(serde_json::Value::Null);
     let serde_json::Value::Object(map) = value else {
-        return String::new();
+        return out;
     };
-    let mut out = String::new();
     for (key, val) in map {
         let shell_val = match val {
             serde_json::Value::Null => continue,
@@ -1102,15 +1110,26 @@ pub fn export_sh(doc: &SpiraToml) -> String {
             }
             serde_json::Value::Object(_) => continue,
         };
-        out.push_str(&key.to_uppercase());
+        out.insert(key.to_uppercase(), shell_val);
+    }
+    out
+}
+
+/// Renders `[spira]` as quoted `KEY=value` lines — `spira-config export --sh` — for the
+/// bash callers this schema has not replaced yet. Only scalar and list fields have a bash
+/// shape; tables (`repo`, `persona`) are not exported.
+pub fn export_sh(doc: &SpiraToml) -> String {
+    let mut out = String::new();
+    for (key, val) in spira_string_map(doc) {
+        out.push_str(&key);
         out.push('=');
-        out.push_str(&shell_quote(&shell_val));
+        out.push_str(&shell_quote(&val));
         out.push('\n');
     }
     out
 }
 
-fn shell_quote(s: &str) -> String {
+pub(crate) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
