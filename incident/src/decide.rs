@@ -190,19 +190,19 @@ pub fn unit_from_cgroup_line(line: &str) -> String {
 /// This crate's `real.rs` shells to `bd` directly, so calling `bd create` without
 /// reimplementing these three checks here would be a real regression, not a
 /// simplification: an invalid `repo:` label, a harness-halting phrase, or a
-/// schema_migrations DELETE that `bdq` refuses today would go through silently. They are
-/// small, self-contained and change rarely, so porting them costs little and keeps parity;
-/// lib.sh's own rewrite wave can delete these three functions here once bdq's fences move
-/// to a shared crate this one can depend on instead.
+/// schema_migrations DELETE that `bdq` refuses today would go through silently.
+///
+/// COLLAPSED ONTO `bead::bdq` (sp-pwmlj, wave 4.15): the matching rules themselves —
+/// which repo values are allowed, which phrases count as destructive, what counts as a
+/// schema-migrations DELETE — now live in exactly one place (`bead::bdq`), shared with
+/// `bdq`'s own argv-parsing fences, rather than in a second hand-rolled copy here that could
+/// (and did: see `destructive_phrase` below) drift from it.
 pub fn invalid_repo_label(labels: &str, home_repo: &str, known_repos: &[String]) -> Option<String> {
-    let repo_val = labels
-        .split(',')
-        .find_map(|l| l.strip_prefix("repo:"))
-        .map(str::to_string)?;
-    if repo_val == home_repo || known_repos.iter().any(|r| r == &repo_val) {
+    let repo_val = labels.split(',').find_map(|l| l.strip_prefix("repo:"))?;
+    if bead::bdq::repo_label_allowed(repo_val, home_repo, known_repos) {
         None
     } else {
-        Some(repo_val)
+        Some(repo_val.to_string())
     }
 }
 
@@ -210,46 +210,36 @@ pub fn invalid_repo_label(labels: &str, home_repo: &str, known_repos: &[String])
 /// harness-halting phrases is refused unless `needs-ryan` (or whatever `ask_label` is
 /// configured to) is already on the bead — the label that records the danger was
 /// acknowledged at filing time (sp-6hdi). Case-insensitive. Returns the matched phrase.
+///
+/// Matching delegated to `bead::bdq::destructive_match` (sp-pwmlj): this function's own
+/// plain-substring patterns disagreed with `bdq`'s real (regex) fence in two ways, both
+/// fixed by sharing the one pattern table instead of a second copy of it — a bug each time,
+/// not a feature, since `bdq`'s suites are the parity contract this crate's own doc comment
+/// above claims to keep:
+///   - `\bdaemon-reload\b` is word-bounded in the real fence; the plain `contains("daemon-
+///     reload")` this function used to run was not, so "mydaemon-reloaded" (an ordinary
+///     word, not the destructive op) would have been refused here and allowed by `bdq`.
+///   - the real fence's patterns tolerate any run of whitespace (`world\.sh +stop`); the
+///     plain substring checks this function used to run required exactly one space, so
+///     "world.sh  stop" (two spaces) would have been missed here and caught by `bdq`.
 pub fn destructive_phrase(title: &str, description: &str, labels: &str, ask_label: &str) -> Option<String> {
     if labels.split(',').any(|l| l == ask_label) {
         return None;
     }
-    let text = format!("{title} {description}").to_lowercase();
-    const PATTERNS: &[&str] = &[
-        "world.sh stop",
-        "spira-world down",
-        "systemd/install.sh",
-        "daemon-reload",
-        "schema migrat",
-        "world stopped",
-    ];
-    for p in PATTERNS {
-        if text.contains(p) {
-            return Some((*p).to_string());
-        }
+    let text = format!("{title} {description}");
+    if text == " " {
+        return None;
     }
-    // "systemctl (stop|restart) spira-" — the one pattern with an alternation.
-    for verb in ["stop", "restart"] {
-        let needle = format!("systemctl {verb} spira-");
-        if text.contains(&needle) {
-            return Some(needle);
-        }
-    }
-    None
+    bead::bdq::destructive_match(&text)
 }
 
 /// `_bdq_check_schema_delete`: refused regardless of `needs-ryan` — approved three times
-/// while still wrong (sp-1khst).
+/// while still wrong (sp-1khst). Matching delegated to `bead::bdq::schema_delete_match`
+/// (sp-pwmlj) — this one already agreed with the real fence (both tolerate arbitrary
+/// whitespace between the three words), so the collapse is pure deduplication here, not a
+/// bug fix.
 pub fn contains_schema_delete(title: &str, description: &str) -> bool {
-    let text = format!("{title} {description}").to_lowercase();
-    let words: Vec<&str> = text.split_whitespace().collect();
-    for i in 0..words.len() {
-        if words[i] == "delete" && words.get(i + 1) == Some(&"from") && words.get(i + 2) == Some(&"schema_migrations")
-        {
-            return true;
-        }
-    }
-    false
+    bead::bdq::schema_delete_match(&format!("{title} {description}"))
 }
 
 #[cfg(test)]
@@ -428,6 +418,14 @@ mod tests {
         assert_eq!(invalid_repo_label("plan,repo:nope", "spira", &known), Some("nope".to_string()));
     }
 
+    // Pins the sp-pwmlj collapse: before it, a bare "repo:" (empty value) was refused here
+    // but allowed by `bdq`'s real fence (`repo_val.is_empty()` short-circuits there).
+    #[test]
+    fn invalid_repo_label_empty_value_is_allowed_same_as_bdq() {
+        let known = vec!["spira".to_string()];
+        assert_eq!(invalid_repo_label("plan,repo:", "spira", &known), None);
+    }
+
     #[test]
     fn destructive_phrase_matches_and_is_bypassed_by_ask_label() {
         // literal-ok: test fixture values (the ask-label argument under test), not a
@@ -439,6 +437,20 @@ mod tests {
             Some("systemctl restart spira-".to_string())
         );
         assert_eq!(destructive_phrase("ordinary title", "ordinary body", "plan", "needs-ryan"), None); // literal-ok
+    }
+
+    // Pins the sp-pwmlj collapse: before it, this function's own plain-substring patterns
+    // disagreed with `bdq`'s real (regex) fence on both of these — see the doc comment.
+    #[test]
+    fn destructive_phrase_agrees_with_bdq_on_word_boundary_and_whitespace() {
+        // word-bounded: an ordinary word containing the substring is not a match.
+        assert_eq!(destructive_phrase("mydaemon-reloaded", "", "plan", "needs-ryan"), None); // literal-ok
+        assert!(destructive_phrase("run daemon-reload now", "", "plan", "needs-ryan").is_some()); // literal-ok
+        // whitespace-flexible: two spaces must still match, same as the real fence.
+        assert_eq!(
+            destructive_phrase("world.sh  stop", "", "plan", "needs-ryan"), // literal-ok
+            Some("world.sh  stop".to_string())
+        );
     }
 
     #[test]

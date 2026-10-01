@@ -50,7 +50,9 @@ impl Bd for BdCli<'_> {
                 stdin: None,
                 timeout: Some(Duration::from_secs(self.timeout_s.max(1))),
             });
-            if last.code == 0 || t >= tries || !last.stderr.contains("invalid connection") {
+            // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the retry
+            // decision bdq's own binary makes, rather than a second copy of it here.
+            if !bead::bdq::should_retry(last.code, t, tries, last.stderr.contains("invalid connection")) {
                 break;
             }
         }
