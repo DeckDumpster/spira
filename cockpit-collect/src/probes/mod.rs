@@ -488,7 +488,9 @@ pub fn slots_keys() -> Kv {
     let live = io::lib_call(&home, "aeons_live_total", &[]).unwrap_or_else(|| "?".to_string());
     push(&mut out, "SP_SLOTS_LIVE", live);
 
-    let pool: i64 = std::env::var("SPIRA_MAX_AEONS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    // SPIRA_MAX_AEONS is never set into this process's own environment (io::NEVER_EXPORTED)
+    // — read io::max_aeons() instead of std::env::var directly.
+    let pool: i64 = io::max_aeons().parse().ok().unwrap_or(0);
     let lane_fayths = io::lib_call(&home, "spira_lane_fayths", &[]).unwrap_or_default();
     let mut lt = 0i64;
     for f in lane_fayths.split_whitespace() {

@@ -29,6 +29,51 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+/// `std::env::var`, trimmed to "set and non-empty" — no `spira_config` fallback. Used only
+/// inside [`resolved_config`]'s own init, which must not call back into [`env`] (that
+/// would recurse into `resolved_config()` while it is still being built).
+fn raw_env(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.is_empty())
+}
+
+/// `$SPIRA_HOME`, else `<release>/spira` derived from this binary's own install location
+/// (`<release>/bin/spira-supervise`) — mirroring every other rewritten tool with no unit
+/// of its own setting `SPIRA_HOME` directly (cockpit-collect's `home_dir`).
+fn spira_home_dir() -> PathBuf {
+    if let Some(h) = raw_env("SPIRA_HOME") {
+        return PathBuf::from(h);
+    }
+    env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().and_then(|d| d.parent()).map(|r| r.join("spira")))
+        .unwrap_or_else(|| PathBuf::from("spira"))
+}
+
+/// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read
+/// SPIRA_SNAP_STALE_S straight out of its own process environment, with no snapshot and
+/// no config document load at all (wave4-decomposition.md row (b) names supervise by file).
+/// Resolved once, lazily, and cached: `spira_config::resolve_for_process`. A resolution
+/// failure yields an empty [`spira_config::resolve::Resolved`] — [`env`]'s own callers
+/// see exactly the behaviour this crate had before this bead, never a panic.
+fn resolved_config() -> &'static spira_config::resolve::Resolved {
+    static RESOLVED: std::sync::OnceLock<spira_config::resolve::Resolved> = std::sync::OnceLock::new();
+    RESOLVED.get_or_init(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        let home = spira_home_dir();
+        let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
+        spira_config::resolve::resolve_for_process(&home, &repo, &env_map).unwrap_or_default()
+    })
+}
+
+/// The environment, then `spira_config::resolve()`'s in-process answer — never the
+/// reverse, so an explicit env override still wins exactly as it did before this bead.
+fn env(name: &str) -> Option<String> {
+    raw_env(name).or_else(|| {
+        let v = resolved_config().get(name);
+        (!v.is_empty()).then(|| v.to_string())
+    })
+}
+
 static SIGTERM_RECEIVED: AtomicBool = AtomicBool::new(false);
 // Stores the child PID so the signal handler can forward SIGTERM immediately.
 static CHILD_PID: AtomicI32 = AtomicI32::new(-1);
@@ -122,6 +167,33 @@ mod tests {
         assert!(age < 5, "age was {age}s");
         let _ = fs::remove_file(&p);
     }
+
+    /// Wave 4.8: `env` now falls back to `spira_config::resolve()` between the raw
+    /// environment and the caller's own default. This is the ONLY test in this binary
+    /// that calls `env`/`resolved_config` — the `OnceLock` inside `resolved_config`
+    /// computes once per process and never resets. SPIRA_HOME points at a throwaway
+    /// fixture with its own `conf.d` (never the real box's).
+    #[test]
+    fn env_falls_back_to_the_registry_then_the_callers_default() {
+        let dir = testkit::TempDir::new("supervise-env");
+        let home = dir.join("spira");
+        fs::create_dir_all(home.join("conf.d")).unwrap();
+        fs::write(
+            home.join("conf.d/SPIRA_SNAP_STALE_S"),
+            "TYPE=u32\nGROUP=cockpit\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_SNAP_STALE_S:=60}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        env::set_var("SPIRA_HOME", &home);
+        env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        env::remove_var("SPIRA_SNAP_STALE_S");
+
+        assert_eq!(env("SPIRA_SNAP_STALE_S"), Some("60".to_string()), "a registry default must reach env() without an env override");
+        assert_eq!(env("SPIRA_NO_SUCH_KEY_AT_ALL_EVER"), None);
+
+        env::set_var("SPIRA_SNAP_STALE_S", "99");
+        assert_eq!(env("SPIRA_SNAP_STALE_S"), Some("99".to_string()), "an explicit env override still wins over the registry");
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 fn main() -> ExitCode {
@@ -139,8 +211,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let stale_secs: u64 = env::var("SPIRA_SNAP_STALE_S")
-        .ok()
+    let stale_secs: u64 = env("SPIRA_SNAP_STALE_S")
         .and_then(|s| s.parse().ok())
         .unwrap_or(60);
 

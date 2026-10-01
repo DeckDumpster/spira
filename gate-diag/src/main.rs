@@ -77,8 +77,8 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
     }
 
     let in_gha = world.github_actions();
-    let tail_n = world.batch_tail_lines();
-    let default_timeout = world.suite_timeout_default();
+    let tail_n = world.batch_tail_lines(home);
+    let default_timeout = world.suite_timeout_default(home);
 
     let mut red_list: Vec<String> = Vec::new();
     let mut flaky_list: Vec<String> = Vec::new();

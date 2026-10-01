@@ -12,7 +12,7 @@ use auron::fallback;
 use auron::gather::{self, Journal, RealJournal, RealSystemctl, Systemctl};
 use auron::heartbeat::{self, Heartbeat};
 use auron::reconcile::{self, Trigger};
-use auron::seam::{self, BashSeam};
+use auron::seam::BashSeam;
 use auron::state::State;
 use auron::util::{self, Sink, StdSink};
 
@@ -71,26 +71,45 @@ fn main() {
     seam_env.insert("BD_TIMEOUT".to_string(), bd_timeout.to_string());
 
     let seam = BashSeam { lib: home.join("lib.sh"), env: &seam_env };
-    let snap = match seam::snapshot(&seam) {
-        Ok(s) => s,
-        Err(o) => {
-            eprintln!("auron: could not resolve conf.sh: {}", o.first_err_line());
+
+    // Wave 4.8 ("retire conf re-import seams in Rust"): `_auron_snapshot` used to be
+    // `env -0` alone, which misses every SPIRA_* key conf.sh/lib.sh set but did not
+    // export — SPIRA_REPO chief among them, so `repo` below was ALWAYS "" and the
+    // mirror_path default silently became the filesystem-root-relative
+    // "/raw/spira-beads/spira.jsonl" instead of "<repo>/raw/spira-beads/spira.jsonl"
+    // (wave4-decomposition.md row (b): "unverified; check" — confirmed live on this box,
+    // no SPIRA_AURON_MIRROR override in force). SPIRA_AURON_RESTARTS/_WINDOW are conf
+    // keys too, but were read from the raw environment below (bypassing `snap`
+    // entirely), so a toml override of either was silently ignored — the same row's
+    // other named hazard. `_auron_snapshot`/`seam::snapshot` had exactly this one
+    // caller, so it is retired outright rather than ported: `derive_home_repo` plus
+    // `resolve_for_process`, in-process, replace both the seam call and the bug.
+    let repo_path = spira_config::resolve::derive_home_repo(&home, &original);
+    let resolved = match spira_config::resolve::resolve_for_process(&home, &repo_path, &original) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("auron: could not resolve config: {e}");
             std::process::exit(1);
         }
     };
+    let rget = |k: &str, d: &str| {
+        let v = resolved.get(k);
+        if v.is_empty() { d.to_string() } else { v.to_string() }
+    };
+    let rnum = |k: &str, d: i64| resolved.get(k).trim().parse().unwrap_or(d);
 
     let now = util::now_epoch();
     let sink = StdSink;
 
     // ---- config, exactly auron.sh's own env reads (SPIRA_AURON_* from the raw
-    // environment — auron-specific, no conf.sh key; everything else from the snapshot) ---
-    let run_dir = PathBuf::from(env_or(&snap, "SPIRA_RUN", "/run/spira"));
-    let db = env_or(&snap, "SPIRA_DB", "");
-    let repo = env_or(&snap, "SPIRA_REPO", "");
-    let exporter = env_or(&snap, "SPIRA_EXPORTER", "");
+    // environment — auron-specific, no conf.sh key; everything else resolved in-process) ---
+    let run_dir = PathBuf::from(rget("SPIRA_RUN", "/run/spira"));
+    let db = rget("SPIRA_DB", "");
+    let repo = repo_path.to_string_lossy().into_owned();
+    let exporter = rget("SPIRA_EXPORTER", "");
     let systemctl_bin = env_or(&original, "SPIRA_SYSTEMCTL", "systemctl");
-    let instance = env_or(&snap, "SPIRA_INSTANCE", "");
-    let tz = env_or(&original, "SPIRA_TZ", "UTC");
+    let instance = rget("SPIRA_INSTANCE", "");
+    let tz = rget("SPIRA_TZ", "UTC");
 
     let state_path = run_dir.join("auron.state");
     let status_path = run_dir.join("auron.status");
@@ -102,8 +121,8 @@ fn main() {
     let confirm = env_n(&original, "SPIRA_AURON_CONFIRM", 2);
     let clear_n = env_n(&original, "SPIRA_AURON_CLEAR", 2);
     let refresh = env_n(&original, "SPIRA_AURON_REFRESH", 3600);
-    let restarts_threshold = env_n(&original, "SPIRA_AURON_RESTARTS", 5);
-    let restart_window = env_n(&original, "SPIRA_AURON_RESTART_WINDOW", 3600);
+    let restarts_threshold = rnum("SPIRA_AURON_RESTARTS", 5);
+    let restart_window = rnum("SPIRA_AURON_RESTART_WINDOW", 3600);
     let drain_ttl = env_n(&original, "SPIRA_DRAIN_TTL", 1800);
     let thresholds = Thresholds {
         pass_stale: env_n(&original, "SPIRA_AURON_PASS_STALE", 600),

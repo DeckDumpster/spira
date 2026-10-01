@@ -22,17 +22,21 @@ pub fn script(body: &str) -> String {
 /// S0 — the context probe. Read-only: the environment conf.sh resolved, the fixed list of
 /// lib.sh variables the binary needs, the roster, and (audit) the repositories. lib.sh's
 /// own chatter goes to stderr so stdout stays the NUL-separated record stream.
+///
+/// UNTIL WAVE 4.8 this `@vars` section was `for _v in $(compgen -v SPIRA_); do ...`: every
+/// SPIRA_* shell variable, exported or not (conf.sh/lib.sh set many without exporting them
+/// — SPIRA_REPO, SPIRA_HOME, SPIRA_GH, the CPU quota — and `env -0` above sees only
+/// exported ones). That compgen dump is RETIRED (wave4-decomposition.md row (b),
+/// "sentinel PROBE @vars"): `crate::probe` (main.rs) now merges `spira_config::resolve()`'s
+/// own in-process answer into the parsed `Context.vars` after this script returns, instead
+/// of re-deriving the same values by shelling out a second time. `@vars` stays a section
+/// header (now carrying only `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE`, still lib.sh's
+/// own, not conf.sh's) rather than disappearing outright, so `Context::parse` and every
+/// existing fixture that names the section order keep working unchanged.
 pub const PROBE: &str = r#"set -uo pipefail
 . "$SENTINEL_LIB" >&2 || exit 97
 env -0
 printf '@vars\0'
-# EVERY SPIRA_* SHELL VARIABLE, EXPORTED OR NOT. conf.sh and lib.sh set many keys without
-# exporting them (SPIRA_REPO, SPIRA_HOME, SPIRA_GH, the CPU quota…),
-# and `env -0` above sees only exported ones — so a fixed list here silently dropped them and
-# the binary fell back to defaults.
-for _v in $(compgen -v SPIRA_); do
-    printf '%s=%s\0' "$_v" "${!_v:-}"
-done
 printf 'SPIRA_HOME_REPO_RESOLVED=%s\0' "$(spira_home_repo)"
 printf 'SPIRA_TOML_FILE=%s\0' "${SPIRA_TOML_FILE:-}"
 printf '@fayths\0'
@@ -112,10 +116,15 @@ mod tests {
         assert!(PROBE.contains("printf '@end\\0'"));
     }
 
-    /// The probe reports SPIRA_* variables lib.sh SETS BUT DOES NOT EXPORT: `env -0` alone
-    /// dropped SPIRA_REPO and SPIRA_GH, and the binary fell back to defaults.
+    /// Wave 4.8 retired the `compgen -v SPIRA_` dump: `@vars` now carries only
+    /// `SPIRA_HOME_REPO_RESOLVED`/`SPIRA_TOML_FILE` from the script itself —
+    /// `crate::probe` (main.rs) merges `spira_config::resolve()`'s own answer into
+    /// `Context.vars` afterward, in-process, rather than this script re-deriving it a
+    /// second time by shelling out. See `main.rs`'s own
+    /// `probe_merges_resolved_config_into_vars_without_shelling_a_second_time` for that
+    /// merge's own test.
     #[test]
-    fn probe_reports_unexported_spira_variables() {
+    fn vars_section_no_longer_dumps_the_whole_shell() {
         let d = testkit::TempDir::new("sentinel-probe");
         std::fs::write(
             d.join("lib.sh"),
@@ -131,8 +140,9 @@ mod tests {
             .unwrap();
         let out = String::from_utf8_lossy(&o.stdout);
         let vars = out.split("@vars\0").nth(1).unwrap_or("");
-        assert!(vars.contains("SPIRA_REPO=/the/repo\0"), "{out:?}");
-        assert!(vars.contains("SPIRA_GH=/the/gh-app.sh\0"), "{out:?}");
+        assert!(vars.starts_with("SPIRA_HOME_REPO_RESOLVED=spira\0SPIRA_TOML_FILE="), "{out:?}");
+        assert!(!vars.contains("SPIRA_REPO=/the/repo\0"), "the bash dump must no longer carry conf vars: {out:?}");
+        assert!(!vars.contains("SPIRA_GH=/the/gh-app.sh\0"), "{out:?}");
         let _ = std::fs::remove_dir_all(&d);
     }
 }

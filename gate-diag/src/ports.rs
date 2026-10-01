@@ -36,8 +36,8 @@ pub trait World {
 
     fn github_actions(&self) -> bool;
     fn step_summary_path(&self) -> Option<PathBuf>;
-    fn batch_tail_lines(&self) -> usize;
-    fn suite_timeout_default(&self) -> u64;
+    fn batch_tail_lines(&self, home: &Path) -> usize;
+    fn suite_timeout_default(&self, home: &Path) -> u64;
 
     fn print(&self, s: &str);
 }
