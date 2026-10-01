@@ -591,6 +591,13 @@ impl Drop for RefillOnDrop<'_> {
 
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let s = settings(deps);
+    // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
+    // name before any work starts — it is never silently folded into "unset" (the
+    // scheduler's own bounded default) or, worse, read as "unlimited".
+    if let Some(reason) = &s.maxpar_refusal {
+        stderr(&format!("batch: {reason}"));
+        return Finish::fault(2, "maxpar-refused", 0);
+    }
     let t_batch = Instant::now();
     // D9: under --deadline the budget is the whole trial's; setup gets its share of it.
     // Cells: time spent waiting for an admission slot moves both later (sp-f4ig1,
@@ -1395,18 +1402,20 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         Mode::Parallel => schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text)),
         Mode::Serial => jobs,
     };
-    match (args.mode, mx.value) {
-        (Mode::Parallel, 0) => deps.log(&format!("running {} suite(s) in {} (mode: parallel, maxpar: unlimited)", jobs.len(), session.name)),
-        (Mode::Parallel, v) => deps.log(&format!(
-            "running {} suite(s) in {} (mode: parallel, maxpar: {v} [{}-bound: cpu={} ceiling={} hardware={}])",
+    match args.mode {
+        // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
+        // longer a value `mx.value` ever carries (0 refuses before this point is reached).
+        Mode::Parallel => deps.log(&format!(
+            "running {} suite(s) in {} (mode: parallel, maxpar: {} [{}-bound: cpu={} ceiling={} hardware={}])",
             jobs.len(),
             session.name,
+            mx.value,
             mx.binding.as_str(),
             util::nproc(),
             mx.cpu_ceiling,
             mx.hardware
         )),
-        (Mode::Serial, _) => deps.log(&format!("running {} suite(s) in {} (mode: serial, nproc: {})", jobs.len(), session.name, util::nproc())),
+        Mode::Serial => deps.log(&format!("running {} suite(s) in {} (mode: serial, nproc: {})", jobs.len(), session.name, util::nproc())),
     }
 
     let host = util::hostname();
