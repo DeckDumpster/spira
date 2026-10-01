@@ -183,10 +183,13 @@ pub trait Scripts {
     fn mail_operator(&self, subject: &str, body: &str);
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;
-    /// `release <args…>` — the release producer, by name on the launcher's PATH, with
-    /// `SPIRA_DB=<db>` in its environment (`release verify`'s pre-activate store check reads
-    /// it). Stdout and stderr are kept apart: `release build` answers the sha on stdout.
-    fn release(&self, args: &[String], db: &str) -> RunOut;
+    /// `<bin> <args…>` — the release producer. `bin` is resolved by the caller
+    /// (`deploy::release_bin`, §8 D14): the round's own `<bins>/release` when it exists,
+    /// never bare `release` from the launcher's PATH while a bin-dir is in play — the
+    /// builder and the build must be the same commit. `SPIRA_DB=<db>` is in its environment
+    /// (`release verify`'s pre-activate store check reads it). Stdout and stderr are kept
+    /// apart: `release build` answers the sha on stdout.
+    fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut;
 }
 
 /// A finished child: its exit status (127 when it could not run), stdout and stderr.

@@ -320,6 +320,11 @@ pub struct SpiraSection {
     pub stack_max_depth: Option<u32>,
     #[serde(default)]
     pub fayths: Vec<String>,
+    /// testenv's own suite concurrency cap (testenv/DESIGN.md §4.3, `schedule::maxpar`).
+    /// Unset derives a quarter of the CPU ceiling, clamped to [2, 16] — never the hardware
+    /// bound. 0 and anything that doesn't parse are refused outright, not read as
+    /// "unlimited" (sp-tj8k3: a batch_maxpar of 0 in production put 61 containers and load
+    /// 90 on one host).
     pub batch_maxpar: Option<u32>,
     pub certify_par: Option<u32>,
     /// Compile admission slots (sp-f4ig1, gate/DESIGN-admission.md §5); unset derives
@@ -626,6 +631,11 @@ pub struct SpiraSection {
     /// No default: absent means the unit is not installed and no build sets
     /// `SCCACHE_WEBDAV_ENDPOINT` — never a guessed or wildcard address.
     pub sccache_dav_addr: Option<String>,
+    /// sp-xjnzl-2: the VM-side `CARGO_HOME` every round-vm round and template build points
+    /// `sccache` at — read once here (never the caller's ambient `CARGO_HOME`,
+    /// `law-a-binary-resolves-the-config-it-reads`) so an operator sets it once in
+    /// `spira.toml` rather than exporting it into every systemd unit that calls `round-vm`.
+    pub round_vm_cache_home: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.

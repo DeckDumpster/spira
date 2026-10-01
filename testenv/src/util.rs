@@ -109,6 +109,30 @@ pub fn hostname() -> String {
         .unwrap_or_else(|| "unknown-host".into())
 }
 
+/// Close every fd ≥ 3 in the child before it execs. This process's OWN fds are already
+/// close-on-exec (Rust's std opens them that way), but a caller's lock fd this process
+/// never opened itself — inherited from a bash caller's `exec 9>…` with no O_CLOEXEC, or
+/// from any process up the chain that spawned this one — carries none of that protection,
+/// and `podman run`'s conmon (or a cargo build's auto-started sccache server) daemonizes
+/// and would hold it forever (sp-ohwg7). `close_range` is the fast path; a kernel too old
+/// for it (< 5.9) falls back to `fcntl(F_SETFD)` per fd. Only async-signal-safe calls run
+/// between fork and exec.
+pub fn close_inherited_fds(cmd: &mut std::process::Command) {
+    use std::os::unix::process::CommandExt;
+    unsafe {
+        cmd.pre_exec(|| {
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+            let r = libc::syscall(libc::SYS_close_range, 3u32, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC);
+            if r != 0 {
+                for fd in 3..4096 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

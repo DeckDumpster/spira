@@ -145,7 +145,7 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_VERDICT_TTL` | 86400 (0 disables) | `spira.verdict_ttl` |
 | `SPIRA_VERDICT_REPEAT_CONSIDERED` | — (≥10 chars to override a cached red) | — |
 | `SPIRA_SUITE_TIMEOUT` | 600 (0 disables) | `spira.suite_timeout` |
-| `SPIRA_BATCH_MAXPAR` | hardware formula (0 = unlimited) | `spira.batch_maxpar` |
+| `SPIRA_BATCH_MAXPAR` | unset: ¼ the CPU ceiling, clamped [2, 16] — never the hardware bound; 0 or unparsable refuses (sp-tj8k3) | `spira.batch_maxpar` |
 | `SPIRA_BATCH_MAXPAR_CEILING` | nproc | `spira.batch_maxpar_ceiling` |
 | `SPIRA_BATCH_MEM_RESERVE_MIB` / `_PER_SUITE_MIB` / `_AVAIL_MIB` | 1024 / 192 / MemAvailable | `spira.batch_mem_*` |
 | `SPIRA_BATCH_PSI_THRESHOLD` | 10 (0 disables) | `spira.batch_psi_threshold` |
@@ -495,9 +495,15 @@ The runtime is a trait (`ContainerRuntime`); the orchestration is unit-tested ag
 
 ### 4.3 Scheduling
 
-* **maxpar** = `min(ceiling, max(1, (avail - reserve) / per_suite))` with
-  `budget = max(avail - reserve, per_suite)`; `SPIRA_BATCH_MAXPAR=0` unlimited; a positive
-  value ≤ the hardware bound is used as an override, a larger one is clamped.
+* **maxpar**: the hardware bound is `min(ceiling, max(1, (avail - reserve) / per_suite))`
+  with `budget = max(avail - reserve, per_suite)`. A positive `SPIRA_BATCH_MAXPAR` ≤ that
+  bound is used as an override; a larger one is clamped to it. **Unset is never the hardware
+  bound** — it defaults to ¼ the CPU ceiling, clamped to [2, 16] (`schedule::maxpar`,
+  sp-tj8k3: an unset key on a wide host, with several concurrent gates and testenv runs each
+  independently claiming the full core count, put 61 containers and load 90 on one box).
+  `SPIRA_BATCH_MAXPAR=0` or anything that fails to parse is refused outright, by name
+  (`maxpar-refused`), before any container work starts — it is never read as "unlimited"
+  and never silently folds into the unset default.
 * **Order**: `# exclusive:` suites first (each drains the pool and runs alone), then
   longest-first by mean `wall_secs` from `suite-timing.jsonl`; a suite with no rows sorts
   as longest-on-record + 1; ties keep selection order.

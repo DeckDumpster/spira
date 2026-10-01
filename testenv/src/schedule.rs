@@ -10,7 +10,9 @@ pub enum Binding {
     Cpu,
     Memory,
     Override,
-    OverrideUnlimited,
+    /// No `requested` value at all: a quarter of the CPU ceiling, clamped to [2, 16] —
+    /// never the hardware bound (sp-tj8k3).
+    Default,
 }
 
 impl Binding {
@@ -19,7 +21,7 @@ impl Binding {
             Binding::Cpu => "cpu",
             Binding::Memory => "memory",
             Binding::Override => "override",
-            Binding::OverrideUnlimited => "override-unlimited",
+            Binding::Default => "default",
         }
     }
 }
@@ -32,13 +34,15 @@ pub struct MaxparInputs {
     pub mem_avail_mib: i64,
     pub mem_reserve_mib: i64,
     pub mem_per_suite_mib: i64,
-    /// SPIRA_BATCH_MAXPAR as given (0 = unlimited; larger than the hardware bound is clamped).
+    /// SPIRA_BATCH_MAXPAR as a positive request, already refused by the settings layer when
+    /// it was given as zero or something unparsable (sp-tj8k3: "unlimited" is no longer a
+    /// value this ever carries) — larger than the hardware bound is clamped; `None` (the key
+    /// was absent) gets the scheduler's own small default, below.
     pub requested: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Maxpar {
-    /// 0 = unlimited.
     pub value: u32,
     pub binding: Binding,
     pub hardware: u32,
@@ -56,9 +60,16 @@ pub fn maxpar(i: &MaxparInputs) -> Maxpar {
     } else {
         (mem_bound, Binding::Memory)
     };
+    // sp-tj8k3: on 2026-10-01, an unset SPIRA_BATCH_MAXPAR resolved to `hardware` — the full
+    // core count on a plentiful-memory host — and every concurrent gate and testenv
+    // invocation independently claimed that whole box, putting 61 containers and load 90 on
+    // one 32-core host. The unset default is now a quarter of the CPU ceiling, clamped to a
+    // small fixed range, and still never above what the box can actually support.
+    let default_cap = (cpu_ceiling / 4).clamp(2, 16);
     let (value, binding) = match i.requested {
-        Some(0) => (0, Binding::OverrideUnlimited),
         Some(n) if n > 0 && n <= hardware as i64 => (n as u32, Binding::Override),
+        Some(n) if n > 0 => (hardware, hardware_binding),
+        _ if default_cap < hardware => (default_cap, Binding::Default),
         _ => (hardware, hardware_binding),
     };
     Maxpar {
@@ -133,9 +144,28 @@ mod tests {
     }
 
     #[test]
-    fn cpu_bound_when_memory_is_plentiful() {
+    fn unset_defaults_to_a_quarter_of_cores_clamped() {
         let m = maxpar(&inp(8, 64_000, None));
-        assert_eq!((m.value, m.binding), (8, Binding::Cpu));
+        assert_eq!((m.value, m.binding), (2, Binding::Default));
+        // The hardware term is still correctly cpu-bound when memory is plentiful — the
+        // default just no longer uses it as the *value*.
+        assert_eq!((m.hardware, m.hardware_binding), (8, Binding::Cpu));
+    }
+
+    /// sp-tj8k3: on 2026-10-01, batch_maxpar removed from production config left `requested`
+    /// None on a 32-core host; the scheduler's own "unset" value resolved to the full
+    /// hardware bound (32), and with two gates plus one testenv run concurrent, each
+    /// claiming the whole box, that put 61 containers and load 90 on one host. Unset must
+    /// resolve to a small, host-derived default — never the hardware ceiling.
+    #[test]
+    fn unset_never_resolves_to_the_hardware_ceiling() {
+        let m = maxpar(&inp(32, 64_000, None));
+        assert_ne!(m.value, 0, "unset must never mean unlimited");
+        assert!(
+            m.value <= 16,
+            "unset must stay a small, host-derived default, got {} on a 32-core host",
+            m.value
+        );
     }
 
     #[test]
@@ -153,15 +183,17 @@ mod tests {
 
     #[test]
     fn ceiling_raises_the_cpu_term() {
+        // The ceiling raises `hardware` (the term an explicit override clamps against) —
+        // it is not itself the unset default, which stays a small fraction of it.
         let mut i = inp(8, 64_000, None);
         i.ceiling = Some(24);
-        assert_eq!(maxpar(&i).value, 24);
+        assert_eq!(maxpar(&i).hardware, 24);
         i.ceiling = Some(0);
-        assert_eq!(maxpar(&i).value, 8);
+        assert_eq!(maxpar(&i).hardware, 8);
     }
 
     #[test]
-    fn override_is_a_ceiling_and_zero_is_unlimited() {
+    fn override_is_a_ceiling_and_a_non_positive_request_falls_back_to_the_default() {
         assert_eq!(
             maxpar(&inp(32, 64_000, Some(16))).binding,
             Binding::Override
@@ -169,11 +201,11 @@ mod tests {
         assert_eq!(maxpar(&inp(32, 64_000, Some(16))).value, 16);
         let m = maxpar(&inp(8, 64_000, Some(16)));
         assert_eq!((m.value, m.binding), (8, Binding::Cpu));
-        assert_eq!(maxpar(&inp(8, 64_000, Some(0))).value, 0);
-        assert_eq!(
-            maxpar(&inp(8, 64_000, Some(0))).binding,
-            Binding::OverrideUnlimited
-        );
+        // sp-tj8k3: zero and anything unparsable are refused by the settings layer before
+        // `requested` is ever built, never read down here as "unlimited" — but the pure
+        // scheduler still treats a non-positive value the same as absent, defensively.
+        let m = maxpar(&inp(8, 64_000, Some(0)));
+        assert_eq!((m.value, m.binding), (2, Binding::Default));
     }
 
     fn job(n: &str, excl: bool) -> Job {

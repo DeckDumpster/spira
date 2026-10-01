@@ -679,6 +679,7 @@ impl<'w, W: World> Trial<'w, W> {
                 ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
                 ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
                 ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+                ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
             );
             match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
                 Ok(line) => w.eprint(&line),

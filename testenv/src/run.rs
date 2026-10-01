@@ -591,6 +591,13 @@ impl Drop for RefillOnDrop<'_> {
 
 pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let s = settings(deps);
+    // sp-tj8k3: a given-but-bad SPIRA_BATCH_MAXPAR (zero, negative, not a number) refuses by
+    // name before any work starts — it is never silently folded into "unset" (the
+    // scheduler's own bounded default) or, worse, read as "unlimited".
+    if let Some(reason) = &s.maxpar_refusal {
+        stderr(&format!("batch: {reason}"));
+        return Finish::fault(2, "maxpar-refused", 0);
+    }
     let t_batch = Instant::now();
     // D9: under --deadline the budget is the whole trial's; setup gets its share of it.
     // Cells: time spent waiting for an admission slot moves both later (sp-f4ig1,
@@ -1395,18 +1402,20 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         Mode::Parallel => schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text)),
         Mode::Serial => jobs,
     };
-    match (args.mode, mx.value) {
-        (Mode::Parallel, 0) => deps.log(&format!("running {} suite(s) in {} (mode: parallel, maxpar: unlimited)", jobs.len(), session.name)),
-        (Mode::Parallel, v) => deps.log(&format!(
-            "running {} suite(s) in {} (mode: parallel, maxpar: {v} [{}-bound: cpu={} ceiling={} hardware={}])",
+    match args.mode {
+        // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
+        // longer a value `mx.value` ever carries (0 refuses before this point is reached).
+        Mode::Parallel => deps.log(&format!(
+            "running {} suite(s) in {} (mode: parallel, maxpar: {} [{}-bound: cpu={} ceiling={} hardware={}])",
             jobs.len(),
             session.name,
+            mx.value,
             mx.binding.as_str(),
             util::nproc(),
             mx.cpu_ceiling,
             mx.hardware
         )),
-        (Mode::Serial, _) => deps.log(&format!("running {} suite(s) in {} (mode: serial, nproc: {})", jobs.len(), session.name, util::nproc())),
+        Mode::Serial => deps.log(&format!("running {} suite(s) in {} (mode: serial, nproc: {})", jobs.len(), session.name, util::nproc())),
     }
 
     let host = util::hostname();
@@ -1857,6 +1866,19 @@ pub fn warm_refill(i: usize, deps: &Deps) -> i32 {
         },
         &|m| deps.log(m),
     );
+    // sp-s8v5r: before adding another ~4.5 GB spare to the scratch root, shed whatever
+    // idle warm slots real free space there can no longer afford (never this slot — its
+    // own lock is held above). Reduce the COUNT, never throttle the job.
+    warm::shed(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.warm_shed_free_mib,
+        &worktree::scratch_root(&s.run),
+        &worktree::free_mib,
+        &|m| deps.log(m),
+    );
     let tag = deps.rt.testenv(&["tag".into()], Some(end));
     let tag = tag.output.trim().to_string();
     if tag.is_empty() {
@@ -1905,6 +1927,20 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
                 .inspect(n, "{{.State.StartedAt}}")
                 .and_then(|t| parse_started_at(&t))
         },
+        &|m| deps.log(m),
+    );
+    // sp-s8v5r: the scratch root's real free space, not its byte usage, is what paged
+    // "Disk quota exceeded" — reduce the COUNT of warm slots when it runs short, rather
+    // than throttle a trial (law-reduce-the-count-never-throttle-the-job).
+    let root = worktree::scratch_root(&s.run);
+    warm::shed(
+        deps.rt,
+        &deps.owner_dir,
+        &s.run,
+        s.warm_slots,
+        s.warm_shed_free_mib,
+        &root,
+        &worktree::free_mib,
         &|m| deps.log(m),
     );
     0

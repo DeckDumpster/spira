@@ -1063,6 +1063,9 @@ impl Host for RealHost {
         use std::process::{Command, Stdio};
         let mut c = Command::new("podman");
         c.args(args).stdin(Stdio::null());
+        // `podman run`/`up` starts conmon, which daemonizes and outlives this call; it must
+        // never inherit a caller's lock fd this process did not open itself (sp-ohwg7).
+        crate::util::close_inherited_fds(&mut c);
         match io {
             Io::Quiet => {
                 c.stderr(Stdio::null());
@@ -1103,21 +1106,24 @@ impl Host for RealHost {
         let Ok(g) = f.try_clone() else {
             return Box::new(FailedBuild);
         };
-        match Command::new("podman")
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(f)
-            .stderr(g)
-            .spawn()
-        {
+        let mut c = Command::new("podman");
+        c.args(args).stdin(Stdio::null()).stdout(f).stderr(g);
+        crate::util::close_inherited_fds(&mut c);
+        match c.spawn() {
             Ok(c) => Box::new(RealBuild(c)),
             Err(_) => Box::new(FailedBuild),
         }
     }
 
     fn exec_replace(&self, args: &[String]) -> i32 {
+        let mut c = std::process::Command::new("podman");
+        c.args(args);
+        // A true exec, not a fork: pre_exec still runs, in this process, right before it —
+        // the one chance to drop any inherited lock fd before podman (and conmon, if this
+        // is a `run`) takes over this process's image (sp-ohwg7).
+        crate::util::close_inherited_fds(&mut c);
         use std::os::unix::process::CommandExt;
-        let e = std::process::Command::new("podman").args(args).exec();
+        let e = c.exec();
         eprintln!("testenv exec: podman: {e}");
         127
     }
