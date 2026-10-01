@@ -695,7 +695,8 @@ nowant "summon_argv: no CPUQuota (sp-b4oct)" "CPUQuota" "$sargv"
 nowant "summon_argv: no Nice (sp-b4oct)"     "Nice="    "$sargv"
 
 # UC-dispatch-23 / G17 — the claude CLI argv (model, tools, --setting-sources) is not built
-# here. aeon.sh's two launch sites both call aeon_claude_argv (lib.sh), a pure function of
+# here. aeon's two launch sites both build it through the same argv table (aeon/src/run.rs;
+# aeon_claude_argv, lib.sh, retired dead by sp-j89pd — zero live callers), a pure function of
 # the fayth's own FAYTH_* knobs already driven directly, in both system-prompt modes, by
 # test-aeon-prompt-layers.sh's table — that table IS the bead-mode row G17 asked for, since
 # the function makes no sweep/bead distinction at all.

@@ -55,8 +55,10 @@ if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/spira/lib.sh"; then
 else
     ok "lib.sh no longer reads FAYTH_MODEL"
 fi
-want "aeon_claude_argv calls persona_model" \
-     'persona_model "${FAYTH:-}"' "$(cat "$HARNESS/spira/lib.sh")"
+# aeon_claude_argv (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the
+# argv table, including its persona_model call, is now aeon/src/run.rs; the real launch
+# paths exercised below (aeon.sh launch paths — a stubbed claude captures argv) already
+# prove persona.builder.model reaches it end to end.
 
 if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/concierge.sh"; then
     bad "concierge.sh no longer reads FAYTH_MODEL" "still present"
