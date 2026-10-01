@@ -6,6 +6,7 @@ version = 4
 name = "aeon"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "libc",
  "regex",
  "serde",
@@ -194,6 +195,7 @@ name = "cockpit-collect"
 version = "1.0.0"
 dependencies = [
  "aeon",
+ "bead",
  "serde_json",
  "spira-config",
  "testkit",
@@ -547,6 +549,7 @@ dependencies = [
 name = "incident"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "serde",
  "serde_json",
  "sha2",

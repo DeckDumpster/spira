@@ -220,7 +220,7 @@ pub fn bdq(args: &[&str]) -> Option<String> {
     let timeout_s = env_or("BD_TIMEOUT", "180");
     let tries: u32 = env_or("SPIRA_BDQ_CONN_RETRIES", "2").parse().unwrap_or(2).max(1);
 
-    let mut attempt = 1;
+    let mut attempt: u32 = 1;
     loop {
         let out = Command::new("timeout")
             .arg(&timeout_s)
@@ -238,7 +238,10 @@ pub fn bdq(args: &[&str]) -> Option<String> {
             return Some(String::from_utf8_lossy(&out.stdout).into_owned());
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
-        if attempt >= tries || !stderr.contains("invalid connection") {
+        let rc = out.status.code().unwrap_or(1);
+        // Collapsed onto bead::bdq::should_retry (sp-pwmlj, wave 4.15) — the same retry
+        // decision bdq's own binary makes, rather than a second copy of it here.
+        if !bead::bdq::should_retry(rc, attempt, tries, stderr.contains("invalid connection")) {
             return None;
         }
         attempt += 1;
@@ -246,27 +249,14 @@ pub fn bdq(args: &[&str]) -> Option<String> {
 }
 
 /// `json_only`: `sed -n '/^[[{]/,$p'` — drop any banner/warning lines a wrapper printed to
-/// stdout before the first line that actually starts a JSON value.
+/// stdout before the first line that actually starts a JSON value. Collapsed onto
+/// `bead::bdq::json_only` (sp-pwmlj, wave 4.15): this crate's own copy tolerated leading
+/// whitespace before the `[`/`{` (`line.trim_start()` then `starts_with`), which `sed -n
+/// '/^[[{]/,$p'` — and `bdq`'s own fence — do not; an indented JSON-looking line would have
+/// been treated as the payload start here and correctly skipped by the real `bdq`/`bdjson`,
+/// a real divergence this collapse fixes rather than a feature to keep.
 pub fn json_only(s: &str) -> &str {
-    let mut started = None;
-    for (i, line) in s.split('\n').enumerate() {
-        let t = line.trim_start();
-        if t.starts_with('[') || t.starts_with('{') {
-            started = Some(i);
-            break;
-        }
-    }
-    match started {
-        None => "",
-        Some(i) => {
-            let byte_off: usize = s
-                .split('\n')
-                .take(i)
-                .map(|l| l.len() + 1)
-                .sum();
-            &s[byte_off..]
-        }
-    }
+    bead::bdq::json_only(s)
 }
 
 /// `bdjson <args>` == `bdq <args> --json 2>/dev/null | json_only`.
@@ -485,6 +475,13 @@ mod tests {
         assert_eq!(json_only("{\"a\":1}"), "{\"a\":1}");
         assert_eq!(json_only("just noise"), "");
         assert_eq!(json_only(""), "");
+    }
+
+    // Pins the sp-pwmlj collapse: before it, this function's own copy tolerated leading
+    // whitespace before `[`/`{` — `sed -n '/^[[{]/,$p'` (and bdq's real fence) do not.
+    #[test]
+    fn json_only_requires_column_one_same_as_the_real_fence() {
+        assert_eq!(json_only("  [1]\n"), "");
     }
 
     #[test]
