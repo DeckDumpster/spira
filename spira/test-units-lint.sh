@@ -173,8 +173,14 @@ IHOME="$TMP/ihome"; mkdir -p "$IHOME"
 : > "$TMP/systemctl.log"
 printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s\nSPIRA_PROD = %s\n' \
     "$RUN" "$ROOT/cockpit" "$MAN" "$STUB" "$PRODROOT/spira" > "$TMP/install.conf"
+# SPIRA_RUN/SPIRA_COCKPIT/SPIRA_PROD IN THE ENVIRONMENT TOO (sp-31dm0), same reason as the
+# render pass above: units-install never sources conf.sh, so $TMP/install.conf alone never
+# reaches it. Left to the conf file alone, @SPIRA_PROD_ROOT@ fell back to dirname(SPIRA_HOME)
+# — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
+# box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
     SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_PROD="$PRODROOT/spira" \
     units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"

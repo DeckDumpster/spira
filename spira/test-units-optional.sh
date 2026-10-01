@@ -29,18 +29,28 @@ mkdir -p "$TMP/run"
 _units() {
     local inotify_mode="$1" path="$PATH"
     if [ "$inotify_mode" = without ]; then
-        # Drop EVERY PATH entry that holds an inotifywait, not just the one `command -v`
-        # happens to pick first — on a box where /bin is its own PATH entry alongside
-        # /usr/bin (not merely a symlink collapsed by the shell), inotifywait resolves from
-        # both, and install::bootstrap::which's own raw PATH scan (unlike a single `command
-        # -v` lookup) would still find the surviving one.
-        local d newpath=""
+        # DROPPING WHOLE DIRECTORIES IS NOT ENOUGH, AND BREAKS OTHER THINGS: on a box
+        # where /bin is its own PATH entry alongside /usr/bin (not merely a symlink
+        # collapsed by the shell), inotifywait resolves from both — but /bin and /usr/bin
+        # also carry bash, awk, grep and everything else watchd.sh itself needs, so
+        # removing either directory wholesale breaks the subprocess chain
+        # install::bootstrap::watch_names() depends on, not just inotify detection. Build
+        # a shadow directory of symlinks to everything reachable on the real PATH, minus
+        # the one program, preserving first-match-wins order; use that as the entire PATH
+        # instead of removing real directories.
+        local shadow="$TMP/path-without-inotify" d f b
+        mkdir -p "$shadow"
         while IFS= read -r d; do
-            [ -n "$d" ] || continue
-            [ -e "$d/inotifywait" ] && continue
-            newpath="${newpath:+$newpath:}$d"
+            [ -n "$d" ] && [ -d "$d" ] || continue
+            for f in "$d"/*; do
+                [ -e "$f" ] || continue
+                b="$(basename "$f")"
+                [ "$b" = inotifywait ] && continue
+                [ -e "$shadow/$b" ] && continue
+                ln -s "$f" "$shadow/$b" 2>/dev/null || true
+            done
         done <<< "$(printf '%s' "$PATH" | tr ':' '\n')"
-        path="$newpath"
+        path="$shadow"
     fi
     env -i \
         PATH="$path" \

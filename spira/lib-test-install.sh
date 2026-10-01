@@ -179,6 +179,13 @@ mk_install_fixture() {
     done
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
+    # concierge.service and beads-push.service ExecStart @SPIRA_PROD_ROOT@/concierge.sh and
+    # .../beads-push.sh (repo-root scripts, not under bin/), and units-install refuses a unit
+    # whose ExecStart target is not executable. SPIRA_PROD is pinned to $fixture/spira by
+    # every caller of this fixture, so PROD_ROOT is $fixture — these two need to exist there.
+    for f in concierge.sh beads-push.sh; do
+        [ -e "$_LIB_INSTALL_SELF/../$f" ] && ln -sf "$_LIB_INSTALL_SELF/../$f" "$fixture/$f"
+    done
 
     FAKE_ORIGIN="$tmp/origin.git"
     FAKE_REPO="$tmp/fakerepo"
