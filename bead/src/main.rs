@@ -61,6 +61,22 @@ fn main() {
 /// `. "$home/lib.sh"; bdq "$@"` — the ONE subprocess boundary this crate crosses into bash
 /// logic (the create-time safety fences, the connection retry loop). `$1` carries `home`
 /// so the script needs no string-interpolation of an untrusted path.
+///
+/// NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+/// rejected). `lib.sh`'s own `bdq()` is already a one-line shim onto `bead::bdq`
+/// (sp-w3h16), so this bridge has no competing Rust logic to retire — every `bdq_status`/
+/// `bdq_capture` call already reaches the one real implementation, just by way of a bash
+/// hop. That hop is still load-bearing for `cmd_file`'s `bd create`: `bead.sh` (the shim
+/// that execs into this binary) re-exports only `SPIRA_HOME`/`SPIRA_REPO_MAP` of the five
+/// vars the repo-label fence needs — `SPIRA_HOME_REPO`/`SPIRA_REPO_DERIVED` are not, because
+/// `bead.sh` only patches up the two every fixture's repository map already depends on. This
+/// script sources `lib.sh` (hence `conf.sh`) fresh inside the bash subprocess, which
+/// re-derives all five correctly before its own `bdq()` shim threads them across the exec
+/// boundary to the binary — the same exec-boundary trap this wave's rules name, worked
+/// around here by re-resolving in bash rather than in this process. Collapsing it for real
+/// needs `spira-config resolve` in-process first (wave4-decomposition.md rows 4–6, not yet
+/// landed) so this binary can build the registry itself, the way `aeon`/`cockpit-collect`
+/// already do.
 const BDQ_SCRIPT: &str = r#"home="$1"; shift; . "$home/lib.sh" || exit 90; bdq "$@""#;
 
 /// Runs `bdq` with inherited stdio (the shape every state-changing call needs: `bd`'s own
