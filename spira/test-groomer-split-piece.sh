@@ -6,7 +6,8 @@
 #   ./test-groomer-split-piece.sh
 #
 # THE DEFECT THIS REPRODUCES. `bd create --parent` inherits every label from the parent by
-# default, and a bead's branch affinity IS a label (branch:<name> — bead_branch, lib.sh).
+# default, and a bead's branch affinity IS a label (branch:<name>; the old lib.sh bead_branch
+# reader was retired dead at sp-27hsi — readers resolve the state themselves now).
 # sp-zs04v was split into four children this way and three of them (sp-zs04v.2/.5/.6)
 # inherited branch:spira/sp-zs04v — the PARENT's branch — so all three resolved to the same
 # branch as their parent and, by extension, as each other (law-one-aeon-one-worktree).

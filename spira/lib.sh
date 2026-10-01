@@ -298,12 +298,6 @@ json_only() { sed -n '/^[[{]/,$p'; }
 
 bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 
-# lcq <verb> [args...] -> spira-lc's own exit code (0 applied, 3 refused, 2 cannot tell);
-# stdout is spira-lc's own reply. Same timeout-wrapped-external-tool shape as ghq above,
-# and the same reason: this is the one thing outside the harness's own state a caller must
-# not hang on.
-lcq() { timeout "${SPIRA_LC_TIMEOUT:-30}" spira-lc "$@"; }
-
 # ask_already_open <subject> -> 0 when an OPEN operator ask already carries that subject.
 #
 # THE STRONGEST DEDUPE IS "IS IT ALREADY IN FRONT OF HIM", not a clock and not a stamp file.
@@ -4613,7 +4607,9 @@ for i in (d if isinstance(d, list) else [d]):
 # would send this bead onto that branch on its next claim (the exact incident this fixes —
 # two split children committed onto their parent's branch before being parked by hand). The
 # fix is mechanical, so it needs no human (law-deterministic-before-inference): strip the
-# label so bead_branch falls back to this bead's own default, and note whatever commits it
+# label so the bead falls back to its own derived default (spira/<id>; the old lib.sh
+# bead_branch reader that did this lookup was retired dead at sp-27hsi, aeon resolves the
+# state itself now), and note whatever commits it
 # already made under the wrong name so they are not silently stranded. Prints "UNLABELED
 # <id> <repo> <branch> <other-id>".
 #
@@ -4773,9 +4769,11 @@ for i in (d if isinstance(d, list) else [d]):
 ' "$(spira_home_repo)" 2>/dev/null | while IFS=$'\t' read -r _cid _crepo _ctitle; do
             [ -n "$_cid" ] || continue
             # We only want the STRUCTURAL case: the repo's land mode is not `pr` so no run
-            # will ever report back. spira_ci_park_state also checks timing and exits 2 on an
-            # empty timestamp, which would trigger `|| _state=no-ci` even for pr-mode repos.
-            # Use repo_land directly — it is the one test that names the structural fault.
+            # will ever report back. The old lib.sh spira_ci_park_state (retired dead at
+            # sp-27hsi — nothing called it) also checked timing and exited 2 on an empty
+            # timestamp, which would have tripped a careless `|| _state=no-ci` even for a
+            # pr-mode repo. Use repo_land directly — it is the one test that names the
+            # structural fault.
             _land="$(repo_land "$_crepo" 2>/dev/null)"
             if [ "${_land:-push}" != pr ]; then
                 printf 'LIVELOCK %s ci-stuck — repo %s land mode is not pr; %s will never clear; strip the label or change the repo land mode. title: %s\n' \
@@ -5441,163 +5439,6 @@ spira_open_trigger_count() {
     printf '%s' "${n:-0}"
 }
 
-_spira_modes_lanes() {    # <path> -> lane set from .spira/modes; empty if absent
-    local mf="$1/.spira/modes" raw
-    [ -f "$mf" ] || return 0
-    raw="$(tr -d '[:space:]' < "$mf" 2>/dev/null)" || return 0
-    [ -z "$raw" ] && return 0
-    _spira_expand_lanes ".spira/modes" "$raw"
-}
-
-_spira_fayths_lane_set() {    # -> space-separated lane labels the configured fayths admit
-    local p="${SPIRA_PLAN_LABEL:-plan}"
-    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
-    local gr="${SPIRA_GROOMER_LABEL:-groom}"
-    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
-    local sp="${SPIRA_SPIKE_LABEL:-spike}"
-    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
-    local result="" f labels lbl saved="$IFS"
-    for f in $(spira_fayths); do
-        labels="$(fayth_get "$f" FAYTH_LABELS "" 2>/dev/null)"
-        [ -z "$labels" ] && continue
-        IFS=,
-        for lbl in $labels; do
-            IFS="$saved"
-            lbl="${lbl#"${lbl%%[![:space:]]*}"}"; lbl="${lbl%"${lbl##*[![:space:]]}"}"
-            case "$lbl" in
-                "$p"|"$inc"|"$gr"|"$mae"|"$sp"|"$cz")
-                    case " $result " in *" $lbl "*) ;; *) result="${result:+$result }$lbl" ;; esac ;;
-            esac
-            IFS=,
-        done
-        IFS="$saved"
-    done
-    [ -n "$result" ] || result="$p"
-    printf '%s' "$result"
-}
-
-# _spira_lane_diag <name> <path> — effective lanes and per-lane refusal diagnostics.
-#
-# Outputs one line per category:
-#   effective: lane1 lane2 ...
-#   refused: <lane> by <side>[, <side>]
-#   modes-error: <message>
-#
-# The effective set is (fayths ∩ repo-map ∩ .spira/modes when present).
-# Absent .spira/modes does not restrict. A lane only generates a refused line when
-# at least one explicit source (map column or .spira/modes file) proposes it and
-# another source denies it — so absent column + absent file produces no diagnostics.
-_spira_lane_diag() {
-    local name="$1" path="$2"
-    local p="${SPIRA_PLAN_LABEL:-plan}"
-    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
-    local gr="${SPIRA_GROOMER_LABEL:-groom}"
-    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
-    local sp="${SPIRA_SPIKE_LABEL:-spike}"
-    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
-    local all_known="$p $inc $gr $mae $sp $cz"
-    local raw_map_col map_lanes fayths_lanes
-    local modes_exists modes_lanes modes_raw _ml_err_file _ml_rc
-    local effective lane in_map in_modes who
-    raw_map_col="$(repo_field "$name" lanes 2>/dev/null)"
-    map_lanes="$(spira_repo_lanes "$name")" || return 1
-    fayths_lanes="$(_spira_fayths_lane_set)"
-    modes_exists=0 modes_lanes="$all_known"
-    if [ -f "$path/.spira/modes" ]; then
-        modes_exists=1
-        modes_raw="$(tr -d '[:space:]' < "$path/.spira/modes" 2>/dev/null)"
-        if [ -n "$modes_raw" ]; then
-            _ml_err_file="$(mktemp)"
-            _ml_rc=0
-            modes_lanes="$(_spira_modes_lanes "$path" 2>"$_ml_err_file")" || _ml_rc=$?
-            if [ "$_ml_rc" -ne 0 ]; then
-                printf 'modes-error: %s\n' "$(cat "$_ml_err_file")"
-                modes_lanes="$p"
-            fi
-            rm -f "$_ml_err_file"
-        else
-            modes_lanes="$p"
-        fi
-    fi
-    effective=""
-    for lane in $all_known; do
-        case " $map_lanes " in *" $lane "*) ;; *) continue ;; esac
-        case " $fayths_lanes " in *" $lane "*) ;; *) continue ;; esac
-        if [ "$modes_exists" = 1 ]; then
-            case " $modes_lanes " in *" $lane "*) ;; *) continue ;; esac
-        fi
-        effective="${effective:+$effective }$lane"
-    done
-    [ -n "$effective" ] || effective="$p"
-    printf 'effective: %s\n' "$effective"
-    for lane in $all_known; do
-        in_map=0 in_modes=0
-        [ -n "$raw_map_col" ] && case " $map_lanes " in *" $lane "*) in_map=1 ;; esac
-        [ "$modes_exists" = 1 ] && case " $modes_lanes " in *" $lane "*) in_modes=1 ;; esac
-        [ "$in_map" = 1 ] || [ "$in_modes" = 1 ] || continue
-        case " $effective " in *" $lane "*) continue ;; esac
-        who=""
-        [ "$in_map" = 0 ] && who="repo-map"
-        if [ "$modes_exists" = 1 ] && [ "$in_modes" = 0 ]; then
-            who="${who:+$who, }.spira/modes"
-        fi
-        case " $fayths_lanes " in *" $lane "*) ;; *) who="${who:+$who, }SPIRA_FAYTHS" ;; esac
-        [ -n "$who" ] && printf 'refused: %s by %s\n' "$lane" "$who"
-    done
-}
-
-# --------------------------------------------------------------------------------------
-# THE CI PARK, AND THE TWO WAYS IT BECOMES A LIE.
-#
-# An aeon parks a bead on `$SPIRA_CI_LABEL` once its pull request is open, so nothing pays an
-# Opus session to sit and watch a test suite. The label is excluded from every fayth's
-# predicate AND from the stalled-work report, which is what stops parked work looking
-# abandoned — and is exactly what makes a park applied where no run exists permanent and
-# invisible: not claimable, not reported, and displayed as "in CI", the one description that
-# stops anybody looking for the real cause. A bead reached 22 reclaims that way, not one of
-# them a work failure.
-#
-#   no-ci    the repository does not land through pull requests, so there is no run and never
-#            will be one. Only `pr` mode opens one: `push` merges the branch itself and `hold`
-#            leaves it for a human, and for both of those the landing gate IS the gate, so
-#            once it passes there is nothing further to wait for. An UNMAPPED repository
-#            answers here too, and should — a repository the map cannot resolve cannot land
-#            at all, so a park on it is waiting for something that has no mechanism.
-#            This is also the case a check made at the moment of parking could not catch: a
-#            bead that MOVED repository while parked was parked correctly and is not now.
-#   expired  whatever the repository, a park older than the longest plausible run is not
-#            parked, it is lost. Expiring it hands the bead back to the report that would
-#            have found it (law-absence-needs-a-positive-control).
-#   watch    a pull-request repository, inside the deadline. Leave it alone.
-#
-# RC 2 MEANS THE PARK COULD NOT BE AGED — a missing or unparseable timestamp. It prints
-# `watch` with it, because the two callers want different things from that and neither wants
-# a guess: the sweep must not strip a label on the strength of a clock it could not read,
-# while the pane must not paint an unreadable check as normal. A broken check that renders as
-# all-clear displaces the suspicion that would have prompted a look.
-#
-# Pure decision — no database, no network, no writes — so the sweep and the pane share one
-# answer instead of two that can disagree, and a suite can drive every branch of it.
-# --------------------------------------------------------------------------------------
-spira_ci_park_state() {  # spira_ci_park_state <repo-name> <updated-at> -> watch|no-ci|expired
-    local name="${1:-}" ts="${2:-}" max t now
-    [ "$(repo_land "$name")" = pr ] || { printf 'no-ci'; return 0; }
-    max="${SPIRA_CI_PARK_MAX:-5400}"
-    case "$max" in ''|*[!0-9]*) max=5400 ;; esac
-    [ "$max" -gt 0 ] || { printf 'watch'; return 0; }   # 0 disables the deadline, deliberately
-    # THE EMPTY TIMESTAMP IS REFUSED BEFORE `date` SEES IT. `date -d ""` does not fail — it
-    # answers midnight today — so an absent updated_at read as a park several hours old and
-    # expired itself, silently, on a field the caller never had. A missing input must reach
-    # the caller as "could not age this", never as a verdict.
-    [ -n "$ts" ] || { printf 'watch'; return 2; }
-    # `date -d` and not python: this is called once per parked bead from a pane that repaints,
-    # and an interpreter start per bead is the cost that makes a dashboard shell out and freeze.
-    t="$(date -u -d "$ts" +%s 2>/dev/null)" || t=""
-    [ -n "$t" ] || { printf 'watch'; return 2; }
-    now="$(date -u +%s)"
-    if [ "$(( now - t ))" -gt "$max" ]; then printf 'expired'; else printf 'watch'; fi
-}
-
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty
     repo_field "${1:-}" gate
 }
@@ -5649,28 +5490,6 @@ spira_repos() {
     local home; home="$(spira_home_repo)"
     printf '%s\n' "$home"
     repo_names | grep -vx -- "$home" || true
-}
-
-# repo_of_labels <label...> -> the `repo:` name carried by a label list, or nothing.
-# Reads from labels already in hand rather than issuing a query, because the caller that
-# matters — aeon.sh — is holding the JSON `bd ready --claim` just handed it.
-repo_of_labels() {
-    local l
-    for l in "$@"; do
-        case "$l" in repo:*) printf '%s' "${l#repo:}"; return 0 ;; esac
-    done
-    return 1
-}
-
-bead_branch() {          # bead_branch <id> -> its recorded branch, or the derived default
-    # The recorded affinity, read back via bd state. Falls through to the derived name so
-    # a bead filed before branches were recorded still resolves (law-branch-affinity-is-recorded).
-    # bd state prints "(no branch state set)" when the dimension has never been written;
-    # strip the sentinel before the fallback test.
-    local id="$1" br
-    br="$(bdq state "$id" branch 2>/dev/null)"
-    case "$br" in '('*) br="" ;; esac
-    printf '%s' "${br:-spira/$id}"
 }
 
 bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if it names none
@@ -5977,36 +5796,6 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail>
     printf '%s %-9s %-22s %s [by %s]\n' \
         "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-}" "$(spira_caller)" \
         >> "$SPIRA_REAPLOG" 2>/dev/null || true
-}
-
-# --------------------------------------------------------------------------------------
-# ONE WRITER PER OPEN BATCH. An open batch's record, PR branch and membership have exactly
-# one owner at a time: normally the automatic pipeline (batcher, or verdict.sh settling a
-# legacy/hand-opened record) — these cooperate already, through the existing owner=batcher
-# check that routes CI-red judgement. A `concierge` claim is different: it means a human is
-# mid hand-edit on the round branch, and every other mutator must back off rather than race
-# it (sp-91hb5: verdict.sh rebuilt and merged PR 421 while the Concierge was patching the
-# same branch, and neither knew about the other).
-#
-# queue_batch_owner <open-batch-file> -> the owner= field's value, empty when none is set
-# (the legacy/default cooperative state).
-queue_batch_owner() {
-    grep '^owner=' "$1" 2>/dev/null | tail -1 | cut -d= -f2-
-}
-
-# queue_owner_refused <owner> <actor> [<label>] -> 0 (refused; a message is printed naming
-# the owner and the override) when <owner> is "concierge" and <actor> is not itself
-# "concierge". 1 (not refused, nothing printed) for every other owner value, for a matching
-# actor, and when SPIRA_QUEUE_OWNER_OVERRIDE=1 breaks the glass — the caller that set it is
-# on record in its own log line, this prints nothing to explain a check it was told to skip.
-queue_owner_refused() {
-    local owner="$1" actor="$2" label="${3:-queue}"
-    [ "${SPIRA_QUEUE_OWNER_OVERRIDE:-0}" = 1 ] && return 1
-    [ "$owner" = concierge ] || return 1
-    [ "$actor" = concierge ] && return 1
-    printf '%s: refused — this batch is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1\n' \
-        "$label" >&2
-    return 0
 }
 
 # queue_notify_concierge <name> <subject-suffix> <body> — mails the concierge mailbox as a
@@ -6862,34 +6651,9 @@ _tsd_slots_sample() {
         >/dev/null 2>&1 || true
 }
 
-# _tsd_sentinel_phase <pass> <check> <secs> — appends one CHECK's wall time for one
-# sentinel.sh pass (run/tsd/sentinel-phase). Best-effort, like every tsd producer here.
-_tsd_sentinel_phase() {
-    tsd-write --family sentinel-phase --root "${SPIRA_RUN:-}" \
-        --field-str "pass=$1" --field-str "check=$2" --field "secs=$3" \
-        >/dev/null 2>&1 || true
-}
-
-# THE WHITELIST IS THE GUARANTEE (design §2, "round rows carry no state"): a round's state
-# changes are batch-machine events and arrive through bead-stage (sp-h82cz), never here.
-# Refusing any phase name outside the round's own timing vocabulary is what keeps a stray
-# CUT/GREEN/RED/EJECTED from ever entering this family as if it belonged.
-_TSD_ROUND_PHASES=" build corpus attribute rerun land publish "
-
-# _tsd_round_phase <batch_id> <phase> <secs> <members> <reds> — appends one round phase's
-# timing (run/tsd/round). TIMINGS ONLY: no state field exists on this row to carry one.
-# Best-effort, like every tsd producer here.
-_tsd_round_phase() {
-    local batch_id="$1" phase="$2" secs="$3" members="${4:-0}" reds="${5:-0}"
-    case "$_TSD_ROUND_PHASES" in *" $phase "*) ;; *) return 0 ;; esac
-    tsd-write --family round --root "${SPIRA_RUN:-}" \
-        --field-str "batch_id=$batch_id" --field-str "phase=$phase" \
-        --field "secs=$secs" --field "members=$members" --field "reds=$reds" \
-        >/dev/null 2>&1 || true
-}
-
-# THE WHITELIST IS THE GUARANTEE, same reason as _TSD_ROUND_PHASES above: these four are
-# the classes sp-6vd2s defines and no others belong in this family.
+# THE WHITELIST IS THE GUARANTEE, the same reason _tsd_round_phase's now-retired whitelist
+# existed (sp-27hsi): these four are the classes sp-6vd2s defines and no others belong in
+# this family.
 _TSD_ESCAPE_CLASSES=" mapping_gap gate_gap environment_gap flake "
 
 # _tsd_escape <member> <suite> <class> [batch_id] — appends one escape record (run/tsd/
@@ -6913,13 +6677,6 @@ land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
     local rc=$?
     _tsd_landing_event "$1" "$2" "${3:-}" "${4:-}"
     return "$rc"
-}
-
-land_mark_at() { # land_mark_at <id> <state> <tip> <epoch>
-    mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
-    printf '%s %s %s' "$2" "${3:-none}" "$4" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null \
-        && mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
 }
 
 land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
@@ -6950,8 +6707,11 @@ queue_certified_list() {
 # concurrency group has no earlier run on that branch to collide with and
 # cancel for free — closing the PR must cancel the run itself.
 # A failed cancel is logged loudly (stderr) rather than swallowed: the run
-# stays non-completed and its PR stays closed, so the orphan-run sweep
-# (queue_sweep_orphan_runs) or the next abandon retries it.
+# stays non-completed and its PR stays closed, so the next abandon retries it. The old
+# lib.sh orphan-run sweep (queue_sweep_orphan_runs, a periodic backstop for a run orphaned
+# some other way — a hand-closed PR, or one left over from before this cancel existed) was
+# retired dead at sp-27hsi: nothing called it, bash or Rust. No in-process replacement
+# exists; file one if the plan still wants that backstop.
 queue_cancel_branch_runs() {
     local forge="$1" repo="$2" branch="$3" tag="${4:-QUEUE}"
     [ -n "$branch" ] || return 0
@@ -6972,55 +6732,6 @@ queue_cancel_branch_runs() {
         fi
     done < <("$forge" runs-for-branch "$repo" "$branch" 2>/dev/null)
     return $rc
-}
-
-# queue_sweep_orphan_runs <forge> <repo-dir>
-# Cancels every non-completed Gate run on a spira/queue/* branch whose PR is not
-# open. Catches runs orphaned before queue_cancel_branch_runs existed, and a PR
-# closed by hand outside the abandon/eject/eviction paths. The live batch's own
-# branch and main's push runs are unaffected: the live branch's PR is open, and
-# a push run's branch is never spira/queue/*.
-queue_sweep_orphan_runs() {
-    local forge="$1" repo="$2"
-    local run_id branch status open_pr rc=0
-    while read -r run_id branch status; do
-        [ -n "$run_id" ] || continue
-        open_pr="$("$forge" pr-number "$repo" "$branch" 2>/dev/null)"
-        [ -n "$open_pr" ] && continue
-        if "$forge" run-cancel "$repo" "$run_id" >/dev/null 2>&1; then
-            printf 'QUEUE SWEEP_CANCEL %s branch=%s run=%s status=%s\n' \
-                "$(date +%s)" "$branch" "$run_id" "$status" \
-                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
-        else
-            rc=1
-            printf 'QUEUE SWEEP_CANCEL_FAILED %s branch=%s run=%s status=%s\n' \
-                "$(date +%s)" "$branch" "$run_id" "$status" \
-                >> "${SPIRA_RUN:-/tmp}/landing.log" 2>/dev/null || true
-            printf 'spira: WARN failed to cancel orphaned run %s for %s\n' \
-                "$run_id" "$branch" >&2
-        fi
-    done < <("$forge" runs-queue-branches "$repo" 2>/dev/null)
-    return $rc
-}
-
-# compute_gate_key <repo-path> <repo-name> <branch-ref> <base-ref>
-# Compute the gate key for a branch. Matches gate.sh's gate_key() computation so that
-# a stored key can be compared against the current one to detect gate-command changes.
-# Exits non-zero if any input is unreadable or the harness hash is empty.
-compute_gate_key() {
-    local repo="$1" name="$2" br="$3" base="$4"
-    local tree files files_h CMD cmd_h harness_h
-    tree="$(git -C "$repo" rev-parse --verify -q "$br^{tree}" 2>/dev/null)" || return 1
-    files="$(git -C "$repo" diff --name-only "$base...$br" 2>/dev/null)" || return 1
-    files_h="$(printf '%s' "$files" | sha256sum | cut -d" " -f1)"
-    CMD="$(repo_gate "$name" 2>/dev/null)"
-    cmd_h="$(printf '%s' "$CMD" | sha256sum | cut -d" " -f1)"
-    # `skew` is a compiled binary now (sp-yyk47), resolved on PATH like every other release
-    # tool (sp-gypjk), not found beside gate.sh/exclude.sh in SPIRA_HOME.
-    harness_h="$(cat "${SPIRA_HOME:?}/gate.sh" "$SPIRA_HOME/exclude.sh" "$(command -v skew 2>/dev/null)" \
-        2>/dev/null | sha256sum | cut -d" " -f1)"
-    [ -n "$harness_h" ] || return 1
-    printf '%s\n' "$name $tree $files_h $cmd_h $harness_h" | sha256sum | cut -d" " -f1
 }
 
 # queue_is_suite_transition <repo-path> <tip> <base-sha>
@@ -7110,144 +6821,6 @@ for r in rows:
     return 0
 }
 
-# ---------------------------------------------------------------------------
-# QUEUE BISECT — a red batch with no attributable suite (a build failure, or
-# any harness-shaped red with no annotations) narrows by binary search rather
-# than by re-running the priority sort, which would just re-select the same
-# culprit forever (sp-y931m: PRs 302-304 cycled the same P0 build-breaker).
-#
-# State is one group ("base-sha id:tip id:tip ...") per line in
-# $SPIRA_QUEUE_DIR/<repo>/bisect. Line 1 is the group batch.sh must cut next;
-# later lines are untested siblings parked by an earlier split, most-recently-
-# parked first (a LIFO worklist), so a nested split finishes the branch it is
-# on before returning to an outer sibling.
-#
-# A group is only meaningful against the exact commits it was split from: the
-# base it recorded, and each member's branch tip at that moment. Either
-# moving invalidates the reasoning (sp-55j4m: a 13-hour-old group forced a
-# stale cut over nine certified P0s), so queue_bisect_current discards a
-# group that no longer matches before it can force a cut.
-# ---------------------------------------------------------------------------
-
-queue_bisect_file() { printf '%s/%s/bisect' "${SPIRA_QUEUE_DIR:?}" "$1"; }
-
-# queue_bisect_current <repo-name> [<repo-path> <base-sha>] -> the forced-next
-# group ("id:tip id:tip"), one line. Empty output (rc 1) means no bisect is
-# in progress.
-#
-# With <repo-path> and <base-sha> given, validates line 1 first: its recorded
-# base must equal <base-sha>, and each recorded member tip must equal that
-# branch's live tip in <repo-path>. A mismatch means the base advanced (a
-# batch landed) or a member was rebuilt since the split, so the group can no
-# longer yield the information the bisect needs — discard it, log why, and
-# check the next parked group in its place. Without those two arguments no
-# validation runs, for callers that already know the current group is valid.
-queue_bisect_current() {
-    local name="$1" repo_path="${2:-}" cur_base="${3:-}"
-    local f; f="$(queue_bisect_file "$name")"
-    local _line _rec_base _members _bl _id _tip _live _reason
-    while :; do
-        [ -s "$f" ] || return 1
-        _line="$(head -1 "$f")"
-        _rec_base="${_line%% *}"
-        _members="${_line#* }"
-        if [ -n "$repo_path" ]; then
-            _reason=""
-            if [ "$_rec_base" != "$cur_base" ]; then
-                _reason="base moved: recorded $_rec_base, now $cur_base"
-            else
-                for _bl in $_members; do
-                    _id="${_bl%%:*}"; _tip="${_bl##*:}"
-                    _live="$(git -C "$repo_path" rev-parse -q --verify "refs/heads/spira/$_id" 2>/dev/null)" || _live=""
-                    if [ "$_live" != "$_tip" ]; then
-                        _reason="member $_id tip changed: recorded $_tip, now ${_live:-gone}"
-                        break
-                    fi
-                done
-            fi
-            if [ -n "$_reason" ]; then
-                printf 'bisect %s: discarding stale group (%s) -- %s\n' "$name" "$_members" "$_reason" >&2
-                queue_bisect_advance "$name"
-                continue
-            fi
-        fi
-        printf '%s\n' "$_members"
-        return 0
-    done
-}
-
-# queue_bisect_current_certified <repo-name> <certs-blob>
-# Print "<id> <tip>" for each member of the current forced group that is still
-# CERTIFIED, using its live certified tip from <certs-blob> (lines "id tip
-# epoch", as queue_certified_list prints). Call this only after
-# queue_bisect_current has validated the group (its recorded tip already
-# equals the live one), so this is purely a still-CERTIFIED filter: a member
-# ejected or landed another way since the split is dropped silently. An empty
-# result means the group has nothing left to cut.
-queue_bisect_current_certified() {
-    local name="$1" certs="$2" _line _bl _id
-    _line="$(queue_bisect_current "$name" 2>/dev/null)" || return 0
-    for _bl in $_line; do
-        _id="${_bl%%:*}"
-        printf '%s\n' "$certs" | awk -v id="$_id" '$1==id{print $1, $2; exit}'
-    done
-}
-
-# queue_bisect_split <repo-name> <base-sha> <id:tip> [<id:tip> ...]
-# The given members just came back red together with no attributable suite.
-# Halve them (first half smaller or equal, matching the batcher's existing
-# epoch convention) and record the first half as the next forced cut, tagged
-# with <base-sha> — the commit the split was made against — so a later reader
-# can tell whether the group is still describing anything real. Any group
-# still pending from an earlier split is kept beneath the new second half, so
-# it is tested once the branch just opened resolves.
-queue_bisect_split() {
-    local name="$1" base_sha="$2"; shift 2
-    local members=("$@")
-    local half=$(( ${#members[@]} / 2 )) i
-    local a=() b=()
-    for i in "${!members[@]}"; do
-        if [ "$i" -lt "$half" ]; then a+=("${members[$i]}"); else b+=("${members[$i]}"); fi
-    done
-    local f; f="$(queue_bisect_file "$name")"
-    local rest=""
-    [ -s "$f" ] && rest="$(tail -n +2 "$f")"
-    mkdir -p "$(dirname "$f")" 2>/dev/null || true
-    {
-        printf '%s %s\n' "$base_sha" "${a[*]}"
-        printf '%s %s\n' "$base_sha" "${b[*]}"
-        [ -n "$rest" ] && printf '%s\n' "$rest"
-        true
-    } > "$f.$$" && mv -f "$f.$$" "$f"
-}
-
-# queue_bisect_advance <repo-name>
-# The current group is resolved (ejected down to nothing left to test, or
-# landed clean) — drop it and promote the next pending group, if any. Removes
-# the state file once the worklist is empty, ending the bisect.
-queue_bisect_advance() {
-    local f; f="$(queue_bisect_file "$1")"
-    [ -s "$f" ] || return 0
-    local rest; rest="$(tail -n +2 "$f")"
-    if [ -n "$rest" ]; then
-        printf '%s\n' "$rest" > "$f.$$" && mv -f "$f.$$" "$f"
-    else
-        rm -f "$f"
-    fi
-}
-
-# queue_bisect_resolve <repo-name> <members-str>
-# <members-str> (space-separated "id:tip") just landed clean. If it is exactly
-# the group the bisect is currently testing, that group is innocent — advance
-# to the next pending group so the culprit is sought there next.
-queue_bisect_resolve() {
-    local name="$1" members_str="$2" _cur
-    _cur="$(queue_bisect_current "$name" 2>/dev/null)" || return 0
-    [ "$(printf '%s\n' $_cur | sort)" = "$(printf '%s\n' $members_str | sort)" ] \
-        && queue_bisect_advance "$name"
-    return 0
-}
-
 # gh_issue_closeout — comment and close the GitHub issue linked to a landed bead.
 #
 # The write-back complement to gh-intake's one-way ingest. Intake holds no
@@ -7318,28 +6891,6 @@ bead_is_work_type() {
         *" $t "*) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-# bead_land_status <id> -> the bead's status as the landing path must read it: "closed" for
-# a bead whose work is DONE — closed, or carrying SPIRA_SUBMITTED_LABEL (sp-qsona: a work
-# bead's own close is converted to open + submitted and only bead_close_on_land closes it,
-# once it lands) — and the raw status otherwise; "-" when it cannot be read.
-#
-# EVERY NON-QUEUE LANDING PATH GATES ON "closed". landing.sh's CHECK 6 and landing-pass's
-# pr_branch (sp-t4y60; was pr-pass-branch.sh) skip, refuse to certify and refuse to land a
-# branch whose bead is not closed — the right
-# rule before sp-qsona, and a total stop after it: in push, pr and hold mode no submitted
-# bead ever landed, so nothing ever closed. One reader, so the rule cannot differ by site.
-bead_land_status() {
-    bdjson show "$1" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print("-"); raise SystemExit
-d = d if isinstance(d, list) else [d]
-if not d: print("-"); raise SystemExit
-st = d[0].get("status") or "-"
-if sys.argv[1] in (d[0].get("labels") or []): st = "closed"
-print(st)' "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" 2>/dev/null || printf -- '-\n'
 }
 
 # bead_close_on_land — the only place a work bead is closed for a landed reason.
