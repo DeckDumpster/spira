@@ -16,7 +16,7 @@ fn raw_env(name: &str) -> Option<String> {
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read
 /// SPIRA_SUITE_TIMEOUT (and SPIRA_BATCH_TAIL_LINES) straight out of its own process
-/// environment, with no snapshot and no spira.toml load at all (wave4-decomposition.md
+/// environment, with no snapshot and no config document load at all (wave4-decomposition.md
 /// row (b) names gate-diag by file). `spira_config::resolve_for_process`, using `home` —
 /// the SAME `--home`/`SPIRA_HOME`/release-relative value `main.rs`'s own `run()` already
 /// resolved once and threads through every `World` call, never recomputed independently
@@ -151,10 +151,10 @@ mod tests {
     use super::*;
 
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the
-    // same hazard): `env()`'s own `resolve_for_process` discovers `spira.toml` from THIS
-    // PROCESS's real environment (SPIRA_TOML/HOME/XDG_CONFIG_HOME), never from `home`
+    // same hazard): `env()`'s own `resolve_for_process` discovers the config document from
+    // THIS PROCESS's real environment (SPIRA_TOML/HOME/XDG_CONFIG_HOME), never from `home`
     // alone — this test takes a lock and pins SPIRA_TOML to a nonexistent path so it
-    // never depends on a real operator spira.toml on the machine running this suite.
+    // never depends on a real operator config document on the machine running this suite.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     /// `home`, not any OTHER process-global state, decides which registry this reads —
@@ -164,7 +164,7 @@ mod tests {
         let _g = ENV_LOCK.lock().unwrap();
         let saved = std::env::var("SPIRA_TOML").ok();
         let dir = testkit::TempDir::new("gate-diag-real-env");
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
         let home = dir.join("spira");
         std::fs::create_dir_all(home.join("conf.d")).unwrap();
         std::fs::write(

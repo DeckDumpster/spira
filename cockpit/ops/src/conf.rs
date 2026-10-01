@@ -57,7 +57,7 @@ mod tests {
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the
     // same hazard): the one test below that resolves config takes this lock, and pins
     // SPIRA_TOML to a nonexistent path, so it never depends on a real operator
-    // spira.toml on the machine running this suite.
+    // config document on the machine running this suite.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -80,7 +80,7 @@ mod tests {
         )
         .unwrap();
         std::env::set_var("SPIRA_RELEASE", dir.path());
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
         // conf.sh's own convention is ${VAR:-default}; a caller override must survive.
         std::env::set_var("COCKPIT_RIGHT_PCT", "50");
 

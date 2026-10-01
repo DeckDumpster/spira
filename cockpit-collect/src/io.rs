@@ -87,8 +87,9 @@ pub fn home_dir() -> PathBuf {
 /// caller or a test — is never overwritten, so this only ever *adds* resolved defaults,
 /// never overrides an explicit value); [`NEVER_EXPORTED`] keys are cached in [`BOOT`]
 /// instead, read back only by [`repo_registry`] and [`max_aeons`]. Best-effort: a missing
-/// `spira.toml`/registry or any other resolution failure leaves the environment exactly as
-/// it was (the same as every `lib_call` already tolerates a bash failure returning `None`).
+/// config document/registry or any other resolution failure leaves the environment
+/// exactly as it was (the same as every `lib_call` already tolerates a bash failure
+/// returning `None`).
 pub fn bootstrap_config() {
     let home = home_dir();
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
@@ -512,13 +513,13 @@ mod tests {
             ("SPIRA_REPO_MAP", "/should-never-leak"),
             ("SPIRA_FAYTHS", "builder groomer"),
             ("SPIRA_MAX_AEONS", "12"),
-            ("SPIRA_WIKI", "/home/ryan/spira/brain"),
+            ("SPIRA_WIKI", "/var/spira/wiki"),
         ]);
         let got = importable(&r, &BTreeMap::new());
         for forbidden in NEVER_EXPORTED {
             assert!(!got.contains_key(*forbidden), "{forbidden} leaked: {got:?}");
         }
-        assert_eq!(got.get("SPIRA_WIKI"), Some(&"/home/ryan/spira/brain".to_string()));
+        assert_eq!(got.get("SPIRA_WIKI"), Some(&"/var/spira/wiki".to_string()));
     }
 
     #[test]
@@ -547,7 +548,7 @@ mod tests {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         assert!(BOOT.get().is_none(), "a prior test in this binary must have called bootstrap_config()");
         let dir = testkit::TempDir::new("cc-io-repo-registry-fallback");
-        let map = dir.join("repo-map");
+        let map = dir.join("repomap");
         std::fs::write(&map, "x|/some/path\n").unwrap();
         let saved = std::env::var("SPIRA_REPO_MAP").ok();
         std::env::set_var("SPIRA_REPO_MAP", &map);

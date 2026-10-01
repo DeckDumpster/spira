@@ -14,7 +14,7 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): every `std::env::var(...)` read across
 /// this crate's submodules (execute.rs, read.rs, submit.rs, repo_map.rs, token.rs) used to
-/// see only this process's own already-set environment — no spira.toml load at all
+/// see only this process's own already-set environment — no config document load at all
 /// (wave4-decomposition.md row (b) names broker by file: SPIRA_GH_APP_*). Merges
 /// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
 /// at the top of `main`, before any subcommand dispatch — inserting a key only when it is
@@ -23,7 +23,7 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 /// `~/.config/spira/github-app.env` fallback `token.rs` already carries, so this changes
 /// nothing for a secret that only ever reaches the box's own environment or that config
 /// file, and only matters for an operator who puts a non-secret override (a different
-/// config file path) in spira.toml. Best-effort: a missing registry or a containment
+/// config file path) in the resolved config document. Best-effort: a missing registry or a containment
 /// refusal leaves the environment exactly as it was.
 fn merge_resolved_env() {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();

@@ -26,7 +26,7 @@ fn raw_env(key: &str) -> Option<String> {
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
 /// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
-/// `spira.toml` load at all (wave4-decomposition.md row (b) names maechen-trigger by
+/// the config document load at all (wave4-decomposition.md row (b) names maechen-trigger by
 /// file, "beyond its shim": SPIRA_MAECHEN_*). Resolved once, lazily, and cached:
 /// `spira_config::resolve_for_process`, using `SPIRA_HOME` (raw — the same precedence
 /// `main`'s own `spira_home` local already uses) and
@@ -229,7 +229,7 @@ mod tests {
         )
         .unwrap();
         env::set_var("SPIRA_HOME", &home);
-        env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
         env::remove_var("SPIRA_MAECHEN_MAX_BEADS");
 
         assert_eq!(env_u64("SPIRA_MAECHEN_MAX_BEADS", 1), 3, "a registry default must reach env_u64 without an env override");

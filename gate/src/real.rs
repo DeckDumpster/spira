@@ -896,8 +896,8 @@ mod tests {
 
     // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same
     // hazard): this test takes a lock and pins SPIRA_TOML to a nonexistent path — locate()'s
-    // own exclusive-pin rule — so it never depends on a real operator spira.toml on the
-    // machine running this suite.
+    // own exclusive-pin rule — so it never depends on a real operator config document on
+    // the machine running this suite.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
@@ -912,7 +912,7 @@ mod tests {
             "TYPE=u32\nGROUP=gate\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_GATE_TIMEOUT:=1234}\"\nSPIRA_CONF_DEFAULT_EOF\n",
         )
         .unwrap();
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
 
         let mut kv = std::collections::HashMap::new();
         kv.insert("SPIRA_GATE_BEAD".to_string(), "sp-xyz".to_string());

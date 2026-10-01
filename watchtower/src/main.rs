@@ -31,7 +31,7 @@ fn raw_env(k: &str) -> Option<String> {
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
 /// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
-/// `spira.toml` load at all (wave4-decomposition.md row (b) names watchtower by file) —
+/// the config document load at all (wave4-decomposition.md row (b) names watchtower by file) —
 /// so an operator's toml value for, say, `SPIRA_QUEUE_THROTTLE_DEPTH_AT` was silently
 /// ignored; only an explicit env override (set by the launching unit) ever took effect.
 /// Resolved once, lazily, and cached: `spira_config::resolve_for_process`, using
@@ -266,7 +266,7 @@ mod tests {
     /// `resolved_config` computes once per process and never resets, so a second test with
     /// a different fixture could not observe a different answer. SPIRA_HOME points at a
     /// throwaway fixture with its own `conf.d` (never the real box's), so this never reads
-    /// an operator's actual spira.toml or registry.
+    /// an operator's actual config document or registry.
     #[test]
     fn getenv_falls_back_to_the_registry_then_the_callers_default() {
         let dir = testkit::TempDir::new("watchtower-getenv");
@@ -278,7 +278,7 @@ mod tests {
         )
         .unwrap();
         std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
         std::env::remove_var("SPIRA_SNAP_STALE_S");
 
         assert_eq!(getenv_i64("SPIRA_SNAP_STALE_S", 60), 77, "a registry default must reach getenv_i64 without an env override");

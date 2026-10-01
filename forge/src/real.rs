@@ -39,7 +39,7 @@ fn spira_home_dir() -> std::path::PathBuf {
 
 /// Wave 4.8 ("retire conf re-import seams in Rust"): this crate used to read every
 /// `SPIRA_*` key straight out of its own process environment, with no snapshot and no
-/// `spira.toml` load at all (wave4-decomposition.md row (b) names forge by file: SPIRA_GH,
+/// the config document load at all (wave4-decomposition.md row (b) names forge by file: SPIRA_GH,
 /// SPIRA_QUEUE_ACTIONS_APP_ID). Resolved once, lazily, and cached:
 /// `spira_config::resolve_for_process`. A resolution failure yields an empty
 /// [`spira_config::resolve::Resolved`] — [`env`]'s own callers see exactly the behaviour
@@ -148,7 +148,7 @@ mod tests {
         )
         .unwrap();
         std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
         std::env::remove_var("SPIRA_GH");
 
         assert_eq!(env("SPIRA_GH"), Some("gh".to_string()), "a registry default must reach env() without an env override");
