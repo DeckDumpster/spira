@@ -1,0 +1,535 @@
+//! `bdq` — the harness's one chokepoint for invoking `bd`, and the three create-time safety
+//! fences every caller goes through on the way there. Ported from `spira/lib.sh`'s `bdq`,
+//! `_bdq_check_repo_label`, `_bdq_check_destructive`, `_bdq_check_schema_delete`, `ghq`,
+//! `bdjson`, `json_only` and `json_count` (sp-w3h16, wave 4.14, wave4-decomposition.md row A
+//! and row B, safety note (c1)).
+//!
+//! Pure, argv-in/decision-out logic lives here so it is unit-testable with no database, no
+//! subprocess and no filesystem. The actual `bd`/`czar-fence.sh`/`bdsim.py` subprocess work,
+//! and the retry loop that drives it, live in `src/bin/bdq.rs` — the same split `lib.rs`/
+//! `main.rs` already draws for `bead file`/`bead lint`.
+
+use std::collections::BTreeMap;
+
+use spira_config::repos::Registry;
+
+// =========================================================================================
+// Argv parsing shared shape. Each of the three bash fence functions parses its own `"$@"`
+// with a slightly different flag set, so each gets its own small state machine below rather
+// than one "generic" parser — matching flags precisely is the whole point of a parity port,
+// and the three loops genuinely disagree about which flags they recognise (schema-delete's
+// loop has no `--labels`/`-l` case at all, unlike destructive's).
+// =========================================================================================
+
+/// `_bdq_check_repo_label`'s own loop: the LAST of `--labels <v>` / `-l <v>` / `--labels=<v>`
+/// anywhere in argv wins (no "create" skip, no title/description tracking at all).
+fn last_labels_value(args: &[String]) -> String {
+    let mut labels = String::new();
+    let mut next_is_labels = false;
+    for arg in args {
+        if next_is_labels {
+            labels = arg.clone();
+            next_is_labels = false;
+            continue;
+        }
+        if arg == "--labels" || arg == "-l" {
+            next_is_labels = true;
+        } else if let Some(v) = arg.strip_prefix("--labels=") {
+            labels = v.to_string();
+        }
+    }
+    labels
+}
+
+/// Title/description/labels extracted by `_bdq_check_destructive`'s loop: `--title`/
+/// `--title=`/a bare positional all set `title` (first non-flag arg after the leading
+/// `create` token is skipped; the next sets `title`, and only if nothing has set it yet);
+/// `-d`/`--description`/`--description=` set `desc`; `--labels`/`-l`/`--labels=` set
+/// `labels` (last one wins, matching bash's unconditional overwrite in both branches).
+fn destructive_fields(args: &[String]) -> (String, String, String) {
+    let mut labels = String::new();
+    let mut title = String::new();
+    let mut desc = String::new();
+    let mut next: &str = "";
+    let mut saw_create = false;
+    let mut positioned = false;
+    for arg in args {
+        if !next.is_empty() {
+            match next {
+                "labels" => labels = arg.clone(),
+                "title" => {
+                    title = arg.clone();
+                    positioned = true;
+                }
+                "description" => desc = arg.clone(),
+                _ => {}
+            }
+            next = "";
+            continue;
+        }
+        if arg == "--labels" || arg == "-l" {
+            next = "labels";
+        } else if let Some(v) = arg.strip_prefix("--labels=") {
+            labels = v.to_string();
+        } else if arg == "--title" {
+            next = "title";
+        } else if let Some(v) = arg.strip_prefix("--title=") {
+            title = v.to_string();
+            positioned = true;
+        } else if arg == "-d" || arg == "--description" {
+            next = "description";
+        } else if let Some(v) = arg.strip_prefix("--description=") {
+            desc = v.to_string();
+        } else if arg.starts_with('-') {
+            // recognised-but-unhandled or unknown flag: skip, matching bash's `-*) ;;`.
+        } else if !saw_create {
+            saw_create = true; // this positional is the literal "create"
+        } else if !positioned {
+            title = arg.clone();
+            positioned = true;
+        }
+    }
+    (title, desc, labels)
+}
+
+/// Title/description extracted by `_bdq_check_schema_delete`'s loop — identical shape to
+/// [`destructive_fields`] but with NO `--labels`/`-l` case at all: a `--labels` token there
+/// falls into the bare `-*)` skip branch instead of consuming the next arg as a value.
+fn schema_delete_fields(args: &[String]) -> (String, String) {
+    let mut title = String::new();
+    let mut desc = String::new();
+    let mut next: &str = "";
+    let mut saw_create = false;
+    let mut positioned = false;
+    for arg in args {
+        if !next.is_empty() {
+            match next {
+                "title" => {
+                    title = arg.clone();
+                    positioned = true;
+                }
+                "description" => desc = arg.clone(),
+                _ => {}
+            }
+            next = "";
+            continue;
+        }
+        if arg == "--title" {
+            next = "title";
+        } else if let Some(v) = arg.strip_prefix("--title=") {
+            title = v.to_string();
+            positioned = true;
+        } else if arg == "-d" || arg == "--description" {
+            next = "description";
+        } else if let Some(v) = arg.strip_prefix("--description=") {
+            desc = v.to_string();
+        } else if arg.starts_with('-') {
+            // includes --labels/-l: unrecognised here, skipped without consuming a value.
+        } else if !saw_create {
+            saw_create = true;
+        } else if !positioned {
+            title = arg.clone();
+            positioned = true;
+        }
+    }
+    (title, desc)
+}
+
+// =========================================================================================
+// The three create-time fences.
+// =========================================================================================
+
+/// `_bdq_check_repo_label`. `registry` is this process's repo registry (built from
+/// `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/`$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO`,
+/// read by the caller — see `src/bin/bdq.rs::build_registry`). Returns the refusal message
+/// (already newline-terminated, ready for stderr), or `None` when the call is allowed.
+pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> {
+    let labels = last_labels_value(args);
+    if labels.is_empty() {
+        return None;
+    }
+    let repo_val = labels.split(',').find_map(|t| t.strip_prefix("repo:"))?;
+    if repo_val.is_empty() {
+        return None;
+    }
+    if repo_val == registry.home_repo() {
+        return None;
+    }
+    let mut names = registry.names();
+    if names.iter().any(|n| n == repo_val) {
+        return None;
+    }
+    names.sort();
+    let valid = if names.is_empty() { "<map not found>".to_string() } else { names.join(" ") };
+    Some(format!("spira: repo:{repo_val} is not in the repo map; valid keys: {valid}\n"))
+}
+
+/// `_bdq_check_destructive`. `ask_label` is `$SPIRA_ASK_LABEL` (conf.sh always exports it;
+/// the bash original hard-refuses to run at all with it unset — callers here are expected to
+/// have already resolved it the same way, see `src/bin/bdq.rs`). Case-insensitive; the
+/// returned refusal names the matched phrase in its ORIGINAL case, same as bash's
+/// `grep -io` capture.
+pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
+    let (title, desc, labels) = destructive_fields(args);
+    if labels.split(',').any(|l| l == ask_label) {
+        return None;
+    }
+    // Mirrors bash's `[ -z "${text# }" ]`: text is always "<title> <desc>", which strips to
+    // empty iff both are empty — i.e. iff text is exactly one space.
+    let text = format!("{title} {desc}");
+    if text == " " {
+        return None;
+    }
+    const PATTERNS: &[&str] = &[
+        r"world\.sh +stop",
+        r"spira-world +down",
+        r"systemd/install\.sh",
+        r"\bdaemon-reload\b",
+        r"systemctl +(stop|restart) +spira-",
+        r"schema +migrat",
+        r"world +stopped",
+    ];
+    for p in PATTERNS {
+        let re = regex::RegexBuilder::new(p).case_insensitive(true).build().expect("static pattern");
+        if let Some(m) = re.find(&text) {
+            return Some(format!(
+                "spira: bead contains \"{}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels, or reword to remove the destructive step.\n",
+                m.as_str()
+            ));
+        }
+    }
+    None
+}
+
+/// `_bdq_check_schema_delete`. Not bypassed by `needs-ryan` (sp-1khst) — this check takes no
+/// `ask_label` at all.
+pub fn check_schema_delete(args: &[String]) -> Option<String> {
+    let (title, desc) = schema_delete_fields(args);
+    let text = format!("{title} {desc}");
+    if text == " " {
+        return None;
+    }
+    static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
+    let re = regex::RegexBuilder::new(PATTERN).case_insensitive(true).build().expect("static pattern");
+    if re.is_match(&text) {
+        return Some(
+            "spira: bead contains \"DELETE FROM schema_migrations\" — this SQL is refused\n\
+             even with needs-ryan because it was escalated and approved three times while wrong.\n\
+             Run `bd migrate schema` and include its output in the escalation instead.\n\
+             The correct response to a real mismatch is rebuilding bd (see bd-pin.sh),\n\
+             not deleting migration rows from the database.\n"
+                .to_string(),
+        );
+    }
+    None
+}
+
+/// `[ "${1:-}" = create ]` — whether this call is a `bd create`, which is when all three
+/// fences above run.
+pub fn is_create(args: &[String]) -> bool {
+    args.first().map(String::as_str) == Some("create")
+}
+
+// =========================================================================================
+// The czar fence's dispatch decision (the fence itself is `czar-fence.sh`, a subprocess —
+// see `src/bin/bdq.rs`). Pure: "should the caller shell out to czar-fence.sh at all, and
+// with which class."
+// =========================================================================================
+
+/// Whether `bdq`'s czar-fence dispatch applies to this call, and the class to pass
+/// `czar-fence.sh` if so. Mirrors the bash's `case "${1:-}" in reopen) ...; update|close)
+/// ...; esac`, gated on `fayth == "czar"` and a non-empty class.
+pub fn czar_fence_class<'a>(
+    fayth: &str,
+    czar_class: &'a str,
+    czar_trigger_bead: &str,
+    args: &[String],
+) -> Option<&'a str> {
+    if fayth != "czar" || czar_class.is_empty() {
+        return None;
+    }
+    match args.first().map(String::as_str) {
+        Some("reopen") => Some(czar_class),
+        Some("update") | Some("close") => {
+            let second = args.get(1).map(String::as_str).unwrap_or("");
+            let trigger = if czar_trigger_bead.is_empty() { "__none__" } else { czar_trigger_bead };
+            if second != trigger {
+                Some(czar_class)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+// =========================================================================================
+// bdjson / json_only / json_count
+// =========================================================================================
+
+/// `json_only`: `sed -n '/^[[{]/,$p'` — find the first line that starts (at column 1, no
+/// leading-whitespace tolerance) with `[` or `{`, and keep that line and everything after it,
+/// verbatim. Everything before it (a warning banner `bd --json` printed on stdout) is
+/// dropped. No match at all -> empty string, matching `sed -n` printing nothing.
+pub fn json_only(input: &str) -> &str {
+    let mut offset = 0usize;
+    for line in input.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        if body.starts_with('[') || body.starts_with('{') {
+            return &input[offset..];
+        }
+        offset += line.len();
+    }
+    ""
+}
+
+/// `json_count`: parse stdin as JSON; an array's length, 1 for any other value, 0 for
+/// anything that fails to parse (including empty input) — never a hard error, matching the
+/// bash's `d = []` fallback on any python exception.
+pub fn json_count(input: &str) -> u64 {
+    match serde_json::from_str::<serde_json::Value>(input) {
+        Ok(serde_json::Value::Array(a)) => a.len() as u64,
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+
+// =========================================================================================
+// Retry-loop decision (the subprocess calls themselves are in src/bin/bdq.rs).
+// =========================================================================================
+
+/// Whether the retry loop should attempt again: bash's
+/// `[ "$_bdq_rc" -eq 0 ] || [ "$_bdq_try" -ge "$_bdq_tries" ] || ! grep -q "invalid connection" "$_bdq_err"`
+/// decides when to BREAK; this is the negation (when to keep going), spelled out positively
+/// so the caller's loop reads as "retry while this is true".
+pub fn should_retry(rc: i32, try_n: u32, max_tries: u32, stderr_has_invalid_connection: bool) -> bool {
+    rc != 0 && try_n < max_tries.max(1) && stderr_has_invalid_connection
+}
+
+/// A repo registry built the same way `spira-config`'s own CLI builds one (see
+/// `spira-config/src/main.rs::repo_registry`): `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/
+/// `$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO` read straight out of an env map the caller
+/// supplies — never self-located beyond that. Exposed here (not just duplicated in
+/// `src/bin/bdq.rs`) so a test can build one without going through `std::env`.
+pub fn registry_from_env(env: &BTreeMap<String, String>, home: &std::path::Path) -> Registry {
+    let map_text = env
+        .get("SPIRA_REPO_MAP")
+        .filter(|p| !p.is_empty())
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    Registry::new(map_text.as_deref(), env, home)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    fn s(strs: &[&str]) -> Vec<String> {
+        strs.iter().map(|s| s.to_string()).collect()
+    }
+
+    // -- check_repo_label -------------------------------------------------------------------
+
+    #[test]
+    fn repo_label_allows_home_repo_and_known_repos() {
+        let e = env(&[("SPIRA_HOME_REPO", "spira")]);
+        let reg = registry_from_env(&e, Path::new("/x"));
+        assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan,repo:spira"]), &reg), None);
+    }
+
+    #[test]
+    fn repo_label_refuses_unknown_repo_and_names_valid_keys() {
+        let map = "spira | /srv/spira | push | origin/main | |\nwidget | /srv/widget | pr | origin/main | |\n";
+        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("/x"));
+        let msg = check_repo_label(&s(&["create", "title", "--labels", "plan,repo:nope"]), &reg);
+        let msg = msg.expect("refused");
+        assert!(msg.contains("repo:nope"), "{msg}");
+        assert!(msg.contains("spira"), "{msg}");
+        assert!(msg.contains("widget"), "{msg}");
+    }
+
+    #[test]
+    fn repo_label_no_repo_label_at_all_is_allowed() {
+        let reg = registry_from_env(&env(&[]), Path::new("/x"));
+        assert_eq!(check_repo_label(&s(&["create", "title", "--labels", "plan"]), &reg), None);
+    }
+
+    #[test]
+    fn repo_label_last_labels_flag_wins() {
+        // Two --labels occurrences: the second overwrites the first, matching bash's
+        // unconditional overwrite with no break.
+        let map = "spira | /srv/spira | push | origin/main | |\n";
+        let reg = Registry::new(Some(map), &env(&[("SPIRA_HOME_REPO", "homerepo")]), Path::new("/x"));
+        assert_eq!(
+            check_repo_label(&s(&["create", "title", "--labels", "repo:nope", "--labels", "repo:spira"]), &reg),
+            None
+        );
+    }
+
+    // -- check_destructive ------------------------------------------------------------------
+
+    #[test]
+    fn destructive_matches_and_is_bypassed_by_ask_label() {
+        assert!(check_destructive(&s(&["create", "needs the world stopped"]), "needs-ryan").is_some());
+        assert_eq!(
+            check_destructive(&s(&["create", "needs the world stopped", "--labels", "needs-ryan"]), "needs-ryan"),
+            None
+        );
+    }
+
+    #[test]
+    fn destructive_matched_text_preserves_original_case() {
+        let msg = check_destructive(&s(&["create", "Needs The WORLD STOPPED now"]), "needs-ryan").unwrap();
+        assert!(msg.contains("WORLD STOPPED"), "{msg}");
+    }
+
+    #[test]
+    fn destructive_systemctl_alternation_matches_stop_and_restart() {
+        assert!(check_destructive(&s(&["create", "run systemctl restart spira-gate"]), "needs-ryan").is_some());
+        assert!(check_destructive(&s(&["create", "run systemctl stop spira-gate"]), "needs-ryan").is_some());
+    }
+
+    #[test]
+    fn destructive_ordinary_bead_is_allowed() {
+        assert_eq!(check_destructive(&s(&["create", "ordinary title", "-d", "ordinary body"]), "needs-ryan"), None);
+    }
+
+    #[test]
+    fn destructive_daemon_reload_is_word_bounded() {
+        assert!(check_destructive(&s(&["create", "run daemon-reload now"]), "needs-ryan").is_some());
+        assert_eq!(check_destructive(&s(&["create", "mydaemon-reloaded"]), "needs-ryan"), None);
+    }
+
+    #[test]
+    fn destructive_description_flag_is_read() {
+        assert!(check_destructive(&s(&["create", "clean title", "-d", "world.sh stop please"]), "needs-ryan").is_some());
+    }
+
+    // -- check_schema_delete -----------------------------------------------------------------
+
+    #[test]
+    fn schema_delete_is_detected_regardless_of_case_or_spacing() {
+        assert!(check_schema_delete(&s(&["create", "DELETE   FROM schema_migrations"])).is_some());
+        assert!(check_schema_delete(&s(&["create", "clean", "-d", "please delete from schema_migrations now"]))
+            .is_some());
+        assert_eq!(check_schema_delete(&s(&["create", "delete from somewhere_else"])), None);
+    }
+
+    #[test]
+    fn schema_delete_labels_flag_is_not_a_bypass_and_is_not_misread_as_title() {
+        // --labels is unrecognised by this parser; its value must not leak into title.
+        let r = check_schema_delete(&s(&[
+            "create",
+            "clean title",
+            "--labels",
+            "needs-ryan",
+            "-d",
+            "DELETE FROM schema_migrations",
+        ]));
+        assert!(r.is_some());
+    }
+
+    // -- is_create ----------------------------------------------------------------------------
+
+    #[test]
+    fn is_create_only_true_for_the_create_verb() {
+        assert!(is_create(&s(&["create", "x"])));
+        assert!(!is_create(&s(&["update", "sp-a"])));
+        assert!(!is_create(&s(&[])));
+    }
+
+    // -- czar fence dispatch ------------------------------------------------------------------
+
+    #[test]
+    fn czar_fence_fires_on_reopen_when_czar_with_class() {
+        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["reopen", "sp-a"])), Some("deadlock"));
+    }
+
+    #[test]
+    fn czar_fence_skips_non_czar_or_empty_class() {
+        assert_eq!(czar_fence_class("builder", "deadlock", "", &s(&["reopen", "sp-a"])), None);
+        assert_eq!(czar_fence_class("czar", "", "", &s(&["reopen", "sp-a"])), None);
+    }
+
+    #[test]
+    fn czar_fence_update_close_skip_the_trigger_bead_itself() {
+        assert_eq!(czar_fence_class("czar", "deadlock", "sp-trigger", &s(&["update", "sp-trigger"])), None);
+        assert_eq!(
+            czar_fence_class("czar", "deadlock", "sp-trigger", &s(&["update", "sp-other"])),
+            Some("deadlock")
+        );
+        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["close", "sp-a"])), Some("deadlock"));
+    }
+
+    #[test]
+    fn czar_fence_ignores_other_verbs() {
+        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["create", "x"])), None);
+        assert_eq!(czar_fence_class("czar", "deadlock", "", &s(&["list"])), None);
+    }
+
+    // -- json_only ----------------------------------------------------------------------------
+
+    #[test]
+    fn json_only_drops_a_warning_banner_before_the_json() {
+        assert_eq!(json_only("warning: schema drift\n[{\"a\":1}]\n"), "[{\"a\":1}]\n");
+        assert_eq!(json_only("{\"a\":1}\n"), "{\"a\":1}\n");
+    }
+
+    #[test]
+    fn json_only_requires_column_one_no_leading_whitespace_tolerance() {
+        // Matches sed's `^[[{]` exactly: a line that starts with whitespace before the
+        // bracket is NOT a match, same as the bash original.
+        assert_eq!(json_only("  [1]\n"), "");
+    }
+
+    #[test]
+    fn json_only_no_json_line_is_empty() {
+        assert_eq!(json_only("just a warning\nand another line\n"), "");
+    }
+
+    #[test]
+    fn json_only_keeps_a_trailing_non_json_line_too() {
+        // sed prints from the first match to the end of input, unconditionally.
+        assert_eq!(json_only("[1]\nnot json\n"), "[1]\nnot json\n");
+    }
+
+    // -- json_count ---------------------------------------------------------------------------
+
+    #[test]
+    fn json_count_array_length() {
+        assert_eq!(json_count("[1,2,3]"), 3);
+        assert_eq!(json_count("[]"), 0);
+    }
+
+    #[test]
+    fn json_count_object_is_one() {
+        assert_eq!(json_count("{\"a\":1}"), 1);
+    }
+
+    #[test]
+    fn json_count_unparseable_is_zero() {
+        assert_eq!(json_count(""), 0);
+        assert_eq!(json_count("not json"), 0);
+    }
+
+    // -- should_retry -------------------------------------------------------------------------
+
+    #[test]
+    fn should_retry_only_on_invalid_connection_within_budget() {
+        assert!(should_retry(1, 1, 2, true));
+        assert!(!should_retry(0, 1, 2, true), "success never retries");
+        assert!(!should_retry(1, 2, 2, true), "budget exhausted");
+        assert!(!should_retry(1, 1, 2, false), "a different error never retries");
+    }
+
+    #[test]
+    fn should_retry_zero_retries_configured_still_allows_one_attempt() {
+        // bash: tries="0" from env; try=1 after the first attempt, "1 -ge 0" is true -> break.
+        // One attempt always happens; this function only governs whether a SECOND is tried.
+        assert!(!should_retry(1, 1, 0, true));
+    }
+}
