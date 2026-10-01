@@ -67,27 +67,61 @@ pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRo
     parse_context(&answer, home)
 }
 
+/// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
+/// `ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_publish_forge` — the CONTEXT seam's
+/// per-repo loop used to shell into, once per function per repository). Built from THIS
+/// process's own environment, same inputs `aeon::conf::Conf` and
+/// `cockpit_collect::io::repo_registry` already read.
+fn repo_registry(home: &Path) -> spira_config::repos::Registry {
+    let env_map: BTreeMap<String, String> = std::env::vars().collect();
+    let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
+    spira_config::repos::Registry::new(map_text.as_deref(), &env_map, home)
+}
+
+/// The base-ref columns (family W) for one already-resolved `(name, path, mode)` — ported
+/// verbatim from the CONTEXT seam's own per-repo loop (sp-o88bx, "wave 4.12"): nothing when
+/// `path` is empty or not a real checkout; `forge_ref` is the qualified publish target under
+/// `queue.local`, else the same as `base_fq`.
+fn resolve_base_refs(
+    reg: &spira_config::repos::Registry,
+    name: &str,
+    path: &Path,
+    mode: &LandMode,
+) -> (Option<String>, Option<String>, Option<String>, String, Option<String>) {
+    if path.as_os_str().is_empty() || !path.join(".git").exists() {
+        return (None, None, None, String::new(), None);
+    }
+    let path_s = path.to_string_lossy().into_owned();
+    let Some(landref) = spira_config::repos::landref(reg, &path_s) else {
+        return (None, None, None, String::new(), None);
+    };
+    let base_remote = spira_config::repos::ref_remote(&landref, Some(&path_s));
+    let base_branch = spira_config::repos::ref_branch(&landref);
+    let base_fq = spira_config::repos::qualify_base_ref(&landref, &path_s);
+    let forge_ref = if *mode == LandMode::QueueLocal {
+        spira_config::repos::publish_forge(reg, name, &std::env::vars().collect()).map(|(remote, branch)| format!("refs/remotes/{remote}/{branch}"))
+    } else {
+        Some(base_fq.clone())
+    };
+    (Some(landref), Some(base_fq), base_remote, base_branch, forge_ref)
+}
+
 pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow>), String> {
     let mut kv: BTreeMap<String, String> = BTreeMap::new();
     let mut repos = Vec::new();
+    let reg = repo_registry(home);
     for rec in answer.split('\0') {
         let Some((k, v)) = rec.split_once('=') else { continue };
         if k == "repo" {
             let f: Vec<&str> = v.split(FIELD).collect();
-            if f.len() != 8 || f[0].is_empty() {
+            if f.len() != 3 || f[0].is_empty() {
                 continue;
             }
-            let opt = |s: &str| if s.is_empty() { None } else { Some(s.to_string()) };
-            repos.push(RepoRow {
-                name: f[0].into(),
-                path: PathBuf::from(f[1]),
-                mode: LandMode::parse(f[2]),
-                landref: opt(f[3]),
-                base_fq: opt(f[4]),
-                base_remote: opt(f[5]),
-                base_branch: f[6].into(),
-                forge_ref: opt(f[7]),
-            });
+            let name = f[0].to_string();
+            let path = PathBuf::from(f[1]);
+            let mode = LandMode::parse(f[2]);
+            let (landref, base_fq, base_remote, base_branch, forge_ref) = resolve_base_refs(&reg, &name, &path, &mode);
+            repos.push(RepoRow { name, path, mode, landref, base_fq, base_remote, base_branch, forge_ref });
         } else {
             kv.insert(k.into(), v.into());
         }

@@ -34,3 +34,39 @@ pub fn tmpdir(tag: &str) -> TmpDir {
     let d = testkit::TempDir::new(&format!("landing-pass-test-{tag}-{n}"));
     TmpDir { path: d.to_path_buf(), _dir: d }
 }
+
+/// Serialises tests that mutate process-global state (an env var such as `SPIRA_REPO_MAP`,
+/// read by `real::repo_registry` — sp-o88bx, "wave 4.12") against each other. Production has
+/// one thread; `cargo test` runs these on several, so without this two tests racing on the
+/// same env var is a test-harness flake, not a real defect. Re-entrant per thread, same
+/// shape as `queue::testutil::serial`.
+pub struct Serial;
+
+static M: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static HELD: std::cell::RefCell<(u32, Option<std::sync::MutexGuard<'static, ()>>)> = const { std::cell::RefCell::new((0, None)) };
+}
+
+pub fn serial() -> Serial {
+    HELD.with(|h| {
+        let mut h = h.borrow_mut();
+        if h.0 == 0 {
+            h.1 = Some(M.lock().unwrap_or_else(|e| e.into_inner()));
+        }
+        h.0 += 1;
+    });
+    Serial
+}
+
+impl Drop for Serial {
+    fn drop(&mut self) {
+        HELD.with(|h| {
+            let mut h = h.borrow_mut();
+            h.0 -= 1;
+            if h.0 == 0 {
+                h.1 = None;
+            }
+        });
+    }
+}
