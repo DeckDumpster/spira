@@ -68,11 +68,15 @@ impl Drop for TempDir {
 /// the file here instead, so no fork in this process can inherit a descriptor on it.
 pub fn write_exe(path: impl AsRef<Path>, body: &str) {
     let path = path.as_ref();
-    // /bin/sh by absolute path: another test in the same binary may have set the process PATH
-    // to a directory with no sh in it (release/src/tests.rs does, under its own ENV_LOCK).
+    // /bin/sh by absolute path, and /bin/cat INSIDE the script also by absolute path: another
+    // test in the same binary may have set the process PATH to a directory with neither in it
+    // (release/src/tests.rs does, under its own ENV_LOCK) — sp-e7fe2 fixed the outer `sh` but
+    // left the inner `cat` a bare word still resolved through that same mutated PATH, so the
+    // race it was meant to remove kept firing, just one level deeper ("sh: 1: cat: not found",
+    // sp-tuupa).
     let mut c = Command::new("/bin/sh")
         .arg("-c")
-        .arg("cat > \"$1\"")
+        .arg("/bin/cat > \"$1\"")
         .arg("sh")
         .arg(path)
         .stdin(Stdio::piped())
