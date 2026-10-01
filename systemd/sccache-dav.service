@@ -1,0 +1,31 @@
+[Unit]
+# sccache-dav (sp-xjnzl): the box's shared compilation cache, over WebDAV, reachable from
+# this host's own builds AND every ephemeral round-vm — not a VM-local cache, not Redis
+# (disk-backed, and it must not compete with the agents' own RAM).
+Description=sccache-dav — the box's shared compilation cache, reachable from every round-vm
+Documentation=file://@SPIRA_HOME@/sccache-dav/DESIGN.md
+After=default.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu): see spira-loom.service's own comment —
+# the same reasoning applies verbatim.
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+# This box's own LAN address, never 0.0.0.0 and never the Tailscale address — the only
+# clients are this host's own builds and round VMs on the same private network. Port 9431
+# is one past the mirror git-daemon's 9430 (round-vm's own DESIGN.md §2.5), both owned by
+# this box. config_from_env() in sccache-dav itself refuses a wildcard bind as a second,
+# code-level guard against this ever drifting.
+Environment=SCCACHE_DAV_ADDR=192.168.1.56:9431
+Environment=SCCACHE_DAV_ROOT=@SPIRA_RUN@/sccache-dav
+Type=simple
+ExecStart=@SPIRA_PROD@/sccache-dav.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:@SPIRA_RUN@/sccache-dav.log
+StandardError=append:@SPIRA_RUN@/sccache-dav.log
+
+[Install]
+WantedBy=default.target

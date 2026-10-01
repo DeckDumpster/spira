@@ -44,6 +44,7 @@ pub struct Fake {
     pub bin_purpose: RefCell<String>,
     pub stray: RefCell<Vec<String>>,
     pub stdout: RefCell<Vec<String>>,
+    pub sccache_help: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -81,6 +82,7 @@ impl Default for Fake {
             bin_purpose: RefCell::new(String::new()),
             stray: RefCell::new(Vec::new()),
             stdout: RefCell::new(Vec::new()),
+            sccache_help: RefCell::new(None),
         }
     }
 }
@@ -184,6 +186,9 @@ impl World for Fake {
     }
     fn concierge_stray_holders(&self, _concierge_sh: &Path) -> Vec<String> {
         self.stray.borrow().clone()
+    }
+    fn sccache_help(&self) -> Option<String> {
+        self.sccache_help.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -534,6 +539,60 @@ fn duckdb_present() {
 fn duckdb_missing_fails() {
     let f = Fake::default();
     assert_eq!(levels(&check_duckdb(&f)), vec![Level::Fail]);
+}
+
+// ============================================================================ compilation cache
+
+#[test]
+fn sccache_missing_fails_and_names_the_install_command() {
+    let f = Fake::default();
+    let lines = check_sccache(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].detail.as_deref().unwrap_or("").contains("cargo install sccache --locked --no-default-features --features webdav"));
+}
+
+#[test]
+fn sccache_missing_only_warns_off_an_operated_box() {
+    // deps.toml's own waiver: a testenv fixture container sets SPIRA_BUILD_CACHE=off and
+    // carries no sccache at all, on purpose — SPIRA_OPERATED=0 is how check_operator_channel
+    // already tells a fixture from a real box, and this check uses the same gate.
+    let f = Fake::default();
+    f.set("SPIRA_OPERATED", "0");
+    assert_eq!(levels(&check_sccache(&f)), vec![Level::Warn]);
+}
+
+#[test]
+fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presence_alone() {
+    let f = Fake::default();
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    *f.sccache_help.borrow_mut() = Some(
+        "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    false\n    OSS:       false\n".into(),
+    );
+    let lines = check_sccache(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].msg.contains("without the webdav backend"), "{:?}", lines[0].msg);
+    assert!(lines[0].detail.as_deref().unwrap_or("").contains("--features webdav"));
+}
+
+#[test]
+fn sccache_with_webdav_enabled_passes() {
+    let f = Fake::default();
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    *f.sccache_help.borrow_mut() = Some(
+        "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    true\n    OSS:       false\n".into(),
+    );
+    assert_eq!(levels(&check_sccache(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn sccache_present_but_unresponsive_to_help_fails() {
+    let f = Fake::default();
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
+    // sccache_help left at its default None: the binary could not be run (permissions,
+    // a wrapper script that shadows the real one, etc).
+    let lines = check_sccache(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].msg.contains("did not answer --help"), "{:?}", lines[0].msg);
 }
 
 // ============================================================================ events probe

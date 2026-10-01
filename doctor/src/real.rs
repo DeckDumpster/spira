@@ -365,6 +365,16 @@ impl World for Real {
             .unwrap_or_default()
     }
 
+    fn sccache_help(&self) -> Option<String> {
+        Command::new("sccache")
+            .arg("--help")
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }

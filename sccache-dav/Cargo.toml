@@ -1,0 +1,19 @@
+[package]
+name = "sccache-dav"
+version = "1.0.0"
+edition = "2021"
+description = "A minimal WebDAV store for sccache (sp-xjnzl): this box and every ephemeral round-vm share one compilation cache instead of each cold-building its dependencies."
+
+[dependencies]
+# axum for routing, tokio for the socket — the same pair loom already uses for a small,
+# single-purpose server on this box. No tower-http, no templating: the whole surface this
+# program needs is PROPFIND/MKCOL/GET/PUT/DELETE over one directory tree.
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "fs", "io-util", "signal"] }
+# RFC 7231 (IMF-fixdate) formatting for D:getlastmodified — the exact shape opendal's webdav
+# client (sccache's own backend) parses as RFC 2822 in its PROPFIND responses.
+httpdate = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+tokio = { version = "1", features = ["io-util", "time"] }

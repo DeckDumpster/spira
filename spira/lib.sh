@@ -1130,71 +1130,28 @@ _counter_events_query() {   # _counter_events_query <id> <event_type> -> count, 
 requeues_of() { _counter_events_query "${1:-}" requeued; }
 
 # CENSUS SQL — the query and runner used by census to aggregate failure classes.
-# Kept in lib.sh so that tests can call it directly without parsing census.
+# Kept callable by name here so tests can call it directly without parsing census.
+#
+# PORTED (wave 4.35, sp-kelr2, row M): `census.sh` no longer exists for this to move "bash
+# to bash" into — the `census` crate replaced it in an earlier bead, deliberately leaving
+# this SQL behind (census/src/ports.rs's own doc: "The SQL itself... UNCHANGED, still
+# lib.sh"). It now lives in `census::sql`, checked byte-for-byte against this file's own
+# prior output before landing (see the bead's report), with `census/src/real.rs`'s World
+# impl calling it in-process — these six are now one-line shims onto the `census sql ...`
+# CLI door that gives every OTHER caller (the test suites, below) the same text and the
+# same retry behaviour without a second implementation.
 # --------------------------------------------------------------------------------------
 _census_events_sql() {   # _census_events_sql [since_epoch_s]
-    # An optional Unix epoch lower bound adds "AND created_at > FROM_UNIXTIME(ts)" so
-    # callers can distinguish events since a watermark from all-time totals. Zero or absent
-    # means all-time.
-    local since_clause=""
-    if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
-        since_clause=" AND created_at > '$(date -u -d "@${1}" '+%Y-%m-%d %H:%M:%S')'"
-    fi
-    # Single-source predicates for each folded event pair. A guard block that calls both
-    # bead_reopen and sets REQUEUE_CAUSE to the same string writes two event streams for
-    # one firing; the fold merges them so census does not double-count and a covers: label
-    # on either name suppresses the whole pair (law-bake-rules-into-tools).
-    local conflict_fold="(event_type = 'requeued' AND new_value = 'merge-conflict')"
-    local rebase_aeon_fold="(event_type = 'requeued' AND new_value = 'rebase-conflict')"
-    local eviction_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race')"
-    local prod_dirty_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty')"
-    local unfinished_fold="(event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason')"
-    # REOPEN-TIMING EXCLUSION, not a fold: _reopen_cause classifies HOW RECENTLY a bead was
-    # closed when the same failure fingerprint recurred ('closed-while-live' vs
-    # 'recurrence'), it is not itself a cause. One re-filing always writes both this event
-    # and a 'recurred' event carrying the true cause (incident.sh's file_one), so ranking
-    # this one too double-counts every re-filing under two class names. Unlike the folds
-    # above, no covers: entry retires it (_census_class_fold_map) because nothing should
-    # ever suppress it by name — it never appears.
-    local reopen_timing_exclude="(event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence'))"
-    # DELIBERATE-CAUSE FOLD. A reopen whose cause is in _census_deliberate_reopen_causes
-    # (adjacent to _census_class_fold_map below) is the system working, not a fault
-    # (law-a-deliberate-state-is-not-a-fault): excluded from the ranked class list here,
-    # the same way an operator's hand-written row is excluded by actor_filter below —
-    # still counted, by _census_deliberate_sql, just never selectable (sp-eiatd).
-    local deliberate_fold="(event_type = 'reopen' AND new_value IN ($(_census_deliberate_causes_sql_list)))"
-    # ACTOR PREDICATE. Ranks only events a harness component wrote (harness or an
-    # aeon-* session); an operator's hand-written events-table row — e.g. zeroing an
-    # attempt-ledger offset with a fabricated requeued/unjudged-<cause> row — is real
-    # state, not a failure class no code path can stop emitting, and is listed
-    # separately by _census_handwritten_sql instead (law-absence-needs-a-positive-
-    # control, law-a-deliberate-state-is-not-a-fault).
-    local actor_filter="(actor = 'harness' OR actor LIKE 'aeon-%')"
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT %s AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND NOT %s AND %s%s GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR %s OR %s) AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE %s AND %s%s HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND %s%s AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR %s)%s) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC" "$conflict_fold" "$rebase_aeon_fold" "$eviction_fold" "$prod_dirty_fold" "$unfinished_fold" "$reopen_timing_exclude" "$deliberate_fold" "$actor_filter" "$since_clause" "$conflict_fold" "$rebase_aeon_fold" "$actor_filter" "$since_clause" "$eviction_fold" "$actor_filter" "$since_clause" "$prod_dirty_fold" "$actor_filter" "$since_clause" "$unfinished_fold" "$actor_filter" "$since_clause" "$actor_filter" "$since_clause" "$conflict_fold" "$since_clause"
+    census sql events "${1:-}"
 }
-# _census_handwritten_sql — events excluded from the ranked query above by the actor
-# predicate, grouped so the excluded actor stays visible. Not time-windowed: this is
-# a standing ledger-correction listing, not a since-watermark ranking.
 _census_handwritten_sql() {
-    printf "SELECT event_type, COALESCE(new_value, ''), actor, COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen', 'reopened') AND NOT (actor = 'harness' OR actor LIKE 'aeon-%%') GROUP BY event_type, new_value, actor ORDER BY 4 DESC"
+    census sql handwritten
 }
 census_handwritten_run_sql() {   # -> tabular output of actor-excluded events, empty when none
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$(_census_handwritten_sql)" 2>/dev/null
+    census sql run-handwritten
 }
 _census_class_fold_map() {
-    # <folded-away-class> <canonical-class>. A covers: label naming a folded-away class
-    # suppresses the class it was folded into. Keep this adjacent to the SQL fold in
-    # _census_events_sql: a rename of one must carry the other.
-    printf 'sp-requeue-merge-conflict sp-reopen-rebase-conflict\n'
-    printf 'sp-requeue-rebase-conflict sp-reopen-rebase-conflict\n'
-    printf 'sp-requeue-eviction-race sp-reopen-eviction-race\n'
-    printf 'sp-requeue-prod-dirty sp-reopen-prod-dirty\n'
-    printf 'sp-requeue-unfinished-reason sp-reopen-unfinished-reason\n'
-    printf 'sp-requeue-workflow-run-missing sp-reopen-workflow-run-missing\n'
-    printf 'sp-requeue-workflow-run-wrong-branch sp-reopen-workflow-run-wrong-branch\n'
-    printf 'sp-requeue-workflow-run-stale-sha sp-reopen-workflow-run-stale-sha\n'
-    printf 'sp-requeue-workflow-run-wrong-file sp-reopen-workflow-run-wrong-file\n'
-    printf 'sp-requeue-workflow-run-unverifiable sp-reopen-workflow-run-unverifiable\n'
+    census sql class-fold-map
 }
 
 # _census_deliberate_reopen_causes -> "<cause> <admission-exempt:0|1>" pairs, one per
@@ -1216,51 +1173,40 @@ _census_reopen_admission_exempt() {
 }
 
 # _census_deliberate_causes_sql_list -> a quoted, comma-separated SQL IN-list of every
-# deliberate cause's name, built from _census_deliberate_reopen_causes so the ranking
-# exclusion and the visibility query below can never name a different set.
+# deliberate cause's name.
+#
+# PORTED (wave 4.35, sp-kelr2, row M) onto `census sql deliberate-causes`. No second copy
+# of the cause list: census's own Real fetches the names from `spira-claim
+# deliberate-causes` (row I, sp-3wfcb — the canonical list is
+# spira_claim::reopen::DELIBERATE_CAUSES now) the same way this file's own
+# _census_deliberate_reopen_causes shim does, above. This shim exists for symmetry with
+# the rest of row M; grepped the whole tree and found no caller, bash or Rust, of this name
+# specifically.
 _census_deliberate_causes_sql_list() {
-    local _dc _dexempt _list=""
-    while read -r _dc _dexempt; do
-        [ -n "$_dc" ] || continue
-        _list="${_list:+$_list, }'$(printf '%s' "$_dc" | sed "s/'/''/g")'"
-    done <<< "$(_census_deliberate_reopen_causes)"
-    printf '%s' "${_list:-''}"
+    census sql deliberate-causes
 }
 
 # _census_deliberate_sql [since_epoch_s] -> the deliberate-cause reopen counts excluded
 # from _census_events_sql's ranked list above. Not ranked, never selectable, but still a
 # real count (law-absence-needs-a-positive-control) — census shows it under
 # --with-suppressed the same way _census_handwritten_sql's actor-excluded rows are shown.
+#
+# PORTED (wave 4.35, sp-kelr2, row M) — see _census_events_sql's own comment above.
 _census_deliberate_sql() {
-    local since_clause=""
-    if [ -n "${1:-}" ] && [ "${1:-0}" -gt 0 ] 2>/dev/null; then
-        since_clause=" AND created_at > '$(date -u -d "@${1}" '+%Y-%m-%d %H:%M:%S')'"
-    fi
-    printf "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type = 'reopen' AND new_value IN (%s)%s GROUP BY event_type, new_value ORDER BY 3 DESC" \
-        "$(_census_deliberate_causes_sql_list)" "$since_clause"
+    census sql deliberate "${1:-}"
 }
 census_deliberate_run_sql() {   # census_deliberate_run_sql [since_epoch_s] -> tabular output of deliberate-cause reopen counts, empty when none
-    "${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$(_census_deliberate_sql "${1:-}")" 2>/dev/null
+    census sql run-deliberate "${1:-}"
 }
-census_events_run_sql() {   # census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable
-    local q
-    q="$(_census_events_sql "${1:-}")"
-    local out bd_rc _errtmp _delay _attempt
-    _delay="${CENSUS_RETRY_DELAY_S:-2}"
-    _errtmp="$(mktemp)"
-    for _attempt in 1 2 3; do
-        bd_rc=0
-        out="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" sql "$q" 2>"$_errtmp")" || bd_rc=$?
-        if [ "$bd_rc" -eq 0 ]; then
-            rm -f "$_errtmp"
-            printf '%s\n' "$out"
-            return 0
-        fi
-        [ "$_attempt" -lt 3 ] && sleep "$_delay" && _delay=$((_delay * 2))
-    done
-    printf 'census_events_run_sql: query failed after 3 attempts: %s\n' "$(cat "$_errtmp")" >&2
-    rm -f "$_errtmp"
-    return 1
+# census_events_run_sql [since_epoch_s] -> tabular output; exits non-zero when unreachable.
+#
+# PORTED (wave 4.35, sp-kelr2, row M): the 3-attempt retry (CENSUS_RETRY_DELAY_S doubling
+# each time, default 2s) moved with the query into census/src/real.rs — the one piece of
+# this family that was never pure SQL text. `CENSUS_RETRY_DELAY_S`/`SPIRA_BD`/`SPIRA_DB`
+# need no re-threading: all three are ordinary (exported-when-set) env vars, not the
+# conf.sh-withheld kind `fayth_get`'s shim has to carry across the exec boundary by hand.
+census_events_run_sql() {
+    census sql run-events "${1:-}"
 }
 
 # counter_label -> the historical sp-attempt-N / sp-reclaim-N / sp-requeue-N bd label a
@@ -1561,85 +1507,22 @@ conflict_reopen_note() {
 #
 # A fayth declares its own with FAYTH_STATUTE_CORE; unset, it gets $SPIRA_STATUTE_CORE, which
 # is what every persona got before this parameter existed.
+#
+# PORTED (wave 4.35, sp-kelr2, row Q): the tiering/cache/seam logic above lives in `rule`
+# now (`rule/src/memories.rs` for the pure render, `rule/src/main.rs` for the cache and the
+# SPIRA_MEMORIES_CMD/bdq read) — this is the one-line shim onto its `render-memories` CLI
+# door, concierge.sh's own call site unchanged. SPIRA_HOME and SPIRA_REPO are threaded
+# explicitly — conf.sh deliberately never exports either (the EXEC-BOUNDARY TRAP comment at
+# the top of this file) — SPIRA_REPO is the harness path the index tier's own "rule.sh show"
+# hint names, caught red by test-render-memories.sh's "rule.sh path is executable" the one
+# time this shim left it unthreaded. SPIRA_STATUTE_CORE/SPIRA_MEMORIES_CACHE/
+# SPIRA_MEMORIES_CACHE_AGE/SPIRA_MEMORIES_CMD need no re-threading — test-render-memories.sh's
+# own fixture calls already export them (bash prefix assignment exports for that command's
+# whole subtree), and production always passes core_csv as $3 rather than relying on the
+# env fallback.
 render_memories() {      # render_memories <prefix-csv> [char-budget] [core-csv]
-    local prefixes="${1:-law-}" budget="${2:-120000}"
-    local core_csv="${3:-${SPIRA_STATUTE_CORE:-}}" harness="${SPIRA_REPO:-<harness>}"
-    local cache="${SPIRA_MEMORIES_CACHE:-}" age="${SPIRA_MEMORIES_CACHE_AGE:-300}"
-    local mem_json="" now mtime
-    if [ -n "$cache" ] && [ -f "$cache" ]; then
-        now="$(date +%s)"
-        mtime="$(stat -c %Y "$cache" 2>/dev/null || printf 0)"
-        [ "$(( now - mtime ))" -lt "$age" ] && mem_json="$(cat "$cache" 2>/dev/null)"
-    fi
-    # SPIRA_MEMORIES_CMD IS THE SEAM. The cache file above already lets a suite drive the
-    # tiering/budget/index logic from a fixture instead of a live bd read; this is the same
-    # idea for the read that FILLS the cache. Unset, it queries bd for real — every caller in
-    # production leaves it unset.
-    if [ -z "$mem_json" ]; then
-        if [ -n "${SPIRA_MEMORIES_CMD:-}" ]; then
-            mem_json="$(bash -c "$SPIRA_MEMORIES_CMD" 2>/dev/null)"
-        else
-            mem_json="$(bdjson memories 2>/dev/null)"
-        fi
-        [ -n "$cache" ] && [ -n "$mem_json" ] \
-            && { mkdir -p "$(dirname "$cache")" 2>/dev/null; printf '%s\n' "$mem_json" > "$cache" 2>/dev/null || true; }
-    fi
-    printf '%s\n' "$mem_json" | python3 -c '
-import sys, json, os
-prefixes = [p for p in sys.argv[1].split(",") if p]
-budget   = int(sys.argv[2])
-core_set = {s.strip() for s in sys.argv[3].split(",") if s.strip()}
-harness  = sys.argv[4]
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-mem = {k: v.strip() for k, v in sorted(d.items())
-       if isinstance(v, str) and any(k.startswith(p) for p in prefixes)}
-
-core_out, used, core_fallback = [], 0, []
-index_slugs = []
-
-for k, v in mem.items():
-    if k in core_set:
-        block = f"## {k}\n\n{v}\n"
-        if used + len(block) > budget:
-            core_fallback.append(k)
-        else:
-            core_out.append(block)
-            used += len(block)
-    else:
-        index_slugs.append(k)
-
-# Core fallback slugs join the index tier rather than disappearing.
-index_slugs = sorted(core_fallback + index_slugs)
-
-parts = []
-if core_out:
-    parts.append("\n".join(core_out))
-
-if index_slugs:
-    # Two namespaces share this tier, fetched by two different tools — one header
-    # naming one command left the other namespace unfetchable by it.
-    NAMESPACES = {
-        "law-": (
-            "## Statutes in force — full text on request\n\n"
-            "These are law and bind you exactly as the text above does. The slug states\n"
-            "the rule; read the reasoning and the scar behind any of them with:\n\n"
-            f"    {harness}/rule.sh show <slug-without-law-prefix>\n"
-        ),
-        "sop-": (
-            "## Runbooks on the shelf — full text on request\n\n"
-            "These bind exactly as the statutes above do. Read the full runbook —\n"
-            "CHECK, FIX, ESCALATE — with:\n\n"
-            "    sop show <slug-without-sop-prefix>\n"
-        ),
-    }
-    for ns, header in NAMESPACES.items():
-        group = sorted(k for k in index_slugs if k.startswith(ns))
-        if group:
-            parts.append(header + "\n".join(group))
-
-print("\n\n".join(parts))
-' "$prefixes" "$budget" "$core_csv" "$harness" 2>/dev/null
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+        rule --home "${SPIRA_HOME:-}" render-memories "$@"
 }
 
 # Split a rendered persona prompt on <!-- task --> and write system.md / task.md.
@@ -1648,18 +1531,17 @@ print("\n\n".join(parts))
 # Reads FAYTH_SYSTEM_PROMPT (replace|append, default append): replace uses
 # --system-prompt-file; append (or unset) uses --append-system-prompt-file so
 # Claude Code's coding guidance stays underneath the persona layer.
+#
+# PORTED (wave 4.35, sp-kelr2, row Q): the split/file-write itself is `rule`'s
+# `system-prompt-split` CLI door (`rule::memories::split`); aeon.sh retired its own call to
+# this function already (sp-j89pd, wave 4.2 — it renders through aeon/src/brief.rs
+# in-process), so test-render-memories.sh's G-08 delivery-fence check is this shim's one
+# live caller now. The SPIRA_SYSTEM_FLAG assignment has no caller left either (same retirement)
+# but stays here, computed locally rather than moved into the binary, since it is a plain
+# shell-variable side effect a subprocess cannot set in its caller's shell.
 system_prompt_split() {
     local sysfile="$1" taskfile="$2" statutes="$3" prompt="$4"
-    local sys task
-    if [[ "$prompt" == *'<!-- task -->'* ]]; then
-        sys="${prompt%%<!-- task -->*}"
-        task="${prompt#*<!-- task -->}"
-        task="${task#$'\n'}"
-    else
-        sys=""; task="$prompt"
-    fi
-    printf '# Memories in force\n\n%s\n\n---\n\n%s' "$statutes" "$sys" > "$sysfile"
-    printf '%s' "$task" > "$taskfile"
+    rule system-prompt-split "$sysfile" "$taskfile" "$statutes" "$prompt"
     case "${FAYTH_SYSTEM_PROMPT:-append}" in
         replace) SPIRA_SYSTEM_FLAG="--system-prompt-file" ;;
         *)       SPIRA_SYSTEM_FLAG="--append-system-prompt-file" ;;
@@ -2011,71 +1893,27 @@ repo_land_queued() {
 # (consume/develop/self) expands to its lane set using the configured SPIRA_*_LABEL values.
 # An unknown mode name or unknown lane label is a hard error naming the row — a typo must
 # not quietly disable a lane.
+#
+# PORTED (wave 4.35, sp-kelr2, row V) to maechen-trigger's `lanes` module, called in-process
+# by its own sweep; this is now the one-line shim onto its `repo-lanes` CLI door, which
+# groom-trigger.sh (the one surviving bash caller) and test-repo-lanes.sh both reach the
+# same way. SPIRA_HOME is threaded explicitly — conf.sh deliberately never exports it (the
+# EXEC-BOUNDARY TRAP comment at the top of this file). `_spira_expand_lanes`, the internal
+# helper this function used to call, had no caller outside this one and is retired rather
+# than given its own shim.
 spira_repo_lanes() {
-    local name="${1:-}" raw
-    raw="$(repo_field "$name" lanes 2>/dev/null)"
-    [ -z "$raw" ] && {
-        local p="${SPIRA_PLAN_LABEL:-plan}"
-        local inc="${SPIRA_INCIDENT_LABEL:-incident}"
-        local gr="${SPIRA_GROOMER_LABEL:-groom}"
-        local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
-        local sp="${SPIRA_SPIKE_LABEL:-spike}"
-        local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
-        printf '%s %s %s %s %s %s' "$p" "$inc" "$gr" "$mae" "$sp" "$cz"
-        return 0
-    }
-    _spira_expand_lanes "$name" "$raw"
-}
-
-_spira_expand_lanes() {  # _spira_expand_lanes <repo-name> <raw> -> space-separated lane labels
-    local name="$1" raw="$2"
-    local p="${SPIRA_PLAN_LABEL:-plan}"
-    local inc="${SPIRA_INCIDENT_LABEL:-incident}"
-    local gr="${SPIRA_GROOMER_LABEL:-groom}"
-    local mae="${SPIRA_MAECHEN_LABEL:-maechen-sweep}"  # literal-ok: bash fallback; SPIRA_MAECHEN_LABEL set by conf.sh
-    local sp="${SPIRA_SPIKE_LABEL:-spike}"
-    local cz="${SPIRA_CZAR_LABEL:-czar-trigger}"
-    case "$raw" in
-        consume) printf '%s' "$p"; return 0 ;;
-        develop) printf '%s %s %s %s' "$p" "$inc" "$gr" "$sp"; return 0 ;;
-        self)    printf '%s %s %s %s %s %s' "$p" "$inc" "$gr" "$sp" "$mae" "$cz"; return 0 ;;
-    esac
-    local result="" item
-    local IFS=,
-    for item in $raw; do
-        item="${item#"${item%%[![:space:]]*}"}"; item="${item%"${item##*[![:space:]]}"}"
-        [ -z "$item" ] && continue
-        case "$item" in
-            "$p"|"$inc"|"$gr"|"$mae"|"$sp"|"$cz") ;;
-            *) printf 'spira: repo:%s — unknown lane %s (valid: %s)\n' \
-                   "$name" "$item" "$p,$inc,$gr,$mae,$sp,$cz" >&2
-               return 1 ;;
-        esac
-        result="${result:+$result }$item"
-    done
-    [ -n "$result" ] || { printf '%s' "$p"; return 0; }
-    printf '%s' "$result"
+    SPIRA_HOME="${SPIRA_HOME:-}" maechen-trigger --home "${SPIRA_HOME:-}" repo-lanes "$1"
 }
 
 # spira_lane_admitted <lane> -> 0 if the home repo or some repo in SPIRA_REPO_MAP admits
-# it, 1 otherwise. Shared by groom-trigger.sh and maechen-trigger.sh (duplicate cluster
-# D14) — on a consuming install with no repo willing to run a lane, its trigger would
-# otherwise accumulate trigger beads for work nobody can do.
+# it, 1 otherwise. Shared by groom-trigger.sh and maechen-trigger (duplicate cluster D14) —
+# on a consuming install with no repo willing to run a lane, its trigger would otherwise
+# accumulate trigger beads for work nobody can do.
+#
+# PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; same shim pattern, same
+# CLI binary, its `lane-admitted` door.
 spira_lane_admitted() {
-    local lane="$1" hr hl rn rest rl
-    hr="$(spira_home_repo 2>/dev/null)" || hr=""
-    if [ -n "$hr" ]; then
-        hl="$(spira_repo_lanes "$hr" 2>/dev/null)" || hl=""
-        case " $hl " in *" $lane "*) return 0 ;; esac
-    fi
-    [ -f "${SPIRA_REPO_MAP:-}" ] || return 1
-    while IFS='|' read -r rn rest; do
-        rn="${rn#"${rn%%[![:space:]]*}"}"; rn="${rn%"${rn##*[![:space:]]}"}"
-        case "${rn:-}" in ''|'#'*) continue ;; esac
-        rl="$(spira_repo_lanes "$rn" 2>/dev/null)" || continue
-        case " $rl " in *" $lane "*) return 0 ;; esac
-    done < "$SPIRA_REPO_MAP"
-    return 1
+    SPIRA_HOME="${SPIRA_HOME:-}" maechen-trigger --home "${SPIRA_HOME:-}" lane-admitted "$1"
 }
 
 # spira_open_trigger_count <labels> -> count of open-or-in_progress beads carrying every
@@ -2085,14 +1923,12 @@ spira_lane_admitted() {
 # query scoped to open alone would file a duplicate on the very next tick (sp-mp9s — the
 # defect that motivated including it in maechen-trigger.sh, extracted here so
 # groom-trigger.sh gets the same fix rather than drifting from it).
+#
+# PORTED (wave 4.35, sp-kelr2, row V) — see spira_repo_lanes above; SPIRA_DB/SPIRA_BD are
+# already exported by conf.sh (`spira_config::resolve::EXPORT_KEYS`), so no re-threading is
+# needed here the way SPIRA_HOME needs it above.
 spira_open_trigger_count() {
-    local labels="$1" json n
-    json="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --status open,in_progress --label "$labels" --json 2>/dev/null)" \
-        || json="[]"
-    [ -z "$json" ] && json="[]"
-    n="$(printf '%s\n' "$json" \
-        | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d))' 2>/dev/null)" || n=0
-    printf '%s' "${n:-0}"
+    maechen-trigger --home "${SPIRA_HOME:-}" open-trigger-count "$1"
 }
 
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty
@@ -2516,16 +2352,11 @@ LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 # shim onto `landing-pass mark`, which does the landing-event dual-write itself, in-process
 # (landing-pass/src/landstate.rs), rather than shelling to tsd-write.
 
-# _tsd_kv_field "<k=v k=v ...>" <key> -> the value for <key>, or "?" when absent. Reads the
-# space-separated key=value string session_result_fields (below) already built — never a
-# second pass over the trace it was parsed from.
-_tsd_kv_field() {
-    local kv
-    for kv in $1; do
-        case "$kv" in "$2="*) printf '%s' "${kv#*=}"; return 0 ;; esac
-    done
-    printf '?'
-}
+# _tsd_kv_field is RETIRED (wave 4.35, sp-kelr2, row AC): its one intended caller,
+# session_result_fields, was already dead (row N, retired in wave 4.2's bead 2 — "RETIRE
+# rather than port" applies to this function too, since the plan's "port to tsd" assumed a
+# live caller that the inventory for THIS bead found gone). Grepped the whole tree: no
+# other caller, bash or Rust, ever existed.
 
 # _tsd_slots_sample <fragment-file> — appends the slots family's row (run/tsd/) from a
 # successful slots probe's own fragment (collect.sh). Best-effort, like every tsd producer
@@ -2549,21 +2380,17 @@ _tsd_slots_sample() {
         >/dev/null 2>&1 || true
 }
 
-# THE WHITELIST IS THE GUARANTEE, the same reason _tsd_round_phase's now-retired whitelist
-# existed (sp-27hsi): these four are the classes sp-6vd2s defines and no others belong in
-# this family.
-_TSD_ESCAPE_CLASSES=" mapping_gap gate_gap environment_gap flake "
-
 # _tsd_escape <member> <suite> <class> [batch_id] — appends one escape record (run/tsd/
 # escape): a round red attributed to <member> on <suite>, classified per sp-6vd2s
 # (escape-classify.sh). Best-effort, like every tsd producer here.
+#
+# PORTED (wave 4.35, sp-kelr2, row AC): the class whitelist and the field mapping now live
+# in `tsd-write`'s own `escape` subcommand (ESCAPE_CLASSES, tsd/src/main.rs) — the one
+# source of truth for the four classes, where it used to be a second copy of
+# _TSD_ESCAPE_CLASSES here that could drift from sp-6vd2s's own definition. This is the
+# one-line shim onto it; escape-classify.sh (the one live caller) is unchanged.
 _tsd_escape() {
-    local member="$1" suite="$2" class="$3" batch_id="${4:-}"
-    case "$_TSD_ESCAPE_CLASSES" in *" $class "*) ;; *) return 0 ;; esac
-    tsd-write --family escape --root "${SPIRA_RUN:-}" \
-        --field-str "member=$member" --field-str "suite=$suite" --field-str "class=$class" \
-        --field-str "batch_id=$batch_id" \
-        >/dev/null 2>&1 || true
+    tsd-write escape "$@" >/dev/null 2>&1 || true
 }
 
 # land_mark/land_state are PORTED (sp-cnnt6, "wave 4.16" — family S, the landstate ledger):

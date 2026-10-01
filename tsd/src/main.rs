@@ -28,18 +28,59 @@ const LOCK_UN: i32 = 8;
 
 fn usage() -> &'static str {
     "usage: tsd-write --family <name> [--root <dir>] [--host <id>] [--ts <iso8601>] \
-     [--field key=value ...] [--field-str key=value ...]"
+     [--field key=value ...] [--field-str key=value ...]\n   or: tsd-write escape <member> <suite> <class> [batch_id]"
 }
+
+/// `_tsd_escape`'s own four classes (wave4-decomposition.md row AC, wave 4.35, sp-kelr2;
+/// originally sp-6vd2s) — the whitelist is the guarantee, same reason
+/// `_tsd_round_phase`'s now-retired one existed: no other class belongs in this family.
+const ESCAPE_CLASSES: &[&str] = &["mapping_gap", "gate_gap", "environment_gap", "flake"];
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
-    match run(&args) {
+    let result = if args.first().map(String::as_str) == Some("escape") { run_escape(&args[1..]) } else { run(&args) };
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("tsd-write: {e}");
             ExitCode::from(2)
         }
     }
+}
+
+/// `tsd-write escape <member> <suite> <class> [batch_id]` — `_tsd_escape`'s own door: one
+/// escape-family row, classified per sp-6vd2s (escape-classify.sh, the one live caller).
+/// A class outside [`ESCAPE_CLASSES`] is a silent no-op, `Ok(())` rather than a refusal,
+/// matching the bash's own `case ... *) return 0 ;; esac` — missing arguments default to
+/// an empty string the same way a bash positional does, so a short call just fails the
+/// whitelist rather than erroring. `SPIRA_RUN` unset behaves exactly as `"${SPIRA_RUN:-}"`
+/// did: an empty root, never a refusal — this call is best-effort end to end, and the
+/// `lib.sh` shim above it already swallows any error this returns.
+fn run_escape(args: &[String]) -> Result<(), String> {
+    let root = PathBuf::from(env::var("SPIRA_RUN").unwrap_or_default());
+    escape_row(
+        &root,
+        &args.first().cloned().unwrap_or_default(),
+        &args.get(1).cloned().unwrap_or_default(),
+        &args.get(2).cloned().unwrap_or_default(),
+        &args.get(3).cloned().unwrap_or_default(),
+    )
+}
+
+/// The testable half of [`run_escape`] — `root` passed explicitly rather than read from
+/// `$SPIRA_RUN`, so a test never has to mutate that process-global env var.
+fn escape_row(root: &Path, member: &str, suite: &str, class: &str, batch_id: &str) -> Result<(), String> {
+    if !ESCAPE_CLASSES.contains(&class) {
+        return Ok(());
+    }
+    let fields = vec![
+        tsd::parse_field_str(&format!("member={member}"))?,
+        tsd::parse_field_str(&format!("suite={suite}"))?,
+        tsd::parse_field_str(&format!("class={class}"))?,
+        tsd::parse_field_str(&format!("batch_id={batch_id}"))?,
+    ];
+    let line = tsd::build_row(&now_iso(), &default_host(), "escape", &fields)?;
+    append_line(&tsd::family_path(root, "escape"), &line)
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -120,4 +161,38 @@ fn append_line(path: &Path, line: &str) -> Result<(), String> {
     let result = writeln!(f, "{line}").map_err(|e| format!("{}: {e}", path.display()));
     let _ = unsafe { flock(fd, LOCK_UN) };
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn escape_row_with_a_known_class_appends_one_row() {
+        let dir = testkit::TempDir::new("tsd-escape");
+        escape_row(&dir, "gate", "test-foo", "flake", "b1").unwrap();
+        let text = fs::read_to_string(dir.join("tsd").join("escape.jsonl")).unwrap();
+        let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["family"], "escape");
+        assert_eq!(row["member"], "gate");
+        assert_eq!(row["suite"], "test-foo");
+        assert_eq!(row["class"], "flake");
+        assert_eq!(row["batch_id"], "b1");
+    }
+
+    #[test]
+    fn escape_row_with_an_unknown_class_is_a_silent_no_op() {
+        let dir = testkit::TempDir::new("tsd-escape-unknown");
+        escape_row(&dir, "gate", "test-foo", "not-a-real-class", "").unwrap();
+        assert!(!dir.join("tsd").join("escape.jsonl").exists());
+    }
+
+    #[test]
+    fn escape_row_with_missing_batch_id_still_writes_an_empty_string_field() {
+        let dir = testkit::TempDir::new("tsd-escape-nobatch");
+        escape_row(&dir, "gate", "test-foo", "mapping_gap", "").unwrap();
+        let text = fs::read_to_string(dir.join("tsd").join("escape.jsonl")).unwrap();
+        let row: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert_eq!(row["batch_id"], "");
+    }
 }
