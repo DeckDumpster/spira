@@ -31,6 +31,15 @@ struct Fake {
     /// What `symlinked_targets` answers, by the `dir` it is asked about; absent = none (an
     /// ordinary, non-symlinked `target/`).
     symlinked_targets: RefCell<BTreeMap<PathBuf, Vec<PathBuf>>>,
+    /// What `current_exe()` answers; `None` (the default) is the "cannot resolve" case.
+    current_exe: RefCell<Option<PathBuf>>,
+    /// What `build_spira_config` answers; `None` (the default) is "the build failed".
+    build_spira_config_result: RefCell<Option<PathBuf>>,
+    /// Every `build_spira_config(repo_root)` call, in order.
+    build_spira_config_calls: RefCell<Vec<PathBuf>>,
+    /// Every `copy_file(from, to)` call, in order — so a test can see staging happened
+    /// without inferring it from file presence alone (which `remove` would later erase).
+    copies: RefCell<Vec<(PathBuf, PathBuf)>>,
 }
 
 struct FakeBuild<'a>(&'a Fake);
@@ -94,6 +103,21 @@ impl Fake {
     fn errs(&self) -> String {
         self.err.borrow().join("\n")
     }
+    /// Simulates a build's own binary at `exe`, with a working `spira-config` already
+    /// sitting next to it (sp-xjnzl) — the common case: the workspace was built first.
+    fn with_spira_config_sibling(&self, exe: &str) {
+        *self.current_exe.borrow_mut() = Some(PathBuf::from(exe));
+        let sibling = Path::new(exe).parent().unwrap().join("spira-config");
+        self.file(&sibling.display().to_string(), "#!/bin/sh\n");
+    }
+    /// No sibling of this process's own binary (current_exe stays None, the common case in
+    /// a test binary) — but `cargo build -p spira-config` in `repo_root` succeeds and
+    /// produces one at the usual path.
+    fn with_spira_config_buildable(&self, repo_root: &str) {
+        let bin = Path::new(repo_root).join("target/release/spira-config");
+        self.file(&bin.display().to_string(), "#!/bin/sh\n");
+        *self.build_spira_config_result.borrow_mut() = Some(bin);
+    }
 }
 
 impl Host for Fake {
@@ -131,6 +155,21 @@ impl Host for Fake {
     }
     fn remove(&self, p: &Path) {
         self.files.borrow_mut().remove(p);
+    }
+    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+        let Some(data) = self.files.borrow().get(from).cloned() else {
+            return false;
+        };
+        self.files.borrow_mut().insert(to.to_path_buf(), data);
+        self.copies.borrow_mut().push((from.to_path_buf(), to.to_path_buf()));
+        true
+    }
+    fn current_exe(&self) -> Option<PathBuf> {
+        self.current_exe.borrow().clone()
+    }
+    fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
+        self.build_spira_config_calls.borrow_mut().push(repo_root.to_path_buf());
+        self.build_spira_config_result.borrow().clone()
     }
     fn temp_log(&self) -> PathBuf {
         PathBuf::from("/t/build.log")
@@ -207,6 +246,9 @@ fn harness(f: &Fake, root: &str) {
         &format!("{root}/spira/deps.toml"),
         "[[dep]]\nname = \"bd\"\ntier = \"runtime\"\n",
     );
+    // sp-xjnzl: every ordinary build_image call needs a spira-config to stage for
+    // doctor-check; tests of that staging itself (a_cold_build_*) set it up by hand instead.
+    f.with_spira_config_buildable(root);
 }
 
 fn args(v: &[&str]) -> Vec<String> {
@@ -587,6 +629,71 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
     let e = f.errs();
     assert!(e.contains("check Containerfile in /h/spira/testenv"));
     assert!(e.contains("line 49") && e.contains("line 10") && !e.contains("line 9\n"));
+}
+
+// ---- sp-xjnzl: staging spira-config into the build context for doctor-check -------------
+
+#[test]
+fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
+    let dest = PathBuf::from("/h/spira/testenv/.doctor-check-spira-config");
+
+    // Present: staged for the build, then cleaned up on a GREEN build.
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    assert_eq!(
+        *f.copies.borrow(),
+        vec![(PathBuf::from("/build/target/release/testenv").parent().unwrap().join("spira-config"), dest.clone())]
+    );
+    assert!(!f.is_file(&dest), "left behind in the checkout after a green build");
+    assert!(!f.errs().contains("no spira-config next to this binary"));
+
+    // Present: also cleaned up on a RED build — staging must not leak on the failure path.
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    f.with_spira_config_sibling("/build/target/release/testenv");
+    f.build_rc.set(1);
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1);
+    assert_eq!(f.copies.borrow().len(), 1);
+    assert!(!f.is_file(&dest), "left behind in the checkout after a red build");
+}
+
+#[test]
+fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    // No with_spira_config_sibling: current_exe() answers None, as it would for a test
+    // binary or any process that cannot resolve its own path. The gate's own host-side
+    // container step builds only `-p testenv`, so this is the common case there, not a
+    // corner case — stage_spira_config must not depend on the caller having remembered to
+    // pre-build it.
+    f.with_spira_config_buildable("/h");
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
+    assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("/h")]);
+    assert_eq!(f.copies.borrow().len(), 1, "the on-demand build still gets staged into the build context");
+    assert!(!f.is_file(&PathBuf::from("/h/spira/testenv/.doctor-check-spira-config")), "cleaned up after the build");
+}
+
+#[test]
+fn a_cold_build_refuses_rather_than_run_podman_when_spira_config_cannot_be_had_at_all() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    // No sibling AND the on-demand build fails too — undo harness()'s own default fixture,
+    // which assumes the ordinary case: every avenue is exhausted here on purpose.
+    *f.build_spira_config_result.borrow_mut() = None;
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 1, "a doomed podman build is never attempted");
+    assert!(f.copies.borrow().is_empty());
+    assert!(f.calls_with("build").is_empty(), "podman build must not even be invoked");
+    assert!(f.errs().contains("could not build spira-config"));
+    assert!(f.errs().contains("refusing the image build"));
 }
 
 // ---- boot failure diagnosis and admission (was test-testenv-resource-diagnosis.sh) -------

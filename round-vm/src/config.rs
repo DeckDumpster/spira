@@ -77,6 +77,11 @@ pub struct Config {
     pub host_key: PathBuf,
     pub host_pubkey: PathBuf,
     pub host_addr: Option<String>,
+    /// sp-xjnzl: this operator's own `CARGO_HOME` — read exactly like cargo itself reads
+    /// it, never a hardcoded literal (a literal would name one operator's box in a crate
+    /// every clone of this repository ships). `None`: a round runs with no cross-machine
+    /// compilation-cache sharing, degraded but not refused.
+    pub cache_home: Option<String>,
     pub vcpus: u32,
     pub maxpar: u32,
     pub retry_interval: Duration,
@@ -126,6 +131,7 @@ impl Config {
             ssh_user: src.get("SPIRA_ROUND_VM_SSH_USER").unwrap_or_else(|| "root".into()),
             ssh_port: num(src, "SPIRA_ROUND_VM_SSH_PORT", 22)?,
             host_addr: src.get("SPIRA_ROUND_VM_HOST_ADDR"),
+            cache_home: src.get("CARGO_HOME"),
             vcpus: num(src, "SPIRA_ROUND_VM_VCPUS", 16)?,
             maxpar: num(src, "SPIRA_ROUND_VM_MAXPAR", 16)?,
             retry_interval: Duration::from_secs(num(src, "SPIRA_ROUND_VM_RETRY_INTERVAL", 60)?),
@@ -257,6 +263,15 @@ mod tests {
         assert_eq!(c.retry_interval, Duration::from_secs(60));
         assert_eq!(c.mailbox, "operator");
         assert!(c.host_addr.is_none());
+        assert!(c.cache_home.is_none(), "no hardcoded literal — unset CARGO_HOME means no cache sharing, not a fabricated path");
+    }
+
+    #[test]
+    fn cache_home_reads_cargo_home_exactly_like_cargo_itself_does() {
+        // sp-xjnzl: this is a plain CARGO_HOME read via the same env-first Source every
+        // other key uses, never a path baked into the source — see BatchJob::cache_home.
+        let c = Config::load(&map(&[("SPIRA_RUN", "/r"), ("CARGO_HOME", "/opt/spira/cargo")])).unwrap();
+        assert_eq!(c.cache_home.as_deref(), Some("/opt/spira/cargo"));
     }
 
     #[test]

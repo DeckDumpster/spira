@@ -10,18 +10,24 @@ use crate::procs::command;
 use crate::provider::{boot, destroy_fenced, DestroyError, Provider, ProvisionSpec};
 use crate::run::{shell_quote, SshRemote};
 
-pub const TEMPLATE_USAGE: &str = "round-vm template: usage: round-vm template <tree-dir> [--vmid <n>]";
+pub const TEMPLATE_USAGE: &str =
+    "round-vm template: usage: round-vm template <tree-dir> [--vmid <n>] [--toolchain <ver>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TemplateArgs {
     pub tree_dir: PathBuf,
     pub vmid: Option<String>,
+    /// sp-xjnzl: the toolchain `rustup` must have installed on the template so a round can
+    /// pin to it (`run --toolchain`) and match the host's own rustc byte-for-byte — sccache
+    /// hashes the compiler's version string, so an unpinned "stable" drifting out of step
+    /// with the host is a silent, permanent cache miss, not an error.
+    pub toolchain: Option<String>,
 }
 
 pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
     let mut it = args.iter();
     let tree = it.next().filter(|a| !a.starts_with("--")).ok_or(TEMPLATE_USAGE)?;
-    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), vmid: None };
+    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), vmid: None, toolchain: None };
     while let Some(a) = it.next() {
         let (key, inline) = match a.split_once('=') {
             Some((k, v)) if k.starts_with("--") => (k, Some(v.to_string())),
@@ -34,6 +40,10 @@ pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
                     return Err(format!("round-vm template: --vmid must be a number, got {v:?}"));
                 }
                 r.vmid = Some(v);
+            }
+            "--toolchain" => {
+                let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --toolchain needs a value")?;
+                r.toolchain = Some(v).filter(|v| !v.is_empty());
             }
             other => return Err(format!("round-vm template: unknown option: {other}")),
         }
@@ -50,20 +60,69 @@ pub fn template_name(commit: &str) -> String {
 /// Where the tree is unpacked on the template VM; removed before shutdown.
 pub const TEMPLATE_WORK: &str = "/root/template-work";
 
-/// Runs on the template VM, in `$1` (the unpacked tree). The image is BUILT here — podman's
-/// default `--layers` keeps every step's cache in the store the template carries. Every
-/// other spira-testenv tag goes (a loaded image has no cache and only costs disk). The
-/// cargo registry is warmed from the tree's lockfile. The key round-vm delivered is removed:
-/// every clone gets its own through the guest agent. The last stdout line is `image=<ref>`.
+/// Runs on the template VM, in `$1` (the unpacked tree), `$2` (this box's own LAN address,
+/// empty to skip the cache), `$3` (the toolchain to install, empty to leave whatever
+/// `cargo`/`rustc` already resolve to on the template's own PATH) and `$4` (the operator's
+/// own `CARGO_HOME`, empty to leave the template's ambient default — never a literal in
+/// this source, which a literal would tie to one operator's box). The image is BUILT here
+/// — podman's default `--layers` keeps every step's cache in the store the template
+/// carries. Every other spira-testenv tag goes (a loaded image has no cache and only costs
+/// disk). The cargo registry is warmed from the tree's lockfile. The key round-vm delivered
+/// is removed: every clone gets its own through the guest agent. The last stdout line is
+/// `image=<ref>`.
+///
+/// sp-xjnzl: the template also gets the box's shared compilation cache wired up — sccache
+/// built with the `webdav` backend, installed at the exact `CARGO_HOME` the host itself
+/// uses (see REMOTE_SCRIPT's own comment: that path is part of every dependency's cache
+/// key). Installing it HERE, once, means every round VM cloned from this template inherits
+/// a working `sccache` on its disk without reinstalling it per round; REMOTE_SCRIPT only
+/// has to point it at the store and set `CARGO_HOME` to match.
+///
+/// The toolchain install is a STANDALONE tarball from static.rust-lang.org, not `rustup
+/// toolchain install`: measured on this box's own template, `rustup toolchain install`
+/// refuses with `rustup is not installed at '/root/.cargo'` — a pre-existing defect in how
+/// this template's rustup was provisioned, reproduced even under rustup's own ambient
+/// default `CARGO_HOME`, nothing to do with this script overriding it. A plain `rustc`/
+/// `cargo` binary has no such self-location check (confirmed on the host, which runs the
+/// identical rustup), so installing the exact release tarball directly avoids the defect
+/// rather than working around it.
 pub const TEMPLATE_SCRIPT: &str = r#"set -euo pipefail
-work="$1"
+work="$1" host_addr="$2" toolchain="$3" cache_home="$4"
 cd "$work"
+export CARGO_HOME="${cache_home:-$HOME/.cargo}"
+mkdir -p "$CARGO_HOME/bin"
+if [ -n "$toolchain" ] && [ ! -x "$CARGO_HOME/bin/rustc" ]; then
+    echo "round-vm template: installing rust $toolchain standalone into $CARGO_HOME (must match the host's rustc byte-for-byte, sp-xjnzl)" >&2
+    tmp="$(mktemp -d)"
+    curl -fsSL "https://static.rust-lang.org/dist/rust-${toolchain}-x86_64-unknown-linux-gnu.tar.gz" -o "$tmp/rust.tar.gz"
+    tar -xzf "$tmp/rust.tar.gz" -C "$tmp" --strip-components=1
+    "$tmp/install.sh" --prefix="$CARGO_HOME" --destdir="" --disable-ldconfig >&2
+    rm -rf "$tmp"
+fi
+export PATH="$CARGO_HOME/bin:$PATH"
+if [ ! -x "$CARGO_HOME/bin/sccache" ]; then
+    echo "round-vm template: installing sccache (webdav backend) into $CARGO_HOME/bin" >&2
+    cargo install sccache --locked --no-default-features --features webdav --quiet
+fi
+export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
+export SCCACHE_IGNORE_SERVER_IO_ERROR=1
+if [ -n "$host_addr" ]; then
+    export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
+    export SCCACHE_WEBDAV_KEY_PREFIX="/"
+fi
+# testenv's own cold-build step stages a sibling `spira-config` binary into the image build
+# context for the Containerfile's doctor-check (container.rs's stage_spira_config,
+# testenv/Containerfile) — `cargo run -p testenv` alone never builds spira-config, since
+# nothing else in the workspace pulls in ITS bin target. Built explicitly here so the
+# sibling exists before testenv ever looks for it.
+cargo build -q --locked --release -p testenv -p spira-config
 img="$(cargo run -q --locked --release -p testenv -- container image)"
 if [ -z "$img" ]; then echo "round-vm template: testenv container image printed no image ref" >&2; exit 1; fi
 podman images --format '{{.Repository}}:{{.Tag}}' \
     | { grep '^localhost/spira-testenv:' || true; } | { grep -vxF "$img" || true; } \
     | while read -r old; do podman rmi "$old" >&2; done
 cargo fetch --locked >&2
+"$CARGO_HOME/bin/sccache" --stop-server >&2 || true
 cd /
 rm -rf "$work" /root/.ssh/authorized_keys
 sync
@@ -80,8 +139,11 @@ pub trait Guest {
     fn reachable(&self, addr: &str) -> bool;
     /// Unpacks `commit` of the repository at `tree` into `dir` on the VM.
     fn upload(&self, addr: &str, tree: &Path, commit: &str, dir: &str) -> Result<(), String>;
-    /// Runs TEMPLATE_SCRIPT in `dir`: (exit code, stdout). 255 is ssh itself.
-    fn prepare(&self, addr: &str, dir: &str) -> Result<(i32, String), String>;
+    /// Runs TEMPLATE_SCRIPT in `dir` on the VM at `addr`, pointing its cache at
+    /// `host_addr` (this box's own LAN address; empty skips the cache), installing
+    /// `toolchain` (empty: leave rustup's default alone) at `cache_home` (empty: the
+    /// template's own ambient `CARGO_HOME`): (exit code, stdout). 255 is ssh itself.
+    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String>;
 }
 
 impl Guest for SshRemote {
@@ -115,11 +177,17 @@ impl Guest for SshRemote {
         Ok(())
     }
 
-    fn prepare(&self, addr: &str, dir: &str) -> Result<(i32, String), String> {
+    fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String> {
         let mut child = command("ssh")
             .args(self.ssh_opts())
             .arg(format!("{}@{addr}", self.user))
-            .arg(format!("bash -s -- {}", shell_quote(dir)))
+            .arg(format!(
+                "bash -s -- {} {} {} {}",
+                shell_quote(dir),
+                shell_quote(host_addr),
+                shell_quote(toolchain),
+                shell_quote(cache_home)
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -148,6 +216,9 @@ pub fn build(
     tree: &Path,
     commit: &str,
     vmid: Option<String>,
+    host_addr: &str,
+    toolchain: &str,
+    cache_home: &str,
 ) -> Result<Built, String> {
     let vmid = match vmid {
         Some(v) => v,
@@ -159,7 +230,7 @@ pub fn build(
     let result = p
         .clone_to(&vmid, &name)
         .map_err(|e| format!("clone refused: {e}"))
-        .and_then(|()| prepare_vm(p, g, spec, ssh_tries, tree, commit, &vmid));
+        .and_then(|()| prepare_vm(p, g, spec, ssh_tries, tree, commit, &vmid, host_addr, toolchain, cache_home));
     match result {
         Ok(image) => Ok(Built { vmid, image }),
         Err(reason) => Err(match destroy_fenced(p, &vmid, &name, t) {
@@ -178,6 +249,9 @@ fn prepare_vm(
     tree: &Path,
     commit: &str,
     vmid: &str,
+    host_addr: &str,
+    toolchain: &str,
+    cache_home: &str,
 ) -> Result<String, String> {
     let t = spec.timing;
     let addr = boot(p, vmid, spec)?;
@@ -193,7 +267,7 @@ fn prepare_vm(
     eprintln!("round-vm template: {vmid} at {addr}: unpacking {commit}");
     g.upload(&addr, tree, commit, TEMPLATE_WORK)?;
     eprintln!("round-vm template: building the test image on {vmid} (a cold build: its heartbeat follows)");
-    let (rc, out) = g.prepare(&addr, TEMPLATE_WORK)?;
+    let (rc, out) = g.prepare(&addr, TEMPLATE_WORK, host_addr, toolchain, cache_home)?;
     if rc != 0 {
         return Err(format!("preparing the template on {vmid} exited {rc}"));
     }
@@ -258,8 +332,8 @@ mod tests {
             self.calls.lock().unwrap().push(format!("upload {addr} {commit} {dir}"));
             Ok(())
         }
-        fn prepare(&self, addr: &str, dir: &str) -> Result<(i32, String), String> {
-            self.calls.lock().unwrap().push(format!("prepare {addr} {dir}"));
+        fn prepare(&self, addr: &str, dir: &str, host_addr: &str, toolchain: &str, cache_home: &str) -> Result<(i32, String), String> {
+            self.calls.lock().unwrap().push(format!("prepare {addr} {dir} {host_addr} {toolchain} {cache_home}"));
             Ok((self.rc, self.out.clone()))
         }
     }
@@ -267,13 +341,25 @@ mod tests {
     const SHA: &str = "0123456789abcdef0123";
 
     #[test]
-    fn args_take_a_tree_and_an_explicit_vmid_in_both_spellings() {
-        assert_eq!(parse_template_args(&s(&["/t"])).unwrap(), TemplateArgs { tree_dir: "/t".into(), vmid: None });
+    fn args_take_a_tree_an_explicit_vmid_and_a_toolchain() {
+        assert_eq!(
+            parse_template_args(&s(&["/t"])).unwrap(),
+            TemplateArgs { tree_dir: "/t".into(), vmid: None, toolchain: None }
+        );
         assert_eq!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap().vmid.as_deref(), Some("9120"));
         assert_eq!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap().vmid.as_deref(), Some("9121"));
+        assert_eq!(
+            parse_template_args(&s(&["/t", "--toolchain", "1.98.1"])).unwrap().toolchain.as_deref(),
+            Some("1.98.1")
+        );
+        assert_eq!(
+            parse_template_args(&s(&["/t", "--toolchain=1.98.1"])).unwrap().toolchain.as_deref(),
+            Some("1.98.1")
+        );
         assert!(parse_template_args(&s(&[])).is_err());
         assert!(parse_template_args(&s(&["/t", "--vmid", "abc"])).unwrap_err().contains("number"));
         assert!(parse_template_args(&s(&["/t", "--bogus"])).unwrap_err().contains("--bogus"));
+        assert!(parse_template_args(&s(&["/t", "--toolchain"])).unwrap_err().contains("needs a value"));
     }
 
     #[test]
@@ -287,7 +373,7 @@ mod tests {
     fn a_build_clones_builds_the_image_then_converts_a_stopped_vm() {
         let p = FakeProvider::new();
         let g = FakeGuest::ok();
-        let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap();
+        let b = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "192.168.1.56", "1.98.1", "/opt/spira/cargo").unwrap();
         assert_eq!(b, Built { vmid: "9120".into(), image: "localhost/spira-testenv:abc123".into() });
         assert!(p.is_template("9120").unwrap());
         assert_eq!(p.name("9120").as_deref(), Some("round-template-0123456789ab"));
@@ -298,14 +384,20 @@ mod tests {
         assert_eq!(order, ["shutdown 9120", "template 9120"]);
         assert_eq!(
             *g.calls.lock().unwrap(),
-            [format!("upload 10.0.0.9120 {SHA} {TEMPLATE_WORK}"), format!("prepare 10.0.0.9120 {TEMPLATE_WORK}")]
+            [
+                format!("upload 10.0.0.9120 {SHA} {TEMPLATE_WORK}"),
+                // sp-xjnzl: the host's own address, the pinned toolchain and the operator's
+                // own CARGO_HOME all reach the VM side of `prepare`, not just the tree and
+                // the work dir.
+                format!("prepare 10.0.0.9120 {TEMPLATE_WORK} 192.168.1.56 1.98.1 /opt/spira/cargo")
+            ]
         );
     }
 
     #[test]
     fn without_a_vmid_the_hypervisor_allocates_one() {
         let p = FakeProvider::new();
-        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, None).unwrap();
+        let b = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, None, "", "", "").unwrap();
         assert_eq!(b.vmid, "100");
         assert_eq!(p.count("nextid"), 1);
     }
@@ -314,7 +406,7 @@ mod tests {
     fn a_failed_image_build_destroys_the_half_built_vm_and_converts_nothing() {
         let p = FakeProvider::new();
         let g = FakeGuest { rc: 1, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
         assert!(e.contains("exited 1") && e.contains("destroyed"), "{e}");
         assert!(p.all_vms().is_empty(), "{:?}", p.all_vms());
         assert_eq!(p.count("template "), 0);
@@ -324,7 +416,7 @@ mod tests {
     fn no_reported_image_is_a_failure_even_on_exit_0() {
         let p = FakeProvider::new();
         let g = FakeGuest { out: "built something\n".into(), ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap_err();
+        let e = build(&p, &g, &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
         assert!(e.contains("reported no image"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -334,12 +426,12 @@ mod tests {
         for step in [Step::Start, Step::Addr, Step::Exec, Step::Shutdown, Step::MakeTemplate] {
             let p = FakeProvider::new();
             p.fail(step);
-            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap_err();
+            let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
             assert!(p.all_vms().is_empty(), "{step:?} left {:?}: {e}", p.all_vms());
         }
         let p = FakeProvider::new();
         let g = FakeGuest { reachable: false, ..FakeGuest::ok() };
-        let e = build(&p, &g, &spec(), 2, Path::new("/tree"), SHA, Some("9120".into())).unwrap_err();
+        let e = build(&p, &g, &spec(), 2, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
         assert!(e.contains("never became reachable"), "{e}");
         assert!(p.all_vms().is_empty());
     }
@@ -348,7 +440,7 @@ mod tests {
     fn a_vmid_that_is_taken_is_refused_and_the_vm_there_is_never_touched() {
         let p = FakeProvider::new();
         p.plant("108", "round-template-old");
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("108".into())).unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("108".into()), "", "", "").unwrap_err();
         assert!(e.contains("clone refused") && e.contains("refusing to destroy"), "{e}");
         assert_eq!(p.name("108").as_deref(), Some("round-template-old"));
         assert_eq!(p.count("destroy"), 0);
@@ -359,7 +451,7 @@ mod tests {
         let p = FakeProvider::new();
         p.fail(Step::Shutdown);
         p.fail(Step::Destroy);
-        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into())).unwrap_err();
+        let e = build(&p, &FakeGuest::ok(), &spec(), 3, Path::new("/tree"), SHA, Some("9120".into()), "", "", "").unwrap_err();
         assert!(e.contains("by hand") && e.contains("9120"), "{e}");
     }
 
@@ -373,5 +465,26 @@ mod tests {
         assert_eq!(reported_image("a\nimage=x:1\n"), Some("x:1".into()));
         assert_eq!(reported_image("image=\n"), None);
         assert_eq!(reported_image(""), None);
+    }
+
+    #[test]
+    fn the_template_installs_webdav_sccache_and_the_toolchain_before_building_the_image() {
+        // sp-xjnzl: the template carries its OWN sccache (so every round VM clones a working
+        // one), pointed at the host's shared store, matching the host's own CARGO_HOME —
+        // see REMOTE_SCRIPT's own test and sccache-dav/DESIGN.md for why that path must be
+        // byte-identical.
+        let cargo_home = TEMPLATE_SCRIPT.find("export CARGO_HOME=\"${cache_home:-$HOME/.cargo}\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
+        let toolchain = TEMPLATE_SCRIPT.find("static.rust-lang.org/dist/rust-${toolchain}-").expect("a standalone toolchain, not rustup (its own toolchain-install is broken on this template)");
+        let install = TEMPLATE_SCRIPT.find("cargo install sccache --locked --no-default-features --features webdav").expect("the exact install command, same as deps.toml's and doctor's");
+        let endpoint = TEMPLATE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the cache endpoint is this box's own address, empty host_addr skips it");
+        let spira_config_build = TEMPLATE_SCRIPT.find("cargo build -q --locked --release -p testenv -p spira-config").expect("spira-config must be built explicitly: `cargo run -p testenv` alone never builds it, and the image's doctor-check step needs the sibling binary sp-xjnzl's container.rs stages");
+        let image = TEMPLATE_SCRIPT.find("-p testenv -- container image").unwrap();
+        assert!(
+            cargo_home < toolchain && toolchain < install && install < endpoint && endpoint < spira_config_build && spira_config_build < image,
+            "the cache, the matching toolchain and the spira-config sibling must all be in place before the image build they are meant to warm or unblock"
+        );
+        assert!(!TEMPLATE_SCRIPT.contains("rustup toolchain install"), "rustup's own toolchain-install refuses on this template (measured: \"rustup is not installed at ...\") — never reintroduce it here");
+        assert!(TEMPLATE_SCRIPT.contains("sccache\" --stop-server"), "the template never ships a running sccache server baked into its disk image");
+        assert!(!TEMPLATE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }
 }

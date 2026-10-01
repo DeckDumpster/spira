@@ -254,16 +254,29 @@ RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_req
     > /usr/local/bin/claude && chmod 0755 /usr/local/bin/claude
 
 # ── doctor-check: image is verified, not asserted ─────────────────────────
-# COPY conf.sh (the manifest) and the check script into a scratch location. Run the check
-# to verify every manifest program is present or explicitly waived.
-# The scripts are deleted after; they are a build-time gate, not a runtime tool.
-COPY conf.sh /tmp/doctor-check/conf.sh
-COPY deps.toml /tmp/doctor-check/deps.toml
-COPY testenv/doctor-check.sh /tmp/doctor-check/doctor-check.sh
-COPY testenv/doctor-waivers /tmp/doctor-check/doctor-waivers
-RUN bash /tmp/doctor-check/doctor-check.sh \
-        /tmp/doctor-check/conf.sh \
-        /tmp/doctor-check/doctor-waivers
+# COPY the WHOLE spira/ tree (the entire build context) into a scratch location, and run
+# the check script from inside it. All of it is deleted after; none of it is a runtime tool.
+#
+# WHY THE WHOLE TREE, not just conf.sh + deps.toml + the two check scripts as before
+# (sp-xjnzl). conf.sh now resolves configuration through a `spira-config` subprocess call
+# even for a plain deps.toml read (`spira_deps_list` — conf.sh's own "wave 4.5: becomes an
+# eval of resolve"), AND it regenerates its own `conf.d.*.generated.sh` fragments through a
+# sibling `conf-gen.sh`, which in turn needs its OWN sibling `conf.d/` registry (297 files)
+# and a place to write two output files — three more siblings a hand-picked COPY list kept
+# needing, one at a time, discovered only by running the build. This image never installs
+# Spira's own binaries (release-tier; testenv stages them per run, see
+# DEPS_TIERS_DOCTOR_CHECK_READS in container.rs), so `spira-config` still has to arrive a
+# different way: testenv's own driver (stage_spira_config, container.rs) copies ITS sibling
+# spira-config — built alongside it by the SAME `cargo build --workspace` every caller
+# already runs before a cold image build — into the build context at
+# testenv/.doctor-check-spira-config; a missing one is a loud COPY failure, not a
+# silently-absent manifest reader. It stays on PATH through BOTH conf.sh-sourcing steps below
+# (this one and SPIRA_RELEASES's, further down).
+COPY . /tmp/doctor-check-spira
+RUN install -m 0755 /tmp/doctor-check-spira/testenv/.doctor-check-spira-config /usr/local/bin/spira-config && \
+    bash /tmp/doctor-check-spira/testenv/doctor-check.sh \
+        /tmp/doctor-check-spira/conf.sh \
+        /tmp/doctor-check-spira/testenv/doctor-waivers
 
 # ── spirauser — non-root user the tests run as ─────────────────────────────
 # A fixed UID keeps the cargo cache volume owner stable across image rebuilds.
@@ -282,11 +295,12 @@ ENV CARGO_HOME=/var/spira/cargo
 # by spirauser for the same reason /var/spira/cargo and /workspace are, or install.sh's
 # release bootstrap has nowhere writable to create it.
 RUN _releases="$(env -i HOME=/root PATH="$PATH" SPIRA_CONF=/nonexistent SPIRA_REPO=/workspace \
-        bash -c '. /tmp/doctor-check/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
+        bash -c '. /tmp/doctor-check-spira/conf.sh 2>/dev/null; printf %s "$SPIRA_RELEASES"')" && \
     [ -n "$_releases" ] && \
     mkdir -p /var/spira/cargo /workspace "$_releases" && \
     chown -R spirauser:spirauser /var/spira/cargo /workspace "$_releases" && \
-    rm -rf /tmp/doctor-check
+    rm -rf /tmp/doctor-check-spira && \
+    rm -f /usr/local/bin/spira-config
 
 # Mask services that require privileges the rootless container does not hold.
 # Masking prevents failed-unit churn during systemd startup and does not prevent
