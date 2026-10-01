@@ -40,22 +40,23 @@ impl Real {
         if a.rc != 0 {
             return Err(format!("the lib.sh context seam exited {}", a.rc));
         }
-        let mut repos = Vec::new();
         for rec in a.text.split('\0').filter(|s| !s.is_empty()) {
             let Some((k, v)) = rec.split_once('=') else { continue };
-            if k == "repo" {
-                let f: Vec<&str> = v.split(FIELD).collect();
-                if f.len() != 4 {
-                    return Err(format!("malformed repository record {v:?}"));
-                }
-                repos.push(Repo { name: f[0].into(), root: (f[1] == "1").then(|| PathBuf::from(f[2])), queued: f[3] == "1" });
-            } else {
-                r.settings.insert(k.into(), v.into());
-            }
+            r.settings.insert(k.into(), v.into());
         }
-        if repos.is_empty() {
-            return Err("spira_repos names no repository — nothing could be judged".into());
-        }
+        // spira_repos/repo_root/repo_land_queued (family U) in-process (sp-k6lku, "wave
+        // 4.13"), not this seam's own loop — Registry::all() always puts the home repo
+        // first, so (unlike the retired bash loop) this can no longer come back empty.
+        let reg = r.repo_registry();
+        let repos: Vec<Repo> = reg
+            .all()
+            .into_iter()
+            .map(|name| {
+                let root = reg.root(&name).map(PathBuf::from);
+                let queued = reg.land_queued(&name);
+                Repo { name, root, queued }
+            })
+            .collect();
         r.submitted_label = r.setting("submitted", "spira-submitted");
         Ok((r, repos))
     }
