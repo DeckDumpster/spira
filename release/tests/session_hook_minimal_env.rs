@@ -2,10 +2,21 @@
 //! COMMAND `session_hook::install` writes, under the same minimal environment the client
 //! gives a hook (`env -i HOME PATH=/usr/bin:/bin`) — never the launcher's own PATH. This is
 //! the regression itself: the old registration was a bare path with no `env`/`PATH` prefix,
-//! so it ran under the CLIENT's environment and `conf.sh` could not find `spira-config`
-//! (fails closed), exiting 1 on every one of the 27 accumulated entries. The fix makes the
-//! registered command self-contained, so it must succeed under an environment that carries
-//! nothing of the launcher's at all.
+//! so it ran under the CLIENT's environment and `conf.sh` could not find `spira-config`. The
+//! fix makes the registered command self-contained, so it must succeed under an environment
+//! that carries nothing of the launcher's at all.
+//!
+//! The bare form's OWN failure shape moved under us (sp-ubcgo, 225aeafae, "conf.sh's resolve
+//! refusal is return, not exit", landed the same day this test does): conf.sh now `return`s
+//! out of its failed resolve instead of `exit`ing the whole process, deliberately, so a
+//! handful of OTHER callers that guard their own `. conf.sh || true` degrade instead of
+//! dying. `session.sh` is not one of those callers, but it is not guarded by `set -e` either,
+//! so it was never going to die from that `return` — it just carries on with every derived
+//! key unset, reaches its own `WATCHD status` call with `watchd` not on the bare `PATH`
+//! either, and takes the "no watchers configured" empty-output exit built for a harness
+//! nobody has turned on (session.sh's own "IT ALWAYS EXITS 0" rule). So the bare form no
+//! longer dies with a visible hook error; it goes quiet instead — rc 0, no output — which is
+//! what this test now has to demonstrate instead of a nonzero exit.
 //!
 //! Builds a fixture release root: `bin/spira-config` (a real build — conf.sh's own
 //! `spira-config convert`/`export` calls need it, and that dependency is the whole defect),
@@ -133,9 +144,15 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
 fn the_old_bare_path_form_is_the_regression_this_replaces() {
     // POSITIVE CONTROL (law-absence-needs-a-positive-control): the exact shape sp-7jr34
     // found still live in the operator's real settings.json — a command with no `env`/`PATH`
-    // prefix at all — fails under this same minimal env, because `conf.sh` cannot find
-    // `spira-config` on a bare PATH. This is what proves the fix above is a fix and not a
-    // fixture that would have passed either way.
+    // prefix at all — must still fail to do the hook's job under this same minimal env,
+    // because `conf.sh` cannot find `spira-config` on a bare PATH. This is what proves the
+    // fix above is a fix and not a fixture that would have passed either way.
+    //
+    // NOT a nonzero exit code (see the module doc): session.sh never dies for this, by its
+    // own "IT ALWAYS EXITS 0" rule, both before and after sp-ubcgo's 225aeafae. What the bug
+    // actually costs is the watcher line this hook exists to print — so that is what a
+    // revert of the env/PATH wrapper has to be caught losing, against the sibling test above
+    // that proves the real, wrapped command still produces it.
     let workspace = workspace_root();
     let tmp = testkit::TempDir::new("session-hook-regression");
     let release_root = tmp.path().join("release");
@@ -144,6 +161,7 @@ fn the_old_bare_path_form_is_the_regression_this_replaces() {
     // Deliberately NO bin/spira-config on this release root, and no env/PATH wrapper — the
     // bare path the old script wrote.
     let bare_command = release_root.join("spira/hooks/session.sh").display().to_string();
-    let (rc, _out) = run_under_minimal_env(&bare_command, "");
-    assert_ne!(rc, 0, "the bare, unwrapped registration must fail under a minimal env — if it didn't, this test no longer demonstrates the defect it exists to guard against");
+    let (rc, out) = run_under_minimal_env(&bare_command, "");
+    assert_eq!(rc, 0, "a SessionStart hook exits 0 even for this failure shape (session.sh's own rule) — a nonzero code here would be a different bug, not this one; got rc={rc}, output:\n{out}");
+    assert!(out.trim().is_empty(), "the bare, unwrapped registration must produce no watcher output under a minimal env — if it printed the watcher line the wrapped command does, this test no longer demonstrates the defect it exists to guard against; got output:\n{out}");
 }
