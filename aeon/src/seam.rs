@@ -21,13 +21,13 @@ __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
-    _aeon_thrash_meta|_aeon_rapid_recur|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
+    _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|session_outcome|session_yield_headless|trace_last|\
-    aeon_fuse_minutes|open_ask_blocker|verdict_committed|close_verdict|land_state|\
+    capacity_pause_set|trace_last|spira_landrefs|\
+    aeon_fuse_minutes|land_state|\
     land_mark|bead_is_work_type|bead_named_paths|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch|groom_claims_verified|\
     wiki_write_paths|wiki_commit_paths|_tsd_aeon_session) ;;
@@ -95,9 +95,6 @@ _aeon_thrash_meta() {
     printf '%s\n' "$(bead_metadata "$1" thrash_streak)"
     printf '%s\n' "$(bead_metadata "$1" thrash_tip)"
     printf '%s\n' "$(bead_metadata "$1" thrash_last)"
-}
-_aeon_rapid_recur() {
-    BEAD_ID="$1" LEDGER="$2" rapid_recur_check
 }
 "$__aeon_fn" "${__aeon_args[@]}"
 "#;

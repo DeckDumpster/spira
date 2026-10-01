@@ -130,12 +130,13 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
   `submitted`, `yield-headless`, `pre-session`, `closed`, `open`, `in_progress`, `?`,
   `sweep`.
 - Readers: `cockpit-metrics.py`, `cockpit.sh` (tail), `watchtower` (`$2=="awake" && $3==f`),
-  `model-switch-report.sh`, `lib.sh rapid_recur_check` (`" done [^ ]* $BEAD_ID "`),
+  `model-switch-report.sh`, `aeon::run::Run::rapid_recur_check` (`" done \S+ <id> "`,
+  native since sp-8kqww — wave 4.33; lib.sh's own copy is retired),
   `full-aeon-fixture.sh`, and many suites. `lib.sh capacity_pause_set` also appends a
   `CAPACITY paused until …` line to the same file (it is called through the seam).
 
-After each `done` line: `_tsd_aeon_session` (tsd family `aeon-session`) and
-`rapid_recur_check` run (seam).
+After each `done` line: `_tsd_aeon_session` (seam, tsd family `aeon-session`) and
+`rapid_recur_check` run (native, `aeon::run::Run::rapid_recur_check`).
 
 ### 2.5 Files read and written
 
@@ -463,13 +464,18 @@ is reimplemented in Rust, §6):
 | `bead_reopen` | every reopen (landstate WITHDRAWN, label removal, release, cause row, note) |
 | `bump_requeue`, `bump_lapsed`, `write_lapse_record`, `thrash_streak_bump`, `requeues_of` | event rows / thrash metadata / the display count on a requeue note |
 | `capacity_reset_at`, `capacity_pause_set` | the account's capacity window |
-| `session_outcome`, `session_yield_headless`, `trace_last`, `aeon_fuse_minutes` | trace readers shared with sentinel/strand/cockpit |
-| `open_ask_blocker` | decision-blocked disposition |
-| `verdict_committed`, `close_verdict` | the verdict shared with sentinel CHECK 5 |
+| `trace_last`, `aeon_fuse_minutes` | trace readers shared with sentinel/strand/cockpit |
+| `spira_landrefs` | `verdict_committed`'s landing-ref fallback (family W, unported) |
 | `eviction_reopen`'s inputs: `land_state`, `land_mark` | landstate |
 | `bead_is_work_type`, `bead_named_paths`, `bead_cited_commit_on_base`, `other_beads_on_conflicts`, `spira_destroy_branch` | helpers shared with landing |
 | `groom_claims_verified`, `wiki_write_paths`, `wiki_commit_paths` | verdict/wiki helpers |
-| `_tsd_aeon_session`, `rapid_recur_check` | after each `done` line |
+| `_tsd_aeon_session` | after each `done` line |
+
+`session_outcome`, `session_yield_headless`, `open_ask_blocker`, `verdict_committed`,
+`close_verdict`, `delivers_verdict` and `rapid_recur_check`/`rapid_recur_streak` were the
+last aeon-only lib.sh functions this seam reached — ported natively into `aeon::decide`,
+`aeon::verdict` and `aeon::run::Run::rapid_recur_check` at sp-8kqww (wave 4.33) and deleted
+from lib.sh (zero callers left once aeon stopped shelling out for them).
 
 Cost: ~0.2 s per call (sourcing lib.sh). A claim run makes ~15-25 calls; the heartbeat makes
 one per beat (`aeon_fuse_minutes`).
@@ -497,13 +503,16 @@ refuse an enabled-but-unbuildable configuration.
 
 ## 7. Tests
 
-`cargo test -p aeon` — 80 tests. Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
+`cargo test -p aeon` — 135 lib tests + 2 bin tests (sp-8kqww, wave 4.33; count drifts as
+functions keep moving over from lib.sh — read it off the actual run, not this number).
+Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 (temp repositories) wherever the assertion is about git's own behaviour.
 
 | module | contract it pins |
 |---|---|
 | `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
-| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, eviction, SOP verdict, close_verdict parsing |
+| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, eviction, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
+| `verdict` | `eviction_race_count`; `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
 | `brief` | FINISH follows lifecycle_enforce only; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
 | `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |

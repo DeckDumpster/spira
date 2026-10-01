@@ -1,5 +1,6 @@
-//! The real world: lib.sh through the seam, `gh` for the one forge question, `spira-lc`
-//! by bare name on the launcher PATH.
+//! The real world: the destruction chokepoint in-process (`reap.rs`, sp-9envm); what has
+//! not moved to Rust yet (context/base/bead — families U/W/A/B) through the lib.sh seam;
+//! `gh` for the one forge question; `spira-lc` by bare name on the launcher PATH.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -9,6 +10,7 @@ use std::process::{Command, Stdio};
 use serde_json::Value;
 
 use crate::ports::{Base, Repo, Sent, World};
+use crate::reap;
 use crate::seam::{self, Op, FIELD};
 
 pub struct Real {
@@ -27,14 +29,12 @@ struct Answer {
 
 impl Real {
     /// Read the context once. Err: lib.sh could not be loaded, or it names no repository.
+    /// Used by the full sweep, which needs the repository list; the chokepoint subcommands
+    /// (destroy-worktree/destroy-branch/witness/reap-landed-branch) use `minimal` instead —
+    /// they are handed a repo PATH directly, as the retired bash functions were, and must
+    /// not be made to depend on the repo-name registry resolving at all.
     pub fn new(home: PathBuf, status: Option<String>) -> Result<(Real, Vec<Repo>), String> {
-        let mut r = Real {
-            home,
-            status: status.unwrap_or_default(),
-            settings: BTreeMap::new(),
-            submitted_label: String::new(),
-            enforce: spira_config::lifecycle_enforce(None),
-        };
+        let mut r = Real::minimal(home, status);
         let a = r.seam(Op::Context, &[]);
         if a.rc != 0 {
             return Err(format!("the lib.sh context seam exited {}", a.rc));
@@ -59,8 +59,52 @@ impl Real {
         Ok((r, repos))
     }
 
+    /// No context seam call at all — just `home`/`status`, for a caller that only needs
+    /// the Base/Status/Bead seams (each self-contained) and never the repository registry.
+    pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
+        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None) }
+    }
+
     fn setting(&self, k: &str, default: &str) -> String {
         self.settings.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| default.to_string())
+    }
+
+    /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's
+    /// own `run=` echo of the same variable, so this works whether or not that seam ran.
+    pub fn run(&self) -> PathBuf {
+        PathBuf::from(std::env::var("SPIRA_RUN").unwrap_or_default())
+    }
+
+    /// `${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}` — the chokepoint's own log, as a real path
+    /// (distinct from the `World::reaplog` trait method, which is display text for a "see
+    /// …" message and keeps its existing placeholder default unchanged).
+    pub fn reaplog_path(&self) -> PathBuf {
+        match std::env::var("SPIRA_REAPLOG") {
+            Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
+            _ => self.run().join("reap.log"),
+        }
+    }
+
+    /// `bdq label remove <id> <label>` — label_add's own mirror, needed by
+    /// `reap::reap_landed_branch` (law-branch-affinity-is-recorded) but not part of the
+    /// `World` trait since nothing else in this crate calls it standalone.
+    pub fn label_remove(&self, id: &str, label: &str) {
+        self.seam(Op::LabelRemove, &[id, label]);
+    }
+
+    /// `sending destroy-branch`'s own entry point: the trait only has the combined `send`
+    /// (witness recheck + full reap), so a standalone destroy-branch (for bash callers that
+    /// are not the sweep itself — `held.sh`, and lib.sh's `spira_destroy_branch` shim) goes
+    /// through this instead.
+    #[allow(clippy::too_many_arguments)]
+    pub fn destroy_branch(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>) -> Result<(), reap::DestroyBranchErr> {
+        reap::destroy_branch(&self.run(), &self.reaplog_path(), id, br, repo, why, caller, base, self)
+    }
+
+    /// `sending salvage`'s own entry point.
+    #[allow(clippy::result_unit_err)]
+    pub fn salvage(&self, id: &str, w: &Path) -> Result<Option<PathBuf>, ()> {
+        reap::salvage(&self.run(), &self.reaplog_path(), id, w)
     }
 
     fn seam(&self, op: Op, vals: &[&str]) -> Answer {
@@ -110,8 +154,7 @@ impl World for Real {
         Some(Base { landref, landrefs, remote })
     }
     fn witness(&self, id: &str) -> Option<String> {
-        let a = self.seam(Op::Witness, &[id]);
-        (a.rc == 0).then_some(a.text)
+        reap::holder_witnesses(&self.run(), id, self)
     }
     fn bead(&self, id: &str) -> Option<Value> {
         let a = self.seam(Op::Bead, &[id]);
@@ -122,23 +165,34 @@ impl World for Real {
             _ => None,
         }
     }
+    /// send_branch: the mid-send recheck, then the verified deletion — in one call so
+    /// nothing can claim the bead between the two, exactly as the retired bash seam ran
+    /// both in one process.
     fn send(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str) -> Sent {
-        let a = self.seam(Op::Send, &[id, br, &p(repo), why, caller]);
-        match a.rc {
-            0 => Sent::Done,
-            10 => Sent::Held(a.text),
-            _ if a.text == "certified-queued" => Sent::Queued,
-            _ => Sent::Failed(a.text),
+        if let Some(held) = reap::holder_witnesses(&self.run(), id, self) {
+            return Sent::Held(held);
+        }
+        // The base and its remote, re-derived here exactly as lib.sh's own
+        // spira_reap_landed_branch re-derived them rather than trusting a value the sweep
+        // read earlier in the pass.
+        let base_info = self.base(repo);
+        let base_ref = base_info.as_ref().map(|b| b.landref.as_str());
+        let remote = base_info.as_ref().and_then(|b| b.remote.as_deref());
+        let (run, reaplog_path) = (self.run(), self.reaplog_path());
+        match reap::reap_landed_branch(&run, &reaplog_path, id, br, repo, why, caller, base_ref, remote, self, &|m| self.log(m), &|i, l| self.label_remove(i, l)) {
+            reap::ReapOutcome::Done => Sent::Done,
+            reap::ReapOutcome::Queued => Sent::Queued,
+            reap::ReapOutcome::Failed(m) => Sent::Failed(m),
         }
     }
     fn close_on_land(&self, id: &str, sha: &str) {
         self.seam(Op::CloseOnLand, &[id, sha]);
     }
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool {
-        self.seam(Op::DestroyWorktree, &[id, &p(w), &p(repo), why]).rc == 0
+        reap::destroy_worktree(&self.run(), &self.reaplog_path(), id, w, repo, why, self)
     }
     fn prune(&self, repo: &Path) {
-        self.seam(Op::Prune, &[&p(repo)]);
+        reap::prune_worktrees(&self.reaplog_path(), repo);
     }
     fn label_add(&self, id: &str, label: &str) {
         self.seam(Op::LabelAdd, &[id, label]);
@@ -171,28 +225,27 @@ impl World for Real {
         println!("{line}");
     }
     fn log(&self, msg: &str) {
-        println!("{} spira: {msg}", utc_now());
+        println!("{} spira: {msg}", reap::utc_now());
     }
     fn reaplog(&self) -> String {
         self.setting("reaplog", "the reap log")
     }
     fn worktrees(&self) -> PathBuf {
-        Path::new(&self.setting("run", "")).join("worktree")
+        self.run().join("worktree")
     }
 }
 
-/// `date -u +%Y-%m-%dT%H:%M:%SZ`.
-fn utc_now() -> String {
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let (days, secs) = (t.div_euclid(86_400), t.rem_euclid(86_400));
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let mo = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(mo <= 2);
-    format!("{y:04}-{mo:02}-{d:02}T{:02}:{:02}:{:02}Z", secs / 3600, (secs % 3600) / 60, secs % 60)
+impl reap::BdProbe for Real {
+    /// `spira_db_reachable` + `spira_bead_status`, still bash (families A/B are not ported
+    /// yet) — the one bd question `reap::holder_witnesses` cannot answer itself.
+    fn probe(&self, id: &str) -> (bool, String) {
+        let a = self.seam(Op::Status, &[id]);
+        if a.rc != 0 {
+            return (false, String::new());
+        }
+        let f: Vec<&str> = a.text.split(FIELD).collect();
+        let reachable = f.first().copied() == Some("1");
+        let status = f.get(1).map(|s| s.to_string()).unwrap_or_default();
+        (reachable, status)
+    }
 }

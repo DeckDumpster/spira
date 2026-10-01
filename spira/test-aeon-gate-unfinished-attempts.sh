@@ -12,8 +12,9 @@
 # SEEN RED FIRST: before the fix, the claim aeon.sh makes to work this bead is never offset,
 # so attempts_of reads 1 after a single gate-unfinished release. The fix makes aeon.sh call
 # bump_requeue with the disposition's own unjudged-gate-unfinished cause, which
-# _attempts_sql_query already nets against a claim (test-aeon-disposition.sh covers the
-# other two release paths with the same defect, capacity and timeout, at the unit level).
+# _attempts_sql_query already nets against a claim (`cargo test -p aeon decide::tests::
+# disposition_table` covers the other two release paths with the same defect, capacity and
+# timeout, at the unit level).
 #
 # tier: T2
 # covers: aeon/src/* spira/lib.sh

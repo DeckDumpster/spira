@@ -1,5 +1,9 @@
-//! Every git question the Sending asks, read-only except `fetch` and `update-ref` of an
-//! archive ref. Each answers what the lib.sh function of the same name answered.
+//! Every git question the Sending asks. Mostly read-only (`fetch` and `update-ref` of an
+//! archive ref being the exceptions noted in the original header) plus, since the
+//! destruction chokepoint moved here from lib.sh (sp-9envm), the mutations that chokepoint
+//! itself makes: `worktree remove`, `branch -D` under `SPIRA_REF_SANCTIONED`, and the
+//! worktree-prune/repair pair. Each answers what the lib.sh function of the same name
+//! answered.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -115,5 +119,103 @@ impl Git<'_> {
     }
     pub fn update_ref(&self, r: &str, sha: &str) -> bool {
         self.ok(&["update-ref", r, sha])
+    }
+
+    // ---- the destruction chokepoint's own mutations (sp-9envm) -------------------------
+
+    /// `worktree remove --force <path>`. lib.sh's spira_destroy_worktree falls back to
+    /// `rm -rf` plus a prune when this fails (a worktree whose registration is already
+    /// broken); the caller does that fallback, not this method.
+    pub fn worktree_remove_force(&self, path: &Path) -> bool {
+        self.cmd(&["worktree", "remove", "--force", &path.to_string_lossy()]).status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    /// `branch -D <name>` with `SPIRA_REF_SANCTIONED=1` set on this one command — the only
+    /// site that may set it (the reference-transaction hook's sanctioned path). Returns the
+    /// first line of combined output on failure (empty on success); the caller re-checks
+    /// `branch_exists` itself exactly as lib.sh does, because `git branch -D` can exit
+    /// non-zero yet still have removed the ref (or vice versa with a racing writer).
+    pub fn branch_delete_sanctioned(&self, name: &str) -> String {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(self.0)
+            .args(["branch", "-D", name])
+            .env("SPIRA_REF_SANCTIONED", "1")
+            .stdin(Stdio::null())
+            .output();
+        match out {
+            Ok(o) if o.status.success() => String::new(),
+            Ok(o) => {
+                let mut s = String::from_utf8_lossy(&o.stderr).into_owned();
+                if s.trim().is_empty() {
+                    s = String::from_utf8_lossy(&o.stdout).into_owned();
+                }
+                s.lines().next().unwrap_or("").trim().to_string()
+            }
+            Err(e) => e.to_string(),
+        }
+    }
+
+    /// `push -q <remote> --delete <branch>`.
+    pub fn push_delete(&self, remote: &str, branch: &str) -> bool {
+        self.ok(&["push", "-q", remote, "--delete", branch])
+    }
+
+    /// `rev-parse --git-common-dir`, absolute (lib.sh resolves a relative answer against
+    /// the repo root itself).
+    pub fn git_common_dir(&self) -> Option<PathBuf> {
+        let s = self.out(&["rev-parse", "--git-common-dir"])?.trim().to_string();
+        if s.is_empty() {
+            return None;
+        }
+        let p = PathBuf::from(&s);
+        Some(if p.is_absolute() { p } else { self.0.join(p) })
+    }
+
+    /// `worktree prune -n -v`'s STDERR (that command reports on stderr, not stdout; reading
+    /// it any other way yields nothing and a guard fed an empty list approves everything).
+    pub fn worktree_prune_dry(&self) -> String {
+        Command::new("git")
+            .arg("-C")
+            .arg(self.0)
+            .args(["worktree", "prune", "-n", "-v"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
+            .unwrap_or_default()
+    }
+
+    pub fn worktree_prune(&self) {
+        let _ = self.cmd(&["worktree", "prune"]).status();
+    }
+
+    pub fn worktree_repair(&self, path: &Path) {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(self.0)
+            .args(["worktree", "repair"])
+            .arg(path)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    /// `status --porcelain`; None on a tree whose status could not be read at all (a
+    /// corrupted `.git` file), distinct from `Some("")` (clean) — salvage must fail closed
+    /// on the former and no-op on the latter.
+    pub fn status_porcelain(&self) -> Option<String> {
+        self.out(&["status", "--porcelain"])
+    }
+
+    pub fn diff_head(&self) -> Option<String> {
+        self.out(&["diff", "HEAD"])
+    }
+
+    /// `ls-files --others --exclude-standard -z`, raw NUL-separated bytes (untracked file
+    /// names may themselves contain anything but NUL).
+    pub fn ls_files_others_nul(&self) -> Vec<u8> {
+        self.cmd(&["ls-files", "--others", "--exclude-standard", "-z"]).output().map(|o| o.stdout).unwrap_or_default()
     }
 }
