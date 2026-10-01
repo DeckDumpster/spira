@@ -140,11 +140,11 @@ mod tests {
     /// checks a LEGACY `spira.conf`'s directory too, found through `HOME`/
     /// `XDG_CONFIG_HOME` independent of the `SPIRA_TOML` pin — so both legacy-search
     /// inputs are pinned at a fixture directory that holds neither, to never resolve the
-    /// real operator's repo-map on the machine running the suite.
+    /// real operator's own map file on the machine running the suite.
     #[test]
     fn repo_root_is_none_when_lib_sh_is_missing() {
         let d = testkit::TempDir::new("watchtower-repo-root-missing");
-        std::env::set_var("SPIRA_TOML", d.join("no-such-spira.toml"));
+        std::env::set_var("SPIRA_TOML", d.join("no-such-config.toml"));
         std::env::set_var("HOME", d.path());
         std::env::set_var("XDG_CONFIG_HOME", d.join("no-such-xdg"));
         assert_eq!(registry("/does/not/exist").root("spira"), None);
