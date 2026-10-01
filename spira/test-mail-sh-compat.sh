@@ -48,6 +48,10 @@ git -C "$REPO" config user.email t@t
 git -C "$REPO" config user.name t
 mkdir -p "$REPO/spira"
 printf 'key=val\n' > "$REPO/spira/conf.sh"
+# sp-nhf25: the compat table build-tarball.sh reads is spira/deps.toml's [[compat]], not a
+# hand-written list in this script — so the fixture must carry one, the same way a real
+# checkout does, or the build step has nothing to symlink and every case below goes dark.
+printf '[[compat]]\nname = "mail"\nalias = "mail.sh"\n' > "$REPO/spira/deps.toml"
 git -C "$REPO" add .
 git -C "$REPO" commit -qm "fixture: initial"
 git -C "$REPO" push -q origin main 2>/dev/null
