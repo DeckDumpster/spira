@@ -489,6 +489,20 @@ fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
     assert_eq!(v["stack_depth"], 5);
 }
 
+#[test]
+fn cli_deadlocked_treats_apply_as_a_bare_flag_not_a_value_consumer() {
+    // `--apply` takes no value (usage: "deadlocked [--apply] --merge-status F
+    // [--actor NAME]") but was missing from BOOL_FLAGS: the generic parser then read
+    // `--apply`'s own value as the NEXT token, which is always `--actor` in the one argv
+    // shape every real caller sends (`groomer deadlocked --apply --actor groomer
+    // --merge-status F --db D`, unchanged from `groomer.sh`'s) — so `groomer` itself fell
+    // out as a stray positional and every `--apply` call failed usage, unconditionally.
+    let empty = tmp("[]");
+    let o = run(&["deadlocked", "--apply", "--actor", "groomer", "--merge-status", &empty, "--db", "/nonexistent-spira-claim-test-db"], "");
+    assert!(!o.err.contains("positional"), "--apply must not consume --actor's value: {}", o.err);
+    assert_ne!(o.code, 1, "{}", o.err);
+}
+
 // ---- the store, through a fake bd -----------------------------------------------------
 
 /// A store over a fake bd; the fake lives as long as this does.
