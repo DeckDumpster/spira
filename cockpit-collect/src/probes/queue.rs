@@ -177,13 +177,14 @@ pub fn queue_keys() -> Kv {
     let mut next_total = 0usize;
     let next_max: i64 = std::env::var("SPIRA_QUEUE_BATCH_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let batch_set: HashSet<&str> = batch_member_ids.iter().map(String::as_str).collect();
-    if let Some(repos) = io::lib_call(&home, "spira_repos", &[]) {
-        for rname in repos.split_whitespace() {
-            let Some(rp) = io::lib_call(&home, "repo_root", &[rname]) else { continue };
-            if io::lib_call(&home, "repo_land", &[rname]).as_deref() != Some("queue") {
+    {
+        let reg = io::repo_registry();
+        for rname in reg.all() {
+            let Some(rp) = reg.root(&rname) else { continue };
+            if reg.land(&rname) != "queue" {
                 continue;
             }
-            let Some(rbase) = io::lib_call(&home, "spira_landref", &[rname]) else { continue };
+            let Some(rbase) = io::lib_call(&home, "spira_landref", &[&rname]) else { continue };
             let rbase_sha = io::git(std::path::Path::new(&rp), &["rev-parse", &rbase]).map(|s| s.trim().to_string());
             let Some(rbase_sha) = rbase_sha else { continue };
             let Some(cert) = io::lib_call(&home, "queue_certified_list", &[&rp]) else { continue };
@@ -234,9 +235,10 @@ pub fn queue_keys() -> Kv {
 
     // --- Quarantine count ---
     let mut quarantine_n = 0;
-    if let Some(repos) = io::lib_call(&home, "spira_repos", &[]) {
-        for rname in repos.split_whitespace() {
-            let Some(rp) = io::lib_call(&home, "repo_root", &[rname]) else { continue };
+    {
+        let reg = io::repo_registry();
+        for rname in reg.all() {
+            let Some(rp) = reg.root(&rname) else { continue };
             let suite_state_file = std::env::var("SPIRA_SUITE_STATE_FILE").unwrap_or_else(|_| "spira/suite-state".to_string());
             let sf = std::path::Path::new(&rp).join(&suite_state_file);
             if let Ok(content) = std::fs::read_to_string(&sf) {

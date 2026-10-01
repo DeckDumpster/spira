@@ -98,12 +98,24 @@ pub struct Conf {
     pub v: BTreeMap<String, String>,
     pub home: PathBuf,
     pub run: PathBuf,
+    /// The repo registry (`spira_config::repos`, sp-37rmg "wave 4.11"), built once from this
+    /// same snapshot instead of shelling to `repo_root`/`repo_land`/`spira_home_repo` per
+    /// call — the biggest wall-clock win the whole family offers, per wave4-decomposition.md's
+    /// own cost note. `SPIRA_REPO_MAP`'s file is read here, in-process, rather than by `awk`
+    /// inside a fresh `bash` seam call.
+    pub repos: spira_config::repos::Registry,
 }
 
 impl Conf {
     pub fn new(snap: &Snapshot, home: &Path) -> Conf {
         let run = PathBuf::from(snap.vars.get("SPIRA_RUN").cloned().unwrap_or_default());
-        Conf { v: snap.vars.clone(), home: home.to_path_buf(), run }
+        let map_text = snap
+            .vars
+            .get("SPIRA_REPO_MAP")
+            .filter(|p| !p.is_empty())
+            .and_then(|p| std::fs::read_to_string(p).ok());
+        let repos = spira_config::repos::Registry::new(map_text.as_deref(), &snap.vars, home);
+        Conf { v: snap.vars.clone(), home: home.to_path_buf(), run, repos }
     }
     pub fn s(&self, k: &str) -> String {
         self.v.get(k).cloned().unwrap_or_default()

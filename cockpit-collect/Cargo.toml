@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 aeon = { path = "../aeon" }
 serde_json = "1"
+spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

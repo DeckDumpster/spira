@@ -461,10 +461,13 @@ impl<'a> Run<'a> {
         }
 
         // ---- the repository comes from the bead; an unknown name is refused ----
-        self.s.repo_name = if c.repo.is_empty() { self.sv("spira_home_repo", &[]).text() } else { c.repo.clone() };
-        let root = self.sv("repo_root", &s(&[&self.s.repo_name]));
-        let repo = PathBuf::from(root.text());
-        if !root.success() || !repo.join(".git").exists() {
+        // spira_config::repos (sp-37rmg, "wave 4.11") in-process, instead of a bash seam
+        // call per lookup — repo_root/repo_land/spira_home_repo were the most-called family
+        // in the whole decomposition.
+        self.s.repo_name = if c.repo.is_empty() { self.conf.repos.home_repo().to_string() } else { c.repo.clone() };
+        let root = self.conf.repos.root(&self.s.repo_name);
+        let repo = root.clone().map(PathBuf::from).unwrap_or_default();
+        if root.is_none() || !repo.join(".git").exists() {
             self.log(&format!("{}: {} names repo:{}, which repo-map does not resolve to a checkout", self.f(), c.id, self.s.repo_name));
             self.sdo("park_unmapped", &s(&[&c.id, &self.s.repo_name]));
             self.ledger_done(1, "unmapped-repo");
@@ -473,7 +476,7 @@ impl<'a> Run<'a> {
             return Err(1);
         }
         self.s.repo = repo;
-        self.s.repo_land = self.sv("repo_land", &s(&[&self.s.repo_name])).text();
+        self.s.repo_land = self.conf.repos.land(&self.s.repo_name);
         self.d.env.set("SPIRA_INCIDENT_REPO", &self.s.repo_name);
         self.log(&format!("{}: {} works repo:{} at {} (land={})", self.f(), c.id, self.s.repo_name, self.s.repo.display(), self.s.repo_land));
 
@@ -855,7 +858,7 @@ impl<'a> Run<'a> {
 
         let scope = self.conf.s("SPIRA_SCOPE_LABEL");
         let home = self.home().display().to_string();
-        let home_repo = self.sv("spira_home_repo", &[]).text();
+        let home_repo = self.conf.repos.home_repo().to_string();
         let tokens = Tokens {
             single: vec![
                 ("BEAD_ID", bead.clone()),

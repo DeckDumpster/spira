@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use spira_config::locate::locate;
+use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
 use spira_config::{
     convert, discover, export_sh, get_path, json_schema, load,
@@ -273,6 +274,214 @@ fn cmd_resolve_sh(file: Option<&str>) -> ExitCode {
         }
         Err(ResolveError::Registry(e)) => {
             eprintln!("spira-config resolve: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The repo registry in force for THIS process (sp-37rmg, "wave 4.11"): `SPIRA_REPO_MAP`,
+/// `SPIRA_HOME`, `SPIRA_HOME_REPO`, `SPIRA_REPO` and `SPIRA_REPO_DERIVED` are read straight
+/// out of the environment, exactly as lib.sh's own repo-registry functions read their bash
+/// globals — never self-located beyond that (the caller, a shim or a bash sourcer, already
+/// has them, same as `cmd_resolve_sh`'s own `SPIRA_HOME`/`SPIRA_REPO`). A `SPIRA_REPO_MAP`
+/// that is unset, empty, or unreadable is "no map" (`Registry::map_present() == false`),
+/// matching `[ -f "$SPIRA_REPO_MAP" ]`'s own existence-only test.
+fn repo_registry() -> Registry {
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    let home = PathBuf::from(env_map.get("SPIRA_HOME").cloned().unwrap_or_default());
+    let map_text = env_map
+        .get("SPIRA_REPO_MAP")
+        .filter(|p| !p.is_empty())
+        .and_then(|p| fs::read_to_string(p).ok());
+    Registry::new(map_text.as_deref(), &env_map, &home)
+}
+
+fn parse_column(s: &str) -> Option<Column> {
+    match s {
+        "path" => Some(Column::Path),
+        "land" => Some(Column::Land),
+        "base" => Some(Column::Base),
+        "format" => Some(Column::Format),
+        "gate" => Some(Column::Gate),
+        "lanes" => Some(Column::Lanes),
+        _ => None,
+    }
+}
+
+/// `spira_containment_check`/`_spira_remote_is_real` (sp-eekjm ported the logic into
+/// [`spira_config::containment`]; this is the CLI door onto it lib.sh's own shim calls,
+/// sp-37rmg) — `SPIRA_INSTANCE`, `SPIRA_WORKSPACES` and `SPIRA_REPO_MAP` read from the
+/// environment exactly as the bash original reads its own globals. Prints every violation,
+/// then the same halting line lib.sh printed, and exits 1 — a non-prod instance naming a
+/// checkout outside its workspaces root, or with a real remote, must halt the whole process
+/// that sourced it, not just this one check.
+fn cmd_repo_containment_check() -> ExitCode {
+    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
+    let workspaces = env::var("SPIRA_WORKSPACES").unwrap_or_default();
+    let map_text = env::var("SPIRA_REPO_MAP")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)));
+    match spira_config::containment::check(&instance, &workspaces, map_text.as_deref()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(violations) => {
+            for v in &violations {
+                eprintln!("{v}");
+            }
+            eprintln!("spira: containment check failed for instance {instance} — halting");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|name-at|same|
+/// containment-check> ...` — the CLI door onto [`spira_config::repos`] for the ~20 bash
+/// scripts that still call lib.sh's `repo_field`/`repo_root`/... by name (now one-line shims
+/// onto this), and for any Rust crate that has not yet been switched to call the library
+/// in-process (wave4-decomposition.md row 13). `field`/`gate`/`format`/`base` refuse (exit 1,
+/// no output) when `SPIRA_REPO_MAP` itself is absent — matching `repo_field`'s own
+/// `[ -f "$SPIRA_REPO_MAP" ] || return 1` — while `land`/`land-queued`/`names`/`all`/
+/// `home-repo` never refuse, matching their bash originals exactly (see `repos.rs`'s own doc
+/// on each).
+fn cmd_repo(args: &[String]) -> ExitCode {
+    let reg = repo_registry();
+    match args.first().map(String::as_str) {
+        Some("field") => match (args.get(1), args.get(2).map(String::as_str).and_then(parse_column)) {
+            (Some(name), Some(col)) => match reg.field(name, col) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            _ => {
+                eprintln!("usage: spira-config repo field <name> <path|land|base|format|gate|lanes>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("names") => {
+            for n in reg.names() {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("all") => {
+            for n in reg.all() {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("home-repo") => {
+            println!("{}", reg.home_repo());
+            ExitCode::SUCCESS
+        }
+        Some("root") => match args.get(1) {
+            Some(name) => match reg.root(name) {
+                Some(p) => {
+                    println!("{p}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo root <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("land") => match args.get(1) {
+            Some(name) => {
+                println!("{}", reg.land(name));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config repo land <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("land-queued") => match args.get(1) {
+            Some(name) => {
+                if reg.land_queued(name) {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            None => {
+                eprintln!("usage: spira-config repo land-queued <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("gate") => match args.get(1) {
+            Some(name) => match reg.gate(name) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo gate <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("format") => match args.get(1) {
+            Some(name) => match reg.format(name) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo format <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("base") => match args.get(1) {
+            Some(name) => match reg.base(name) {
+                Some(v) => {
+                    println!("{v}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo base <name>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("name-at") => match args.get(1) {
+            Some(path) => match reg.name_at(path) {
+                Some(n) => {
+                    println!("{n}");
+                    ExitCode::SUCCESS
+                }
+                None => ExitCode::FAILURE,
+            },
+            None => {
+                eprintln!("usage: spira-config repo name-at <path>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("same") => match (args.get(1), args.get(2)) {
+            (Some(a), Some(b)) => {
+                if spira_config::repos::same_repo(a, b) {
+                    ExitCode::SUCCESS
+                } else {
+                    ExitCode::FAILURE
+                }
+            }
+            _ => {
+                eprintln!("usage: spira-config repo same <a> <b>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("containment-check") => cmd_repo_containment_check(),
+        _ => {
+            eprintln!(
+                "usage: spira-config repo <field|names|all|home-repo|root|land|land-queued|\n\
+                 \x20            gate|format|base|name-at|same|containment-check> ..."
+            );
             ExitCode::FAILURE
         }
     }
@@ -539,6 +748,7 @@ fn main() -> ExitCode {
             }
         }
         Some("convert") => cmd_convert(&args[1..]),
+        Some("repo") => cmd_repo(&args[1..]),
         Some("set") => match (args.get(1), args.get(2), args.get(3)) {
             (Some(path), Some(value), Some(file)) => cmd_set(path, value, file),
             _ => {
@@ -564,7 +774,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|migrate> ...\n\
+                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -577,7 +787,9 @@ fn main() -> ExitCode {
                  \x20 unset <dotted.path> <file>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
-                 \x20 migrate <file>"
+                 \x20 migrate <file>\n\
+                 \x20 repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|\n\
+                 \x20      name-at|same|containment-check> ..."
             );
             ExitCode::FAILURE
         }

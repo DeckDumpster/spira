@@ -192,6 +192,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
