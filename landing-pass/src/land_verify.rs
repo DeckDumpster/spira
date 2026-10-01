@@ -162,9 +162,14 @@ pub fn bead_cited_commit_on_base(git: &dyn Git, repo: &Path, base: &str, id: &st
 /// lib.sh `pr_merged <repo> <branch>`: a pull request whose head is `branch` is MERGED.
 /// Evidence for not reopening, never for deleting (`content_landed` is the exact, local
 /// check a destroying caller must use instead).
+///
+/// `ghq` IS NOT A PROGRAM. lib.sh's `ghq() { command bdq __ghq "$@"; }` is itself a shim
+/// onto `bdq`'s internal `__ghq` subcommand (`timeout $GH_TIMEOUT $SPIRA_GH "$@"`, bdq.rs
+/// `cmd_ghq`) — there is no `ghq` binary on PATH to exec. This calls that same subcommand
+/// directly, exactly what the bash shim would have called.
 pub fn pr_merged(repo: &Path, branch: &str) -> bool {
-    let mut c = Command::new("ghq");
-    c.current_dir(repo).args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
+    let mut c = Command::new("bdq");
+    c.current_dir(repo).arg("__ghq").args(["pr", "view", branch, "--json", "state", "-q", ".state"]);
     c.stdin(Stdio::null()).stderr(Stdio::null());
     match c.output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim() == "MERGED",
