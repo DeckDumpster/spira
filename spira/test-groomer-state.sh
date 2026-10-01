@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # timeout: 150
 #
-# test-groomer-state.sh — groomer.sh sweep reads bead STATE across the whole graph, not
+# test-groomer-state.sh — groomer sweep reads bead STATE across the whole graph, not
 #   just its own trigger partition (sp-0qp7s).
 #
 # THE ROOT CAUSE. Before this, chamber/groomer.md told the groomer to "read all open beads
@@ -28,7 +28,7 @@
 #
 # tier: T2
 # defect: sp-0qp7s
-# covers: spira/groomer.sh spira/lib.sh spira/conf.sh
+# covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -67,7 +67,7 @@ run_sweep() {
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL=spira \
-        groomer.sh sweep "$@" 2>&1
+        groomer sweep "$@" 2>&1
 }
 
 status_of() { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | python3 -c '
@@ -128,7 +128,7 @@ JSONL
 
 # ==========================================================================================
 echo
-echo "REAL RUN — groomer.sh sweep applies the whole-graph STATE remedies"
+echo "REAL RUN — groomer sweep applies the whole-graph STATE remedies"
 # ==========================================================================================
 : > "$RUN/groom.log"
 out="$(run_sweep)"

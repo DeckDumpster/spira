@@ -122,7 +122,7 @@ echo "=== concierge.sh: the statute book rendering empty vs. the store being unr
 
 FX="$TMP/fx"; mkdir -p "$FX/chamber"
 cp "$HERE/chamber/concierge.md" "$FX/chamber/fx.md"
-ln -sf "$HERE/mail.sh" "$FX/mail.sh"
+ln -sf "$(command -v mail)" "$FX/mail"   # the real compiled binary, found on the suite's own PATH (mail is gone, sp-ooh1k)
 ln -sf "$HERE/bead.sh" "$FX/bead.sh"
 cat > "$FX/chamber/fx.fayth" <<'EOF'
 FAYTH_NAME=fx

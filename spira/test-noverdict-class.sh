@@ -29,7 +29,7 @@ mkdir -p "$SH" "$TMP/run"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 
 MAIL_LOG="$TMP/mail-log"; : > "$MAIL_LOG"
-cat > "$SH/mail.sh" <<MAILEOF
+cat > "$SH/mail" <<MAILEOF
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
 shift
@@ -39,12 +39,12 @@ while [ "\$#" -gt 0 ]; do
 done
 printf '%s\n' "\$subj" >> "$MAIL_LOG"
 MAILEOF
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 
 BD_FIXTURE="$TMP/bd.json"
 printf '[]\n' > "$BD_FIXTURE"
 
-# The fixture home first on PATH: lib.sh calls mail.sh by name (sp-gypjk).
+# The fixture home first on PATH: lib.sh calls mail by name (sp-gypjk).
 export PATH="$SH:$PATH"
 export SPIRA_HOME="$SH" SPIRA_RUN="$TMP/run" SPIRA_DB="$TMP/db.json" \
        SPIRA_BDJSON_FIXTURE="$BD_FIXTURE" BEADS_NO_AUTO_IMPORT=1

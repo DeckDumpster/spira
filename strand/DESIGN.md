@@ -94,12 +94,12 @@ Mechanical fixes, unchanged in effect:
 | `ghost` | `spira-lc show <id>` → `spira-lc event bead <id> --expect <state> --version <v> --actor strand --kind '"HolderDead"'`; one `reclaimed`/`ghost` row into `events` (`bd sql`); `bd note <id> --stdin` (fixed text); `branch.reclaimed` line in `$SPIRA_RUN/events.log` with the per-key cooldown in `$SPIRA_RUN/events/`; at exactly `SPIRA_RECLAIM_AT` (5) reclaims, a `reclaim-ceiling` escalation | `RECLAIMED <id> — <detail>` |
 | `stale-blocked` | `bd recompute-blocked` | `RECOMPUTED is_blocked — <id> stuck with every blocker closed` |
 
-Escalation: `$SPIRA_HOME/mail.sh send operator --from 'Strand check <strand@spira>'
+Escalation: `$SPIRA_HOME/mail send operator --from 'Strand check <strand@spira>'
 --subject <title> --kind question --default <action>`, body on **stdin**; titles exactly as
 before (`Spira: <id> is stranded (<kind>)`, `Spira: the [<part>] queue is stranded
 (<kind>)`, `Spira: <id> keeps losing its aeon — the host, not the bead`). The body is the
 bead context (`bd show <id> --json`, rendered as before) + `WHY THIS IS ESCALATED` + the
-last 12 sentinel log lines. No `mail.sh` ⇒ no mail, state still marked (as before).
+last 12 sentinel log lines. No `mail` ⇒ no mail, state still marked (as before).
 
 ### 2.5 The roster probe — the one bash seam
 

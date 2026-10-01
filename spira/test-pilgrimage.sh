@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-pilgrimage.sh — a completed pilgrimage announces itself via mail.sh.
+# test-pilgrimage.sh — a completed pilgrimage announces itself via mail.
 #
 # TWO TIERS:
 #

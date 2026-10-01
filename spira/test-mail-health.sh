@@ -8,7 +8,7 @@
 #   - silent below threshold: fresh message never triggers
 #
 # tier: T2
-# covers: spira/mail-health.sh spira/mail.sh spira/conf.sh UC-operator-channel-09
+# covers: spira/mail-health.sh mail/src/* spira/conf.sh UC-operator-channel-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -26,7 +26,7 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_MAIL_UNREAD_AGE=60
 
 HEALTH=mail-health.sh   # invoked by name on the suite's PATH (sp-gypjk)
-MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
+MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 
 # Deliver a message to a mailbox and backdate its mtime to simulate an old backlog.
 send_old() {

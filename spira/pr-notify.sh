@@ -65,7 +65,7 @@ _emit() { printf '%s\n' "$1"; }
 _report() {
     local line="$1"
     _emit "$line"
-    mail.sh send concierge \
+    mail send concierge \
         --from "PR Notify <pr-notify@spira>" \
         --subject "pr-notify: $line" \
         --kind event <<MAILEOF >/dev/null || printf 'pr-notify: mail send failed for: %s\n' "$line" >&2
@@ -297,7 +297,7 @@ cmd_watch() {
 
 # SOURCEABLE, AND SILENT WHEN IT IS. A T1 test wanting only _PR_STATUS_PY, _open_prs or
 # _pr_transitions (pure functions once `gh` is stubbed) would otherwise trigger a live
-# repo-map scan on source — the same seam watchd.sh and incident.sh already open.
+# repo-map scan on source — the same seam watchd and incident.sh already open.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     case "${1:-}" in
         --show|-s|"") _pr_notify_tick ;;

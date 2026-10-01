@@ -55,7 +55,7 @@ BODY
 When an ask or proposed statute cites a specific bead, pass `--bead <id>` to the `{{NOTIFY}}`
 call. This creates a non-blocking reference (a relates_to link): the cited bead stays
 ready and claimable, whether it is a work bead or another ask. An ask is never a gate on
-the work — or the other ask — it references; the guard in `mail.sh` enforces this
+the work — or the other ask — it references; the guard in `mail` enforces this
 regardless of the cited bead's own type and will refuse any attempt to wire a blocking
 edge.
 
@@ -71,7 +71,7 @@ subsumed asks with a pointer to it.
 above — never a mail of its own. Every time you file one, register it with
 `{{ARCHIVIST}} record "<where it lives>: <what it is>"`, and say nothing to the operator
 yourself: at most one `--kind note` per day is sent, for you, listing every line recorded
-since the last one, so deleting that one mail loses nothing. `mail.sh` refuses any other
+since the last one, so deleting that one mail loses nothing. `mail` refuses any other
 `--kind note` sent as the archivist (`law-fail-closed-at-the-source`) — do not try to route
 around it by changing the From address or the kind.
 

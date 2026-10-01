@@ -11,7 +11,7 @@
 # assertion below is the one that was seen red before spira/lib.sh grew
 # queue_notify_concierge and queue.sh eject started calling it.
 #
-# covers: queue/src/* spira/lib.sh spira/mail.sh spira/conf.sh
+# covers: queue/src/* spira/lib.sh mail/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -40,7 +40,11 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
-cp -r "$HERE/mail" "$SH/mail"
+# mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
+# the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
+# compiled binary in by name instead, so queue_notify_concierge's bare `mail send` finds an
+# executable here rather than a directory.
+ln -sf "$(command -v mail)" "$SH/mail"
 
 cat > "$SH/repo-map" <<RMAP
 $REPONAME | $REPO | queue | origin/main | | |
@@ -70,7 +74,10 @@ queue() {
 }
 
 concierge_unread() {
-    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" bash "$SH/mail.sh" count concierge 2>/dev/null
+    # mail is a compiled binary now (sp-ooh1k) — never `bash <path>`, which only ever
+    # worked while this was a shell script. $SH is on PATH (below), so bare name resolves
+    # to the symlinked real binary staged there.
+    SPIRA_HOME="$SH" SPIRA_MAIL="$MAIL" PATH="$SH:$PATH" mail count concierge 2>/dev/null
 }
 
 echo "test-queue-owner-mail.sh"

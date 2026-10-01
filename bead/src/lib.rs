@@ -1,5 +1,5 @@
 //! Pure logic behind the `bead` binary. Contract: DESIGN.md. Kept separate from `main.rs`
-//! (which does the `bdq`/`.fayth`/`schema.sh`/`mail.sh` subprocess work) so the CLI's own
+//! (which does the `bdq`/`.fayth`/`schema.sh`/`mail` subprocess work) so the CLI's own
 //! rules — the lane-admission guard, label composition, the lint judge — are unit-testable
 //! with no database, no chamber and no subprocess.
 

@@ -379,7 +379,7 @@ spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <ga
     local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`gate.sh $br $repo\` by hand and read the whole output"
     local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
     local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -410,7 +410,7 @@ spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count
     local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
     local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
     local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -573,7 +573,7 @@ print(d[0].get("title", "") if d else "")' 2>/dev/null)"
     if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
         _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
     fi
-    mail.sh send concierge \
+    mail send concierge \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind note <<MAILEOF >/dev/null 2>&1
@@ -608,7 +608,7 @@ spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first
         elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
     local _subj="$br red recurring: $reason_class twice on $id in $name"
     local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -630,7 +630,7 @@ spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
     ask_already_open "$br rebase refused" && return 0
     local _subj="$br rebase refused in $name: $reason"
     local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -652,7 +652,7 @@ spira_ask_budget_deferred() {  # <branch> <repo> <count>
     local br="$1" name="$2" n="$3"
     ask_already_open "$br budget-deferred" && return 0
     local _subj="$br budget-deferred: $n consecutive passes in $name"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind alert <<MAILEOF >/dev/null 2>&1
@@ -684,7 +684,7 @@ spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
     local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
     local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
          "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -721,7 +721,7 @@ land_escalate() {        # land_escalate <subject-tail> <evidence>
     echo "$now" > "$cd"
     local _subj="Spira is landing nothing — $why"
     local _dflt="run \`landing-pass land\` by hand to see the failure, then file the fix as a bead"
-    mail.sh send operator \
+    mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -3230,7 +3230,7 @@ session_outcome() {      # session_outcome <trace-file> -> unlanded|refused|kill
 # Pulled out of aeon.sh cleanup() (sp-eq8a4.2.1 precedent) so it is testable with crafted
 # JSON, no bd, no live session.
 #
-# A RELATES-TO EDGE IS NOT A BLOCKER (sp-dvsqc): mail.sh wires a non-decision cited bead's
+# A RELATES-TO EDGE IS NOT A BLOCKER (sp-dvsqc): mail wires a non-decision cited bead's
 # ask via `dep relate`, which is dependency_type "relates-to", not "blocks" — treating every
 # open ask-labelled dep as a blocker released a work bead that should have been worked.
 #
@@ -6018,7 +6018,7 @@ queue_owner_refused() {
 queue_notify_concierge() {
     local name="$1" subject="$2" body="$3"
     printf '## Alert\n%s\n' "$body" \
-    | mail.sh send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
+    | mail send "${SPIRA_MAIL_SESSION_MAILBOX:-concierge}" \
         --from "Spira Queue <queue@spira>" \
         --subject "Merge queue: $name $subject" \
         --kind alert \
@@ -7487,7 +7487,7 @@ gh_issue_ask_unlanded() {  # gh_issue_ask_unlanded <bead-id> <external-ref> [dra
 
     _dflt="${draft:-post a comment explaining the resolution and close the issue}"
 
-    _err="$(mail.sh send operator \
+    _err="$(mail send operator \
         --from "Landing gate <gate@spira>" \
         --subject "$_subj" \
         --kind question \
@@ -7509,7 +7509,7 @@ MAILEOF
     elif [ -n "${_err:-}" ]; then
         log "gh-closeout $id: ask refused (${_err})"
     else
-        log "gh-closeout $id: ask refused — probe fault: mail.sh produced no reason"
+        log "gh-closeout $id: ask refused — probe fault: mail produced no reason"
     fi
 }
 

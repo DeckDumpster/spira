@@ -71,8 +71,8 @@ fn main() -> ExitCode {
             if verify_fail == 0 {
                 println!("cockpit rebuilt. Attach with:  tmux attach -t cockpit");
                 println!("A watcher's Monitor cannot be started by a script — re-attach them in the session:");
-                println!("    Monitor: watchd.sh tail answers");
-                println!("    Monitor: watchd.sh tail view");
+                println!("    Monitor: watchd tail answers");
+                println!("    Monitor: watchd tail view");
                 ExitCode::SUCCESS
             } else {
                 eprintln!("rebuild: {verify_fail} check(s) failed — the cockpit is NOT fully rebuilt");

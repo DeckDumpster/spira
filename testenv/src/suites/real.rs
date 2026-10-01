@@ -13,7 +13,7 @@ pub const HOST_CHECK_WALL: Duration = Duration::from_secs(30);
 
 pub struct Real {
     suite_dir: PathBuf,
-    /// incident.sh / mail.sh: the SPIRA_INCIDENT / SPIRA_MAIL_CMD test seams, else found on
+    /// incident.sh / mail: the SPIRA_INCIDENT / SPIRA_MAIL_CMD test seams, else found on
     /// PATH (sp-gypjk). None = not on PATH.
     incident: Option<PathBuf>,
     mail: Option<PathBuf>,
@@ -27,7 +27,7 @@ impl Real {
         let path = env("PATH").unwrap_or_default();
         Real {
             incident: get("SPIRA_INCIDENT").or_else(|| crate::util::which_in(&path, "incident.sh")),
-            mail: get("SPIRA_MAIL_CMD").or_else(|| crate::util::which_in(&path, "mail.sh")),
+            mail: get("SPIRA_MAIL_CMD").or_else(|| crate::util::which_in(&path, "mail")),
             suite_dir: s.suite_dir.clone(),
             path,
         }

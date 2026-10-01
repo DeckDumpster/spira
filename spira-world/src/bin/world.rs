@@ -17,11 +17,14 @@
 //! clear first — the same shape `drain` already gives live aeons. See `spira_world::round`
 //! for exactly what this can and cannot see.
 //!
-//! AEONS ARE STOPPED THROUGH slay.sh, never killed directly — a bare kill leaves the bead
+//! AEONS ARE STOPPED THROUGH slay, never killed directly — a bare kill leaves the bead
 //! held until its lease expires and charges the attempt anyway, which is how a halt for an
-//! unrelated reason walks a bead toward poison. `slay.sh` is invoked as an external
-//! process, exactly as bash `world.sh` always called it — the two tools share no Rust code
-//! at that boundary, only the binary's name on PATH.
+//! unrelated reason walks a bead toward poison. Spawned by its real binary name, `slay`,
+//! not the `slay.sh` compat alias — this is harness-to-harness, not an operator typing a
+//! remembered name, and it must not depend on a release having built the compat symlink
+//! table correctly (sp-6onps-compat: production's bin/ had neither for a cycle). `slay.sh`
+//! is invoked as an external process, exactly as bash `world.sh` always called it — the
+//! two tools share no Rust code at that boundary, only the binary's name on PATH.
 
 use std::collections::BTreeSet;
 use std::env;
@@ -228,7 +231,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
         println!("  slaying {bead} (pid {pid})");
         let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
-        let ok = Command::new("slay.sh")
+        let ok = Command::new("slay")
             .args(["--bead", &bead, "--keep-work", "--why", &why_text])
             .output()
             .map(|o| o.status.success())
@@ -464,7 +467,7 @@ fn cmd_drain(args: &[String]) -> i32 {
                         continue;
                     }
                     println!("  slaying {bead} (pid {pid})");
-                    let ok = Command::new("slay.sh")
+                    let ok = Command::new("slay")
                         .args(["--bead", &bead, "--keep-work", "--reopen", "--why", "drain deadline reached"])
                         .output()
                         .map(|o| o.status.success())

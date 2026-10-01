@@ -77,7 +77,9 @@ Rust cutover was "leave lib.sh alone"):**
   format is shell, not a value to be reparsed," so this follows that precedent rather than
   writing a second, partial shell-fragment parser.
 - `schema.sh type-of <kind>` / `schema.sh kinds` (kind→bd-type mapping; schema.sh is group 4).
-- `mail.sh send` (`amend`'s live-aeon notify).
+- `mail send` (`amend`'s live-aeon notify; `mail.sh` itself was rewritten and retired by
+  sp-ooh1k — a compat symlink remains for callers outside this tree, but this crate calls
+  the real `mail` binary by bare name).
 
 ## Parity
 
@@ -142,4 +144,4 @@ itself for the full explanation. Any later bead in this area (or the eventual `l
   `bead.sh`, and `lib.sh` is explicitly deferred (group 4).
 - **`--parent` always adds `--no-inherit-labels`** (unchanged from the bash): the label set
   computed above is already complete, and inheriting the parent's `branch:` label is exactly
-  the defect `groomer.sh split-piece` exists to undo after the fact (sp-zs04v).
+  the defect `groomer split-piece` exists to undo after the fact (sp-zs04v).

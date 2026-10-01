@@ -95,6 +95,11 @@ for f in "$HERE"/chamber/*.md; do
         filler="$AEON_FILLER"
     elif [ -f "$HERE/$n.sh" ]; then
         filler="$HERE/$n.sh"
+    elif [ -f "$HERE/../$n/src/run.rs" ]; then
+        # A brief with no .fayth (not dispatched via aeon.sh) and no same-named script:
+        # its own Rust crate rendered the template directly (archivist.md, run.rs's
+        # `prompt::substitute` call), same as a rewritten script would have.
+        filler="$HERE/../$n/src/run.rs"
     else
         filler="$HERE/../$n.sh"
     fi
@@ -102,7 +107,7 @@ for f in "$HERE"/chamber/*.md; do
         bad "every placeholder in $n.md is substituted" "no filler: $(basename "$filler") does not exist"
         continue
     fi
-    is "every placeholder in $n.md is substituted by $(basename "$filler")" "" "$(unfilled "$f" "$filler")"
+    is "every placeholder in $n.md is substituted by $(basename "$(dirname "$filler")")/$(basename "$filler")" "" "$(unfilled "$f" "$filler")"
 done
 
 # EVERY COMMAND A BRIEF NAMES MUST EXIST. The placeholder check above proves the TEMPLATE
@@ -130,7 +135,7 @@ for f in "$HERE"/chamber/*.md; do
         [ -x "$cand" ] || missing="$missing $cand"
     done < <(
         sed -e "s|{{SOP}}|sop|g" -e "s|{{INCIDENT}}|$HERE/incident.sh|g" \
-            -e "s|{{ASK}}|$HERE/mail.sh|g" \
+            -e "s|{{ASK}}|mail|g" \
             -e "s|{{SUITES}}|testenv suites|g" "$f" |
         grep -oE '(^|[`( ])/[A-Za-z0-9_./-]+\.sh' | tr -d '`( ' | sort -u
     )

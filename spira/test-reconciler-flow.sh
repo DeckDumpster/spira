@@ -72,20 +72,20 @@ export SPIRA_DESIRED_DIR="$T/desired"
 export SPIRA_SCOPE_LABEL=""
 mkdir -p "$SPIRA_RUN"
 
-# Stub mail.sh: records every "send concierge" call so the alert path is observable without
+# Stub mail: records every "send concierge" call so the alert path is observable without
 # a real mailbox. Any other subcommand is refused loudly — a call this suite did not expect.
 MAIL_LOG="$T/mail-calls.log"
-cat > "$T/mail.sh" <<STUB
+cat > "$T/mail" <<STUB
 #!/usr/bin/env bash
 if [ "\$1" = "send" ] && [ "\$2" = "concierge" ]; then
     { printf 'CALL %s\n' "\$*"; cat; printf '\n---\n'; } >> "$MAIL_LOG"
     exit 0
 fi
-printf 'stub mail.sh: unexpected invocation: %s\n' "\$*" >&2
+printf 'stub mail: unexpected invocation: %s\n' "\$*" >&2
 exit 1
 STUB
-chmod +x "$T/mail.sh"
-export SPIRA_MAIL_SH="$T/mail.sh"
+chmod +x "$T/mail"
+export SPIRA_MAIL_SH="$T/mail"
 
 run_pass() { reconciler-flow --pass >"$T/pass-out.log" 2>&1; }
 status_of() {

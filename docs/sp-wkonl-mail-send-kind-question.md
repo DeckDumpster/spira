@@ -1,14 +1,14 @@
-# sp-wkonl: mail.sh send --kind question — correct invocation
+# sp-wkonl: mail send --kind question — correct invocation
 
-`mail.sh send <mailbox> --kind question` has no body flag. `--body`,
+`mail send <mailbox> --kind question` has no body flag. `--body`,
 `--message`, `--question`, a bare positional, and a `-`-prefixed heredoc are
-all rejected with `mail.sh send: unknown option: <flag>`.
+all rejected with `mail send: unknown option: <flag>`.
 
 The body must be piped on stdin as markdown headers, not `Label:` lines:
 
 ```
 printf '## Question\n<question text>\n\n## Default\n<default text>\n' \
-  | mail.sh send <mailbox> --from "Ops <ops@spira>" \
+  | mail send <mailbox> --from "Ops <ops@spira>" \
       --subject "<human topic — do NOT lead with a bead id>" \
       --kind question --default "<default text>" --bead <id>
 ```

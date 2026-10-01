@@ -226,7 +226,7 @@ want "builder plan: bd create called" "create" "$(cat "$BD_LOG")"
 # =====================================================================================
 # --parent: the aeon semantic layer's file-followup/split, filed through this same
 # contract (sp-3m1p9). --no-inherit-labels always rides along — a bare --parent would
-# inherit the parent's branch: label too (groomer.sh split-piece's own comment on why).
+# inherit the parent's branch: label too (groomer split-piece's own comment on why).
 # =====================================================================================
 out="$(run_bead "a split piece" --for builder --repo testrepo --parent sp-orig)"; rc=$?
 is   "parent: exits 0"                    "0"                   "$rc"

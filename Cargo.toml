@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "mail",
     "spira-ctrl",
     "spira-world",
     "auron",
@@ -44,11 +45,15 @@ members = [
     "gate-diag",
     "gate-check",
     "testkit",
+    "groomer",
+    "archivist",
     "intent-report",
     "beads-store",
     "suite-select",
     "release",
     "forge",
+    "watchd",
+    "inbox-triage",
     "gh-intake",
     "sop",
     "incident",

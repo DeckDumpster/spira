@@ -23,9 +23,9 @@ fn spira_repo() -> String {
     env::var("SPIRA_REPO").unwrap_or_else(|_| ".".to_string())
 }
 
-/// mail.sh by name on the launcher's PATH (sp-gypjk).
+/// mail by name on the launcher's PATH (sp-gypjk).
 fn mail_sh() -> String {
-    "mail.sh".to_string()
+    "mail".to_string()
 }
 
 fn concierge_sh() -> String {

@@ -4,7 +4,7 @@
 # waits for the next session to open, and for a headless agent that is never. A poll is the
 # only thing that can ask the question when there is nobody to ask it of.
 Description=Spira watch notify — escalate events no reader has taken
-Documentation=file://@SPIRA_HOME@/watchd.sh
+Documentation=file://@SPIRA_PROD_ROOT@/watchd/DESIGN.md
 After=default.target
 
 [Service]
@@ -15,7 +15,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/watchd.sh notify
+ExecStart=@SPIRA_PROD_ROOT@/bin/watchd notify
 # A STANDING BACKLOG IS NOT A UNIT FAILURE. Exit 1 means the condition was found and the
 # decision is already in front of the operator; leaving the unit red on top of that is a
 # second alert for one condition, and a unit permanently red is one whose next genuine
