@@ -701,14 +701,22 @@ pub fn dup_refs_keys() -> Kv {
 }
 
 // ---------------------------------------------------------------------------------------
-// livelock_keys — delegates the detection itself to lib.sh (`detect_livelocked`,
-// `detect_invalid_closed`); this only classifies refusal-vs-empty and formats rows.
+// livelock_keys — delegates the detection itself to `strand::detectors` (wave 4.29,
+// sp-8ofmt: `detect_livelocked`, `detect_invalid_closed`, called in-process instead of
+// through the `lib.sh` bridge); this only classifies refusal-vs-empty and formats rows.
 // ---------------------------------------------------------------------------------------
+
+/// `strand::config::Config`, resolved fresh per call — a probe call is already a fresh
+/// process-equivalent pass (DESIGN.md: data fetching goes through `io` each time), and
+/// `groomer`/`maechen-trigger` resolve their own copy the same independent way.
+fn strand_cfg() -> strand::config::Config {
+    strand::config::Config::resolve(&strand::config::Live::load())
+}
 
 pub fn livelock_keys() -> Kv {
     let mut out = Kv::new();
-    let home = io::home_dir();
-    let ll_out = io::lib_call(&home, "detect_livelocked", &[]).unwrap_or_default();
+    let cfg = strand_cfg();
+    let ll_out = strand::detectors::detect_livelocked(&cfg);
     if ll_out.is_empty() && io::bdjson(&["list", "--limit", "1"]).is_none() {
         push(&mut out, "SP_LIVELOCKED", "?");
         push(&mut out, "SP_LIVELOCK_N", "?");
@@ -730,12 +738,12 @@ pub fn livelock_keys() -> Kv {
         push(&mut out, "SP_LIVELOCK_N", n.to_string());
     }
 
-    // `detect_invalid_closed` (lib.sh) emits three row shapes: `INVALID-CLOSED <id> — ...`,
+    // `detect_invalid_closed` emits three row shapes: `INVALID-CLOSED <id> — ...`,
     // `UNFILED-FOLLOW <id> — ...` and `ALLOWED-IC <id> — ...` (a bead on
     // $SPIRA_RUN/invalid-closed.allow, reported but not counted as either). None of the
     // three caps at 20 rows the way LIVELOCK above does — the bash's own cap check there is
     // `[ "$_n" -ge 20 ] && true`, which never breaks — so every matching row is emitted.
-    let ic_out = io::lib_call(&home, "detect_invalid_closed", &[]).unwrap_or_default();
+    let ic_out = strand::detectors::detect_invalid_closed(&cfg);
     if ic_out.is_empty() && io::bdjson(&["list", "--status", "closed", "--limit", "1"]).is_none() {
         push(&mut out, "SP_INVALID_CLOSED", "?");
         push(&mut out, "SP_INVCLSD_N", "?");

@@ -434,6 +434,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spira-config",
+ "testkit",
  "ureq",
 ]
 
@@ -444,6 +445,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spira-config",
+ "strand",
  "testkit",
 ]
 
@@ -672,6 +674,7 @@ name = "maechen-trigger"
 version = "1.0.0"
 dependencies = [
  "spira-config",
+ "strand",
  "testkit",
 ]
 

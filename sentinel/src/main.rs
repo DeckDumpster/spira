@@ -10,11 +10,21 @@
 //!                            production probe with --dry-run)
 //!   sentinel --land-escalate land_escalate alone, stdin `<why>\n<evidence>` (sp-31hjr;
 //!                            the real-sender suites' way in, no whole pass)
+//!   sentinel --mark-queue-waiters / --close-landed-queue-waiters
+//!                            CHECK 3b's two halves alone (wave 4.28, sp-fbqsv): the
+//!                            lib.sh shims' way in for suites that call them directly
+//!   sentinel --detect-unclaimable / --file-unclaimable
+//!                            CHECK 7c alone; --file-unclaimable reads detect's output
+//!                            on stdin (wave 4.28, sp-fbqsv)
+//!   sentinel --detect-collisions / --park-collisions
+//!                            CHECK 7d alone; --park-collisions reads detect's output
+//!                            on stdin (wave 4.28, sp-fbqsv)
 
 mod audit;
 mod cfg;
 mod check4;
 mod check5;
+mod detect;
 mod dispatch;
 mod fresh;
 mod host;
@@ -28,6 +38,7 @@ mod seams;
 mod store;
 mod summon;
 mod temps;
+mod waiters;
 #[cfg(test)]
 mod tests;
 
@@ -156,9 +167,8 @@ fn fatal(msg: &str) -> i32 {
 
 fn main() {
     temps::install_handlers();
-    let first = std::env::args().nth(1);
-    let second = std::env::args().nth(2);
-    let mode = Mode::from_args(first.as_deref(), second.as_deref());
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mode = Mode::from_argv(&argv);
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sentinel"));
     let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
         std::process::exit(fatal("cannot find lib.sh (set SPIRA_HOME)"));

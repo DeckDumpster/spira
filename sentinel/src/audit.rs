@@ -2,9 +2,10 @@
 //! 7d (branch collisions) — and the full pass's last word, CHECK 8 (judgement).
 
 use crate::cfg::Repo;
+use crate::detect::ParkOutcome;
 use crate::host::{Io, Spec};
 use crate::pass::Sentinel;
-use crate::seams;
+use crate::store::Snapshot;
 
 /// How many open plan beads judgement is shown. reflect.sh reads each one with its own
 /// `bd show`, and the backlog is the whole open plan (hundreds), not one epic's handful of
@@ -129,17 +130,10 @@ impl<'a> Sentinel<'a> {
     }
 
     /// CHECK 7c — ready beads no persona can claim: name them, file one incident each.
-    pub fn check7c(&self) {
-        let out = self
-            .seam(
-                "detect-unclaimable",
-                seams::DETECT_UNCLAIMABLE,
-                None,
-                Io::Capture,
-                Io::Null,
-                false,
-            )
-            .stdout;
+    /// Native now (wave 4.28, sp-fbqsv): the bash seams S7/S8 are retired.
+    pub fn check7c(&self, snap: &Snapshot) {
+        let snap_ready_raw = (!snap.ready_raw.is_empty()).then_some(snap.ready_raw.as_str());
+        let out = self.detect_unclaimable_ready(snap_ready_raw);
         let out = out.trim_end_matches('\n');
         if out.is_empty() {
             return;
@@ -148,50 +142,26 @@ impl<'a> Sentinel<'a> {
         let n = out.lines().filter(|l| l.starts_with("UNCLAIMABLE")).count();
         self.log(&format!("CHECK7c: {n} ready bead(s) no persona can claim — fix each by adding or removing the label named above"));
         self.act(&format!("surfaced {n} unclaimable ready bead(s)"));
-        self.seam(
-            "file-unclaimable",
-            seams::FILE_UNCLAIMABLE,
-            Some(out.as_bytes().to_vec()),
-            Io::Inherit,
-            Io::Inherit,
-            true,
-        );
+        self.file_unclaimable_incidents(out);
     }
 
-    /// CHECK 7d — a bead's recorded branch checked out in another bead's worktree.
+    /// CHECK 7d — a bead's recorded branch checked out in another bead's worktree. Native
+    /// now (wave 4.28, sp-fbqsv): the bash seams S9/S10 are retired.
     pub fn check7d(&self) {
-        let out = self
-            .seam(
-                "detect-collisions",
-                seams::DETECT_COLLISIONS,
-                None,
-                Io::Capture,
-                Io::Null,
-                false,
-            )
-            .stdout;
-        let out = out.trim_end_matches('\n');
-        if out.is_empty() {
+        let collisions = self.detect_branch_collisions();
+        if collisions.is_empty() {
             return;
         }
-        self.h.print(out);
-        let n_col = out.lines().filter(|l| l.starts_with("COLLISION")).count() as i64;
-        let park = self
-            .seam(
-                "park-collisions",
-                seams::PARK_COLLISIONS,
-                Some(out.as_bytes().to_vec()),
-                Io::Capture,
-                Io::Inherit,
-                false,
-            )
-            .stdout;
-        let park = park.trim_end_matches('\n');
-        if !park.is_empty() {
-            self.h.print(park);
+        let text: Vec<String> = collisions.iter().map(crate::detect::Collision::line).collect();
+        self.h.print(&text.join("\n"));
+        let n_col = collisions.len() as i64;
+        let outcomes = self.park_branch_collisions(&collisions);
+        let park_lines: Vec<String> = outcomes.iter().map(ParkOutcome::line).collect();
+        if !park_lines.is_empty() {
+            self.h.print(&park_lines.join("\n"));
         }
-        let freed = park.lines().filter(|l| l.starts_with("FREED")).count() as i64;
-        let unl = park.lines().filter(|l| l.starts_with("UNLABELED")).count() as i64;
+        let freed = outcomes.iter().filter(|o| matches!(o, ParkOutcome::Freed { .. })).count() as i64;
+        let unl = outcomes.iter().filter(|o| matches!(o, ParkOutcome::Unlabeled { .. })).count() as i64;
         let parked = n_col - freed - unl;
         if freed > 0 {
             self.log(&format!("CHECK7d: freed {freed} stale squatting worktree(s) whose owning bead is closed and clean"));

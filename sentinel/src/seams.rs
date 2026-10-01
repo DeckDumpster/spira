@@ -59,35 +59,19 @@ while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_na
 printf '@end\0'
 "#;
 
-/// S1 — summon-only's gate: the world (halt/drain). Exit 0 = go on; the seam logs its own
-/// reason for stopping. The capacity window used to be checked here too
-/// (`capacity_paused`), but that call also ran `capacity_probe_maybe` and could delete
-/// the pause file — a second probe owner alongside aeon's own (wave4-decomposition.md
-/// (c)3: "if both callers' ports each probe, the cost doubles"). Wave 4.26 moves the
-/// capacity check to `summon.rs`'s own in-process read (`aeon::capacity::pause_state`,
-/// never mutating, never probing) right after this seam call returns.
-pub const SUMMON_GATE: &str = r#"world_gate fleet summon-only || exit 1
-exit 0"#;
+/// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
+/// summon loop (`world_gate`, `ck7_summon_pass`, `summon_fayth`, `summon_argv`) now run
+/// in-process — `pass::Sentinel::world_gate`/`ck7_summon_pass` in `summon.rs`, under a
+/// real OS flock on `summon.lock` rather than a bash seam under one. lib.sh's own copies
+/// are one-line shims onto `sentinel --world-gate`/`--summon`/`--summon-argv`/
+/// `--named-unit-stop`, kept only for `aeon --escape`'s seam and `acceptance-local.sh`.
 
-/// S2 — CHECK 7: the lane-then-pool summon loop under summon.lock.
-pub const CK7: &str = "ck7_summon_pass";
-
-/// S4 — CHECK 3b: queue-mode dependents. (CHECK 3c, open children, is Rust: open_children.rs.)
-pub const CHECK3B: &str = r#"mark_queue_waiters 2>/dev/null || true
-close_landed_queue_waiters 2>/dev/null || true"#;
+// S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
+// detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.
 
 /// S5 — spira_event: four NUL-terminated fields on stdin (kind, target, title, detail).
 pub const EVENT: &str = r#"IFS= read -r -d '' _k; IFS= read -r -d '' _t; IFS= read -r -d '' _ti; IFS= read -r -d '' _de
 spira_event "$_k" "$_t" "$_ti" "$_de" || true"#;
-
-/// S7 — CHECK 7c's detector.
-pub const DETECT_UNCLAIMABLE: &str = "detect_unclaimable_ready 2>/dev/null";
-/// S8 — one incident per unclaimable bead; S7's output on stdin.
-pub const FILE_UNCLAIMABLE: &str = r#"file_unclaimable_incidents "$(cat)""#;
-/// S9 — CHECK 7d's detector.
-pub const DETECT_COLLISIONS: &str = "detect_branch_collisions 2>/dev/null";
-/// S10 — free, un-label or park each collision; S9's output on stdin.
-pub const PARK_COLLISIONS: &str = r#"park_branch_collisions "$(cat)""#;
 
 #[cfg(test)]
 mod tests {
@@ -96,16 +80,7 @@ mod tests {
     /// G9: no seam interpolates a Rust value; every one is a constant with the prelude.
     #[test]
     fn seams_are_constants_with_the_prelude() {
-        for body in [
-            SUMMON_GATE,
-            CK7,
-            CHECK3B,
-            EVENT,
-            DETECT_UNCLAIMABLE,
-            FILE_UNCLAIMABLE,
-            DETECT_COLLISIONS,
-            PARK_COLLISIONS,
-        ] {
+        for body in [EVENT] {
             let s = script(body);
             assert!(
                 s.starts_with("set -uo pipefail\n. \"$SENTINEL_LIB\" >/dev/null 2>&1 || exit 97")

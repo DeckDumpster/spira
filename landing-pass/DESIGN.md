@@ -282,7 +282,7 @@ enum BranchVerdict { Gone, NotClosed, WrongRepo, Superseded, CutoverRound, Eject
 8. **Queue step, after**: `queue late: <line>`.
 9. `skew refresh <path>` for push and queue(forge) repositories (queue.local's base is
    local; its refresh belongs to land-local, as before).
-10. `_gh_unlanded_scan` (seam). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
+10. `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31" — `_gh_unlanded_scan` moved natively into gh-intake, no seam call left). `unit-ensure` (sp-31dm0), `target-reap` (lines logged; sp-z61hj replaced `land-build-ensure.sh`).
 11. The pass-complete line; status file; remove `landing.run`/`landing.containers`.
 
 ### 4.1 Per repository: enumerate, scan, order
@@ -433,9 +433,9 @@ are values like any other.
 | S13 `push` | `spira_git_push <tree> -q <remote> <refspec>` (stderr returned) | GitHub App credentials |
 | S14 | ~~`land_subject`~~ | **retired (sp-81t4d):** native — `Lib::land_subject` reads the title through this crate's own `Beads::show`, no second bd subprocess. `landing-pass land-subject <id>` is the shim target. |
 | S15 `deliver_*` | `spira-lc deliver push-delivered / push-requeued / push-returned` (lc-delivery.sh's `lc_deliver_push_*` until sp-arpjt) | delivery CAS |
-| S16 `closeout` / ~~`close_on_land`~~ | `gh_issue_closeout` (unchanged) | issue close. `bead_close_on_land` is native now (sp-81t4d) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `sending reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target. |
+| S16 | ~~`closeout` / `close_on_land`~~ | **both retired:** `gh_issue_closeout` moved natively into gh-intake (sp-j3fim, "wave 4.31") — this crate shells to `gh-intake closeout <id> <sha> <repo>` by bare name now, stdout relayed through `Reporter::raw`. `bead_close_on_land` is native too (sp-81t4d, "wave 4.17": family R) — `Lib::close_on_land` calls `land_verify::close_on_land` (bd close + `land_mark` + a direct `sending reap-landed-branch` call, never this seam). `landing-pass close-on-land <id> [sha]` is the shim target for the latter. |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
-| S18 `gh_unlanded_scan` | `_gh_unlanded_scan` | GitHub asks |
+| S18 | ~~`gh_unlanded_scan`~~ | **retired (sp-j3fim, wave 4.31):** `_gh_unlanded_scan` moved natively into gh-intake; this crate shells to `gh-intake unlanded-scan` by bare name now. |
 | S19 | ~~`ask_refresh_loop`~~ (sp-t4y60) | **retired (sp-31hjr):** `spira_ask_refresh_loop` is native — `Lib::ask_refresh_loop` in `real.rs`, text in `ask.rs`; `needs_refresh`'s own escalation, distinct from the rebase-loop ask. |
 | S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `spira-lc deliver pr-merged` / `pr-closed` (lc-delivery.sh's `lc_deliver_pr_*` until sp-arpjt) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
 | S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |
@@ -701,9 +701,12 @@ build or locate the binary — the testenv container already builds the workspac
   grep found that was no longer true: this crate's own seam calls were the ONLY caller of
   `spira_land_noverdict`, `spira_ask_rebase_loop`, `_red_recurring`, `_rebase_refused`,
   `_budget_deferred` and `_refresh_loop` (`land_escalate` likewise, sentinel's only caller —
-  moved there, not here). `ask_already_open` stays bash: the GitHub-closeout family (AB,
-  not yet in this wave) still calls it directly, so it is the one function in the group left
-  as-is rather than shimmed. The mail-composition text moved into `src/ask.rs` (pure,
+  moved there, not here). `ask_already_open` stayed bash at the time: the GitHub-closeout
+  family (AB, not yet in this wave) still called it directly, so it was the one function in
+  the group left as-is rather than shimmed. (Closed out by sp-j3fim, "wave 4.31": AB moved
+  into gh-intake with its own third native copy of `ask_already_open`, and lib.sh's bash
+  form retired outright — no caller was left anywhere.) The mail-composition text moved
+  into `src/ask.rs` (pure,
   unit-tested against the bash output byte-for-byte except `bead_context`'s `P9999` vs
   python's `PNone` on a priority-less bead, named there); the subprocess wiring (`bd`,
   `git`, `mail`) moved into `src/real.rs`. `landing-pass noverdict …` and `landing-pass

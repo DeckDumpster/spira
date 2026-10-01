@@ -57,6 +57,24 @@ impl<'a> SeamRunner<'a> {
     }
 }
 
+/// Run a harness binary by bare name (sp-gypjk's convention), relaying its stdout through
+/// `out.raw` line by line exactly as a lib.sh seam call's own log lines were, and its
+/// stderr (if any) as one line — `gh-intake closeout`/`unlanded-scan` (sp-j3fim, "wave
+/// 4.31") are the first callers that need this outside the seam itself.
+fn run_bin(out: &Reporter, bin: &str, args: &[&str]) {
+    let mut c = command(bin);
+    c.args(args);
+    let (_rc, stdout, stderr) = run_capture(c);
+    for line in String::from_utf8_lossy(&stdout).lines() {
+        out.raw(line);
+    }
+    let stderr = String::from_utf8_lossy(&stderr);
+    let stderr = stderr.trim();
+    if !stderr.is_empty() {
+        out.raw(&format!("{bin}: {stderr}"));
+    }
+}
+
 /// Resolve settings and every repository through lib.sh (seam S1): the one resolver.
 pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRow>), String> {
     let sr = SeamRunner { home: home.to_path_buf(), out };
@@ -457,8 +475,13 @@ impl<'a> Lib for RealLib<'a> {
     fn deliver_returned(&self, id: &str, reason: &str) {
         self.seam.call(Op::DeliverReturned, &[id, reason]);
     }
+    /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
+    /// moved natively into gh-intake; this crate shells to the compiled binary by bare
+    /// name now, the same way `land_mark` shells to `landing-pass` itself rather than the
+    /// lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
+    /// through this pass's own `Reporter::raw`, exactly as the seam's own log lines were.
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
-        self.seam.call(Op::Closeout, &[id, sha, &p(repo)]);
+        run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
     /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
     /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
@@ -469,8 +492,10 @@ impl<'a> Lib for RealLib<'a> {
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
     }
+    /// `gh-intake unlanded-scan` (sp-j3fim, "wave 4.31"): `_gh_unlanded_scan` moved
+    /// natively into gh-intake; no lib.sh snippet backs this any more.
     fn gh_unlanded_scan(&self) {
-        self.seam.call(Op::GhUnlandedScan, &[]);
+        run_bin(self.seam.out, "gh-intake", &["unlanded-scan"]);
     }
     /// lib.sh `spira_ask_refresh_loop` — ported natively (sp-31hjr; was the S19 seam).
     /// Deduped on the bead id ("<id> refresh cap"), not the branch — one alert per cap.

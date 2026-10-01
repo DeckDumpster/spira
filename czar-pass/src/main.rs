@@ -45,7 +45,6 @@ fn main() -> ExitCode {
 
 struct Config {
     spira_run: PathBuf,
-    spira_home: String,
     czar_log: PathBuf,
     qc_log: PathBuf,
     marker: PathBuf,
@@ -109,7 +108,6 @@ impl Config {
         let spira_run_str =
             env::var("SPIRA_RUN").unwrap_or_else(|_| "/tmp/spira".to_string());
         let spira_run = PathBuf::from(&spira_run_str);
-        let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
         let now = unix_now();
         let iso = compute_now_iso();
         Config {
@@ -167,7 +165,6 @@ impl Config {
             now_secs: now,
             now_iso: iso,
             spira_run,
-            spira_home,
         }
     }
 
@@ -368,14 +365,15 @@ fn det_action(cfg: &Config, class: &str, desc: &str, action: impl FnOnce()) {
     }
 }
 
-fn summon_fayth_czar(cfg: &Config) {
-    if cfg.spira_run.join("world.halted").exists() {
-        return;
-    }
-    let script = format!(". \"{}/lib.sh\" && summon_fayth czar", cfg.spira_home);
-    let _ = Command::new("bash")
-        .arg("-c")
-        .arg(&script)
+/// `sentinel --summon czar` directly — no lib.sh sourcing at all (wave 4.27, family G,
+/// sp-gzmd2: `summon_fayth` moved in-process into the sentinel crate). The own
+/// `world.halted` pre-check this used to need is gone too: `sentinel --summon` runs the
+/// SAME `world_gate` sentinel's own pass does, which also catches a live DRAIN this
+/// hand-rolled check never did.
+fn summon_fayth_czar(_cfg: &Config) {
+    let _ = Command::new("sentinel")
+        .arg("--summon")
+        .arg("czar")
         .stderr(Stdio::null())
         .status();
 }
@@ -1452,7 +1450,6 @@ mod tests {
     fn test_config(dir: &Path, now: u64) -> Config {
         Config {
             spira_run: dir.to_path_buf(),
-            spira_home: dir.to_string_lossy().to_string(),
             czar_log: dir.join("czar.log"),
             qc_log: dir.join("landing.log"),
             marker: dir.join("czar-pass.swept"),

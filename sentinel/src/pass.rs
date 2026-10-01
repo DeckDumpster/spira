@@ -11,7 +11,7 @@ use crate::seams;
 use crate::store::{self, Bd, Snapshot};
 use crate::temps;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Pass,
     Report,
@@ -22,6 +22,32 @@ pub enum Mode {
     /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
     /// suites' way to drive the native escalation without a whole pass.
     LandEscalate,
+    /// `summon_fayth` alone (wave 4.27, family G): lib.sh's own shim target, and
+    /// czar-pass's direct call — no lib.sh sourcing at all any more.
+    Summon { fayth: String, pool: Option<i64>, require_label: String },
+    /// `summon_argv` alone: `aeon --escape`'s own seam reaches it through lib.sh's shim.
+    SummonArgv { fayth: String },
+    /// `world_gate` alone: ditto.
+    WorldGate { fayth: String, prefix: String },
+    /// `named_unit_stop` alone: `acceptance-local.sh`'s own shim target.
+    NamedUnitStop { glob: String },
+    /// `ck7_summon_pass` alone, under its own flock — lib.sh's shim target, and the way a
+    /// bash fixture now proves the lock serializes two real contenders without a database.
+    SummonPass,
+    /// lib.sh `mark_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
+    MarkQueueWaiters,
+    /// lib.sh `close_landed_queue_waiters`'s shim target (wave 4.28, sp-fbqsv).
+    CloseLandedQueueWaiters,
+    /// lib.sh `detect_unclaimable_ready`'s shim target (wave 4.28, sp-fbqsv).
+    DetectUnclaimable,
+    /// lib.sh `file_unclaimable_incidents`'s shim target; stdin is detect's output
+    /// (wave 4.28, sp-fbqsv).
+    FileUnclaimable,
+    /// lib.sh `detect_branch_collisions`'s shim target (wave 4.28, sp-fbqsv).
+    DetectCollisions,
+    /// lib.sh `park_branch_collisions`'s shim target; stdin is detect's output
+    /// (wave 4.28, sp-fbqsv).
+    ParkCollisions,
 }
 
 impl Mode {
@@ -33,6 +59,12 @@ impl Mode {
             Some("--audit") => Mode::Audit,
             Some("--open-children") => Mode::OpenChildren { dry: false },
             Some("--land-escalate") => Mode::LandEscalate,
+            Some("--mark-queue-waiters") => Mode::MarkQueueWaiters,
+            Some("--close-landed-queue-waiters") => Mode::CloseLandedQueueWaiters,
+            Some("--detect-unclaimable") => Mode::DetectUnclaimable,
+            Some("--file-unclaimable") => Mode::FileUnclaimable,
+            Some("--detect-collisions") => Mode::DetectCollisions,
+            Some("--park-collisions") => Mode::ParkCollisions,
             _ => Mode::Pass,
         }
     }
@@ -42,6 +74,29 @@ impl Mode {
         match (Mode::from_first(a), b) {
             (Mode::OpenChildren { .. }, Some("--dry-run")) => Mode::OpenChildren { dry: true },
             (m, _) => m,
+        }
+    }
+
+    /// The full argv (sans argv[0]) — the only modes that take more than a flag and an
+    /// optional `--dry-run` (`--summon`, `--summon-argv`, `--world-gate`,
+    /// `--named-unit-stop`) are parsed here; everything else falls back to
+    /// [`Mode::from_args`] unchanged.
+    pub fn from_argv(args: &[String]) -> Mode {
+        let a0 = args.first().map(String::as_str);
+        match a0 {
+            Some("--summon") => Mode::Summon {
+                fayth: args.get(1).cloned().unwrap_or_default(),
+                pool: args.get(2).filter(|s| !s.is_empty()).and_then(|s| s.parse().ok()),
+                require_label: args.get(3).cloned().unwrap_or_default(),
+            },
+            Some("--summon-argv") => Mode::SummonArgv { fayth: args.get(1).cloned().unwrap_or_default() },
+            Some("--world-gate") => Mode::WorldGate {
+                fayth: args.get(1).cloned().unwrap_or_default(),
+                prefix: args.get(2).cloned().unwrap_or_default(),
+            },
+            Some("--named-unit-stop") => Mode::NamedUnitStop { glob: args.get(1).cloned().unwrap_or_default() },
+            Some("--summon-pass") => Mode::SummonPass,
+            _ => Mode::from_args(a0, args.get(1).map(String::as_str)),
         }
     }
 }
@@ -309,10 +364,46 @@ impl<'a> Sentinel<'a> {
     // The entry points.
 
     pub fn run(&self) -> i32 {
-        match self.mode {
+        match &self.mode {
             Mode::SummonOnly => self.summon_only(),
-            Mode::OpenChildren { dry } => self.open_children_only(dry),
+            Mode::OpenChildren { dry } => self.open_children_only(*dry),
             Mode::LandEscalate => self.land_escalate_cmd(),
+            Mode::Summon { fayth, pool, require_label } => self.summon_cmd(fayth, *pool, require_label),
+            Mode::SummonArgv { fayth } => self.summon_argv_cmd(fayth),
+            Mode::WorldGate { fayth, prefix } => self.world_gate_cmd(fayth, prefix),
+            Mode::NamedUnitStop { glob } => self.named_unit_stop_cmd(glob),
+            Mode::SummonPass => self.ck7_summon_pass(),
+            Mode::MarkQueueWaiters => {
+                self.mark_queue_waiters(None);
+                0
+            }
+            Mode::CloseLandedQueueWaiters => {
+                self.close_landed_queue_waiters();
+                0
+            }
+            Mode::DetectUnclaimable => {
+                self.h.print(&self.detect_unclaimable_ready(None));
+                0
+            }
+            Mode::FileUnclaimable => {
+                self.file_unclaimable_incidents(&read_stdin());
+                0
+            }
+            Mode::DetectCollisions => {
+                let cs = self.detect_branch_collisions();
+                let text: Vec<String> = cs.iter().map(crate::detect::Collision::line).collect();
+                self.h.print(&text.join("\n"));
+                0
+            }
+            Mode::ParkCollisions => {
+                let input = read_stdin();
+                let cs: Vec<crate::detect::Collision> =
+                    input.lines().filter_map(crate::detect::Collision::parse_line).collect();
+                let outs = self.park_branch_collisions(&cs);
+                let text: Vec<String> = outs.iter().map(crate::detect::ParkOutcome::line).collect();
+                self.h.print(&text.join("\n"));
+                0
+            }
             _ => self.full(),
         }
     }
@@ -467,20 +558,17 @@ impl<'a> Sentinel<'a> {
         self.phase("CHECK6");
         self.check6();
         self.phase("CHECK3b");
-        self.seam(
-            "check3b",
-            seams::CHECK3B,
-            None,
-            Io::Inherit,
-            Io::Inherit,
-            true,
-        );
+        // S4 is retired (wave 4.28, sp-fbqsv): mark_queue_waiters/close_landed_queue_waiters
+        // are native now, reading the pass's own broad ready snapshot already in memory
+        // rather than round-tripping through $SPIRA_READY_SNAPSHOT's temp file.
+        self.mark_queue_waiters(snap.ready.as_deref());
+        self.close_landed_queue_waiters();
         // CHECK 3c from the snapshot: one walk in memory, never one `bd children` per
         // candidate (sp-du8bv: that loop was 91% of every pass).
         self.phase("CHECK3c");
         self.mark_open_children(&snap, false);
         self.phase("CHECK7");
-        self.seam("ck7", seams::CK7, None, Io::Inherit, Io::Inherit, true);
+        self.ck7_summon_pass();
 
         self.phase("CHECK8");
         self.check8(plan_ready, plan_inprog, n_open, &open_plan);
@@ -507,7 +595,7 @@ impl<'a> Sentinel<'a> {
         }
         self.check6b();
         if !self.cfg.skip_reclaim {
-            self.check7c();
+            self.check7c(snap);
             self.check7d();
         }
         let _ = std::fs::write(
@@ -722,6 +810,15 @@ pub fn is_aeon_cmdline(c: &[u8]) -> bool {
     let argv0 = c.split(|b| *b == 0).next().unwrap_or(&[]);
     let argv0 = String::from_utf8_lossy(argv0);
     String::from_utf8_lossy(c).contains("aeon.sh") || argv0 == "aeon" || argv0.ends_with("/aeon")
+}
+
+/// All of stdin, for the standalone CLI modes whose shim passes along another function's
+/// output (`file_unclaimable_incidents "$(cat)"`, `park_branch_collisions "$(cat)"`).
+pub fn read_stdin() -> String {
+    use std::io::Read;
+    let mut s = String::new();
+    let _ = std::io::stdin().read_to_string(&mut s);
+    s
 }
 
 pub fn append_line(p: &Path, line: &str) {

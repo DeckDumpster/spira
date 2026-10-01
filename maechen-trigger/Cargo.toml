@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 spira-config = { path = "../spira-config" }
+strand = { path = "../strand" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

@@ -1,10 +1,10 @@
 //! groomer — graph hygiene operations for the Spira DAG (DESIGN.md).
 //!
 //! [`litter`] and [`sweep::parse`] are pure: no I/O, no clock, table-tested directly.
-//! [`bd`] and [`seam`] are the impure boundary — the real bead store and the lib.sh
-//! detectors (`detect_livelocked` and its STATE-scan siblings) that this crate does not
-//! own and must not re-derive (law: leave lib.sh alone; sentinel reaches the same
-//! functions the same way). [`sweep`], [`cmds`] and [`unpoison`] compose the two.
+//! [`bd`] and [`seam`] are the impure boundary — the real bead store and the stranded-work
+//! detectors (`detect_livelocked` and its STATE-scan siblings, now `strand::detectors`,
+//! wave 4.29 sp-8ofmt) that this crate does not own and must not re-derive. [`sweep`],
+//! [`cmds`] and [`unpoison`] compose the two.
 
 pub mod bd;
 pub mod cmds;

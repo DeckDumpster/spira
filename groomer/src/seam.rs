@@ -1,9 +1,11 @@
-//! The boundary to lib.sh's STATE and LIVELOCK detectors, and to the lifecycle hold
-//! verb. These stay in lib.sh (group 4, last — "leave lib.sh alone") and are shared with
-//! callers this crate does not own (`cockpit.sh livelock`, `attempts.sh`, `auron.sh`,
-//! `incident.sh`); `groomer` reaches them the same way `sentinel` reaches its own lib.sh
-//! seams — `bash -c '. "$LIB"; <func> "$@"'` — rather than re-deriving the detection
-//! logic. Production shells out for real; tests use a recording fake.
+//! The boundary to the STATE and LIVELOCK detectors, and to the lifecycle hold verb.
+//! The detectors themselves now live in the `strand` crate (wave 4.29, sp-8ofmt) and are
+//! called in-process — [`LibSeam::strand_cfg`] resolves `strand::config::Config` once per
+//! process, the same way `strand`'s own binary does. `bead_reopen`/`bump_poison_cleared`/
+//! `poison_asked_clear`/`conf` and the repo lookups still go through the `bash -c '.
+//! "$LIB"; <func> "$@"'` seam (group 4, last — "leave lib.sh alone"), shared with callers
+//! this crate does not own (`cockpit.sh livelock`, `attempts.sh`, `auron.sh`, `incident.sh`).
+//! Production shells out for real; tests use a recording fake.
 
 use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
@@ -47,11 +49,19 @@ pub trait Seam {
 pub struct LibSeam {
     pub lib_sh: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
+    strand_cfg: OnceCell<strand::config::Config>,
 }
 
 impl LibSeam {
     pub fn new(lib_sh: PathBuf) -> LibSeam {
-        LibSeam { lib_sh, registry: OnceCell::new() }
+        LibSeam { lib_sh, registry: OnceCell::new(), strand_cfg: OnceCell::new() }
+    }
+
+    /// `strand::config::Config`, resolved once per process exactly as `strand`'s own
+    /// binary resolves it (env, then the resolved toml config, then the conf.sh default) —
+    /// never from this struct's own `lib_sh` path, since the detectors no longer source it.
+    fn strand_cfg(&self) -> &strand::config::Config {
+        self.strand_cfg.get_or_init(|| strand::config::Config::resolve(&strand::config::Live::load()))
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -90,23 +100,23 @@ impl LibSeam {
 
 impl Seam for LibSeam {
     fn detect_livelocked(&self) -> Result<String, String> {
-        self.run(&["detect_livelocked"])
+        Ok(strand::detectors::detect_livelocked(self.strand_cfg()))
     }
 
     fn detect_landed_but_open(&self) -> Result<String, String> {
-        self.run(&["detect_landed_but_open"])
+        Ok(strand::detectors::detect_landed_but_open(self.strand_cfg()))
     }
 
     fn detect_closed_unlanded_states(&self) -> Result<String, String> {
-        self.run(&["detect_closed_unlanded_states"])
+        Ok(strand::detectors::detect_closed_unlanded_states(self.strand_cfg()))
     }
 
     fn detect_false_blockers(&self, reopened_ids: &str) -> Result<String, String> {
-        self.run(&["detect_false_blockers", reopened_ids])
+        Ok(strand::detectors::detect_false_blockers(self.strand_cfg(), reopened_ids))
     }
 
     fn detect_incident_needs_builder(&self) -> Result<String, String> {
-        self.run(&["detect_incident_needs_builder"])
+        strand::detectors::detect_incident_needs_builder(self.strand_cfg())
     }
 
     fn bead_reopen(&self, id: &str, cause: &str, note: &str) -> Result<(), String> {
@@ -138,7 +148,7 @@ impl Seam for LibSeam {
     }
 
     fn all_partition_members(&self) -> Result<String, String> {
-        self.run(&["all_partition_members"])
+        Ok(strand::detectors::all_partition_members(self.strand_cfg()))
     }
 
     fn bead_repo(&self, id: &str) -> Result<String, String> {

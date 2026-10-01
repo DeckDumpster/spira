@@ -14,9 +14,10 @@
 # database at all, now that the per-case arithmetic those passes used to be the ONLY
 # coverage for has its own T1 tables:
 #   - the fill loop's pool math and per-persona cap  -> ck7_pool/ck7_fill_cap (G2, G3),
-#     tested directly in test-watchtower-throttle.sh
+#     tested directly in sentinel's own summon::tests (wave 4.27, sp-gzmd2 — ported from
+#     bash, where test-watchtower-throttle.sh used to call them)
 #   - lane rotation order                            -> lane_rotate (G1),
-#     tested directly in test-lane-ceiling.sh
+#     tested directly in sentinel's own summon::tests, ditto
 #   - CHECK 8's firing predicate                      -> sentinel's audit::tests::judgement_table
 #     (G15; check8_should_judge/test-check8-progressed.sh retired at sp-8itaf, zero live callers)
 #

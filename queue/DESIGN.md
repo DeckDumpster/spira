@@ -309,7 +309,7 @@ operation (the function name is part of the text, never data).
 | R4 `cause_event` | `_bump_write_event <id> reopen <cause>` | the events row spira-claim counts |
 | R5 `release_claim` | `release_claim <id>` | bd assignee clear |
 | R6 `bead_close_on_land` | `bead_close_on_land <id> <sha>` | close + LANDED + branch reap |
-| R7 `gh_issue_closeout` | `gh_issue_closeout <id> <sha> <repo>` | GitHub issue close-out |
+| ~~R7 `gh_issue_closeout`~~ | shells to `gh-intake closeout <id> <sha> <repo>` now (sp-j3fim, "wave 4.31"): `gh_issue_closeout` moved natively into gh-intake; no lib.sh seam call left | — |
 | R8 `bead_comment` | `bdq comment <id> --stdin` (text piped inside the script) | bdq's retry, czar and fixture logic |
 | ~~R9 `notify`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::notify`; lib.sh's `queue_notify_concierge` is retired, not a shim | — |
 | R10 `event` | `spira_event <kind> - <title> <detail>` | rate-limited events log |
