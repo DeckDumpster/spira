@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::bdq::{
     check_destructive, check_repo_label, check_schema_delete, czar_fence_class, is_create, json_count, json_only,
-    registry_from_env, should_retry,
+    should_retry,
 };
 use spira_config::repos::Registry;
 
@@ -40,15 +40,21 @@ fn env_nonempty(key: &str) -> Option<String> {
     std::env::var(key).ok().filter(|v| !v.is_empty())
 }
 
-/// The repo registry in force for THIS process: `SPIRA_REPO_MAP`/`SPIRA_HOME`/`SPIRA_REPO`/
-/// `SPIRA_REPO_DERIVED`/`SPIRA_HOME_REPO` read straight out of the environment, same shape
-/// `spira-config`'s own `repo_registry()` builds (spira-config/src/main.rs) — never
-/// self-located beyond that. The caller (the lib.sh shim) is the one that must have threaded
-/// these through explicitly, since conf.sh deliberately never exports any of them.
+/// The repo registry in force for THIS process. The lib.sh `bdq()` shim threads
+/// `SPIRA_REPO_MAP`/`SPIRA_HOME`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_HOME_REPO`
+/// through explicitly on every call it makes, but a bare invocation (no shim in front of
+/// it — a human at a terminal, or a caller that execs this binary directly) has none of
+/// them, since conf.sh exports none. `spira_config::repos::Registry::from_env` (sp-k6lku)
+/// is the one production door onto a registry: it resolves the four in-process,
+/// in-process the same way conf.sh does, whenever the environment it is given lacks them
+/// — a key the shim DID thread through still wins, since `from_env` never overwrites a
+/// key already present. `bead::bdq::registry_from_env` (the crate's own, lower-level
+/// helper) stays reserved for this crate's own deterministic tests, which want an exact,
+/// unresolved env map and no filesystem resolution at all.
 fn build_registry() -> Registry {
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
     let home = PathBuf::from(env_map.get("SPIRA_HOME").cloned().unwrap_or_default());
-    registry_from_env(&env_map, &home)
+    spira_config::repos::Registry::from_env(env_map, &home)
 }
 
 // =========================================================================================

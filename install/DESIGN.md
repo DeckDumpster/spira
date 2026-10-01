@@ -119,6 +119,27 @@ template this box ever actually renders, not a synthetic fixture.
   passes), just more patient. Worth revisiting if it recurs even at 45s — the fix should then
   move from "wait longer" to "look at journalctl for what `spira-cockpit.service` is actually
   doing."
+- **The end-state check names a watcher that never reaches active inside a test fixture
+  but does not fault the run for it alone (`install::install_units::split_not_active`,
+  sp-e5v53-4).** Recurring in production (concierge/sp-kfimz, sp-0ffox twice, 2026-10-01):
+  the gate's base trial faulted at install, "these units are enabled but not active," naming
+  `spira-watch-pr-notify-*`, `spira-watch-inbox-keeper-*` and `spira-watch-publish-backlog-*`
+  — never `spira-watch-queue-watch-*`. Those three are daemons that reach outside the box
+  (GitHub for PRs, mail for the inbox, the forge for the publish backlog); `queue-watch`
+  watches only the local bead queue. A reproduction confirmed a plain `testenv --suites
+  test-certify.sh` on an ordinary worktree (no `--deadline`, "in place," matching the gate's
+  own base re-run) does not reliably reproduce this on its own — the failure needs the same
+  host contention that makes the end-state wait above marginal in the first place, so a
+  watcher that cannot finish its own startup handshake before the 45s bound crash-loops
+  instead, never settling into `active`. A watcher failing in an isolated test container is
+  expected, not a defect: no suite tests a watcher, and the container is sandboxed
+  specifically so it cannot reach what these three need. `testenv::fixture::install_request`
+  now sets `SPIRA_IN_TESTENV=1` (previously only the suite-exec request did); when set,
+  `split_not_active` separates `spira-watch-*` units into a named, non-fatal warning from
+  everything else, which still faults exactly as before. Outside a test fixture
+  (`SPIRA_IN_TESTENV` unset — real production installs) every unit, watcher or not, is
+  still fatal if it never reaches active: a watcher that cannot start in production is still
+  worth knowing.
 - **The `$tmpl` "watcher template changed" check in `systemd/install.sh`'s enable loop is
   dropped, not ported.** `tmpl="${u%%@*}@.service"` was meant to mark every watcher instance
   changed when the shared `spira-watch@.service` template changed — but under per-instance

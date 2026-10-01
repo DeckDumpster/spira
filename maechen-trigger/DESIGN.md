@@ -69,12 +69,18 @@ Side effects (unchanged from the bash):
 
 ## Non-goals (out of scope for this bead)
 
-- **`repo_field`, `spira_landref`'s resolution ladder, `spira_lane_admitted`'s fayth-label
-  scan, `spira_open_trigger_count`, `detect_invalid_closed`.** These are `lib.sh`'s own
-  functions, shared with `groom-trigger.sh`, the census and the closed-record review.
-  `lib.sh` is explicitly the *last* component in the wave order (wave-brief "Order is the
-  inventory's ... lib.sh last"); reimplementing any of them here now would create a second,
-  driftable copy of logic lib.sh's own wave will port properly. They stay a subprocess seam.
+- **`spira_lane_admitted`'s fayth-label scan, `spira_open_trigger_count`, `detect_invalid_closed`.**
+  These are `lib.sh`'s own functions (families V and T), shared with `groom-trigger.sh`, the
+  census and the closed-record review. `lib.sh` is explicitly the *last* component in the wave
+  order (wave-brief "Order is the inventory's ... lib.sh last"); reimplementing any of them
+  here now would create a second, driftable copy of logic lib.sh's own wave will port
+  properly. They stay a subprocess seam.
+- **`repo_field`, `spira_landref`'s resolution ladder — no longer true.** Family U (the repo
+  registry) and family W (base refs) ported to `spira_config::repos` in sp-37rmg/sp-o88bx
+  ("wave 4.11"/"4.12"); `real.rs`'s `home_repo`/`repo_root`/`landref` call that in-process now
+  (sp-k6lku, "wave 4.13") instead of a `bash -c '. lib.sh; ...'` seam that itself only shelled
+  into the `spira-config` binary a second time. This is calling the canonical port, not a
+  second copy of it.
 - **`mail.sh`.** Not used by `maechen-trigger.sh` at all (only `incident.sh` sends mail); no
   change needed here.
 - **`groom-trigger.sh`.** Shares `spira_open_trigger_count`/`spira_lane_admitted` with this
