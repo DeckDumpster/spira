@@ -5,7 +5,7 @@
 # The failure this guards: clearing a poison by removing the label left the attempt count at
 # the threshold, so the very next sentinel pass re-poisoned the bead (2026-09-26, six beads).
 # The CONTROL case below reproduces exactly that with a label-only clear; the tool's case must
-# come out the other way, judged by check4_decide — the function CHECK 4 itself calls.
+# come out the other way, judged by `spira-claim decide` — the function CHECK 4 itself calls.
 #
 # tier: T2
 # covers: spira-claim/* spira-lc/* lifecycle/*
@@ -93,7 +93,11 @@ labels_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(",".join(b.get("labels") or []))'; }
 status_of() { bdjson show "$1" | python3 -c 'import sys,json
 d=json.load(sys.stdin); b=(d if isinstance(d,list) else [d])[0]; print(b.get("status",""))'; }
-decide() { check4_decide "$(attempts_of "$1")" "$(requeues_of "$1")" "$(reclaims_of "$1")" "$(labels_of "$1")"; }
+# reclaims_of (lib.sh) was retired at sp-8itaf — zero live callers. _counter_events_query,
+# the shared helper it and requeues_of both used, stays (requeues_of still calls it), so
+# this reaches the identical count the old function did.
+reclaims_of() { _counter_events_query "${1:-}" reclaimed; }
+decide() { spira-claim decide "$(attempts_of "$1")" "$(requeues_of "$1")" "$(reclaims_of "$1")" "$(labels_of "$1")"; }
 UNPOISON=spira-claim
 
 testdb_reset

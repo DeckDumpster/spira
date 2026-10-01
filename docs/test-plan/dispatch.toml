@@ -101,6 +101,11 @@ id = "UC-dispatch-18"
 tier = "T1"
 statement = "CHECK 8 fires only when nothing progressed and plan is starved, subject to cooldown"
 
+[use_case.uncovered]
+reason = "lib.sh check8_should_judge had zero live callers (no Rust seam, no bash sourcer outside its own suite) and was deleted outright, not ported, at sp-8itaf; test-check8-progressed.sh, its sole cover, was retired with it. The equivalent decision is now sentinel's audit::tests::judgement_table (cargo test -p sentinel)."
+date = "2026-09-30"
+bead = "sp-8itaf"
+
 [[use_case]]
 id = "UC-dispatch-19"
 tier = "T1"
@@ -111,10 +116,20 @@ id = "UC-dispatch-20"
 tier = "T1"
 statement = "a stale lease anywhere in spira-lc is reclaimed and charged, whatever partition it belongs to; orphans released"
 
+[use_case.uncovered]
+reason = "lib.sh check2_reclaim_stale/check2c_lc_consistency had zero live callers and were deleted outright, not ported, at sp-8itaf; test-check2-reaper.sh, their sole cover, was retired with them. The equivalent logic is now sentinel's lifecycle.rs, unit-tested by stale_leases_skip_wait_and_respect_grace and inconsistency_lines (cargo test -p sentinel)."
+date = "2026-09-30"
+bead = "sp-8itaf"
+
 [[use_case]]
 id = "UC-dispatch-21"
 tier = "T1"
 statement = "the ghost classifier never reclaims a bead carrying the ask label or a spira-lc wait hold"
+
+[use_case.uncovered]
+reason = "lib.sh check2_protect_waiting had zero live callers and was deleted outright, not ported, at sp-8itaf; test-check2-reclaim.sh, its sole cover, was retired with it. The equivalent logic is now sentinel's lifecycle.rs, unit-tested by protect_only_when_every_open_dep_is_an_ask_blocker (cargo test -p sentinel)."
+date = "2026-09-30"
+bead = "sp-8itaf"
 
 [[use_case]]
 id = "UC-dispatch-22"
