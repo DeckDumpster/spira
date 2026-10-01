@@ -44,6 +44,8 @@ members = [
     "gate-diag",
     "gate-check",
     "testkit",
+    "groomer",
+    "archivist",
     "intent-report",
     "beads-store",
     "suite-select",

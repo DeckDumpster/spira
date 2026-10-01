@@ -55,7 +55,7 @@ WORLD_BIN="$(command -v world || true)"
 [ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-timer-names.sh: the world binary is not on PATH" >&2; exit 1; }
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay"; chmod +x "$SH/slay"
 
 # write_sc ENABLED_TIMER ACTIVE_TIMER LEGACY_WATCH INSTANCE_WATCH
 #   ENABLED_TIMER  — unit name that is-enabled should confirm (empty = none)

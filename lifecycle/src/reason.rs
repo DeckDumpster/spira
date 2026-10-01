@@ -104,8 +104,8 @@ impl GateRedReason {
 }
 
 /// Why a bead was dropped. The producer table (design §3.2) names "groomer, operator" —
-/// groomer.sh's own sweep vocabulary (`closed-no-branch`) is the mechanical case, and
-/// `unwanted` is the policy call groomer.sh itself refuses to make and escalates instead
+/// groomer's own sweep vocabulary (`closed-no-branch`) is the mechanical case, and
+/// `unwanted` is the policy call groomer itself refuses to make and escalates instead
 /// (law-escalate-decisions-not-problems), so it can only ever arrive here as the operator's
 /// own event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

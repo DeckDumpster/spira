@@ -142,4 +142,4 @@ itself for the full explanation. Any later bead in this area (or the eventual `l
   `bead.sh`, and `lib.sh` is explicitly deferred (group 4).
 - **`--parent` always adds `--no-inherit-labels`** (unchanged from the bash): the label set
   computed above is already complete, and inheriting the parent's `branch:` label is exactly
-  the defect `groomer.sh split-piece` exists to undo after the fact (sp-zs04v).
+  the defect `groomer split-piece` exists to undo after the fact (sp-zs04v).

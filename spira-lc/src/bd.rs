@@ -48,7 +48,7 @@ pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
 
 /// Files through `spira/bead.sh`'s contract (the labelling rules `bd create` alone does not
 /// enforce), with `--parent` set by this layer, never the caller — see bead.sh's own
-/// `--parent` doc for why an inherited `branch:` label made `groomer.sh split-piece` a
+/// `--parent` doc for why an inherited `branch:` label made `groomer split-piece` a
 /// two-step dance that this avoids by filing with the right labels from the start.
 pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Result<String, String> {
     // bead.sh, by name on the launcher's PATH (sp-gypjk) — never repository-relative.
