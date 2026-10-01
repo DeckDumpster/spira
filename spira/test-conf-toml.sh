@@ -207,32 +207,42 @@ is "SPIRA_PROD survives an unwritable SPIRA_REPO" "$ro_prod" "$got_ro_prod"
 
 # ==========================================================================
 echo
-echo "BOOTSTRAP — no spira-config binary anywhere: cargo stays reachable:"
+echo "BOOTSTRAP — no spira-config binary anywhere, and no config readable either:"
 # ==========================================================================
-# conf.sh keeps the caller's PATH first and APPENDS the box tail, ~/.cargo/bin included (the
-# gate and testenv build trees under test with cargo), even with no config readable at all.
+# sp-ubcgo ("wave 4.5: conf.sh becomes an eval of resolve"): derived-default computation
+# itself now lives in spira-config (`resolve --sh-all`), not in bash, so conf.sh can no
+# longer finish — not even the PATH tail — without that binary, REGARDLESS of whether a
+# config file exists. Before this bead, an install with no spira-config on PATH but also no
+# spira.toml/spira.conf to read could still derive every SPIRA_* default in pure bash and
+# reach the PATH-tail append below; that bootstrap path is gone on purpose (fail closed,
+# never partially-computed — see conf.sh's own "DERIVED DEFAULTS" comment).
 BOOT_HOME="$T/boot-home"
 mkdir -p "$BOOT_HOME/.cargo/bin"
 printf '#!/bin/sh\nexit 0\n' > "$BOOT_HOME/.cargo/bin/cargo"
 chmod +x "$BOOT_HOME/.cargo/bin/cargo"
-boot_path="$(env -i PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
-    bash -c ". '$HARNESS/spira/conf.sh'; printf '%s' \"\$PATH\"" 2>/dev/null)"
-want "conf.sh's PATH still reaches \$HOME/.cargo/bin with no config readable" \
-    "$BOOT_HOME/.cargo/bin" "$boot_path"
+if env -i PATH=/usr/bin:/bin HOME="$BOOT_HOME" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HARNESS/spira/conf.sh'" >"$T/boot.out" 2>&1
+then
+    bad "conf.sh refuses when spira-config is unresolvable, even with no config file" \
+        "exited 0 instead of refusing"
+else
+    ok "conf.sh refuses when spira-config is unresolvable, even with no config file"
+fi
+want "the refusal names spira-config" "spira-config" "$(cat "$T/boot.out")"
 
 # ==========================================================================
 echo
-echo "FAIL-CLOSED (sp-c7b85) — a config file exists but spira-config is unresolvable:"
+echo "FAIL-CLOSED (sp-c7b85, extended by sp-ubcgo) — a config file exists but spira-config"
+echo "is unresolvable:"
 # ==========================================================================
 # The scar: run by hand without the launcher PATH, conf.sh could not find spira-config
 # ("spira-config: command not found", bash's exit 127) and silently fell back to derived
 # defaults (SPIRA_DB=~/.local/share/spira/db, ...) instead of refusing — a tool run that
-# way could write to a store that is not production's. Distinguished from the BOOTSTRAP
-# case above by one thing: a readable spira.toml is actually THERE to be read.
-# /usr/bin:/bin (never this suite's own PATH, which carries spira-config) still resolves
-# `bash` and `git` — spira_conf_defaults's SPIRA_HOME_REPO detection runs `git` before
-# spira_toml_read ever gets a chance to fail, so a git-less PATH would fail for an
-# unrelated reason first.
+# way could write to a store that is not production's. conf.sh now checks `command -v
+# spira-config` itself, before deriving anything, so this refuses identically whether or
+# not a config file exists — the BOOTSTRAP case above hits the exact same guard; this one
+# just sets SPIRA_TOML explicitly, to show the guard does not depend on there being no
+# config to read.
 if env -i PATH="/usr/bin:/bin" HOME="$T/home" SPIRA_TOML="$FIXTURE" \
     bash -c ". '$HARNESS/spira/conf.sh'" >"$T/unresolvable.out" 2>&1
 then
