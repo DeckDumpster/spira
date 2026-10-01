@@ -47,26 +47,28 @@ impl Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
-    /// Like `seam`, but returns (success, stdout, stderr) — for callers that need the exit
-    /// status or the error text (the retry-aware SQL runners; `landed`'s own exit code).
-    /// See `seam`'s own comment for why the `--` is load-bearing, not decoration.
-    fn seam_full(&self, body: &str, args: &[&str]) -> (bool, String, String) {
-        let script = format!(
-            ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; {body}",
-            self.home.display(),
-            self.home.display()
-        );
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).output();
-        match out {
-            Ok(o) => (o.status.success(), String::from_utf8_lossy(&o.stdout).into_owned(), String::from_utf8_lossy(&o.stderr).into_owned()),
-            Err(e) => (false, String::new(), e.to_string()),
-        }
-    }
-
     fn write_scratch(&self, name: &str, content: &str) -> PathBuf {
         let p = self.scratch.join(name);
         let _ = std::fs::write(&p, content);
         p
+    }
+
+    /// `<bd> -C <db> sql <query>` — stdout/stderr returned separately (never combined the
+    /// way `seam`'s bash-pipe callers were), so a retrying caller can report the LAST
+    /// attempt's stderr alone, exactly as `census_events_run_sql`'s own `2>"$_errtmp"`
+    /// (truncated fresh each attempt) did.
+    fn run_bd_sql(&self, query: &str) -> (bool, String, String) {
+        let db = self.env("SPIRA_DB").unwrap_or_default();
+        let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+        let out = Command::new(bd).arg("-C").arg(db).arg("sql").arg(query).stdin(Stdio::null()).output();
+        match out {
+            Ok(o) => (
+                o.status.success(),
+                String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string(),
+                String::from_utf8_lossy(&o.stderr).trim_end_matches('\n').to_string(),
+            ),
+            Err(e) => (false, String::new(), e.to_string()),
+        }
     }
 
     fn run_py(&self, script: &str, args: &[&Path], stdin: Option<&str>) -> String {
@@ -99,24 +101,38 @@ impl World for Real {
         std::env::var(k).ok()
     }
 
+    /// Ported in-process (wave 4.35, sp-kelr2, row M): the query itself is `crate::sql`'s
+    /// (checked byte-for-byte against the live bash — see the module doc); the retry loop
+    /// below is `census_events_run_sql`'s own (3 attempts, `CENSUS_RETRY_DELAY_S` doubling
+    /// each retry, default 2s) — the one piece of row M that was never pure SQL text, so it
+    /// moves here rather than into `crate::sql`.
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String> {
-        let since_s = since.unwrap_or(0).to_string();
-        let (ok, out, err) = self.seam_full("census_events_run_sql \"$1\"", &[&since_s]);
-        if ok {
-            Ok(out)
-        } else {
-            Err(err)
+        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
+        let query = crate::sql::events_sql(since_formatted.as_deref());
+        let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
+        let mut last_stderr = String::new();
+        for attempt in 1..=3 {
+            let (ok, out, err) = self.run_bd_sql(&query);
+            if ok {
+                return Ok(out);
+            }
+            last_stderr = err;
+            if attempt < 3 {
+                std::thread::sleep(std::time::Duration::from_secs(delay));
+                delay *= 2;
+            }
         }
+        Err(format!("census_events_run_sql: query failed after 3 attempts: {last_stderr}"))
     }
     fn census_handwritten_run_sql(&self) -> String {
-        self.seam("census_handwritten_run_sql", &[])
+        self.run_bd_sql(&crate::sql::handwritten_sql()).1
     }
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String {
-        let since_s = since.unwrap_or(0).to_string();
-        self.seam("census_deliberate_run_sql \"$1\"", &[&since_s])
+        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
+        self.run_bd_sql(&crate::sql::deliberate_sql(since_formatted.as_deref())).1
     }
     fn census_class_fold_map(&self) -> String {
-        self.seam("_census_class_fold_map", &[])
+        crate::sql::class_fold_map().trim_end_matches('\n').to_string()
     }
     fn repo_root(&self) -> Option<String> {
         let out = self.seam("repo_root 2>/dev/null", &[]);

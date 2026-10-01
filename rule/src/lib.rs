@@ -2,6 +2,8 @@
 //! (which does the `bd`/hook subprocess work) so it is unit-testable with no database, no
 //! filesystem and no subprocess.
 
+pub mod memories;
+
 use std::collections::BTreeMap;
 
 /// `slugify("foo") == "law-foo"`, `slugify("law-foo") == "law-foo"` — the `law-` prefix is

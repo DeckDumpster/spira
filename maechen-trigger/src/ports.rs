@@ -1,7 +1,8 @@
-//! The boundary `real.rs` implements: the `lib.sh` repository/trigger seam (`spira_home_repo`,
-//! `repo_root`, `spira_landref`, `spira_lane_admitted`, `spira_open_trigger_count`,
-//! `detect_invalid_closed` — none of those six are ported, DESIGN.md "Non-goals"), `bd`
-//! directly (the bash calls `bd create`, not `bdq` — DESIGN.md "Decisions"), and `git log`.
+//! The boundary `real.rs` implements: `spira_home_repo`/`repo_root`/`spira_landref` (in-process
+//! via `spira_config::repos::Registry`) and `detect_invalid_closed` (still the `lib.sh` seam —
+//! DESIGN.md "Non-goals"), `bd` directly (the bash calls `bd create`, not `bdq` — DESIGN.md
+//! "Decisions"), `git log`, and — in-process since wave 4.35, sp-kelr2, row V —
+//! `spira_open_trigger_count`/`spira_lane_admitted`/`spira_repo_lanes` (`crate::lanes`).
 
 use std::path::{Path, PathBuf};
 
@@ -14,10 +15,13 @@ pub trait World {
     fn read_lastpass(&self) -> i64;
     fn now(&self) -> i64;
 
-    /// `spira_open_trigger_count <labels>` (the `lib.sh` seam).
+    /// `spira_open_trigger_count <labels>`.
     fn open_trigger_count(&self, labels: &str) -> u64;
-    /// `spira_lane_admitted <lane>` (the `lib.sh` seam).
+    /// `spira_lane_admitted <lane>`.
     fn lane_admitted(&self, lane: &str) -> bool;
+    /// `spira_repo_lanes <name>` — reached by `main.rs`'s `repo-lanes` CLI door, the one
+    /// lib.sh's shim calls; `groom-trigger.sh` is that door's one remaining live caller.
+    fn repo_lanes(&self, name: &str) -> Result<String, String>;
 
     /// `spira_home_repo` (the `lib.sh` seam).
     fn home_repo(&self) -> String;
