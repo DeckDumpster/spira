@@ -1175,6 +1175,13 @@ fn a_base_re_run_that_cannot_judge_is_untestable() {
         .insert((BASE.into(), SUITE.into()), (75, "batch: no image".into()));
     assert_eq!(f.run(), NOVERDICT);
     assert!(f.verdict_line().contains("reason=base-untestable"));
+    // sp-e5v53-2: "when it truly can't, say exactly why" — the rerun's own fault output
+    // reaches the verdict message, not just the generic "cannot be established" line.
+    assert!(
+        f.stderr().contains("batch: no image"),
+        "the rerun's own fault output is surfaced: {}",
+        f.stderr()
+    );
 }
 
 /// A red suite the base does not have is the branch's own; nothing to run on the base.
@@ -1216,6 +1223,66 @@ fn the_re_run_prefers_a_tree_owned_testenv_with_a_bare_fallback() {
     assert!(
         c.contains("\"${SPIRA_TESTENV_BIN:-testenv}\" --suites test-a.sh"),
         "{c}"
+    );
+}
+
+/// THE PRODUCTION REGRESSION (2026-10-01, after sp-e5v53 landed): base-untestable via a
+/// different path than the bare-testenv defect sp-e5v53 fixed — concierge/sp-g3uwp (red on
+/// test-persona-model.sh) and sp-ooh1k (red on test-install-dolt-*) both showed the rerun
+/// genuinely ran (`gate.log` phases named a real `base-rerun` wall time, 13-26s, not the
+/// instant 0-1s a 127 exit gives), yet still ended `base-untestable`.
+///
+/// Root cause: the repository's own gate string always hands testenv a *second* positional
+/// argument, the repo (`"$SPIRA_TESTENV_BIN" --deadline … --suites … "$SPIRA_GATE_BRANCH"
+/// "$SPIRA_GATE_REPO"`, gate.steps) — `base_rerun_cmd` never has, since sp-hh5h0. Reproduced
+/// directly: `testenv --suites <suite> <rev>` with no repo argument and no `$SPIRA_REPO` in
+/// the environment (never set in the gate command's `env -i`, DESIGN.md "The gate command's
+/// environment") faults `VERDICT FAULT rc=2 reason=base-ref` — `resolve_repo` falls back to
+/// the harness root, whose basename matches no configured repo, so `landref` finds no base
+/// column for it. Adding the repo as a second argument (confirmed by hand against this very
+/// repository) resolves it and the suite actually runs.
+///
+/// This is this bead's own positive control for the fix: the generated command must carry
+/// the repo, in the same position the real gate string puts it, so a real `testenv` can
+/// resolve its base ref instead of faulting before a single suite runs.
+#[test]
+fn the_re_run_also_names_the_repo_so_testenv_can_resolve_its_base_ref() {
+    let c = crate::engine::base_rerun_cmd(&["test-persona-model.sh".into()]);
+    assert!(
+        c.contains("--suites test-persona-model.sh \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\""),
+        "the repo must follow the branch, exactly as the repository's own gate string orders \
+         them: {c}"
+    );
+}
+
+/// The end-to-end shape of the regression: a rerun that genuinely cannot judge (here,
+/// standing in for testenv's own `VERDICT FAULT rc=2 reason=base-ref`) still ends
+/// `base-untestable` — a fault that reaches the rerun is not a verdict either way — but the
+/// verdict message must say exactly why, not just that it "cannot be established": a reader
+/// should never have to go read `gate.log`'s phases to learn the rerun was even tried.
+#[test]
+fn a_rerun_that_faults_on_its_own_base_ref_is_untestable_and_says_why() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs
+        .borrow_mut()
+        .insert(BASE.into(), (0, "  test-a.sh ok".into()));
+    f.reruns.borrow_mut().insert(
+        (BASE.into(), SUITE.into()),
+        (
+            75,
+            format!(
+                "batch: cannot resolve the base ref for spira\nbatch: add a base column to the repo-map, or run: git remote set-head origin -a\nVERDICT FAULT rc=2 ran=0 reason={}",
+                "base-ref"
+            ),
+        ),
+    );
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=base-untestable"));
+    assert!(
+        f.stderr().contains("cannot resolve the base ref"),
+        "the fault that actually happened is named, not just \"cannot be established\": {}",
+        f.stderr()
     );
 }
 
