@@ -1,4 +1,5 @@
-# suite-covers.sh — RETIRED (wave 4.36, sp-bobsp). Nothing sources this file any more:
+# suite-covers.sh — RETIRED (wave 4.36, sp-bobsp). Sourced, never executed. Nothing
+# sources this file any more:
 # the one Rust parser lives in suite-select/src/header.rs, read through the
 # `suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>`
 # CLI. plan-lint.sh, suite-coverage-json.sh, escape-classify.sh, testenv-guard.sh and
