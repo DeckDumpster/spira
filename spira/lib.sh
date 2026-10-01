@@ -5614,214 +5614,41 @@ spira_prune_worktrees() {
 }
 
 # --------------------------------------------------------------------------------------
-# format_rebased <branch> <onto> <worktree> [repo-name] -> 0 always; the rebase stands
-# whatever the formatter does.
-#
-# A REBASE PRODUCES A TREE NOBODY FORMATTED. git replays hunks; it does not re-run anyone's
-# formatter on the result, so a rebase that resolves perfectly still hands the required
-# check a tree that no human or tool ever laid out. It recurs on exactly the shape a rebase
-# is best at — two branches adding names to the same import list, struct literal or match
-# arm — where each side is individually well-formed and the union is over the line limit.
-# The branch then fails `cargo fmt --all -- --check`, a check it passed before the harness
-# touched it, and the failure is charged to the aeon that wrote correct code.
-#
-# ONLY WHAT THE BRANCH TOUCHED IS COMMITTED. The declared command is repository-wide, because
-# that is the writing form of the repository-wide check it must satisfy — but a repository
-# whose main is already unformatted would otherwise have its entire tree swept into one
-# bead's branch. Against a clean main this restriction changes nothing, since a rebase can
-# only disturb the layout of files the branch itself touched; against a dirty one it is the
-# difference between a format commit and a rewrite.
-#
-# A FORMATTER THAT FAILS CHANGES NOTHING. `cargo fmt` exits non-zero on a tree it cannot
-# parse, and it may have rewritten half of it first. Discard and let the gate render the
-# verdict — a formatter is a convenience, and it must never be able to turn a clean rebase
-# into a branch full of partial edits.
-# --------------------------------------------------------------------------------------
-format_rebased() {
-    local br="$1" onto="$2" wt="$3" name="${4:-}" cmd paths f staged=0
-
-    [ -n "$name" ] || name="$(repo_name_at "$(git -C "$wt" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null)" || return 0
-    cmd="$(repo_format "$name" 2>/dev/null)"
-    [ -n "$cmd" ] || return 0
-
-    # The formatter sees what a gate command sees and nothing else: an ambient variable that
-    # can change a formatter's output changes what lands (law-gates-run-in-a-clean-environment).
-    # ~/.cargo/bin for the same reason gate.sh names it — lib.sh's PATH is written for
-    # systemd and carries no toolchain.
-    if ! ( cd "$wt" && env -i PATH="$HOME/.cargo/bin:$PATH" HOME="$HOME" TERM=dumb \
-             timeout "${SPIRA_FORMAT_TIMEOUT:-300}" bash -c "$cmd" ) >/dev/null 2>&1; then
-        log "format: $name's formatter failed on $br — leaving the rebase unformatted"
-        git -C "$wt" checkout -q -- . 2>/dev/null
-        return 0
-    fi
-
-    # The branch's own files, read from history rather than from the dirty tree: $onto is an
-    # ancestor now, so this diff IS the branch's work. Filtered to paths that still exist,
-    # because a path the branch deleted cannot have been reformatted and `git add` on it is
-    # an error rather than a no-op.
-    paths=()
-    while IFS= read -r -d '' f; do
-        [ -f "$wt/$f" ] && paths+=("$f")
-    done < <(git -C "$wt" diff -z --name-only "$onto" HEAD 2>/dev/null)
-    [ "${#paths[@]}" -gt 0 ] && git -C "$wt" add -- "${paths[@]}" 2>/dev/null
-
-    # Everything the formatter touched outside the branch's own work goes back. Staged paths
-    # are restored from the index, so this only discards the repository-wide remainder.
-    git -C "$wt" checkout -q -- . 2>/dev/null
-    git -C "$wt" diff --cached --quiet 2>/dev/null || staged=1
-    [ "$staged" = 1 ] || return 0
-
-    # The subject names the bead, because for `spira/<id>` branches ${br##*/} IS the id and
-    # that string is the only machine-checkable link between a bead and the commit graph
-    # (law-aeon-commits-name-their-bead). Through stdin, never an argument: a formatter
-    # command containing backticks or $( ) would otherwise be executed by the very quoting
-    # that was meant to quote it (law-commit-messages-via-stdin).
-    git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" commit -q -F - <<EOF 2>/dev/null
-spira: re-format ${br##*/} after rebase onto $onto
-
-The rebase replayed cleanly and nothing re-ran $name's formatter on the result, so
-the tree its own check tests was machine-produced. Formatted with: $cmd
-EOF
-    log "format: re-formatted $br after its rebase onto $onto"
-    return 0
-}
-
-# --------------------------------------------------------------------------------------
 # rebase_branch <branch> <onto> [repo] [repo-name] -> 0 if <branch> now contains <onto>, 1
 # if it does not. On failure the branch ref is left EXACTLY as it was and $REBASE_CONFLICTS
-# names the paths that collided. On success, and only when commits were actually replayed,
-# the repository's own formatter runs on the result and is committed as part of the rebase —
-# see format_rebased. The branch tip therefore MOVES on success, and a caller holding a tip
-# from before the call is holding a stale one.
+# names the paths that collided ($REBASE_FAILURE says which of conflict | rebase-refused |
+# no-base | no-branch | no-worktree; $REBASE_REFUSED_REASON is set only for rebase-refused).
+# On success, and only when commits were actually replayed, the repository's own formatter
+# runs on the result and is committed as part of the rebase. The branch tip therefore MOVES
+# on success, and a caller holding a tip from before the call is holding a stale one.
 #
 # THE CALLER MUST HAVE ESTABLISHED THAT NO LIVE AEON HOLDS THE BRANCH. This rewrites
-# commits beneath a working tree; doing that under a running aeon destroys work in flight,
-# which is the one failure here that is not recoverable. `holder_alive` is the precondition.
+# commits beneath a working tree; doing that under a running aeon destroys work in flight.
+# `holder_alive` is the precondition — unchanged; this shim adds no liveness check of its
+# own, exactly as the function it replaces did not.
 #
-# WHY THE BRANCH'S OWN WORKTREE. git refuses to move a ref that a worktree has checked out
-# — `git branch -f` and `git rebase` both — so when a worktree holds the branch it is the
-# only place the rebase can happen. When nothing holds it the rebase still needs SOME
-# working tree, and that tree must never be the shared checkout, whose HEAD an interactive
-# session is using; a detached scratch worktree costs one checkout.
-#
-# A rebase is refused by tracked modifications, and those are routine rather than
-# exceptional here: wiki/tasks.md is a GENERATED file tracked in git and rewritten by a
-# timer, so it is dirty in every worktree within minutes of its creation and would
-# otherwise block every rebase for a reason that has nothing to do with the work. Tracked
-# changes are salvaged to a patch and discarded; untracked files are left alone, because
-# `git diff HEAD` cannot carry their content and discarding them would destroy the one copy.
-#
-# A FAILURE IS NAMED, BECAUSE ONLY ONE OF THEM IS THE BRANCH'S FAULT. Every way this can
-# return 1 used to look the same to a caller — one exit status and an empty $REBASE_CONFLICTS
-# — so a caller that reopens a bead on a rebase failure reopened it for a missing ref, an
-# unresolvable base and a scratch tree it could not build, all with the words "conflicts in
-# unknown". That is a lie about a bead and it costs a session:
-#
-#   21:51:17  landed spira/<id>            <- pass A lands it
-#   21:52:13  landing: starting a pass     <- pass B reads the branch list, <id> still in it
-#   21:52:36  REMOVED branch spira/<id>    <- the Sending reaps it
-#   22:00:55  reopened <id> — does not rebase onto origin/main; conflicts in unknown
-#
-# Pass B held an eight-minute-old list, reached a ref that was gone, and this function said
-# "1" about it. $REBASE_FAILURE now says which:
-#
-#   conflict      the rebase RAN and the commits disagree — the branch's own fault, and the
-#                 only value on which finished work may be put back on the board
-#   no-branch     the ref is gone: reaped, landed, or slain under a stale list
-#   no-base       the ref it lands on does not resolve
-#   no-worktree   no tree to replay in
-#
-# The last three are the pass failing to ask the question, never an answer to it.
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs` for the full
+# rationale this header used to carry (why the branch's own worktree, why failures are
+# named, why a formatter failure changes nothing, why only the branch's own paths are
+# committed). `format_rebased` folded into the port; nothing else called it. Any worktree
+# pruning or pre-reset salvage in the port goes through `sending`'s destruction chokepoint
+# in-process, never a raw git removal.
 # --------------------------------------------------------------------------------------
 REBASE_CONFLICTS=""
 REBASE_FAILURE=""
 REBASE_REFUSED_REASON=""
 rebase_branch() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" wt scratch rc=0
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" fmtcmd out rc
     REBASE_CONFLICTS=""; REBASE_FAILURE=""; REBASE_REFUSED_REASON=""
-    # The repo NAME, for the formatter that runs on the result. Derived from the path only
-    # when the caller did not supply it — both real callers hold it already, having read it
-    # off the bead, and a derived value is a convention that breaks the moment two names
-    # point at one checkout.
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { REBASE_FAILURE=no-base; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { REBASE_FAILURE=no-branch; return 1; }
-    # Already current. This is the common case once branches are cut from the base ref, and
-    # it is what makes running the rebase on every landing pass cheap.
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-
-    wt="$(worktree_of "$br" "$repo")"
-    if [ -z "$wt" ]; then
-        # PER REPOSITORY. One shared `.rebase` tree is registered against exactly one
-        # repository, so a second repo asking for it gets a checkout of somebody else's
-        # history — or, worse, a `git worktree add` that fails because the directory is
-        # already a worktree of another repo, and a rebase that silently never happens.
-        # Named for the checkout's own directory, which is unique by construction: two
-        # repositories cannot share a path.
-        scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-        if [ ! -e "$scratch/.git" ]; then
-            mkdir -p "$(dirname "$scratch")"
-            # Through the chokepoint: a bare prune here would silently unregister any tree
-            # whose `.git` link is broken, including a live aeon's, and free its branch.
-            spira_prune_worktrees "$repo" >/dev/null 2>&1
-            git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-                || { REBASE_FAILURE=no-worktree; return 1; }
-        fi
-        git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-        # A ref that vanished between the check above and here — the reaper runs on its own
-        # timer — is still `no-branch`, not a tree we could not build. The distinction is the
-        # whole point of naming these, so the narrower window gets the narrower name.
-        if ! git -C "$scratch" checkout -q -B "$br" "refs/heads/$br" >/dev/null 2>&1; then
-            git -C "$repo" show-ref --verify -q "refs/heads/$br" \
-                && REBASE_FAILURE=no-worktree || REBASE_FAILURE=no-branch
-            return 1
-        fi
-        wt="$scratch"
+    fmtcmd="$(repo_format "$name" 2>/dev/null)"
+    out="$(rebase-stale rebase-branch "$br" "$onto" "$repo" "$name" "$fmtcmd")"; rc=$?
+    if [ "$rc" != 0 ]; then
+        REBASE_FAILURE="$(sed -n 1p <<<"$out")"
+        REBASE_CONFLICTS="$(sed -n 2p <<<"$out")"
+        REBASE_REFUSED_REASON="$(sed -n 3p <<<"$out")"
     fi
-
-    if ! git -C "$wt" diff --quiet HEAD 2>/dev/null; then
-        # `reset --hard`, not `checkout -- .`: a file STAGED for addition is not restored by
-        # checkout, and `git rebase` refuses outright on "your index contains uncommitted
-        # changes". reset --hard clears index and tracked worktree together and leaves
-        # untracked files exactly where they are.
-        salvage "${br##*/}-prerebase" "$wt" >/dev/null
-        git -C "$wt" reset -q --hard HEAD 2>/dev/null
-    fi
-
-    local _rebase_err
-    _rebase_err="$(mktemp)"
-    if ! git -C "$wt" -c "user.name=${SPIRA_GIT_NAME:-spira}" -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" rebase -q "$onto" >/dev/null 2>"$_rebase_err"; then
-        # Name the collisions BEFORE aborting; after the abort there is nothing to read.
-        REBASE_CONFLICTS="$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-        REBASE_CONFLICTS="${REBASE_CONFLICTS% }"
-        git -C "$wt" rebase --abort >/dev/null 2>&1
-        # A non-zero rebase with no unmerged files is not a content conflict — git refused
-        # outright (untracked file collision, locked index, etc.). Only a real content conflict
-        # may reopen a finished bead; a refusal is the pass failing to ask the question.
-        if [ -n "$REBASE_CONFLICTS" ]; then
-            REBASE_FAILURE=conflict
-        else
-            REBASE_FAILURE=rebase-refused
-            REBASE_REFUSED_REASON="$(head -1 "$_rebase_err" 2>/dev/null)"
-        fi
-        rc=1
-    else
-        # THE REBASE ACTUALLY REPLAYED COMMITS, so the tree is machine-produced and nobody
-        # formatted it. This is the only path that reaches here: the already-an-ancestor case
-        # returned above without touching anything, and a formatter run on a branch nothing
-        # rewrote would be a diff the harness invented.
-        format_rebased "$br" "$onto" "$wt" "$name"
-    fi
-    rm -f "$_rebase_err"
-
-    # Let go of the branch. A scratch tree still holding it is not inert: `git branch -D`
-    # refuses a branch a worktree has checked out, which is exactly the defect sending.sh
-    # exists to fix, and it would arrive here by a new route.
-    if [ "$wt" = "${SPIRA_RUN}/worktree/.rebase.$(basename "$repo")" ]; then
-        git -C "$wt" checkout -q --detach >/dev/null 2>&1
-    fi
-    return $rc
+    return "$rc"
 }
 
 # recut_onto — move a branch onto a new base by cherry-picking commits one by one.
@@ -5832,51 +5659,21 @@ rebase_branch() {
 # force-updated to that commit so the merge-base moves forward. When zero commits land
 # the branch ref is left unchanged — moving it to the new base would strip all work and
 # leave a trivially-clean branch that the next pass certifies without any content.
+# $RECUT_CONFLICTS is a real conflict's path list, a git error line, or one of the sentinel
+# words no-base | no-branch | no-worktree | no-merge-base | no-checkout on an early refusal.
 # Returns 0 if all commits applied cleanly, 1 if any conflict remains.
+#
+# Ported to Rust (wave 4.21, sp-07jcz): see `rebase-stale/src/branch.rs`.
+RECUT_CONFLICTS=""
+RECUT_APPLIED_COUNT=0
 recut_onto() {
-    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" scratch old_base rc=0 _cp_err new_tip
+    local br="$1" onto="$2" repo="${3:-$(repo_root)}" name="${4:-}" out rc
     RECUT_CONFLICTS=""; RECUT_APPLIED_COUNT=0
     [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-    scratch="$SPIRA_RUN/worktree/.rebase.$(basename "$repo")"
-    if [ ! -e "$scratch/.git" ]; then
-        mkdir -p "$(dirname "$scratch")"
-        spira_prune_worktrees "$repo" >/dev/null 2>&1
-        git -C "$repo" worktree add -q --detach "$scratch" "$onto" >/dev/null 2>&1 \
-            || { RECUT_CONFLICTS="no-worktree"; return 1; }
-    fi
-    git -C "$repo" rev-parse --verify -q "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-base"; return 1; }
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || { RECUT_CONFLICTS="no-branch"; return 1; }
-    git -C "$repo" merge-base --is-ancestor "$onto" "refs/heads/$br" 2>/dev/null && return 0
-    old_base="$(git -C "$repo" merge-base "$onto" "refs/heads/$br" 2>/dev/null)" || { RECUT_CONFLICTS="no-merge-base"; return 1; }
-    git -C "$scratch" checkout -q --detach "$onto" >/dev/null 2>&1 || { RECUT_CONFLICTS="no-checkout"; return 1; }
-    _cp_err="$(mktemp)"
-    local commit count=0
-    while IFS= read -r commit; do
-        [ -n "$commit" ] || continue
-        if ! git -C "$scratch" \
-                -c "user.name=${SPIRA_GIT_NAME:-spira}" \
-                -c "user.email=${SPIRA_GIT_EMAIL:-spira@spira.invalid}" \
-                cherry-pick "$commit" 2>"$_cp_err"; then
-            RECUT_CONFLICTS="$(git -C "$scratch" diff --name-only --diff-filter=U 2>/dev/null | tr '\n' ' ')"
-            RECUT_CONFLICTS="${RECUT_CONFLICTS% }"
-            [ -n "$RECUT_CONFLICTS" ] || RECUT_CONFLICTS="$(head -1 "$_cp_err" 2>/dev/null)"
-            git -C "$scratch" cherry-pick --abort >/dev/null 2>&1
-            rc=1
-            break
-        fi
-        count=$(( count + 1 ))
-    done < <(git -C "$repo" rev-list --reverse "${old_base}..${br}" 2>/dev/null)
-    rm -f "$_cp_err"
-    RECUT_APPLIED_COUNT=$count
-    new_tip="$(git -C "$scratch" rev-parse HEAD 2>/dev/null)"
-    # Only move the branch when at least one commit landed on the new base.
-    # With zero commits the branch has no work on the new base, and updating it
-    # there strips all content — the next pass would see a trivially clean rebase
-    # and certify an empty branch.
-    [ "${RECUT_APPLIED_COUNT:-0}" -gt 0 ] && [ -n "$new_tip" ] && \
-        git -C "$repo" update-ref "refs/heads/$br" "$new_tip" >/dev/null 2>&1
-    git -C "$scratch" checkout -q --detach >/dev/null 2>&1
-    return $rc
+    out="$(rebase-stale recut-onto "$br" "$onto" "$repo" "$name")"; rc=$?
+    RECUT_APPLIED_COUNT="$(sed -n 1p <<<"$out")"
+    RECUT_CONFLICTS="$(sed -n 2p <<<"$out")"
+    return "$rc"
 }
 
 

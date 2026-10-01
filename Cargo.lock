@@ -785,6 +785,7 @@ name = "rebase-stale"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "sending",
  "serde",
  "serde_json",
  "spira-config",
