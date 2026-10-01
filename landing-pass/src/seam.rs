@@ -328,7 +328,7 @@ mod tests {
         git(&upstream, &["commit", "-q", "-m", "x"]);
         git(&dir, &["clone", "-q", upstream.to_str().unwrap(), o.to_str().unwrap()]);
 
-        let map = dir.join("repo-map");
+        let map = dir.join("repomap-fixture");
         std::fs::write(&map, format!("spira | {}\nother | {}\n", h.display(), o.display())).unwrap();
         let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
         std::env::set_var("SPIRA_REPO_MAP", &map);

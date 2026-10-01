@@ -860,7 +860,8 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         // 4.12"), through spira_config::repos against THIS process's real environment and
         // a real git checkout — not through the stubbed lib.sh above, which still answers
         // everything else context() asks (including repo_root's own fake "/repo", which is
-        // why `r.path` below is unaffected). A real repo-map + checkout stands in for them.
+        // why `r.path` below is unaffected). A real registry file plus a real checkout
+        // stand in for them.
         let repo = home.join("repo");
         fs::create_dir_all(&repo).unwrap();
         let git = |args: &[&str]| {
@@ -881,7 +882,7 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         git(&["add", "f"]);
         git(&["commit", "-q", "-m", "x"]);
         git(&["branch", "-q", "local/main"]);
-        let map = home.join("repo-map");
+        let map = home.join("repomap-fixture");
         fs::write(&map, format!("spira | {} | queue.local | local/main |  | \n", repo.display())).unwrap();
         let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
         std::env::set_var("SPIRA_REPO_MAP", &map);
