@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mail-health.sh — unread-age check over every registered mailbox.
-# Called from watchd.sh notify.
+# Called from watchd notify.
 #
 # For each mailbox in SPIRA_MAIL_READERS: if mail unread-age exceeds
 # SPIRA_MAIL_UNREAD_AGE, mails the operator once per distinct backlog.

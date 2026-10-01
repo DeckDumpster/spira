@@ -151,7 +151,7 @@ cmd_health() {
     return "$rc"
 }
 
-# SOURCEABLE, AND SILENT WHEN IT IS — same convention as watchd.sh. A test drives _wake_loop
+# SOURCEABLE, AND SILENT WHEN IT IS — same convention as watchd. A test drives _wake_loop
 # and _kick directly, against a stub wake command and a real Maildir, without inotifywait or
 # a spawned daemon in the loop; sourcing must not itself start watching mailboxes.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then

@@ -9,8 +9,8 @@ differs from its draft.
 Subjects: `incident.sh`, `census.sh` (and the `count.py`/`merge.py`/`covers.py` files it
 calls), `maechen-trigger.sh` + `chamber/maechen.md`, `auron.sh` + `auron-classify.py`,
 `strand.sh` + `strand-classify.py`, `watchtower.sh`, `czar-pass` → `czar-pass/src/main.rs` (on
-the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer.sh`, `groom-trigger.sh`,
-`hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `close-reason-flags.py`, `archivist.sh`.
+the reconciler-engine, sp-pu7v6), `czar-fence.sh`, `groomer`, `groom-trigger.sh`,
+`hold.sh`/`unhold.sh`, `cockpit.sh livelock` + `close-reason-flags.py`, `archivist`.
 
 ---
 

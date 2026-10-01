@@ -17,6 +17,7 @@ use std::process::Command;
 
 pub mod lex;
 pub mod rules;
+pub mod rust_test;
 
 /// One file in the walk.
 pub struct Entry {
@@ -331,6 +332,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::tier_budget::Areas::default()),
         Box::new(rules::inventory::Inventory),
         Box::new(rules::literal_lint::LiteralLint),
+        Box::new(rules::script_callers::ScriptCallers::default()),
         Box::new(rules::scratch_fence::ScratchFence),
         Box::new(rules::wiki_add_fence::WikiAddFence),
         Box::new(rules::tmux_scope_fence::TmuxScopeFence),

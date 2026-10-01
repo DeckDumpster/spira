@@ -51,7 +51,7 @@
 #
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: sentinel/src/* spira/lib.sh spira/groomer.sh spira-claim/* spira/chamber/* lifecycle/* spira-lc/*
+# covers: sentinel/src/* spira/lib.sh groomer/src/deadlocked.rs spira-claim/* spira/chamber/* lifecycle/* spira-lc/*
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -169,7 +169,7 @@ mkdir -p "$RUN/worktree" "$SH/chamber"
 
 # The program under test, run out of its own directory so it sources the real lib.sh but
 # finds stubbed sub-programs beside it.
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$HERE/groomer.sh" "$SH/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub pilgrimage.sh 'printf "%s" "${PILGRIMAGE_OUT:-}"'
 stub strand        'printf "%s" "${STRAND_OUT:-}"'
@@ -258,13 +258,13 @@ predicate() {   # predicate <fn> -> that lib predicate's output under the fixtur
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
         bash -c ". \"$SH/lib.sh\"; $1" 2>/dev/null
 }
-# groomer.sh deadlocked (the git half) into spira-claim deadlocked (the decision and the
+# groomer deadlocked (the git half) into spira-claim deadlocked (the decision and the
 # write), under the same configuration as sentinel(), so a deadlock lift is made through the
 # real tools against the real fixture repo — not a model of what either would do.
 deadlocked() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_FAYTHS="${ROSTER:-t tinc}" \
-        bash "$SH/groomer.sh" deadlocked "$@" 2>&1
+        groomer deadlocked "$@" 2>&1
 }
 # spira-claim unpoison, same configuration — the operator's own remedy against the real
 # store (replaces attempts.sh clear, superseded when unpoison shipped, before this bead).
@@ -607,7 +607,7 @@ want "the requeue cap fires for the tinc partition's own bead too" \
      "sp-tinc-req — completed and requeued 5 times" "$(cat "$MAIL_LOG")"
 
 # --------------------------------------------------------------------------------------
-# sp-wiyr2 — A LIFT BY `spira-claim deadlocked` (via `groomer.sh deadlocked`) SURVIVES THE
+# sp-wiyr2 — A LIFT BY `spira-claim deadlocked` (via `groomer deadlocked`) SURVIVES THE
 # NEXT SENTINEL PASS. deadlocked releases the poison hold on finished, mergeable work; it
 # does not touch the attempt count (the rungs are the record of how the bead got here).
 # Without the fix CHECK 4 reads that same unchanged count against an unheld bead on its

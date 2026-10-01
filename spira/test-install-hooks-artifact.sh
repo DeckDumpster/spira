@@ -51,7 +51,6 @@ ln -s "$HERE/../systemd/units.sh"   "$SYSTEMD_DIR/units.sh"
 ln -s "$HERE/conf.sh"         "$SPIRA_DIR/conf.sh"
 ln -s "$HERE/lib.sh"          "$SPIRA_DIR/lib.sh"
 ln -s "$HERE/suite-covers.sh" "$SPIRA_DIR/suite-covers.sh"
-ln -s "$HERE/watchd.sh"       "$SPIRA_DIR/watchd.sh"
 
 # ctrl: report every unit as suspended, so phase 4's ExecStart-is-executable check
 # (which the built Rust/Python binaries this fixture never builds would otherwise fail)
@@ -135,7 +134,7 @@ chmod +x "$COCKPIT_DIR/layout.sh"
 # for executability (systemd/install.sh refuses to write a unit whose target
 # is not +x). None of these run for real in this suite; they exist so phase 4
 # succeeds and execution reaches phase 5, the subject under test.
-for _s in archive.sh archivist.sh broker.sh \
+for _s in archive.sh broker.sh \
           gate-check.sh groom-trigger.sh maechen-trigger.sh \
           loom.sh mail pr-notify.sh skew.sh spira-mail-deliver.sh \
           watch-refresh.sh; do
@@ -144,7 +143,7 @@ for _s in archive.sh archivist.sh broker.sh \
 done
 # The Rust binaries units ExecStart from the release root: dirname(SPIRA_PROD)/bin.
 mkdir -p "$FIXTURE/bin"
-for _s in sentinel queue aeon watchtower auron; do
+for _s in sentinel queue aeon archivist auron watchtower; do
     printf '#!/usr/bin/env bash\ntrue\n' > "$FIXTURE/bin/$_s"
     chmod +x "$FIXTURE/bin/$_s"
 done

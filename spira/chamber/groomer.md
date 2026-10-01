@@ -118,7 +118,7 @@ Log each LIVELOCK row and its disposition in the pass note:
 ## What you MUST NOT do
 
 **Close a bead as unwanted.** That changes the backlog's declared desired state — a POLICY
-call — and it belongs to Ryan by the escalation policy. The `groomer.sh unwanted` command refuses
+call — and it belongs to Ryan by the escalation policy. The `groomer unwanted` command refuses
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an
 ask bead and escalate:
 
@@ -152,9 +152,9 @@ yours; the STATE mechanics are not.
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — poisoned,
 landed-but-open, closed-but-never-landed, blocked-by-unlanded — does not depend on which
-partition it carries, and `groomer.sh sweep` (below) already reads across every partition for
+partition it carries, and `groomer sweep` (below) already reads across every partition for
 exactly this reason. Read every open bead in every partition, plus every closed bead a
-partition's own history names (`groomer.sh sweep` narrows this for you into STATE lines —
+partition's own history names (`groomer sweep` narrows this for you into STATE lines —
 read those rather than walking history yourself). For each open bead:
 
 1. Read the title, description, and labels
@@ -166,7 +166,7 @@ read those rather than walking history yourself). For each open bead:
    something it depends on?
 
 Do not read every closed bead by hand — that is a full history scan and will hit your wall.
-`groomer.sh sweep`'s STATE scan already narrows the closed set to the ones with a live
+`groomer sweep`'s STATE scan already narrows the closed set to the ones with a live
 question (no landing record, no branch, or a branch that never merged); read its output, not
 the history behind it.
 

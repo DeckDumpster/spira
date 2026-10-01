@@ -1,0 +1,16 @@
+[package]
+name = "groomer"
+version = "1.0.0"
+edition = "2021"
+description = "groomer — graph hygiene operations for the Spira DAG: the sweep's mechanical LIVELOCK/STATE remedies, split-piece, supersede, close, correct-lane, depends-on-fix, unpoison (delegates to spira-claim), triage-poison, and the hard unwanted refusal. Replaces spira/groomer.sh and spira/groomer-litter-predicate.py; the detectors themselves (detect_livelocked and friends) stay in lib.sh (law: leave lib.sh alone) and are reached through the same bash seam sentinel uses."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "groomer"
+path = "src/main.rs"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

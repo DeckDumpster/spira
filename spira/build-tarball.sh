@@ -255,47 +255,48 @@ for pkg in meta['packages']:
         chmod +x "$stage/bin/${_bin_names[$_i]}"
     done
 
-    # sp-ooh1k: mail.sh is now the `mail` binary (a cargo bin target's name can't carry a
-    # dot), but several callers outside this tree still spell the old name: the Concierge
-    # persona text builds "$SPIRA_HOME/mail.sh send operator ...", brain's
-    # escalation-hook.sh pattern-matches "mail.sh ... --kind question|suit" verbatim, and an
-    # operator's own aerc config (outside version control) may still say
-    # "outgoing = <release>/spira/mail.sh". A same-directory symlink is the whole fix, same
-    # pattern sp-6onps uses for world.sh/slay.sh/aeons.sh/ctrl.sh below: bare-name PATH
-    # lookup for either spelling resolves to the identical binary, and it costs nothing to
-    # keep once every caller is repointed. Two locations, because the callers above name
-    # $SPIRA_HOME/mail.sh (spira/) specifically, not just whatever bin/ resolves on PATH.
-    if [ -f "$stage/bin/mail" ]; then
-        [ -e "$stage/bin/mail.sh" ] || ln -s mail "$stage/bin/mail.sh"
-        [ -e "$stage/spira/mail.sh" ] || ln -s ../bin/mail "$stage/spira/mail.sh"
-    fi
+    # COMPAT NAMES (sp-6onps-compat). spira/deps.toml's [[compat]] table is the one
+    # declared list — read the same way (python3/tomllib) conf.sh reads deps.toml's [[dep]]
+    # table, never a second hand-written name list to drift from this one or from
+    # release/src/build.rs's own reader of the identical table. A symlink in bin/ covers a
+    # bare-name PATH lookup; one in spira/ covers a caller still spelling
+    # "$SPIRA_HOME/<alias>" (mail.sh's own callers — the Concierge persona text, brain's
+    # escalation-hook.sh, an operator's own aerc config — are exactly why the spira/ leg
+    # exists; sp-ooh1k's entry in the table is what makes mail.sh one of these now).
+    # Silently skipped when the target binary was not built into this release.
+    mkdir -p "$stage/spira"
+    while IFS=$'\t' read -r _compat_name _compat_alias; do
+        [ -n "$_compat_name" ] || continue
+        [ -f "$stage/bin/$_compat_name" ] || continue
+        [ -e "$stage/bin/$_compat_alias" ] || ln -s "$_compat_name" "$stage/bin/$_compat_alias"
+        [ -e "$stage/spira/$_compat_alias" ] || ln -s "../bin/$_compat_name" "$stage/spira/$_compat_alias"
+    done < <(python3 - "$stage/spira/deps.toml" 2>/dev/null <<'_COMPAT_PY'
+import sys, tomllib
+try:
+    with open(sys.argv[1], "rb") as f:
+        data = tomllib.load(f)
+except Exception:
+    sys.exit(0)
+for c in data.get("compat", []):
+    print(f"{c['name']}\t{c['alias']}")
+_COMPAT_PY
+)
 
-    # sp-6onps: world.sh, ctrl.sh, aeons.sh and slay.sh are the `world`/`ctrl`/`aeons`/
-    # `slay` binaries now (a cargo bin target's name can't carry a dot), but the operator
-    # surface — chamber briefs, skills, every test suite that spells one of these by its
-    # old name — still calls them by the bare `.sh` name. A same-directory symlink is the
-    # whole fix: bare-name PATH lookup for either spelling resolves to the identical
-    # binary, and it costs nothing to keep once every caller is eventually repointed.
-    local _alias
-    for _alias in world ctrl aeons slay; do
-        if [ -f "$stage/bin/$_alias" ] && [ ! -e "$stage/bin/$_alias.sh" ]; then
-            ln -s "$_alias" "$stage/bin/$_alias.sh"
-        fi
-    done
-
-    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (a compat
-    # symlink is not a binary this loop names; sha256sum would dereference it to the exact
-    # same hash as the real one anyway).
+    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (and per
+    # compat symlink under bin/, which sha256sum dereferences, so its hash is simply the
+    # real binary's; spira/ symlinks are not separately hashed — spira/ as a whole is the
+    # git archive's own content, verified by the commit sha, not by MANIFEST entries).
     printf 'commit %s\ntimestamp %s\nrepo %s\n' "$sha" "$ts" "$repo_name" > "$stage/MANIFEST"
     [ -n "$release_repo" ] && printf 'release-repo %s\n' "$release_repo" >> "$stage/MANIFEST"
     for _i in "${!_bin_names[@]}"; do
         local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
         printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"
     done
-    for _alias in world ctrl aeons slay; do
-        [ -L "$stage/bin/$_alias.sh" ] || continue
-        local _h; _h="$(sha256sum "$stage/bin/$_alias.sh" | awk '{print $1}')"
-        printf 'bin/%s.sh %s\n' "$_alias" "$_h" >> "$stage/MANIFEST"
+    local _alias_path
+    for _alias_path in "$stage/bin/"*; do
+        [ -L "$_alias_path" ] || continue
+        local _h; _h="$(sha256sum "$_alias_path" | awk '{print $1}')"
+        printf 'bin/%s %s\n' "$(basename "$_alias_path")" "$_h" >> "$stage/MANIFEST"
     done
 
     # Pack. -C to the parent so the top-level entry is the versioned directory.

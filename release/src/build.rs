@@ -141,6 +141,12 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
         return Err(format!("the workspace declares {} but the build at {} did not produce {}", missing.join(", "), out.display(), if missing.len() == 1 { "it" } else { "them" }));
     }
 
+    // COMPAT NAMES (sp-6onps-compat, a P0): spira/deps.toml's [[compat]] table, read the
+    // same way spira/build-tarball.sh reads it, so a release built by either path carries
+    // every compat name in bin/ and spira/ — this was the one path (`queue land-local` →
+    // `release build --bin-dir`) that never did.
+    crate::compat::link(&stage, &bin_dir)?;
+
     let clashes = clashes(&stage, &o.system_dirs);
     if !clashes.is_empty() {
         return Err(format!("{sha} would shadow system commands: {}", clashes.join("; ")));

@@ -5,7 +5,7 @@
 # rows 14-16, 18-19, 24; clusters D1/D2): test-mail-decision-ask.sh,
 # test-mail-decision-ask-no-bead.sh, test-mail-sendmail.sh's non-routing cases,
 # test-sentinel.sh's land_escalate cases, and test-archivist-cited-bead.sh's surviving
-# assert (the blocking-edge guard logs its refusal — archivist.sh itself was never run by
+# assert (the blocking-edge guard logs its refusal — archivist itself was never run by
 # that suite, only mail's own guard, which every question-with-bead send already exercises
 # here). Reply ROUTING (no bead cited, no db needed) moved to test-mail.sh (row 17) — it does
 # not belong on a testdb it never reads.

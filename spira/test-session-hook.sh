@@ -13,7 +13,7 @@
 #      line count against a fixture manifest, because the failure being fixed was a hook that
 #      printed 38 lines of watcher backlog plus a 409-line summary into a fresh context.
 #   2. NO EVENT CONTENT LEAKS. `peek` is never called; a watcher's unread count is reported but
-#      none of its log lines are, because the session re-attaches with `watchd.sh tail <name>`,
+#      none of its log lines are, because the session re-attaches with `watchd tail <name>`,
 #      which replays the same backlog from its cursor.
 #   3. A DEGRADED ROW CARRIES ITS OWN REASON, inline on the same line — a watcher that is
 #      running and blind is silent in exactly the way a healthy quiet one is, so the suite
@@ -39,7 +39,7 @@
 #
 # defect: sp-4vp
 # tier: T1
-# covers: release/src/session_hook.rs spira/hooks/session.sh spira/watchd.sh mail/src/* systemd/install.sh systemd/cockpit-ensure.service
+# covers: release/src/session_hook.rs spira/hooks/session.sh watchd/* inbox-triage/* mail/src/* systemd/install.sh systemd/cockpit-ensure.service
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -52,20 +52,21 @@ mkdir -p "$TMP/home" "$TMP/bin"
 
 # conf.sh's spira.toml auto-convert shells out to spira-config (sp-zs04v.2), found on PATH.
 command -v spira-config >/dev/null 2>&1 || bail "spira-config is not on PATH"
+# sp-48f6g: watchd.sh rewritten to the compiled binary `watchd`; the session hook drives it
+# as a subprocess (law-prefer-the-real-dependency, not a stub — see PART 6 below).
+command -v watchd >/dev/null 2>&1 || bail "watchd is not on PATH"
+# sp-ooh1k: mail.sh rewritten to the compiled binary `mail`, same treatment.
+command -v mail >/dev/null 2>&1 || bail "mail is not on PATH"
 
 # A harness tree that is NOT this checkout, so nothing here can read the operator's own
 # configuration, their watcher manifest or their client settings and report a pass it did not
 # earn.
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
-cp "$HERE/conf.sh" "$HERE/watchd.sh" "$HERE/install-session-hook.sh" "$CLONE/spira/"
-cp "$HERE/inbox-triage.sh" "$CLONE/spira/"
-# `mail` is a compiled binary now (sp-ooh1k), not a bash script beside these — and "$HERE/mail"
-# is the pre-existing kinds/ directory (spira/mail/kinds), not the tool. Symlink the real
-# compiled binary in by name instead, so this clone stays self-contained rather than leaning
-# on whatever happens to be further down the outer PATH.
-ln -sf "$(command -v mail)" "$CLONE/spira/mail"
+cp "$HERE/conf.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
+# `watchd`, `inbox-triage` (sp-48f6g) and `mail` (sp-ooh1k) are compiled binaries, not
+# scripts under spira/ to copy — the hook finds them on PATH, same as spira-config above.
 
 # `status` asks systemd about every daemon row. A stub answers instead, so this suite says
 # nothing about whether the box it runs on has a user manager.
@@ -117,7 +118,7 @@ PY
 hook() {
     local ev="$1" src="$2"; shift 2
     printf '{"hook_event_name":"%s","source":"%s"}' "$ev" "$src" \
-      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" "$@" \
+      | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 "$@" \
         bash "$CLONE/spira/hooks/session.sh"
 }
 
@@ -128,7 +129,7 @@ echo "one line per watcher, and nothing else — the positive control"
 out="$(hook SessionStart startup)"; rc=$?
 is  "the hook exits clean"                       "0" "$rc"
 has "it names itself and how to re-attach"       "$out" "## Spira watchers — re-attach with:"
-has "the re-attach command names watchd tail"    "$out" "watchd.sh tail <name>"
+has "the re-attach command names watchd tail"    "$out" "watchd tail <name>"
 has "the answers row is there, with its count"   "$out" "answers"
 has "and its unread count"                       "$out" "300 unread"
 has "and so is the log row"                      "$out" "cron"
@@ -184,7 +185,7 @@ is "and prints nothing at all" "" "$out3"
 echo
 echo "it never breaks a session start"
 run_raw() {                        # run_raw <stdin> — the hook with an arbitrary payload
-    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" \
+    printf '%s' "$1" | env -i HOME="$TMP/home" PATH="$TMP/bin:$CLONE/spira:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 \
         bash "$CLONE/spira/hooks/session.sh"
 }
 out4="$(run_raw 'not json at all')"; is "malformed stdin still exits clean" "0" "$?"
@@ -211,7 +212,7 @@ is "and says nothing at all"          "" "$out8"
 
 echo
 echo "a DEGRADED row carries its own reason, inline"
-# DRIVEN THROUGH THE REAL `watchd.sh`, never a planted table (law-prefer-the-real-dependency).
+# DRIVEN THROUGH THE REAL `watchd`, never a planted table (law-prefer-the-real-dependency).
 # A health probe that exits non-zero is all the real thing needs, so there is nothing here
 # worth faking.
 DRUN="$TMP/elsewhere/drun"; mkdir -p "$DRUN/watchd"
@@ -360,7 +361,7 @@ hasnt "a non-concierge session gets no arm instruction" "$nout" "MANDATORY FIRST
 
 cout="$(hook SessionStart startup SPIRA_CONCIERGE=1)"
 has "the concierge session gets the arm instruction"    "$cout" "MANDATORY FIRST ACTION"
-has "naming inbox-triage.sh as the Monitor to arm"       "$cout" "inbox-triage.sh"
+has "naming inbox-triage as the Monitor to arm"          "$cout" "inbox-triage"
 has "naming the durable inbox path"                      "$cout" "$RUN/watchd/concierge-inbox.log"
 has "it still gets the ordinary watcher table too"       "$cout" "## Spira watchers"
 
