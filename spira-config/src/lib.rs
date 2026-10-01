@@ -26,6 +26,7 @@ pub mod eval;
 pub mod legacy_map;
 pub mod locate;
 pub mod registry;
+pub mod repos;
 pub mod resolve;
 
 pub use locate::LocateOutcome;

@@ -23,8 +23,8 @@ case "$__aeon_fn" in
     _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
     _aeon_thrash_meta|_aeon_rapid_recur|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
-    lc_bead_verified|park_unmapped|repo_root|repo_land|repo_land_queued|\
-    spira_home_repo|qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
+    lc_bead_verified|park_unmapped|\
+    qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
     capacity_pause_set|session_outcome|session_yield_headless|trace_last|\
     aeon_fuse_minutes|open_ask_blocker|verdict_committed|close_verdict|land_state|\
@@ -108,7 +108,7 @@ pub const SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_HOME", "SPIRA_RUN", "SPIRA_DB", "SPIRA_BD", "SPIRA_MAIL", "SPIRA_WIKI",
     "SPIRA_CHAMBER_OVERLAY", "SPIRA_TESTDB_LIB", "SPIRA_TESTDB_PORT", "SPIRA_WORLD_STOP_LABEL",
     "SPIRA_WORLD_STOP_SKIP", "SPIRA_ASK_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_SCOPE_LABEL",
-    "SPIRA_REPO", "SPIRA_REPO_MAP", "LANDSTATE", "SPIRA_THRASH_MINUTES",
+    "SPIRA_REPO", "SPIRA_REPO_MAP", "SPIRA_REPO_DERIVED", "SPIRA_HOME_REPO", "LANDSTATE", "SPIRA_THRASH_MINUTES",
     "SPIRA_THRASH_STREAK_CAP", "SPIRA_BRIEF_KEEP_RECURRENCES", "SPIRA_BRIEF_NOTES_MAX_CHARS",
     "SPIRA_SPIKE_DIR", "SPIRA_SPIKE_PATHS", "SPIRA_MAECHEN_MAX_BEADS",
     "SPIRA_MAECHEN_REMEDY_LABEL", "SPIRA_STATUTE_CORE", "SPIRA_MEMORIES_CACHE",

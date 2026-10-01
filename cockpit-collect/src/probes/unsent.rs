@@ -54,17 +54,17 @@ fn branch_backlog_section(out: &mut Kv) {
     let mut closed_stranded = 0usize;
     let mut closed_stranded_oldest: Option<i64> = None;
 
-    let repos = io::lib_call(&home, "spira_repos", &[]).unwrap_or_default();
+    let reg = io::repo_registry();
     let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
     let batch_wait: i64 = std::env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
 
-    for rname in repos.split_whitespace() {
-        let Some(rp) = io::lib_call(&home, "repo_root", &[rname]) else { continue };
+    for rname in reg.all() {
+        let Some(rp) = reg.root(&rname) else { continue };
         let rp_path = Path::new(&rp);
         if !rp_path.join(".git").exists() {
             continue;
         }
-        let base = io::lib_call(&home, "spira_landref", &[rname]);
+        let base = io::lib_call(&home, "spira_landref", &[&rname]);
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
@@ -309,7 +309,7 @@ fn value_to_plain(v: &Value) -> String {
 fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let home_repo = io::lib_call(&io::home_dir(), "spira_home_repo", &[]).unwrap_or_default();
+    let home_repo = io::repo_registry().home_repo().to_string();
     let raw = io::bdq(&["list", "--status", "closed", "--limit", "0", "--label", &label, "--json"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
@@ -364,8 +364,9 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let mut subjects: Vec<String> = Vec::new();
     let mut branches: Vec<String> = Vec::new();
     let home = io::home_dir();
+    let reg = io::repo_registry();
     for r in repos {
-        let Some(rp) = io::lib_call(&home, "repo_root", &[r]) else { continue };
+        let Some(rp) = reg.root(r) else { continue };
         let rp_path = Path::new(&rp);
         if !rp_path.join(".git").exists() {
             continue;

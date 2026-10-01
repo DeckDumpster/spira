@@ -120,9 +120,6 @@ impl Seam for FakeSeam {
             "fayth_free" => Out::ok("1"),
             "_aeon_capacity_paused" => Out::fail(1, ""),
             "aeon_name_take" => Out::ok("ifrit"),
-            "spira_home_repo" => Out::ok("fixture"),
-            "repo_root" => Out::ok(self.repo.display().to_string()),
-            "repo_land" => Out::ok("push"),
             "_aeon_base" => Out::ok("main\nmain\n\n"),
             "qualify_base_ref" => Out::ok("main"),
             "_aeon_rebase" => Out::ok(""),
@@ -151,7 +148,7 @@ impl Seam for FakeSeam {
                     Out::fail(1, "")
                 }
             }
-            "land_state" | "capacity_reset_at" | "lc_bead_verified" | "open_ask_blocker" | "session_yield_headless" | "repo_land_queued" => Out::fail(1, ""),
+            "land_state" | "capacity_reset_at" | "lc_bead_verified" | "open_ask_blocker" | "session_yield_headless" => Out::fail(1, ""),
             "session_outcome" => Out::ok("unlanded"),
             "requeues_of" => Out::ok("1"),
             _ => Out::ok(""),
@@ -266,6 +263,13 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
         ("SPIRA_CLAIM_RETRIES", "1".to_string()),
         ("SPIRA_CLAIM_RETRY_DELAY_S", "0".to_string()),
         ("FAYTH_LABELS", labels.to_string()),
+        // spira_config::repos (sp-37rmg): no repo-map fixture here, so the home repo
+        // resolves through the SPIRA_REPO override exactly as the old FakeSeam's
+        // "repo_root"/"repo_land"/"spira_home_repo" answers always did — f.repo, "fixture",
+        // "push". A test wanting an UNMAPPED repo (there is exactly one) cancels the
+        // override via `extra` instead (SPIRA_REPO_DERIVED == SPIRA_REPO).
+        ("SPIRA_HOME_REPO", "fixture".to_string()),
+        ("SPIRA_REPO", f.repo.display().to_string()),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v))
@@ -575,9 +579,12 @@ fn unmapped_repo_is_parked_and_the_world_restarted() {
     let f = fx("unmapped");
     seed(&f, "sp-u");
     f.w.lock().unwrap().labels.get_mut("sp-u").unwrap().insert("world-stop".into()); // literal-ok: test fixture
-    let mut a = BTreeMap::new();
-    a.insert("repo_root", Out::fail(1, ""));
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, no_session());
+    // Cancel go()'s default SPIRA_REPO override (spira_config::repos::Registry treats it as
+    // "deliberate" only when it differs from SPIRA_REPO_DERIVED) so "fixture" falls through
+    // to the map lookup — absent here — and repo_root refuses, same as the old FakeSeam's
+    // `"repo_root" => Out::fail(1, "")` answer.
+    let repo_derived = f.repo.display().to_string();
+    let o = go(&f, "spira,plan", &[("SPIRA_REPO_DERIVED", repo_derived.as_str())], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
     assert!(ledger_lines(&o)[2].contains("done builder sp-u rc=1 status=unmapped-repo"));
     let w = o.w.lock().unwrap();

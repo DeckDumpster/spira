@@ -282,7 +282,7 @@ impl Run<'_> {
         } else if let Some((gate_st, why)) = self.gate_status() {
             gate_why = why.clone();
             let superseded = bd::show(self.d.bd, &id).is_some_and(|r| r.superseded());
-            let queued = self.sv("repo_land_queued", &s(&[&self.s.repo_name])).success();
+            let queued = self.conf.repos.land_queued(&self.s.repo_name);
             let hasown = queued && self.has_own_commit();
             let br = self.s.branch.clone();
             let rn = self.s.repo_name.clone();
