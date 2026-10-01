@@ -51,6 +51,12 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 NOW="$(date +%s)"
 GATE_WINDOW=3600         # deliberately not the shipped 21600
 
+# land_mark (lib.sh) is now a one-line shim onto `landing-pass mark` (sp-cnnt6, "wave
+# 4.16"), which reads $SPIRA_RUN alone rather than a lib.sh seam — exported here so the
+# extraction below still reaches the real writer. `wt()`/`ledger()` set their own SPIRA_RUN
+# inside `env -i`, which overrides this, so the two never disagree.
+export SPIRA_RUN="$TMP/run"
+
 # FAST MOCK FOR suites.sh status. suites.sh status calls host-check.sh twice (~3.5s each),
 # and every wt() / wt_file_multi() call invokes watchtower which calls suites.sh status.
 # At ~40 total invocations that is ~280s before any actual test logic runs. The mock returns

@@ -1,6 +1,6 @@
 //! The pass's own files under $SPIRA_RUN (DESIGN.md §2.4). Landstate is READ here; every
-//! landstate WRITE goes through lib.sh `land_mark` (its TSD dual-write). The rest are this
-//! pass's own records.
+//! landstate WRITE goes through this crate's own `landstate::mark` (its TSD dual-write),
+//! lib.sh `land_mark` before sp-cnnt6 ("wave 4.16"). The rest are this pass's own records.
 
 use crate::model::{LandState, RunRecord, StatusFile, Submitted};
 use crate::util::{atomic_write, branch_key};
