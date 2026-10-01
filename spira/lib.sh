@@ -4725,79 +4725,33 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # not a file:// URL and is not empty. https://, git@, ssh:// are all real remotes.
 # A clone with no remotes at all passes — that is the intended shape for test repos.
 # --------------------------------------------------------------------------------------
-_spira_remote_is_real() {   # _spira_remote_is_real <url> -> 0 if network-reachable
-    local url="${1:-}"
-    [ -n "$url" ] || return 1          # no URL is not a real remote
-    case "$url" in
-        /*)        return 1 ;;         # absolute local path
-        file:///*) return 1 ;;         # file:// URL pointing locally
-        *)         return 0 ;;         # https://, git@, ssh://, etc.
-    esac
+# THE REPO REGISTRY'S CLI DOOR (spira_config::repos, sp-37rmg, "wave 4.11"). SPIRA_HOME,
+# SPIRA_REPO, SPIRA_REPO_DERIVED, SPIRA_HOME_REPO and SPIRA_REPO_MAP are deliberately NOT
+# exported by conf.sh (each is a fact about this one copy of the harness; conf.sh's own
+# comment on SPIRA_REPO_DERIVED says why) — a bare `spira-config repo ...` run from a
+# function below would see none of them, so every shim threads them through explicitly
+# instead of trusting export.
+_spira_config_repo() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
+    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
+        spira-config repo "$@"
 }
 
+# Ported to spira_config::containment (sp-eekjm) and wired into spira-config's own
+# `resolve()` there; this is now the one-line shim onto the CLI door for every bash caller
+# (wave4-decomposition.md row U, sp-37rmg, "wave 4.11"). `_spira_remote_is_real` had no
+# caller outside this function and is retired rather than ported. SPIRA_INSTANCE/
+# SPIRA_WORKSPACES ARE already exported by conf.sh, but SPIRA_REPO_MAP is not, so this still
+# goes through the same threading helper as every other repo-registry shim.
 spira_containment_check() {
-    # prod (or unset) is always allowed; the map is unconstrained.
+    # prod (or unset) is always allowed; the map is unconstrained — kept as a bash-only
+    # fast path (never shells to spira-config) so every lib.sh source, in production and in
+    # every test fixture that never sets SPIRA_INSTANCE, costs exactly what it always did:
+    # nothing. Only a genuinely confined instance pays for the real check.
     case "${SPIRA_INSTANCE:-prod}" in prod) return 0 ;; esac
-
-    local ws path url row name bad=0
-    ws="${SPIRA_WORKSPACES:-}"
-
-    [ -f "$SPIRA_REPO_MAP" ] || return 0   # no map to check
-
-    while IFS='|' read -r name path rest || [ -n "$name" ]; do
-        # strip whitespace and skip comments/blanks
-        name="${name#"${name%%[![:space:]]*}"}"; name="${name%"${name##*[![:space:]]}"}"
-        path="${path#"${path%%[![:space:]]*}"}"; path="${path%"${path##*[![:space:]]}"}"
-        case "$name" in ''|'#'*) continue ;; esac
-        [ -n "$path" ] || continue
-
-        # REFUSAL 1: path must be under SPIRA_WORKSPACES.
-        if [ -n "$ws" ]; then
-            # resolve the workspace root to its canonical prefix
-            local ws_real; ws_real="$(cd "$ws" 2>/dev/null && pwd -P)"
-            if [ -n "$ws_real" ]; then
-                # canonical path of the repo entry (use the directory if it exists, else
-                # compare the literal string so an unmade path is still caught by name)
-                local path_real; path_real="$(cd "$path" 2>/dev/null && pwd -P)"
-                [ -n "$path_real" ] || path_real="$path"
-                # Strip the trailing slash before interpolating into the glob pattern.
-                # When ws_real is "/" the unstripped form produces "//*", which a shell
-                # case statement never matches — a single leading slash cannot satisfy two.
-                # Without the slash the prefix becomes "" and "/*" matches every absolute path.
-                local ws_pfx="${ws_real%/}"
-                case "$path_real" in
-                    "$ws_pfx"/*|"$ws_pfx") ;;   # inside workspaces root — ok
-                    *) printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
-                           "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
-                       bad=1 ;;
-                esac
-            else
-                # SPIRA_WORKSPACES does not exist as a directory; compare literal prefix.
-                # Same trailing-slash fix applies to the literal path.
-                local ws_lit="${ws%/}"
-                case "$path" in
-                    "$ws_lit"/*|"$ws_lit") ;;
-                    *) printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
-                           "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
-                       bad=1 ;;
-                esac
-            fi
-        fi
-
-        # REFUSAL 2: no real (network) remote on any registered checkout.
-        # Only check if the path is a git repository at all.
-        if git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
-            while IFS= read -r url; do
-                _spira_remote_is_real "$url" || continue
-                printf 'spira: containment: instance %s may not have a real remote — %s (%s) has %s\n' \
-                    "${SPIRA_INSTANCE}" "$name" "$path" "$url" >&2
-                bad=1; break
-            done < <(git -C "$path" remote -v 2>/dev/null | awk '/\(fetch\)/ { print $2 }')
-        fi
-    done < "$SPIRA_REPO_MAP"
-
-    [ "$bad" -eq 0 ] || { printf 'spira: containment check failed for instance %s — halting\n' \
-        "${SPIRA_INSTANCE}" >&2; exit 1; }
+    _spira_config_repo containment-check && return 0
+    exit 1     # the bash original halted the whole sourcing process on a violation, not just this call
 }
 
 # Run at source time. The cost is one read of the map file and, for non-prod instances,
@@ -4807,8 +4761,9 @@ spira_containment_check
 # The name is DERIVED from the checkout the harness is installed in (conf.sh: basename of
 # SPIRA_REPO) and overridable in spira.conf. It used to be the literal `brain`, which is one
 # operator's repository written into the mechanism.
+# Ported to spira_config::repos::home_repo (sp-37rmg, "wave 4.11") — a one-line shim.
 spira_home_repo() {      # the repo name a bead means when it names none
-    printf '%s' "${SPIRA_HOME_REPO:-$(basename "${SPIRA_REPO:-$SPIRA_HOME}")}"
+    _spira_config_repo home-repo
 }
 
 # COLUMNS ARE NAMED, NEVER NUMBERED. This function took an index until `base` was added
@@ -4830,59 +4785,15 @@ spira_home_repo() {      # the repo name a bead means when it names none
 # hypothetical, since the harness is installed in a checkout and read by systemd
 # timers, so lib.sh and repo-map can be read out of step for one pass.
 #
-# NOTE: no apostrophes inside the awk program below. It is single-quoted, so one in a comment
-# closes the string and the shell reports a syntax error pointing at the following line.
+# Ported to spira_config::repos (sp-37rmg, "wave 4.11") — see that module's own doc for the
+# row-shape logic this used to spell out in awk; `repo_field`/`repo_root`/`repo_names` below
+# are now one-line shims onto it.
 repo_field() {           # repo_field <name> <path|land|base|format|gate|lanes> -> the field
-    local name="$1" col="$2"
-    [ -f "$SPIRA_REPO_MAP" ] || return 1
-    awk -v want="$name" -v col="$col" '
-        function _lanes_col_idx(    t) {
-            if (NF < 7) return 0
-            t = $NF; gsub(/^[ \t]+|[ \t]+$/, "", t)
-            # An empty trailing field means an explicit empty lanes column.
-            if (t == "") return NF
-            # A lanes value is a simple identifier: letters, digits, hyphens, commas only.
-            # Gate fragments always contain spaces, slashes, dollars, or other shell chars,
-            # so this pattern distinguishes them in practice.
-            if (t ~ /^[A-Za-z][A-Za-z0-9,_-]*$/) return NF
-            return 0
-        }
-        BEGIN { FS = "|" }
-        /^[ \t]*#/ { next }
-        {
-            n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n)
-            if (n == "" || NF < 2 || n != want) next
-            li = _lanes_col_idx()
-            # The gate is everything from the last fixed column on, rejoined with "|", up
-            # to but not including the lanes column when one is present. The formatter is
-            # always a single field; the gate is the last command column and may contain
-            # pipes (and therefore become multiple awk fields when split on "|").
-            #
-            # WHICH position gate starts at comes from NF (or li when lanes is present),
-            # never from a constant. A six-field row is the current shape; five-field rows
-            # predate `base`; anything narrower predates both.
-            if (col == "lanes") { v = (li > 0 ? $NF : "") }
-            else if (col == "gate") {
-                s = (NF >= 6 ? 6 : (NF == 5 ? 5 : 4))
-                e = (li > 0 ? NF - 1 : NF)
-                v = ""
-                for (i = s; i <= e; i++) v = v (i > s ? "|" : "") $i
-            }
-            else if (col == "path")   v = $2
-            else if (col == "land")   v = $3
-            else if (col == "base")   v = (NF >= 6 ? $4 : "")
-            else if (col == "format") v = (NF >= 6 ? $5 : (NF == 5 ? $4 : ""))
-            else                      v = ""
-            gsub(/^[ \t]+|[ \t]+$/, "", v)
-            print v; exit
-        }' "$SPIRA_REPO_MAP" 2>/dev/null
+    _spira_config_repo field "$1" "$2"
 }
 
 repo_names() {           # every repo name in the map, one per line
-    [ -f "$SPIRA_REPO_MAP" ] || return 0
-    awk 'BEGIN { FS = "|" } /^[ \t]*#/ { next }
-         { n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n != "" && NF > 1) print n }' \
-        "$SPIRA_REPO_MAP" 2>/dev/null
+    _spira_config_repo names
 }
 
 # repo_root <name> -> the checkout, or non-zero if the map does not carry that name.
@@ -4891,19 +4802,7 @@ repo_names() {           # every repo name in the map, one per line
 # drives a fixture through: a test sets SPIRA_REPO and its beads carry no `repo:` label at
 # all. Widening it into a map rather than replacing it is what keeps those suites honest.
 repo_root() {
-    local name="${1:-}" p
-    [ -n "$name" ] || name="$(spira_home_repo)"
-    # ONLY WHEN IT IS AN OVERRIDE. conf.sh derives SPIRA_REPO from where the harness sits, so
-    # it is now always set — and taking it unconditionally made every home-repository lookup
-    # bypass the map. It counts as an override exactly when it differs from that derived
-    # value, which is what "somebody set this on purpose" means here.
-    if [ "$name" = "$(spira_home_repo)" ] && [ -n "${SPIRA_REPO:-}" ] \
-       && [ "$SPIRA_REPO" != "${SPIRA_REPO_DERIVED:-}" ]; then
-        printf '%s' "$SPIRA_REPO"; return 0
-    fi
-    p="$(repo_field "$name" path)"
-    [ -n "$p" ] || return 1
-    printf '%s' "$p"
+    _spira_config_repo root "${1:-}"
 }
 
 # spira_same_repo <a> <b> -> 0 if those two paths are the same repository.
@@ -4912,17 +4811,10 @@ repo_root() {
 # repository under two paths, and this harness runs from both — every aeon works in a
 # worktree and the landing gate extracts one. A string comparison therefore calls the copy in
 # force "some other repository", so a fence keyed on it fires on every branch, and a check
-# keyed on it reports a second copy that does not exist.
-#
-# `--git-common-dir` and not `--git-dir`: a worktree has a private git dir and a shared common
-# one, and only the shared one identifies the repository. Resolved by `cd` + `pwd -P` rather
-# than `--path-format=absolute`, which is newer than the git a colleague may be running, and
-# because the answer is relative when the command is run from inside the repository.
+# keyed on it reports a second copy that does not exist. Ported (sp-37rmg); `_spira_gitstore`
+# below stays bash — it has a caller outside this family (duc's own worktree-dir lookup).
 spira_same_repo() {      # spira_same_repo <path-a> <path-b>
-    local a b
-    a="$(_spira_gitstore "${1:-}")" || return 1
-    b="$(_spira_gitstore "${2:-}")" || return 1
-    [ -n "$a" ] && [ -n "$b" ] && [ "$a" = "$b" ]
+    spira-config repo same "${1:-}" "${2:-}"
 }
 
 _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, absolute
@@ -4944,9 +4836,7 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
 # batch-PR pipeline must still spell out `queue` alone. Certification and the periodic
 # step/verdict dispatch are not specific to that pipeline — see repo_land_queued.
 repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.local
-    local m; m="$(repo_field "${1:-}" land)"
-    [ "$m" = "queue.forge" ] && m=queue
-    printf '%s' "${m:-push}"
+    _spira_config_repo land "${1:-}"
 }
 
 # repo_land_queued <name> -> 0 when the repo is EITHER merge-queue mode (queue or
@@ -4955,10 +4845,7 @@ repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.
 # SUBMITTED branch the same way regardless of how its round eventually lands — only the
 # round's own terminal step (a batch PR vs. land-local) differs between the two.
 repo_land_queued() {
-    case "$(repo_land "${1:-}")" in
-        queue|queue.local) return 0 ;;
-        *) return 1 ;;
-    esac
+    _spira_config_repo land-queued "${1:-}"
 }
 
 # spira_repo_lanes <name> -> the granted lane set (space-separated partition labels).
@@ -5052,7 +4939,7 @@ spira_open_trigger_count() {
 }
 
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty
-    repo_field "${1:-}" gate
+    _spira_config_repo gate "${1:-}"
 }
 
 # repo_format <name> -> the repo's own formatter, or nothing. ABSENCE MEANS DO NOTHING, and
@@ -5061,13 +4948,13 @@ repo_gate() {            # repo_gate <name> -> the repo's own gate command, poss
 # whose base is already unformatted — another, measured once — it rewrites the whole
 # tree out from under the work.
 repo_format() {
-    repo_field "${1:-}" format
+    _spira_config_repo format "${1:-}"
 }
 
 # repo_base <name> -> the repo's declared base ref, or nothing if the row leaves it to
 # spira_landref to resolve. Callers want spira_landref, not this: it is the raw column.
 repo_base() {
-    repo_field "${1:-}" base
+    _spira_config_repo base "${1:-}"
 }
 
 # repo_name_at <path> -> the map name for a checkout path, or non-zero.
@@ -5078,18 +4965,7 @@ repo_base() {
 # which is the same property the per-repository scratch worktree is named for. A caller
 # that already holds the name should pass it rather than make this guess.
 repo_name_at() {
-    local p="${1:-}" home n
-    [ -n "$p" ] || return 1
-    home="$(spira_home_repo)"
-    # SPIRA_REPO overrides the map for the home repo, so it must be consulted first or a
-    # fixture — which has no map entry at all — resolves to nothing.
-    if [ -n "${SPIRA_REPO:-}" ] && [ "$SPIRA_REPO" != "${SPIRA_REPO_DERIVED:-}" ] \
-       && [ "$p" = "$SPIRA_REPO" ]; then printf '%s' "$home"; return 0; fi
-    while IFS= read -r n; do
-        [ -n "$n" ] || continue
-        if [ "$(repo_field "$n" path)" = "$p" ]; then printf '%s' "$n"; return 0; fi
-    done <<< "$(repo_names)"
-    return 1
+    _spira_config_repo name-at "${1:-}"
 }
 
 # spira_repos -> every repository this harness manages, one name per line.
@@ -5099,9 +4975,7 @@ repo_name_at() {
 # repositories would land nothing while reporting a clean pass — the exact false-clean this
 # whole file is written against.
 spira_repos() {
-    local home; home="$(spira_home_repo)"
-    printf '%s\n' "$home"
-    repo_names | grep -vx -- "$home" || true
+    _spira_config_repo all
 }
 
 bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if it names none
