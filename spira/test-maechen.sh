@@ -38,8 +38,15 @@ NONE="$T/no-such.conf"
 FAYTH="$HERE/chamber/maechen.fayth"
 BRIEF="$HERE/chamber/maechen.md"
 
+# SPIRA_CONFIG_DIR: the directory holding spira-config on THIS invocation's own PATH, so
+# the stripped-down PATH built for run_conf below can still find it — conf.sh now refuses
+# outright without it (sp-ubcgo: "wave 4.5: conf.sh becomes an eval of resolve"). Resolved
+# once, from testenv's/the gate's own PATH (where the staged release's spira-config lives),
+# never guessed.
+SPIRA_CONFIG_DIR="$(command -v spira-config >/dev/null 2>&1 && dirname "$(command -v spira-config)" || true)"
+
 run_conf() {
-    env -i HOME="$T" PATH="/usr/bin:/bin" SPIRA_CONF="$NONE" \
+    env -i HOME="$T" PATH="${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" SPIRA_CONF="$NONE" \
         bash -c ". '$HERE/conf.sh' && $1" 2>/dev/null
 }
 
