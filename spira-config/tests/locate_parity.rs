@@ -45,14 +45,8 @@ fn harness_script(conf_sh: &str, call: &str) -> String {
     format!("#!/usr/bin/env bash\nset -u\n{conf_fn}\n\n{toml_fn}\n\n{call}\n")
 }
 
-fn scratch_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-config-test-locate-parity-{tag}-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-    ));
-    fs::create_dir_all(&dir).expect("scratch dir");
-    dir
+fn scratch_dir(tag: &str) -> testkit::TempDir {
+    testkit::TempDir::new(&format!("spira-config-test-locate-parity-{tag}"))
 }
 
 /// Runs `conf.sh`'s real `spira_toml_file` (bash) in a fully cleared environment plus
@@ -61,7 +55,8 @@ fn scratch_dir(tag: &str) -> PathBuf {
 fn bash_spira_toml_file(env: &[(&str, &str)]) -> String {
     let conf_sh = fs::read_to_string(repo_root().join("spira/conf.sh")).expect("read conf.sh");
     let script = harness_script(&conf_sh, "spira_toml_file");
-    let script_path = scratch_dir("script").join("harness.sh");
+    let script_dir = scratch_dir("script");
+    let script_path = script_dir.join("harness.sh");
     fs::write(&script_path, script).unwrap();
     let mut cmd = Command::new("bash");
     cmd.env_clear();

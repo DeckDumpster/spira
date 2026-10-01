@@ -8,17 +8,8 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-fn scratch_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-config-test-locate-{tag}-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).expect("scratch dir");
-    dir
+fn scratch_dir(tag: &str) -> testkit::TempDir {
+    testkit::TempDir::new(&format!("spira-config-test-locate-{tag}"))
 }
 
 fn write_toml(dir: &Path, rel: &str) -> std::path::PathBuf {
