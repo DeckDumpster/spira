@@ -11,7 +11,7 @@
 # callers" trivially.
 #
 # tier: T0
-# covers: spira/lib.sh sentinel/src/* watchd/* spira/skew.sh spira/pilgrimage.sh spira/archivist.sh spira/reflect.sh spira/incident.sh strand/src/* spira/mail.sh incident/* UC-operator-channel-13 spira/watchd.sh archivist/src/*
+# covers: spira/lib.sh sentinel/src/* watchd/* spira/skew.sh spira/pilgrimage.sh spira/reflect.sh spira/incident.sh strand/src/* spira/mail.sh incident/* UC-operator-channel-13 archivist/src/*
 # host-reason: greps the tree; no systemd/gh/network required; no shared state written
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
