@@ -45,7 +45,7 @@
 #
 # defect: sp-v890d sp-ya5nk sp-rvoun
 # tier: T2
-# covers: spira/lib.sh sentinel/src/* spira/conf.sh strand/src/*
+# covers: spira/lib.sh sentinel/src/* spira/conf.sh strand/src/* spira-claim/*
 # hermetic-ok: uses a fixture database; mark_queue_waiters tested with real bd;
 #              assertion 10 uses stub ready_count (no db call needed for structural check)
 set -uo pipefail
@@ -170,17 +170,22 @@ lacks "9: GATED landstate — push-mode state does not trigger queue-wait label"
 echo
 echo "assertion 10 — fayth_exclude passes SPIRA_QUEUE_WAIT_LABEL in exclude arg:"
 # =====================================================================================
-# A structural check: the label must reach ready_count's second arg via fayth_exclude,
-# not just be set in conf.sh. Uses stub ready_count (no db call needed).
-EXCL_FILE="$TMP/observed-excl"
-MOCK_READY=0
-ready_count() {
-    printf '%s' "$2" > "$EXCL_FILE"
-    printf '%d' "$MOCK_READY"
-}
-aeon_count() { printf '0'; }
+# A structural check: the label must reach bd's --exclude-label via fayth_exclude, not
+# just be set in conf.sh. `fayth_ready` is a one-line shim onto `spira-claim fayth-ready`
+# now (wave 4.25, sp-obhv6) — a bash-level `ready_count` override is no longer in that
+# path, so this uses a fake `$SPIRA_BD` that records its own argv instead (no db call
+# needed, same as before; `SPIRA_BD=... fayth_ready ...` scopes the override to this one
+# call and leaves the real testdb `$SPIRA_BD` in place for the assertions after it).
+EXCL_FILE="$TMP/observed-bd-args"
+FAKE_BD="$TMP/fake-bd-10"
+cat > "$FAKE_BD" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$EXCL_FILE"
+echo '[]'
+EOF
+chmod +x "$FAKE_BD"
 
-fayth_ready builder >/dev/null 2>&1 || true
+SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" fayth_ready builder >/dev/null 2>&1 || true
 observed_excl="$(cat "$EXCL_FILE" 2>/dev/null)"
 has "10: fayth_exclude passes SPIRA_QUEUE_WAIT_LABEL in exclude arg to ready_count" \
     "$WAIT" "$observed_excl"

@@ -24,7 +24,7 @@
 # forced rank failure surfaces as a claim-error rather than an empty/idle result.
 #
 # defect: sp-ns46j sp-o4trx
-# covers: spira/lib.sh aeon/src/* spira/epic-rank.sh
+# covers: spira/lib.sh aeon/src/* spira/epic-rank.sh spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
