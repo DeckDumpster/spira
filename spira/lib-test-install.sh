@@ -106,6 +106,18 @@ _install_fixture_unit_bins() {
 }
 INSTALL_FIXTURE_UNIT_BINS="$(_install_fixture_unit_bins)"
 
+# Root-level exec targets (sp-m6ow8): a unit may also exec @SPIRA_PROD_ROOT@/<name> outside bin/
+# (concierge.service runs concierge.sh). Derived the same way, from Exec* lines only, so a
+# Documentation= path never becomes a stub.
+_install_fixture_root_execs() {
+    local sysd
+    sysd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" 2>/dev/null && pwd)" || return 1
+    grep -h '^Exec[A-Za-z]*=' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null \
+        | grep -o '@SPIRA_PROD_ROOT@/[^[:space:]]*' | sed 's|^@SPIRA_PROD_ROOT@/||' \
+        | grep -v / | sort -u | tr '\n' ' '
+}
+INSTALL_FIXTURE_ROOT_EXECS="$(_install_fixture_root_execs)"
+
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
 install_fixture_release_bins() {
@@ -118,6 +130,13 @@ install_fixture_release_bins() {
     for b in $INSTALL_FIXTURE_UNIT_BINS; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
         chmod +x "$dir/$b"
+    done
+    # Stub a root-level target only where nothing stands: install_fixture_prod symlinks the
+    # real tree's top-level entries, and writing through one would edit the checkout.
+    for b in $INSTALL_FIXTURE_ROOT_EXECS; do
+        [ -e "$1/$b" ] || [ -L "$1/$b" ] && continue
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$1/$b"
+        chmod +x "$1/$b"
     done
 }
 
