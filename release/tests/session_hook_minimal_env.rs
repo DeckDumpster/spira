@@ -94,7 +94,10 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     std::os::unix::fs::symlink(&spira_config, release_root.join("bin/spira-config")).expect("symlink spira-config");
     // session.sh reads its watcher rows from the release's own `watchd` binary (sp-48f6g);
     // without it `watchd status` is not found, prints nothing, and the hook stays silent.
-    std::os::unix::fs::symlink(build_bin("watchd", "watchd"), release_root.join("bin/watchd")).expect("symlink watchd");
+    // COPIED, as a release copies it, never symlinked: watchd finds conf.sh by walking up
+    // from its resolved current_exe(), and a symlink resolves into the target directory —
+    // outside any spira/ when the gate builds on tmpfs.
+    std::fs::copy(build_bin("watchd", "watchd"), release_root.join("bin/watchd")).expect("copy watchd");
     std::os::unix::fs::symlink(workspace.join("spira"), release_root.join("spira")).expect("symlink spira/");
 
     let paths = release::session_hook::resolve(&release_root, "", tmp.path().join("settings.json")).expect("resolve paths");
