@@ -2933,3 +2933,41 @@ fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
 }
+
+/// sp-f4ig1-fix: a gate never loses its verdict to a compile-slot wait. Every command that can
+/// compile — the trial's own and the after-PASS release-bins, which runs outside the trial's
+/// environment — carries the gate's admission token, so spira-admit (env or cargo config) and
+/// testenv run it on the gate's slot without queueing behind agent builds.
+#[test]
+fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
+    let f = Fake::new();
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    let ran = f.ran.borrow().clone();
+    assert!(ran.len() >= 2, "{ran:?}");
+    for (i, env) in ran.iter().enumerate() {
+        assert!(
+            env.iter().any(|(k, v)| k == "SPIRA_ADMISSION" && v == "gate"),
+            "command {i} ({}) runs outside the gate's slot: {env:?}",
+            f.cmds.borrow()[i]
+        );
+    }
+    // POSITIVE CONTROL: the release-bins command is the one that used to lack it.
+    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
+}
+
+/// D11 (option 2): with spira-admit on the PATH, every cargo the gate runs compiles through it
+/// with the gate's token, so each takes a compile lease for its cargo WITHOUT WAITING and agent
+/// builds queue behind it; sccache stays the inner compiler, and the lease names the branch.
+#[test]
+fn the_gates_cargo_takes_compile_leases_through_spira_admit_with_the_gate_token() {
+    let f = Fake::new();
+    f.files.borrow_mut().insert(PathBuf::from("/h/spira-admit"), String::new());
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    for (i, env) in f.ran.borrow().iter().enumerate() {
+        let get = |k: &str| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("RUSTC_WRAPPER"), Some("/h/spira-admit"), "command {i}: {env:?}");
+        assert_eq!(get("SPIRA_ADMIT_INNER"), Some("/box/.cargo/bin/sccache"), "command {i}");
+        assert_eq!(get("SPIRA_ADMIT_WHO"), Some(format!("gate:{BR}").as_str()), "command {i}");
+        assert_eq!(get("SPIRA_ADMISSION"), Some("gate"), "command {i}");
+    }
+}

@@ -188,7 +188,20 @@ impl<'w, W: World> Trial<'w, W> {
                 if wr == spira_config::build::Wrapper::Off {
                     w.eprint(&format!("gate: {}", wr.describe()));
                 }
-                self.s.build_env = wr.env();
+                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
+                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
+                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
+                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
+                // queue behind it instead of competing at full width. testenv's own build does
+                // the same in-process. The token also keeps every other admission inherited.
+                // Without spira-admit on PATH (an older release) the plain wrapper still carries
+                // the token: the gate never waits, it just holds nothing.
+                let who = format!("gate:{br}");
+                self.s.build_env = match w.which(spira_config::admission::BIN) {
+                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who),
+                    None => wr.env(),
+                };
+                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }
             Err(e) => self.s.cache_refusal = Some(e),
         }
