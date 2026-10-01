@@ -363,9 +363,11 @@ export SPIRA_REPO_MAP="$FA_REPO_MAP"
 echo
 echo "ROW: ledger segment boundary — attempt 2 reads its OWN segment, not attempt 1's"
 # ==========================================================================================
-# What only a real aeon run can prove: that aeon.sh's own marks (spira_trace_mark) and
-# attempt_trace's backward scan land on the same boundary session_result_fields (T1, in
-# test-session-result-fields.sh) already proves trace_segment finds by a forward scan.
+# What only a real aeon run can prove: that the aeon's own marks and attempt_trace's
+# backward scan land on the same boundary a forward scan would find (aeon::ledger). The
+# forward-scan half (spira_trace_mark/trace_segment, and session_result_fields's own field
+# table) was lib.sh's and retired dead with it (sp-j89pd, wave 4.2) — superseded by
+# aeon::ledger::session_fields and its own unit tests.
 FULL='{"type":"result","subtype":"success","is_error":false,"duration_ms":90480,"duration_api_ms":61400,"num_turns":7,"total_cost_usd":1.3474715,"usage":{"input_tokens":1234,"cache_creation_input_tokens":105984,"cache_read_input_tokens":456789,"output_tokens":2222,"output_tokens_details":{"thinking_tokens":333}},"result":"done"}'
 cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash

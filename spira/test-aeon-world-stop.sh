@@ -1,23 +1,18 @@
 #!/usr/bin/env bash
 #
-# test-aeon-world-stop.sh — world_stop_decide (lib.sh) is the pure decision the world-stop
-#   fence in aeon.sh acts on: a bead labelled SPIRA_WORLD_STOP_LABEL needs the world halted
-#   while it runs, but must not run world.sh stop out from under live aeons. The near-miss
-#   this closes: sp-6ylz had "needs the world stopped" in its title, was dispatchable
-#   anyway, and an aeon ran world.sh stop with live aeons running, producing a three-minute
-#   write outage. (sp-ynvd)
+# test-aeon-world-stop.sh — the world-stop fence in aeon.sh: a bead labelled
+#   SPIRA_WORLD_STOP_LABEL needs the world halted while it runs, but must not run world.sh
+#   stop out from under live aeons. The near-miss this closes: sp-6ylz had "needs the world
+#   stopped" in its title, was dispatchable anyway, and an aeon ran world.sh stop with live
+#   aeons running, producing a three-minute write outage. (sp-ynvd)
 #
-# world_stop_decide <has-label> <live-aeon-list> <skip> -> none|refuse|stop:
-#   none   — no halting label; the fence never touches world.sh
-#   refuse — the label is present, live aeons are running, no override: release the claim
-#   stop   — the label is present and (no live aeons OR the operator overrode it)
-#
-# bead_has_label (lib.sh) is the label-presence check both this fence and the read-after-
-# claim spira-poison guard (aeon.sh, right after the claim) share — tested directly below
-# rather than through a second copy of either caller.
+# RETIRED (sp-j89pd, wave 4.2): world_stop_decide and bead_has_label (lib.sh) had zero live
+# callers — the decision is now aeon::decide::world_stop and the poison-race label check is
+# aeon::bd::has_label (aeon/src/decide.rs, aeon/src/bd.rs). Their T1 tables here are deleted
+# with them; T3 below still proves the wiring end to end through the real `aeon` binary.
 #
 # defect: sp-ynvd
-# covers: aeon/src/* spira/lib.sh spira-world/src/bin/world.rs spira/conf.sh
+# covers: aeon/src/* spira-world/src/bin/world.rs spira/conf.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -25,52 +20,6 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "test-aeon-world-stop.sh"
-
-wsd() {   # wsd <has-label> <live> <skip> -> world_stop_decide's own output
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; world_stop_decide "$2" "$3" "$4"' _ "$HERE" "$1" "$2" "$3" 2>/dev/null
-}
-
-# ===========================================================================================
-echo
-echo "T1: world_stop_decide <has-label> <live-aeon-list> <skip> -> none|refuse|stop"
-# ===========================================================================================
-# name|has-label|live|skip|want
-ROWS=(
-    "no label at all — proceeds as an ordinary bead (positive control)|0|aeon-ops-sp-x|0|none"
-    "no label, even with live aeons around — still none|0|aeon-ops-sp-x|1|none"
-    "label present, no live aeons — stop (nothing to refuse against)|1|EMPTY|0|stop"
-    "label present, live aeons, no override — refuse|1|aeon-ops-sp-x|0|refuse"
-    "label present, live aeons, override set — stop despite live aeons|1|aeon-ops-sp-x|1|stop"
-    "label present, no live aeons, override set too — still just stop|1|EMPTY|1|stop"
-)
-for row in "${ROWS[@]}"; do
-    IFS='|' read -r name has_label live skip want <<<"$row"
-    [ "$live" = "EMPTY" ] && live=""
-    got="$(wsd "$has_label" "$live" "$skip")"
-    is "$name" "$want" "$got"
-done
-
-# ===========================================================================================
-echo
-echo "T1: bead_has_label <json> <label> — the shared predicate behind the fence"
-# ===========================================================================================
-bhl() {   # bhl <json> <label> -> rc via wantrc
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; bead_has_label "$2" "$3"' _ "$HERE" "$1" "$2" 2>/dev/null
-}
-J_WS='[{"id":"sp-x","labels":["repo:fixture","world-stop"]}]'
-J_NO='[{"id":"sp-x","labels":["repo:fixture"]}]'
-J_EMPTY_LABELS='[{"id":"sp-x","labels":[]}]'
-
-bhl "$J_WS" world-stop;  wantrc "label present in a list of labels" 0 "$?"
-bhl "$J_NO" world-stop;  wantrc "label absent from a non-empty list" 1 "$?"
-bhl "$J_EMPTY_LABELS" world-stop; wantrc "empty labels list" 1 "$?"
-bhl "" world-stop;       wantrc "empty json (unreadable bead) fails OPEN to absent" 1 "$?"
-bhl "not json" world-stop; wantrc "garbage json fails OPEN to absent" 1 "$?"
-bhl "$J_WS" spira-poison; wantrc "a different label than the one present is absent" 1 "$?"
 
 # ===========================================================================================
 echo

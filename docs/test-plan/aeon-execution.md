@@ -494,7 +494,37 @@ test-deadlock-sweep.sh,test-session-result-fields.sh,test-session-yield-headless
 test-testlib-migrated.sh,test-aeon-resume.sh spira/sp-g44ke` — all green. `plan-lint.sh
 --orphans` against the pre-consolidation tip reports no UC left uncovered.
 
-## 13. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
+## 13. Wave 4.2: dead lib.sh functions retired (sp-j89pd)
+
+25 lib.sh functions with zero live callers (every Rust seam site and bash sourcer already
+reimplements the logic natively: aeon/src/decide.rs, brief.rs, ledger.rs, run.rs, worktree.rs)
+are deleted outright rather than ported: `outcome_charges`, `aeon_disposition`,
+`session_result_fields`, both `bead_has_label` definitions, `spira_trace_mark`,
+`trace_segment`, `still_waiting`, `fayth_lease_seconds`, `hb_wait_outcome`, `hb_tick`,
+`world_stop_decide`, `sop_rule_verdict`, `aeon_settings`, `aeon_claude_argv`,
+`render_resume_brief`, `render_slain_brief`, `render_deadline_brief`, `bound_bead_notes`,
+`render_holds_brief`, `aeon_own_unit`, `fayth_fenced`, `eviction_reopen`,
+`worktree_move_aside`, `worktree_evict_foreign`.
+
+Suites that only exercised these functions directly are deleted with them:
+`test-session-result-fields.sh`, `test-brief-notes.sh`, `test-aeon-worktree-evict-foreign.sh`,
+`test-aeon-settings-guard-allowlist.sh`. Suites that mixed a dead row with a still-live one
+(`test-aeon-disposition.sh`, `test-aeon-world-stop.sh`, `test-aeon-resume.sh`,
+`test-aeon-lease.sh`, `test-holds.sh`, `test-aeon-eviction-race.sh`,
+`test-aeon-prompt-layers.sh`, `test-fayth-project-instructions.sh`, `test-persona-model.sh`)
+keep their e2e/live rows and lose only the dead-function row. UC-aeon-execution-03 and
+UC-aeon-execution-08 lose their last covering suite and are marked `[use_case.uncovered]` in
+the TOML catalogue, citing the Rust unit tests that now prove the same behaviour
+(`aeon::tests::poison_raced_releases_and_records`, `aeon::decide::tests::hb_tick_table`).
+UC-aeon-execution-09 and UC-aeon-execution-11 remain covered by `test-thrash.sh` and by
+`test-aeon-teardown-e2e.sh`/`test-rapid-recur.sh`/`test-thrash-teardown.sh` respectively —
+neither suite called the retired functions directly, both already exercise the behaviour
+end to end through the real `aeon` binary.
+
+`sp-wkgyc` asked where `aeon_disposition`'s declared set now lives: `aeon/src/decide.rs`
+(`NoteKey`, `Disposition`, `pub fn disposition`), not lib.sh.
+
+## 14. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
 
 `test-holds.sh` (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
 catalogued `UC-` of its own — it predates this area's numbered use cases and was never
