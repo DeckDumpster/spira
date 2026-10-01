@@ -89,7 +89,7 @@ printf 'LANDED %s %s push\n' "$LANDED_SHA" "$(date +%s)" > "$RUN/landstate/$BEAD
 # _gh_unlanded_scan's landed() check) need the same repo mapping the backfill
 # subprocess calls above are given inline, but in-process this time.
 export SPIRA_HOME="$SH"
-# lib.sh calls mail.sh by name (sp-gypjk): the fixture's stubbed mail.sh must come first.
+# lib.sh calls mail by name (sp-gypjk): the fixture's stubbed mail must come first.
 export PATH="$SH:$PATH"
 # Explicit, or a container with a real installed harness leaves SPIRA_REPO_MAP already
 # set and conf.sh's "only resolve when unset" guard never looks at $SH/repo-map at all
@@ -256,13 +256,13 @@ export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
 export SPIRA_MAIL="$RUN/mail"
 MAIL_CALLS="$TMP/mail.calls"
 : > "$MAIL_CALLS"
-# Stub mail.sh: any call writes to MAIL_CALLS (a call here is a test failure).
-cat > "$SH/mail.sh" <<MAILSTUB
+# Stub mail: any call writes to MAIL_CALLS (a call here is a test failure).
+cat > "$SH/mail" <<MAILSTUB
 #!/usr/bin/env bash
 echo called >> $MAIL_CALLS
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 : > "$GHLOG"
 scan_out="$(_gh_unlanded_scan 2>&1)"
 if [[ "$scan_out" == *"waiting on landing"* ]]; then
@@ -271,12 +271,12 @@ else
     bad "CERTIFIED: 'waiting on landing' logged" "got: $scan_out"
 fi
 if [ -s "$MAIL_CALLS" ]; then
-    bad "CERTIFIED: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS")"
+    bad "CERTIFIED: no ask sent" "mail was called: $(cat "$MAIL_CALLS")"
 else
     ok "CERTIFIED: no ask sent"
 fi
 
-printf '\n10. _gh_unlanded_scan: mail.sh refuse logs ask refused with reason:\n'
+printf '\n10. _gh_unlanded_scan: mail refuse logs ask refused with reason:\n'
 testdb_seed <<JSONL
 {"id":"sp-scan2","title":"Scan unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#92","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
@@ -291,13 +291,13 @@ esac
 exit 0
 GHSTUB
 chmod +x "$TMP/bin/gh"
-# Stub mail.sh to refuse with a reason on stderr.
-cat > "$SH/mail.sh" <<'MAILSTUB'
+# Stub mail to refuse with a reason on stderr.
+cat > "$SH/mail" <<'MAILSTUB'
 #!/usr/bin/env bash
 printf 'mail: repeat refused — stub\n' >&2
 exit 1
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 scan_out="$(_gh_unlanded_scan 2>&1)"
 if [[ "$scan_out" == *"ask refused"* ]]; then
     ok "refused: 'ask refused' logged"
@@ -305,9 +305,9 @@ else
     bad "refused: 'ask refused' logged" "got: $scan_out"
 fi
 if [[ "$scan_out" == *"repeat refused"* ]]; then
-    ok "refused: reason from mail.sh in log"
+    ok "refused: reason from mail in log"
 else
-    bad "refused: reason from mail.sh in log" "got: $scan_out"
+    bad "refused: reason from mail in log" "got: $scan_out"
 fi
 if [[ "$scan_out" == *"asked operator"* ]]; then
     bad "refused: 'asked operator' not logged on refusal" "got: $scan_out"
@@ -315,20 +315,20 @@ else
     ok "refused: 'asked operator' not logged on refusal"
 fi
 
-printf '\n11. mail.sh success logs asked operator; second pass silent:\n'
-# Stub mail.sh to succeed.
-cat > "$SH/mail.sh" <<'MAILSTUB'
+printf '\n11. mail success logs asked operator; second pass silent:\n'
+# Stub mail to succeed.
+cat > "$SH/mail" <<'MAILSTUB'
 #!/usr/bin/env bash
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 scan_out="$(_gh_unlanded_scan 2>&1)"
 if [[ "$scan_out" == *"asked operator"* ]]; then
     ok "success: 'asked operator' logged"
 else
     bad "success: 'asked operator' logged" "got: $scan_out"
 fi
-# Simulate the tracking ask bead now existing (as mail.sh with --bead would create).
+# Simulate the tracking ask bead now existing (as mail with --bead would create).
 _ask_subj="Close GitHub issue github:fixture/testrepo#92 for bead sp-scan2"
 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" create "$_ask_subj" \
     -l "needs-operator,overseer" --type decision --silent >/dev/null 2>&1 || true
@@ -361,12 +361,12 @@ GHSTUB
 chmod +x "$TMP/bin/gh"
 MAIL_CALLS2="$TMP/mail.calls2"
 : > "$MAIL_CALLS2"
-cat > "$SH/mail.sh" <<MAILSTUB
+cat > "$SH/mail" <<MAILSTUB
 #!/usr/bin/env bash
 echo called >> $MAIL_CALLS2
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 scan_out="$(_gh_unlanded_scan 2>&1)"
 if [ -e "$RUN/gh-closed/sp-scan3" ]; then
     ok "forge-closed: gh-closed marker written"
@@ -379,7 +379,7 @@ else
     bad "forge-closed: log line about being closed" "got: $scan_out"
 fi
 if [ -s "$MAIL_CALLS2" ]; then
-    bad "forge-closed: no mail sent" "mail.sh was called: $(cat "$MAIL_CALLS2")"
+    bad "forge-closed: no mail sent" "mail was called: $(cat "$MAIL_CALLS2")"
 else
     ok "forge-closed: no mail sent"
 fi
@@ -404,12 +404,12 @@ GHSTUB
 chmod +x "$TMP/bin/gh"
 MAIL_CALLS3="$TMP/mail.calls3"
 : > "$MAIL_CALLS3"
-cat > "$SH/mail.sh" <<MAILSTUB
+cat > "$SH/mail" <<MAILSTUB
 #!/usr/bin/env bash
 echo called >> $MAIL_CALLS3
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 _gh_unlanded_scan >/dev/null 2>&1
 if grep -q "issue comment 94" "$GHLOG" 2>/dev/null && grep -q "issue close 94" "$GHLOG" 2>/dev/null; then
     ok "landed-by-commit: issue closed via ancestry, not landstate"
@@ -422,7 +422,7 @@ else
     bad "landed-by-commit: close marker written" "no marker at $RUN/gh-closed/sp-scan4"
 fi
 if [ -s "$MAIL_CALLS3" ]; then
-    bad "landed-by-commit: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS3")"
+    bad "landed-by-commit: no ask sent" "mail was called: $(cat "$MAIL_CALLS3")"
 else
     ok "landed-by-commit: no ask sent"
 fi
@@ -437,14 +437,14 @@ testdb_seed <<JSONL
 {"id":"sp-scan5","title":"Scan truly unlanded bead","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#95","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
 : > "$GHLOG"
-cat > "$SH/mail.sh" <<'MAILSTUB'
+cat > "$SH/mail" <<'MAILSTUB'
 #!/usr/bin/env bash
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 scan_out="$(_gh_unlanded_scan 2>&1)"
 want "positive control: ask sent for the unlanded bead" "asked operator about github:fixture/testrepo#95" "$scan_out"
-# Simulate the tracking bead mail.sh would have created, so later scans in this file
+# Simulate the tracking bead mail would have created, so later scans in this file
 # dedupe sp-scan5 through ask_already_open instead of re-asking on every pass.
 ASK_ID="$("${SPIRA_BD:-bd}" -C "$SPIRA_DB" create \
     "Close GitHub issue github:fixture/testrepo#95 for bead sp-scan5" \
@@ -513,12 +513,12 @@ JSONL
 : > "$GHLOG"
 MAIL_CALLS4="$TMP/mail.calls4"
 : > "$MAIL_CALLS4"
-cat > "$SH/mail.sh" <<MAILSTUB
+cat > "$SH/mail" <<MAILSTUB
 #!/usr/bin/env bash
 echo called >> $MAIL_CALLS4
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 _gh_unlanded_scan >/dev/null 2>&1
 if grep -q "97" "$GHLOG" 2>/dev/null; then
     bad "open bead: no gh call for its issue" "GHLOG: $(cat "$GHLOG" 2>/dev/null)"
@@ -526,7 +526,7 @@ else
     ok "open bead: no gh call for its issue"
 fi
 if [ -s "$MAIL_CALLS4" ]; then
-    bad "open bead: no ask sent" "mail.sh was called: $(cat "$MAIL_CALLS4")"
+    bad "open bead: no ask sent" "mail was called: $(cat "$MAIL_CALLS4")"
 else
     ok "open bead: no ask sent"
 fi
@@ -563,12 +563,12 @@ GHSTUB
     chmod +x "$TMP/bin/gh"
     MAIL_CALLS5="$TMP/mail.calls5"
     : > "$MAIL_CALLS5"
-    cat > "$SH/mail.sh" <<MAILSTUB
+    cat > "$SH/mail" <<MAILSTUB
 #!/usr/bin/env bash
 echo called >> $MAIL_CALLS5
 exit 0
 MAILSTUB
-    chmod +x "$SH/mail.sh"
+    chmod +x "$SH/mail"
     scan_out="$(_gh_unlanded_scan 2>&1)"
     if [ -e "$RUN/gh-closed/sp-scan2" ]; then
         ok "answering the ask wrote the gh-closed marker"
@@ -576,7 +576,7 @@ MAILSTUB
         bad "answering the ask wrote the gh-closed marker" "no marker at $RUN/gh-closed/sp-scan2"
     fi
     if [ -s "$MAIL_CALLS5" ]; then
-        bad "no new ask filed after the first was answered" "mail.sh was called: $(cat "$MAIL_CALLS5")"
+        bad "no new ask filed after the first was answered" "mail was called: $(cat "$MAIL_CALLS5")"
     else
         ok "no new ask filed after the first was answered"
     fi
@@ -618,8 +618,8 @@ testdb_seed <<JSONL
 {"id":"sp-ct2","title":"Closeout non-blocking ask test","status":"closed","issue_type":"bug","labels":["spira","plan"],"external_ref":"github:fixture/testrepo#102","updated_at":"2026-09-05T00:00:00Z"}
 {"id":"sp-ct2d","title":"dummy blocker for positive control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-05T00:00:00Z"}
 JSONL
-# Stub mail.sh: creates ask bead with dep relate (the path the guard enforces).
-cat > "$SH/mail.sh" <<'MAILSTUB'
+# Stub mail: creates ask bead with dep relate (the path the guard enforces).
+cat > "$SH/mail" <<'MAILSTUB'
 #!/usr/bin/env bash
 _bead=""; _subj=""
 while [ $# -gt 0 ]; do
@@ -639,7 +639,7 @@ if [ -n "$_bead" ] && [ -n "${SPIRA_DB:-}" ] && [ -n "$_subj" ]; then
 fi
 exit 0
 MAILSTUB
-chmod +x "$SH/mail.sh"
+chmod +x "$SH/mail"
 cat > "$TMP/bin/gh" <<'GHSTUB'
 #!/usr/bin/env bash
 case " $* " in *" issue view "*) printf '{"state":"OPEN"}\n' ;; esac

@@ -120,7 +120,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     if code != 0 {
         return (code, out);
     }
-    // mail.sh's own "question" kind requires a filled "## Question" and "## Default"
+    // mail's own "question" kind requires a filled "## Question" and "## Default"
     // section in the body (every "## " heading in its template is a required section,
     // not just the X-Spira-Default header) — a bare question string is refused.
     let body = format!("## Question\n{question}\n\n## Default\n{default}\n");
@@ -169,9 +169,9 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
     if code != 0 {
         return (code, out);
     }
-    // mail.sh refuses a Subject that leads with a bead id — the id belongs in --bead,
+    // mail refuses a Subject that leads with a bead id — the id belongs in --bead,
     // which this call already carries. Same "## Question"/"## Default" requirement as
-    // cmd_blocked, from mail.sh's "question" kind template.
+    // cmd_blocked, from mail's "question" kind template.
     let subject = format!("superseded-by {successor}?");
     let question = format!("{bead_id} requests confirmation that it is superseded by {successor}.");
     let body = format!("## Question\n{question}\n\n## Default\n{successor}\n");

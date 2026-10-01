@@ -1,6 +1,6 @@
 //! The alert path's IO seam: persists which streak each invariant last alerted for (one
 //! JSON file, keyed by invariant), asks whether the Concierge is running, and hands mail to
-//! `mail.sh`. Every function here does exactly one read, one write or one subprocess call —
+//! `mail`. Every function here does exactly one read, one write or one subprocess call —
 //! the dedup and classification logic lives in `reconciler_engine::alert`, not here.
 
 use std::io::Write;
@@ -26,9 +26,9 @@ pub fn concierge_is_running(concierge_sh: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Sends one message through `mail.sh send`. A spawn failure, a non-zero exit, or invalid
+/// Sends one message through `mail send`. A spawn failure, a non-zero exit, or invalid
 /// UTF-8 in stderr are all reported distinctly (mirroring czar-pass's `run_forge`) so a
-/// caller never mistakes "mail.sh refused it" for "the wake was delivered".
+/// caller never mistakes "mail refused it" for "the wake was delivered".
 pub fn mail_send(
     mail_sh: &str,
     mailbox: &str,
@@ -48,16 +48,16 @@ pub fn mail_send(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("mail.sh spawn failed: {}", e))?;
+        .map_err(|e| format!("mail spawn failed: {}", e))?;
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(body.as_bytes());
     }
     let output = child
         .wait_with_output()
-        .map_err(|e| format!("mail.sh: failed to wait: {}", e))?;
+        .map_err(|e| format!("mail: failed to wait: {}", e))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("mail.sh send {} exited {}: {}", mailbox, output.status, stderr.trim()));
+        return Err(format!("mail send {} exited {}: {}", mailbox, output.status, stderr.trim()));
     }
     Ok(())
 }

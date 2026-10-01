@@ -100,7 +100,7 @@ impl Config {
                     .unwrap_or_else(|_| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"));
                 config_home.join("spira").join("desired")
             }),
-            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail.sh".to_string()),
+            mail_sh: env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string()),
             window_hours: env::var("SPIRA_FLOW_WINDOW_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5),
             baseline_hours: env::var("SPIRA_FLOW_BASELINE_HOURS").ok().and_then(|v| v.parse().ok()).unwrap_or(24.0),
             grace_secs: env::var("SPIRA_FLOW_GRACE_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(1800),

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # accept-default.sh — compose and send an accept-default reply for a Spira message.
 # Receives the full RFC 5322 message on stdin (from aerc :pipe).
-# Extracts X-Spira-Default and sends that value as the reply via mail.sh sendmail.
+# Extracts X-Spira-Default and sends that value as the reply via mail sendmail.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -33,4 +33,4 @@ from_orig="$(_hdr from)"
     printf 'Date: %s\n' "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')"
     printf '\n'
     printf '%s\n' "$default"
-} | mail.sh sendmail
+} | mail sendmail

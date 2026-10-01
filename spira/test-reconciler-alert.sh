@@ -68,8 +68,8 @@ report_cargo "$ALERT_OUT" "$_rc"
 command -v reconciler-alert >/dev/null 2>&1 || bail "reconciler-alert is not on PATH"
 
 # --- fixtures --------------------------------------------------------------------------------
-# Real mail.sh and its real conf.sh, so this suite exercises the actual lint and the actual
-# alert.md kind file this bead adds — not a hand-written model of what mail.sh accepts.
+# Real mail and its real conf.sh, so this suite exercises the actual lint and the actual
+# alert.md kind file this bead adds — not a hand-written model of what mail accepts.
 export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
 export SPIRA_DB="$T/db"                 # never the operator's real store (law-run-the-suite-in-a-container)

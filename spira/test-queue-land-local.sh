@@ -29,7 +29,7 @@ echo "test-queue-land-local.sh"
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
-stub mail.sh 'exit 0'
+stub mail 'exit 0'
 
 REPO="$TMP/repo"
 git init -q -b trunk "$REPO"

@@ -77,10 +77,10 @@ cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SH/$1"; chmod +x "$SH/$1"; }
 stub confine.sh 'exit 0'
 # THE OUTCOME STREAM IS RECORDED, NOT MERELY SWALLOWED, and it is stubbed EXPLICITLY. Without
-# a stub, mail.sh would write to $SPIRA_MAIL on the host — a suite writing into the operator's
+# a stub, mail would write to $SPIRA_MAIL on the host — a suite writing into the operator's
 # live mailbox is not a risk worth leaving to an unset variable
 # (law-gates-run-in-a-clean-environment).
-stub mail.sh '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
+stub mail '[ "${1:-}" = send ] || exit 0; printf "%s\n" "$*" >> "$EMITTED"; cat >> "$EMITTED"; printf "\n" >> "$EMITTED"'
 export EMITTED="$TMP/events"; : > "$EMITTED"
 events() { cat "$RUN/events.log" 2>/dev/null; }
 

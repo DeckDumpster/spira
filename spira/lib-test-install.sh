@@ -106,6 +106,21 @@ _install_fixture_unit_bins() {
 }
 INSTALL_FIXTURE_UNIT_BINS="$(_install_fixture_unit_bins)"
 
+# Exec targets outside bin/ (sp-m6ow8): a unit may exec a script under the root, spira/
+# (@SPIRA_PROD@) or cockpit/ (@SPIRA_PROD_COCK@) — concierge.sh, mail.sh, moot-sweep.sh. Derived
+# from the program word of Exec* lines only, so neither an argument nor a Documentation= path
+# becomes a stub.
+_install_fixture_root_execs() {
+    local sysd
+    sysd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" 2>/dev/null && pwd)" || return 1
+    grep -h '^Exec[A-Za-z]*=' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null \
+        | sed 's|^Exec[A-Za-z]*=[-:+!]*||; s|[[:space:]].*||' \
+        | grep -o '^@SPIRA_PROD\(_ROOT\|_COCK\)\?@/[^[:space:]]*' \
+        | sed -e 's|^@SPIRA_PROD_ROOT@/||' -e 's|^@SPIRA_PROD_COCK@/|cockpit/|' -e 's|^@SPIRA_PROD@/|spira/|' \
+        | grep -v '^bin/' | sort -u | tr '\n' ' '
+}
+INSTALL_FIXTURE_ROOT_EXECS="$(_install_fixture_root_execs)"
+
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
 install_fixture_release_bins() {
@@ -118,6 +133,18 @@ install_fixture_release_bins() {
     for b in $INSTALL_FIXTURE_UNIT_BINS; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
         chmod +x "$dir/$b"
+    done
+    # Stub a target only where nothing stands, and only inside the fixture: install_fixture_prod
+    # symlinks the real tree's top-level entries, and writing through one would edit the checkout.
+    local root parent
+    root="$(cd "$1" && pwd -P)"
+    for b in $INSTALL_FIXTURE_ROOT_EXECS; do
+        [ -e "$1/$b" ] || [ -L "$1/$b" ] && continue
+        mkdir -p "$(dirname "$1/$b")"
+        parent="$(cd "$(dirname "$1/$b")" && pwd -P)"
+        case "$parent/" in "$root"/*) ;; *) continue ;; esac
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$1/$b"
+        chmod +x "$1/$b"
     done
 }
 

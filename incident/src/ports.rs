@@ -1,5 +1,5 @@
 //! Every effect the intake has outside its own arguments, as a trait (DESIGN.md §5):
-//! `bd`, `mail.sh`, the repository map and the clock. `real.rs` implements them against the
+//! `bd`, `mail`, the repository map and the clock. `real.rs` implements them against the
 //! host; unit tests implement them as fakes so the orchestration in `run.rs` is testable
 //! without a database.
 
@@ -96,7 +96,7 @@ fn uuid_v4() -> String {
 }
 
 pub trait Mailer {
-    /// `mail.sh send operator --from "Incident <incident@spira>" --subject S --kind
+    /// `mail send operator --from "Incident <incident@spira>" --subject S --kind
     /// question --default D`, body on stdin. True on success.
     fn send_operator_question(&self, subject: &str, default: &str, body: &str) -> bool;
 }

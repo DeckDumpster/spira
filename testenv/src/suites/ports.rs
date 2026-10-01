@@ -1,5 +1,5 @@
 //! Every effect `testenv suites` has outside its own state directory, as a trait
-//! (DESIGN-suites.md §5): git, the lib.sh seam, incident.sh, mail.sh, host-check.sh, the
+//! (DESIGN-suites.md §5): git, the lib.sh seam, incident.sh, mail, host-check.sh, the
 //! queue, the clock and the two output streams. `real.rs` implements them against the
 //! host; the unit tests implement them as fakes.
 
@@ -152,7 +152,7 @@ pub trait Intake {
 }
 
 pub trait Mail {
-    /// `mail.sh send operator --from … --subject … [--bead …]`, body on stdin.
+    /// `mail send operator --from … --subject … [--bead …]`, body on stdin.
     fn send_operator(&self, from: &str, subject: &str, bead: Option<&str>, body: &str) -> bool;
 }
 

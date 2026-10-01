@@ -33,7 +33,7 @@
 # never a hand-written model of what `gh` would say.
 #
 # tier: T1
-# covers: spira/pr-notify.sh spira/watchers spira/mail.sh spira/mail/kinds UC-operator-channel-38
+# covers: spira/pr-notify.sh spira/watchers mail/src/* spira/mail/kinds UC-operator-channel-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

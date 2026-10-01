@@ -32,8 +32,10 @@ Re-running never double-files: the external ref (`github:<repo>#<n>` /
   group 4 — "leave lib.sh alone" is still Ryan's standing instruction). `RealRepo` shells
   out to `bash -c '. lib.sh; repo_root "$1"'`, the identical boundary gate-check's Rust port
   already draws around this same function.
-- **`mail.sh`**, still bash (operator surface, group 5 — rewrite when next touched). Called
-  by bare name, stdin piped, exactly as the script invoked it.
+- **`mail`**, a subprocess call (operator surface). Called by bare name, stdin piped, the
+  same boundary the bash script used against `mail.sh` before it was rewritten and retired
+  by sp-ooh1k (a `mail.sh` compat symlink remains for callers outside this tree, but this
+  crate's default already points at the real binary).
 
 ## 3. Contract
 
@@ -48,7 +50,7 @@ refusal, exit 2 — unchanged from the bash.
 |---|---|---|
 | `SPIRA_DB` | *(required)* | the beads store; missing is a refusal, exit 1 |
 | `SPIRA_BD` | `bd` | the `bd` binary |
-| `SPIRA_MAIL_BIN` | `mail.sh` | the digest mailer |
+| `SPIRA_MAIL_BIN` | `mail` | the digest mailer |
 | `SPIRA_HOME` | `.` | where `lib.sh` lives, for `repo_root` |
 | `SPIRA_GH_INTAKE_REPO` | *(empty)* | `owner/repo` to ingest; empty is a real no-op, exit 0 |
 | `SPIRA_GH_INTAKE_BEAD_REPO` | `repo`'s basename | the `repo:` label and repo-map lookup |

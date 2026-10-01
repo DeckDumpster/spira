@@ -163,7 +163,7 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
             ("WHY", why),
             ("LINEAGE", lineage.as_str()),
             ("ARCHIVIST", "archivist"),
-            ("NOTIFY", "mail.sh"),
+            ("NOTIFY", "mail"),
             ("WIKI", wiki_text.as_str()),
         ],
     );

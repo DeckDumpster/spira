@@ -260,8 +260,10 @@ for pkg in meta['packages']:
     # table, never a second hand-written name list to drift from this one or from
     # release/src/build.rs's own reader of the identical table. A symlink in bin/ covers a
     # bare-name PATH lookup; one in spira/ covers a caller still spelling
-    # "$SPIRA_HOME/<alias>". Silently skipped when the target binary was not built into
-    # this release (e.g. mail.sh's entry, ahead of sp-ooh1k landing the `mail` binary).
+    # "$SPIRA_HOME/<alias>" (mail.sh's own callers — the Concierge persona text, brain's
+    # escalation-hook.sh, an operator's own aerc config — are exactly why the spira/ leg
+    # exists; sp-ooh1k's entry in the table is what makes mail.sh one of these now).
+    # Silently skipped when the target binary was not built into this release.
     mkdir -p "$stage/spira"
     while IFS=$'\t' read -r _compat_name _compat_alias; do
         [ -n "$_compat_name" ] || continue

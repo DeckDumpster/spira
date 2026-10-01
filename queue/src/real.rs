@@ -447,7 +447,7 @@ impl Scripts for RealScripts {
         let _ = ok(Command::new("testenv").args(["suites", "observe-flake", suite, sha]).stdout(Stdio::null()).stderr(Stdio::null()));
     }
     fn mail_operator(&self, subject: &str, body: &str) {
-        let Ok(mut child) = Command::new("mail.sh")
+        let Ok(mut child) = Command::new("mail")
             .args(["send", "operator", "--from", "Spira Queue <queue@spira>", "--subject", subject])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())

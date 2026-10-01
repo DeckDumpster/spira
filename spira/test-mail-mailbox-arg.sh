@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# test-mail-mailbox-arg.sh — mail.sh's mailbox argument is positional, so a flag that
+# test-mail-mailbox-arg.sh — mail's mailbox argument is positional, so a flag that
 # lands in that slot (a caller's typo, an argument shifted one place — e.g.
-# `mail.sh list --unread` with no mailbox given, or `mail.sh count --inbox`) is
-# otherwise a legal directory name. Before this fix mail.sh silently created and then
+# `mail list --unread` with no mailbox given, or `mail count --inbox`) is
+# otherwise a legal directory name. Before this fix mail silently created and then
 # truthfully reported on an empty mailbox named after the flag: nine of these
 # (--all --bead --box --from --help --inbox --kind --subject --to) accumulated on the
 # real box, each one telling a caller "no mail" from a mailbox its own question had
@@ -15,7 +15,7 @@
 # explicit `ensure` command may create one.
 #
 # tier: T1
-# covers: spira/mail.sh
+# covers: mail/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -29,7 +29,7 @@ export SPIRA_CONF=""
 export SPIRA_ID_PREFIX="sp"
 mkdir -p "$SPIRA_MAIL_KINDS"
 
-run() { mail.sh "$@"; }
+run() { mail "$@"; }
 
 no_mailbox_created() {  # <name> <label>
     [ -e "$SPIRA_MAIL/$1" ] && bad "$2: no mailbox created" "found $SPIRA_MAIL/$1" \

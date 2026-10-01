@@ -40,7 +40,7 @@ pub trait Repo {
 }
 
 /// The one piece of the operator channel gh-intake touches: the daily digest of new
-/// untrusted issues. Still bash (`mail.sh`, group 5 — rewrite when next touched), called by
+/// untrusted issues. `mail` (rewritten and retired from bash by sp-ooh1k), called by
 /// bare name on the launcher PATH.
 pub trait Mail {
     fn send_operator_note(&self, subject: &str, body: &[u8]) -> bool;

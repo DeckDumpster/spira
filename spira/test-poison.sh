@@ -178,13 +178,13 @@ stub strand        'printf "%s" "${STRAND_OUT:-}"'
 stub sending       'printf "%s" "${SENDING_OUT:-}"'
 stub gate.sh       'exit ${GATE_RC:-0}'
 stub reflect.sh    'touch "$SPIRA_RUN/reflect.fired"'
-# mail.sh is RECORDED, not merely swallowed: half of what poisoning must do is reach the
+# mail is RECORDED, not merely swallowed: half of what poisoning must do is reach the
 # operator, and a stub that exits 0 without a trace would pass whether or not it ran.
 # ASK_CLOSES is the seam that stages a race no fixture can otherwise produce: a bead that is
 # dispatchable when the pass snapshots the set and CLOSED by the time the loop reaches it. The
 # stub closes the named bead the first time it is called about any OTHER bead, which is exactly
 # a landing finishing mid-pass.
-stub mail.sh       '[ "${1:-}" = send ] || exit 0
+stub mail       '[ "${1:-}" = send ] || exit 0
 printf "%s\n" "$*" >> "$MAIL_LOG"
 cat >> "$MAIL_LOG"
 if [ -n "${ASK_CLOSES:-}" ]; then case "$*" in *"$ASK_CLOSES"*) ;;

@@ -64,13 +64,13 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
     Ok(stdout.trim().to_string())
 }
 
-/// `mail.sh send operator` — an ask carrying the channel back (design §3.5's `work
+/// `mail send operator` — an ask carrying the channel back (design §3.5's `work
 /// blocked`, and the supersede-by confirmation request). `--bead` ties the tracking
-/// decision bead mail.sh files to the one this layer is bound to.
+/// decision bead mail files to the one this layer is bound to.
 pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, body: &str) -> Result<String, String> {
-    // mail.sh, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
-    // script-override seam.
-    let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail.sh".to_string());
+    // mail, by name on the launcher's PATH (sp-gypjk); SPIRA_MAIL_SH is the harness-wide
+    // binary-override seam.
+    let mail_sh = std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| "mail".to_string());
     let mut child = Command::new(&mail_sh)
         .args(["send", "operator", "--from", from, "--subject", subject, "--kind", "question", "--default", default, "--bead", bead_id])
         .stdin(std::process::Stdio::piped())

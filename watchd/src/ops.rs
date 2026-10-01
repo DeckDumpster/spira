@@ -1,4 +1,4 @@
-//! Everything `watchd` asks systemd, `mail.sh` or `/proc` to do, behind one trait so the
+//! Everything `watchd` asks systemd, `mail` or `/proc` to do, behind one trait so the
 //! command logic (`cmd_status`, `cmd_notify`, `cmd_restart`, …) is unit tested with a Fake
 //! rather than a real systemd user manager or mailbox. `Real` is the production
 //! implementation; DESIGN.md "Test strategy".
@@ -28,7 +28,7 @@ pub trait Ops {
     /// <path>"`, or `None`.
     fn orphan_lock(&self, target: &str) -> Option<String>;
 
-    /// Send an escalation through `mail.sh send operator …`.
+    /// Send an escalation through `mail send operator …`.
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String>;
 
     /// `mail-health.sh`'s own exit code (0 nothing to say, 1 escalated, 3 could not check).
@@ -185,7 +185,7 @@ impl Ops for Real {
     fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
         let body = format!("## Question\n{subject}\n\n## Default\n{default}\n\n{why}\n\n{evidence}\n");
         run_with_stdin(
-            "mail.sh",
+            "mail",
             &["send", "operator", "--from", "Watchd <watchd@spira>", "--subject", subject, "--kind", "question", "--default", default],
             &body,
         )

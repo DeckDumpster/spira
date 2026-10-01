@@ -70,8 +70,9 @@ lib.sh's own copies are untouched and still serve every other caller (`aeon.sh`,
 of reproducing the rule a second time).
 
 `ctx-meter.sh env <transcript>`, `archive.sh lineage <session> --json` and
-`mail.sh send operator …` stay external tools, invoked by bare name exactly as the bash
-did; none of the three are in this rewrite's scope. The agent itself (`${SPIRA_AGENT:-
+`mail send operator …` stay external tools, invoked by bare name exactly as the bash
+did (`mail.sh` itself was rewritten and retired by sp-ooh1k); none of the three are in
+this rewrite's scope. The agent itself (`${SPIRA_AGENT:-
 claude}`) is run through `timeout`, unchanged — `timeout`'s own exit code 124 is still
 what says "killed by the clock."
 

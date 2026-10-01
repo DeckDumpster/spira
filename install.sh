@@ -710,12 +710,12 @@ _prod_guard "${SPIRA_PROD:-}" || exit 2
 # when the first mail was sent, so on a never-used install spira-mail-tidy's first pass —
 # fired the moment its timer is enabled on a box up longer than OnBootSec — exited 1
 # ("tidy: operator: mailbox not found") and stayed FAILED, which deploy's pre-health check
-# refuses on. `mail.sh ensure` creates the maildir and is a no-op when it exists.
+# refuses on. `mail ensure` creates the maildir and is a no-op when it exists.
 if [ "$_dry" = 1 ]; then
-    phase_info "would run: mail.sh ensure operator"
+    phase_info "would run: mail ensure operator"
 else
-    mail.sh ensure operator \
-        || _phase_fail "units" "could not create the operator mailbox (mail.sh ensure operator)"
+    mail ensure operator \
+        || _phase_fail "units" "could not create the operator mailbox (mail ensure operator)"
 fi
 
 # SPIRA_PROD must exist before systemd/install.sh renders units; _bootstrap_decision
