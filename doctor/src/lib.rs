@@ -70,6 +70,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "gate compile check", lines: check_gate_compile_check(w) },
         Section { title: "store", lines: check_store(w) },
         Section { title: "time series query layer", lines: check_duckdb(w) },
+        Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
             title: "systemd units",
@@ -407,6 +408,44 @@ pub fn check_duckdb(w: &dyn World) -> Vec<Line> {
         vec![fail(
             "duckdb is not on PATH",
             "tsd-query.sh refuses every query and every reconciler-flow invariant logs\n        unobservable until this is installed. See deps.toml's duckdb entry.",
+        )]
+    }
+}
+
+// ============================================================================ compilation cache
+
+/// sp-xjnzl: `sccache` present (see deps.toml) is not the same question as `sccache` built
+/// with the backend the host and every round-vm now share — a binary installed with
+/// `cargo install sccache --locked` alone (no `--features webdav`) runs and passes every
+/// ordinary cache check, and silently never speaks WebDAV. The install command that is
+/// actually correct, pinned once here rather than re-derived: `cargo install sccache
+/// --locked --no-default-features --features webdav`.
+const SCCACHE_INSTALL: &str = "cargo install sccache --locked --no-default-features --features webdav";
+
+pub fn check_sccache(w: &dyn World) -> Vec<Line> {
+    let Some(bin) = w.which("sccache") else {
+        return vec![fail(
+            "sccache is not on PATH",
+            format!("every build refuses rather than compile every dependency cold (sp-z61hj). See deps.toml's sccache entry. Install: {SCCACHE_INSTALL}"),
+        )];
+    };
+    let Some(help) = w.sccache_help() else {
+        return vec![fail(format!("sccache ({}) did not answer --help", bin.display()), "")];
+    };
+    let has_webdav = help
+        .lines()
+        .find(|l| l.trim_start().starts_with("WebDAV:"))
+        .is_some_and(|l| l.trim_end().ends_with("true"));
+    if has_webdav {
+        vec![ok(format!("sccache ({}) — webdav backend present", bin.display()))]
+    } else {
+        vec![fail(
+            format!("sccache ({}) was built without the webdav backend", bin.display()),
+            format!(
+                "round-vm's shared cache (sccache-dav, sp-xjnzl) and this box's own builds both need it. \
+                 `sccache --help`'s \"Enabled features\" block said so, not just sccache's presence on PATH. \
+                 Reinstall: {SCCACHE_INSTALL}"
+            ),
         )]
     }
 }

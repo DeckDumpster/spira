@@ -102,5 +102,14 @@ pub trait World {
     /// `bash <concierge.sh> _stray-holders` -> PIDs, one per line, empty when none.
     fn concierge_stray_holders(&self, concierge_sh: &Path) -> Vec<String>;
 
+    // ---- compilation cache ----
+    /// `sccache --help`'s stdout, verbatim; `None` if `sccache` could not be run at all
+    /// (absent is reported separately via [`World::which`] — this is "it ran, here is what
+    /// it says about itself"). sp-xjnzl: a binary built `--no-default-features` compiles and
+    /// runs fine but silently drops every remote backend, so presence alone (`which`) is not
+    /// a health check — the "Enabled features:" block this prints is the only place that
+    /// says so.
+    fn sccache_help(&self) -> Option<String>;
+
     fn out(&self, s: &str);
 }

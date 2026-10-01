@@ -122,7 +122,7 @@ version_probe = "cargo --version"
 [[dep]]
 name = "sccache"
 tier = "operator"
-purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Install: cargo install sccache --locked"
+purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Since sp-xjnzl this cache is also shared with every ephemeral round-vm over a small WebDAV store (sccache-dav), which needs the `webdav` backend compiled in — `cargo install sccache --locked` alone (no feature flags) silently builds a binary that passes every ordinary check and never speaks WebDAV. Install: cargo install sccache --locked --no-default-features --features webdav — `doctor`'s \"compilation cache\" section runs `sccache --help` and fails if its own \"Enabled features\" block says WebDAV: false, so presence on PATH is checked separately from this."
 version_min = ""
 version_probe = "sccache --version"
 absent = "every build tool refuses rather than compile every dependency cold: the gate is NO_VERDICT reason=no-build-cache, testenv faults rc=3 reason=no-build-cache, release build errors; an aeon session runs with its builds uncached and says so. SPIRA_BUILD_CACHE=off opts out on purpose."
