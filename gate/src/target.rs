@@ -23,13 +23,24 @@ pub struct Limits {
     pub min_free_mib: u64,
     /// MiB of MemAvailable this trial needs (tmpfs pages are RAM; short means swap, a disk).
     pub min_mem_mib: u64,
+    /// sp-s8v5r: besides the byte cap, keep evicting LRU unlocked trees while the root's
+    /// real free space is below this — the same floor testenv sheds idle warm slots
+    /// against (`SPIRA_TMPFS_SHED_FREE_MIB`), since both compete for the same tmpfs.
+    /// law-reduce-the-count-never-throttle-the-job: reduce the count of cached trees here
+    /// rather than refuse the trial.
+    pub shed_free_mib: u64,
 }
 
 impl Limits {
     /// From the operator's variables (empty or unparsable = the default).
-    pub fn from_vars(cap: &str, free: &str, mem: &str) -> Limits {
+    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str) -> Limits {
         let n = |s: &str, d: u64| s.trim().parse::<u64>().unwrap_or(d);
-        Limits { cap_mib: n(cap, 12288), min_free_mib: n(free, 4096), min_mem_mib: n(mem, 4096) }
+        Limits {
+            cap_mib: n(cap, 12288),
+            min_free_mib: n(free, 4096),
+            min_mem_mib: n(mem, 4096),
+            shed_free_mib: n(shed, 6144),
+        }
     }
 }
 
@@ -137,14 +148,19 @@ pub fn prepare(
         }
     }
 
-    // 2. The cap: least recently used first; a tree whose lock is held is a running trial.
+    // 2. The cap, least recently used first; a tree whose lock is held is a running trial.
+    //    Besides the byte cap, sp-s8v5r also keeps evicting while the root's actual free
+    //    space is short of `shed_free_mib` — the signal that paged "Disk quota exceeded"
+    //    twice in one day, which the byte cap alone does not see (another process on the
+    //    same tmpfs, like testenv's warm slots, can eat the room this cap never counted).
     let mut sizes: Vec<(PathBuf, String, u64)> = live.into_iter().map(|(p, n)| { let s = size_of(&p); (p, n, s) }).collect();
     let own = size_of(&out.dir);
     let mut total: u64 = sizes.iter().map(|s| s.2).sum::<u64>() + own;
     let cap = lim.cap_mib * 1024 * 1024;
     sizes.sort_by_key(|(p, _, _)| mtime(p));
     for (p, n, s) in sizes {
-        if total <= cap {
+        let short_of_floor = free_mib(root).is_some_and(|f| f < lim.shed_free_mib);
+        if total <= cap && !short_of_floor {
             break;
         }
         if !lock_free(&trees_dir.join(format!("{n}.lock"))) {
@@ -247,7 +263,7 @@ mod tests {
     }
 
     fn lim(cap: u64) -> Limits {
-        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10 }
+        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0 }
     }
     fn roomy(_: &Path) -> Option<u64> {
         Some(1 << 20)
@@ -328,9 +344,9 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1 }, &|_| Some(100), &mem).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
         assert!(e.contains("100 MiB free") && e.contains("refusing to build on the disk"), "{e}");
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096 }, &roomy, &|| 12).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12).unwrap_err();
         assert!(e.contains("MemAvailable is 12 MiB"), "{e}");
         assert!(!tree.join("target").exists(), "nothing linked, nothing built");
         assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem).is_err(), "an unreadable root refuses");
@@ -343,6 +359,60 @@ mod tests {
         assert!(a.to_string_lossy().starts_with("/tmp/spira-gate-target-"));
         assert_ne!(a, root("", "/srv/b/run", true).unwrap(), "two installs never share a root");
         assert_eq!(root("", "/run", false), None);
-        assert_eq!(Limits::from_vars("", "x", "7"), Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7 });
+        assert_eq!(
+            Limits::from_vars("", "x", "7", ""),
+            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144 }
+        );
+        assert_eq!(Limits::from_vars("1", "2", "3", "500").shed_free_mib, 500);
+    }
+
+    /// sp-s8v5r, positive control: the byte cap alone (deliberately huge) would evict
+    /// nothing; a fake free-space reading below the shared shed floor does, oldest
+    /// unlocked tree first, and a held tree is never touched. The same low reading against
+    /// a floor it already clears evicts nothing — proof the floor, not the fake itself,
+    /// drives it.
+    #[test]
+    fn the_floor_evicts_further_than_the_cap_but_never_a_held_tree() {
+        let s = Scratch::new("floor");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        for t in ["old", "mid", "held"] {
+            fs::create_dir_all(trees.join(format!(".gate.harness.{t}"))).unwrap();
+            write_mib(&root.join(format!(".gate.harness.{t}/aeon/x")), 1);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        // "held" is the oldest now, and a running trial holds its lock.
+        let _ = fs::File::open(root.join(".gate.harness.held"))
+            .and_then(|d| d.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1)));
+        let lock = trees.join(".gate.harness.held.lock");
+        let f = fs::File::create(&lock).unwrap();
+        use std::os::unix::io::AsRawFd;
+        assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+
+        let tree = trees.join(".gate.harness.new");
+        fs::create_dir_all(&tree).unwrap();
+
+        // RED FIRST: a huge byte cap would evict nothing on its own; 50 MiB free below a
+        // 200 MiB floor makes the eviction continue past the cap check — but stops as soon
+        // as the (fake) drop clears the floor, and never touches the held tree.
+        let calls = std::cell::Cell::new(0u64);
+        let short = move |_: &Path| {
+            let n = calls.get();
+            calls.set(n + 1);
+            Some(if n < 2 { 50 } else { 300 })
+        };
+        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200 };
+        let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem).unwrap();
+        assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
+        assert!(root.join(".gate.harness.held/aeon/x").is_file());
+        assert!(root.join(".gate.harness.mid/aeon/x").is_file());
+
+        // CONTROL: the identical 50 MiB reading, but a floor it already clears — nothing
+        // is shed, so the behavior above is the floor's, not an eviction that always runs.
+        let tree2 = trees.join(".gate.harness.new2");
+        fs::create_dir_all(&tree2).unwrap();
+        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10 };
+        let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem).unwrap();
+        assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
+        drop(f);
     }
 }
