@@ -14,7 +14,7 @@
 # disagree: by the time this bead started, SPIRA_EXPRESS_LABEL/SPIRA_GH_APP_CONFIG/
 # SPIRA_GROOM_THRESHOLD each had TWO default statements, and eleven keys (SPIRA_LC_SOCKET,
 # SPIRA_REBASE_DECOMPOSE_FILES, SPIRA_CZAR_OUTCOME_MINS, ...) had a real default but were
-# missing from the allowlist entirely, so spira.toml could never legally set them. A registry
+# missing from the allowlist entirely, so the operator's config file could never legally set them. A registry
 # with one file per key makes both failure modes structural: two branches that each add a
 # key add two different files, which git can only merge cleanly, and the allowlist IS the
 # directory listing, so it cannot omit a key that has a file.
@@ -42,7 +42,7 @@
 #     separately-sourced block unsafe. conf.sh keeps defaulting it inline, in its original
 #     position; this script still contributes its name to the allowlist.
 #   NO-DEFAULT — the key carries no default anywhere today; it resolves empty unless the
-#     environment or spira.toml sets it. Also allowlist-only.
+#     environment or the operator's config file sets it. Also allowlist-only.
 # Either way, a DEFAULT body with no `: "${KEY:=...}"` or `: "${KEY=...}"` statement in it is
 # read as "allowlist membership only" — not an error.
 #

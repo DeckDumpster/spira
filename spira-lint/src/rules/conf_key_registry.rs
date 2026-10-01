@@ -25,6 +25,27 @@ pub fn conf_keys(conf_sh: &str) -> Option<Vec<String>> {
     Some(after[..end].split_whitespace().map(str::to_string).filter(|k| seen.insert(k.clone())).collect())
 }
 
+/// When conf.sh no longer carries the literal `SPIRA_CONF_KEYS` block in its own text
+/// (sp-g3uwp: it is generated from `spira/conf.d/` — one file per key — rather than
+/// hand-maintained inline), regenerate `conf-gen.sh`'s output against the tree under lint
+/// and read the keys from there instead. This keeps checking the keys actually in force
+/// rather than refusing the moment the literal block this rule used to grep is gone by
+/// design; `conf.sh` and this fallback both resolve through the identical generator, so
+/// they cannot disagree about which keys exist.
+fn conf_keys_via_registry(root: &std::path::Path) -> Option<Vec<String>> {
+    let conf_gen = root.join("spira/conf-gen.sh");
+    let conf_d = root.join("spira/conf.d");
+    if !conf_gen.is_file() || !conf_d.is_dir() {
+        return None;
+    }
+    let status = std::process::Command::new("bash").arg(&conf_gen).current_dir(root).status().ok()?;
+    if !status.success() {
+        return None;
+    }
+    let generated = std::fs::read_to_string(root.join("spira/conf.d.keys.generated.sh")).ok()?;
+    conf_keys(&generated)
+}
+
 /// Keys the schema types as something other than a bare string: (value written into the
 /// synthetic spira.conf, value `export --sh` must give back). Any other key is a string
 /// field, and the key's own name is written and must come back byte-for-byte.
@@ -130,7 +151,9 @@ impl Rule for ConfKeyRegistry {
     fn check(&self, tree: &Tree) -> Result<Vec<Finding>, LintError> {
         let text = tree.text_of(CONF_SH).ok_or(LintError::EmptyScope)?;
         let refuse = |reason: &str| LintError::BadAllow { file: CONF_SH.into(), line: 0, reason: reason.into() };
-        let keys = conf_keys(&text).ok_or_else(|| refuse("SPIRA_CONF_KEYS block not found or unterminated"))?;
+        let keys = conf_keys(&text)
+            .or_else(|| conf_keys_via_registry(&tree.root))
+            .ok_or_else(|| refuse("SPIRA_CONF_KEYS block not found or unterminated, and spira/conf.d/ + conf-gen.sh could not regenerate it"))?;
         // A parser reading the wrong block reports clean over a handful of keys.
         if keys.len() < 200 {
             return Err(refuse(&format!("SPIRA_CONF_KEYS parsed to {} keys, expected over 200 — reading the wrong thing", keys.len())));
@@ -168,6 +191,34 @@ mod tests {
         let got = round_trip(&keys(&["SPIRA_MAX_AEONS", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]));
         assert!(!got.is_empty());
         assert!(got.iter().any(|m| m.contains("SPIRA_TOTALLY_MADE_UP_TEST_KEY")), "{got:?}");
+    }
+
+    #[test]
+    fn falls_back_to_the_registry_when_conf_sh_has_no_literal_block() {
+        let t = crate::testutil::TempDir::new("ckr-registry");
+        // conf.sh carries no literal SPIRA_CONF_KEYS block at all (sp-g3uwp) — just the
+        // call that regenerates and sources it at use time.
+        t.write(CONF_SH, "_spira_conf_gen_ensure keys || return 1\n");
+        t.write(
+            "spira/conf.d/SPIRA_MAX_AEONS",
+            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_MAX_AEONS:=7}\"\nEOF\n",
+        );
+        t.write(
+            "spira/conf.d/SPIRA_CERTIFY_PAR",
+            "TYPE=u32\nGROUP=test\nDOC=test\nDEFAULT<<'EOF'\n    : \"${SPIRA_CERTIFY_PAR:=7}\"\nEOF\n",
+        );
+        // A minimal stand-in generator — this test exercises the fallback plumbing itself
+        // (that it shells out to conf-gen.sh and reads the result back), not the real
+        // spira/conf-gen.sh's own correctness, which test-conf-registry-parity.sh covers.
+        t.write(
+            "spira/conf-gen.sh",
+            "#!/usr/bin/env bash\nset -euo pipefail\nd=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")\" && pwd)\"\n{ printf 'SPIRA_CONF_KEYS=\"\\n'; ls \"$d/conf.d\"; printf '\"\\n'; } > \"$d/conf.d.keys.generated.sh\"\n",
+        );
+        // conf_keys() directly, not the full Rule::check (which also floors at 200 keys —
+        // a guard against a parser silently reading the wrong block, not part of what the
+        // registry fallback itself is responsible for; the real registry clears it easily).
+        let got = conf_keys_via_registry(t.path()).expect("fallback should resolve the registry, not refuse");
+        assert_eq!(got, keys(&["SPIRA_CERTIFY_PAR", "SPIRA_MAX_AEONS"]));
     }
 
     #[test]

@@ -5,7 +5,8 @@
 # inspection, and exercises conf-gen.sh's two refusals (an empty/missing registry; a
 # dependency cycle among generated defaults) as positive controls.
 #
-# covers: spira/conf-gen.sh, spira/conf.d/
+# tier: T1
+# covers: spira/conf-gen.sh spira/conf.d/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -46,7 +47,7 @@ echo
 echo "conf.sh's own SPIRA_CONF_KEYS, sourced fresh (self-heal from nothing), matches too:"
 # =============================================================================
 rm -f "$SCRATCH_SPIRA/conf.d.keys.generated.sh" "$SCRATCH_SPIRA/conf.d.defaults.generated.sh"
-# An isolated HOME with no real spira.toml anywhere in its search path: conf.sh fails
+# An isolated HOME with no real config file anywhere in its search path: conf.sh fails
 # closed (by design, nothing to do with this bead) when a config file exists but
 # spira-config is not resolvable, and this box's real $HOME has one.
 ISOHOME="$TMP/isohome"; mkdir -p "$ISOHOME"

@@ -11,7 +11,8 @@
 # SPIRA_CONF_KEYS shape conf.sh had before this bead, make the same two-branch edit this
 # suite's registry version makes, and require git to see a CONFLICT there.
 #
-# covers: spira/conf.d/, spira/conf-gen.sh
+# tier: T1
+# covers: spira/conf.d/* spira/conf-gen.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
