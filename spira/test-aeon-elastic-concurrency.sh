@@ -56,7 +56,18 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Minimal harness tree: the aeon binary runs with --home here, against a stub lib.sh that
 # sources the real one; everything else is read from the real checkout.
+#
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): since wave
+# 4.8 (sp-mz7dn), aeon's own capacity check reads SPIRA_MAX_AEONS through the in-process
+# spira_config::resolve() registry pass (aeon::conf::merge_resolved_config), which derives
+# conf.d from THIS --home, not — the way the bash seam's conf.sh derives it from its own
+# BASH_SOURCE — from wherever lib.sh/conf.sh actually live. A --home with no conf.d resolves
+# the whole generic registry to nothing, so SPIRA_MAX_AEONS=6 (exported below) never reaches
+# aeon.v despite being set in the environment: aeon fell back to FAYTH_MAX_CONCURRENT alone
+# ("at capacity (5/3)" instead of honouring the pool), exactly the defect sp-4gxjo fixed,
+# reintroduced through the config seam instead of the inline check this time (sp-8qm8g).
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber"
+cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_CONF="$TMP/no-such.conf"
 export SPIRA_DB="$TMP/no-db"
