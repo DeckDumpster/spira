@@ -45,12 +45,24 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 FIXTURE="$TMP/harness"
 tinstall_fixture "$FIXTURE"
 
+# A release-shaped bin/ beside the fixture's own spira/ and systemd/ (sp-al35q): with
+# neither SPIRA_HOME nor SPIRA_REPO set, host_from_env()/templates_dir() both resolve by
+# walking up from the units-install binary's OWN location, exactly as a real release's
+# pre-activate does. Running units-install FROM $FIXTURE/bin — not from this suite's own
+# build output, which has no systemd/ or spira/ sibling at all — is what makes that
+# resolution land on THIS fixture's spira/ and systemd/, the same ones tinstall_render's
+# explicit SPIRA_HOME="$FIXTURE/spira" used to populate $DEST. Without this, "neither set"
+# resolved to two different, self-consistent-but-different release locations and every
+# unit showed DIFFERS regardless of whether anything had actually drifted.
+mkdir -p "$FIXTURE/bin"
+ln -sf "$(command -v units-install)" "$FIXTURE/bin/units-install"
+
 DEST="$TMP/home/.config/systemd/user"
 mkdir -p "$DEST"
 
 # The installer, run in a controlled environment. HOME decides DEST.
 inst() {
-    env -i PATH="$PATH" HOME="$TMP/home" \
+    env -i PATH="$FIXTURE/bin:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \
