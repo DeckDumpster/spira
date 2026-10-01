@@ -28,6 +28,15 @@
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
+//!   spira-config writeback <candidate>  the write target any REGENERATING caller resolves
+//!                                       through first (wave 4.7, sp-ksrss) — `candidate`
+//!                                       unchanged on the installed release or
+//!                                       SPIRA_CONFIG_WRITE=1, else redirected under
+//!                                       SPIRA_REPO, then XDG_CONFIG_HOME, then a scratch
+//!                                       file, at the first of those that is writable;
+//!                                       reads SPIRA_CONFIG_WRITE/SPIRA_HOME/SPIRA_PROD/
+//!                                       SPIRA_REPO/HOME/XDG_CONFIG_HOME from this
+//!                                       process's own environment, same as `resolve`
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
@@ -700,6 +709,10 @@ fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     }
 }
 
+/// ATOMIC (temp file + rename, [`write_atomic`]), not a plain `fs::write` — a reader racing
+/// this writer (`validate`, another `get`) must never observe a half-written document
+/// truncated by a writer killed mid-write. The same guarantee `convert`'s own writer below
+/// already has; `set`/`unset` lacked it until this bead (wave 4.7, sp-ksrss).
 fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
     let out = match toml::to_string_pretty(doc) {
         Ok(s) => s,
@@ -708,7 +721,7 @@ fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match fs::write(file, out) {
+    match write_atomic(Path::new(file), &out) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("spira-config {verb}: {file}: {e}");
@@ -754,6 +767,32 @@ fn cmd_unset(path: &str, file: &str) -> ExitCode {
         }
     };
     write_doc(file, &new_doc, "unset")
+}
+
+/// `writeback <candidate>` (conf.sh's `spira_config_writeback`; wave 4.7, sp-ksrss) — reads
+/// `SPIRA_CONFIG_WRITE`, `SPIRA_HOME`, `SPIRA_PROD`, `SPIRA_REPO`, `HOME` and
+/// `XDG_CONFIG_HOME` from this process's own environment (passed explicitly by `conf.sh`'s
+/// one-line shim, same reason `cmd_resolve_sh`/`cmd_env_bootstrap_sh` do — several of these
+/// are deliberately unexported per-copy facts) and prints [`spira_config::writeback::writeback`]'s
+/// answer. Always succeeds: the whole point of the scratch-file fallback is that this never
+/// has nothing to print.
+fn cmd_writeback(candidate: &str) -> ExitCode {
+    use spira_config::writeback::{writeback, WritebackInput};
+
+    let config_write = env::var("SPIRA_CONFIG_WRITE").map(|v| v == "1").unwrap_or(false);
+    let home = PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default());
+    let prod = env::var("SPIRA_PROD").ok().filter(|v| !v.is_empty()).map(PathBuf::from);
+    let repo = PathBuf::from(env::var("SPIRA_REPO").unwrap_or_default());
+    let xdg = env::var("XDG_CONFIG_HOME")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env::var("HOME").unwrap_or_default()).join(".config"))
+        .join("spira");
+
+    let input = WritebackInput { config_write, home: &home, prod: prod.as_deref(), repo: &repo, xdg_spira_dir: xdg };
+    println!("{}", writeback(Path::new(candidate), &input).display());
+    ExitCode::SUCCESS
 }
 
 fn cmd_convert(args: &[String]) -> ExitCode {
@@ -1080,6 +1119,13 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Some("writeback") => match args.get(1) {
+            Some(candidate) => cmd_writeback(candidate),
+            None => {
+                eprintln!("usage: spira-config writeback <candidate>");
+                ExitCode::FAILURE
+            }
+        },
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
         Some("fayth") => cmd_fayth(&args[1..]),
@@ -1093,7 +1139,7 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
-                 \x20       convert|set|unset|schema|path-tail|fayth|migrate|repo> ...\n\
+                 \x20       convert|set|unset|writeback|schema|path-tail|fayth|migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -1106,6 +1152,7 @@ fn main() -> ExitCode {
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\
                  \x20 unset <dotted.path> <file>\n\
+                 \x20 writeback <candidate>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
                  \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
