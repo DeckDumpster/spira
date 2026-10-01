@@ -783,7 +783,7 @@ mod tests {
     }
 
     fn ctx(run: &Path) -> Ctx {
-        Ctx { run: run.to_path_buf(), ask_label: "needs-operator".to_string(), grace_secs: 3600 }
+        Ctx { run: run.to_path_buf(), ask_label: "needs-operator".to_string(), grace_secs: 3600 } // literal-ok: test fixture, SPIRA_ASK_LABEL's usual production value
     }
 
     // ── gh_issue_closeout ────────────────────────────────────────────────────────────────
