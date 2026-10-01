@@ -157,6 +157,7 @@ fn main() -> ExitCode {
         keys.get("SPIRA_DB", |s| s.db.clone()).map(PathBuf::from),
         keys.get("SPIRA_BD", |s| s.bd.clone())
             .unwrap_or_else(|| "bd".into()),
+        run.clone(),
     );
     let rules = Rules::standard(Some(run.join("rebase-stale.target")));
     let r = engine::run(&id, repo_arg.as_deref(), &cfg, &seam, &rules);

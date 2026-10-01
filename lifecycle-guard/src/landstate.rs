@@ -9,7 +9,10 @@ use crate::finding::{Class, Finding};
 use crate::rules::landstate_path_allowed;
 use std::path::{Path, PathBuf};
 
-const LANDSTATE_CALL_NAMES: &[&str] = &["land_mark", "landed", "landed_sha"];
+// land_state added (sp-cnnt6, "wave 4.16"): the read side moved from a lib.sh function no
+// lint named into a Rust one (`landing_pass::landstate::land_state`, `aeon::conf::Conf::
+// land_state`) that is just as much a direct reach into the ledger as the write.
+const LANDSTATE_CALL_NAMES: &[&str] = &["land_mark", "land_state", "landed", "landed_sha"];
 const FS_READ_TOKENS: &[&str] = &["fs::read_dir", "fs::read_to_string", "fs::read(", "file::open"];
 
 pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {

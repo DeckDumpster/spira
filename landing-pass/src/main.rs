@@ -9,9 +9,15 @@
 //!                            the real-sender suites' way in, no whole pass)
 //!   landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<dir> <base>]
 //!                            `spira_ask_rebase_loop` alone (sp-31hjr)
+//!   landing-pass mark <id> <state> <tip> [reason] [extra]
+//!                            `land_mark` alone (sp-cnnt6) — reads only $SPIRA_RUN, no
+//!                            lib.sh seam, so every other crate's own land_mark call can
+//!                            shell to this instead of sourcing bash.
+//!   landing-pass state <id>  `land_state` alone (sp-cnnt6), same reasoning.
 
 use landing_pass::cli::{self, Cmd, Reason};
 use landing_pass::halt::{self, HaltArgs, HaltCtx, RealHalt};
+use landing_pass::landstate;
 use landing_pass::model::{RunRecord, StatusFile};
 use landing_pass::pass::Pass;
 use landing_pass::ports::Lib;
@@ -22,6 +28,7 @@ use landing_pass::report::Reporter;
 use landing_pass::lifecycle::{lifecycle_on, pin_for_children, RealLc};
 use landing_pass::{signals, util};
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::os::unix::io::AsRawFd;
@@ -48,6 +55,8 @@ fn main() -> ExitCode {
         Cmd::SweepRed => sweep_red(),
         Cmd::Noverdict { id, branch, repo, reason, outcome } => noverdict_cmd(&id, &branch, &repo, &reason, &outcome),
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
+        Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
+        Cmd::State { id } => state_cmd(&id),
     };
     ExitCode::from(code as u8)
 }
@@ -346,4 +355,176 @@ fn sweep_red() -> i32 {
         eprintln!("{l}");
     }
     rc
+}
+
+/// `$SPIRA_RUN` alone — never the lib.sh seam. `mark`/`state` are the hot path every other
+/// crate's own land_mark/land_state call becomes (sp-cnnt6): shelling to bash just to read
+/// one already-exported variable would reintroduce the per-call cost this wave exists to
+/// cut (wave4-decomposition.md's own cost note).
+///
+/// `$SPIRA_RUN` when it is exported; otherwise resolved in-process the way conf.sh itself
+/// would, so a bare environment — a unit's own (`SPIRA_RELEASE` + `PATH` only), the shape
+/// that broke this in production three times — still gets a real answer rather than a
+/// refusal (law-a-binary-resolves-the-config-it-reads). The fallback still never shells to
+/// bash: `spira_config::resolve` is the same in-process resolver `queue`/`aeon` already
+/// call for this, not a lib.sh seam.
+fn run_dir() -> Result<PathBuf, String> {
+    if let Some(r) = std::env::var_os("SPIRA_RUN").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(r));
+    }
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = harness_home(&env).ok_or_else(|| {
+        "SPIRA_RUN is unset and SPIRA_HOME could not be resolved (no lib.sh found via \
+         $SPIRA_HOME, spira.prod, or beside this binary)"
+            .to_string()
+    })?;
+    let repo = spira_config::resolve::derive_repo_filesystem(&home, &env);
+    let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &env)
+        .map_err(|e| format!("SPIRA_RUN is unset and resolving it failed: {e}"))?;
+    let run = resolved.get("SPIRA_RUN");
+    if run.is_empty() {
+        return Err("SPIRA_RUN is unset and resolve() produced no SPIRA_RUN".to_string());
+    }
+    Ok(PathBuf::from(run))
+}
+
+/// Where lib.sh and the harness live, for [`run_dir`]'s fallback alone — never touches
+/// [`home`] or any of the other commands above, which keep requiring `$SPIRA_HOME`
+/// explicitly. The same three rungs queue's own `harness_home` climbs: `$SPIRA_HOME`, else
+/// spira-config's `spira.prod`, else beside this binary (`<release>/bin/landing-pass` →
+/// `<release>/spira`, `<workspace>/target/<profile>/landing-pass` → `<workspace>/spira`).
+fn harness_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    let has_lib = |p: &Path| p.join("lib.sh").is_file();
+    if let Some(h) = env.get("SPIRA_HOME").map(PathBuf::from).filter(|p| has_lib(p)) {
+        return Some(h);
+    }
+    if let Some(doc) = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok()) {
+        if let Some(p) = spira_config::get_path(&doc, "spira.prod").map(PathBuf::from).filter(|p| has_lib(p)) {
+            return Some(p);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let exe = exe.canonicalize().unwrap_or(exe);
+    exe.ancestors().skip(1).take(4).map(|a| a.join("spira")).find(|p| has_lib(p))
+}
+
+fn mark_cmd(id: &str, state: &str, tip: &str, reason: &str, extra: &str) -> i32 {
+    let run = match run_dir() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("landing-pass mark: {e}");
+            return 2;
+        }
+    };
+    if landstate::land_mark(&run, id, state, tip, reason, extra) {
+        0
+    } else {
+        1
+    }
+}
+
+fn state_cmd(id: &str) -> i32 {
+    let run = match run_dir() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("landing-pass state: {e}");
+            return 2;
+        }
+    };
+    match landstate::land_state(&run, id) {
+        Some(s) => {
+            print!("{s}");
+            0
+        }
+        None => 1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// Serialises this file's env-mutating tests against each other and against anything
+    /// else in this binary that might read these same names — same reasoning as
+    /// `landing_pass::testutil::serial` (not reusable here: it is private to the lib
+    /// crate, and this test lives in the bin crate).
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn run_dir_resolves_in_process_when_spira_run_is_unset() {
+        // law-a-binary-resolves-the-config-it-reads: a bare environment — a unit's own
+        // (SPIRA_RELEASE + PATH only) — must still get a real answer from `run_dir`, not a
+        // refusal. The production defect this guards: aeon's own `landing-pass mark` call
+        // silently did nothing when its process environment lacked $SPIRA_RUN.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = testkit::TempDir::new("landing-pass-run-dir");
+        let home = dir.join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
+        let xdg_data = dir.join("xdg-data");
+        let xdg_config = dir.join("xdg-config"); // empty: no config file for discover() to pick up
+        fs::create_dir_all(&xdg_config).unwrap();
+
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+            ["SPIRA_RUN", "SPIRA_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "SPIRA_TOML", "HOME"].iter().map(|k| (*k, std::env::var_os(k))).collect();
+        std::env::remove_var("SPIRA_RUN");
+        std::env::set_var("SPIRA_HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &xdg_data);
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
+        std::env::remove_var("SPIRA_TOML");
+        std::env::set_var("HOME", dir.join("userhome"));
+
+        let got = run_dir();
+
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+
+        let run = got.expect("run_dir must resolve a real answer without $SPIRA_RUN");
+        // The exact directory spira_config::resolve derives from XDG_DATA_HOME with no toml
+        // override and the default ("prod") instance — asserted exactly, so this proves
+        // resolution ran, not a lucky guess at some other path.
+        assert_eq!(run, xdg_data.join("spira").join("run"));
+    }
+
+    #[test]
+    fn state_reads_back_a_record_through_the_resolved_run_dir() {
+        // The same fallback, exercised through state_cmd end to end: with $SPIRA_RUN
+        // unset, a record planted at the path `run_dir` resolves to is still read back.
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = testkit::TempDir::new("landing-pass-run-dir-state");
+        let home = dir.join("home");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
+        let xdg_data = dir.join("xdg-data");
+        let xdg_config = dir.join("xdg-config");
+        fs::create_dir_all(&xdg_config).unwrap();
+        let run = xdg_data.join("spira").join("run");
+        fs::create_dir_all(run.join("landstate")).unwrap();
+        fs::write(run.join("landstate").join("sp-x"), "LANDED deadbeef 1700000000 spira").unwrap();
+
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+            ["SPIRA_RUN", "SPIRA_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "SPIRA_TOML", "HOME"].iter().map(|k| (*k, std::env::var_os(k))).collect();
+        std::env::remove_var("SPIRA_RUN");
+        std::env::set_var("SPIRA_HOME", &home);
+        std::env::set_var("XDG_DATA_HOME", &xdg_data);
+        std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
+        std::env::remove_var("SPIRA_TOML");
+        std::env::set_var("HOME", dir.join("userhome"));
+
+        let rc = state_cmd("sp-x");
+
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+
+        assert_eq!(rc, 0);
+    }
 }

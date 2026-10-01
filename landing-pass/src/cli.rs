@@ -16,6 +16,13 @@ pub enum Cmd {
     /// `ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<repo-dir> <base>]`:
     /// `spira_ask_rebase_loop` alone (sp-31hjr).
     AskRebaseLoop(Vec<String>),
+    /// `mark <id> <state> <tip> [reason] [extra]`: lib.sh `land_mark` alone (sp-cnnt6,
+    /// "wave 4.16") — the landstate ledger's one writer. `tip` empty or omitted means
+    /// `none` in the record; `reason` and `extra` default to empty.
+    Mark { id: String, state: String, tip: String, reason: String, extra: String },
+    /// `state <id>`: lib.sh `land_state` alone (sp-cnnt6) — the record's raw bytes with
+    /// newlines stripped, or nothing with exit 1 when it cannot be read.
+    State { id: String },
     Help,
 }
 
@@ -27,7 +34,7 @@ pub enum Reason {
     File(String),
 }
 
-pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red | noverdict <id> <branch> <repo> <reason> <outcome>";
+pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red | noverdict <id> <branch> <repo> <reason> <outcome> | mark <id> <state> <tip> [reason] [extra] | state <id>";
 
 /// Err((exit code, message for stderr)).
 pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
@@ -37,6 +44,16 @@ pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
         Some("sweep-red") if args.len() == 1 => Ok(Cmd::SweepRed),
         Some("-h") | Some("--help") => Ok(Cmd::Help),
         Some("halt") => parse_halt(&args[1..]),
+        Some("mark") if (4..=6).contains(&args.len()) => Ok(Cmd::Mark {
+            id: args[1].clone(),
+            state: args[2].clone(),
+            tip: args[3].clone(),
+            reason: args.get(4).cloned().unwrap_or_default(),
+            extra: args.get(5).cloned().unwrap_or_default(),
+        }),
+        Some("mark") => Err((2, "landing-pass mark: usage: mark <id> <state> <tip> [reason] [extra]".to_string())),
+        Some("state") if args.len() == 2 => Ok(Cmd::State { id: args[1].clone() }),
+        Some("state") => Err((2, "landing-pass state: usage: state <id>".to_string())),
         Some("noverdict") if args.len() == 6 => Ok(Cmd::Noverdict {
             id: args[1].clone(),
             branch: args[2].clone(),
@@ -122,5 +139,22 @@ mod tests {
             Ok(Cmd::AskRebaseLoop(v(&["sp-a", "spira/sp-a", "spira", "3", "foo.sh", ""])))
         );
         assert_eq!(parse(&v(&["ask-rebase-loop", "sp-a"])).unwrap_err().0, 2);
+        assert_eq!(
+            parse(&v(&["mark", "sp-a", "LANDED", "deadbeef"])),
+            Ok(Cmd::Mark { id: "sp-a".into(), state: "LANDED".into(), tip: "deadbeef".into(), reason: "".into(), extra: "".into() })
+        );
+        assert_eq!(
+            parse(&v(&["mark", "sp-a", "RED", "deadbeef", "gate"])),
+            Ok(Cmd::Mark { id: "sp-a".into(), state: "RED".into(), tip: "deadbeef".into(), reason: "gate".into(), extra: "".into() })
+        );
+        assert_eq!(
+            parse(&v(&["mark", "sp-a", "WITHDRAWN", "none", "operator", "suites=a,b"])),
+            Ok(Cmd::Mark { id: "sp-a".into(), state: "WITHDRAWN".into(), tip: "none".into(), reason: "operator".into(), extra: "suites=a,b".into() })
+        );
+        assert_eq!(parse(&v(&["mark", "sp-a", "LANDED"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["mark", "sp-a", "LANDED", "t1", "r", "e", "extra"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["state", "sp-a"])), Ok(Cmd::State { id: "sp-a".into() }));
+        assert_eq!(parse(&v(&["state"])).unwrap_err().0, 2);
+        assert_eq!(parse(&v(&["state", "sp-a", "extra"])).unwrap_err().0, 2);
     }
 }

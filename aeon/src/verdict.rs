@@ -236,8 +236,7 @@ impl Run<'_> {
 
         // ---- eviction race ----
         if !restricted && st == "closed" && committed && !superseded {
-            let ls = self.sv("land_state", &s(&[&id]));
-            let ls = if ls.success() { ls.text() } else { String::new() };
+            let ls = self.conf.land_state(&id);
             let reasons = self.conf.s("LAND_EVICTION_REASONS");
             let cap_at = self.conf.n("SPIRA_EVICTION_ESCALATE_AT", 3);
             if !ls.is_empty() && decide::eviction_reopen(&ls, "", 0, &reasons, cap_at) != Eviction::None {
@@ -469,7 +468,24 @@ impl Run<'_> {
                     };
                     if !cited.is_empty() {
                         self.log(&format!("{f}: {id} closed behind {base} but notes cite {cited} on {base} — retiring as landed"));
-                        self.sdo("land_mark", &s(&[&id, "LANDED", &cited, "cited-on-main"]));
+                        // landing-pass owns the landstate ledger's one writer (sp-cnnt6,
+                        // "wave 4.16") — `landing-pass mark`, not the lib.sh seam. SPIRA_RUN
+                        // is passed explicitly (law-a-binary-resolves-the-config-it-reads,
+                        // the "env KEY=value prog args…" idiom this file already uses for
+                        // workflow-run-check.py above) rather than left to this process's
+                        // own environment, which a unit need not export it into; a failed
+                        // mark is logged, never silently discarded, because it is an
+                        // operator-visible fact (the bead reads landed-on-main with no
+                        // landstate record to show it).
+                        let mo = self.d.exec.exec(
+                            "env",
+                            &s(&[&format!("SPIRA_RUN={}", self.conf.run.display()), "landing-pass", "mark", &id, "LANDED", &cited, "cited-on-main"]),
+                            None,
+                            None,
+                        );
+                        if !mo.success() {
+                            self.log(&format!("{f}: {id} landing-pass mark LANDED {cited} cited-on-main FAILED (rc={}): {}", mo.code, mo.first_err_line()));
+                        }
                         if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("fix on {base} cited in notes as {cited}"), "cited-landed"])) != 0 {
                             self.log(&format!("{f}: {id} branch retire failed"));
                         }
