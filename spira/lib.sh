@@ -350,390 +350,16 @@ for i in rows:
         break' "$subject" 2>/dev/null
 }
 
-# spira_ask_machinery — escalate a judgement that repeatedly could not be made.
-#
-# THE CASE THIS EXISTS FOR. A gate that withholds its verdict is correct to let the branch
-# keep its turn, and the pass is telling the truth every time it says "the next pass takes
-# it". Said eleven times in a row it is also the exact sound of a livelock, and on
-# 2026-09-07 nothing anywhere turned that repetition into a signal: origin/main sat still for
-# fifty minutes while every log line individually read as normal operation.
-#
-# So the escalation is on the REPETITION, not on the occurrence (law-alerts-must-be-actionable
-# — a first lock-timeout is not actionable and paging on it would teach the operator to
-# ignore the channel). It is a decision request, not a problem report: it names the machinery
-# fault, what it is costing, and what to do (law-escalate-decisions-not-problems).
-#
-# Deduped through ask_already_open on the branch name, because the strongest dedupe is "is it
-# already in front of him" rather than a clock — a rate-limited version of this same alert
-# put nine identical decisions in his pane in one day.
-spira_ask_machinery() {  # <bead> <branch> <repo> <outcome> <reason> <count> <gate output>
-    local id="$1" br="$2" repo="$3" outcome="$4" reason="$5" n="$6" out="$7"
-    ask_already_open "$br cannot be judged" && return 0
-    local _subj="$br cannot be judged: $outcome x$n in a row ($reason)"
-    local _dflt="raise the budget or clear the contention this reason names, then let the next pass take it; if it is not obvious, run \`gate.sh $br $repo\` by hand and read the whole output"
-    local _why="$outcome means the machinery could not reach a verdict — the branch has NOT been judged and has NOT been charged, and $id is not at fault. It has now failed to be judged $n times, so this is no longer a queue clearing itself. Nothing on $br can land until a verdict is reached, and every other branch of $repo is behind the same fault."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-$_ev
-MAILEOF
-}
-
-# spira_ask_machinery_class — escalate a machinery fault that belongs to no single branch.
-#
-# THE CASE THIS EXISTS FOR. A dead container is not any one branch's problem — every branch
-# gated against it fails the same way — so counting and escalating it per branch produced
-# eight separate asks for one fault, each advising a fix that could not help because the
-# reason string itself was wrong. Escalated by class (repo+reason) instead, this fires once
-# and names every branch the fault touched.
-spira_ask_machinery_class() {  # <repo> <reason> <branches-csv> <outcome> <count> <gate output>
-    local repo="$1" reason="$2" branches="$3" outcome="$4" n="$5" out="$6"
-    ask_already_open "$repo cannot be judged: $outcome ($reason)" && return 0
-    local _subj="$repo cannot be judged: $outcome x$n in a day ($reason) — $branches"
-    local _dflt="this is one machinery fault behind every branch named above, not one per branch; fix the cause this reason names, then let the next pass take all of them"
-    local _why="$outcome/$reason means the machinery could not reach a verdict for any of these branches — none of them is at fault and none has been charged. It has recurred $n times across $repo within a day, so this is escalated once for the class rather than once per branch."
-    local _ev; _ev="$(printf '%s' "$out" | tail -20)"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$_why
-
-Affected branches: $branches
-
-$_ev
-MAILEOF
-}
-
-# spira_land_noverdict — record one NO_VERDICT occurrence for a branch and escalate when it
-# recurs (law-alerts-must-be-actionable at the machinery level, same as spira_ask_machinery
-# above).
-#
-# A HARNESS-FAULT REASON IS COUNTED AND ESCALATED BY CLASS (repo+reason), not by branch. A
-# dead container makes every branch's gate fail identically, so the count that decides
-# whether this has become a pattern belongs to the fault, and the ask that follows names
-# every branch it has touched instead of filing one ask per branch. Every other NO_VERDICT
-# reason (a lock wait, a missing base ref) is still genuinely per-branch and keeps the old
-# per-branch key.
-#
-# THE CLASS WINDOW RESETS. An .asked marker older than SPIRA_NOVERDICT_CLASS_WINDOW (default
-# a day) is cleared along with its count, so a fault that went away and came back on a later
-# day escalates again rather than being silenced forever by yesterday's ask.
-spira_land_noverdict() {  # <bead> <branch> <repo-name> <reason> <outcome> <gate output>
-    local id="$1" br="$2" name="$3" reason="${4:-unspecified}" outcome="$5" out="$6"
-    local nv_key nv_file nv_n
-
-    if [ "$reason" = harness-fault ]; then
-        nv_key="$(printf '%s' "$name-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-        nv_file="$SPIRA_RUN/noverdict/$nv_key"
-        mkdir -p "$SPIRA_RUN/noverdict"
-        if [ -e "$nv_file.asked" ]; then
-            local _age=$(( $(date +%s) - $(date -r "$nv_file.asked" +%s 2>/dev/null || echo 0) ))
-            if [ "$_age" -ge "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}" ]; then
-                rm -f "$nv_file" "$nv_file.asked" "$nv_file.branches"
-            fi
-        fi
-        nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-        printf '%s\n' "$nv_n" > "$nv_file"
-        grep -qxF "$br" "$nv_file.branches" 2>/dev/null || printf '%s\n' "$br" >> "$nv_file.branches"
-        if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-            : > "$nv_file.asked"
-            local _branches; _branches="$(paste -sd, "$nv_file.branches" 2>/dev/null)"
-            spira_ask_machinery_class "$name" "$reason" "${_branches:-$br}" "$outcome" "$nv_n" "$out"
-            progress "escalated $name — $outcome x$nv_n in a day ($reason) across ${_branches:-$br}"
-        fi
-        return 0
-    fi
-
-    nv_key="$(printf '%s' "$br-$reason" | tr -c 'A-Za-z0-9._-' '-')"
-    nv_file="$SPIRA_RUN/noverdict/$nv_key"
-    mkdir -p "$SPIRA_RUN/noverdict"
-    nv_n=$(( $(cat "$nv_file" 2>/dev/null || echo 0) + 1 ))
-    printf '%s\n' "$nv_n" > "$nv_file"
-    if [ "$nv_n" -ge "${SPIRA_NOVERDICT_MAX:-3}" ] && [ ! -e "$nv_file.asked" ]; then
-        : > "$nv_file.asked"
-        spira_ask_machinery "$id" "$br" "$name" "$outcome" "$reason" "$nv_n" "$out"
-        progress "escalated $id — $outcome x$nv_n on $br"
-    fi
-}
-
-# spira_is_generated_file <path> -> 0 if path names a file this harness regenerates whole
-# rather than hand-merges (law-regenerate-derived-summaries). A rebase conflict on one of
-# these is resolved by rerunning its generator, never by reconciling the two hunks by hand.
-# The declared list lives in SPIRA_REBASE_GENERATED_FILES (conf.sh) — a path substring
-# match, since a generated file is named the same regardless of which directory it sits in.
-spira_is_generated_file() {
-    local path="$1" pat
-    for pat in ${SPIRA_REBASE_GENERATED_FILES:-}; do
-        case "$path" in
-            *"$pat"*) return 0 ;;
-        esac
-    done
-    return 1
-}
-
-# spira_ask_rebase_loop — tell the Concierge a bead's rebase keeps failing.
-#
-# Seven reopens on sp-dvlq, each one handing the next aeon "resolve the conflict" against a
-# branch whose correct resolution was "drop it". The repetition is the signal: a bead that
-# cannot rebase N times in a row is not learning from the reopen, and repeating it is
-# machinery cycling on itself (law-alerts-must-be-actionable at the machinery level).
-#
-# NEVER RYAN'S DECISION (law-a-rebase-loop-is-sequenced-not-split) — every one of these was
-# resolved by the Concierge with rebase guidance, never by him. So this sends a machine event
-# to the Concierge's mailbox (real time, law-machine-events-wake-in-real-time) — never a
-# --kind question/decision, which would file the same needs-ryan ask under another name.
-spira_ask_rebase_loop() {  # <bead> <branch> <repo-name> <requeue-count> <conflicts> <other-beads> [<repo-dir> <base>]
-    local id="$1" br="$2" name="$3" n="$4" conflicts="$5" others="$6"
-    local repo_dir="${7:-}" base_ref="${8:-}"
-    # Fetch bead title and status so the event names the work and its current state.
-    local bead_title bead_status
-    bead_title="$(bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: print(""); sys.exit()
-d = d if isinstance(d, list) else [d]
-print(d[0].get("title", "") if d else "")' 2>/dev/null)"
-    bead_status="$(spira_bead_status "$id")"
-    # Commits-ahead and branch tip when repo coordinates are available.
-    local tip_short="" ahead=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        tip_short="$(git -C "$repo_dir" rev-parse --short "$br" 2>/dev/null || true)"
-        ahead="$(git -C "$repo_dir" rev-list --count "$base_ref..$br" 2>/dev/null || echo '?')"
-    fi
-    local ctx=""
-    [ -n "$others" ] && ctx=" The conflicted files were also changed on the base by $others."
-    # File count over the branch's own diff (not just the conflicted files) — a bead whose
-    # scope spans several hot files cannot win a rebase race it re-enters every few hours;
-    # past SPIRA_REBASE_DECOMPOSE_FILES the answer is decomposition, not another hand rebase.
-    local nfiles=0 decompose_ctx=""
-    if [ -n "$repo_dir" ] && [ -n "$base_ref" ]; then
-        nfiles="$(git -C "$repo_dir" diff --name-only "${base_ref}...${br}" 2>/dev/null | grep -c .)"
-    fi
-    if [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        decompose_ctx=" $br touches $nfiles files — a bead this wide re-enters the rebase race every landing; consider splitting it into smaller beads instead of hand-rebasing the whole thing again."
-    fi
-    # Subject: title first so the Concierge knows what the work is (law-escalations-lead-with-the-bead).
-    local _subj
-    if [ -n "$bead_title" ]; then
-        _subj="${bead_title}: $br rebase loop x$n in $name"
-    else
-        _subj="$br rebase loop x$n in $name"
-    fi
-    # Per-file listing, one line per conflicted file, flagging any that are GENERATED
-    # (regenerate, don't hand-merge) instead of leaving that judgement to the reader.
-    local _file _files_note="" _gen_note=""
-    for _file in $conflicts; do
-        if spira_is_generated_file "$_file"; then
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file (GENERATED — regenerate it, do not merge it by hand)"
-            _gen_note=1
-        else
-            _files_note="${_files_note}${_files_note:+$'\n'}  - $_file"
-        fi
-    done
-    [ -n "$_files_note" ] || _files_note="  - ${conflicts:-unknown}"
-    # Suggested action: no empty slots — omit the duplicate clause when others is empty.
-    local _sugg
-    if [ -n "$_gen_note" ]; then
-        _sugg="regenerate the GENERATED file(s) named above via their own generator and rebase again — do not hand-merge them"
-    elif [ "${nfiles:-0}" -ge "${SPIRA_REBASE_DECOMPOSE_FILES:-4}" ]; then
-        _sugg="split $br into smaller beads by file/deliverable and land those independently, rather than rebasing the whole thing by hand again"
-    elif [ -n "$others" ]; then
-        _sugg="check whether $br is a duplicate of $others and close it if so; if the work is genuinely new, rebase by hand and push"
-    else
-        _sugg="rebase $br by hand and push, or close it if the work is already landed"
-    fi
-    # Extra lines for the body: status and branch info.
-    local _extra=""
-    [ -n "$bead_status" ] && _extra="Status: ${bead_status}."
-    if [ -n "$tip_short" ] && [ -n "$ahead" ]; then
-        _extra="${_extra:+$_extra$'\n'}Branch: ${tip_short} (${ahead} commit(s) ahead of ${base_ref})."
-    fi
-    mail send concierge \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind note <<MAILEOF >/dev/null 2>&1
-## Note
-
-$_subj
-
-$id has been reopened for a rebase conflict $n times and the loop is not converging. This is
-machinery cycling on itself, not a decision for Ryan (law-a-rebase-loop-is-sequenced-not-split)
-— rebase with explicit guidance and fast-track the bead into a round the moment it certifies.
-
-Conflicting file(s):
-$_files_note
-$ctx$decompose_ctx
-
-Suggested action: $_sugg
-
-$_extra
-MAILEOF
-}
-
-# spira_ask_red_recurring — escalate a bead that has gone RED twice with the same reason class.
-#
-# The second RED with the same reason class means the aeon's work did not fix the root cause.
-# Each reopen costs a full session; repeating it charges work that hits the same wall.
-# Deduped on "$br red recurring $reason_class" so one open ask suppresses re-escalation.
-spira_ask_red_recurring() {  # <bead> <branch> <repo-name> <reason-class> <first-red-epoch>
-    local id="$1" br="$2" name="$3" reason_class="$4" first_epoch="${5:-0}"
-    ask_already_open "$br red recurring $reason_class" && return 0
-    local elapsed_h=0
-    [ "${first_epoch:-0}" -gt 0 ] && \
-        elapsed_h=$(( ( $(date +%s) - first_epoch ) / 3600 ))
-    local _subj="$br red recurring: $reason_class twice on $id in $name"
-    local _dflt="investigate why $br cannot land ($reason_class); close the bead if the work is superseded, or rebase by hand if the root cause is external"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id has gone RED twice with the same reason class ($reason_class) on $br in $name. The shas changed between marks, so each reopen charged a session to work that hit the same wall. Elapsed since first RED: ${elapsed_h}h.
-MAILEOF
-}
-
-# spira_ask_rebase_refused — one deduplicated ask per closed bead the harness cannot rebase.
-# A refusal is an infrastructure fault, not the work's fault — the bead stays closed.
-spira_ask_rebase_refused() {  # <bead> <branch> <repo-name> <reason>
-    local id="$1" br="$2" name="$3" reason="$4"
-    ask_already_open "$br rebase refused" && return 0
-    local _subj="$br rebase refused in $name: $reason"
-    local _dflt="fix the infrastructure; $id stays closed and its branch will land on the next pass"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-$id is closed; its branch $br cannot be rebased onto the base in $name.
-The failure is not a merge conflict — the work is not being reopened.
-Reason: $reason.
-MAILEOF
-}
-
-# spira_ask_budget_deferred — branch deferred by budget exhaustion N consecutive passes.
-spira_ask_budget_deferred() {  # <branch> <repo> <count>
-    local br="$1" name="$2" n="$3"
-    ask_already_open "$br budget-deferred" && return 0
-    local _subj="$br budget-deferred: $n consecutive passes in $name"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind alert <<MAILEOF >/dev/null 2>&1
-## Alert
-$_subj
-
-Branch $br has been deferred by budget exhaustion $n consecutive landing passes in $name.
-The pass runs out of gate budget before reaching this branch.
-MAILEOF
-}
-
-# spira_ask_refresh_loop — escalate a pr-mode branch that will not merge despite being
-# repeatedly refreshed onto the base.
-#
-# A branch that has been rebased N times and its pull request still has not merged is not
-# a slow landing — it is a stuck one. The obstacle is not staleness; the loop keeps
-# removing that and the PR stays open. An aeon must own the investigation; the bead
-# belongs back on the board at high priority so the next aeon finds it immediately rather
-# than after whatever the queue was already doing.
-#
-# Deduped on the bead id (via ask_already_open) so a stuck branch sends one alert per cap,
-# not one per pass: a monitor that fires every two minutes trains the operator to mute it,
-# which is the failure law-alerts-must-be-actionable names.
-spira_ask_refresh_loop() {  # <repo> <repo-name> <branch> <bead> <base> <n>
-    local repo="$1" name="$2" br="$3" id="$4" base="$5" n="$6" behind
-    ask_already_open "$id refresh cap" && return 0
-    behind="$(git -C "$repo" rev-list --count "$br..$base" 2>/dev/null)" || behind="?"
-    local _subj="Spira: $id's pull request has been rebased $n time(s) and still has not merged"
-    local _dflt="reopen $id at P0 so an aeon owns the pull request's own failure, and leave the branch alone until it does"
-    local _ev; _ev="$(printf 'BRANCH    %s in %s\nBASE      %s, %s commit(s) ahead of the branch\nREFRESHED %s time(s); the cap is %s\n\n%s\n' \
-         "$br" "$name" "$base" "$behind" "$n" "${SPIRA_PR_REFRESH_MAX:-5}" "$(bead_context "$id")")"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-the bead is closed and its aeon is gone, so nothing is watching this pull request. Spira has been dragging $br back onto $base every time the base moved, and $n rebases have not got it merged — which means the obstacle is not staleness.
-
-WHAT THIS BEAD IS FOR:
-$_ev
-MAILEOF
-}
-
-# land_escalate — ask the operator once when the landing leg is broken.
-#
-# The escalation is rate limited because a dead landing leg stays dead until someone fixes
-# it, and a check that says so every two minutes is a check the operator learns to scroll past
-# (law-alerts-must-be-actionable).
-land_escalate() {        # land_escalate <subject-tail> <evidence>
-    local why="$1" ev="$2" cd="$SPIRA_RUN/landing.escalated" now last
-    # ALREADY ON HIS SCREEN? THEN DO NOT ASK AGAIN. The clock below is a floor, not the
-    # answer: a dead landing leg stays dead until somebody fixes it, so an hourly re-ask put
-    # NINE identical "Spira is landing nothing" decisions in the operator's pane in one day.
-    # He closed eight of them and the ninth arrived anyway — "why do i keep getting this."
-    # The queue is the database, so ask the database rather than this box's memory of it.
-    ask_already_open "Spira is landing nothing" && return 0
-    now="$(date +%s)"; last=0
-    [ -f "$cd" ] && last="$(cat "$cd" 2>/dev/null || echo 0)"
-    [ $(( now - last )) -lt "${SPIRA_LAND_ESCALATE_EVERY:-3600}" ] && return 0
-    echo "$now" > "$cd"
-    local _subj="Spira is landing nothing — $why"
-    local _dflt="run \`landing-pass land\` by hand to see the failure, then file the fix as a bead"
-    mail send operator \
-        --from "Landing gate <gate@spira>" \
-        --subject "$_subj" \
-        --kind question \
-        --default "$_dflt" <<MAILEOF >/dev/null 2>&1
-## Question
-$_subj
-
-## Default
-$_dflt
-
-every finished branch in every repository is standing unlanded until this is fixed; aeons go on working and closing beads, so the board will read as healthy while nothing reaches a base branch
-
-$ev
-MAILEOF
-    # An escalation is a write, never a movement. Counting a report of paralysis as progress
-    # would mute the one check that notices paralysis.
-    act "escalated: the landing leg is not running"
-}
+# spira_ask_machinery, spira_ask_machinery_class, spira_land_noverdict,
+# spira_is_generated_file, spira_ask_rebase_loop, spira_ask_red_recurring,
+# spira_ask_rebase_refused, spira_ask_budget_deferred, spira_ask_refresh_loop and
+# land_escalate retired (sp-31hjr, wave 4.30, family C): ported natively into
+# landing-pass/src/real.rs + ask.rs (land_escalate into sentinel/src/dispatch.rs).
+# No caller remained in bash — landing-pass's own lib.sh seam was the only one, and
+# it calls the Rust versions in-process now. `landing-pass noverdict ...` and
+# `sentinel --land-escalate` drive the native versions standalone for the
+# real-sender suites. ask_already_open stays (the GitHub-closeout family, not yet
+# ported, still calls it directly).
 
 # How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
 # is one line, and a warning printed before it would be counted as a row.
@@ -3540,46 +3166,10 @@ sys.stdout.write("\n".join(out[-int(sys.argv[1]):]) if out else "(trace had no r
 ' "$n" 2>/dev/null || printf '(could not render the trace)'
 }
 
-bead_context() {         # bead_context <id> -> a human-readable block
-    local id="$1"
-    [ -n "$id" ] && [ "$id" != "-" ] || { printf '(no single bead — this is about the plan as a whole)'; return 0; }
-    bdjson show "$id" 2>/dev/null | python3 -c '
-import sys, json, datetime
-try:
-    d = json.load(sys.stdin)
-    i = (d if isinstance(d, list) else [d])[0]
-except Exception:
-    print("(could not read the bead — say so rather than pretend)"); raise SystemExit
-def age(ts):
-    try:
-        t = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
-        h = (datetime.datetime.now(datetime.timezone.utc) - t).total_seconds() / 3600
-        return "%dh" % h if h < 48 else "%dd" % (h / 24)
-    except Exception:
-        return "?"
-print("BEAD    %s  [%s, P%s, open %s]" % (i.get("id"), i.get("status"), i.get("priority"), age(i.get("created_at"))))
-print("TITLE   %s" % (i.get("title") or "(none)"))
-labs = ", ".join(i.get("labels") or []) or "(none)"
-print("LABELS  %s" % labs)
-print("")
-print("WHAT THIS BEAD IS FOR")
-print((i.get("description") or "(no description — that is itself the problem)").strip())
-# `notes` is a STRING on these beads, not a list — iterating it yielded one character
-# per "note" and printed "- c", "- h". Normalise before slicing anything.
-notes = i.get("notes")
-if isinstance(notes, str):
-    notes = [n for n in notes.split("\n") if n.strip()]
-elif isinstance(notes, list):
-    notes = [(n.get("text") if isinstance(n, dict) else str(n)) for n in notes]
-else:
-    notes = []
-if notes:
-    print("")
-    print("MOST RECENT NOTES")
-    for n in notes[-3:]:
-        print("  - %s" % str(n).strip()[:400])
-' 2>/dev/null || printf '(could not read %s)' "$id"
-}
+# bead_context retired (sp-31hjr, family C): ported natively into landing-pass/src/ask.rs
+# (bead_context) + real.rs (RealBeads::context). No caller remained — spira_ask_refresh_loop
+# was the only one, and it's native now too. sentinel's and strand's own `bead_context`
+# (render.rs, check.rs) are separate, pre-existing Rust copies, untouched by this bead.
 
 # land_subject <id> -> "spira: land <id>", or "spira: land <id> — <title>" when the bead
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
@@ -4763,79 +4353,33 @@ SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-$SPIRA_HOME/repo-map}"
 # not a file:// URL and is not empty. https://, git@, ssh:// are all real remotes.
 # A clone with no remotes at all passes — that is the intended shape for test repos.
 # --------------------------------------------------------------------------------------
-_spira_remote_is_real() {   # _spira_remote_is_real <url> -> 0 if network-reachable
-    local url="${1:-}"
-    [ -n "$url" ] || return 1          # no URL is not a real remote
-    case "$url" in
-        /*)        return 1 ;;         # absolute local path
-        file:///*) return 1 ;;         # file:// URL pointing locally
-        *)         return 0 ;;         # https://, git@, ssh://, etc.
-    esac
+# THE REPO REGISTRY'S CLI DOOR (spira_config::repos, sp-37rmg, "wave 4.11"). SPIRA_HOME,
+# SPIRA_REPO, SPIRA_REPO_DERIVED, SPIRA_HOME_REPO and SPIRA_REPO_MAP are deliberately NOT
+# exported by conf.sh (each is a fact about this one copy of the harness; conf.sh's own
+# comment on SPIRA_REPO_DERIVED says why) — a bare `spira-config repo ...` run from a
+# function below would see none of them, so every shim threads them through explicitly
+# instead of trusting export.
+_spira_config_repo() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
+    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
+        spira-config repo "$@"
 }
 
+# Ported to spira_config::containment (sp-eekjm) and wired into spira-config's own
+# `resolve()` there; this is now the one-line shim onto the CLI door for every bash caller
+# (wave4-decomposition.md row U, sp-37rmg, "wave 4.11"). `_spira_remote_is_real` had no
+# caller outside this function and is retired rather than ported. SPIRA_INSTANCE/
+# SPIRA_WORKSPACES ARE already exported by conf.sh, but SPIRA_REPO_MAP is not, so this still
+# goes through the same threading helper as every other repo-registry shim.
 spira_containment_check() {
-    # prod (or unset) is always allowed; the map is unconstrained.
+    # prod (or unset) is always allowed; the map is unconstrained — kept as a bash-only
+    # fast path (never shells to spira-config) so every lib.sh source, in production and in
+    # every test fixture that never sets SPIRA_INSTANCE, costs exactly what it always did:
+    # nothing. Only a genuinely confined instance pays for the real check.
     case "${SPIRA_INSTANCE:-prod}" in prod) return 0 ;; esac
-
-    local ws path url row name bad=0
-    ws="${SPIRA_WORKSPACES:-}"
-
-    [ -f "$SPIRA_REPO_MAP" ] || return 0   # no map to check
-
-    while IFS='|' read -r name path rest || [ -n "$name" ]; do
-        # strip whitespace and skip comments/blanks
-        name="${name#"${name%%[![:space:]]*}"}"; name="${name%"${name##*[![:space:]]}"}"
-        path="${path#"${path%%[![:space:]]*}"}"; path="${path%"${path##*[![:space:]]}"}"
-        case "$name" in ''|'#'*) continue ;; esac
-        [ -n "$path" ] || continue
-
-        # REFUSAL 1: path must be under SPIRA_WORKSPACES.
-        if [ -n "$ws" ]; then
-            # resolve the workspace root to its canonical prefix
-            local ws_real; ws_real="$(cd "$ws" 2>/dev/null && pwd -P)"
-            if [ -n "$ws_real" ]; then
-                # canonical path of the repo entry (use the directory if it exists, else
-                # compare the literal string so an unmade path is still caught by name)
-                local path_real; path_real="$(cd "$path" 2>/dev/null && pwd -P)"
-                [ -n "$path_real" ] || path_real="$path"
-                # Strip the trailing slash before interpolating into the glob pattern.
-                # When ws_real is "/" the unstripped form produces "//*", which a shell
-                # case statement never matches — a single leading slash cannot satisfy two.
-                # Without the slash the prefix becomes "" and "/*" matches every absolute path.
-                local ws_pfx="${ws_real%/}"
-                case "$path_real" in
-                    "$ws_pfx"/*|"$ws_pfx") ;;   # inside workspaces root — ok
-                    *) printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
-                           "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
-                       bad=1 ;;
-                esac
-            else
-                # SPIRA_WORKSPACES does not exist as a directory; compare literal prefix.
-                # Same trailing-slash fix applies to the literal path.
-                local ws_lit="${ws%/}"
-                case "$path" in
-                    "$ws_lit"/*|"$ws_lit") ;;
-                    *) printf 'spira: containment: instance %s is confined to %s — %s (%s) is outside it\n' \
-                           "${SPIRA_INSTANCE}" "$ws" "$name" "$path" >&2
-                       bad=1 ;;
-                esac
-            fi
-        fi
-
-        # REFUSAL 2: no real (network) remote on any registered checkout.
-        # Only check if the path is a git repository at all.
-        if git -C "$path" rev-parse --git-dir >/dev/null 2>&1; then
-            while IFS= read -r url; do
-                _spira_remote_is_real "$url" || continue
-                printf 'spira: containment: instance %s may not have a real remote — %s (%s) has %s\n' \
-                    "${SPIRA_INSTANCE}" "$name" "$path" "$url" >&2
-                bad=1; break
-            done < <(git -C "$path" remote -v 2>/dev/null | awk '/\(fetch\)/ { print $2 }')
-        fi
-    done < "$SPIRA_REPO_MAP"
-
-    [ "$bad" -eq 0 ] || { printf 'spira: containment check failed for instance %s — halting\n' \
-        "${SPIRA_INSTANCE}" >&2; exit 1; }
+    _spira_config_repo containment-check && return 0
+    exit 1     # the bash original halted the whole sourcing process on a violation, not just this call
 }
 
 # Run at source time. The cost is one read of the map file and, for non-prod instances,
@@ -4845,8 +4389,9 @@ spira_containment_check
 # The name is DERIVED from the checkout the harness is installed in (conf.sh: basename of
 # SPIRA_REPO) and overridable in spira.conf. It used to be the literal `brain`, which is one
 # operator's repository written into the mechanism.
+# Ported to spira_config::repos::home_repo (sp-37rmg, "wave 4.11") — a one-line shim.
 spira_home_repo() {      # the repo name a bead means when it names none
-    printf '%s' "${SPIRA_HOME_REPO:-$(basename "${SPIRA_REPO:-$SPIRA_HOME}")}"
+    _spira_config_repo home-repo
 }
 
 # COLUMNS ARE NAMED, NEVER NUMBERED. This function took an index until `base` was added
@@ -4868,59 +4413,15 @@ spira_home_repo() {      # the repo name a bead means when it names none
 # hypothetical, since the harness is installed in a checkout and read by systemd
 # timers, so lib.sh and repo-map can be read out of step for one pass.
 #
-# NOTE: no apostrophes inside the awk program below. It is single-quoted, so one in a comment
-# closes the string and the shell reports a syntax error pointing at the following line.
+# Ported to spira_config::repos (sp-37rmg, "wave 4.11") — see that module's own doc for the
+# row-shape logic this used to spell out in awk; `repo_field`/`repo_root`/`repo_names` below
+# are now one-line shims onto it.
 repo_field() {           # repo_field <name> <path|land|base|format|gate|lanes> -> the field
-    local name="$1" col="$2"
-    [ -f "$SPIRA_REPO_MAP" ] || return 1
-    awk -v want="$name" -v col="$col" '
-        function _lanes_col_idx(    t) {
-            if (NF < 7) return 0
-            t = $NF; gsub(/^[ \t]+|[ \t]+$/, "", t)
-            # An empty trailing field means an explicit empty lanes column.
-            if (t == "") return NF
-            # A lanes value is a simple identifier: letters, digits, hyphens, commas only.
-            # Gate fragments always contain spaces, slashes, dollars, or other shell chars,
-            # so this pattern distinguishes them in practice.
-            if (t ~ /^[A-Za-z][A-Za-z0-9,_-]*$/) return NF
-            return 0
-        }
-        BEGIN { FS = "|" }
-        /^[ \t]*#/ { next }
-        {
-            n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n)
-            if (n == "" || NF < 2 || n != want) next
-            li = _lanes_col_idx()
-            # The gate is everything from the last fixed column on, rejoined with "|", up
-            # to but not including the lanes column when one is present. The formatter is
-            # always a single field; the gate is the last command column and may contain
-            # pipes (and therefore become multiple awk fields when split on "|").
-            #
-            # WHICH position gate starts at comes from NF (or li when lanes is present),
-            # never from a constant. A six-field row is the current shape; five-field rows
-            # predate `base`; anything narrower predates both.
-            if (col == "lanes") { v = (li > 0 ? $NF : "") }
-            else if (col == "gate") {
-                s = (NF >= 6 ? 6 : (NF == 5 ? 5 : 4))
-                e = (li > 0 ? NF - 1 : NF)
-                v = ""
-                for (i = s; i <= e; i++) v = v (i > s ? "|" : "") $i
-            }
-            else if (col == "path")   v = $2
-            else if (col == "land")   v = $3
-            else if (col == "base")   v = (NF >= 6 ? $4 : "")
-            else if (col == "format") v = (NF >= 6 ? $5 : (NF == 5 ? $4 : ""))
-            else                      v = ""
-            gsub(/^[ \t]+|[ \t]+$/, "", v)
-            print v; exit
-        }' "$SPIRA_REPO_MAP" 2>/dev/null
+    _spira_config_repo field "$1" "$2"
 }
 
 repo_names() {           # every repo name in the map, one per line
-    [ -f "$SPIRA_REPO_MAP" ] || return 0
-    awk 'BEGIN { FS = "|" } /^[ \t]*#/ { next }
-         { n = $1; gsub(/^[ \t]+|[ \t]+$/, "", n); if (n != "" && NF > 1) print n }' \
-        "$SPIRA_REPO_MAP" 2>/dev/null
+    _spira_config_repo names
 }
 
 # repo_root <name> -> the checkout, or non-zero if the map does not carry that name.
@@ -4929,19 +4430,7 @@ repo_names() {           # every repo name in the map, one per line
 # drives a fixture through: a test sets SPIRA_REPO and its beads carry no `repo:` label at
 # all. Widening it into a map rather than replacing it is what keeps those suites honest.
 repo_root() {
-    local name="${1:-}" p
-    [ -n "$name" ] || name="$(spira_home_repo)"
-    # ONLY WHEN IT IS AN OVERRIDE. conf.sh derives SPIRA_REPO from where the harness sits, so
-    # it is now always set — and taking it unconditionally made every home-repository lookup
-    # bypass the map. It counts as an override exactly when it differs from that derived
-    # value, which is what "somebody set this on purpose" means here.
-    if [ "$name" = "$(spira_home_repo)" ] && [ -n "${SPIRA_REPO:-}" ] \
-       && [ "$SPIRA_REPO" != "${SPIRA_REPO_DERIVED:-}" ]; then
-        printf '%s' "$SPIRA_REPO"; return 0
-    fi
-    p="$(repo_field "$name" path)"
-    [ -n "$p" ] || return 1
-    printf '%s' "$p"
+    _spira_config_repo root "${1:-}"
 }
 
 # spira_same_repo <a> <b> -> 0 if those two paths are the same repository.
@@ -4950,17 +4439,10 @@ repo_root() {
 # repository under two paths, and this harness runs from both — every aeon works in a
 # worktree and the landing gate extracts one. A string comparison therefore calls the copy in
 # force "some other repository", so a fence keyed on it fires on every branch, and a check
-# keyed on it reports a second copy that does not exist.
-#
-# `--git-common-dir` and not `--git-dir`: a worktree has a private git dir and a shared common
-# one, and only the shared one identifies the repository. Resolved by `cd` + `pwd -P` rather
-# than `--path-format=absolute`, which is newer than the git a colleague may be running, and
-# because the answer is relative when the command is run from inside the repository.
+# keyed on it reports a second copy that does not exist. Ported (sp-37rmg); `_spira_gitstore`
+# below stays bash — it has a caller outside this family (duc's own worktree-dir lookup).
 spira_same_repo() {      # spira_same_repo <path-a> <path-b>
-    local a b
-    a="$(_spira_gitstore "${1:-}")" || return 1
-    b="$(_spira_gitstore "${2:-}")" || return 1
-    [ -n "$a" ] && [ -n "$b" ] && [ "$a" = "$b" ]
+    spira-config repo same "${1:-}" "${2:-}"
 }
 
 _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, absolute
@@ -4982,9 +4464,7 @@ _spira_gitstore() {      # _spira_gitstore <path> -> its shared git directory, a
 # batch-PR pipeline must still spell out `queue` alone. Certification and the periodic
 # step/verdict dispatch are not specific to that pipeline — see repo_land_queued.
 repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.local
-    local m; m="$(repo_field "${1:-}" land)"
-    [ "$m" = "queue.forge" ] && m=queue
-    printf '%s' "${m:-push}"
+    _spira_config_repo land "${1:-}"
 }
 
 # repo_land_queued <name> -> 0 when the repo is EITHER merge-queue mode (queue or
@@ -4993,10 +4473,7 @@ repo_land() {            # repo_land <name> -> push | pr | hold | queue | queue.
 # SUBMITTED branch the same way regardless of how its round eventually lands — only the
 # round's own terminal step (a batch PR vs. land-local) differs between the two.
 repo_land_queued() {
-    case "$(repo_land "${1:-}")" in
-        queue|queue.local) return 0 ;;
-        *) return 1 ;;
-    esac
+    _spira_config_repo land-queued "${1:-}"
 }
 
 # spira_repo_lanes <name> -> the granted lane set (space-separated partition labels).
@@ -5090,7 +4567,7 @@ spira_open_trigger_count() {
 }
 
 repo_gate() {            # repo_gate <name> -> the repo's own gate command, possibly empty
-    repo_field "${1:-}" gate
+    _spira_config_repo gate "${1:-}"
 }
 
 # repo_format <name> -> the repo's own formatter, or nothing. ABSENCE MEANS DO NOTHING, and
@@ -5099,13 +4576,13 @@ repo_gate() {            # repo_gate <name> -> the repo's own gate command, poss
 # whose base is already unformatted — another, measured once — it rewrites the whole
 # tree out from under the work.
 repo_format() {
-    repo_field "${1:-}" format
+    _spira_config_repo format "${1:-}"
 }
 
 # repo_base <name> -> the repo's declared base ref, or nothing if the row leaves it to
 # spira_landref to resolve. Callers want spira_landref, not this: it is the raw column.
 repo_base() {
-    repo_field "${1:-}" base
+    _spira_config_repo base "${1:-}"
 }
 
 # repo_name_at <path> -> the map name for a checkout path, or non-zero.
@@ -5116,18 +4593,7 @@ repo_base() {
 # which is the same property the per-repository scratch worktree is named for. A caller
 # that already holds the name should pass it rather than make this guess.
 repo_name_at() {
-    local p="${1:-}" home n
-    [ -n "$p" ] || return 1
-    home="$(spira_home_repo)"
-    # SPIRA_REPO overrides the map for the home repo, so it must be consulted first or a
-    # fixture — which has no map entry at all — resolves to nothing.
-    if [ -n "${SPIRA_REPO:-}" ] && [ "$SPIRA_REPO" != "${SPIRA_REPO_DERIVED:-}" ] \
-       && [ "$p" = "$SPIRA_REPO" ]; then printf '%s' "$home"; return 0; fi
-    while IFS= read -r n; do
-        [ -n "$n" ] || continue
-        if [ "$(repo_field "$n" path)" = "$p" ]; then printf '%s' "$n"; return 0; fi
-    done <<< "$(repo_names)"
-    return 1
+    _spira_config_repo name-at "${1:-}"
 }
 
 # spira_repos -> every repository this harness manages, one name per line.
@@ -5137,9 +4603,7 @@ repo_name_at() {
 # repositories would land nothing while reporting a clean pass — the exact false-clean this
 # whole file is written against.
 spira_repos() {
-    local home; home="$(spira_home_repo)"
-    printf '%s\n' "$home"
-    repo_names | grep -vx -- "$home" || true
+    _spira_config_repo all
 }
 
 bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if it names none

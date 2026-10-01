@@ -53,10 +53,15 @@ certified instead). NO_VERDICT is counted and escalated by `spira_land_noverdict
   contract (§2.5). The gate string (repository's own: fences, then the budgeted
   `gate-touched.sh` selector of sp-vq2za, then `testenv-batch.sh`/`testenv`) is the gate's
   business; this pass never selects suites.
-- **Not the rebase machinery, the reopen, the asks or the delivery machine.** `rebase_branch`,
-  `recut_onto`, `bead_reopen`, `bead_close_on_land`, the `spira_ask_*` family, the
-  `lc_deliver_*` wrappers, `land_mark` (with its TSD dual-write) stay in lib.sh and are
-  reached through one seam (§6).
+- **Not the rebase machinery, the reopen or the delivery machine.** `rebase_branch`,
+  `recut_onto`, `bead_reopen`, `bead_close_on_land`, the `lc_deliver_*` wrappers, `land_mark`
+  (with its TSD dual-write) stay in lib.sh and are reached through one seam (§6).
+  **The asks are this crate's own now (sp-31hjr):** `spira_land_noverdict` and the
+  `spira_ask_*` family (`rebase_loop`, `red_recurring`, `rebase_refused`, `budget_deferred`,
+  `refresh_loop`) moved into `src/ask.rs` (the text) + `src/real.rs` (`mail`, `bd`, `git`) —
+  no more a seam onto lib.sh. `land_escalate` moved to **sentinel**, not here (CHECK 6's own
+  concern, not the pass's). `landing-pass noverdict …` and `landing-pass ask-rebase-loop …`
+  drive the two that had their own real-sender bash suites, standalone.
 - **Not a config reader.** Every setting and every repository row comes from conf.sh/lib.sh
   through the context seam — the one resolver (law-config-through-the-cli-only). No Rust
   here parses the repository map or the config document; the pr pass's private parser and
@@ -417,9 +422,9 @@ are values like any other.
 | S2 `land_mark` | `land_mark <id> <state> <tip> [reason]` | landstate + TSD dual-write |
 | S3 `reopen` | `bead_reopen <id> <cause> <note>` | WITHDRAWN, submitted label, release, cause event |
 | S4 `event` | `spira_event <kind> <id> <title> <detail>` | rate-limited events log |
-| S5 `noverdict` | `spira_land_noverdict …` | per-class counters, machinery ask |
+| S5 | ~~`noverdict`~~ | **retired (sp-31hjr):** `spira_land_noverdict` is native — `Lib::noverdict` in `real.rs`, text in `ask.rs`. `landing-pass noverdict …` drives it standalone. |
 | S6 `incident` | `incident.sh file <title> -` with `SPIRA_INCIDENT_*` set **inside** the script | spooled, deduped intake |
-| S7 `ask_*` | `spira_ask_rebase_loop / _red_recurring / _rebase_refused / _budget_deferred` | mail wiring, dedupe |
+| S7 | ~~`ask_*`~~ | **retired (sp-31hjr):** `spira_ask_rebase_loop` / `_red_recurring` / `_rebase_refused` / `_budget_deferred` are native — `Lib::ask_*` in `real.rs`, text in `ask.rs`. `landing-pass ask-rebase-loop …` drives the first standalone. |
 | S8 `rebase` / `recut` | `rebase_branch`, `recut_onto` (+ their globals) | scratch worktrees, salvage, formatter |
 | S9 `requeue` | `bump_requeue <id> merge-conflict`; `requeues_of <id>` | events table |
 | S10 `conflict_note` / `other_beads` | `conflict_reopen_note`, `other_beads_on_conflicts` | shared with `pr_branch` (sp-t4y60; was pr-pass-branch.sh) |
@@ -431,7 +436,7 @@ are values like any other.
 | S16 `closeout` | `gh_issue_closeout`; `bead_close_on_land` | issue close + close + reap |
 | S17 `prune_worktrees` | `spira_prune_worktrees <repo>` | the one destruction site |
 | S18 `gh_unlanded_scan` | `_gh_unlanded_scan` | GitHub asks |
-| S19 `ask_refresh_loop` (sp-t4y60) | `spira_ask_refresh_loop <repo> <name> <br> <id> <base_fq> <n>` | mail wiring, dedupe — `needs_refresh`'s own escalation, distinct from S7's rebase-loop ask |
+| S19 | ~~`ask_refresh_loop`~~ (sp-t4y60) | **retired (sp-31hjr):** `spira_ask_refresh_loop` is native — `Lib::ask_refresh_loop` in `real.rs`, text in `ask.rs`; `needs_refresh`'s own escalation, distinct from the rebase-loop ask. |
 | S20 `deliver_pr_merged` / `deliver_pr_closed` (sp-t4y60) | `spira-lc deliver pr-merged` / `pr-closed` (lc-delivery.sh's `lc_deliver_pr_*` until sp-arpjt) | delivery CAS, pr mode's own exits (distinct from S15's push-mode wrappers) |
 | S21 `force_push` (sp-t4y60) | `spira_git_push <repo> -q --force-with-lease -u <remote> <br>` (stderr returned) | GitHub App credentials, same as S13; `land_pr`'s push always force-with-lease |
 
@@ -682,6 +687,21 @@ build or locate the binary — the testenv container already builds the workspac
   *Kept as a genuine port, not a rewrite-from-intent:* the escalation thresholds
   (`SPIRA_PR_REFRESH_MAX`, default 5), the exact log wording, and the state machine's shape
   — this is a port of a well-specified 162-line script, not a redesign.
+- **D16 — the asks, revisited (sp-31hjr, wave 4.30).** D14's "Rejected" list called the asks
+  "shared lib.sh machinery with other callers" and left them on seams S5/S7/S19. A tree-wide
+  grep found that was no longer true: this crate's own seam calls were the ONLY caller of
+  `spira_land_noverdict`, `spira_ask_rebase_loop`, `_red_recurring`, `_rebase_refused`,
+  `_budget_deferred` and `_refresh_loop` (`land_escalate` likewise, sentinel's only caller —
+  moved there, not here). `ask_already_open` stays bash: the GitHub-closeout family (AB,
+  not yet in this wave) still calls it directly, so it is the one function in the group left
+  as-is rather than shimmed. The mail-composition text moved into `src/ask.rs` (pure,
+  unit-tested against the bash output byte-for-byte except `bead_context`'s `P9999` vs
+  python's `PNone` on a priority-less bead, named there); the subprocess wiring (`bd`,
+  `git`, `mail`) moved into `src/real.rs`. `landing-pass noverdict …` and `landing-pass
+  ask-rebase-loop …` exist only so the two real-sender bash suites that drove the bash
+  functions directly (test-noverdict-class.sh, test-rebase-escalation.sh) keep driving the
+  real send path rather than a Rust-level fake — the same shape as sentinel's
+  `--land-escalate`.
 
 ## 9. Lifecycle switch
 
@@ -742,6 +762,7 @@ liveness, the clock, spira-lc and the halt ports (signals, podman, testenv teard
 | the seam mechanism, for real through bash | `seam::tests` (values on stdin intact; progress vs log vs answer; the context script against a stand-in lib.sh; a missing lib.sh is 96) |
 | concurrent certification (§8 D14): N gates start; decisions one at a time in completion order; base-fix alone (at the front and when it becomes ready mid-pass); a P0 submitted mid-pass takes the next free slot; a full admission pool holds the second gate; the budget cut waits for in-flight gates; SIGTERM reaches every running gate and its children; PAR=1 is the serial walk; push/hold stay serial; `SPIRA_CERTIFY_PAR` parsing | `par_n_starts_n_gates_before_any_finishes`, `decisions_are_applied_one_at_a_time_in_completion_order`, `a_base_fix_runs_alone_…`, `a_base_fix_that_becomes_ready_mid_pass_…`, `a_p0_submitted_mid_pass_takes_the_next_free_slot`, `a_full_admission_pool_holds_the_second_gate_back`, `a_budget_cut_waits_for_the_gates_in_flight_…`, `sigterm_reaches_every_running_gate_and_its_children`, `the_admission_probe_counts_free_slots_…`, `par_one_is_the_serial_walk_unchanged`, `push_mode_stays_serial_at_any_par`, `the_context_answer_parses_…` |
 | records and parsing | `records_keep_their_shell_formats`, `the_context_answer_parses_…`, `util::tests` |
+| asks / noverdict text (D16, sp-31hjr) | `ask::tests` — generated-file matching, each `ask_*`/`machinery*` mail against lib.sh's own wording, `bead_context` against the python |
 
 Also run by hand (not a suite, not production): `landing-pass land` against a stand-in
 `SPIRA_HOME` (stub lib.sh/gate.sh/bdsim.py, a temp git repository) — certified, then skipped

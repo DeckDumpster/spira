@@ -210,6 +210,23 @@ pub fn bd_rows(raw: Option<String>) -> Option<Vec<serde_json::Value>> {
     })
 }
 
+/// The repo registry (`spira_config::repos`, sp-37rmg "wave 4.11"), built in-process from
+/// THIS process's own environment — safe only because [`bootstrap_config`] has already
+/// imported every shell variable `conf.sh`/`lib.sh` would have resolved (`SPIRA_HOME_REPO`,
+/// `SPIRA_REPO`, `SPIRA_REPO_DERIVED`, `SPIRA_REPO_MAP`), exactly as `spira_repos`/
+/// `repo_root`/`repo_land`/`spira_home_repo` read them in bash. Replaces four of this
+/// crate's own `lib_call` round trips (one bash subprocess each, previously) with one file
+/// read — the repo registry is the most-called family in the whole wave4 decomposition.
+pub fn repo_registry() -> spira_config::repos::Registry {
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let home = home_dir();
+    let map_text = env_map
+        .get("SPIRA_REPO_MAP")
+        .filter(|p| !p.is_empty())
+        .and_then(|p| std::fs::read_to_string(p).ok());
+    spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &home)
+}
+
 /// Generic bridge to a `lib.sh` function, the same seam `gate-run`'s `Real` uses for
 /// `repo_root`/`spira_landref` (its `REPO_CONTEXT`/`LANDREF_SNIPPET`), generalised: `lib.sh`
 /// (wave 4, `law-rust-rewrites-start-from-intent` proposes it last and explicitly "leave

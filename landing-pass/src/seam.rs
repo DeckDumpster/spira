@@ -18,12 +18,7 @@ pub enum Op {
     LandMark,
     Reopen,
     Event,
-    NoVerdict,
     Incident,
-    AskRebaseLoop,
-    AskRedRecurring,
-    AskRebaseRefused,
-    AskBudgetDeferred,
     Rebase,
     Recut,
     BumpRequeue,
@@ -41,9 +36,6 @@ pub enum Op {
     CloseOnLand,
     PruneWorktrees,
     GhUnlandedScan,
-    /// pr-pass-branch.sh port (sp-t4y60): `spira_ask_refresh_loop` (needs_refresh's own
-    /// escalation mail, distinct from `AskRebaseLoop`).
-    AskRefreshLoop,
     /// `spira-lc deliver pr-merged <repo> <id> <br> <merge-sha>` (lc-delivery.sh until sp-arpjt).
     DeliverPrMerged,
     /// `spira-lc deliver pr-closed <id>`.
@@ -58,12 +50,7 @@ pub const ALL: &[Op] = &[
     Op::LandMark,
     Op::Reopen,
     Op::Event,
-    Op::NoVerdict,
     Op::Incident,
-    Op::AskRebaseLoop,
-    Op::AskRedRecurring,
-    Op::AskRebaseRefused,
-    Op::AskBudgetDeferred,
     Op::Rebase,
     Op::Recut,
     Op::BumpRequeue,
@@ -81,7 +68,6 @@ pub const ALL: &[Op] = &[
     Op::CloseOnLand,
     Op::PruneWorktrees,
     Op::GhUnlandedScan,
-    Op::AskRefreshLoop,
     Op::DeliverPrMerged,
     Op::DeliverPrClosed,
     Op::ForcePush,
@@ -140,6 +126,11 @@ __kv path "${PATH:-}"
 __kv bdjson_fixture "${SPIRA_BDJSON_FIXTURE:-}"
 __kv toml "${SPIRA_TOML_FILE:-}"
 __kv pr_refresh_max "${SPIRA_PR_REFRESH_MAX:-5}"
+__kv ask_label "${SPIRA_ASK_LABEL:-}"
+__kv noverdict_max "${SPIRA_NOVERDICT_MAX:-3}"
+__kv noverdict_class_window "${SPIRA_NOVERDICT_CLASS_WINDOW:-86400}"
+__kv rebase_decompose_files "${SPIRA_REBASE_DECOMPOSE_FILES:-4}"
+__kv rebase_generated_files "${SPIRA_REBASE_GENERATED_FILES:-}"
 for __n in $(spira_repos); do
     __p="$(repo_root "$__n" 2>/dev/null)" || __p=""
     __m="$(repo_land "$__n" 2>/dev/null)"
@@ -179,12 +170,7 @@ fn body(op: Op) -> &'static str {
         Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
         Op::Reopen => "bead_reopen \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
-        Op::NoVerdict => "spira_land_noverdict \"$1\" \"$2\" \"$3\" \"$4\" \"$5\" \"$6\" || true\nexit 0\n",
         Op::Incident => INCIDENT,
-        Op::AskRebaseLoop => "spira_ask_rebase_loop \"$@\" || true\nexit 0\n",
-        Op::AskRedRecurring => "spira_ask_red_recurring \"$@\" || true\nexit 0\n",
-        Op::AskRebaseRefused => "spira_ask_rebase_refused \"$@\" || true\nexit 0\n",
-        Op::AskBudgetDeferred => "spira_ask_budget_deferred \"$@\" || true\nexit 0\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s\\035%s' \"${REBASE_FAILURE:-}\" \"${REBASE_CONFLICTS:-}\" \"${REBASE_REFUSED_REASON:-}\"\nexit $__rc\n",
         Op::Recut => "recut_onto \"$1\" \"$2\" \"$3\" \"$4\"; __rc=$?\nprintf '\\036%s\\035%s' \"${RECUT_APPLIED_COUNT:-0}\" \"${RECUT_CONFLICTS:-}\"\nexit $__rc\n",
         Op::BumpRequeue => "bump_requeue \"$1\" \"$2\" >/dev/null 2>&1\nexit 0\n",
@@ -204,7 +190,6 @@ fn body(op: Op) -> &'static str {
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
         Op::GhUnlandedScan => "_gh_unlanded_scan || true\nexit 0\n",
-        Op::AskRefreshLoop => "spira_ask_refresh_loop \"$@\" || true\nexit 0\n",
         Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
         Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\" || true\nexit 0\n",
         Op::ForcePush => "__e=\"$(spira_git_push \"$1\" -q --force-with-lease -u \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
@@ -296,11 +281,11 @@ mod tests {
         std::fs::write(
             dir.join("lib.sh"),
             "log() { echo \"T spira: $*\"; }\n\
-             spira_land_noverdict() { log \"counted $1\"; progress \"escalated $3 — x\"; }\n\
+             spira_event() { log \"counted $1\"; progress \"escalated $3 — x\"; }\n\
              rebase_branch() { REBASE_FAILURE=conflict; REBASE_CONFLICTS='a b'; return 1; }\n",
         )
         .unwrap();
-        let (_, out) = run(&dir, Op::NoVerdict, &["sp-a", "spira/sp-a", "spira", "lock", "NO_VERDICT", "out"]);
+        let (_, out) = run(&dir, Op::Event, &["sp-a", "spira/sp-a", "spira", "detail"]);
         let p = split(&out);
         assert_eq!(p.logs, vec!["T spira: counted sp-a"]);
         assert_eq!(p.progress, vec!["escalated spira — x"]);

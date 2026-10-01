@@ -19,6 +19,9 @@ pub enum Mode {
     Audit,
     /// CHECK 3c alone; `dry` prints the decision and writes nothing.
     OpenChildren { dry: bool },
+    /// `land_escalate` alone, stdin `<why>\n<evidence>` (sp-31hjr): the real-sender
+    /// suites' way to drive the native escalation without a whole pass.
+    LandEscalate,
 }
 
 impl Mode {
@@ -29,6 +32,7 @@ impl Mode {
             Some("--summon-only") => Mode::SummonOnly,
             Some("--audit") => Mode::Audit,
             Some("--open-children") => Mode::OpenChildren { dry: false },
+            Some("--land-escalate") => Mode::LandEscalate,
             _ => Mode::Pass,
         }
     }
@@ -249,6 +253,38 @@ impl<'a> Sentinel<'a> {
         self.h.run(s).ok()
     }
 
+    /// lib.sh `ask_already_open <subject>` — ported natively (sp-31hjr). True when an
+    /// OPEN ask already carries `subject` in its title. THE STRONGEST DEDUPE IS "IS IT
+    /// ALREADY IN FRONT OF HIM": the database is the queue, so this asks the database
+    /// rather than a clock or a stamp file; a closed ask does NOT suppress a new one —
+    /// a condition recurring after an answer is new information.
+    pub fn ask_already_open(&self, subject: &str) -> bool {
+        if subject.is_empty() {
+            return false;
+        }
+        let out = self.bd().call_owned(
+            self.h,
+            &[
+                "list".into(),
+                "--status".into(),
+                "open".into(),
+                "--label".into(),
+                self.cfg.ask.clone(),
+                "--limit".into(),
+                "0".into(),
+                "--json".into(),
+            ],
+            None,
+        );
+        if !out.ok() {
+            return false;
+        }
+        let js = crate::model::json_only(&out.stdout);
+        crate::model::parse_beads(js)
+            .map(|rows| rows.iter().any(|b| b.title.as_deref().unwrap_or("").contains(subject)))
+            .unwrap_or(false)
+    }
+
     pub fn git(&self, repo: &str, args: &[&str]) -> Out {
         let mut a = vec!["-C".to_string(), repo.to_string()];
         a.extend(args.iter().map(|s| s.to_string()));
@@ -276,6 +312,7 @@ impl<'a> Sentinel<'a> {
         match self.mode {
             Mode::SummonOnly => self.summon_only(),
             Mode::OpenChildren { dry } => self.open_children_only(dry),
+            Mode::LandEscalate => self.land_escalate_cmd(),
             _ => self.full(),
         }
     }

@@ -1,6 +1,7 @@
 //! landing-pass — the one landing pass for every land mode. See DESIGN.md for the contract
 //! this implements.
 
+pub mod ask;
 pub mod budget;
 pub mod cli;
 pub mod halt;

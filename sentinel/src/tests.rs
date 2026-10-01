@@ -487,11 +487,21 @@ fn mailboxes_count_as_progress_and_status_files_are_read() {
     )
     .unwrap();
     r.on(|s| {
-        if seam_name(s).as_deref() == Some("sentinel-land-escalate") {
+        if s.prog == "mail" && s.args.first().map(String::as_str) == Some("send") {
+            // sp-31hjr: land_escalate is native now (no more "sentinel-land-escalate"
+            // seam) — it shells straight into `mail` by name (sp-gypjk).
             let body = String::from_utf8(s.stdin.clone().unwrap()).unwrap();
-            assert!(body.starts_with("its last run exited 2\nSTATUS  SP_LAND_AT="), "{body}");
+            let subj_arg = s
+                .args
+                .iter()
+                .position(|a| a == "--subject")
+                .and_then(|i| s.args.get(i + 1))
+                .cloned()
+                .unwrap_or_default();
+            assert_eq!(subj_arg, "Spira is landing nothing — its last run exited 2");
+            assert!(body.starts_with("## Question\nSpira is landing nothing — its last run exited 2\n\n## Default\n"), "{body}");
+            assert!(body.contains("STATUS  SP_LAND_AT="));
             assert!(body.contains("\n\n--- landing.log (tail) ---\n(no landing log — the worker has never written one)"));
-            tally(s, "act\tescalated: the landing leg is not running\n");
             return ok("");
         }
         None
@@ -511,6 +521,28 @@ fn mailboxes_count_as_progress_and_status_files_are_read() {
         "{}",
         sink.text()
     );
+}
+
+// lib.sh `ask_already_open` (sp-31hjr): the database is the queue, so this asks the
+// database — `--status open --label <ask>`, matched by title substring. A closed ask
+// does not suppress: it is excluded by the `--status open` filter this sends, the same
+// filter the real `bd` enforces server-side, not by any re-check here.
+#[test]
+fn ask_already_open_queries_open_asks_by_label_and_matches_the_subject_substring() {
+    let (w, r, sink, clock) = setup("ask-open");
+    r.on(|s| {
+        if !is_bd(s, "list") {
+            return None;
+        }
+        let arg_after = |k: &str| s.args.iter().position(|a| a == k).and_then(|i| s.args.get(i + 1)).map(String::as_str);
+        assert_eq!(arg_after("--status"), Some("open"));
+        assert_eq!(arg_after("--label"), Some("needs-operator")); // literal-ok: asserts argv built from the fixture
+        ok(r#"[{"id":"sp-ask1","title":"Spira is landing nothing — its last run exited 1","status":"open"}]"#)
+    });
+    let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let s = Sentinel::new(h, w.ctx(&[], None), &w.home, Mode::Report, "sentinel".into(), "p".into(), Lifecycle::Off);
+    assert!(s.ask_already_open("Spira is landing nothing"), "{}", sink.text());
+    assert!(!s.ask_already_open("no bead carries this subject"));
 }
 
 // ---------------------------------------------------------------------------------------

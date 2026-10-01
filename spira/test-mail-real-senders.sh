@@ -8,8 +8,9 @@
 # scratch Maildir and with no lint override, so the running message actually clears
 # mail's send path.
 #
-# COVERAGE: land_escalate (lib.sh) is a standalone function reachable without standing up
-# a database or systemd — sourced directly. watchd and skew are both compiled binaries now
+# COVERAGE: land_escalate is native in sentinel now (sp-31hjr; was lib.sh, sourced
+# directly) — driven through `sentinel --land-escalate`, the same real-sender contract
+# every emitter below is held to. watchd and skew are both compiled binaries now
 # (sp-07yxy's watchd, sp-yyk47's skew) — there is no source text left to sed or source a
 # function body from, so each is driven through its own real CLI instead: watchd's notify
 # path directly, skew's through a real `skew check --escalate` against a minimal
@@ -29,7 +30,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py mail/src/* incident/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py mail/src/* incident/* sentinel/src/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -58,13 +59,13 @@ export SPIRA_DB="$TMP/db"
 unread() { mail count operator 2>/dev/null; }
 
 echo
-echo "lib.sh: land_escalate (question)"
+echo "sentinel: land_escalate (question)"
 
-. "$HERE/lib.sh"
+command -v sentinel >/dev/null 2>&1 || bail "sentinel is not on PATH"
 export SPIRA_LAND_ESCALATE_EVERY=0
 before="$(unread)"
-land_escalate "gate keeps failing in the real emitter test" \
-    "every finished branch has been rejected by the landing gate." >/dev/null 2>&1
+printf 'gate keeps failing in the real emitter test\nevery finished branch has been rejected by the landing gate.\n' | \
+    sentinel --land-escalate >/dev/null 2>&1
 after="$(unread)"
 is "land_escalate delivers exactly one message" "$((before + 1))" "$after"
 msg="$(ls -t "$SPIRA_MAIL/operator/new" 2>/dev/null | head -1)"
