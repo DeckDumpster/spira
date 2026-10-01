@@ -59,18 +59,12 @@ while IFS= read -r _l; do [ -n "$_l" ] && printf '%s\0' "$_l"; done < <(fayth_na
 printf '@end\0'
 "#;
 
-/// S1 — summon-only's gate: the world (halt/drain). Exit 0 = go on; the seam logs its own
-/// reason for stopping. The capacity window used to be checked here too
-/// (`capacity_paused`), but that call also ran `capacity_probe_maybe` and could delete
-/// the pause file — a second probe owner alongside aeon's own (wave4-decomposition.md
-/// (c)3: "if both callers' ports each probe, the cost doubles"). Wave 4.26 moves the
-/// capacity check to `summon.rs`'s own in-process read (`aeon::capacity::pause_state`,
-/// never mutating, never probing) right after this seam call returns.
-pub const SUMMON_GATE: &str = r#"world_gate fleet summon-only || exit 1
-exit 0"#;
-
-/// S2 — CHECK 7: the lane-then-pool summon loop under summon.lock.
-pub const CK7: &str = "ck7_summon_pass";
+/// S1/S2 RETIRED (wave 4.27, family G, sp-gzmd2): the world gate and CHECK 7's whole
+/// summon loop (`world_gate`, `ck7_summon_pass`, `summon_fayth`, `summon_argv`) now run
+/// in-process — `pass::Sentinel::world_gate`/`ck7_summon_pass` in `summon.rs`, under a
+/// real OS flock on `summon.lock` rather than a bash seam under one. lib.sh's own copies
+/// are one-line shims onto `sentinel --world-gate`/`--summon`/`--summon-argv`/
+/// `--named-unit-stop`, kept only for `aeon --escape`'s seam and `acceptance-local.sh`.
 
 // S4 (CHECK 3b: mark_queue_waiters/close_landed_queue_waiters) and S7–S10 (CHECK 7c/7d's
 // detectors) are retired (wave 4.28, sp-fbqsv): native now, in waiters.rs and detect.rs.
@@ -86,7 +80,7 @@ mod tests {
     /// G9: no seam interpolates a Rust value; every one is a constant with the prelude.
     #[test]
     fn seams_are_constants_with_the_prelude() {
-        for body in [SUMMON_GATE, CK7, EVENT] {
+        for body in [EVENT] {
             let s = script(body);
             assert!(
                 s.starts_with("set -uo pipefail\n. \"$SENTINEL_LIB\" >/dev/null 2>&1 || exit 97")

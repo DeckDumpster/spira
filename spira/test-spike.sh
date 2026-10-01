@@ -76,13 +76,17 @@ echo "the partition is the spike's own:"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
-# THE STUB MUST ANSWER "capacity paused" TOO (sp-wm2a3, wave 4.26/sp-kn6d8): summon_fayth's
-# CHECK7 now asks the real `aeon capacity paused` binary before anything else, and PATH
-# puts this stub ahead of the compiled one — so a bare "exit 0" (meant only to stand in for
-# the launch target further down) answered every capacity probe as "paused" too, and
-# summon_fayth refused every summon regardless of partition. No pause file is ever written
-# here, so the honest answer is "open": exit 1 (capacity_cli.rs's own Paused::Open -> 1),
-# printing nothing. Everything else keeps the original no-op exit 0.
+# `summon_fayth` is a `sentinel --summon` shim now (wave 4.27, family G, sp-gzmd2): a real
+# subprocess with SPIRA_HOME=$SPIRA_HOME, which needs a working lib.sh at its own context
+# probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`
+# fixture uses.
+printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
+# $SPIRA_HOME/aeon is the LAUNCH TARGET `which("aeon", PATH)` resolves to below — a bare
+# "exit 0" stands in for it, since nothing here ever execs it for real. Its "capacity
+# paused" branch is a leftover from when that question was a subprocess call this stub
+# could intercept (sp-wm2a3, wave 4.26/sp-kn6d8): capacity_paused is an in-process read
+# now (aeon::capacity::pause_state), never a subprocess, so this branch is dead weight,
+# kept only because answering "open" here is also harmless.
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
 chmod +x "$SPIRA_HOME/aeon"
 export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here

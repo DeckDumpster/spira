@@ -302,62 +302,25 @@ is   "1 live cert at threshold=1 → stamp written (positive control for filter)
 
 # ======================================================================================
 echo
-echo "sentinel.sh CHECK7: throttle stamp gates task pool to 0 — real behaviour rows (G2):"
+echo "sentinel CHECK7: throttle stamp gates task pool to 0 (G2/G3)"
 # ======================================================================================
-# lib.sh functions, not a source grep: ck7_pool (pool minus task-live), ck7_throttled
-# (stamp + override -> throttled flag) and ck7_fill_cap (per-persona fill cap, G3).
-#
-# Sourced in an isolated child process per call, never into this suite's own shell — this
-# suite's main process must not inherit a real SPIRA_CONF/SPIRA_RUN (law-gates-run-in-a-
-# clean-environment); wt_tc above already isolates the same way for a full watchtower run.
-libcall() {   # libcall '<shell code calling one of the lib.sh functions above>'
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/libcall-run" \
-        bash -c '. "'"$HERE"'/lib.sh" >/dev/null 2>&1 || exit 1
-'"$1"
-}
+# ck7_pool/ck7_throttled/check7_pool_decision/ck7_fill_cap moved in-process into the
+# sentinel crate (wave 4.27, family G, sp-gzmd2) — `_ck7_summon_body` (lib.sh), their only
+# caller, is itself now a one-line shim, so there is no bash function left to `libcall`
+# here. The exact same cases (ck7_pool's subtraction and floor, ck7_throttled's stamp and
+# override, check7_pool_decision's throttle-leak fix, ck7_fill_cap's pool/cap stop) are
+# `summon::tests::ck7_pool_subtracts_task_live_and_floors_at_zero`,
+# `ck7_throttled_is_the_stamp_unless_the_override_pins_it_clear`,
+# `check7_pool_decision_matches_the_throttle_leak_fix` and
+# `ck7_fill_cap_stops_on_either_the_pool_or_the_per_persona_cap` in sentinel/src/summon.rs.
 
-# POSITIVE CONTROL: ck7_pool subtracts task-live from the configured pool.
-is "ck7_pool: 4 max, 1 live -> 3 free" "3" "$(libcall 'ck7_pool 4 1')"
-is "ck7_pool: task-live at or above max floors at 0" "0" "$(libcall 'ck7_pool 4 4')"
-is "ck7_pool: no pool configured -> empty (today's behaviour unchanged)" \
-   "" "$(libcall 'ck7_pool "" 0')"
-
-# ck7_throttled: the stamp alone throttles; SPIRA_QUEUE_THROTTLE_OVERRIDE=off pins it clear.
-is "ck7_throttled: stamp present, no override -> throttled" "1" "$(libcall 'ck7_throttled 1 ""')"
-is "ck7_throttled: no stamp -> not throttled" "0" "$(libcall 'ck7_throttled 0 ""')"
-is "ck7_throttled: stamp present but override=off -> NOT throttled" \
-   "0" "$(libcall 'ck7_throttled 1 off')"
-
-# check7_pool_decision composes with ck7_throttled: throttled pool holds at 0 unless an
-# express bead is ready, in which case it grants exactly 1 (already covered in
-# test-express-lane.sh; these rows are the override=off case reaching an unthrottled pool).
-is "override=off: pool stays the ck7_pool value, untouched by check7_pool_decision" \
-   "3" "$(libcall 'check7_pool_decision "$(ck7_throttled 1 off)" "$(ck7_pool 4 1)" 0')"
-is "no override: stamp forces the same pool to 0 (no express bead ready)" \
-   "0" "$(libcall 'check7_pool_decision "$(ck7_throttled 1 "")" "$(ck7_pool 4 1)" 0')"
-
-# ck7_fill_cap: the per-persona fill cap that stops an unbounded summon loop on a host
-# with no pool configured (G3 — this had no test at all before this extraction).
-is "ck7_fill_cap: below the cap, no pool -> continue" \
-   "continue" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 1 ""')"
-is "ck7_fill_cap: at the cap, no pool -> stop" \
-   "stop" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 2 ""')"
-is "ck7_fill_cap: pool exhausted before the cap -> stop" \
-   "stop" "$(libcall 'SPIRA_MAX_LIVE_AEONS=2 ck7_fill_cap 0 0')"
-is "ck7_fill_cap: unset SPIRA_MAX_LIVE_AEONS defaults to 4" \
-   "stop" "$(libcall 'ck7_fill_cap 4 ""')"
-
-# Structural control retained: lanes must still precede the pool gate in _ck7_summon_body
-# (lib.sh — CHECK 7's lane+pool loop, extracted from sentinel.sh and shared with
-# sentinel.sh --summon-only under ck7_summon_pass's flock, sp-0y2av), since
-# ck7_throttled/check7_pool_decision replacing the pool are only reached after the lane
-# loop — a real behaviour row cannot see file ordering, so this stays a source check.
-sentinel="$HERE/lib.sh"
-lane_line="$(grep -n 'for f in \$LANE_FAYTHS' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-# 'ck7_throttled "' (not the bare name) so this matches _ck7_summon_body's CALL site,
-# not ck7_throttled's own function definition earlier in the file — lib.sh, unlike the
-# old inlined sentinel.sh, defines the helper before the loop that calls it.
-gate_line="$(grep -n 'ck7_throttled "' "$sentinel" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+# Structural control retained: lanes must still precede the pool/throttle gate in
+# `ck7_summon_body` (sentinel/src/summon.rs — CHECK 7's lane+pool loop, shared by the full
+# pass and --summon-only under ck7_summon_pass's flock, sp-0y2av) — a real behaviour row
+# cannot see source ordering, so this stays a source check.
+summon_rs="$HERE/../sentinel/src/summon.rs"
+lane_line="$(grep -n 'for f in &rotated_lanes' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+gate_line="$(grep -n 'if ck7_throttled(' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then

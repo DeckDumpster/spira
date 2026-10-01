@@ -106,13 +106,6 @@ pub fn env_of<'s>(s: &'s Spec, k: &str) -> Option<&'s str> {
         .find(|(x, _)| x == k)
         .map(|(_, v)| v.as_str())
 }
-/// Simulate a seam's lib.sh function calling `act`/`progress`.
-pub fn tally(s: &Spec, lines: &str) {
-    if let Some(t) = env_of(s, "SENTINEL_TALLY") {
-        std::fs::write(t, lines).unwrap();
-    }
-}
-
 pub struct World {
     pub dir: testkit::TempDir,
     pub run: PathBuf,
@@ -364,17 +357,14 @@ fn full_pass_reads_the_store_once_and_exports_it() {
         }
         None
     });
-    r.on(|s| {
-        if seam_name(s).as_deref() == Some("sentinel-ck7") {
-            tally(s, "act\tsummoned a builder aeon\n");
-            return ok("");
-        }
-        None
-    });
-    // Queue waiters (wave 4.28, sp-fbqsv) are native now and run unconditionally inside
-    // the full pass; disabled here (empty label) because this test is about the store
-    // snapshot, not queue-wait behavior — that is waiters.rs's own module tests plus
-    // test-dependents.sh.
+    // CK7 runs in-process now (wave 4.27): `fayth_ready` reaches `spira-claim` directly;
+    // left unstubbed here it answers "0" (the fixture's point is the ONE bulk read, not
+    // a summon), so CHECK 7 contributes no action this pass.
+    //
+    // Queue waiters (wave 4.28, sp-fbqsv) are native now too and run unconditionally
+    // inside the full pass; disabled here (empty label) because this test is about the
+    // store snapshot, not queue-wait behavior — that is waiters.rs's own module tests
+    // plus test-dependents.sh.
     assert_eq!(
         run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_QUEUE_WAIT_LABEL", "")], None),
         0
@@ -388,13 +378,14 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
     assert!(sink.has("ACT escalated 1 stranded item(s)"));
-    // the seams ran in order. CHECK 3b (mark_queue_waiters/close_landed_queue_waiters) is
-    // native now (wave 4.28) and is no longer among them.
+    // No seams run at all any more: CK7 (wave 4.27) and CHECK 3b's
+    // mark_queue_waiters/close_landed_queue_waiters (wave 4.28) are both native now.
     let seams: Vec<String> = r.calls.borrow().iter().filter_map(seam_name).collect();
-    assert_eq!(seams, vec!["sentinel-ck7"]);
-    // strand 2 acts (1 progress), ck7 1 act; CHECK 8 does not fire with ready plan work
+    assert_eq!(seams, Vec::<String>::new());
+    // strand's 2 acts (1 progress) are the only ones; CHECK 8 does not fire with ready
+    // plan work.
     assert!(
-        sink.has("spira: pass complete — 3 action(s), 1 progress"),
+        sink.has("spira: pass complete — 2 action(s), 1 progress"),
         "{}",
         sink.text()
     );
@@ -661,13 +652,9 @@ fn report_lists_the_open_plan_beads_and_nothing_when_empty() {
 #[test]
 fn summon_only_gates_then_reads_ready_once() {
     let (w, r, sink, clock) = setup("summon");
-    r.on(|s| {
-        if seam_name(s).as_deref() == Some("sentinel-summon-gate") {
-            fail(1)
-        } else {
-            None
-        }
-    });
+    // world_gate runs in-process now (wave 4.27): a halted world is the real file, not a
+    // stubbed seam.
+    std::fs::write(w.run.join("world.halted"), "").unwrap();
     assert_eq!(
         run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
         0
@@ -680,16 +667,21 @@ fn summon_only_gates_then_reads_ready_once() {
 
     let (w, r, sink, clock) = setup("summon2");
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
+    // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
+    // directly, reading the SAME SPIRA_READY_CACHE export_snapshot (above) already wrote.
     r.on(|s| {
-        if seam_name(s).as_deref() == Some("sentinel-ck7") {
-            assert_eq!(
-                std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap(),
-                "builder 1\nops 0\n"
-            );
-            tally(s, "act\tsummoned a builder aeon\n");
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+            let cache = std::fs::read_to_string(env_of(s, "SPIRA_READY_CACHE").unwrap()).unwrap();
+            assert_eq!(cache, "builder 1\nops 0\n");
+            let n = if s.args.get(1).map(String::as_str) == Some("builder") { "1" } else { "0" };
+            ok(n)
+        } else {
+            None
         }
-        None
     });
+    // "builder" is 1/1 live already (the list-units fixture above), so fayth_free refuses
+    // the concurrency cap before ever reaching for `aeon` on PATH — no systemd-run call,
+    // and no action is tallied; this pass proves the ready-cache plumbing, not a summon.
     assert_eq!(
         run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
         0
@@ -702,7 +694,8 @@ fn summon_only_gates_then_reads_ready_once() {
         "summon-only reads READY_ARGS"
     );
     assert!(sink.has("summon-only: live=2 fayths=[builder ops]"));
-    assert!(sink.has("summon-only pass complete — 1 action(s)"));
+    assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
+    assert!(sink.has("summon-only pass complete — 0 action(s)"));
 }
 
 /// Family K, wave 4.26: sentinel reads the pause file in-process now (never through the
@@ -729,6 +722,187 @@ fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
     assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
     assert_eq!(r.count(|s| s.prog == "bd"), 0, "an unreadable pause file must gate, never fail open");
     assert!(sink.has("summon-only: the capacity pause file could not be read — not summoning (failing closed)"));
+}
+
+// ---------------------------------------------------------------------------------------
+// world_gate / summon / summon-argv / named-unit-stop (wave 4.27, family G, sp-gzmd2) —
+// lib.sh's own shim targets, in-process now.
+
+#[test]
+fn world_gate_cmd_halts_pins_and_lifts_an_expired_drain_loudly() {
+    let mode = |f: &str| Mode::WorldGate { fayth: f.into(), prefix: "CHECK7".into() };
+
+    // No stamp at all: permitted, silently.
+    let (w, r, sink, clock) = setup("wg-open");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 0);
+    assert!(!sink.has("halted") && !sink.has("draining"));
+
+    // HALTED is indefinite and checked first.
+    let (w, r, sink, clock) = setup("wg-halted");
+    std::fs::write(w.run.join("world.halted"), "").unwrap();
+    std::fs::write(w.run.join("world.draining"), "").unwrap(); // halt wins even if both exist
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
+    assert!(sink.has("CHECK7 builder: halted — not summoning (world.sh start to lift)"));
+
+    // DRAINING, not yet expired: refused, quietly (no DRAIN EXPIRED line).
+    let (w, r, sink, clock) = setup("wg-draining");
+    std::fs::write(w.run.join("world.draining"), format!("expires {}\n", NOW + 10_000)).unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 1);
+    assert!(sink.has("CHECK7 builder: draining — not summoning (world.sh resume to lift)"));
+    assert!(!sink.has("EXPIRED"));
+    assert!(w.run.join("world.draining").is_file(), "a live drain is never touched");
+
+    // DRAINING, past its own `expires` line: lifted, LOUDLY, and removed.
+    let (w, r, sink, clock) = setup("wg-expired");
+    std::fs::write(w.run.join("world.draining"), format!("expires {}\n", NOW - 10)).unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, mode("builder"), &[], None), 0);
+    assert!(sink.has("CHECK7 builder: DRAIN EXPIRED — lifting a drain nobody resumed"), "{}", sink.text());
+    assert!(!w.run.join("world.draining").is_file(), "the expired stamp is removed");
+}
+
+#[test]
+fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
+    // No `aeon` anywhere on PATH: refused loudly, never hands systemd-run a name it will
+    // not find either.
+    let (w, r, sink, clock) = setup("summon-noaeon");
+    r.on(|s| if s.prog == "spira-claim" { ok("1") } else { None });
+    let rc = run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        &[],
+        None,
+    );
+    assert_eq!(rc, 1);
+    assert!(sink.has("CHECK7 builder: aeon not found on PATH — not summoning"));
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0);
+
+    // Everything in place: ready, free, `aeon` resolvable — summons, and the aeon binary
+    // plus `--home`/the fayth land on the systemd-run argv exactly as lib.sh built them.
+    let (w, r, sink, clock) = setup("summon-ok");
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    r.on(|s| if s.prog == "spira-claim" { ok("2") } else { None });
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+    let rc = run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Summon { fayth: "builder".into(), pool: None, require_label: "express".into() },
+        &[("PATH", &format!("{}:/usr/bin:/bin", bin.display()))],
+        None,
+    );
+    assert_eq!(rc, 0);
+    let launch = r.find(|s| s.prog == "systemd-run").unwrap();
+    assert!(launch.args.iter().any(|a| a == &bin.join("aeon").to_string_lossy().into_owned()));
+    assert!(launch.args.contains(&"--home".to_string()));
+    assert!(launch.args.contains(&w.home.to_string_lossy().into_owned()));
+    assert!(launch.args.contains(&"builder".to_string()));
+    assert!(launch.args.iter().any(|a| a.starts_with("--unit=spira-aeon-builder-")));
+    assert!(launch.args.contains(&"--setenv=SPIRA_REQUIRE_LABEL=express".to_string()));
+    assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to 'express'"), "{}", sink.text());
+}
+
+#[test]
+fn named_unit_stop_cmd_stops_every_match_and_says_so_when_there_is_none() {
+    let (w, r, sink, clock) = setup("nus");
+    assert_eq!(
+        run_mode(&w, &r, &sink, &clock, Mode::NamedUnitStop { glob: "spira-acc-r1-*".into() }, &[], None),
+        0
+    );
+    assert!(sink.has("no unit matches spira-acc-r1-*"));
+
+    let (w, r, sink, clock) = setup("nus2");
+    r.on(|s| {
+        if s.args.iter().any(|a| a == "list-units") {
+            ok("spira-acc-r1-1.service loaded active\nspira-acc-r1-2.service loaded active\n")
+        } else if s.args.first().map(String::as_str) == Some("--user") && s.args.get(1).map(String::as_str) == Some("stop") {
+            if s.args.get(2).map(String::as_str) == Some("spira-acc-r1-2.service") {
+                fail(1)
+            } else {
+                ok("")
+            }
+        } else {
+            None
+        }
+    });
+    let rc = run_mode(&w, &r, &sink, &clock, Mode::NamedUnitStop { glob: "spira-acc-r1-*".into() }, &[], None);
+    assert_eq!(rc, 1, "a stop that fails is a failure");
+    assert!(sink.has("stopped spira-acc-r1-1.service"));
+    assert!(sink.has("could not stop spira-acc-r1-2.service"));
+}
+
+/// ck7_summon_pass's own lane rotation, end to end (lib.sh G1's integration half; the
+/// pure rotation arithmetic is `summon::tests::lane_rotate_…`). Two real passes through
+/// the SAME flock, with a FakeRunner that actually remembers which lane has a live unit
+/// after it summons one — bash's own version of this row could only hand-simulate that
+/// (a mock summon script cannot write a pidfile its own mock aeon never becomes), so this
+/// is the more faithful proof: pass 1 takes `builder` (both lanes ready, first in roster
+/// order); pass 2, with no prior rotation state… — the lane the FIRST pass actually filled
+/// now reads as live, so the collective cap (1) holds it off and `ops` draws instead, with
+/// no rotation state needed at all for two lanes. `lane_round_robin` is still written and
+/// read, proven by the file's own content.
+#[test]
+fn ck7_summon_pass_rotates_across_two_real_passes() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let (w, r, sink, clock) = setup("rotate");
+    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
+    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LANE=builder\nFAYTH_MAX_CONCURRENT=1\n").unwrap();
+    std::fs::write(w.home.join("chamber/ops.fayth"), "FAYTH_LANE=ops\nFAYTH_MAX_CONCURRENT=1\n").unwrap();
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    let live: Rc<RefCell<std::collections::HashSet<String>>> = Rc::new(RefCell::new(Default::default()));
+    r.on(|s| if s.prog == "spira-claim" { ok("1") } else { None });
+    let live_c = live.clone();
+    r.on(move |s| {
+        if s.args.iter().any(|a| a == "list-units") {
+            let glob = s.args.iter().find(|a| a.starts_with("spira-aeon-")).cloned().unwrap_or_default();
+            let f = glob.trim_start_matches("spira-aeon-").trim_end_matches("-*");
+            let line = if live_c.borrow().contains(f) {
+                format!("spira-aeon-{f}-1.service loaded active\n")
+            } else {
+                String::new()
+            };
+            return ok(&line);
+        }
+        None
+    });
+    let live_c2 = live.clone();
+    r.on(move |s| {
+        if s.prog == "systemd-run" {
+            let f = s.args.last().cloned().unwrap_or_default();
+            live_c2.borrow_mut().insert(f);
+            return ok("");
+        }
+        None
+    });
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![
+        ("PATH", &path),
+        ("SPIRA_MAX_LIVE_AEONS", "4"),
+        ("SPIRA_LANES_MAX_LIVE", "1"),
+    ];
+
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(sink.has("ACT summoned a builder lane aeon"), "{}", sink.text());
+    assert!(!sink.has("ACT summoned a ops lane aeon"), "{}", sink.text());
+    assert_eq!(std::fs::read_to_string(w.run.join("lane-round-robin")).unwrap(), "builder");
+
+    // Between passes, builder's own aeon finishes and its unit disappears — exactly what
+    // bash's own version of this row simulated by resetting MOCK_LIVE_LANES to 0 before
+    // its second loop. Rotation (not the collective cap, now slack again) decides which
+    // lane goes first this time.
+    live.borrow_mut().clear();
+    let sink2 = FakeSink::default();
+    assert_eq!(run_mode(&w, &r, &sink2, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(sink2.has("ACT summoned a ops lane aeon"), "{}", sink2.text());
+    assert!(!sink2.has("ACT summoned a builder lane aeon"), "{}", sink2.text());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1734,11 +1908,10 @@ fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
         1,
         "said once per pass"
     );
-    // the rest of the pass still ran: landing and summoning do not wait on the machine
-    assert_eq!(
-        r.count(|s| seam_name(s).as_deref() == Some("sentinel-ck7")),
-        1
-    );
+    // the rest of the pass still ran: landing and summoning do not wait on the machine.
+    // CK7 is in-process now (wave 4.27); its own observable reach is `fayth_ready`'s
+    // `spira-claim` call, once per roster persona (builder, ops).
+    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready")), 2);
     assert!(sink.has("pass complete"));
     // no legacy fallback either
     assert_eq!(r.count(|s| is_bd(s, "reclaim") || is_bd(s, "assign")), 0);
@@ -1779,10 +1952,9 @@ fn the_switch_reaches_every_child_and_both_workers() {
         }
         run_mode(&w, &r, &sink, &clock, Mode::Pass, &extra, None);
         let want = if on { "1" } else { "0" };
-        let ck7 = r
-            .find(|s| seam_name(s).as_deref() == Some("sentinel-ck7"))
-            .unwrap();
-        assert_eq!(env_of(&ck7, "SPIRA_LIFECYCLE_ENFORCE"), Some(want));
+        // CK7 is in-process now (wave 4.27) — it reads `self.lc` directly, never a child's
+        // environment, so there is no longer a CK7 child to check the switch on; the
+        // audit and landing workers below are still real children and still carry it.
         let audit = r
             .find(|s| s.prog == "/stub/launch" && s.args.iter().any(|a| a == "--audit"))
             .unwrap();
@@ -1796,7 +1968,6 @@ fn the_switch_reaches_every_child_and_both_workers() {
             .args
             .contains(&format!("--setenv=SPIRA_LIFECYCLE_ENFORCE={want}")));
         assert!(!land.args.iter().any(|a| a.starts_with("--setenv=SPIRA_LC_BIN")));
-        assert_eq!(env_of(&ck7, "SPIRA_LC_BIN"), None);
     }
 }
 

@@ -10,9 +10,8 @@
 # lib.sh-and-stub boilerplate:
 #   - test-elastic-ceiling.sh — all rows, minus criterion 3 (a verbatim duplicate of
 #     criterion 1's own positive control)
-#   - test-lane-ceiling.sh — criteria (a)(b)(c) and their controls, plus (d) rotation,
-#     rewritten to call the real lane_rotate (extracted from sentinel.sh's CHECK 7
-#     ordering into lib.sh) instead of reimplementing it — closes gap G1 (sp-9ce60.5)
+#   - test-lane-ceiling.sh — criteria (a)(b)(c) and their controls (rotation (d) moved on,
+#     see the note below)
 #   - test-drain-expiry.sh — every row, including the world.sh writer/reader seam
 #   - test-fayth-free.sh — every row but its own vacuous inline-arithmetic "positive
 #     control" (G18), replaced below with a row that calls fayth_free directly with
@@ -33,10 +32,32 @@
 #        is unchanged because it is still world_gate, reached through the aeon binary's
 #        own lib.sh seam (aeon/src/escape.rs) rather than escape.sh's own sourcing.
 #
+# WAVE 4.27 (family G, sp-gzmd2): `world_gate`/`summon_argv`/`summon_fayth`/
+# `ck7_summon_pass` moved in-process into the sentinel crate; lib.sh's own copies are
+# one-line shims onto a fresh `sentinel` process. A fresh process cannot see a shell
+# function this script defines after sourcing lib.sh — the OLD stub set (bash functions
+# named `aeons_live_total`/`aeons_live_lanes`/`fayth_ready`/`capacity_paused`) stopped
+# reaching anything the day that landed. Every row below that calls `summon_fayth`
+# directly now drives the SAME questions through what sentinel itself reads: real
+# pidfiles under $SPIRA_RUN for the live/concurrency counts (sentinel falls back to them
+# whenever SPIRA_SUMMON is not literally "systemd-run", true throughout this suite — the
+# same fallback production uses off a real systemd user session), and a `spira-claim`
+# stub on PATH for readiness. `fayth_free` ITSELF IS UNCHANGED (lib.sh keeps it real bash
+# by design — see lib.sh's own comment on the exec-boundary trap) and still calls
+# `aeon_count` by name in this shell, so the fayth_free-only rows below are untouched.
+#
+# Lane rotation's own integration (G1(d)) moved to a Rust test
+# (`sentinel::tests::ck7_summon_pass_rotates_across_two_real_passes`), which can make a
+# summoned lane's unit actually appear for the SECOND lane's own check within the same
+# pass — a mock summon script here cannot do that (its mock aeon never becomes a real
+# unit), so the bash version of this row was always a hand simulation of the loop, not a
+# call to it. The pure rotation arithmetic is `summon::tests::
+# lane_rotate_moves_last_and_everything_before_it_to_the_end`.
+#
 # POSITIVE CONTROLS BEFORE EACH REFUSAL (law-absence-needs-a-positive-control).
 #
 # tier: T1
-# covers: spira/lib.sh aeon/src/escape.rs spira-world/src/bin/world.rs UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
+# covers: spira/lib.sh sentinel/src/summon.rs aeon/src/escape.rs spira-world/src/bin/world.rs UC-dispatch-09 UC-dispatch-10 UC-dispatch-11 UC-dispatch-12 UC-dispatch-15 UC-dispatch-23
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -57,10 +78,12 @@ printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 cp -r "$HERE/conf.d" "$T/"
 
 # A MINIMAL ENVIRONMENT, non-default everywhere so that assertions cannot pass by reading
-# literals out of conf.sh (law-gates-run-in-a-clean-environment).
+# literals out of conf.sh (law-gates-run-in-a-clean-environment). $T/bin goes FIRST so our
+# own spira-claim/mock-summon stubs shadow the release's real ones; the release's real
+# `aeon` (never placed in $T/bin) still resolves further down the same PATH.
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
-export SPIRA_HOME="$T" PATH="$T:$PATH"
+export SPIRA_HOME="$T" PATH="$T/bin:$T:$PATH"
 export SPIRA_DB="$T/no-db"
 
 # THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
@@ -73,21 +96,52 @@ command -v aeon >/dev/null 2>&1 \
 # ======================================================================================
 # THE SHARED STUB SET. No real database, no real systemd, no real process table.
 # ======================================================================================
-MOCK_LIVE=0; MOCK_LIVE_LANES=0; MOCK_COUNT=0
-aeons_live_total() { printf '%d' "$MOCK_LIVE"; }
-aeons_live_lanes() { printf '%d' "$MOCK_LIVE_LANES"; }
-aeon_count()       { printf '%d' "$MOCK_COUNT"; }
-capacity_paused()  { return 1; }   # no outage
 
-# Per-fayth ready counts, keyed by name; default 0. Calls are appended to a file rather
-# than counted in a variable: fayth_ready runs inside a $() subshell, so a variable
-# increment there is invisible to the parent (test-elastic-ceiling's original template).
-FAYTH_READY_CALL_FILE="$T/fayth-ready-calls"
-fayth_ready() {
-    printf '%s\n' "$1" >> "$FAYTH_READY_CALL_FILE"
-    local _n; _n="MOCK_READY_${1}"
-    printf '%d' "${!_n:-0}"
+# fayth_free (lib.sh) is UNCHANGED by wave 4.27 — it stays real bash, calling aeon_count
+# by name in THIS shell, so a bash-function stub still reaches it directly.
+MOCK_COUNT=0
+aeon_count() { printf '%d' "$MOCK_COUNT"; }
+
+# A small pool of real, long-lived processes whose /proc cmdline reads as an aeon
+# (aeon_alive's own check: argv[0] ends in "/aeon" or contains "aeon.sh") — exactly the
+# `exec -a aeon.sh` trick test-summon-fast-path.sh's own section A already uses. set_live
+# writes pidfiles pointing at them; sentinel's pidfile fallback (SPIRA_SUMMON is never
+# literally "systemd-run" in this suite) counts a pidfile as live iff the pid is one of
+# these and still running.
+FAKE_AEON_PIDS=()
+for _i in 1 2 3 4 5; do
+    ( exec -a aeon.sh sleep 300 ) &
+    FAKE_AEON_PIDS+=("$!")
+done
+
+# set_live <fayth> <n> -> exactly <n> live pidfiles for <fayth> (clears its own first).
+set_live() {
+    local fayth="$1" n="${2:-0}" i
+    rm -f "$SPIRA_RUN"/aeon-"$fayth"-mock*.pid
+    for ((i = 1; i <= n; i++)); do
+        # Reused cyclically past the pool's own size (callers that just need "a lot" —
+        # e.g. 999, to prove an unset ceiling ignores the count entirely — never need
+        # that many DISTINCT pids, only that many pidfiles).
+        printf '%s' "${FAKE_AEON_PIDS[$(((i - 1) % ${#FAKE_AEON_PIDS[@]}))]}" > "$SPIRA_RUN/aeon-$fayth-mock$i.pid"
+    done
 }
+clear_live() { rm -f "$SPIRA_RUN"/aeon-*-mock*.pid; }
+
+# set_ready <fayth> <n> -> fayth_ready(<fayth>) as `summon_fayth` (now a `sentinel` shim,
+# wave 4.27) reaches it: `spira-claim fayth-ready`, a real subprocess on PATH, never a
+# bash function the fresh sentinel process could see.
+FAYTH_READY_CALL_FILE="$T/fayth-ready-calls"
+set_ready() { printf '%s' "${2:-0}" > "$T/ready-$1"; }
+cat > "$T/bin/spira-claim" <<SPIRACLAIM
+#!/usr/bin/env bash
+if [ "\${1:-}" = fayth-ready ]; then
+    printf '%s\n' "\${2:-}" >> "$FAYTH_READY_CALL_FILE"
+    cat "$T/ready-\${2:-}" 2>/dev/null || printf 0
+    exit 0
+fi
+exit 0
+SPIRACLAIM
+chmod +x "$T/bin/spira-claim"
 fayth_ready_call_count() { grep -c . "$FAYTH_READY_CALL_FILE" 2>/dev/null || printf '0'; }
 reset_call_count() { : > "$FAYTH_READY_CALL_FILE"; }
 
@@ -146,18 +200,24 @@ echo "elastic last-slot reservation — criterion 1: refused when last slot and 
 export SPIRA_FAYTHS="anchor stretchy"
 export SPIRA_MAX_LIVE_AEONS=3
 unset SPIRA_LANES_MAX_LIVE 2>/dev/null || true
+clear_live
+# The fleet-total pidfiles are tagged under "stretchy" throughout this section, never
+# "anchor": stretchy is elastic AND every call below passes a pool, so its OWN
+# concurrency check (`is_remainder`) uses the pool verbatim and never looks at its own
+# `have` at all — tagging the fleet total under anchor instead would corrupt anchor's own
+# cap (1) the moment criterion 4 asks for it.
 
 # POSITIVE CONTROL: with 2 free slots, stretchy IS summoned despite anchor being ready.
-MOCK_LIVE=1     # 3-1=2 free slots
-MOCK_READY_anchor=1
-MOCK_READY_stretchy=1
+set_live stretchy 1     # 3-1=2 free slots
+set_ready anchor 1
+set_ready stretchy 1
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "positive: elastic succeeds with 2 free slots (anchor also ready)" \
    "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
 
 # N-1=2 live -> exactly 1 slot free. anchor has work -> stretchy must be refused.
-MOCK_LIVE=2
+set_live stretchy 2
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "criterion 1: elastic refused when last slot and non-elastic has ready work" \
@@ -170,9 +230,9 @@ nowant "log says 'at concurrency cap'" "at concurrency cap" "$log_out"
 
 echo
 echo "criterion 2 — positive control: elastic succeeds when no non-elastic has ready work"
-MOCK_LIVE=2
-MOCK_READY_anchor=0
-MOCK_READY_stretchy=1
+set_live stretchy 2
+set_ready anchor 0
+set_ready stretchy 1
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "criterion 2: elastic succeeds when no non-elastic has work" \
@@ -180,9 +240,9 @@ is "criterion 2: elastic succeeds when no non-elastic has work" \
 
 echo
 echo "criterion 4 — non-elastic persona is never refused by this rule"
-MOCK_LIVE=2
-MOCK_READY_anchor=1
-MOCK_READY_stretchy=1
+set_live stretchy 2     # fleet total only — never under "anchor" itself (see note above)
+set_ready anchor 1
+set_ready stretchy 1
 rm -f "$SUMMONED"
 summon_fayth anchor >/dev/null 2>&1 || true
 is "criterion 4: non-elastic persona succeeds with 1 slot free" \
@@ -191,7 +251,7 @@ is "criterion 4: non-elastic persona succeeds with 1 slot free" \
 echo
 echo "cost — fayth_ready is called for non-elastic personas only when the last slot is contested"
 reset_call_count
-MOCK_LIVE=2
+set_live stretchy 2
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "cost: refused case makes exactly 1 fayth_ready call (anchor reservation only)" \
@@ -199,7 +259,7 @@ is "cost: refused case makes exactly 1 fayth_ready call (anchor reservation only
 is "cost: that call was for anchor" "anchor" "$(cat "$FAYTH_READY_CALL_FILE" 2>/dev/null)"
 
 reset_call_count
-MOCK_LIVE=1     # 2 free slots
+set_live stretchy 1     # 2 free slots
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "cost: 2-free-slot path makes 1 fayth_ready call (stretchy only, no reservation)" \
@@ -209,11 +269,12 @@ is "cost: that call was for stretchy" "stretchy" "$(cat "$FAYTH_READY_CALL_FILE"
 echo
 echo "no ceiling — SPIRA_MAX_LIVE_AEONS unset means today's behaviour exactly"
 unset SPIRA_MAX_LIVE_AEONS
-MOCK_LIVE=999
+set_live stretchy 999
 rm -f "$SUMMONED"
 summon_fayth stretchy 4 >/dev/null 2>&1 || true
 is "no ceiling: elastic succeeds when SPIRA_MAX_LIVE_AEONS is unset" \
    "SUMMONED:stretchy" "$(cat "$SUMMONED" 2>/dev/null)"
+clear_live
 
 # ======================================================================================
 echo
@@ -222,17 +283,22 @@ echo "lane ceiling (a) — a non-lane task fayth is held back when last slot and
 export SPIRA_FAYTHS="tasker laner"
 export SPIRA_MAX_LIVE_AEONS=4
 export SPIRA_LANES_MAX_LIVE=1
+clear_live
+# The fleet-total pidfiles below are tagged under "tasker": tasker's own cap is 4, well
+# above every value used in this section, so tagging the fleet total there never corrupts
+# tasker's own concurrency check the way tagging it under "laner" (cap 1) would.
 
 # POSITIVE CONTROL: with 2 free slots, tasker IS summoned even though laner is ready.
-MOCK_LIVE=2; MOCK_LIVE_LANES=0
-MOCK_READY_laner=1; MOCK_READY_tasker=1
+set_live tasker 2
+set_ready laner 1
+set_ready tasker 1
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "positive: tasker succeeds with 2 free slots (laner also ready)" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
 
 # 3 live -> 1 slot free. laner ready -> tasker must be held back.
-MOCK_LIVE=3; MOCK_LIVE_LANES=0
+set_live tasker 3
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "(a): tasker refused when last slot and laner has ready work" \
@@ -245,21 +311,28 @@ nowant "log says 'at concurrency cap'"     "at concurrency cap"     "$log_out"
 
 echo
 echo "lane ceiling (a2) — tasker IS summoned when the only ready lane is at its own concurrency cap"
-# laner has FAYTH_MAX_CONCURRENT=1; MOCK_COUNT=1 means it already has one live, so it
-# cannot take the last slot even though it is ready. Holding the slot back for it would
-# leave the slot empty rather than give it to anyone.
-MOCK_LIVE=3; MOCK_LIVE_LANES=0; MOCK_COUNT=1
-MOCK_READY_laner=1; MOCK_READY_tasker=1
+# laner has FAYTH_MAX_CONCURRENT=1; a real laner pidfile means it is simultaneously at its
+# own cap AND counted in the collective lane total — unlike the old independent mocks,
+# those two facts cannot be pulled apart with real state, so SPIRA_LANES_MAX_LIVE is
+# raised to 2 for this one case to keep the SAME path exercised (a ready lane refused only
+# because IT ITSELF has no room, not because the collective cap already absorbed it).
+export SPIRA_LANES_MAX_LIVE=2
+set_live tasker 2        # total 3/4 -> exactly 1 fleet slot free, the reservation's gate
+set_live laner 1        # laner's own cap (1) is now met, AND the lane total is 1 (< 2)
+set_ready laner 1
+set_ready tasker 1
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "(a2): tasker summoned when laner is ready but at its own concurrency cap" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
-MOCK_COUNT=0
+export SPIRA_LANES_MAX_LIVE=1
+set_live laner 0
 
 echo
 echo "lane ceiling (b) — the task fayth is allowed when last slot and no lane has ready work"
-MOCK_LIVE=3; MOCK_LIVE_LANES=0
-MOCK_READY_laner=0; MOCK_READY_tasker=1
+set_live tasker 3
+set_ready laner 0
+set_ready tasker 1
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "(b): tasker summoned when no lane has ready work" \
@@ -268,14 +341,19 @@ is "(b): tasker summoned when no lane has ready work" \
 echo
 echo "lane ceiling (c) — collective lane cap: at most SPIRA_LANES_MAX_LIVE lane aeons"
 # POSITIVE CONTROL: lane below cap -> summoned.
-MOCK_LIVE=0; MOCK_LIVE_LANES=0
-MOCK_READY_laner=1; MOCK_READY_tasker=0
+set_live tasker 0
+set_live laner 0
+set_ready laner 1
+set_ready tasker 0
 rm -f "$SUMMONED"
 summon_fayth laner >/dev/null 2>&1 || true
 is "positive: laner summoned when below lane cap" \
    "SUMMONED:laner" "$(cat "$SUMMONED" 2>/dev/null)"
 
-MOCK_LIVE=1; MOCK_LIVE_LANES=1
+# One real laner pidfile is simultaneously "laner's own cap reached" and "the lane total
+# is at SPIRA_LANES_MAX_LIVE (1)" — both true at once in reality, and either alone
+# refuses laner here, so this still proves the collective-cap message fires.
+set_live laner 1
 rm -f "$SUMMONED"
 summon_fayth laner >/dev/null 2>&1 || true
 is "(c): laner refused when lanes at collective cap" \
@@ -285,98 +363,35 @@ log_out="$(summon_fayth laner 2>&1 || true)"
 want "log says 'lane slot(s) in use'" "lane slot(s) in use" "$log_out"
 
 # The lane cap check is for lane fayths only; a task fayth is not refused by it.
-MOCK_LIVE=0; MOCK_LIVE_LANES=1
-MOCK_READY_laner=0; MOCK_READY_tasker=1
+set_live tasker 0
+set_ready laner 0
+set_ready tasker 1
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "(c): tasker not refused by the lane cap check" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
+set_live laner 0
 
 echo
 echo "no lane cap — SPIRA_LANES_MAX_LIVE unset: no preference, the task fayth fills freely"
 unset SPIRA_LANES_MAX_LIVE
-MOCK_LIVE=3; MOCK_LIVE_LANES=0
-MOCK_READY_laner=1; MOCK_READY_tasker=1
+set_live tasker 3
+set_ready laner 1
+set_ready tasker 1
 rm -f "$SUMMONED"
 summon_fayth tasker >/dev/null 2>&1 || true
 is "no lane cap: tasker fills last slot when SPIRA_LANES_MAX_LIVE unset" \
    "SUMMONED:tasker" "$(cat "$SUMMONED" 2>/dev/null)"
 
-# ======================================================================================
-echo
-echo "lane rotation (G1) — sentinel.sh's CHECK 7 ordering, via the real lane_rotate,"
-echo "  not a copy reimplemented in the test (sp-9ce60.5, closing test-lane-ceiling.sh's"
-echo "  gap: (d) rotation used to mirror sentinel.sh's logic by hand rather than call it)"
-# ======================================================================================
-cat > "$T/chamber/groomer.fayth" <<'F'
-FAYTH_NAME=groomer
-FAYTH_LABELS="test,groomer"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=60
-FAYTH_LANE=groomer
-F
-export SPIRA_FAYTHS="tasker laner groomer"
-export SPIRA_MAX_LIVE_AEONS=4
-export SPIRA_LANES_MAX_LIVE=1
-
-# Both lanes always ready. Over two simulated passes the rotation must give each one turn,
-# calling summon_fayth for each lane in the order the sentinel loop would, with rotation
-# applied through the real lane_rotate.
-MOCK_LIVE=0; MOCK_LIVE_LANES=0
-MOCK_READY_laner=1; MOCK_READY_groomer=1; MOCK_READY_tasker=0
-LANE_ORDER="laner groomer"
-_lane_rr="$T/run/lane-round-robin"
-rm -f "$_lane_rr" "$SUMMONED"
-
-# Pass 1: no prior rotation state -> laner goes first, is summoned (cap reached).
-pass1_summoned=""
-for _f in $LANE_ORDER; do
-    MOCK_LIVE_LANES="$([ -n "$pass1_summoned" ] && echo 1 || echo 0)"
-    rm -f "$SUMMONED"
-    summon_fayth "$_f" >/dev/null 2>&1 || true
-    if [ -f "$SUMMONED" ] && grep -qF "SUMMONED:$_f" "$SUMMONED" 2>/dev/null; then
-        pass1_summoned="$_f"
-        printf '%s' "$_f" > "$_lane_rr"
-        break
-    fi
-done
-is "rotation pass 1: a lane was summoned" "laner" "$pass1_summoned"
-
-# Pass 2: rotate through the real lane_rotate so laner goes last; groomer gets the slot.
-_last="$(cat "$_lane_rr" 2>/dev/null)"
-is "lane_rotate: laner (last-summoned) moves to the end" \
-   "groomer laner" "$(lane_rotate "$_last" $LANE_ORDER)"
-ROTATED="$(lane_rotate "$_last" $LANE_ORDER)"
-pass2_summoned=""
-MOCK_LIVE_LANES=0
-for _f in $ROTATED; do
-    rm -f "$SUMMONED"
-    summon_fayth "$_f" >/dev/null 2>&1 || true
-    if [ -f "$SUMMONED" ] && grep -qF "SUMMONED:$_f" "$SUMMONED" 2>/dev/null; then
-        pass2_summoned="$_f"
-        break
-    fi
-done
-is "rotation pass 2: the OTHER lane was summoned (rotation worked)" "groomer" "$pass2_summoned"
-
-# lane_rotate edge cases beyond the rotation exercised above.
-is "lane_rotate: no prior last — order unchanged" \
-   "laner groomer" "$(lane_rotate "" laner groomer)"
-is "lane_rotate: last not among lanes — order unchanged" \
-   "laner groomer" "$(lane_rotate "nosuchlane" laner groomer)"
-is "lane_rotate: single lane — unchanged regardless of last" \
-   "laner" "$(lane_rotate "laner" laner)"
-is "lane_rotate: no lanes at all — empty" \
-   "" "$(lane_rotate "laner")"
-
 unset SPIRA_MAX_LIVE_AEONS SPIRA_LANES_MAX_LIVE 2>/dev/null || true
+clear_live
 
 # ======================================================================================
 echo
 echo "drain expiry — positive control: with no drain at all, the fayth IS summoned"
 # ======================================================================================
 export SPIRA_DRAIN_TTL=1800
-MOCK_READY_stretchy=1
+set_ready stretchy 1
 DRAIN_STAMP="$T/run/world.draining"
 try_drain() { rm -f "$SUMMONED"; summon_fayth stretchy 1 2>&1; }
 
@@ -492,7 +507,8 @@ MOCK_QUOTA="$T/bin/mock-quota"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\nexit 0\n' "$ARGS_FILE" > "$MOCK_QUOTA"
 chmod +x "$MOCK_QUOTA"
 export SPIRA_SUMMON="$MOCK_QUOTA"
-MOCK_READY_stretchy=1
+set_ready stretchy 1
+clear_live
 
 # law-isolate-greedy-work-in-vms: the OS schedules aeons. The positive control is that the
 # summon happened at all (TimeoutStartSec is in the captured argv), so an empty capture
@@ -512,7 +528,8 @@ export SPIRA_SUMMON="$T/bin/mock-summon"
 echo
 echo "summon_fayth — a task fayth honours the pool argument; a lane fayth ignores it"
 # ======================================================================================
-MOCK_READY_stretchy=1; MOCK_READY_laner=1
+set_ready stretchy 1
+set_ready laner 1
 MOCK_COUNT=0
 
 rm -f "$SUMMONED"
@@ -533,12 +550,13 @@ is "lane fayth without pool arg IS summoned even when pool would be 0" \
 echo
 echo "aeon --escape — reaches a bead when the pool argument would have refused it"
 # ======================================================================================
-# SUBPROCESS STUB. Shell function overrides (fayth_ready, capacity_paused) do not
-# propagate into `aeon --escape`'s own lib.sh seam — it sources lib.sh fresh, exactly as
-# escape.sh did. SPIRA_BD is exported to a
-# shim that answers "ready" queries from a sentinel file, so the subprocess's readiness
-# can be toggled without a real Dolt database. Its real capacity_paused runs unstubbed;
-# with no pause stamp at $SPIRA_RUN it answers "not paused" on its own.
+# SUBPROCESS STUB. `aeon --escape`'s own lib.sh seam sources lib.sh fresh in a new bash
+# process (aeon/src/seam.rs), exactly as escape.sh did and exactly as `summon_fayth`'s own
+# `sentinel` shim now does for THIS script's direct calls too — neither sees a function
+# this shell defines. SPIRA_BD is exported to a shim that answers "ready" queries from a
+# sentinel file, so the subprocess's readiness can be toggled without a real Dolt
+# database. Its real capacity_paused runs unstubbed; with no pause stamp at $SPIRA_RUN it
+# answers "not paused" on its own.
 export FAKE_READY_FILE="$T/run/fake-ready"
 cat > "$T/bin/fake-bd" <<'FAKEBD'
 #!/usr/bin/env bash
@@ -553,8 +571,13 @@ FAKEBD
 chmod +x "$T/bin/fake-bd"
 export SPIRA_BD="$T/bin/fake-bd"
 
-MOCK_READY_stretchy=1
+# `summon_fayth`'s OWN readiness, below, goes through the spira-claim stub (set_ready) —
+# $T/bin is ahead of the release's real spira-claim on PATH for every subprocess this
+# whole suite spawns, `aeon --escape` included, so fake-bd's "ready" answer (read through
+# a REAL spira-claim this stub shadows) is never reached either way; kept in sync here so
+# both readinesses agree.
 touch "$T/run/fake-ready"
+set_ready stretchy 1
 
 # POSITIVE CONTROL: normal summon with pool=0 produces nothing.
 rm -f "$SUMMONED"
@@ -571,16 +594,19 @@ want "escape.sh summons despite pool=0 not being passed" "SUMMONED:stretchy" "$(
 # summons nothing — the summon above is about the fayth having work, not the script
 # always calling the binary unconditionally.
 rm -f "$T/run/fake-ready" "$SUMMONED"
+set_ready stretchy 0
 aeon --escape stretchy 2>/dev/null || true
 is "escape.sh with nothing ready does not summon" "absent" \
    "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 touch "$T/run/fake-ready"
+set_ready stretchy 1
 
 # ======================================================================================
 echo
 echo "G5 — summon_fayth refuses under a live halt, loudly (previously only source-grepped)"
 # ======================================================================================
 HALT_STAMP="$T/run/world.halted"
+set_ready stretchy 1
 
 # POSITIVE CONTROL: with no halt stamp, stretchy is summoned.
 rm -f "$HALT_STAMP" "$SUMMONED"
@@ -599,23 +625,29 @@ rm -f "$HALT_STAMP"
 echo
 echo "G6 — plain fleet-ceiling refusal, not merely the last-slot rules"
 # ======================================================================================
+# SPIRA_FAYTHS restored: the lane-ceiling section above left it at "tasker laner", and
+# live_total/aeon_count only count pidfiles tagged under the CURRENT roster — unlike the
+# old independent MOCK_LIVE, a real fleet total is the roster's own sum.
+export SPIRA_FAYTHS="anchor stretchy"
 export SPIRA_MAX_LIVE_AEONS=3
-MOCK_READY_anchor=1
+set_ready anchor 1
+clear_live
 
 # POSITIVE CONTROL: one slot below the ceiling, anchor is summoned.
-MOCK_LIVE=2
+set_live stretchy 2     # fleet total only — tagged away from "anchor" itself (cap 1)
 rm -f "$SUMMONED"
 summon_fayth anchor >/dev/null 2>&1 || true
 is "G6 positive control: below the ceiling, anchor is summoned" \
    "SUMMONED:anchor" "$(cat "$SUMMONED" 2>/dev/null)"
 
-MOCK_LIVE=3    # 3/3 — the fleet is AT the ceiling, not merely down to its last slot
+set_live stretchy 3    # 3/3 — the fleet is AT the ceiling, not merely down to its last slot
 rm -f "$SUMMONED"
 out="$(summon_fayth anchor 2>&1 || true)"
 is "G6: fleet at ceiling — nothing summoned" "absent" "$( [ -f "$SUMMONED" ] && cat "$SUMMONED" || echo absent )"
 want "G6: log names the live/ceiling count" "3/3 aeon(s) live across the whole fleet" "$out"
 want "G6: log says 'not summoning'" "not summoning" "$out"
 unset SPIRA_MAX_LIVE_AEONS
+clear_live
 
 # ======================================================================================
 echo
@@ -629,7 +661,6 @@ echo "G7 — governor withholding: MOOT, spira/governor.sh no longer exists (sp-
 echo
 echo "G8 — escape.sh honours world_gate: a halt or live drain refuses the escape summon too (sp-uyw4n, sp-2w2wu)"
 # ======================================================================================
-MOCK_READY_stretchy=1
 touch "$T/run/fake-ready"
 
 # POSITIVE CONTROL: with no halt or drain stamp, escape.sh still summons.

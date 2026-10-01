@@ -5,15 +5,29 @@
 #
 #   ./test-summon-fast-path.sh
 #
-# FOUR THINGS THIS PROVES, each with a positive control first:
+# THREE THINGS THIS PROVES, each with a positive control first:
 #   A. aeon_count counts by unit name, not pidfile — the pidfile gap (aeon.sh writes its
 #      pidfile only after it claims a bead) must not read a just-summoned aeon as free.
-#   B. ck7_summon_pass's summon.lock actually serializes: the unlocked body races and
-#      double-summons past its own cap; the locked wrapper does not.
 #   C. ready-bucket.py's bucketing mirrors fayth_ready's predicate exactly (labels,
 #      excludes, fayth: preference) — checked directly, no database needed.
 #   D. sentinel.sh --summon-only, against a real fixture: ONE bd ready call (not one per
 #      partition), a summon happens, and none of the full pass's own checks run.
+#
+# B — ck7_summon_pass's summon.lock serializing two real contenders — MOVED (wave 4.27,
+#     family G, sp-gzmd2): `_ck7_summon_body`, bare and unlocked, used to be reachable as
+#     a bash function this suite could stub (aeon_count/capacity_paused/world_gate/
+#     fayth_ready/act, by name) to PROVE the unlocked race and then prove the lock
+#     removes it. `ck7_summon_pass`/`world_gate`/`summon_fayth` are now one-line shims
+#     onto a compiled `sentinel` process, which offers no shell-function-by-name override
+#     — the race this row used to demonstrate is now structurally impossible rather than
+#     merely refused: there is no entry point to the unlocked body left to call bare. The
+#     lock itself (the exact `libc::flock` primitive `acquire_summon_lock` takes, proven
+#     against two real OS threads racing to enter) is
+#     `summon::tests::the_lock_actually_serializes_two_real_contenders` in
+#     sentinel/src/summon.rs; what the lock protects — two real `ck7_summon_pass` calls in
+#     sequence sharing the fleet correctly — is
+#     `sentinel::tests::ck7_summon_pass_rotates_across_two_real_passes` in
+#     sentinel/src/tests.rs.
 #
 # POSITIVE CONTROLS FIRST (law-a-regression-test-must-be-seen-to-fail).
 #
@@ -31,6 +45,12 @@ export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_HOME="$T" PATH="$T:$PATH"
 export SPIRA_DB="$T/no-db"
+
+# `summon_argv` (section E) is a `sentinel --summon-argv` shim now (wave 4.27, family G,
+# sp-gzmd2) — a real subprocess with SPIRA_HOME=$T, which needs a working $T/lib.sh to
+# source at its own context probe. Same one-line symlink trick test-summon-fayth.sh's own
+# `aeon --escape` fixture uses.
+printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 
 # THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
 # on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
@@ -127,82 +147,7 @@ kill "$FAKE_AEON_PID" 2>/dev/null; wait "$FAKE_AEON_PID" 2>/dev/null
 rm -f "$SPIRA_RUN"/aeon-builder-*.pid
 unset SPIRA_SUMMON 2>/dev/null || true
 
-# ============================================================================
-echo
-echo "B — ck7_summon_pass's flock actually matters:"
-# ============================================================================
-cat > "$T/chamber/racer.fayth" <<'F'
-FAYTH_NAME=racer
-FAYTH_LABELS="test"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=60
-F
-export SPIRA_FAYTHS=racer
-export SPIRA_MAX_AEONS=1
-unset SPIRA_MAX_LIVE_AEONS SPIRA_LANES_MAX_LIVE 2>/dev/null || true
-
-RACE_LOG="$T/race-summoned.log"
-capacity_paused() { return 1; }
-world_gate() { return 0; }
-fayth_ready() { printf '1'; }
-aeon_count() { local n; n="$(grep -c . "$RACE_LOG" 2>/dev/null)"; printf '%s' "${n:-0}"; }
-acted=0; act() { acted=$((acted+1)); }
-
-echo
-echo "B negative control — the UNLOCKED body races and double-summons past cap=1:"
-# A DETERMINISTIC INTERLEAVE, not a sleep-based window: a 0.3s sleep in aeon_count
-# reliably overlapped two backgrounded bodies at low load, then stopped overlapping
-# under load ~24 on unchanged code (sp-2usbl, law-a-test-that-flips-is-deleted). The
-# mock SPIRA_SUMMON below is a real two-party barrier on the WRITE side: neither body
-# can record its summon until the other has also read cap=1/have=0 and committed to
-# summoning too, so both reads are forced to see the same pre-race state on every run,
-# on any host — the double-summon this proves is no longer a timing gamble.
-BARRIER_LOCK="$T/race-barrier.lock"; BARRIER_ARRIVALS="$T/race-barrier.count"
-BARRIER_FIFO="$T/race-barrier.fifo"
-: > "$BARRIER_ARRIVALS"; rm -f "$BARRIER_FIFO"; mkfifo "$BARRIER_FIFO"
-cat > "$T/bin/mock-summon-barrier" <<EOF
-#!/usr/bin/env bash
-mynum=\$(
-    exec 8>"$BARRIER_LOCK"
-    flock 8
-    printf 'x\n' >> "$BARRIER_ARRIVALS"
-    wc -l < "$BARRIER_ARRIVALS"
-)
-if [ "\$mynum" -ge 2 ]; then
-    printf go > "$BARRIER_FIFO"
-else
-    read -r _ < "$BARRIER_FIFO"
-fi
-echo summoned >> "$RACE_LOG"
-EOF
-chmod +x "$T/bin/mock-summon-barrier"
-export SPIRA_SUMMON="$T/bin/mock-summon-barrier"
-: > "$RACE_LOG"; rm -f "$SPIRA_RUN/summon.lock"
-( _ck7_summon_body ) & ( _ck7_summon_body ) &
-wait
-is "unlocked: two concurrent bodies both summon (cap=1 exceeded — the race is real)" \
-   "2" "$(grep -c . "$RACE_LOG" 2>/dev/null || echo 0)"
-
-echo
-echo "B — the LOCKED wrapper serializes the same race and holds the cap:"
-# THE VARIANT WITH THE RACE REMOVED: the same body, the same cap, wrapped in
-# ck7_summon_pass's flock instead of called bare. A plain (non-barrier) summon mock —
-# under the lock only one process is ever inside the body at once, so a second arrival
-# at a two-party barrier would never come and the run would hang forever.
-cat > "$T/bin/mock-summon-plain" <<EOF
-#!/usr/bin/env bash
-echo summoned >> "$RACE_LOG"
-EOF
-chmod +x "$T/bin/mock-summon-plain"
-export SPIRA_SUMMON="$T/bin/mock-summon-plain"
-: > "$RACE_LOG"; rm -f "$SPIRA_RUN/summon.lock"
-( ck7_summon_pass ) & ( ck7_summon_pass ) &
-wait
-is "locked: two concurrent passes summon exactly once (cap=1 honoured)" \
-   "1" "$(grep -c . "$RACE_LOG" 2>/dev/null || echo 0)"
-
-unset -f capacity_paused world_gate fayth_ready aeon_count act
-unset SPIRA_SUMMON SPIRA_FAYTHS SPIRA_MAX_AEONS acted 2>/dev/null || true
+# Section B (the summon.lock race/serialization proof) moved — see the header note above.
 
 # ============================================================================
 echo
@@ -344,13 +289,18 @@ echo "E — every aeon carries its own fast-path refill hook (ExecStopPost):"
 # an aeon exiting is right back to waiting out the 2-minute cadence this bead exists to cut.
 export SPIRA_SUMMON="$T/bin/mock-summon-noop"   # already an absolute path; created in section A
 # The refill runs the sentinel BINARY (sentinel.sh is gone), resolved on PATH (sp-gypjk):
-# ExecStopPost needs an absolute path, so summon_argv hands it `command -v sentinel`.
-printf '#!/bin/sh\nexit 0\n' > "$T/bin/sentinel"; chmod +x "$T/bin/sentinel"
+# ExecStopPost needs an absolute path, so summon_argv hands it its own resolved path.
+# `summon_argv` is itself a `sentinel --summon-argv` shim now (wave 4.27, family G,
+# sp-gzmd2) — a real execution, not a pure string computation in this shell — so it
+# necessarily resolves to WHATEVER "sentinel" is really on PATH, not a stand-in; the
+# assertion below resolves the same name through the same PATH rather than asserting a
+# fixed fake path no real binary would ever embed as itself.
+sentinel_path="$(PATH="$T/bin:$PATH" command -v sentinel)"
 argv="$(PATH="$T/bin:$PATH" summon_argv racer | tr '\n' ' ')"
 case "$argv" in
-    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/bin/sentinel --summon-only"*)
+    *"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $sentinel_path --summon-only"*)
         ok "summon_argv: ExecStopPost refills via --summon-only, not a full pass" ;;
-    *) bad "summon_argv: ExecStopPost refills via --summon-only" "got: $argv" ;;
+    *) bad "summon_argv: ExecStopPost refills via --summon-only" "got: $argv (sentinel resolved to $sentinel_path)" ;;
 esac
 unset SPIRA_SUMMON 2>/dev/null || true
 
