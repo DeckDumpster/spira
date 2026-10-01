@@ -1,9 +1,12 @@
-TYPE=string
+TYPE=u32
 GROUP=summon
-DOC=SPIRA_SUMMON_JITTER — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+DOC=HOW MANY SECONDS AN AEON SLEEPS BEFORE ITS SESSION STARTS. A batch of aeons summoned
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
-    # spira_conf_defaults() today; it resolves to an empty string unless the
-    # environment or spira.toml sets it. Registered here only so the allowlist is
-    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # HOW MANY SECONDS AN AEON SLEEPS BEFORE ITS SESSION STARTS. A batch of aeons summoned
+    # together picks a uniform random delay in 0..=this many seconds (aeon's own
+    # spira_config::admission::jitter) so they do not all hit the claim store, the worktree
+    # root and the model API in the same instant. 20s is the default (sp-f4ig1); matches
+    # aeon/src/../spira-config/src/admission.rs's JITTER_DEFAULT, which this registry entry
+    # exists to keep in sync with, not to override — change both together (sp-1cdgq).
+    : "${SPIRA_SUMMON_JITTER:=20}"
 SPIRA_CONF_DEFAULT_EOF

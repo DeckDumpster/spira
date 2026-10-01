@@ -66,6 +66,11 @@ git -C "$SECOND_REPO" add second.txt; git -C "$SECOND_REPO" commit -qm "second s
 git -C "$SECOND_REPO" push -q origin main 2>/dev/null
 
 export SPIRA_HOME="$TMP/harness"; mkdir -p "$SPIRA_HOME/chamber"
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
+# own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
+# derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
+# a --home with no conf.d used to resolve silently to nothing instead of refusing.
+cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 # Derive the copy set from a glob — not a hand-maintained list that drifts when lib.sh
 # gains a new sourced dependency. Only production scripts; test-*.sh are excluded.
 find "$HERE" -maxdepth 1 -name '*.sh' ! -name 'test-*.sh' -exec cp {} "$SPIRA_HOME/" \;

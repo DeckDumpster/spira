@@ -76,9 +76,17 @@ git -C "$REPO" push -q origin trunk 2>/dev/null
 # ---- harness fixture -------------------------------------------------------
 SH="$TMP/spira"
 mkdir -p "$SH"
-for f in review.sh release.sh unhold.sh lib.sh conf.sh suite-covers.sh; do
+for f in review.sh release.sh unhold.sh lib.sh suite-covers.sh; do
     [ -f "$HERE/$f" ] && cp "$HERE/$f" "$SH/"
 done
+# conf.sh is SYMLINKED, never copied (the pattern test-conf.sh/test-install-landref.sh/
+# test-install-hooks-artifact.sh/test-install-conf-seed.sh all use): its own
+# _spira_conf_gen_ensure resolves ${BASH_SOURCE[0]} through readlink -f to find conf.d/
+# and conf-gen.sh beside the REAL file, precisely so a fixture tree does not also have to
+# carry a copy of the generated-keys machinery (sp-g3uwp) alongside it. A plain `cp` here
+# left $SH with no conf.d/ and no conf-gen.sh, so sourcing conf.sh refused with "conf-gen.sh
+# failed to regenerate conf.d.*.generated.sh" the moment review.sh tried to source it.
+ln -s "$HERE/conf.sh" "$SH/conf.sh"
 chmod +x "$SH/review.sh" "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"

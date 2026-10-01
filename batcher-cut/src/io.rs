@@ -52,6 +52,10 @@ pub struct Env {
     pub queue_bin: PathBuf,
     /// The `rebase-stale` program (by name on the launcher's PATH).
     pub rebase_stale_bin: PathBuf,
+    /// The `landing-pass` program (by name on the launcher's PATH): owns the landstate
+    /// ledger's one writer (sp-cnnt6, "wave 4.16") — `land_mark` below shells to its
+    /// `mark` subcommand with `$SPIRA_RUN` passed explicitly, never the lib.sh seam.
+    pub landing_pass_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -131,7 +135,9 @@ where
 }
 
 pub fn land_mark(env: &Env, id: &str, state: &str, tip: &str, reason: &str) {
-    let _ = lib_call(env, "land_mark", [id, state, tip, reason]);
+    let mut cmd = Command::new(&env.landing_pass_bin);
+    cmd.env("SPIRA_RUN", &env.run).args(["mark", id, state, tip, reason]);
+    let _ = run(&mut cmd, "landing-pass mark");
 }
 
 /// The queue's own merge subject for `id` — "spira: land <id>", or with " — <title>"
@@ -1305,17 +1311,28 @@ mod eject_tests {
     fn an_ejected_member_carries_its_suites_to_the_sidecar_and_the_row() {
         let d = testkit::TempDir::new("batcher-cut-eject");
         // A lib.sh that records each call's argv, one call per line, fields tab-separated.
+        // land_mark is NOT here (sp-cnnt6, "wave 4.16") — landing-pass owns that write now,
+        // a stand-in landing-pass binary below records it instead.
         let log = d.join("calls");
         let rec = |f: &str| format!("{f}() {{ (IFS=$'\\t'; printf '{f}\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display());
-        fs::write(d.join("lib.sh"), rec("bead_reopen") + &rec("land_mark")).unwrap();
-        let e = super::lifecycle_tests_env(&d);
+        fs::write(d.join("lib.sh"), rec("bead_reopen")).unwrap();
+        let mut e = super::lifecycle_tests_env(&d);
+        let landing_pass = d.join("landing-pass");
+        testkit::write_exe(
+            &landing_pass,
+            &format!(
+                "#!/bin/sh\n{{ printf 'land_mark'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> '{}'\n",
+                log.display()
+            ),
+        );
+        e.landing_pass_bin = landing_pass;
         eject_member(&e, "spira", "sp-m2", "abc", &["test-a.sh".into(), "test-b.sh".into()]);
         let calls = fs::read_to_string(&log).unwrap();
         let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
         assert_eq!(lines.len(), 2, "{calls}");
         assert_eq!(lines[0][..3], ["bead_reopen", "sp-m2", "queue-eject-local"]);
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
-        assert_eq!(lines[1], ["land_mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
+        assert_eq!(lines[1], ["land_mark", "mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
         let _ = fs::remove_dir_all(&d);
     }
 }
@@ -1335,6 +1352,7 @@ fn lifecycle_tests_env(dir: &Path) -> Env {
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
+        landing_pass_bin: dir.join("landing-pass"),
         round_slots: None,
         poll_secs: 1,
         maxpar: 1,

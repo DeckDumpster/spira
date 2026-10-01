@@ -157,6 +157,15 @@ impl Conf {
         }
     }
 
+    /// lib.sh `land_state <id>`, read in-process (sp-cnnt6, "wave 4.16"): landing-pass owns
+    /// the one WRITE (`landstate::mark`, reached here through `landing-pass mark`), but the
+    /// ledger's files are ordinary reads — same contract queue/watchtower already read
+    /// directly. Newlines stripped, matching the bash function's own `tr -d '\n'`; empty
+    /// when the record cannot be read, matching its `return 1` into no stdout.
+    pub fn land_state(&self, id: &str) -> String {
+        std::fs::read_to_string(self.landstate().join(id)).map(|t| t.chars().filter(|c| *c != '\n').collect()).unwrap_or_default()
+    }
+
     // ---- capacity pause (family K, wave 4.26) -----------------------------------------
     //
     // SPIRA_CAPACITY_PAUSE/_BACKOFF/_PROBE_LAST/_WITHDRAWN are lib.sh literals, not
@@ -283,9 +292,15 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
 /// `spira_home_repo` logic needs all three to tell an explicit `SPIRA_REPO` override apart
 /// from one that merely fell out of where this copy of the harness sits.
 ///
-/// Best-effort, same as every other config read in this binary: a containment refusal or
-/// an unreadable registry leaves `snap.vars` exactly as the seam call alone produced it.
-pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) {
+/// NOT BEST-EFFORT ANY MORE (sp-1cdgq round 3): a containment refusal or an unreadable
+/// registry used to leave `snap.vars` exactly as the seam call alone produced it — silently,
+/// with no error anywhere. That "best-effort" was what let a missing `conf.d` (production
+/// never has one; only a test fixture's `--home` ever does) resolve every `RETIRED_SNAPSHOT_
+/// VARS` key to nothing while looking like a clean run (sp-8qm8g, then sp-1cdgq itself, same
+/// defect twice). `resolve_for_process`'s `Err` is now the caller's problem: surfaced here,
+/// not swallowed, so `main.rs` can refuse to start rather than run an aeon short the config
+/// it believes it has.
+pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) -> Result<(), String> {
     let repo_derived = spira_config::resolve::derive_repo_filesystem(home, env);
     let repo = env
         .get("SPIRA_REPO")
@@ -295,11 +310,11 @@ pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env:
     snap.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
     snap.vars.entry("SPIRA_REPO_DERIVED".into()).or_insert_with(|| repo_derived.to_string_lossy().into_owned());
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, env) {
-        for (k, v) in resolved.values {
-            snap.vars.entry(k).or_insert(v);
-        }
+    let resolved = spira_config::resolve::resolve_for_process(home, &repo, env)?;
+    for (k, v) in resolved.values {
+        snap.vars.entry(k).or_insert(v);
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -396,7 +411,7 @@ mod tests {
             vars: vars(&[("LANDSTATE", "/seam/landstate")]),
             ..Default::default()
         };
-        merge_resolved_config(&mut snap, &home, &BTreeMap::new());
+        merge_resolved_config(&mut snap, &home, &BTreeMap::new()).unwrap();
 
         match saved {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
@@ -433,7 +448,7 @@ mod tests {
         std::env::set_var("SPIRA_SUMMON_JITTER", "0");
 
         let mut snap = crate::seam::Snapshot::default();
-        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]));
+        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())])).unwrap();
 
         match saved_toml {
             Some(v) => std::env::set_var("SPIRA_TOML", v),
@@ -448,6 +463,58 @@ mod tests {
             snap.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str),
             Some("0"),
             "SPIRA_SUMMON_JITTER is set in the environment handed to merge_resolved_config but never reaches snap.vars"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-1cdgq, round 2: the test above proves the WIRING using a synthetic `conf.d` it
+    /// writes itself — which is exactly why it did not catch the second collapse. Round 161
+    /// (sp-mz7dn) moved SPIRA_SUMMON_JITTER's resolution onto `--home`'s OWN `conf.d/`, not
+    /// wherever `lib.sh`/`conf.sh` happen to live (the old bash seam's decoupling), so a test
+    /// fixture `--home` with no `conf.d` at all resolves the whole generic registry pass to
+    /// nothing — `test-thrash-teardown.sh`'s fixture, still red with the identical
+    /// "pre-session death" signature even after `SPIRA_SUMMON_JITTER=0` was exported,
+    /// because no `conf.d` was ever copied into its `$SPIRA_HOME`.
+    ///
+    /// This test uses the REAL, checked-in `spira/conf.d` (this crate's own repo layout:
+    /// `aeon/` sits beside `spira/`) instead of fabricating one, so a future regression in
+    /// either direction — the registry file disappearing, `resolve()`'s generic pass
+    /// breaking, or a fixture that forgets to copy `conf.d` in — is caught the same way
+    /// production would actually hit it: through `Conf`, the way `run.rs`'s summon jitter
+    /// reads it, not just `snap.vars`.
+    #[test]
+    fn summon_jitter_reaches_conf_through_the_real_registry() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        assert!(home.join("conf.d").is_dir(), "this crate's own ../spira/conf.d must exist for this test to mean anything");
+
+        let dir = testkit::TempDir::new("aeon-conf-real-jitter");
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+
+        // No SPIRA_SUMMON_JITTER in snap.vars going in — matching production: wave 4.8
+        // retired it from the bash seam's own SNAPSHOT_VARS allowlist, so only
+        // merge_resolved_config can ever supply it now.
+        let mut snap = crate::seam::Snapshot::default();
+        let env = BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]);
+        merge_resolved_config(&mut snap, &home, &env).unwrap();
+        let conf = Conf::new(&snap, &home);
+
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        match saved_jitter {
+            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
+            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
+        }
+
+        assert_eq!(
+            conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64),
+            0,
+            "SPIRA_SUMMON_JITTER=0 in the environment did not reach Conf through the real spira/conf.d registry"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

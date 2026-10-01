@@ -76,7 +76,15 @@ echo "the partition is the spike's own:"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_HOME="$TMP/home" PATH="$TMP/home:$PATH"
 mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
-printf '#!/bin/sh\nexit 0\n' > "$SPIRA_HOME/aeon"; chmod +x "$SPIRA_HOME/aeon"
+# THE STUB MUST ANSWER "capacity paused" TOO (sp-wm2a3, wave 4.26/sp-kn6d8): summon_fayth's
+# CHECK7 now asks the real `aeon capacity paused` binary before anything else, and PATH
+# puts this stub ahead of the compiled one — so a bare "exit 0" (meant only to stand in for
+# the launch target further down) answered every capacity probe as "paused" too, and
+# summon_fayth refused every summon regardless of partition. No pause file is ever written
+# here, so the honest answer is "open": exit 1 (capacity_cli.rs's own Paused::Open -> 1),
+# printing nothing. Everything else keeps the original no-op exit 0.
+printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
+chmod +x "$SPIRA_HOME/aeon"
 export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
 SUMMONED="$TMP/summoned.txt"
 export SPIRA_SUMMON="$TMP/summon.sh"

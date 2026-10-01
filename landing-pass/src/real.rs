@@ -251,8 +251,11 @@ impl<'a> RealLib<'a> {
 }
 
 impl<'a> Lib for RealLib<'a> {
+    /// In-process now (sp-cnnt6, "wave 4.16"): this crate owns the landstate ledger, so its
+    /// own writes never need the lib.sh seam — only the other five crates' seams do, and
+    /// those shell to `landing-pass mark` instead.
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        self.seam.call(Op::LandMark, &[id, state, tip, reason]);
+        crate::landstate::land_mark(&self.s.run, id, state, tip, reason, "");
     }
     fn reopen(&self, id: &str, cause: &str, note: &str) {
         self.seam.call(Op::Reopen, &[id, cause, note]);

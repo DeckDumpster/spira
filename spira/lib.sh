@@ -3932,22 +3932,9 @@ LANDSTATE="${SPIRA_RUN}/landstate"
 # reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
 LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
 
-# _tsd_landing_event <id> <state> <tip> [reason]
-# Best-effort: appends a landing-event row (run/tsd/) via tsd-write. Never affects the
-# caller's exit status — an unbuilt or missing binary means the family stays unwritten, not
-# that landing itself fails.
-_tsd_landing_event() {
-    local id="$1" state="$2" tip="${3:-none}" reason="${4:-}"
-    if [ -n "$reason" ]; then
-        tsd-write --family landing-event --root "${SPIRA_RUN:-}" \
-            --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
-            --field-str "reason=$reason" >/dev/null 2>&1 || true
-    else
-        tsd-write --family landing-event --root "${SPIRA_RUN:-}" \
-            --field-str "bead=$id" --field-str "state=$state" --field-str "tip=$tip" \
-            >/dev/null 2>&1 || true
-    fi
-}
+# _tsd_landing_event is RETIRED (sp-cnnt6, "wave 4.16"): its one caller was land_mark, now a
+# shim onto `landing-pass mark`, which does the landing-event dual-write itself, in-process
+# (landing-pass/src/landstate.rs), rather than shelling to tsd-write.
 
 # _tsd_kv_field "<k=v k=v ...>" <key> -> the value for <key>, or "?" when absent. Reads the
 # space-separated key=value string session_result_fields (below) already built — never a
@@ -3999,21 +3986,17 @@ _tsd_escape() {
         >/dev/null 2>&1 || true
 }
 
+# land_mark/land_state are PORTED (sp-cnnt6, "wave 4.16" — family S, the landstate ledger):
+# landing-pass/src/landstate.rs is the one writer now; these are one-line shims so every
+# bash sourcer here keeps working unchanged. Both read only $SPIRA_RUN — no lib.sh seam, no
+# containment check — so a caller that already has it exported pays one process, not a
+# bash-plus-source.
 land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
-    mkdir -p "$(dirname "$LANDSTATE/$1")" 2>/dev/null || return 0
-    printf '%s %s %s %s' "$2" "${3:-none}" "$(date +%s)" "${4:-}" \
-        > "$LANDSTATE/$1.$$" 2>/dev/null
-    [ -n "${5:-}" ] && printf ' %s' "$5" >> "$LANDSTATE/$1.$$" 2>/dev/null
-    mv -f "$LANDSTATE/$1.$$" "$LANDSTATE/$1" 2>/dev/null
-    local rc=$?
-    _tsd_landing_event "$1" "$2" "${3:-}" "${4:-}"
-    return "$rc"
+    landing-pass mark "$@"
 }
 
 land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
-    local f="$LANDSTATE/$1"
-    [ -r "$f" ] || return 1
-    tr -d '\n' < "$f" 2>/dev/null
+    landing-pass state "$@"
 }
 
 
