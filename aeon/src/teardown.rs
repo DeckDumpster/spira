@@ -137,6 +137,7 @@ impl Run<'_> {
             } else if let Some((2, why)) = self.gate_status() {
                 i.gate_unfinished = true;
                 gw = why;
+            // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset (same as below)
             } else if decide::open_ask_blocker(&bd::json(self.d.bd, &["show", &id]), &id, &self.conf.or("SPIRA_ASK_LABEL", "needs-operator")) {
                 i.decision_blocked = true;
             } else if self.s.session_rc == 124 && !self.s.committed {

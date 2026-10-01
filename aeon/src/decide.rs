@@ -491,13 +491,15 @@ mod tests {
     // test-aeon-disposition.sh's open_ask_blocker table.
     #[test]
     fn open_ask_blocker_table() {
+        // literal-ok: a test fixture's own ask label, substituted into every row below so the literal appears exactly once, here.
         let ask = "needs-operator";
-        assert!(open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "positive control: an open ask-labelled blocks dep IS a blocker");
-        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"relates-to","title":"decide"}]}]"#, "sp-x", ask), "sp-dvsqc: relates-to is not a blocker");
-        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"closed","labels":["needs-operator"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "a closed ask dep is not a blocker");
-        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["plan"],"dependency_type":"blocks","title":"decide"}]}]"#, "sp-x", ask), "an open blocks dep with no ask label is not a blocker");
-        assert!(!open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-x"}]}]"#, "sp-x", ask), "sp-2a4hd: this bead's own gh-closeout ask is not its own blocker");
-        assert!(open_ask_blocker(r#"[{"dependencies":[{"status":"open","labels":["needs-operator"],"dependency_type":"blocks","title":"Close GitHub issue 5 for bead sp-OTHER"}]}]"#, "sp-x", ask), "a gh-closeout ask for a DIFFERENT bead IS still a blocker");
+        let row = |status: &str, label: &str, kind: &str, title: &str| format!(r#"[{{"dependencies":[{{"status":"{status}","labels":["{label}"],"dependency_type":"{kind}","title":"{title}"}}]}}]"#);
+        assert!(open_ask_blocker(&row("open", ask, "blocks", "decide"), "sp-x", ask), "positive control: an open ask-labelled blocks dep IS a blocker");
+        assert!(!open_ask_blocker(&row("open", ask, "relates-to", "decide"), "sp-x", ask), "sp-dvsqc: relates-to is not a blocker");
+        assert!(!open_ask_blocker(&row("closed", ask, "blocks", "decide"), "sp-x", ask), "a closed ask dep is not a blocker");
+        assert!(!open_ask_blocker(&row("open", "plan", "blocks", "decide"), "sp-x", ask), "an open blocks dep with no ask label is not a blocker");
+        assert!(!open_ask_blocker(&row("open", ask, "blocks", "Close GitHub issue 5 for bead sp-x"), "sp-x", ask), "sp-2a4hd: this bead's own gh-closeout ask is not its own blocker");
+        assert!(open_ask_blocker(&row("open", ask, "blocks", "Close GitHub issue 5 for bead sp-OTHER"), "sp-x", ask), "a gh-closeout ask for a DIFFERENT bead IS still a blocker");
         assert!(!open_ask_blocker("", "sp-x", ask), "unparseable JSON fails closed");
     }
 
