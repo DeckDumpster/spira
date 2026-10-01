@@ -70,8 +70,42 @@ struct Config {
     now_iso: String,
 }
 
+/// `SPIRA_*` values a bash process `Config::from_env`'s own callers spawn (`. "$SPIRA_HOME/
+/// lib.sh"` in `summon_fayth_czar`, inheriting this process's own environment) must never
+/// see pre-set — the same per-copy-fact / host-policy keys `cockpit-collect`'s
+/// `bootstrap_config` names (wave4-decomposition.md row (b)): a nested conf.sh that sees
+/// one of these already set skips deriving it fresh from whatever THAT call was actually
+/// pointed at.
+const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "SPIRA_REPO_MAP", "SPIRA_FAYTHS", "SPIRA_MAX_AEONS"];
+
+/// Wave 4.8 ("retire conf re-import seams in Rust"): every `env::var(...)` read below used
+/// to see only this process's own already-set environment — no spira.toml load at all
+/// (wave4-decomposition.md row (b) names czar-pass by file). Merges
+/// `spira_config::resolve()`'s in-process answer into THIS process's own environment once,
+/// inserting a key only when it is not already set (conf.sh's own `${VAR:=default}` rule)
+/// and never one of [`NEVER_EXPORTED`], so every `env::var(...)` read below (and in any
+/// child this process spawns) sees a toml override exactly as conf.sh would have resolved
+/// it. Best-effort: a missing registry or a containment refusal leaves the environment
+/// exactly as it was.
+fn merge_resolved_env() {
+    let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+    let home = PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default());
+    let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
+    if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
+        for (k, v) in resolved.values {
+            if NEVER_EXPORTED.contains(&k.as_str()) {
+                continue;
+            }
+            if env::var_os(&k).is_none() {
+                env::set_var(k, v);
+            }
+        }
+    }
+}
+
 impl Config {
     fn from_env() -> Config {
+        merge_resolved_env();
         let spira_run_str =
             env::var("SPIRA_RUN").unwrap_or_else(|_| "/tmp/spira".to_string());
         let spira_run = PathBuf::from(&spira_run_str);
@@ -1158,6 +1192,52 @@ mod tests {
                 None => env::remove_var("PATH"),
             }
         }
+    }
+
+    // Wave 4.8: merge_resolved_env() must reach a registry key `Config::from_env` never
+    // hardcoded a default for (SPIRA_CZAR_LABEL's conf.d default, "czar-trigger", is the
+    // same literal already in czar_label's own unwrap_or_else below — this proves the
+    // MERGE path, not merely that the two defaults happen to agree), and must never leak
+    // a NEVER_EXPORTED key into this process's own environment.
+    #[test]
+    fn merge_resolved_env_reaches_a_registry_default_and_never_exports_the_forbidden_set() {
+        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_home = env::var_os("SPIRA_HOME");
+        let saved_label = env::var_os("SPIRA_CZAR_LABEL");
+        let saved_max_aeons = env::var_os("SPIRA_MAX_AEONS");
+        env::remove_var("SPIRA_CZAR_LABEL");
+        env::remove_var("SPIRA_MAX_AEONS");
+        let dir = testkit::TempDir::new("czar-pass-merge-env");
+        let home = dir.join("spira");
+        fs::create_dir_all(home.join("conf.d")).unwrap();
+        fs::write(
+            home.join("conf.d/SPIRA_CZAR_LABEL"),
+            "TYPE=string\nGROUP=czar\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    : \"${SPIRA_CZAR_LABEL:=czar-trigger}\"\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        env::set_var("SPIRA_HOME", &home);
+
+        merge_resolved_env();
+
+        let got_label = env::var("SPIRA_CZAR_LABEL").ok();
+        let got_max_aeons = env::var_os("SPIRA_MAX_AEONS");
+
+        match saved_home {
+            Some(v) => env::set_var("SPIRA_HOME", v),
+            None => env::remove_var("SPIRA_HOME"),
+        }
+        match saved_label {
+            Some(v) => env::set_var("SPIRA_CZAR_LABEL", v),
+            None => env::remove_var("SPIRA_CZAR_LABEL"),
+        }
+        match saved_max_aeons {
+            Some(v) => env::set_var("SPIRA_MAX_AEONS", v),
+            None => env::remove_var("SPIRA_MAX_AEONS"),
+        }
+
+        assert_eq!(got_label, Some("czar-trigger".to_string()), "a registry default must reach the real environment");
+        assert_eq!(got_max_aeons, None, "SPIRA_MAX_AEONS must never leak into this process's own environment");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:

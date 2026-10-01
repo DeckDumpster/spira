@@ -9,6 +9,7 @@ name = "maechen-trigger"
 path = "src/main.rs"
 
 [dependencies]
+spira-config = { path = "../spira-config" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
