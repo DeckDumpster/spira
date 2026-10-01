@@ -26,17 +26,19 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
 # one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
 # binary's own subprocess, which inherits only the real process environment — not this
-# shell's unexported variables, the way the old in-shell `( subshell )` did. conf.sh
-# deliberately leaves most of its ~264 keys unexported (its own comment above the export
-# list); these are the ones every shipped `.fayth`'s FAYTH_LABELS line actually references
-# (grepped: spira/chamber/*.fayth) that are not already on that list. Exported here, once,
-# the same narrow way spira/bead.sh:49 already does for the bead binary — not a blanket
-# export, which would leak the per-copy facts conf.sh's own fence exists to keep out of
-# every child process (SPIRA_HOME, SPIRA_REPO, the maps, SPIRA_FAYTHS, SPIRA_MAX_AEONS —
-# law-gates-run-in-a-clean-environment). A custom operator fayth referencing some OTHER
-# unexported key is the same trap bead.sh's own narrow list already carries; widen this
-# list (and bead.sh's) together if one shows up.
-export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO
+# shell's unexported variables, the way the old in-shell `( subshell )` did.
+#
+# THE EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa): this file used to
+# `export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL
+# SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO` here, the same narrow re-export
+# spira/bead.sh:49 and rule.sh:50 carried for the same reason — a `.fayth`'s FAYTH_LABELS
+# line references these by parameter expansion (grepped: spira/chamber/*.fayth), and the
+# `spira-config fayth` subprocess that sources it needs them in ITS OWN environment, not
+# this shell's. `spira-config/src/chamber.rs`'s `fayth_get` now resolves all five itself —
+# `fayth_label_overlay` calls `spira_config::resolve::resolve_for_process` in-process and
+# sets them explicitly on the sourcing subshell's `Command` — so this shell no longer needs
+# to carry them across the exec boundary at all. An unexported key here is no longer a trap:
+# the resolution lives where the sourcing happens, not in whichever caller sourced lib.sh.
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
 # lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
 # functions that once stood in for those two calls are retired too (sp-uwhx0): their only

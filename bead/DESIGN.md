@@ -96,10 +96,20 @@ as plain shell variables, never exported — harmless for the bash `bead.sh`, wh
 sourcing `conf.sh` inline in its own process, but invisible to a binary this file `exec`s
 into, since only the environment table crosses that boundary. `test-express-lane.sh` (which
 relies on `SPIRA_REPO_MAP`'s derived default rather than setting it explicitly, unlike every
-other bead suite) caught this the first time the shim ran against a real fixture. Fixed by
-re-exporting the four names in `bead.sh` immediately after sourcing `conf.sh`; see the shim
-itself for the full explanation. Any later bead in this area (or the eventual `lib.sh`/
-`conf.sh` rewrite) should widen that export list rather than removing it.
+other bead suite) caught this the first time the shim ran against a real fixture. Fixed at
+the time by re-exporting the four names (plus `SPIRA_HOME`) in `bead.sh` immediately after
+sourcing `conf.sh`.
+
+**RETIRED (wave 4.9, sp-k80sa):** now that `spira_config::resolve_for_process` exists
+in-process (wave 4.4/4.8), the re-export is gone rather than widened. `SPIRA_HOME` was
+never really a config value — it is the `--home` argument already on this binary's own
+argv, so `chamber_dir`/`fayth_names` read that parameter directly instead of
+`$SPIRA_HOME`. `SPIRA_REPO_MAP` and the three fayth labels are resolved by calling
+`spira_config::resolve::resolve_for_process(home, repo, &env)` where they were needed:
+`load_repos` for the repo map, and `fayth_get`'s bash subshell (which sources a `.fayth`
+file whose `FAYTH_LABELS` references the three labels by parameter expansion) gets them
+injected explicitly via `.env(...)` on that `Command`, rather than depending on whatever
+this process's own environment happened to inherit.
 
 ## Two named differences from the bash (both forced by `config-fence`, both unreachable by
 ## every suite this bead could run)

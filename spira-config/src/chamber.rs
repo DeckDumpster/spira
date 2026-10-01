@@ -11,11 +11,65 @@
 //! `bash -c '. "$f"; eval ...'` — the `bead` crate's own copy already uses (its own
 //! comment: "rather than writing a second, partial shell-fragment parser"), instead of
 //! reimplementing a shell-fragment evaluator in Rust.
+//!
+//! `fayth_get`'s bash subshell needs `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/
+//! `SPIRA_MAECHEN_LABEL`/`SPIRA_BATCH_JUDGEMENT_LABEL`/`SPIRA_HOME_REPO` in its OWN
+//! environment: `czar.fayth`/`groomer.fayth`/`maechen.fayth` each write their
+//! `FAYTH_LABELS` as `${SPIRA_SCOPE_LABEL:+...}$SPIRA_CZAR_LABEL` (etc.) parameter
+//! expansion, and an unset expansion is silently empty, not an error — a persona's
+//! partition label reads as empty rather than failing loudly. Wave 4.9 (sp-k80sa) retired
+//! lib.sh's own `export` of these (its one-line shim onto this module's `fayth_get`), on
+//! the strength of [`fayth_label_overlay`] resolving them in-process and setting them
+//! explicitly on the subshell's `Command`, rather than depending on whatever this
+//! process's OWN environment happened to inherit — the scar this closes (round 151): a
+//! caller that did not itself export these left the roster silently empty.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::{discover, load, SpiraToml};
+
+/// The fayth-label keys a `.fayth` file's `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` may
+/// reference by parameter expansion — exactly the set `spira/lib.sh` used to `export`
+/// before wave 4.9 (sp-k80sa) retired that line in favour of this in-process resolution.
+const FAYTH_LABEL_KEYS: [&str; 5] = [
+    "SPIRA_CZAR_LABEL",
+    "SPIRA_GROOMER_LABEL",
+    "SPIRA_MAECHEN_LABEL",
+    "SPIRA_BATCH_JUDGEMENT_LABEL",
+    "SPIRA_HOME_REPO",
+];
+
+/// The pure half of [`fayth_label_overlay`]: pick [`FAYTH_LABEL_KEYS`] out of an
+/// already-[`crate::resolve::resolve_for_process`]d [`crate::resolve::Resolved`]. Split out
+/// so it is unit-testable without a `discover()` call touching this process's real
+/// environment — the same reason `persona_model_from_doc` exists alongside `persona_model`
+/// below, and the same hazard: a test that called the `discover`-touching half directly
+/// would need `crate::ENV_LOCK` (test-only, sp-dh4fv/sp-mz7dn's crate-wide serialization
+/// against another test's `std::env::set_var`), and holding that lock here while a caller
+/// above is ALSO holding it to drive its own env mutation would deadlock (`std::sync::Mutex`
+/// is not reentrant) — so this half takes no lock and touches no env at all.
+fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String, String> {
+    FAYTH_LABEL_KEYS
+        .iter()
+        .filter_map(|k| resolved.values.get(*k).map(|v| (k.to_string(), v.clone())))
+        .collect()
+}
+
+/// Resolves [`FAYTH_LABEL_KEYS`] via [`crate::resolve::resolve_for_process`] (env > toml >
+/// derived default — the same precedence `conf.sh` always applied), so [`fayth_get`] can
+/// hand them to its bash subshell explicitly rather than relying on this process's own
+/// ambient environment. A resolution failure (no `spira.toml` resolves, or a parse error)
+/// yields an empty overlay: the bash subshell then falls back to whatever it would have
+/// seen anyway, never a hard failure over a label.
+fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let repo = crate::resolve::derive_home_repo(home, &env);
+    crate::resolve::resolve_for_process(home, &repo, &env)
+        .map(|r| extract_label_overlay(&r))
+        .unwrap_or_default()
+}
 
 /// `<home>/chamber` — the one directory every function here resolves a fayth against.
 pub fn chamber_dir(home: &Path) -> PathBuf {
@@ -65,6 +119,7 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
         .arg(&f)
         .arg(var)
         .arg(default)
+        .envs(fayth_label_overlay(home))
         .output();
     match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -343,5 +398,31 @@ mod tests {
             system_prompt: None,
         });
         assert_eq!(persona_model_from_doc(Some(&doc), "builder", "claude-opus-5"), "claude-sonnet-5");
+    }
+
+    /// Wave 4.9 (sp-k80sa): `extract_label_overlay` must pick every one of
+    /// `FAYTH_LABEL_KEYS` out of a `Resolved` that carries it, and quietly drop any that
+    /// is missing — mirroring a `conf.d` registry where not every label has a file (never
+    /// an error: a `.fayth` referencing an unresolved key just sees it absent). Pure: no
+    /// process environment touched, so unlike `fayth_label_overlay` itself (which calls
+    /// `discover()` and so needs the crate-wide `ENV_LOCK` serialization any REAL test of
+    /// it would require — see `persona_model`/`persona_model_from_doc`'s identical split
+    /// for why that half is exercised only by the end-to-end proof, not a unit test here).
+    #[test]
+    fn extract_label_overlay_picks_known_keys_and_drops_the_rest() {
+        let mut resolved = crate::resolve::Resolved::default();
+        resolved.values.insert("SPIRA_CZAR_LABEL".to_string(), "czar-trigger".to_string());
+        resolved.values.insert("SPIRA_GROOMER_LABEL".to_string(), "groom".to_string());
+        resolved.values.insert("SPIRA_HOME_REPO".to_string(), "brain".to_string());
+        resolved.values.insert("SPIRA_SOME_OTHER_KEY".to_string(), "irrelevant".to_string());
+
+        let overlay = extract_label_overlay(&resolved);
+
+        assert_eq!(overlay.get("SPIRA_CZAR_LABEL").map(String::as_str), Some("czar-trigger"));
+        assert_eq!(overlay.get("SPIRA_GROOMER_LABEL").map(String::as_str), Some("groom"));
+        assert_eq!(overlay.get("SPIRA_HOME_REPO").map(String::as_str), Some("brain"));
+        assert!(!overlay.contains_key("SPIRA_MAECHEN_LABEL"), "a key absent from Resolved must stay absent, not default to empty");
+        assert!(!overlay.contains_key("SPIRA_BATCH_JUDGEMENT_LABEL"));
+        assert!(!overlay.contains_key("SPIRA_SOME_OTHER_KEY"), "only FAYTH_LABEL_KEYS may pass through");
     }
 }
