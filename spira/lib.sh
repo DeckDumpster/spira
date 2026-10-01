@@ -367,8 +367,10 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
 # three is named in this bead's scope, each still has live bash callers outside family F
 # (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
-# fleet-status.sh calls ready_count; detect_unclaimable_ready — family T, a later bead —
-# calls ready_raw_args), and routing them through a `spira-claim` subprocess at lib.sh
+# fleet-status.sh calls ready_count; detect_unclaimable_ready called ready_raw_args here
+# too, until wave 4.28 (sp-fbqsv) ported it — its own fallback now calls
+# `store::ready_raw_args` in-process, the Rust mirror of this same function), and routing
+# them through a `spira-claim` subprocess at lib.sh
 # SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
 # `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
 # call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
@@ -540,178 +542,19 @@ ck7_fill_cap() {
     printf continue
 }
 
-# mark_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on beads whose closed blocker
-# is in the queue pipeline (CERTIFIED or BATCHED) and has not yet reached LANDED.
-#
-# bd considers a dep resolved once the blocker is closed, so the dependent appears in
-# `bd ready`. In queue mode, CLOSED ≠ LANDED — the work is not yet on base. This label
-# keeps fayth_ready from counting those beads until the blocker's landstate reaches LANDED.
-#
-# Same-repo work-bead blockers release earlier (at CERTIFIED) under the stacked-dependents
-# rule (stack_max_depth) — see wiki/projects/spira/designs/stacked-dependents-2026-09-28.md.
-# This label still governs cross-repo and non-work blockers, which wait for LANDED.
-#
-# A closed blocker with tip="none" (design, diagnosis, superseded) has no commit and will
-# never reach LANDED via the queue path; it counts as satisfied regardless of landstate.
-#
-# All label decisions are made in a single pass over the union of labeled and ready beads
-# using consistent dep data, preventing the clear-then-apply flip-flop that occurs when
-# the release and apply steps disagree on which deps are visible.
+# mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
+# beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
+# and close out a labeled bead whose landstate already reads LANDED (it never got a branch
+# to land, so the normal close-on-land path never visited it). PERMANENT (wave4-decomposition
+# row H): the lifecycle-flip plan keeps this family even once lc.sh's own calls are gone —
+# stacked dependents still read the label. Ported to Rust (sp-fbqsv, "wave 4.28"); see
+# `sentinel::waiters` for the one-pass decision (no release-then-apply flip-flop) and the
+# landstate scan (now in-process, no per-file awk fork).
 mark_queue_waiters() {
-    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
-    [ -n "$label" ] || return 0
-    local landstate_dir="$SPIRA_RUN/landstate"
-    local id state tip qblockers=""
-
-    # Active queue blockers: CERTIFIED or BATCHED beads with a real commit tip.
-    # tip="none" means no commit was recorded (design, diagnosis, superseded bead);
-    # such a bead will never reach LANDED and is treated as already satisfied.
-    #
-    # ONE AWK FOR THE WHOLE DIRECTORY, not a per-file loop forking two awks apiece — 546
-    # landstate files forked ~1,092 processes to read two fields each (sp-bo67y). A single
-    # invocation over every filename argument resets FNR at each file boundary, so one call
-    # still prints exactly one "<path> <state> <tip>" line per file.
-    if [ -d "$landstate_dir" ]; then
-        local -a _mq_all=("$landstate_dir"/*) _mq_files=() _mq_sf
-        for _mq_sf in "${_mq_all[@]}"; do [ -f "$_mq_sf" ] && _mq_files+=("$_mq_sf"); done
-        if [ "${#_mq_files[@]}" -gt 0 ]; then
-            while IFS=' ' read -r sf state tip; do
-                [ -n "$sf" ] || continue
-                id="${sf##*/}"
-                case "$state" in
-                    CERTIFIED|BATCHED)
-                        [ -n "$tip" ] && [ "$tip" != "none" ] \
-                            && qblockers="${qblockers}${id} "
-                        ;;
-                esac
-            done < <(awk 'FNR==1{print FILENAME, $1, $2}' "${_mq_files[@]}" 2>/dev/null)
-        fi
-    fi
-
-    # Collect labeled beads and ready beads, then decide each bead's label state
-    # once — no separate release and apply passes that can clear for one blocker
-    # and re-apply for another in the same run.
-    local labeled_json ready_json
-    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
-        || labeled_json=""
-    ready_json=""
-    if [ -n "$qblockers" ]; then
-        # SPIRA_READY_SNAPSHOT, WHEN SET, IS THE BROADER ready_raw_args SUPERSET (no
-        # SPIRA_SCOPE_LABEL filter) that sentinel.sh's full pass fetches once (sp-bo67y).
-        # READY_ARGS itself narrows to scope, so the python below re-applies that one
-        # restriction rather than asking bd again for an identical, narrower query.
-        if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
-            ready_json="$(SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" python3 -c '
-import json, os, sys
-scope = os.environ.get("SPIRA_SCOPE_LABEL", "")
-try: d = json.load(sys.stdin)
-except Exception: d = []
-d = d if isinstance(d, list) else [d]
-if scope:
-    d = [b for b in d if scope in (b.get("labels") or [])]
-print(json.dumps(d))
-' < "$SPIRA_READY_SNAPSHOT" 2>/dev/null)" || ready_json=""
-        else
-            ready_json="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)" || ready_json=""
-        fi
-    fi
-
-    # labeled_json goes in a temp file, ready_json on stdin — neither through the
-    # environment or argv (law-payloads-go-on-stdin): both scale with queue size, unbounded.
-    local _lqf; _lqf="$(mktemp)" || return 1
-    printf '%s' "${labeled_json:-[]}" > "$_lqf"
-    QUEUE_BLOCKERS="$qblockers" QUEUE_LABEL="$label" \
-    LABELED_FILE="$_lqf" python3 -c '
-import json, sys, os
-
-active = set(os.environ.get("QUEUE_BLOCKERS", "").split())
-label  = os.environ["QUEUE_LABEL"]
-
-def parse(s):
-    if not s: return []
-    try: d = json.loads(s); return d if isinstance(d, list) else [d]
-    except Exception: return []
-
-with open(os.environ["LABELED_FILE"]) as f:
-    labeled = {b["id"]: b for b in parse(f.read()) if b.get("id")}
-ready   = {b["id"]: b for b in parse(sys.stdin.read()) if b.get("id")}
-
-def blocks_active(bead):
-    return any(
-        (dep.get("dependency_type") or dep.get("type")) == "blocks"
-        and dep.get("depends_on_id") in active
-        for dep in (bead.get("dependencies") or [])
-    )
-
-# ready dep data is authoritative; labeled-only beads (in_progress, extra blockers)
-# get no dep check — removing the label is safe since the bead is not claimable.
-for bid, bead in ready.items():
-    currently = bid in labeled
-    want = bool(active) and blocks_active(bead)
-    if want and not currently: print("add", bid)
-    elif not want and currently: print("remove", bid)
-
-for bid in labeled:
-    if bid not in ready:
-        print("remove", bid)
-' <<< "${ready_json:-[]}" 2>/dev/null \
-    | while IFS=' ' read -r action id; do
-        [ -n "$id" ] || continue
-        case "$action" in
-            add)
-                bdq label add "$id" "$label" >/dev/null 2>&1 || true
-                # Dual-written, not a replace (sp-ki12s precedent): fayth_ready still reads
-                # the label, not this hold, until CHECK 3b's reader is cut over in the round.
-                spira-lc hold "$id" wait "blocker certified or batched, not yet landed" sentinel || true
-                log "mark_queue_waiters: $id — queue-wait applied"
-                ;;
-            remove)
-                bdq label remove "$id" "$label" >/dev/null 2>&1 || true
-                spira-lc unhold "$id" wait sentinel || true
-                log "mark_queue_waiters: $id — blocker landed, cleared"
-                ;;
-        esac
-    done
-    rm -f "$_lqf"
+    sentinel --mark-queue-waiters
 }
-
-# close_landed_queue_waiters — close any open bead carrying SPIRA_QUEUE_WAIT_LABEL whose
-# landstate file records LANDED. These beads never leave the label on their own because the
-# normal close path runs when the branch lands; a bead with no branch or an empty branch has
-# nothing to land and is never visited by that path.
 close_landed_queue_waiters() {
-    local label="${SPIRA_QUEUE_WAIT_LABEL:-}"
-    [ -n "$label" ] || return 0
-    local landstate_dir="$SPIRA_RUN/landstate"
-    local labeled_json _id _state _ls
-    labeled_json="$(bdjson list --status open --label "$label" --limit 0 2>/dev/null)" \
-        || labeled_json=""
-    [ -n "$labeled_json" ] || return 0
-    while IFS= read -r _id; do
-        [ -n "$_id" ] || continue
-        _ls="$landstate_dir/$_id"
-        [ -f "$_ls" ] || continue
-        _state=""
-        { read -r _state _ < "$_ls"; } 2>/dev/null || continue
-        if [ "$_state" = "LANDED" ]; then
-            bdq label remove "$_id" "$label" >/dev/null 2>&1 || true
-            spira-lc unhold "$_id" wait sentinel || true
-            bdq close "$_id" \
-                --reason "Content already on main (landstate=LANDED); no branch remained to land." \
-                >/dev/null 2>&1 || true
-            log "close_landed_queue_waiters: $_id — closed (LANDED, no branch)"
-        fi
-    done < <(printf '%s\n' "$labeled_json" | python3 -c '
-import sys, json
-try:
-    rows = json.loads(sys.stdin.read())
-    if not isinstance(rows, list): rows = [rows]
-    for r in rows:
-        bid = r.get("id", "")
-        if bid: print(bid)
-except Exception:
-    pass
-' 2>/dev/null)
+    sentinel --close-landed-queue-waiters
 }
 
 # mark_open_children is CHECK 3c in the sentinel binary (sentinel/src/open_children.rs,
@@ -2332,255 +2175,36 @@ for i in (d if isinstance(d, list) else [d]): print(i["id"])' 2>/dev/null
 }
 
 # detect_unclaimable_ready -> one UNCLAIMABLE line per ready bead no persona can claim.
+# file_unclaimable_incidents <detect_unclaimable_ready output> -> one P1 incident per line,
+# filed into the Groomer partition (idempotent: incident.sh dedupes on unclaimable:<id>).
+# detect_branch_collisions -> one COLLISION line per open bead whose recorded branch is
+# checked out in a DIFFERENT bead's canonical worktree. park_branch_collisions <that output>
+# frees a closed-clean-unheld squatter, cuts an inherited branch: label, or parks the rest
+# with SPIRA_ASK_LABEL/overseer.
 #
-# THE ALARM THIS CHECK FIRES ON IS DISTINCT FROM AN IDLE QUEUE. "nothing ready" and "a
-# ready bead nobody can claim" look identical to CHECK 7: every partition reports 0, a
-# genuinely empty queue reports 0, and the pass ends with the same log line either way.
-# This check reads the raw ready set — no partition filter — and tests each bead against
-# the full chamber. The empty-queue case finds no beads; the unclaimable case finds them.
-#
-# THE ARITHMETIC MIRRORS bead.sh's claimers(). Not called from there because bead.sh lives
-# in the brain repo and this runs in the harness; porting keeps the harness self-contained.
-# Both derive from the same chamber files, so they agree by construction.
-#
-# EXCLUSION SET IS THE PERSONA'S OWN FAYTH_EXCLUDE_LABELS ONLY. The `fayth:<other-persona>`
-# terms that fayth_exclude() appends to each `bd ready --exclude-label` call are already
-# handled here by the preference check: when a bead carries `fayth:ops`, pref={ops} and
-# only ops is tested — no other persona enters the loop at all. Duplicating fayth: terms
-# into the exclusion set would be correct but redundant.
-#
-# OUTPUT NAMES THE BEAD, ITS PREFERENCE AND THE REJECTION REASON so the fix is one label.
-# Format: UNCLAIMABLE <id> — <reason>
+# Ported to Rust (sp-fbqsv, "wave 4.28"); see `sentinel::detect` for the full rationale
+# each of these carried (the fifteen-hour fayth:-preference strand, the unclaimable-
+# reporting-its-own-report cycle guard, the sp-lyglx/sp-vcxmz branch-collision incidents).
+# `detect_unclaimable_ready` still classifies through `spira/unclaimable.py`, unchanged and
+# untouched — split out on purpose so a fixture-JSON table (test-unclaimable.sh) and
+# cockpit-collect's own cross-check (test-cockpit-unclaimable.sh, UC-dispatch-17) can drive
+# it directly; this bead only ports the bash orchestration around it. The bash-only re-exec
+# that used to re-source lib.sh from the production checkout when called from a worktree
+# (sp-b0j0s) is retired, not ported: it was a workaround for a bash function having no
+# persistent, correctly-resolved context across calls, and this binary resolves its config
+# once at startup the same way for every check in the pass (law-a-binary-resolves-the-
+# config-it-reads) — see test-unclaimable-worktree.sh for the suite kept to prove this.
 detect_unclaimable_ready() {
-    # Config must come from the production checkout — not from a worktree whose
-    # conf.sh carries a different SPIRA_PLAN_LABEL or other partition label.
-    # _spira_gitstore returns the shared .git dir; its parent is the main worktree.
-    # If that differs from our SPIRA_REPO, re-run via the main checkout with the
-    # label vars unset so the production conf.sh defaults take effect.
-    local _duc_gcd _duc_prod_root
-    _duc_gcd="$(_spira_gitstore "$SPIRA_HOME")" || _duc_gcd=""
-    if [ -n "$_duc_gcd" ]; then
-        _duc_prod_root="$(cd "$_duc_gcd/.." 2>/dev/null && pwd -P)" || _duc_prod_root=""
-        if [ -n "$_duc_prod_root" ] && [ "$_duc_prod_root" != "$SPIRA_REPO" ]; then
-            local _duc_prod_home="$_duc_prod_root/${SPIRA_HOME#$SPIRA_REPO/}"
-            if [ -f "$_duc_prod_home/lib.sh" ]; then
-                env -u SPIRA_PLAN_LABEL -u SPIRA_INCIDENT_LABEL \
-                    -u SPIRA_SCOPE_LABEL -u SPIRA_CI_LABEL \
-                    -u SPIRA_ASK_LABEL -u SPIRA_NO_LOOP_LABEL \
-                    -u SPIRA_CZAR_LABEL -u SPIRA_GROOMER_LABEL \
-                    -u SPIRA_GROOM_ASK_LABEL \
-                    -u SPIRA_MAECHEN_LABEL -u SPIRA_SPIKE_LABEL \
-                    -u SPIRA_READY_SNAPSHOT -u SPIRA_LIST_SNAPSHOT -u SPIRA_READY_CACHE \
-                    SPIRA_HOME="$_duc_prod_home" \
-                    bash -c ". \"$_duc_prod_home/lib.sh\"; detect_unclaimable_ready"
-                return $?
-            fi
-        fi
-    fi
-
-    local parts="" all_parts="" f inc exc
-    for f in $(spira_fayths); do
-        inc="$(fayth_get "$f" FAYTH_LABELS)"
-        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-        [ -n "$inc" ] && parts="${parts}${f}|${inc}|${exc}"$'\n'
-    done
-    [ -n "$parts" ] || return 0
-
-    # ALL_PARTS: the full chamber, including fayths the active roster omits. Used to
-    # distinguish a parked partition (bead claimable by a chamber fayth not in SPIRA_FAYTHS)
-    # from a real mislabelling (bead claimable by nobody, full chamber included).
-    for f in $(fayth_names); do
-        inc="$(fayth_get "$f" FAYTH_LABELS)"
-        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-        [ -n "$inc" ] && all_parts="${all_parts}${f}|${inc}|${exc}"$'\n'
-    done
-
-    # SPIRA_READY_SNAPSHOT is exactly this query (ready_raw_args), fetched once for the whole
-    # pass (sp-bo67y) — read it instead of asking bd again when the caller has one ready.
-    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
-        cat "$SPIRA_READY_SNAPSHOT"
-    else
-        local _det_args; mapfile -t _det_args < <(ready_raw_args)
-        bdjson "${_det_args[@]}" 2>/dev/null
-    fi \
-    | PARTS="$parts" ALL_PARTS="$all_parts" unclaimable.py 2>/dev/null
+    sentinel --detect-unclaimable
 }
-
-# file_unclaimable_incidents — for each UNCLAIMABLE line in detect_unclaimable_ready output,
-# file a P1 incident in the Groomer partition so the Groomer can claim and fix the label.
-#
-# THE GROOMER IS THE TERMINUS. Only the Groomer can discharge an UNCLAIMABLE finding: it can
-# add the scope label, correct the fayth:, or close the row. Ops cannot do any of these and
-# must not be the sole recipient. The incident is filed with SPIRA_GROOMER_LABEL.
-#
-# THE CALL IS IDEMPOTENT. incident.sh dedupes on the unclaimable:<id> ref, so a
-# bead that is still unclaimable on the next sentinel pass bumps the recurrence counter
-# rather than filing a duplicate.
-#
-# SPIRA_INCIDENT_SH overrides incident.sh (found by name on PATH). Test suites inject a
-# mock here; production uses the default.
 file_unclaimable_incidents() {   # file_unclaimable_incidents <detect_unclaimable_ready output>
-    local line bid reason inc
-    inc="${SPIRA_INCIDENT_SH:-incident.sh}"
-    while IFS= read -r line; do
-        case "$line" in UNCLAIMABLE\ *) ;; *) continue ;; esac
-        bid="${line#UNCLAIMABLE }"; bid="${bid%% —*}"
-        reason="${line#*— }"
-        SPIRA_DB="$SPIRA_DB" \
-        SPIRA_INCIDENT_TYPE=task \
-        SPIRA_INCIDENT_PRIORITY=1 \
-        SPIRA_INCIDENT_ACTOR=sentinel \
-        SPIRA_INCIDENT_LABELS="${SPIRA_SCOPE_LABEL:-spira},${SPIRA_GROOMER_LABEL:-groom}" \
-        SPIRA_INCIDENT_REPO="${SPIRA_HOME_REPO:-spira}" \
-        SPIRA_INCIDENT_REF="unclaimable:$bid" \
-        SPIRA_INCIDENT_CAUSE=unclaimable \
-        bash "$inc" file "UNCLAIMABLE: $bid — fix the fayth: or partition label" \
-            - <<< "$reason" >/dev/null 2>&1 || true
-    done <<< "$1"
+    sentinel --file-unclaimable <<< "$1"
 }
-
-# detect_branch_collisions -> "COLLISION <id> <repo> <branch> <holder-id> <holder-path>" for
-# every open bead whose recorded branch is checked out in a DIFFERENT bead's canonical
-# worktree ($SPIRA_RUN/worktree/<id>). The branch label is read from the `bd list` JSON
-# already fetched above, not with a per-bead `bd state` call (sp-nsxhd) — bd stores state as
-# a `branch:<value>` label (`bd set-state`), so it is already sitting in `labels`.
-#
-# aeon.sh's worktree-attach guard (law-one-aeon-one-worktree) reacts correctly once a bead is
-# claimed — it self-corrects a mislabeled child onto a fresh branch of its own, or dies naming
-# the true holder — but reacting is not preventing: nothing in the store changes between
-# failed claims, so dispatch re-derives the identical collision every cycle
-# (law-a-retry-must-change-an-input). A bead whose own DEFAULT branch is the one squatted (a
-# parent shadowed by a child that inherited its name before groomer.sh stopped copying it) can
-# never self-correct at all, because its own default IS the squatted name. Read here, before
-# a claim is spent, rather than at aeon.sh's refusal.
-#
-# Already-parked beads (carrying SPIRA_ASK_LABEL) are excluded so a repeat sentinel pass
-# stays silent once a bead has been escalated — the point is ONE escalation, not one per pass.
 detect_branch_collisions() {
-    local _bc_raw _bc_ids
-    _bc_raw="$(bdjson list --status open --limit 0 --exclude-type epic,event 2>/dev/null)"
-    [ -n "$_bc_raw" ] || return 0
-    _bc_ids="$(printf '%s' "$_bc_raw" | SPIRA_ASK_LABEL="${SPIRA_ASK_LABEL:-}" python3 -c '
-import json, os, sys
-ask = os.environ.get("SPIRA_ASK_LABEL", "needs-operator")  # literal-ok: Python fallback for direct invocation without conf.sh
-try: d = json.load(sys.stdin)
-except Exception: d = []
-for i in (d if isinstance(d, list) else [d]):
-    labels = i.get("labels") or []
-    if ask in labels:
-        continue
-    repo = next((l[5:] for l in labels if l.startswith("repo:")), "")
-    branch = next((l[7:] for l in labels if l.startswith("branch:")), "")
-    print("%s\t%s\t%s" % (i["id"], repo, branch))
-' 2>/dev/null)"
-    [ -n "$_bc_ids" ] || return 0
-
-    local -A _bc_maps
-    local _bc_id _bc_repo _bc_branch _bc_root _bc_br _bc_holder _bc_holder_id
-    while IFS=$'\t' read -r _bc_id _bc_repo _bc_branch; do
-        [ -n "$_bc_id" ] || continue
-        _bc_repo="${_bc_repo:-$(spira_home_repo)}"
-        if [ -z "${_bc_maps[$_bc_repo]+x}" ]; then
-            _bc_root="$(repo_root "$_bc_repo" 2>/dev/null)"
-            if [ -n "$_bc_root" ] && { [ -d "$_bc_root/.git" ] || [ -f "$_bc_root/.git" ]; }; then
-                _bc_maps[$_bc_repo]="$(git -C "$_bc_root" worktree list --porcelain 2>/dev/null \
-                    | awk '/^worktree /{w=$2} /^branch /{print $2"\t"w}')"
-            else
-                _bc_maps[$_bc_repo]=""
-            fi
-        fi
-        [ -n "${_bc_maps[$_bc_repo]}" ] || continue
-        _bc_br="${_bc_branch:-spira/$_bc_id}"
-        _bc_holder="$(awk -v b="refs/heads/$_bc_br" -F'\t' '$1==b{print $2; exit}' <<< "${_bc_maps[$_bc_repo]}")"
-        [ -n "$_bc_holder" ] || continue
-        case "$_bc_holder" in
-            "$SPIRA_RUN/worktree/"*) _bc_holder_id="${_bc_holder#"$SPIRA_RUN/worktree/"}" ;;
-            *) continue ;;
-        esac
-        [ "$_bc_holder_id" != "$_bc_id" ] || continue
-        printf 'COLLISION %s %s %s %s %s\n' "$_bc_id" "$_bc_repo" "$_bc_br" "$_bc_holder_id" "$_bc_holder"
-    done <<< "$_bc_ids"
+    sentinel --detect-collisions
 }
-
-# park_branch_collisions <detect_branch_collisions output> — labels each COLLISION bead
-# $SPIRA_ASK_LABEL and overseer, once, so dispatch stops spending a claim on a condition that
-# cannot change until a human frees the holder or corrects the branch: label. Idempotent
-# (re-checks the label directly) so calling this on stale output does not re-note a bead
-# detect_branch_collisions itself would already have excluded.
-#
-# AN INHERITED LABEL IS NOT A COLLISION FOR RYAN (sp-ln4ke). `bd create --parent` copies
-# every label onto a child, so a split child can carry the parent's branch:spira/<parent>
-# untouched — the child never chose that branch, it cut no branch of its own, and Ryan has
-# no decision to make about it. Checked BEFORE the closed/clean free below: even if the
-# named bead happens to be closed and clean right now, the label itself is still wrong and
-# would send this bead onto that branch on its next claim (the exact incident this fixes —
-# two split children committed onto their parent's branch before being parked by hand). The
-# fix is mechanical, so it needs no human (law-deterministic-before-inference): strip the
-# label so the bead falls back to its own derived default (spira/<id>; the old lib.sh
-# bead_branch reader that did this lookup was retired dead at sp-27hsi, aeon resolves the
-# state itself now), and note whatever commits it
-# already made under the wrong name so they are not silently stranded. Prints "UNLABELED
-# <id> <repo> <branch> <other-id>".
-#
-# BUT A CLOSED, CLEAN, UNHELD SQUATTER NEEDS NO HUMAN EITHER (sp-vcxmz): its aeon already
-# finished and left, so nothing but a stale worktree registration stands between the
-# blocked bead and a claim. Freed through the one destruction chokepoint
-# (spira_destroy_worktree) rather than a bare `git worktree remove` — same salvage and
-# liveness fence every other reap goes through, even though salvage will find nothing
-# because the clean check already ran. The branch and its commits are never touched.
-# Prints "FREED <id> <repo> <branch> <holder-id> <holder-path>" for each one freed, so a
-# caller can log and count it apart from what still parks. Open, dirty or live holders
-# fall through to the park below unchanged.
-park_branch_collisions() {
-    local line id repo branch holder_id holder_path labels
-    local holder_status holder_dirty holder_repo_root
-    local inherited_from inherited_commits pc_sha pc_subj
-    while IFS= read -r line; do
-        case "$line" in COLLISION\ *) ;; *) continue ;; esac
-        read -r _ id repo branch holder_id holder_path <<< "$line"
-        labels="$(bdq label list "$id" 2>/dev/null)"
-        case "$labels" in *"${SPIRA_ASK_LABEL}"*) continue ;; esac
-
-        inherited_from="${branch#spira/}"
-        if [ "$inherited_from" != "$branch" ] && [ -n "$inherited_from" ] \
-           && [ "$inherited_from" != "$id" ] && bdq show "$inherited_from" --json >/dev/null 2>&1; then
-            case "$labels" in
-                *"branch:$branch"*)
-                    inherited_commits="$(git -C "$holder_path" log --format='%h%x09%s' --grep="$id:" -F 2>/dev/null \
-                        | while IFS=$'\t' read -r pc_sha pc_subj; do
-                              case "$pc_subj" in "$id":*) printf '%s %s\n' "$pc_sha" "$pc_subj" ;; esac
-                          done)"
-                    bdq label remove "$id" "branch:$branch" >/dev/null 2>&1 || true
-                    if [ -n "$inherited_commits" ]; then
-                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch. This bead has its own commit(s) sitting unlanded on $branch, made before this label was removed: $inherited_commits" >/dev/null 2>&1 || true
-                    else
-                        bdq note "$id" "Corrected by detect_branch_collisions: inherited branch:$branch from $inherited_from; cuts its own branch." >/dev/null 2>&1 || true
-                    fi
-                    printf 'UNLABELED %s %s %s %s\n' "$id" "$repo" "$branch" "$inherited_from"
-                    ;;
-            esac
-            continue
-        fi
-
-        holder_status="$(spira_bead_status "$holder_id")"
-        if [ "$holder_status" = closed ] && ! holder_alive "$holder_id"; then
-            if holder_dirty="$(git -C "$holder_path" status --porcelain 2>/dev/null)" \
-               && [ -z "$holder_dirty" ] \
-               && holder_repo_root="$(repo_root "$repo" 2>/dev/null)" && [ -n "$holder_repo_root" ] \
-               && spira_destroy_worktree "$holder_id" "$holder_path" "$holder_repo_root" \
-                      "branch collision: $holder_id is closed and clean, squatting $branch, blocking $id"; then
-                printf 'FREED %s %s %s %s %s\n' "$id" "$repo" "$branch" "$holder_id" "$holder_path"
-                continue
-            fi
-        fi
-
-        bdq label add "$id" "$SPIRA_ASK_LABEL" >/dev/null 2>&1 || true
-        bdq label add "$id" "overseer" >/dev/null 2>&1 || true
-        # Dual-written, not a replace (sp-ki12s precedent) — the label is still what every
-        # fayth's dispatch exclusion reads until that reader is cut over in the same round.
-        spira-lc hold "$id" ask "branch $branch squatted by $holder_id's worktree at $holder_path" sentinel || true
-        bdq note "$id" "Parked by detect_branch_collisions: recorded branch $branch is checked out in $holder_id's worktree at $holder_path, not this bead's own canonical path. Every summon reaches aeon.sh's law-one-aeon-one-worktree refusal (or a no-op self-correct, when this bead's own default branch is the squatted one) before a session can start, and nothing about the input changes on retry. Labeled $SPIRA_ASK_LABEL and overseer so dispatch stops spending a claim here — free $holder_path or correct the branch: label, then remove $SPIRA_ASK_LABEL." >/dev/null 2>&1 || true
-    done <<< "$1"
+park_branch_collisions() {   # park_branch_collisions <detect_branch_collisions output>
+    sentinel --park-collisions <<< "$1"
 }
 
 # detect_livelocked -> one LIVELOCK line per open bead that cannot make progress.
