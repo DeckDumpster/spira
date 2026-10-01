@@ -3,6 +3,7 @@
 pub mod batch;
 pub mod bdmeter;
 pub mod build;
+pub mod busy;
 pub mod cli;
 pub mod container;
 pub mod fixture;
