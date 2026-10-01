@@ -164,9 +164,12 @@ want "push still passes through"               "push"               "$args_witho
 echo
 echo "7. CONF.SH — App credential keys are in the allowlist"
 # =========================================================================
+# sp-g3uwp: conf.sh no longer carries its allowlist as literal text — a key's membership
+# is now the existence of its own file under conf.d/, which conf-gen.sh derives the
+# allowlist from directly.
 for key in SPIRA_GH_APP_ID SPIRA_GH_APP_INSTALLATION_ID SPIRA_GH_APP_KEY \
            SPIRA_GH_APP_PRIVATE_KEY SPIRA_GH_APP_CONFIG; do
-    if grep -q "$key" "$CONF_SH"; then
+    if [ -f "$HERE/conf.d/$key" ]; then
         ok "$key in conf.sh"
     else
         bad "$key in conf.sh" "not found"
