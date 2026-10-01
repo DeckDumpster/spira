@@ -119,7 +119,10 @@ set_live() {
     local fayth="$1" n="${2:-0}" i
     rm -f "$SPIRA_RUN"/aeon-"$fayth"-mock*.pid
     for ((i = 1; i <= n; i++)); do
-        printf '%s' "${FAKE_AEON_PIDS[$((i - 1))]}" > "$SPIRA_RUN/aeon-$fayth-mock$i.pid"
+        # Reused cyclically past the pool's own size (callers that just need "a lot" —
+        # e.g. 999, to prove an unset ceiling ignores the count entirely — never need
+        # that many DISTINCT pids, only that many pidfiles).
+        printf '%s' "${FAKE_AEON_PIDS[$(((i - 1) % ${#FAKE_AEON_PIDS[@]}))]}" > "$SPIRA_RUN/aeon-$fayth-mock$i.pid"
     done
 }
 clear_live() { rm -f "$SPIRA_RUN"/aeon-*-mock*.pid; }

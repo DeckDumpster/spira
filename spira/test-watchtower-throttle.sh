@@ -320,7 +320,7 @@ echo "sentinel CHECK7: throttle stamp gates task pool to 0 (G2/G3)"
 # cannot see source ordering, so this stays a source check.
 summon_rs="$HERE/../sentinel/src/summon.rs"
 lane_line="$(grep -n 'for f in &rotated_lanes' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
-gate_line="$(grep -n 'ck7_throttled(' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
+gate_line="$(grep -n 'if ck7_throttled(' "$summon_rs" 2>/dev/null | head -1 | cut -d: -f1 || echo 0)"
 if [ -n "$lane_line" ] && [ -n "$gate_line" ] && \
    [ "$lane_line" -gt 0 ] && [ "$gate_line" -gt 0 ] && \
    [ "$lane_line" -lt "$gate_line" ]; then
