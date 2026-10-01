@@ -108,6 +108,21 @@ impl<'a> Sentinel<'a> {
             }
             return 0;
         }
+        // Capacity (family K, wave 4.26): a pure read, in-process — sentinel never probes
+        // or mutates the pause file, so aeon stays the probe's one owner
+        // (wave4-decomposition.md (c)3).
+        match aeon::capacity::pause_state(&self.cfg.capacity_pause) {
+            aeon::capacity::PauseState::Open => {}
+            aeon::capacity::PauseState::Paused { until, .. } => {
+                let left = until - self.h.now();
+                self.log(&format!("summon-only: account out of capacity for another {left}s — not summoning"));
+                return 0;
+            }
+            aeon::capacity::PauseState::Unknown => {
+                self.log("summon-only: the capacity pause file could not be read — not summoning (failing closed)");
+                return 0;
+            }
+        }
         let live = self.live_total();
         self.log(&format!(
             "summon-only: live={live} fayths=[{}]",

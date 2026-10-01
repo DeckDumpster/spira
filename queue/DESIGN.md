@@ -314,10 +314,10 @@ operation (the function name is part of the text, never data).
 | ~~R9 `notify`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::notify`; lib.sh's `queue_notify_concierge` is retired, not a shim | — |
 | R10 `event` | `spira_event <kind> - <title> <detail>` | rate-limited events log |
 | ~~R11 `divergence`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::check_divergence`; lib.sh's `queue_local_check_divergence` is retired, not a shim | — |
-| ~~R12 `push`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::git_push_cmd`; lib.sh's `spira_git_push` keeps a shim onto the `queue git-push` CLI for its other callers (branch-sweep.sh, landing-pass's own separate seam) | — |
+| ~~R12 `push`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::git_push_cmd`; lib.sh's `spira_git_push` keeps a shim onto the separate `queue-helpers git-push` CLI (never `queue` itself — a stub of that binary must not also swallow production's push) for its other callers (branch-sweep.sh, landing-pass's own separate seam) | — |
 | R13 `rebase` | `rebase_branch <br> <base> <path> <repo>` (push-mode submit) | scratch worktrees, salvage, formatter |
 | R14 `land_subject` | `land_subject <id>` | merge subject with title |
-| ~~R15 `sort_rows`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::sort_rows` + `is_suite_transition`; lib.sh's `queue_sort_rows` keeps a shim onto the `queue sort-rows` CLI (test-queue-sort-large.sh, cockpit-collect); `queue_is_suite_transition` is retired, not a shim | — |
+| ~~R15 `sort_rows`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::sort_rows` + `is_suite_transition`; lib.sh's `queue_sort_rows` keeps a shim onto the separate `queue-helpers sort-rows` CLI (test-queue-sort-large.sh, cockpit-collect); `queue_is_suite_transition` is retired, not a shim | — |
 | ~~R16 `cancel_runs`~~ | in process now (sp-hwjsq, "wave 4.32"): `ops::helpers::cancel_branch_runs`; lib.sh's `queue_cancel_branch_runs` is retired, not a shim | — |
 | R17 `lc_returned` | not a seam since sp-arpjt: `spira-lc returned <id> <reason>` run directly (switch ON only) | the Returned event CAS |
 | R18 `batch_fns` | `format_batch`, `base_conflict`, `pf_gate` — open-batch only, the queue.forge assembly primitives | **inlined, sp-uwhx0**: same bodies, no longer sourced from batch.sh (deleted); `pf_gate`'s `_PF_DEADLINE` shared-wall bookkeeping dropped, since open-batch calls it exactly once (the wall is just its own `wall_secs` argument) |
