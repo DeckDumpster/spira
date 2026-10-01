@@ -204,20 +204,16 @@ mod tests {
         }
     }
 
-    fn tmp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "gate-wait-test-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    /// A fresh scratch directory, removed on drop (spira-lint `tmp-leak`); `out` lives
+    /// inside it rather than directly under the system temp dir.
+    fn tmp(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("gate-wait-test-{name}"))
     }
 
     #[test]
     fn a_pass_is_reported_and_exits_0() {
-        let out = tmp("pass");
+        let d = tmp("pass");
+        let out = d.join("out");
         fs::write(&out, "gate: VERDICT=PASS reason=pass branch=spira/x repo=spira suite=-\n").unwrap();
         fs::write(pid_path(&out), "42\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(42, 1));
@@ -229,7 +225,8 @@ mod tests {
 
     #[test]
     fn a_fail_exits_1() {
-        let out = tmp("fail");
+        let d = tmp("fail");
+        let out = d.join("out");
         fs::write(&out, "gate: VERDICT=FAIL reason=branch-red branch=x repo=spira suite=test-a.sh\n").unwrap();
         fs::write(pid_path(&out), "7\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(7, 1));
@@ -238,7 +235,8 @@ mod tests {
 
     #[test]
     fn a_base_fail_exits_76() {
-        let out = tmp("basefail");
+        let d = tmp("basefail");
+        let out = d.join("out");
         fs::write(&out, "gate: VERDICT=BASE_FAIL reason=base-red branch=x repo=spira suite=test-a.sh\n").unwrap();
         fs::write(pid_path(&out), "8\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(8, 1));
@@ -247,7 +245,8 @@ mod tests {
 
     #[test]
     fn a_process_gone_without_any_verdict_line_is_no_verdict_reason_gone() {
-        let out = tmp("kill9");
+        let d = tmp("kill9");
+        let out = d.join("out");
         fs::write(&out, "gate: merging...\n").unwrap();
         fs::write(pid_path(&out), "555\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(555, 1));
@@ -257,7 +256,8 @@ mod tests {
 
     #[test]
     fn no_pid_file_ever_appearing_is_a_named_fault_not_a_hang() {
-        let out = tmp("nopid");
+        let d = tmp("nopid");
+        let out = d.join("out");
         fs::write(&out, "nothing ran\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(1, 0));
         assert!(o.line.contains("reason=no-pid"), "{}", o.line);

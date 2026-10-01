@@ -11,7 +11,7 @@
 #      be covering for a bug one layer down instead of the one SIGKILL actually has.
 #
 # tier: T2
-# covers: gate/src/wait.rs sp-tcarr
+# covers: gate/src/wait.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -28,7 +28,7 @@ gate_fixture_branch "$BR"
 echo "test-gate-wait.sh — sp-tcarr"
 
 run_killed() {
-    # Runs the fixture's gate.sh against a repo-map command that sleeps, in its own
+    # Runs the fixture's gate.sh against a fixture command that sleeps, in its own
     # session (so a signal reaches the gate command underneath gate.sh, exactly as
     # test-gate-metering.sh's UC-gate-verdict-25 case does), and sends $1 once the
     # command is confirmed running. Writes combined output to $OUT and the gate binary's

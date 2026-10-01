@@ -218,20 +218,16 @@ mod tests {
         }
     }
 
-    fn tmp(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "testenv-wait-test-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+    /// A fresh scratch directory, removed on drop (spira-lint `tmp-leak`); `out` lives
+    /// inside it rather than directly under the system temp dir.
+    fn tmp(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("testenv-wait-test-{name}"))
     }
 
     #[test]
     fn a_clean_green_exit_is_reported_and_exits_0() {
-        let out = tmp("green");
+        let d = tmp("green");
+        let out = d.join("out");
         fs::write(&out, "building...\nVERDICT GREEN ran=3\n").unwrap();
         fs::write(pid_path(&out), "4242\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(4242, 2));
@@ -241,7 +237,8 @@ mod tests {
 
     #[test]
     fn red_exits_1() {
-        let out = tmp("red");
+        let d = tmp("red");
+        let out = d.join("out");
         fs::write(&out, "VERDICT RED ran=2 red=1\n").unwrap();
         fs::write(pid_path(&out), "99\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(99, 1));
@@ -250,7 +247,8 @@ mod tests {
 
     #[test]
     fn a_caught_signal_s_own_fault_line_is_passed_through() {
-        let out = tmp("term");
+        let d = tmp("term");
+        let out = d.join("out");
         fs::write(&out, "batch: interrupted\nVERDICT FAULT rc=2 ran=0 reason=signal\n").unwrap();
         fs::write(pid_path(&out), "7\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(7, 1));
@@ -262,7 +260,8 @@ mod tests {
     fn a_process_gone_without_any_verdict_line_is_fault_reason_gone() {
         // the SIGKILL case: the output has whatever it had when the kill landed, and
         // never gained a VERDICT line because nothing could run after SIGKILL.
-        let out = tmp("kill9");
+        let d = tmp("kill9");
+        let out = d.join("out");
         fs::write(&out, "building...\nhalfway through a suite\n").unwrap();
         fs::write(pid_path(&out), "555\n").unwrap();
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(555, 1));
@@ -272,7 +271,8 @@ mod tests {
 
     #[test]
     fn a_gone_process_still_reports_the_parent_s_rc_hint_when_present() {
-        let out = tmp("kill9-rc");
+        let d = tmp("kill9-rc");
+        let out = d.join("out");
         fs::write(&out, "building...\n").unwrap();
         fs::write(pid_path(&out), "556\n").unwrap();
         fs::write(rc_path(&out), "137\n").unwrap();
@@ -282,7 +282,8 @@ mod tests {
 
     #[test]
     fn no_pid_file_ever_appearing_is_a_named_fault_not_a_hang() {
-        let out = tmp("nopid");
+        let d = tmp("nopid");
+        let out = d.join("out");
         fs::write(&out, "nothing ran\n").unwrap();
         // no pid file written at all
         let o = wait_for(&out, &FakeClock::new(), &FakeProc::new(1, 0));
@@ -292,7 +293,8 @@ mod tests {
 
     #[test]
     fn a_pid_file_that_appears_within_the_grace_window_is_still_honored() {
-        let out = tmp("late-pid");
+        let d = tmp("late-pid");
+        let out = d.join("out");
         fs::write(&out, "VERDICT GREEN ran=0 selected=0\n").unwrap();
         // simulate the parent writing the pid file one tick after wait starts polling for
         // it, by writing it now: read_pid succeeds on the very first poll either way, but

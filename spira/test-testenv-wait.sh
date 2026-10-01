@@ -16,7 +16,7 @@
 #      the signal).
 #
 # tier: T2
-# covers: testenv/src/wait.rs testenv/src/build.rs sp-tcarr
+# covers: testenv/src/wait.rs testenv/src/build.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
