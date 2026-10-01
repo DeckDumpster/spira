@@ -116,29 +116,23 @@ impl Bd for RealBd {
     }
 }
 
-/// Sources `lib.sh` (and, transitively, `conf.sh`) exactly once per call and asks it a single
-/// question — the same boundary gate-check's Rust port already draws around this same
-/// function (`repo_root`, unported; spira/lib.sh is last in the rewrite order).
+/// `repo_root` (family U), in-process via `spira_config::repos` (sp-k6lku, "wave 4.13") —
+/// no longer a `bash -c '. lib.sh; ...'` seam at all.
 pub struct RealRepo {
     pub spira_home: String,
 }
 
 impl Repo for RealRepo {
+    /// `repo_root <name>` (family U) in-process now (sp-k6lku, "wave 4.13") through
+    /// `spira_config::repos`, built from this process's own environment — a single
+    /// `SPIRA_REPO_MAP` file read in place of the `bash -c '. lib.sh; repo_root ...'`
+    /// subprocess this used to shell out to, once per invocation (gh-intake is a one-shot
+    /// binary, so there is no loop to amortise a cached Registry over).
     fn root_with_git(&self, name: &str) -> Option<String> {
-        let script = ". \"$0\" >/dev/null 2>&1 || exit 96\nrepo_root \"$1\" 2>/dev/null";
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(format!("{}/lib.sh", self.spira_home))
-            .arg(name)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if root.is_empty() {
-            return None;
-        }
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        let reg = spira_config::repos::Registry::new(map_text.as_deref(), &env_map, std::path::Path::new(&self.spira_home));
+        let root = reg.root(name)?;
         if std::path::Path::new(&root).join(".git").exists() {
             Some(root)
         } else {
