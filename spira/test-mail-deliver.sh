@@ -45,7 +45,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SERVICE="$HERE/../systemd/spira-mail-deliver.service"
-WORLD=world.sh   # invoked by name on the suite's PATH (sp-gypjk)
+WORLD=world   # invoked by name on the suite's PATH (sp-gypjk); world.sh is retired (sp-6onps)
 WATCHD="$HERE/watchd.sh"
 
 echo

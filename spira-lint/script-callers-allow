@@ -1,0 +1,13 @@
+# script-callers' shrink-only allow list — exact repo-relative paths, like
+# spira-lint/tmp-leak-allow and spira-lint/fence-scripts-allow. A path here already carried
+# this defect when the rule landed; remove the line in the same change that fixes it (every
+# finding the path produces is suppressed while it is listed, not just the one named below).
+#
+# spira-world/src/bin/world.rs: `world stop` and `drain --deadline` still spawn the retired
+# spira/slay.sh (sp-6onps repointed world.sh/aeons.sh/ctrl.sh but missed this caller) —
+# Command::new("slay.sh") at both call sites should read Command::new("slay"), the real
+# binary (spira-world/Cargo.toml's [[bin]] name = "slay"). Not fixed in sp-9y0gf itself: a
+# dozen suites (test-world*.sh, test-aeon-*.sh, test-slay.sh, …) stub a fake `$SH/slay.sh`
+# on PATH to intercept the call, so the rename needs each of those repointed too in the
+# same change — filed separately rather than folded into the lint-rule delivery.
+spira-world/src/bin/world.rs
