@@ -66,7 +66,7 @@ rather than resolved — defense in depth on a socket reachable from more than o
 though both are on a private LAN. `Authorization: Bearer <token>` is enforced on every
 request when `SCCACHE_DAV_TOKEN` is configured.
 
-## 4. Configuration (environment only — this is not a `spira.toml` key; see §6)
+## 4. Configuration (environment only, for this SERVER)
 
 | variable | meaning |
 |---|---|
@@ -74,16 +74,34 @@ request when `SCCACHE_DAV_TOKEN` is configured.
 | `SCCACHE_DAV_ROOT` | directory the cache entries live under; created if missing. |
 | `SCCACHE_DAV_TOKEN` | optional bearer token; unset means no auth (LAN-only is the only guard). |
 
-## 5. What a build on either side needs set (not this crate's concern — see the operator's
-config lines in the bead's report)
+This server binary never reads `spira.toml` itself — `SCCACHE_DAV_ADDR` above is the
+*unit's* own `Environment=` line (`systemd/sccache-dav.service`), rendered by
+`units-install` from the `SPIRA_SCCACHE_DAV_ADDR` conf.d key (sp-xtdqi; no default — absent
+means `install/src/manifest.rs` declines the unit outright, the same as it would a template
+with an unfillable placeholder), same as every other value a systemd template substitutes.
+The server binary still only ever sees a bare environment variable; it is the CLIENT side
+(§5) that now also reads config.
 
-`spira_config::build::Wrapper::env()` sets only `RUSTC_WRAPPER` and
-`SCCACHE_IGNORE_SERVER_IO_ERROR`; it does not — and must not — set `SCCACHE_WEBDAV_*`
-(sccache reads those from its own environment, which `.envs()` does not clear). Pointing a
-build at this store is therefore an **ambient environment change** (the gate/testenv
-process's own env, or `~/.cargo/config.toml`'s `[env]` table, or the VM launcher script),
-never a code change in `spira_config::build` or in `testenv`/`gate` — the wrapper module's
-whole job is staying agnostic of which storage backend `sccache` is configured for.
+## 5. What a build on either side needs set — UPDATED, sp-xtdqi (reverses the call below)
+
+~~`spira_config::build::Wrapper::env()` sets only `RUSTC_WRAPPER` and
+`SCCACHE_IGNORE_SERVER_IO_ERROR`; it does not — and must not — set `SCCACHE_WEBDAV_*`... an
+**ambient environment change**, never a code change in `spira_config::build`.~~ That call did
+not survive contact with a gate restarting the box's one sccache CLIENT daemon: the daemon
+fixes its backend at spawn time and ignores every later invocation's environment, so a
+daemon a stale build started before anyone had exported `SCCACHE_WEBDAV_ENDPOINT` kept every
+later build on the LOCAL DISK cache until an operator noticed and re-exported the vars by
+hand — the exact failure sp-xtdqi exists to close.
+
+`Wrapper::env`/`Wrapper::admitted_env` now take an `Option<&spira_config::build::Store>` and,
+when `Some`, set `SCCACHE_WEBDAV_ENDPOINT`/`SCCACHE_WEBDAV_KEY_PREFIX` themselves — resolved
+from `SPIRA_SCCACHE_DAV_ADDR` (`Store::from_values`/`Store::from_env`, in-process, never a
+bare env read) — AND synchronise the client daemon's own backend first (`ensure_store_backend`
+inside `spira-config/src/build.rs`): a daemon already on the store is left alone, one on a
+different backend is stopped (never refused — see that function's own doc) so the very next
+cargo invocation this call is about to make starts a fresh daemon on the right one. A build
+whose box names no store (`SPIRA_SCCACHE_DAV_ADDR` unset) is unaffected either way — still
+whatever backend an operator's own `~/.cargo/config.toml` happens to name, if anything.
 
 For a cross-machine cache hit on a dependency crate, sccache's Rust frontend hashes the
 literal compiler arguments and `CARGO_*` environment variables — including the absolute path

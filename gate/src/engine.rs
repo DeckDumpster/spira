@@ -197,9 +197,16 @@ impl<'w, W: World> Trial<'w, W> {
                 // Without spira-admit on PATH (an older release) the plain wrapper still carries
                 // the token: the gate never waits, it just holds nothing.
                 let who = format!("gate:{br}");
+                // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process
+                // (`merge_resolved_config`, `Real::context`) the same as every other
+                // `spira.toml`-only key this `ctx` already carries — never a bare env read.
+                let store = spira_config::build::Store::from_values(|k| {
+                    let v = ctx.var(k);
+                    (!v.is_empty()).then(|| v.to_string())
+                });
                 self.s.build_env = match w.which(spira_config::admission::BIN) {
-                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who),
-                    None => wr.env(),
+                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who, store.as_ref()),
+                    None => wr.env(store.as_ref()),
                 };
                 self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }

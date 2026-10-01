@@ -620,6 +620,12 @@ pub struct SpiraSection {
     pub round_vm_max_retries: Option<String>,
     pub round_vm_retry_interval: Option<String>,
     pub round_vm_mirror_port: Option<String>,
+    /// This box's own LAN address for the shared compilation cache (sccache-dav, sp-xjnzl /
+    /// sp-xtdqi), `ip:port` — the one fact `systemd/sccache-dav.service` used to hardcode as
+    /// operator inventory in the public harness (law-harness-ships-mechanism-not-inventory).
+    /// No default: absent means the unit is not installed and no build sets
+    /// `SCCACHE_WEBDAV_ENDPOINT` — never a guessed or wildcard address.
+    pub sccache_dav_addr: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.

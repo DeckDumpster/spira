@@ -71,6 +71,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "store", lines: check_store(w) },
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
+        Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
             title: "systemd units",
@@ -454,6 +455,45 @@ pub fn check_sccache(w: &dyn World) -> Vec<Line> {
                 "round-vm's shared cache (sccache-dav, sp-xjnzl) and this box's own builds both need it. \
                  `sccache --help`'s \"Enabled features\" block said so, not just sccache's presence on PATH. \
                  Reinstall: {SCCACHE_INSTALL}"
+            ),
+        )]
+    }
+}
+
+/// sp-xtdqi: `sccache` naming the webdav backend at build time (`check_sccache`, above) is
+/// not the same question as the CLIENT DAEMON already running on this box actually being
+/// configured for it — a daemon fixes its backend at spawn time and ignores every later
+/// invocation's environment, so a stale one silently answers every build from the local disk
+/// cache even on a box that built sccache correctly and whose config names a store. Read-only:
+/// unlike `spira_config::build`'s own `ensure_store_backend`, doctor never stops the server —
+/// it only reports (`A failed probe renders ?, never 0` is this check's whole job; the
+/// self-heal lives where a build is actually about to happen).
+pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
+    let Some(addr) = w.env("SPIRA_SCCACHE_DAV_ADDR").filter(|v| !v.trim().is_empty()) else {
+        return vec![ok("no shared store configured (SPIRA_SCCACHE_DAV_ADDR unset) — nothing to check")];
+    };
+    let operated = w.env("SPIRA_OPERATED").map(|v| v != "0").unwrap_or(true);
+    let make = |msg: String, detail: String| -> Line {
+        if operated { fail(msg, detail) } else { warn(msg, detail) }
+    };
+    let Some(stats) = w.sccache_show_stats() else {
+        return vec![make("sccache --show-stats did not answer".into(), "cannot verify the live server's backend".into())];
+    };
+    let Some(loc) = stats.lines().find(|l| l.trim_start().starts_with("Cache location")) else {
+        return vec![make("sccache --show-stats did not report a Cache location".into(), stats)];
+    };
+    let loc = loc.trim();
+    if loc.to_ascii_lowercase().contains("webdav") {
+        vec![ok(format!("sccache server is on the shared store ({addr}): {loc}"))]
+    } else {
+        vec![make(
+            format!("sccache server is NOT on the shared store — {loc}"),
+            format!(
+                "spira.conf/spira.toml names a shared store ({addr}) but the running sccache \
+                 server was started on a different backend — a build that restarted it since \
+                 (or one that never has) silently lands on the local-disk cache instead. \
+                 `spira_config::build::Wrapper` stops a wrong-backend server itself the next \
+                 time it builds through it; `sccache --stop-server` does the same by hand."
             ),
         )]
     }
