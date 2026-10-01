@@ -26,22 +26,27 @@ fn workspace_root() -> PathBuf {
 /// `target/debug/...` — the target directory is whatever `CARGO_TARGET_DIR` says, or the
 /// gate's own sccache-backed one (release/DESIGN.md "Build IO"), never assumed.
 fn build_spira_config() -> PathBuf {
+    build_bin("spira-config", "spira-config")
+}
+
+/// Builds one workspace binary the hook execs and returns its path (see [`build_spira_config`]).
+fn build_bin(package: &str, bin: &str) -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(&cargo)
-        .args(["build", "--message-format=json", "-p", "spira-config", "--bin", "spira-config"])
+        .args(["build", "--message-format=json", "-p", package, "--bin", bin])
         .current_dir(workspace_root())
         .output()
-        .expect("cannot run cargo build -p spira-config");
-    assert!(out.status.success(), "cargo build -p spira-config failed:\n{}", String::from_utf8_lossy(&out.stderr));
+        .unwrap_or_else(|e| panic!("cannot run cargo build -p {package}: {e}"));
+    assert!(out.status.success(), "cargo build -p {package} failed:\n{}", String::from_utf8_lossy(&out.stderr));
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else { continue };
-        if v.get("reason").and_then(Value::as_str) == Some("compiler-artifact") && v.get("target").and_then(|t| t.get("name")).and_then(Value::as_str) == Some("spira-config") {
+        if v.get("reason").and_then(Value::as_str) == Some("compiler-artifact") && v.get("target").and_then(|t| t.get("name")).and_then(Value::as_str) == Some(bin) {
             if let Some(exe) = v.get("executable").and_then(Value::as_str) {
                 return PathBuf::from(exe);
             }
         }
     }
-    panic!("spira-config's binary artifact did not appear in cargo's own build output");
+    panic!("{bin}'s binary artifact did not appear in cargo's own build output");
 }
 
 /// Runs `command` (the registered hook/meter command, already self-contained: `env
@@ -87,6 +92,9 @@ fn hook_and_meter_run_clean_under_the_clients_own_minimal_env() {
     let release_root = tmp.path().join("release");
     std::fs::create_dir_all(release_root.join("bin")).unwrap();
     std::os::unix::fs::symlink(&spira_config, release_root.join("bin/spira-config")).expect("symlink spira-config");
+    // session.sh reads its watcher rows from the release's own `watchd` binary (sp-48f6g);
+    // without it `watchd status` is not found, prints nothing, and the hook stays silent.
+    std::os::unix::fs::symlink(build_bin("watchd", "watchd"), release_root.join("bin/watchd")).expect("symlink watchd");
     std::os::unix::fs::symlink(workspace.join("spira"), release_root.join("spira")).expect("symlink spira/");
 
     let paths = release::session_hook::resolve(&release_root, "", tmp.path().join("settings.json")).expect("resolve paths");
