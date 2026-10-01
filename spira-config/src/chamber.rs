@@ -60,9 +60,9 @@ fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String
 /// Resolves [`FAYTH_LABEL_KEYS`] via [`crate::resolve::resolve_for_process`] (env > toml >
 /// derived default — the same precedence `conf.sh` always applied), so [`fayth_get`] can
 /// hand them to its bash subshell explicitly rather than relying on this process's own
-/// ambient environment. A resolution failure (no `spira.toml` resolves, or a parse error)
-/// yields an empty overlay: the bash subshell then falls back to whatever it would have
-/// seen anyway, never a hard failure over a label.
+/// ambient environment. A resolution failure (no config document resolves, or a parse
+/// error) yields an empty overlay: the bash subshell then falls back to whatever it would
+/// have seen anyway, never a hard failure over a label.
 fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let repo = crate::resolve::derive_home_repo(home, &env);

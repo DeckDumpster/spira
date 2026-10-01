@@ -124,7 +124,7 @@ fn s(strs: &[&str]) -> Vec<String> {
 /// those across the `exec` boundary into this binary). `home` is this process's own
 /// `--home` argument, never read back out of `$SPIRA_HOME` — that var is a per-copy fact
 /// `spira_config::resolve` deliberately never derives, so it must be the caller's own
-/// input, not something this resolves. A failure (no `spira.toml` resolves, or a parse
+/// input, not something this resolves. A failure (no config document resolves, or a parse
 /// error) yields an empty `Resolved`, matching this crate's existing "missing config
 /// degrades to the caller's own default" behaviour everywhere else.
 fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
