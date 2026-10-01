@@ -26,17 +26,19 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
 # one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
 # binary's own subprocess, which inherits only the real process environment — not this
-# shell's unexported variables, the way the old in-shell `( subshell )` did. conf.sh
-# deliberately leaves most of its ~264 keys unexported (its own comment above the export
-# list); these are the ones every shipped `.fayth`'s FAYTH_LABELS line actually references
-# (grepped: spira/chamber/*.fayth) that are not already on that list. Exported here, once,
-# the same narrow way spira/bead.sh:49 already does for the bead binary — not a blanket
-# export, which would leak the per-copy facts conf.sh's own fence exists to keep out of
-# every child process (SPIRA_HOME, SPIRA_REPO, the maps, SPIRA_FAYTHS, SPIRA_MAX_AEONS —
-# law-gates-run-in-a-clean-environment). A custom operator fayth referencing some OTHER
-# unexported key is the same trap bead.sh's own narrow list already carries; widen this
-# list (and bead.sh's) together if one shows up.
-export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO
+# shell's unexported variables, the way the old in-shell `( subshell )` did.
+#
+# THE EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa): this file used to
+# `export SPIRA_CZAR_LABEL SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL
+# SPIRA_BATCH_JUDGEMENT_LABEL SPIRA_HOME_REPO` here, the same narrow re-export
+# spira/bead.sh:49 and rule.sh:50 carried for the same reason — a `.fayth`'s FAYTH_LABELS
+# line references these by parameter expansion (grepped: spira/chamber/*.fayth), and the
+# `spira-config fayth` subprocess that sources it needs them in ITS OWN environment, not
+# this shell's. `spira-config/src/chamber.rs`'s `fayth_get` now resolves all five itself —
+# `fayth_label_overlay` calls `spira_config::resolve::resolve_for_process` in-process and
+# sets them explicitly on the sourcing subshell's `Command` — so this shell no longer needs
+# to carry them across the exec boundary at all. An unexported key here is no longer a trap:
+# the resolution lives where the sourcing happens, not in whichever caller sourced lib.sh.
 # CERTIFICATION ONTO EVENTS is `spira-lc certify` / `spira-lc resubmit` (sp-arpjt retired
 # lifecycle-cert.sh into spira-lc's caller verbs). The lc_certify/lc_resubmit wrapper
 # functions that once stood in for those two calls are retired too (sp-uwhx0): their only
@@ -431,31 +433,28 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
-[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
-[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
-
-# ready_raw_args -> READY_ARGS without the SPIRA_SCOPE_LABEL restriction, one argv token a
-# line. This is the broadest "is this bead claimable by ANY persona" query — detect_unclaimable_
-# ready's own reason for existing is seeing a bead that is MISSING the scope label, so it
-# cannot ask through READY_ARGS. It is also the one shape sentinel.sh's full pass fetches
-# ONCE into SPIRA_READY_SNAPSHOT (sp-bo67y): every scope-restricted consumer (bulk_ready_by_
-# fayth via each fayth's own FAYTH_LABELS, mark_queue_waiters via an explicit filter) narrows
-# the cached superset in-process rather than asking bd again with a narrower --label.
+# READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
+# three is named in this bead's scope, each still has live bash callers outside family F
+# (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
+# fleet-status.sh calls ready_count; detect_unclaimable_ready — family T, a later bead —
+# calls ready_raw_args), and routing them through a `spira-claim` subprocess at lib.sh
+# SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
+# `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
+# call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
+# satisfied on the Rust side alone — `spira_claim::READY_ARGS_BASE`, which cockpit-collect
+# now links in-process instead of keeping its own copy (`probes/queue.rs`). `fayth_ready`/
+# `fayth_exclude`/`bulk_ready_by_fayth`'s OWN Rust ports (below) build their own ready
+# query independently, in spira-claim/src/ready.rs — a second, Rust-only copy of this
+# predicate's SHAPE, not a bash caller asking two different functions the same question.
 ready_raw_args() {
     local args=(ready --limit 0 --exclude-type epic,event -u)
     [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
     printf '%s\n' "${args[@]}"
 }
+READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
+[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
+[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
-# ready_count <labels> <exclude-labels> -> how many beads that predicate can claim.
-#
-# A FAILED QUERY IS NOT A ZERO. bd's own circuit breaker or a Dolt lock can refuse the read
-# outright; treating that refusal the same as "the predicate matched nothing" is what made a
-# transient store failure read as an empty queue (sp-3ntca). This still prints '0' on stdout
-# on failure, so a caller that only reads the count (sentinel.sh's plan_ready) is unaffected,
-# but now returns 1 and puts the bd error on its OWN stderr — the fayth_ready subshell
-# captures exactly that line.
 ready_count() {
     local out rc _errtmp
     _errtmp="$(mktemp)"
@@ -471,303 +470,66 @@ ready_count() {
     printf '%s' "$out" | json_only | json_count
 }
 
-# epic_parent_lookup <ready-beads-json> -> {"prio": {epic_id: priority, ...}, "started": [epic_id, ...]}
-#
-# THE EPIC-FIRST CLAIM ORDER'S OWN BATCHED LOOKUP (sp-ns46j). Every ready bead already
-# carries its own "parent" field (bd list/ready return it inline), so which epic a bead
-# belongs to costs nothing further to learn; what is missing is the EPIC's own priority and
-# whether it has started. Both are fetched here — once per distinct epic referenced, never
-# once per bead, however many beads reference the same epic.
-#
-# Priority: one `bd list --id a,b,c` for every distinct epic in the set.
-# Started (any child closed, in progress, or carrying the submitted label): `bd children`
-# takes one parent at a time, so this is one query per DISTINCT epic — still bounded by the
-# number of epics in flight, never by the number of ready beads.
-#
-# A NONZERO RETURN IS A FAILED LOOKUP, NOT AN EMPTY ONE (law-payloads-go-on-stdin): the
-# caller must treat it as a claim-error, the same as a failed bd query, never as "nothing
-# ready".
-epic_parent_lookup() {
-    local ready_json="$1" parents prio_json="[]" started_csv=""
-    parents="$(printf '%s' "$ready_json" | python3 -c '
-import json, sys
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-ids = sorted({r["parent"] for r in d if r.get("parent")})
-print("\n".join(ids))
-' 2>/dev/null)"
-    if [ -n "$parents" ]; then
-        local csv; csv="$(printf '%s' "$parents" | paste -sd, -)"
-        prio_json="$(bdjson list --id "$csv" --status all --limit 0 2>/dev/null)"
-        [ -n "$prio_json" ] || prio_json="[]"
-        local started_ids=() p kids
-        while IFS= read -r p; do
-            [ -n "$p" ] || continue
-            kids="$(bdjson children "$p" 2>/dev/null)"
-            [ -n "$kids" ] || continue
-            if printf '%s' "$kids" | SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-spira-submitted}" python3 -c '
-import sys, json, os
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(1)
-d = d if isinstance(d, list) else [d]
-subl = os.environ.get("SPIRA_SUBMITTED_LABEL", "spira-submitted")
-for c in d:
-    if c.get("status") in ("in_progress", "closed"):
-        sys.exit(0)
-    if c.get("status") == "open" and subl in (c.get("labels") or []):
-        sys.exit(0)
-sys.exit(1)
-' 2>/dev/null; then
-                started_ids+=("$p")
-            fi
-        done <<< "$parents"
-        started_csv="$(IFS=,; printf '%s' "${started_ids[*]:-}")"
-    fi
-    # prio_json ON STDIN, NEVER ARGV (law-payloads-go-on-stdin): it scales with the number of
-    # DISTINCT EPICS referenced, unbounded by the same fact that made ready_json unbounded
-    # (sp-o4trx). started_csv is a short id list, safe as an argv token.
-    printf '%s' "$prio_json" | python3 -c '
-import json, sys
-prio_rows = json.loads(sys.stdin.read() or "[]")
-prio_rows = prio_rows if isinstance(prio_rows, list) else [prio_rows]
-prio = {r["id"]: r.get("priority", 99) for r in prio_rows}
-started = [x for x in sys.argv[1].split(",") if x]
-print(json.dumps({"prio": prio, "started": started}))
-' "$started_csv"
+# `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
+# through bulk_ready_by_fayth, plus ready_shared_exclude) — same pattern
+# `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
+# `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
+# (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
+# defence in depth. `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/`SPIRA_SCOPE_LABEL`/
+# `SPIRA_SUBMITTED_LABEL` need no entry here: the first two are resolved by spira-claim
+# itself from spira.toml, and the last two ARE exported.
+_spira_claim() {
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
+    SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
+    SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
+        spira-claim "$@"
 }
 
-# epic_rank_rows <ready-beads-json> <epic-lookup-json> [<resumable-csv>] -> TSV, best first:
-#   epic_priority  epic_started(0|1)  bead_priority  resumable(0|1)  created_at  id  epic_id
-#
-# A NONZERO RETURN IS A FAILED RANK, NOT AN EMPTY ONE (law-payloads-go-on-stdin): the caller
-# must treat it as a claim-error, the same as a failed bd query, never as "nothing ready".
-#
-# THE RANK, in the order the rule states it (sp-ns46j): the parent epic's priority; then,
-# among epics of equal priority, a started epic before an unstarted one; then the bead's own
-# priority within the epic; then resumable work, then oldest. A bead with no epic (or whose
-# epic the lookup found nothing for) ranks as its own epic, at its own priority, unstarted —
-# epic_id is then the bead's own id, so a round-cutter grouping on that column still gets one
-# group per bead rather than merging every unaffiliated bead into one.
-#
-# A REWORKED OR EJECTED BEAD KEEPS ITS EPIC'S RANK for free: nothing here reads the bead's
-# own history, only its current parent and priority, so a bead sent back to ready re-enters
-# at exactly the rank its epic already holds.
+# epic_parent_lookup, epic_rank_rows -> moved to spira-claim's `epics`/`select` verbs
+# (sp-f0qhr's DESIGN.md §5 items 8-9, applied here at wave 4.25, sp-obhv6: the design
+# predates this bead, "not performed" under the operator's "leave lib.sh alone" directive
+# during the earlier cutover; the world is stopped now, so it is).
+epic_parent_lookup() {
+    printf '%s' "$1" | _spira_claim epics
+}
+
 epic_rank_rows() {
-    local ready_json="$1" lookup_json="$2" resume_csv="${3:-}"
-    # READY_JSON ON STDIN, LOOKUP_JSON IN A TEMP FILE — NEVER ARGV (law-payloads-go-on-stdin).
-    # At 142 ready beads this argument alone was already past MAX_ARG_STRLEN and every exec
-    # here died E2BIG, silently, as an empty ranked list read as "nothing ready" (sp-o4trx).
-    local _lkf; _lkf="$(mktemp)" || return 1
-    printf '%s' "$lookup_json" > "$_lkf"
-    printf '%s' "$ready_json" | LOOKUP_FILE="$_lkf" python3 -c '
-import json, os, sys
-
-ready = json.loads(sys.stdin.read() or "[]")
-ready = ready if isinstance(ready, list) else [ready]
-with open(os.environ["LOOKUP_FILE"]) as f:
-    lookup = json.loads(f.read() or "{}")
-prio = lookup.get("prio", {})
-started = set(lookup.get("started", []))
-resume = set(x for x in sys.argv[1].split(",") if x)
-
-def rank(r):
-    pid = r.get("parent") or ""
-    epic_id = pid or r["id"]
-    eprio = prio.get(pid, r.get("priority", 99)) if pid else r.get("priority", 99)
-    estarted = 0 if pid in started else 1
-    bprio = r.get("priority", 99)
-    resumable = 0 if r["id"] in resume else 1
-    age = r.get("created_at") or r.get("updated_at") or ""
-    return (eprio, estarted, bprio, resumable, age, r["id"], epic_id)
-
-for r in sorted(ready, key=rank):
-    k = rank(r)
-    print("%s\t%s\t%s\t%s\t%s\t%s\t%s" % k)
-' "$resume_csv"
-    local _rc=$?
-    rm -f "$_lkf"
+    local _lkf _rsf _rc
+    _lkf="$(mktemp)" || return 1
+    _rsf="$(mktemp)" || { rm -f "$_lkf"; return 1; }
+    printf '%s' "$2" > "$_lkf"
+    printf '%s' "${3:-}" > "$_rsf"
+    printf '%s' "$1" | _spira_claim select --fayth "${FAYTH:-any}" --epics "$_lkf" --resumable "$_rsf"
+    _rc=$?
+    rm -f "$_lkf" "$_rsf"
     return $_rc
 }
 
-# claim_retry <bdq claim args...> -> stdout: bd's JSON result (already through json_only).
-# Empty stdout with rc 0 is a REAL empty result — bd ran the query and it matched nothing.
-# rc 1 means every retry failed to complete at all; the first line of bd's own stderr from
-# the last attempt is written to THIS function's stderr, one line, prefixed — never to a
-# global variable, because every caller here reads claim_retry through a command
-# substitution, and a command substitution is a subshell: an assignment made inside it is
-# gone the instant the substitution completes. A caller that wants the message captures
-# this function's stderr directly (a `{ claim_retry ...; } 2>"$errfile"` around the call,
-# not a plain variable read afterward).
-#
-# CONCURRENT CLAIMS ARE EXPECTED CONTENTION, NOT AN EMPTY QUEUE. Aeons are summoned seconds
-# apart and read the same store; a lock or commit collision at that instant is a different
-# fact from a query that ran cleanly and found zero rows, and collapsing the two is what let
-# a transient bd failure report as "nothing ready to claim" while ~90 beads were ready
-# (sp-3ntca). A short retry absorbs the ordinary case — another aeon's claim landing between
-# this one's read and write — before the failure is trusted at all.
+# claim_retry, fayth_exclude, fayth_ready, bulk_ready_by_fayth, ready_shared_exclude ->
+# moved to spira-claim (wave 4.25, sp-obhv6). `ready_shared_exclude`'s only caller besides
+# `fayth_exclude` is test-dispatch-open-children.sh, which calls it directly — kept as its
+# own shim (onto `shared-exclude`, spira-claim/src/ready.rs `shared_exclude3`) rather than
+# deleted. `express_ready_in_task_pool` has had no live caller since sentinel.sh (the only
+# thing that ever called it) was retired for the Rust sentinel crate — deleted outright
+# rather than ported (see `test-express-lane.sh`, trimmed to match).
 claim_retry() {
-    local out rc _errtmp _attempt=1 _tries="${SPIRA_CLAIM_RETRIES:-3}" _delay="${SPIRA_CLAIM_RETRY_DELAY_S:-1}"
-    _errtmp="$(mktemp)"
-    while [ "$_attempt" -le "$_tries" ]; do
-        out="$(bdq "$@" --json 2>"$_errtmp")"
-        rc=$?
-        if [ "$rc" -eq 0 ]; then
-            rm -f "$_errtmp"
-            printf '%s' "$out" | json_only
-            return 0
-        fi
-        [ "$_attempt" -lt "$_tries" ] && sleep "$_delay"
-        _attempt=$((_attempt + 1))
-    done
-    printf 'claim_retry: query failed after %s attempt(s): %s\n' \
-        "$_tries" "$(head -1 "$_errtmp" 2>/dev/null)" >&2
-    rm -f "$_errtmp"
-    return 1
-}
-
-# fayth_exclude <fayth> -> the persona's own exclusions, plus every OTHER persona's claim.
-#
-# THE ENCOUNTER CHOOSES THE PARTY (the operator, 2026-09-07: "Spira is the world. there are
-# many parties within it — with different compositions — and hence many concurrent
-# encounters... having beads declare the personas they prefer is a nice touch").
-#
-# Until now the arrow pointed the other way: each persona carried a predicate and trawled the
-# whole graph for beads it liked, so a bead had no say in who worked it and two personas
-# whose partitions overlapped raced for the same work. A bead may now carry `fayth:<name>`
-# and that is a claim on WHO: the named persona sees it, every other persona does not.
-#
-# A BEAD THAT NAMES NOBODY BEHAVES EXACTLY AS BEFORE, which is what makes this safe to land
-# on a live graph — the 89 beads out there today declare no preference and every one of them
-# stays claimable by whoever the partition already allowed.
-#
-# IT NARROWS, IT NEVER WIDENS. `fayth:ops` on a bead outside Ops's partition does not hand it
-# to Ops; the partition still decides WHETHER the work is yours, and this decides only that
-# it is not somebody else's. A preference that could also grant would be a way to route work
-# past a persona's own predicate, which is the one thing FAYTH_LABELS exists to guarantee.
-#
-# `--exclude-label` is OR (verified against bd: adding an unused label to the list does not
-# change the count), so appending is exactly the semantics wanted here.
-#
-# ready_shared_exclude -> the labels every "is this claimable" predicate excludes regardless
-# of caller: SPIRA_QUEUE_WAIT_LABEL, SPIRA_SUBMITTED_LABEL and SPIRA_OPEN_CHILDREN_LABEL,
-# none of which marks a bead an aeon can take. fayth_exclude and strand.sh's classify_one
-# both call this rather than each carrying its own copy, because a copy is how one of them
-# drifts (sp-wnsks: strand.sh's counted a spira-submitted bead as ready and reported
-# starvation on a partition the sentinel correctly saw as empty).
-ready_shared_exclude() {
-    local out=""
-    [ -n "${SPIRA_QUEUE_WAIT_LABEL:-}" ] && out="${out:+$out,}${SPIRA_QUEUE_WAIT_LABEL}"
-    [ -n "${SPIRA_SUBMITTED_LABEL:-}" ] && out="${out:+$out,}${SPIRA_SUBMITTED_LABEL}"
-    [ -n "${SPIRA_OPEN_CHILDREN_LABEL:-}" ] && out="${out:+$out,}${SPIRA_OPEN_CHILDREN_LABEL}"
-    printf '%s' "$out"
+    _spira_claim claim-retry "$@"
 }
 
 fayth_exclude() {        # fayth_exclude <fayth> -> comma-separated exclusions
-    local me="$1" own="${2:-}" f out shared
-    out="$own"
-    shared="$(ready_shared_exclude)"
-    [ -n "$shared" ] && out="${out:+$out,}${shared}"
-    for f in $(spira_fayths 2>/dev/null); do
-        [ "$f" = "$me" ] && continue
-        out="${out:+$out,}fayth:$f"
-    done
-    printf '%s' "$out"
+    _spira_claim fayth-exclude "$1" "${2:-}"
 }
 
-# fayth_ready <fayth> -> claimable beads under ITS OWN predicate, on stdout.
-#
-# EXIT CODE NAMES WHICH OF TWO DIFFERENT THINGS WENT WRONG, because "no fayth in the
-# chamber" and "the ready query itself failed" used to collapse into the same caller branch
-# and the same log line — so a transient bd failure was reported to the operator as a
-# missing persona file, the one description that cannot be true while the persona is
-# actively summoning (sp-3ntca). 2: no such fayth file. 1: the file exists but ready_count
-# could not complete. 0: a real count, zero included.
-#
-# THE REASON GOES TO THIS FUNCTION'S OWN STDERR, NEVER A GLOBAL. Every caller reads
-# fayth_ready through a command substitution (`r="$(fayth_ready "$f")"`), which is a
-# subshell — an assignment made inside fayth_ready during that call cannot reach the
-# caller's shell at all, so a global here would silently read as whatever it held before
-# (this is the same trap claim_retry documents). A caller that wants the reason redirects
-# this function's stderr to a file around the call, same as claim_retry's callers do.
 fayth_ready() {
-    local f="$1" F="$SPIRA_HOME/chamber/$1.fayth" out rc _errtmp
-    if [ ! -f "$F" ]; then
-        printf '0'
-        printf 'fayth_ready: no fayth in the chamber: %s\n' "$F" >&2
-        return 2
-    fi
-    # SPIRA_READY_CACHE: sentinel.sh --summon-only precomputes every fayth's ready count
-    # with ONE bd call (bulk_ready_by_fayth) rather than paying this function's own call
-    # once per partition, to hit its ~1s target (sp-0y2av). Unset in the full pass, which
-    # still pays its own per-fayth query below exactly as before.
-    if [ -n "${SPIRA_READY_CACHE:-}" ] && [ -f "$SPIRA_READY_CACHE" ]; then
-        awk -v f="$f" '$1==f{print $2; found=1} END{if(!found) print 0}' "$SPIRA_READY_CACHE"
-        return 0
-    fi
-    _errtmp="$(mktemp)"
-    # shellcheck disable=SC1090
-    out="$( ( . "$F" 2>/dev/null
-              ready_count "${FAYTH_LABELS:-}" "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" \
-      ) 2>"$_errtmp" )"
-    rc=$?
-    [ "$rc" -ne 0 ] && cat "$_errtmp" >&2
-    rm -f "$_errtmp"
-    printf '%s' "$out"
-    return "$rc"
+    _spira_claim fayth-ready "$1"
 }
 
-# bulk_ready_by_fayth -> "<fayth> <count>" lines, one per active fayth, from ONE bd query.
-#
-# fayth_ready pays one `bd ready` call per partition; sentinel.sh --summon-only cannot
-# afford N of those and still land near 1s, so this fetches the whole ready set once and
-# buckets it in-process with ready-bucket.py, applying the identical predicate fayth_ready
-# would (FAYTH_LABELS, FAYTH_EXCLUDE_LABELS, and fayth: preference — mirrored from
-# unclaimable.py's own claimers loop, not reimplemented a third time).
-#
-# SPIRA_READY_SNAPSHOT, WHEN SET, REPLACES THE QUERY — sentinel.sh's full pass fetches the
-# ready_raw_args superset once (sp-bo67y) and every fayth here still gets the identical
-# count: FAYTH_LABELS already carries SPIRA_SCOPE_LABEL itself (every chamber file sets
-# `FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}..."`), so the `inc <= L` test in
-# ready-bucket.py rejects an out-of-scope bead exactly as READY_ARGS's own --label would
-# have, and reading the broader snapshot changes no fayth's count.
 bulk_ready_by_fayth() {
-    local raw parts f inc exc
-    if [ -n "${SPIRA_READY_SNAPSHOT:-}" ] && [ -r "$SPIRA_READY_SNAPSHOT" ]; then
-        raw="$(cat "$SPIRA_READY_SNAPSHOT")"
-    else
-        raw="$(bdjson "${READY_ARGS[@]}" 2>/dev/null)"
-    fi
-    [ -n "$raw" ] || return 0
-    parts=""
-    for f in $(spira_fayths); do
-        inc="$(fayth_get "$f" FAYTH_LABELS)"
-        [ -n "$inc" ] || continue
-        exc="$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-        parts="${parts}${f}|${inc}|${exc}"$'\n'
-    done
-    [ -n "$parts" ] || return 0
-    printf '%s' "$raw" | json_only \
-        | PARTS="$parts" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
-          SPIRA_SUBMITTED_LABEL="${SPIRA_SUBMITTED_LABEL:-}" ready-bucket.py
+    _spira_claim bulk-ready-by-fayth
 }
 
-# express_ready_in_task_pool <task-fayths> <express-label>
-# Returns 0 when an express bead is ready in any task partition, 1 otherwise.
-# Composes with FAYTH_LABELS rather than bypassing them — the partition stays intact.
-express_ready_in_task_pool() {
-    local task_fayths="$1" express_label="$2" f ff ec
-    for f in $task_fayths; do
-        ff="$SPIRA_HOME/chamber/$f.fayth"
-        [ -f "$ff" ] || continue
-        # shellcheck disable=SC1090
-        ec="$( ( . "$ff" 2>/dev/null
-                 [ -n "${FAYTH_LABELS:-}" ] || exit 1
-                 ready_count "${FAYTH_LABELS},${express_label}" \
-                     "$(fayth_exclude "$f" "${FAYTH_EXCLUDE_LABELS:-}")" ) 2>/dev/null)" || true
-        [ "${ec:-0}" -gt 0 ] 2>/dev/null && return 0
-    done
-    return 1
+ready_shared_exclude() {
+    _spira_claim shared-exclude
 }
 
 # check7_pool_decision <throttled:0|1> <free> <express-ready:0|1> -> the task pool CHECK 7

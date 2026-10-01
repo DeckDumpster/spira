@@ -18,12 +18,15 @@
 #   2. When fayth_ready asks ready_count for the builder, qa-proposed appears in the
 #      exclude argument (the end-to-end predicate check).
 #
-# WHAT THIS SUITE DOES NOT USE. No bd, no systemd, no network. ready_count is stubbed
-# to capture its arguments without touching the database.
+# WHAT THIS SUITE DOES NOT USE. No real database, no systemd, no network. `fayth_ready`
+# (wave 4.25, sp-obhv6: a one-line shim onto `spira-claim fayth-ready`, no longer an
+# in-process bash call to `ready_count`) is exercised end to end against a fake `$SPIRA_BD`
+# that records its own argv — one layer lower than the old `ready_count` function stub, but
+# the same technique test-sentinel-store-reads.sh already uses.
 #
 # tier: T1
-# covers: spira/chamber/builder.fayth spira/lib.sh
-# hermetic-ok: no database, no systemd; ready_count and SPIRA_SUMMON are stubs
+# covers: spira/chamber/builder.fayth spira/lib.sh spira-claim/*
+# hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -58,22 +61,21 @@ want "builder FAYTH_LABELS contains plan" "plan" "$builder_labels"
 echo
 echo "fayth_ready builder — qa-proposed appears in the exclude argument to ready_count"
 # ==========================================================================================
-# Override ready_count to capture the EXCLUDE argument (second positional) it receives.
-# fayth_ready calls: ready_count "$FAYTH_LABELS" "$(fayth_exclude ...)" inside a subshell,
-# so we write to a file rather than a variable.
-EXCL_FILE="$T/observed-excl"
-MOCK_READY=0
-ready_count() {
-    # $1 = include labels, $2 = exclude labels
-    printf '%s' "$2" > "$EXCL_FILE"
-    printf '%d' "$MOCK_READY"
-}
-# Stub aeon_count so fayth_free does not block the ready_count call.
-aeon_count() { printf '0'; }
+# A fake bd that records its own argv: `fayth-ready` calls `ready_count`'s Rust equivalent
+# with `--label <FAYTH_LABELS> --exclude-label <fayth_exclude ...>`, so qa-proposed (from
+# builder.fayth's own FAYTH_EXCLUDE_LABELS) must appear there.
+BD_ARGS_FILE="$T/observed-bd-args"
+FAKE_BD="$T/fake-bd"
+cat > "$FAKE_BD" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$BD_ARGS_FILE"
+echo '[]'
+EOF
+chmod +x "$FAKE_BD"
 
-fayth_ready builder >/dev/null 2>&1 || true
-observed_excl="$(cat "$EXCL_FILE" 2>/dev/null)"
-want "fayth_ready builder passes qa-proposed in the exclude arg" "qa-proposed" "$observed_excl"
+SPIRA_BD="$FAKE_BD" SPIRA_DB="/fake/db" fayth_ready builder >/dev/null 2>&1 || true
+observed_excl="$(cat "$BD_ARGS_FILE" 2>/dev/null)"
+want "fayth_ready builder passes qa-proposed in the exclude arg to bd" "qa-proposed" "$observed_excl"
 
 # ==========================================================================================
 echo

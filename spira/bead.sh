@@ -38,15 +38,17 @@
 #
 # `exec -a "$0"` keeps this script's path in the process's argv.
 #
-# RE-EXPORT WHAT conf.sh DERIVES BUT DOES NOT EXPORT. conf.sh's own `export` list (its
-# "THE ENVIRONMENT ALREADY OWNS" section) leaves several of the plain-shell-variable
-# derivations it computes unexported — harmless for the bash bead.sh, which ran in the SAME
-# process as conf.sh and so saw them regardless of export, but fatal to a binary this file
-# `exec`s into: only the environment table crosses that boundary, and a plain variable does
-# not. SPIRA_REPO_MAP is the one every fixture's repo-map depends on
-# (`_spira_repo_map_candidate`'s derivation); the three lane labels are the same shape.
+# THE RE-EXPORT THIS COMMENT ONCE DESCRIBED IS RETIRED (wave 4.9, sp-k80sa). This file used
+# to `export SPIRA_HOME SPIRA_REPO_MAP SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL
+# SPIRA_CZAR_LABEL` here, because conf.sh's own `export` list leaves those plain-shell-
+# variable derivations unexported, and only the environment table crosses the `exec`
+# boundary below. The `bead` binary now resolves all five itself: `SPIRA_HOME` is simply
+# the `--home` argument already on its own argv (bead/src/main.rs's `chamber_dir`/
+# `fayth_names` read that parameter, not `$SPIRA_HOME`); `SPIRA_REPO_MAP` and the three
+# fayth labels (needed only for `fayth_get`'s bash subshell, which sources a `.fayth` file
+# that references them by parameter expansion) are resolved in-process via
+# `spira_config::resolve::resolve_for_process` (see `load_resolved`/`fayth_get` there).
 . "$(dirname "$0")/conf.sh" || exit 75
-export SPIRA_HOME SPIRA_REPO_MAP SPIRA_GROOMER_LABEL SPIRA_MAECHEN_LABEL SPIRA_CZAR_LABEL
 if ! command -v bead >/dev/null 2>&1; then
     printf 'bead: bead is not on PATH (the launcher sets PATH to a release) — refusing.\n' >&2
     exit 75
