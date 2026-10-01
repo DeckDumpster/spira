@@ -116,29 +116,24 @@ impl Bd for RealBd {
     }
 }
 
-/// Sources `lib.sh` (and, transitively, `conf.sh`) exactly once per call and asks it a single
-/// question — the same boundary gate-check's Rust port already draws around this same
-/// function (`repo_root`, unported; spira/lib.sh is last in the rewrite order).
+/// `repo_root` (family U), in-process via `spira_config::repos` (sp-k6lku, "wave 4.13") —
+/// no longer a `bash -c '. lib.sh; ...'` seam at all.
 pub struct RealRepo {
     pub spira_home: String,
 }
 
 impl Repo for RealRepo {
+    /// `repo_root <name>` (family U) in-process now (sp-k6lku, "wave 4.13") through
+    /// `spira_config::repos::Registry::from_env` — the one production door onto a
+    /// registry (following the structural fix for sp-z3eyk): building one from a bare
+    /// `std::env::vars()` directly, with no resolution, found no map at all in production,
+    /// since conf.sh exports none of `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/
+    /// `SPIRA_REPO_DERIVED`; `from_env` resolves them in-process instead. No
+    /// `bash -c '. lib.sh; repo_root ...'` subprocess at all (gh-intake is a one-shot
+    /// binary, so there is no loop to amortise a cached Registry over).
     fn root_with_git(&self, name: &str) -> Option<String> {
-        let script = ". \"$0\" >/dev/null 2>&1 || exit 96\nrepo_root \"$1\" 2>/dev/null";
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(format!("{}/lib.sh", self.spira_home))
-            .arg(name)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if root.is_empty() {
-            return None;
-        }
+        let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
+        let root = reg.root(name)?;
         if std::path::Path::new(&root).join(".git").exists() {
             Some(root)
         } else {

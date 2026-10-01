@@ -374,21 +374,22 @@ fn cmd_check_bd() -> ExitCode {
     }
 }
 
-/// The repo registry in force for THIS process (sp-37rmg, "wave 4.11"): `SPIRA_REPO_MAP`,
-/// `SPIRA_HOME`, `SPIRA_HOME_REPO`, `SPIRA_REPO` and `SPIRA_REPO_DERIVED` are read straight
-/// out of the environment, exactly as lib.sh's own repo-registry functions read their bash
-/// globals — never self-located beyond that (the caller, a shim or a bash sourcer, already
-/// has them, same as `cmd_resolve_sh`'s own `SPIRA_HOME`/`SPIRA_REPO`). A `SPIRA_REPO_MAP`
-/// that is unset, empty, or unreadable is "no map" (`Registry::map_present() == false`),
-/// matching `[ -f "$SPIRA_REPO_MAP" ]`'s own existence-only test.
+/// The repo registry in force for THIS process (sp-37rmg, "wave 4.11"; `Registry::from_env`
+/// since sp-k6lku). `SPIRA_HOME` is read straight out of the environment — the caller's own
+/// per-copy fact, same as `cmd_resolve_sh`'s own `SPIRA_HOME`/`SPIRA_REPO` — but
+/// `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` are NOT assumed
+/// present: a shim or a bash sourcer that already resolved conf.sh threads them through
+/// explicitly and `from_env` leaves them untouched, but this binary is also the one a bare
+/// shell or a unit calls directly (`spira-config repo root <name>` typed by hand, or by a
+/// caller that never sourced conf.sh at all) — exactly the case conf.sh's own
+/// never-exports-them design breaks without an in-process resolve (sp-z3eyk). A
+/// `SPIRA_REPO_MAP` that resolves to nothing, or to an unreadable path, is still "no map"
+/// (`Registry::map_present() == false`), matching `[ -f "$SPIRA_REPO_MAP" ]`'s own
+/// existence-only test.
 fn repo_registry() -> Registry {
     let env_map: BTreeMap<String, String> = env::vars().collect();
     let home = PathBuf::from(env_map.get("SPIRA_HOME").cloned().unwrap_or_default());
-    let map_text = env_map
-        .get("SPIRA_REPO_MAP")
-        .filter(|p| !p.is_empty())
-        .and_then(|p| fs::read_to_string(p).ok());
-    Registry::new(map_text.as_deref(), &env_map, &home)
+    Registry::from_env(env_map, &home)
 }
 
 fn parse_column(s: &str) -> Option<Column> {
