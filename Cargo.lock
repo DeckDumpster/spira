@@ -598,6 +598,7 @@ name = "landing-pass"
 version = "2.0.0"
 dependencies = [
  "libc",
+ "regex",
  "serde",
  "serde_json",
  "spira-config",

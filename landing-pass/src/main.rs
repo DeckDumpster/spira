@@ -17,10 +17,11 @@
 
 use landing_pass::cli::{self, Cmd, Reason};
 use landing_pass::halt::{self, HaltArgs, HaltCtx, RealHalt};
+use landing_pass::land_verify;
 use landing_pass::landstate;
 use landing_pass::model::{RunRecord, StatusFile};
 use landing_pass::pass::Pass;
-use landing_pass::ports::Lib;
+use landing_pass::ports::{Beads, Lib};
 use landing_pass::pr::{PrPass, RealPrTools};
 use landing_pass::real::{load_context, RealBeads, RealClock, RealGit, RealLib, RealProcs, RealTools, SeamRunner};
 use landing_pass::records::Files;
@@ -57,6 +58,14 @@ fn main() -> ExitCode {
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
         Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
         Cmd::State { id } => state_cmd(&id),
+        Cmd::Landed { id, repo } => landed_cmd(&id, &repo),
+        Cmd::LandSubject { id } => land_subject_cmd(&id),
+        Cmd::PrMerged { repo, branch } => pr_merged_cmd(&repo, &branch),
+        Cmd::ConflictNote(args) => conflict_note_cmd(&args),
+        Cmd::OtherBeads { repo, branch, base, files } => other_beads_cmd(&repo, &branch, &base, &files),
+        Cmd::IsWorkType { ty } => is_work_type_cmd(&ty),
+        Cmd::CitedCommit { id, repo, base } => cited_commit_cmd(&id, &repo, &base),
+        Cmd::CloseOnLand { id, sha } => close_on_land_cmd(&id, &sha),
     };
     ExitCode::from(code as u8)
 }
@@ -438,6 +447,153 @@ fn state_cmd(id: &str) -> i32 {
         }
         None => 1,
     }
+}
+
+// ── family R (sp-81t4d, "wave 4.17" — landed verification) ──────────────────────────────
+//
+// None of these need the full pass context (repositories, the gate/queue tooling): each
+// resolves only what it reads, the same `$SPIRA_HOME`-then-resolve-in-process rule
+// `run_dir` already follows for `mark`/`state` (law-a-binary-resolves-the-config-it-reads).
+
+/// `$SPIRA_HOME` when exported, else [`harness_home`]'s own three rungs — never a refusal
+/// just because a unit's bare environment did not export it.
+fn resolve_home() -> Result<PathBuf, String> {
+    if let Some(h) = home() {
+        return Ok(h);
+    }
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    harness_home(&env).ok_or_else(|| "SPIRA_HOME is unset and could not be resolved".to_string())
+}
+
+/// bd's own connection facts, resolved in-process against `home` — conf.sh resolves
+/// `SPIRA_DB`/`SPIRA_BD`/`BD_TIMEOUT`/`SPIRA_HOME_REPO`/`SPIRA_SUBMITTED_LABEL`/
+/// `SPIRA_BDJSON_FIXTURE` but exports none of them (the same defect `run_dir`/`Registry::from_env`
+/// already guard against), so this never reads them straight off `std::env`.
+fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let repo = spira_config::resolve::derive_repo_filesystem(home, &env);
+    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env)?;
+    let get = |k: &str, d: &str| {
+        let v = resolved.get(k);
+        if v.is_empty() { d.to_string() } else { v.to_string() }
+    };
+    // BD_TIMEOUT and SPIRA_BDJSON_FIXTURE carry no `spira/conf.d/<KEY>` entry — ad hoc
+    // overrides `resolve_for_process` never produces (aeon's own seam doc names the same
+    // split), so these two are read straight off the raw environment, never `resolved`.
+    let ad_hoc = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| d.to_string());
+    Ok(RealBeads {
+        home: home.to_path_buf(),
+        db: get("SPIRA_DB", ""),
+        bd: get("SPIRA_BD", "bd"),
+        timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
+        home_repo: get("SPIRA_HOME_REPO", "spira"),
+        submitted_label: get("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
+        fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),
+    })
+}
+
+/// `landing-pass landed <id> <repo>`: lib.sh `landed`/`landed_sha` alone. Prints the
+/// landing sha on a found exit; exit 1 not found; exit 2 cannot tell (an unresolvable land
+/// ref, OR `$SPIRA_HOME` itself could not be resolved — both are the same named refusal,
+/// never folded into "not landed").
+fn landed_cmd(id: &str, repo: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 2 };
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
+    let Some((base, local)) = spira_config::repos::landrefs(&reg, repo) else { return 2 };
+    let mut refs = vec![base];
+    if let Some(l) = local {
+        refs.push(l);
+    }
+    match land_verify::landed(&RealGit, Path::new(repo), id, &refs) {
+        Some(sha) => {
+            print!("{sha}");
+            0
+        }
+        None => 1,
+    }
+}
+
+/// `landing-pass land-subject <id>`: lib.sh `land_subject` alone. A bead that cannot be
+/// read (bd unreachable, or `$SPIRA_HOME` itself unresolved) falls back to the bare form —
+/// the same fallback the bash function's own `bdjson` failure took.
+fn land_subject_cmd(id: &str) -> i32 {
+    let title = resolve_home()
+        .ok()
+        .and_then(|home| resolve_beads(&home).ok())
+        .and_then(|beads| beads.show(&[id.to_string()]).ok())
+        .and_then(|rows| rows.into_iter().next())
+        .map(|r| land_verify::collapse_title(&r.title))
+        .unwrap_or_default();
+    print!("{}", land_verify::land_subject(id, &title));
+    0
+}
+
+/// `landing-pass pr-merged <repo> <branch>`: lib.sh `pr_merged` alone.
+fn pr_merged_cmd(repo: &str, branch: &str) -> i32 {
+    if land_verify::pr_merged(Path::new(repo), branch) {
+        0
+    } else {
+        1
+    }
+}
+
+/// `landing-pass conflict-note <repo> <branch> <base> <name> <conflicts> <actor> [rq_n]`:
+/// lib.sh `conflict_reopen_note` alone.
+fn conflict_note_cmd(args: &[String]) -> i32 {
+    let get = |i: usize| args.get(i).map(String::as_str).unwrap_or("");
+    let rq_n = args.get(6).map(String::as_str).filter(|s| !s.is_empty()).unwrap_or("1");
+    let note = land_verify::conflict_reopen_note(&RealGit, Path::new(get(0)), get(1), get(2), get(3), get(4), get(5), rq_n);
+    print!("{note}");
+    0
+}
+
+/// `landing-pass other-beads <repo> <branch> <base> <files>`: lib.sh
+/// `other_beads_on_conflicts` alone.
+fn other_beads_cmd(repo: &str, branch: &str, base: &str, files: &str) -> i32 {
+    print!("{}", land_verify::other_beads_on_conflicts(&RealGit, Path::new(repo), branch, base, files));
+    0
+}
+
+/// `landing-pass is-work-type <type>`: lib.sh `bead_is_work_type` alone.
+/// `SPIRA_WORK_CLOSE_TYPES` is an ad hoc override with no `conf.d` entry (as it has always
+/// been for the bash function), so this reads it straight off the environment, same as
+/// every other such name this crate's seam used to snapshot.
+fn is_work_type_cmd(ty: &str) -> i32 {
+    let close_types = std::env::var("SPIRA_WORK_CLOSE_TYPES").unwrap_or_else(|_| "task bug feature".to_string());
+    if land_verify::is_work_type(ty, &close_types) {
+        0
+    } else {
+        1
+    }
+}
+
+/// `landing-pass cited-commit <id> <repo> <base>`: lib.sh `bead_cited_commit_on_base`
+/// alone. Prints "<sha> <rule>" on a found exit; exit 1 not found (including a bead or
+/// `$SPIRA_HOME` that could not be read at all — there is nothing to cite without notes).
+fn cited_commit_cmd(id: &str, repo: &str, base: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 1 };
+    let Ok(beads) = resolve_beads(&home) else { return 1 };
+    let Some(row) = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next()) else { return 1 };
+    match land_verify::bead_cited_commit_on_base(&RealGit, Path::new(repo), base, id, &row.notes) {
+        Some((sha, rule)) => {
+            print!("{sha} {rule}");
+            0
+        }
+        None => 1,
+    }
+}
+
+/// `landing-pass close-on-land <id> [sha]`: lib.sh `bead_close_on_land` alone. Always
+/// exits 0 — every caller (including lib.sh's own shim) already discards this function's
+/// exit code (`|| true`), so there is no exit-code contract to preserve beyond "ran".
+fn close_on_land_cmd(id: &str, sha: &str) -> i32 {
+    let Ok(home) = resolve_home() else { return 0 };
+    let Ok(run) = run_dir() else { return 0 };
+    let Ok(beads) = resolve_beads(&home) else { return 0 };
+    let row = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
+    let out = Reporter::stdout(None);
+    land_verify::close_on_land(&RealGit, &out, &run, &home, &beads.submitted_label, row.as_ref(), id, sha);
+    0
 }
 
 #[cfg(test)]
