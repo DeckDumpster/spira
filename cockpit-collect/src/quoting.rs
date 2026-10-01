@@ -111,14 +111,38 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     era * 146097 + doe - 719468
 }
 
-/// The literal single-quote wrap a handful of keys apply to their OWN value before the
-/// merge's outer `shq()` quotes the fragment line a second time (SP_HOTFIX_LINE,
-/// SP_OVERRIDES_LIST, the `*_NAMES` space-lists, SP_AURON_KEYS). Ported as-is
-/// (law-rust-rewrites-start-from-intent names this an accretion worth keeping rather than
-/// fixing silently: `health.sh` already parses this exact double-quoted shape, and changing
-/// it here without touching that reader would break it).
+/// The one shell-quoting layer `cockpit.env` itself carries: every value is wrapped in
+/// single quotes, with an embedded `'` escaped as `'\''` (close-quote, backslash-quote,
+/// open-quote — the standard POSIX idiom), so the file sources safely with no parser.
+/// Applied exactly once, at merge/write time ([`unquote_shell_single`] is this function's
+/// inverse, used to make that one application idempotent against an already-quoted input).
 pub fn self_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The inverse of [`self_quote`]: if `v` is wrapped in a single-quote pair using that exact
+/// escaping, return the unescaped inner value; otherwise return `v` unchanged.
+///
+/// Fragment files (`cockpit.d/*.env`) are meant to carry each probe's RAW, unquoted value —
+/// but a fragment can legitimately carry an already-quoted one anyway: `run_probe_body`'s
+/// "stale" path copies a fragment's previous value lines forward VERBATIM on a failing
+/// pass (DESIGN.md), so a value written by an older binary (or any future producer that
+/// quotes its own output, by accident or on purpose) survives in that raw form until the
+/// probe succeeds again. Merging that straight through `self_quote` a second time produced
+/// the doubled `''\'''\'''` for an empty value in production (the operator, 2026-09-30,
+/// `cockpit-collect collect` release 51228489c) — found AFTER the first fix (removing the
+/// probe-level pre-quoting) had already landed, because that fix cannot retroactively
+/// unquote a value a stale-carried-forward fragment was still holding from before it took
+/// effect. Unquoting defensively at the one place every fragment value is read —
+/// `parse_fragment` — makes the merge idempotent regardless of what already produced the
+/// fragment's content, which the first fix alone could not guarantee.
+pub fn unquote_shell_single(v: &str) -> String {
+    let bytes = v.as_bytes();
+    if bytes.len() >= 2 && bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\'' {
+        v[1..v.len() - 1].replace("'\\''", "'")
+    } else {
+        v.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +200,29 @@ mod tests {
     fn self_quote_escapes_embedded_quotes() {
         assert_eq!(self_quote("plain"), "'plain'");
         assert_eq!(self_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn unquote_shell_single_is_self_quotes_exact_inverse() {
+        for raw in ["", "plain", "a b", "a'b", "can't stop"] {
+            assert_eq!(unquote_shell_single(&self_quote(raw)), raw);
+        }
+    }
+
+    #[test]
+    fn unquote_shell_single_leaves_an_unquoted_value_alone() {
+        // A probe's own raw, never-quoted output must round-trip unchanged — this is not
+        // a guess that every value is quoted, only a correction when one already is.
+        assert_eq!(unquote_shell_single("plain"), "plain");
+        assert_eq!(unquote_shell_single(""), "");
+        assert_eq!(unquote_shell_single("a b"), "a b");
+    }
+
+    #[test]
+    fn unquote_shell_single_matches_the_production_fixture() {
+        // The exact values found in run/cockpit.d/*.env (the operator, 2026-09-30): an
+        // already-quoted empty string, and a quoted non-empty one.
+        assert_eq!(unquote_shell_single("''"), "");
+        assert_eq!(unquote_shell_single("'a b'"), "a b");
     }
 }

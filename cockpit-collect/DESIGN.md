@@ -113,6 +113,18 @@ these ten keys now go through the exact same single `push`/one-`self_quote`-at-m
 every other key does. No reader depends on the doubled shape — it was never intentional,
 just two independent quoting steps neither knew about the other.
 
+That first fix could not be the whole story: it stops the PROBES from pre-quoting going
+forward, but a fragment the "stale" path had already copied forward from before the fix
+took effect kept its old, already-quoted value verbatim — `run_probe_body`'s stale branch
+carries a fragment's previous value lines forward unchanged on every failing pass, by
+design. Merge then quoted that already-quoted value a second time anyway, reproducing the
+exact same production symptom from a Rust collector release (51228489c, the operator,
+2026-09-30) the first fix had supposedly already closed. The real fix is at the one place
+every fragment value is read, `parse_fragment`: `quoting::unquote_shell_single` undoes a
+value that is already wrapped the way `self_quote` wraps it, so merge is idempotent
+against whatever produced the fragment — a probe from before the fix, a hand-edited
+fragment, anything — not just correct as long as every probe always behaves.
+
 `sanitize_title`'s trailing `.replace("=", "-")` (mirroring the bash's
 `re.sub(...)[:80].replace("=", "-")`) can never fire: the allowlist already maps `=` to a
 space before that call runs. Ported as-is for the same reason.
