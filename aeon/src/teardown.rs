@@ -106,10 +106,12 @@ impl Run<'_> {
                 if o.success() { o.text() } else { "?".into() }
             };
             let requeue_cause = self.s.requeue_cause.clone();
-            let cr = self.sv("capacity_reset_at", &s(&[&logf]));
-            if cr.success() {
+            // capacity_reset_at, in-process now (wave 4.26). `Some(0)` ("hit, but no
+            // resetsAt") still counts as a capacity return — see capacity.rs's own doc.
+            let cr = crate::capacity::reset_at(Path::new(&logf), &self.conf.trace_mark());
+            if let Some(r) = cr {
                 i.capacity = true;
-                reset = cr.text();
+                reset = r.to_string();
             } else if run.join(format!("{id}.slain")).exists() {
                 i.slain = true;
             } else if run.join(format!("{id}.thrash")).exists() {
@@ -168,7 +170,10 @@ impl Run<'_> {
             let thrash_minutes = self.conf.n("SPIRA_THRASH_MINUTES", 20);
             match d.note {
                 NoteKey::Capacity => {
-                    self.sdo("capacity_pause_set", &s(&[&reset, &id]));
+                    let at: i64 = reset.trim().parse().unwrap_or(0);
+                    if let Some(line) = crate::capacity::pause_set(&self.conf.capacity_pause(), &self.conf.ledger(), self.now(), self.conf.capacity_backoff(), at, &id) {
+                        self.log(&line);
+                    }
                     self.release();
                     self.bump_requeue(&cause);
                     self.note("Returned unchanged by aeon.sh: the account's capacity window was spent mid-session, so this bead was never judged. No attempt was charged and nothing about the work is implied. Summoning is paused until the window reopens.");

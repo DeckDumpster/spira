@@ -79,9 +79,31 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     Ok(Cli { home, fayth, mode, prompt_from_stdin: stdin, escape: false, escape_dry_run: false })
 }
 
+/// `aeon capacity <verb> ...` (wave 4.26): no fayth, so this resolves config without the
+/// bash seam round trip at all — `merge_resolved_config` already runs entirely in-process
+/// (`spira_config::resolve::resolve_for_process`); the bash seam exists only to source a
+/// fayth file and lib.sh's own derived values, neither of which this subcommand needs.
+fn run_capacity(args: &[String]) -> i32 {
+    let original: BTreeMap<String, String> = std::env::vars().collect();
+    let exe = std::env::current_exe().ok();
+    let Some(home) = conf::resolve_home(None, &original, exe.as_deref()) else {
+        fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
+    };
+    let mut snap = seam::Snapshot::default();
+    conf::merge_resolved_config(&mut snap, &home, &original);
+    conf::merge_capacity_env(&mut snap, &original);
+    let conf = Conf::new(&snap, &home);
+    let env = Env::new(original.clone(), snap.env.clone());
+    let exec = RealExec { env: &env, timeout: None };
+    aeon::capacity_cli::run(&conf, &exec, util::now_epoch(), args)
+}
+
 fn main() {
     let t0 = util::now_epoch();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("capacity") {
+        std::process::exit(run_capacity(&args[1..]));
+    }
     let mut cli = match parse(&args) {
         Ok(c) => c,
         Err(u) => fatal(&u),
@@ -115,6 +137,7 @@ fn main() {
         Err(e) => fatal(&format!("{}: {e}: {}", cli.fayth, raw.stderr.lines().next().unwrap_or(""))),
     };
     conf::merge_resolved_config(&mut snap, &home, &original);
+    conf::merge_capacity_env(&mut snap, &original);
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);
     let fayth = Fayth::from_vars(&cli.fayth, &snap.vars);
@@ -125,14 +148,16 @@ fn main() {
     let seam = BashSeam { lib: home.join("lib.sh"), fayth_file: fayth_file.clone(), fayth: cli.fayth.clone(), env: &env };
 
     if cli.escape {
-        // world_gate, capacity_paused, fayth_ready and summon_argv carry real side
-        // effects (a capacity probe can clear the pause file; an expired drain is lifted
-        // and logged) that must stay lib.sh's, reached through the same seam summon_fayth
-        // uses — not reimplemented in Rust where they could drift (escape.rs's own doc).
+        // world_gate, fayth_ready and summon_argv carry real side effects (an expired
+        // drain is lifted and logged) that must stay lib.sh's, reached through the same
+        // seam summon_fayth uses — not reimplemented in Rust where they could drift
+        // (escape.rs's own doc, family G). The capacity check is in-process
+        // (`capacity::check_and_probe`, wave 4.26) so the probe fires from exactly one
+        // place no matter which of this binary's own entry points asks.
         let exec = RealExec { env: &env, timeout: None };
         let sink = StdSink;
         let summon_bin = original.get("SPIRA_SUMMON").cloned().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemd-run".to_string());
-        let rc = aeon::escape::run(&seam, &exec, &env, &sink, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
+        let rc = aeon::escape::run(&seam, &exec, &env, &sink, &conf, &summon_bin, &home, &cli.fayth, cli.escape_dry_run, util::now_epoch());
         std::process::exit(rc);
     }
     let bd = BdCli {

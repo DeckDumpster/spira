@@ -69,13 +69,14 @@ pub fn load_context(home: &Path, out: &Reporter) -> Result<(Settings, Vec<RepoRo
 
 /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
 /// `ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_publish_forge` — the CONTEXT seam's
-/// per-repo loop used to shell into, once per function per repository). Built from THIS
-/// process's own environment, same inputs `aeon::conf::Conf` and
-/// `cockpit_collect::io::repo_registry` already read.
+/// per-repo loop used to shell into, once per function per repository). `Registry::from_env`
+/// (sp-k6lku, following the structural fix for sp-z3eyk) is the one production door onto
+/// a registry: building one from a bare `std::env::vars()` directly, with no resolution,
+/// found NO map and NO landref in production (conf.sh exports none of `SPIRA_REPO_MAP`/
+/// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them
+/// in-process instead.
 fn repo_registry(home: &Path) -> spira_config::repos::Registry {
-    let env_map: BTreeMap<String, String> = std::env::vars().collect();
-    let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
-    spira_config::repos::Registry::new(map_text.as_deref(), &env_map, home)
+    spira_config::repos::Registry::from_env(std::env::vars().collect(), home)
 }
 
 /// The base-ref columns (family W) for one already-resolved `(name, path, mode)` — ported
@@ -108,28 +109,27 @@ fn resolve_base_refs(
 
 pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow>), String> {
     let mut kv: BTreeMap<String, String> = BTreeMap::new();
-    let mut repos = Vec::new();
-    let reg = repo_registry(home);
     for rec in answer.split('\0') {
         let Some((k, v)) = rec.split_once('=') else { continue };
-        if k == "repo" {
-            let f: Vec<&str> = v.split(FIELD).collect();
-            if f.len() != 3 || f[0].is_empty() {
-                continue;
-            }
-            let name = f[0].to_string();
-            let path = PathBuf::from(f[1]);
-            let mode = LandMode::parse(f[2]);
-            let (landref, base_fq, base_remote, base_branch, forge_ref) = resolve_base_refs(&reg, &name, &path, &mode);
-            repos.push(RepoRow { name, path, mode, landref, base_fq, base_remote, base_branch, forge_ref });
-        } else {
-            kv.insert(k.into(), v.into());
-        }
+        kv.insert(k.into(), v.into());
     }
     let run = kv.get("run").cloned().unwrap_or_default();
     if run.is_empty() {
         return Err("the context seam named no SPIRA_RUN".into());
     }
+    // spira_home_repo/spira_repos/repo_root/repo_land (family U) in-process (sp-k6lku,
+    // "wave 4.13"): the seam above no longer emits "repo=" records or "home_repo" at all.
+    let reg = repo_registry(home);
+    let repos: Vec<RepoRow> = reg
+        .all()
+        .into_iter()
+        .map(|name| {
+            let path = reg.root(&name).map(PathBuf::from).unwrap_or_default();
+            let mode = LandMode::parse(&reg.land(&name));
+            let (landref, base_fq, base_remote, base_branch, forge_ref) = resolve_base_refs(&reg, &name, &path, &mode);
+            RepoRow { name, path, mode, landref, base_fq, base_remote, base_branch, forge_ref }
+        })
+        .collect();
     let g = |k: &str| kv.get(k).cloned().unwrap_or_default();
     let num = |k: &str, d: i64| kv.get(k).and_then(|v| v.trim().parse::<i64>().ok()).unwrap_or(d);
     let path_opt = |k: &str| kv.get(k).filter(|v| !v.is_empty()).map(PathBuf::from);
@@ -140,7 +140,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         db: g("db"),
         bd: kv.get("bd").filter(|v| !v.is_empty()).cloned().unwrap_or_else(|| "bd".into()),
         bd_timeout: num("bd_timeout", 180).max(1) as u64,
-        home_repo: g("home_repo"),
+        home_repo: reg.home_repo().to_string(),
         id_prefix: g("id_prefix"),
         land_maxsec: num("land_maxsec", 3600),
         gate_reserve: num("gate_reserve", 1200),

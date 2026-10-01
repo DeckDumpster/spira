@@ -1775,186 +1775,51 @@ SPIRA_CAPACITY_PAUSE="${SPIRA_CAPACITY_PAUSE:-$SPIRA_RUN/capacity-pause}"
 # exactly why it must not be a long sleep taken on faith. 15 minutes re-asks cheaply.
 SPIRA_CAPACITY_BACKOFF="${SPIRA_CAPACITY_BACKOFF:-900}"
 
-# capacity_reset_at <session-log> -> prints the epoch the window reopens; rc 0 if the
-# session was ended by the account running out of capacity, rc 1 for anything else.
-#
-# rc 1 covers "the log does not exist", "the log is unparseable" and "the session failed for
-# its own reasons" ALIKE, and that is deliberate: the false direction of this check must be
-# the one that preserves today's behaviour. Reading a genuine failure as an outage would stop
-# a bead ever being poisoned, which is the one property CHECK 4 exists to hold.
-capacity_reset_at() {
-    local logf="${1:-}"
-    [ -n "$logf" ] && [ -s "$logf" ] || return 1
-    # THE LAST ATTEMPT ONLY. The log carries every attempt this bead has had, and a refusal
-    # is sticky evidence: attempt 1 dying to a spent window would otherwise make attempt 3
-    # look refused too, so a bead that genuinely failed would be handed its attempt back and
-    # the harness would pause summoning against a `resetsAt` that has already passed. No cap
-    # — this runs once at teardown, and the two records that decide the verdict sit at
-    # opposite ends of a session.
-    # THE PROGRAM ARRIVES ON FD 3, NOT ON STDIN, because stdin is the trace. `python3 -
-    # <<PY` looks right and silently reads the HEREDOC as the data too: the redirect wins,
-    # the pipe is discarded unread, and the detector then says "not a refusal" about every
-    # log ever handed to it — with a BrokenPipeError from the writer as the only tell.
-    attempt_trace "$logf" | python3 /dev/fd/3 3<<'PY'
-import json, sys
+# --------------------------------------------------------------------------------------
+# WAVE 4.26 ("capacity pause (K) -> aeon"): every function below is now a one-line shim
+# onto `aeon capacity <verb>` (aeon/src/capacity.rs). aeon is the probe's one owner —
+# `capacity_probe_maybe`/`capacity_probe` are retired outright, not shimmed: nothing but
+# `capacity_paused` ever called them, and that logic now lives entirely in the binary
+# (wave4-decomposition.md (c)3: "keep exactly one owner for the probe"). The pause file
+# stays the contract every language reads: `$SPIRA_CAPACITY_PAUSE`, `<epoch> <iso> <why>`,
+# unchanged. Streams: the verb's plain answer is on stdout, any `log`-style chatter is on
+# stderr — `capacity_paused`'s own `SPIRA_CAPACITY_LEFT="$(aeon capacity paused)"` below
+# captures only the number, never the chatter.
+# --------------------------------------------------------------------------------------
 
-# The session limit shows up twice in one trace and either alone is enough. The
-# rate_limit_event is preferred because it carries resetsAt as an epoch; the terminal
-# `result` record is the fallback for a refusal that arrives without one.
-LIMIT_TEXT = ("hit your session limit", "usage limit", "rate limit")
-reset, hit = 0, False
-for line in sys.stdin:
-    line = line.strip()
-    if not line.startswith("{"):
-        continue
-    try:
-        d = json.loads(line)
-    except ValueError:
-        continue          # a partial last line is normal on a killed session
-    if not isinstance(d, dict):
-        continue
-    if d.get("type") == "rate_limit_event":
-        info = d.get("rate_limit_info") or {}
-        # `status`, never `overageStatus` — see the header. A value we have never seen
-        # is not treated as a refusal: an unknown string must not be able to halt the
-        # harness, and a real refusal also lands on the `result` record below.
-        if info.get("status") == "rejected":
-            hit = True
-            try:
-                reset = max(reset, int(info.get("resetsAt") or 0))
-            except (TypeError, ValueError):
-                pass
-    elif d.get("type") == "result" and d.get("is_error"):
-        # `subtype` is "success" on this record even though is_error is true, so subtype
-        # cannot be the test. The text is what distinguishes an account refusal from a
-        # session that failed at its own work.
-        text = str(d.get("result") or "").lower()
-        if any(t in text for t in LIMIT_TEXT):
-            hit = True
-if not hit:
-    raise SystemExit(1)
-print(reset)
-PY
+# capacity_reset_at <session-log> -> prints the epoch the window reopens; rc 0 if the
+# session was ended by the account running out of capacity, rc 1 for anything else (the
+# log does not exist, is unparseable, or the session failed for its own reasons — reading
+# a genuine failure as an outage would stop a bead ever being poisoned).
+capacity_reset_at() {
+    aeon capacity reset-at "${1:-}"
 }
 
-# capacity_pause_set <epoch> <reason> — record that the account is out until <epoch>.
-#
-# ANNOUNCED HERE AND ONLY HERE. The bead asked for it to be said "once in the ledger rather
-# than every pass"; the write is the once. An existing pause is only ever EXTENDED, never
-# shortened, so a second aeon dying into the same outage cannot pull the reopening forward
-# to its own — older — reading of resetsAt.
+# capacity_pause_set <epoch> <reason> — record that the account is out until <epoch>. An
+# existing pause is only ever EXTENDED, never shortened.
 capacity_pause_set() {
-    local at="${1:-0}" why="${2:-unknown}" now cur
-    now="$(date +%s)"
-    [ "${at:-0}" -gt "$now" ] 2>/dev/null || at=$(( now + SPIRA_CAPACITY_BACKOFF ))
-    cur="$(capacity_pause_until)"
-    [ "${cur:-0}" -ge "$at" ] 2>/dev/null && return 0
-    mkdir -p "$(dirname "$SPIRA_CAPACITY_PAUSE")" 2>/dev/null
-    printf '%s %s %s\n' "$at" "$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$why" \
-        > "$SPIRA_CAPACITY_PAUSE"
-    log "CAPACITY: the account is out until $(date -u -d "@$at" +%H:%M 2>/dev/null)Z ($(( at - now ))s) — summoning is paused, $why returned unchanged"
-    printf '%s CAPACITY paused until %s %s\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        "$(date -u -d "@$at" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" "$why" >> "$SPIRA_RUN/aeon-ledger.log"
+    aeon capacity pause-set "${1:-0}" "${2:-unknown}"
 }
 
 capacity_pause_until() {  # -> the epoch a pause runs to, or 0 if none is recorded
-    local at
-    [ -f "$SPIRA_CAPACITY_PAUSE" ] || { printf '0'; return; }
-    at="$(awk 'NR==1{print $1}' "$SPIRA_CAPACITY_PAUSE" 2>/dev/null)"
-    case "${at:-}" in ''|*[!0-9]*) printf '0' ;; *) printf '%s' "$at" ;; esac
+    aeon capacity pause-until
 }
 
 # capacity_paused -> rc 0 while the window is still shut, and sets $SPIRA_CAPACITY_LEFT to
-# the seconds remaining.
-#
-# THE ANSWER IS A GLOBAL, NOT STDOUT, because this function also announces the reopening —
-# and a caller reading it as `left="$(capacity_paused)"` would capture that announcement into
-# a variable it then discards, so the one line saying the harness is moving again would be
-# swallowed by the check that resumed it (law-absence-needs-a-positive-control, in the
-# direction nobody looks: the all-clear that never printed).
-#
-# A pause that has run out is REMOVED here rather than merely ignored, so the file itself is
-# the answer to "is the harness paused" for anything reading it without this library.
-#
-# PROBE WHEN THE HORIZON IS FAR OUT. A single refusal can write a pause that runs for
-# days; the account may re-open hours earlier than the refusal message claimed. When the
-# remaining time exceeds SPIRA_CAPACITY_PROBE_WINDOW, capacity_probe_maybe is called:
-# a probe that receives a response lifts the pause early, a refused probe keeps it.
-# This is the only place that lifts a pause via a probe, and it only runs here, where
-# every summon check passes through — so the probe fires exactly when the queue is
-# blocked and no more often than SPIRA_CAPACITY_PROBE_INTERVAL allows.
+# the seconds remaining ("?" when the pause file exists but could not be read or parsed —
+# fail closed, never treated as open). Probes when the horizon is far out
+# (SPIRA_CAPACITY_PROBE_WINDOW) and lifts the pause early on a served probe, same as
+# before — that whole decision is `aeon::capacity::paused` now.
 SPIRA_CAPACITY_LEFT=0
 capacity_paused() {
-    local at now
-    at="$(capacity_pause_until)"; now="$(date +%s)"
-    if [ "$at" -gt "$now" ] 2>/dev/null; then
-        SPIRA_CAPACITY_LEFT=$(( at - now ))
-        if [ "$SPIRA_CAPACITY_LEFT" -gt "${SPIRA_CAPACITY_PROBE_WINDOW:-18000}" ] 2>/dev/null \
-           && capacity_probe_maybe; then
-            rm -f "$SPIRA_CAPACITY_PAUSE"
-            log "CAPACITY: probe served — pause lifted early (horizon was ${SPIRA_CAPACITY_LEFT}s out)"
-            SPIRA_CAPACITY_LEFT=0
-            return 1
-        fi
-        return 0
-    fi
-    SPIRA_CAPACITY_LEFT=0
-    if [ -f "$SPIRA_CAPACITY_PAUSE" ]; then
-        rm -f "$SPIRA_CAPACITY_PAUSE"
-        log "CAPACITY: the window has reopened — summoning resumes"
-    fi
-    return 1
+    SPIRA_CAPACITY_LEFT="$(aeon capacity paused)"
 }
 
 # Path for the probe-last timestamp. Lives beside the other capacity state files.
 SPIRA_CAPACITY_PROBE_LAST="${SPIRA_CAPACITY_PROBE_LAST:-$SPIRA_RUN/capacity-probe-last}"
 
-# capacity_probe_maybe -> rc 0 if the probe ran and the account responded, rc 1 otherwise.
-#
-# Returns 1 without probing when the interval has not elapsed since the last attempt. The
-# timestamp is written BEFORE the probe runs, not after: if the process is killed during a
-# hung probe the next call still respects the interval instead of looping immediately
-# (law-bound-the-rare-path).
-capacity_probe_maybe() {
-    local last now interval
-    interval="${SPIRA_CAPACITY_PROBE_INTERVAL:-3600}"
-    now="$(date +%s)"
-    last="$(awk 'NR==1{print $1}' "$SPIRA_CAPACITY_PROBE_LAST" 2>/dev/null)"
-    case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
-    [ "$(( now - last ))" -lt "$interval" ] 2>/dev/null && return 1
-    mkdir -p "$(dirname "$SPIRA_CAPACITY_PROBE_LAST")" 2>/dev/null
-    printf '%s %s\n' "$now" "$(date -u -d "@$now" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" \
-        > "$SPIRA_CAPACITY_PROBE_LAST"
-    log "CAPACITY: probing the account (pause horizon ${SPIRA_CAPACITY_LEFT}s, interval ${interval}s)"
-    if capacity_probe; then
-        log "CAPACITY: probe served — account is open"
-        return 0
-    else
-        log "CAPACITY: probe refused — pause continues"
-        return 1
-    fi
-}
-
-# capacity_probe -> rc 0 if the account serves a minimal request, rc 1 otherwise.
-#
-# Uses SPIRA_AGENT (the configured agent CLI, default: claude) so tests drive it through
-# the same seam that aeon.sh uses for its own injections. Uses SPIRA_CAPACITY_PROBE_MODEL
-# so an operator whose pool runs a different model can match the probe to it; unset, it
-# DEFAULTS TO THE BUILDER'S OWN RESOLVED MODEL — a probe the builder's model cannot answer
-# is evidence the account is genuinely out for builders, so the two must not drift apart.
-# Timeouts are treated as refusals — an API that does not answer in
-# SPIRA_CAPACITY_PROBE_TIMEOUT seconds is not evidence the account is open, and the
-# conservative direction is to keep the pause.
-capacity_probe() {
-    printf 'ok' | timeout "${SPIRA_CAPACITY_PROBE_TIMEOUT:-30}" \
-        "${SPIRA_AGENT:-claude}" -p --model "${SPIRA_CAPACITY_PROBE_MODEL:-$(persona_model builder)}" \
-        >/dev/null 2>&1
-}
-
 capacity_pause_why() {   # -> what was being worked when the account ran out
-    [ -f "$SPIRA_CAPACITY_PAUSE" ] || return 1
-    awk 'NR==1{$1="";$2="";sub(/^  */,"");print}' "$SPIRA_CAPACITY_PAUSE" 2>/dev/null
+    aeon capacity pause-why
 }
 
 # --------------------------------------------------------------------------------------
@@ -1981,40 +1846,22 @@ capacity_pause_why() {   # -> what was being worked when the account ran out
 SPIRA_CAPACITY_WITHDRAWN="${SPIRA_CAPACITY_WITHDRAWN:-$SPIRA_RUN/capacity-withdrawn}"
 
 # capacity_log_fingerprint <log> -> a string that moves when the log's content does; rc 1
-# if there is no readable content to fingerprint.
-#
-# Content and not `stat`: size and mtime make an unchanged log look new whenever anything
-# copies, restores or re-syncs the runtime directory, and every one of those false readings
-# spends an attempt that was never charged.
+# if there is no readable content to fingerprint. sha2 in-process now (aeon::capacity),
+# replacing the sha256sum/cksum fallback — both the write and the read are this one
+# binary's now, so only internal consistency matters, never the algorithm's name.
 capacity_log_fingerprint() {
-    local f="${1:-}" h
-    [ -n "$f" ] && [ -s "$f" ] || return 1
-    if command -v sha256sum >/dev/null 2>&1; then
-        h="$(sha256sum < "$f" 2>/dev/null | awk '{print $1}')"
-    else
-        # cksum is POSIX and always there. It is weaker, and it does not need to be strong:
-        # this distinguishes one session trace from the next, not from an adversary's.
-        h="$(cksum < "$f" 2>/dev/null | tr -s ' ' -)"
-    fi
-    [ -n "$h" ] || return 1
-    printf '%s' "$h"
+    aeon capacity log-fingerprint "${1:-}"
 }
 
 capacity_withdrawn_fp() {   # capacity_withdrawn_fp <id> -> the fingerprint already paid back, or nothing
-    local id="${1:-}"
-    [ -n "$id" ] || return 1
-    awk 'NR==1{print $1}' "$SPIRA_CAPACITY_WITHDRAWN/$id" 2>/dev/null
+    aeon capacity withdrawn-fp "${1:-}"
 }
 
 # capacity_withdrawn_mark <id> <fingerprint> <attempt> — record that this exact log has been
 # paid back. Written whole rather than appended: one line per bead is the entire question,
 # and a file that only ever grows is one more thing to prune.
 capacity_withdrawn_mark() {
-    local id="${1:-}" fp="${2:-}" att="${3:-0}"
-    [ -n "$id" ] && [ -n "$fp" ] || return 1
-    mkdir -p "$SPIRA_CAPACITY_WITHDRAWN" 2>/dev/null || return 1
-    printf '%s %s %s\n' "$fp" "$att" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        > "$SPIRA_CAPACITY_WITHDRAWN/$id"
+    aeon capacity withdrawn-mark "${1:-}" "${2:-}" "${3:-0}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -2537,60 +2384,23 @@ aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, i
 # so every reader that asks "what is happening" must read the LAST segment and not the whole
 # file: a `result` record from attempt 1 taken for attempt 3's would pause the harness for a
 # capacity outage that ended hours ago, or report a finished session's last tool call as a
-# live one's. attempt_trace is that boundary, and it is the only place the mark is parsed.
+# live one's. `attempt_trace` was that boundary; it is `aeon::ledger::attempt_trace` now
+# (Rust, wave 4.26 — its last bash caller, `capacity_reset_at`, is a shim onto the binary),
+# and it is the only place the mark is parsed.
 #
 # The mark is a constant rather than a configuration key because it is a FORMAT, not a path:
 # an operator who changed it would make every log already on disk unreadable by the code that
-# writes the next line of it. It is defined once here and written by aeon.sh through
-# spira_trace_mark, so the writer and the readers cannot drift.
+# writes the next line of it. It is defined once here (still a plain shell variable — the
+# bash seam reads it off the sourced lib.sh for every Rust caller that has not yet moved to
+# `spira-config`) and written by aeon.sh through spira_trace_mark, so the writer and the
+# readers cannot drift.
 #
 # It is not JSON and does not start with `{`, which is what makes it inert: every consumer of
 # this trace already skips any line that is not a JSON object, so the mark passes through
-# capacity_reset_at and tokens.sh without special handling here, and through aeon::trace
+# `aeon::capacity::reset_at` without special handling here, and through aeon::trace
 # (trace_last, trace_stats, trace_tail, wiki_write_paths — wave 4.34) the same way.
 # --------------------------------------------------------------------------------------
 SPIRA_TRACE_MARK='=== spira attempt'
-
-# attempt_trace <logfile> [cap] -> the LAST attempt's segment, at most <cap> trailing bytes
-# (0 or absent means all of it). A log with no mark in it is emitted whole, because that is
-# what every log written before this change looks like and one attempt is all it ever held.
-attempt_trace() {
-    local f="${1:-}" cap="${2:-0}"
-    [ -r "$f" ] || return 0
-    python3 - "$f" "$cap" "$SPIRA_TRACE_MARK" <<'PY'
-import os, sys
-
-path, cap, mark = sys.argv[1], int(sys.argv[2]), sys.argv[3].encode()
-try:
-    fh = open(path, "rb")
-except OSError:
-    raise SystemExit(0)
-with fh:
-    size = os.fstat(fh.fileno()).st_size
-    # BACKWARDS IN CHUNKS, never a read of the whole file. This runs on every heartbeat of
-    # every live aeon, and the file it reads is the one thing here that grows without bound;
-    # a forward scan would make the cost of watching a session rise with how long the bead
-    # has been worked, which is the wrong way round.
-    CH, keep = 1 << 16, len(mark) + 1
-    start, pos, carry = 0, size, b""
-    while pos > 0:
-        step = min(CH, pos)
-        pos -= step
-        fh.seek(pos)
-        buf = fh.read(step) + carry
-        i = buf.rfind(b"\n" + mark)
-        if i >= 0:
-            start = pos + i + 1
-            break
-        if pos == 0 and buf.startswith(mark):
-            start = 0
-            break
-        # A mark straddling a chunk boundary belongs to neither half alone.
-        carry = buf[:keep]
-    fh.seek(max(start, size - cap) if cap > 0 else start)
-    sys.stdout.buffer.write(fh.read())
-PY
-}
 
 
 # bead_context retired (sp-31hjr, family C): ported natively into landing-pass/src/ask.rs
@@ -4434,8 +4244,17 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
 # queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,
 # the reconciler's mergeability check, cockpit-collect's "next up" pane) draws from. Kept
 # as a shim: queue-certified-list.sh and cockpit-collect still call this by name.
+#
+# EXECS `queue-helpers`, NOT `queue` — a SEPARATE binary, on purpose (same crate, a second
+# [[bin]]). The first cut named this subcommand on `queue` itself; that broke production
+# the moment it ran under any fixture that stubs `queue` by NAME on PATH to isolate
+# dispatch behaviour (sp-gypjk's convention — test-certify.sh's `queue-bin` stub is one).
+# The stub logs argv and returns 0; it has no idea it was just asked to do a real git
+# push, and the caller saw a quiet success with nothing moved. A plain git/mail primitive
+# must never share a name with the big multi-purpose operator CLI that tests routinely
+# replace wholesale.
 queue_certified_list() {
-    queue certified-list "$1"
+    queue-helpers certified-list "$1"
 }
 
 # queue_cancel_branch_runs and queue_is_suite_transition are RETIRED (sp-hwjsq,
@@ -4467,10 +4286,11 @@ queue_certified_list() {
 # Rust now (sp-hwjsq, "wave 4.32"), queue/src/ops/helpers.rs `sort_rows` — same ranking,
 # same fail-open contract — called in process from queue's own Lib::sort_rows. Kept as a
 # shim: test-queue-sort-large.sh and cockpit-collect still call this by name. PRIO_JSON is
-# written to a temp file and unset BEFORE this shim execs the `queue` binary, for exactly
-# the reason above: the payload must never cross a process boundary as an environment
-# variable, and an exec is still a process boundary even when the function calling it is
-# this thin.
+# written to a temp file and unset BEFORE this shim execs the `queue-helpers` binary (a
+# SEPARATE binary from `queue` itself — see queue_certified_list's note above; a stub of
+# `queue` must never also swallow this), for exactly the reason above: the payload must
+# never cross a process boundary as an environment variable, and an exec is still a
+# process boundary even when the function calling it is this thin.
 queue_sort_rows() {
     local repo="$1" base_sha="$2"
     local _pj="${PRIO_JSON:-[]}" _pjf _rc
@@ -4478,7 +4298,7 @@ queue_sort_rows() {
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-    queue sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
+    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
     _rc=$?
     rm -f "$_pjf"
     return "$_rc"
@@ -4903,7 +4723,15 @@ for r in rows:
 # test-git-push-app.sh and landing-pass's own separate seam (a different crate, not
 # touched here) still call this by name. Neither this function nor the Rust it calls
 # redirects stdout or stderr — that stays the caller's choice, exactly as before.
+#
+# SCAR (sp-hwjsq, round 160): the first cut execed `queue git-push`, the operator CLI
+# itself. test-certify.sh stubs `queue` by NAME on PATH to isolate "queue step" dispatch
+# (sp-gypjk's convention), so production's push-mode landing silently hit that stub —
+# exit 0, nothing pushed, "not ok 30 - push-mode remote actually moved" — while every
+# suite this bead ran was one that never stubs `queue`, so nothing caught it before it
+# landed. Execs `queue-helpers` now, a SEPARATE binary (see queue_certified_list's note
+# above) immune to a `queue` stub, exactly because production pushes through this path.
 spira_git_push() {
     local repo="$1"; shift
-    queue git-push "$repo" "$@"
+    queue-helpers git-push "$repo" "$@"
 }

@@ -16,6 +16,13 @@ release = { path = "../release" }
 name = "queue"
 path = "src/main.rs"
 
+# A separate binary, deliberately (queue/src/bin/queue-helpers.rs): a test fixture that
+# stubs `queue` by name on PATH to isolate dispatch behaviour must never also swallow
+# these plain git/mail leaf operations.
+[[bin]]
+name = "queue-helpers"
+path = "src/bin/queue-helpers.rs"
+
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
