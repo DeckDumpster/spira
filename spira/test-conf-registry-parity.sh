@@ -18,13 +18,22 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 echo
 echo "the generated allowlist is exactly the registry's directory listing:"
 # =============================================================================
+# A WRITABLE COPY, not the real $HERE in place: conf-gen.sh's output lands beside conf.sh,
+# and the tree under test here may be mounted read-only for whoever runs this suite (the
+# gate's container among them) — reading the registry never needs write access, only
+# regenerating it does, so only the regeneration below moves to a scratch copy.
 registry_keys="$(ls "$HERE/conf.d" | LC_ALL=C sort)"
 registry_count="$(printf '%s\n' "$registry_keys" | sed '/^$/d' | wc -l)"
 
-bash "$HERE/conf-gen.sh" >/dev/null 2>"$TMP/gen.err"
-wantrc "conf-gen.sh exits 0 against the real registry" 0 "$?"
+SCRATCH_SPIRA="$TMP/spira"; mkdir -p "$SCRATCH_SPIRA"
+cp -r "$HERE/conf.d" "$SCRATCH_SPIRA/conf.d"
+cp "$HERE/conf-gen.sh" "$SCRATCH_SPIRA/conf-gen.sh"
+cp "$HERE/conf.sh" "$SCRATCH_SPIRA/conf.sh"
 
-generated_keys="$(grep -v '^#' "$HERE/conf.d.keys.generated.sh" | tr -s ' ' '\n' \
+bash "$SCRATCH_SPIRA/conf-gen.sh" >/dev/null 2>"$TMP/gen.err"
+wantrc "conf-gen.sh exits 0 against a writable copy of the real registry" 0 "$?"
+
+generated_keys="$(grep -v '^#' "$SCRATCH_SPIRA/conf.d.keys.generated.sh" | tr -s ' ' '\n' \
     | sed -n '/^[A-Z_][A-Z0-9_]*$/p' | LC_ALL=C sort)"
 generated_count="$(printf '%s\n' "$generated_keys" | sed '/^$/d' | wc -l)"
 
@@ -34,15 +43,15 @@ is "registry listing is byte-identical to the generated allowlist (sorted)" \
 
 # =============================================================================
 echo
-echo "conf.sh's own SPIRA_CONF_KEYS, sourced fresh, matches the registry too:"
+echo "conf.sh's own SPIRA_CONF_KEYS, sourced fresh (self-heal from nothing), matches too:"
 # =============================================================================
-rm -f "$HERE/conf.d.keys.generated.sh" "$HERE/conf.d.defaults.generated.sh"
+rm -f "$SCRATCH_SPIRA/conf.d.keys.generated.sh" "$SCRATCH_SPIRA/conf.d.defaults.generated.sh"
 # An isolated HOME with no real spira.toml anywhere in its search path: conf.sh fails
 # closed (by design, nothing to do with this bead) when a config file exists but
 # spira-config is not resolvable, and this box's real $HOME has one.
 ISOHOME="$TMP/isohome"; mkdir -p "$ISOHOME"
 sourced_keys="$(env -i HOME="$ISOHOME" PATH="$PATH" \
-    bash -c "cd '$HERE/..' && . './spira/conf.sh' >/dev/null 2>&1; tr -s ' ' '\n' <<<\"\$SPIRA_CONF_KEYS\"" \
+    bash -c "cd '$SCRATCH_SPIRA/..' && . './spira/conf.sh' >/dev/null 2>&1; tr -s ' ' '\n' <<<\"\$SPIRA_CONF_KEYS\"" \
     | sed '/^$/d' | LC_ALL=C sort)"
 is "conf.sh's resolved SPIRA_CONF_KEYS matches the registry" "$registry_keys" "$sourced_keys"
 
