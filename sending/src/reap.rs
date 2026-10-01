@@ -513,6 +513,11 @@ pub fn reap_landed_branch(
 mod tests {
     use super::*;
     use std::process::Command as Cmd;
+    use testkit::TempDir;
+
+    fn tempdir() -> TempDir {
+        TempDir::new("sending-reap-test")
+    }
 
     struct FakeBd {
         reachable: bool,
@@ -725,28 +730,4 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-w3", &open()), None);
     }
 
-    // ---- a tiny, self-cleaning tempdir helper ----------------------------------------------
-
-    struct TempDir(PathBuf);
-    impl std::ops::Deref for TempDir {
-        type Target = Path;
-        fn deref(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl AsRef<Path> for TempDir {
-        fn as_ref(&self) -> &Path {
-            &self.0
-        }
-    }
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
-    fn tempdir() -> TempDir {
-        let p = std::env::temp_dir().join(format!("sending-reap-test-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
-        std::fs::create_dir_all(&p).unwrap();
-        TempDir(p)
-    }
 }
