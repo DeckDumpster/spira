@@ -5,6 +5,7 @@ pub mod ask;
 pub mod budget;
 pub mod cli;
 pub mod halt;
+pub mod landstate;
 pub mod lifecycle;
 pub mod model;
 pub mod order;

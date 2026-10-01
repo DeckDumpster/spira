@@ -34,6 +34,11 @@ struct World {
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
     /// test that never mentions stacking at all).
     stack_answer: Option<String>,
+    /// Makes the `env SPIRA_RUN=… landing-pass mark …` exec call this test's fixture
+    /// synthesizes fail, so a test can prove the caller logs it rather than discarding it
+    /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
+    /// every other test's "every exec succeeds" assumption unchanged.
+    fail_landing_pass_mark: bool,
 }
 
 type W = Arc<Mutex<World>>;
@@ -161,6 +166,13 @@ impl Exec for FakeExec {
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
+        }
+        if prog == "env"
+            && args.iter().any(|a| a == "landing-pass")
+            && args.iter().any(|a| a == "mark")
+            && self.0.lock().unwrap().fail_landing_pass_mark
+        {
+            return Out::fail(1, "landing-pass mark: stub refusal");
         }
         Out::ok("")
     }
@@ -744,6 +756,70 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}\n{}", w.seam_calls, o.log);
     assert!(!o.log.contains("REOPENED"), "{}", o.log);
+}
+
+#[test]
+fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_pass() {
+    // sp-cnnt6: closed behind base, does not rebase, but the session's own notes cite a
+    // commit already on base — landing-pass (not a lib.sh seam) retires it as LANDED.
+    let f = fx("cited");
+    seed(&f, "sp-m");
+    let mut a = BTreeMap::new();
+    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
+    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
+    let repo = f.repo.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
+        std::fs::write(repo.join("f"), "theirs\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else"]);
+        w.lock().unwrap().status.insert("sp-m".into(), "closed".into());
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "env"
+            && args.iter().any(|x| x == "landing-pass")
+            && args.iter().any(|x| x == "mark")
+            && args.iter().any(|x| x == "deadbeef")
+            && args.iter().any(|x| x.starts_with("SPIRA_RUN="))),
+        "{:?}",
+        w.exec_calls
+    );
+    assert!(o.log.contains("notes cite deadbeef on"), "{}", o.log);
+    assert!(!o.log.contains("FAILED"), "a successful mark logs nothing alarming: {}", o.log);
+}
+
+#[test]
+fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
+    // The same scenario, except the exec of `landing-pass mark` itself refuses — proving
+    // the caller no longer discards that result (it used to be `let _ = ...`).
+    let f = fx("cited-mark-fails");
+    seed(&f, "sp-m");
+    let mut a = BTreeMap::new();
+    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
+    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
+    let repo = f.repo.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
+        std::fs::write(repo.join("f"), "theirs\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else"]);
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-m".into(), "closed".into());
+        w.fail_landing_pass_mark = true;
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "env" && args.iter().any(|x| x == "landing-pass") && args.iter().any(|x| x == "mark")),
+        "{:?}",
+        w.exec_calls
+    );
+    assert!(o.log.contains("landing-pass mark LANDED deadbeef cited-on-main FAILED"), "{}", o.log);
+    assert!(o.log.contains("landing-pass mark: stub refusal"), "{}", o.log);
 }
 
 #[test]

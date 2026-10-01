@@ -82,9 +82,12 @@ pub fn check_landref(host: &HostValues) -> Result<(), String> {
     Ok(())
 }
 
-/// `spira_live_aeons` (lib.sh), reimplemented directly against [`Systemctl`].
+/// `spira_live_aeons` (lib.sh), reimplemented directly against [`Systemctl`]. Active units
+/// only — `list_matching`'s file-known-or-ever-loaded union would also catch a dead or
+/// never-started aeon unit left over from a prior run, which is not one this install would
+/// disrupt.
 pub fn live_aeons(systemctl: &dyn Systemctl, instance: &str) -> Vec<String> {
-    systemctl.list_matching(&format!("spira-aeon-*-{instance}.service"))
+    systemctl.list_active_matching(&format!("spira-aeon-*-{instance}.service"))
 }
 
 /// Run all three, in the same order `units-install` does, `Err` naming every refusal line.

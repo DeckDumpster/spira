@@ -43,16 +43,26 @@ pub struct LibSeam {
     pub bd: String,
     /// The queue binary: `queue`, by name on the launcher's PATH (sp-gypjk).
     pub queue_bin: PathBuf,
+    /// The landing-pass binary: `landing-pass`, by name on the launcher's PATH, same
+    /// reasoning as `queue_bin` (sp-cnnt6, "wave 4.16").
+    pub landing_pass_bin: PathBuf,
+    /// `$SPIRA_RUN`, passed explicitly to `landing-pass mark` rather than left to this
+    /// process's own ambient environment — the EXEC-BOUNDARY trap this wave keeps naming:
+    /// a binary that needs config must get it explicitly, not by hoping a caller already
+    /// exported it.
+    pub run: PathBuf,
     db_ok: OnceCell<bool>,
 }
 
 impl LibSeam {
-    pub fn new(home: PathBuf, db: Option<PathBuf>, bd: String) -> LibSeam {
+    pub fn new(home: PathBuf, db: Option<PathBuf>, bd: String, run: PathBuf) -> LibSeam {
         LibSeam {
             home,
             db,
             bd,
             queue_bin: PathBuf::from("queue"),
+            landing_pass_bin: PathBuf::from("landing-pass"),
+            run,
             db_ok: OnceCell::new(),
         }
     }
@@ -193,8 +203,11 @@ impl Seam for LibSeam {
         let _ = self.lib("bump_requeue", &[id, reason], None);
     }
 
+    /// landing-pass owns the landstate ledger's one writer now (sp-cnnt6, "wave 4.16"):
+    /// `landing-pass mark`, with `$SPIRA_RUN` passed explicitly — never the lib.sh seam,
+    /// which this family dropped.
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        let _ = self.lib("land_mark", &[id, state, tip, reason], None);
+        let _ = Command::new(&self.landing_pass_bin).env("SPIRA_RUN", &self.run).args(["mark", id, state, tip, reason]).status();
     }
 
     fn note(&self, id: &str, text: &str) {
@@ -236,7 +249,7 @@ mod probe_tests {
                 "#!/bin/sh\ncase \"$3\" in\n list) printf '%s' '{list_json}' ;;\n show) [ \"$4\" = sp-held ] && printf '[{{\"id\":\"sp-held\",\"status\":\"in_progress\"}}]' && exit 0; exit 1 ;;\nesac\n"
             ),
         );
-        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into());
+        let seam = LibSeam::new(d.to_path_buf(), Some(d.to_path_buf()), bd.to_string_lossy().into(), d.to_path_buf());
         (d, seam)
     }
 

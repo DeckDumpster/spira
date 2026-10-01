@@ -62,7 +62,7 @@ impl Run<'_> {
     fn already_certified(&self) -> Option<String> {
         let tip = self.d.git.git(&self.s.repo, &["rev-parse", &self.s.branch]);
         let tip = if tip.success() { tip.text() } else { String::new() };
-        let ls = self.sv("land_state", &s(&[&self.s.bead])).text();
+        let ls = self.conf.land_state(&self.s.bead);
         let mut it = ls.split_whitespace();
         let (state, ltip) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
         (state == "CERTIFIED" && !tip.is_empty() && ltip == tip).then_some(tip)

@@ -24,7 +24,7 @@
 # startup (test-plan-2026-09-23 §3 row 08, coverage-map DEMOTE-TO-T2).
 #
 # tier: T2
-# covers: mail/src/* spira/conf.sh UC-operator-channel-08
+# covers: mail/src/* spira/conf.sh install/src/bin/install.rs UC-operator-channel-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -232,9 +232,10 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # THE DEFECT. The operator mailbox was created lazily, by the first mail sent to it, so on a
 # never-used install it did not exist and the first tidy (its timer fires the moment it is
 # enabled on a box up longer than OnBootSec) exited 1 — "tidy: operator: mailbox not found"
-# — and left spira-mail-tidy FAILED, which deploy's pre-health check refuses on. install.sh
-# now creates it with `mail ensure operator`; tidy's own refusal of a mailbox that does
-# not exist stays (a misconfigured SPIRA_MAIL must not tidy silently).
+# — and left spira-mail-tidy FAILED, which deploy's pre-health check refuses on. `install`
+# (the Rust phase-4 installer, install.sh's successor since sp-31dm0) now creates it with
+# `mail ensure operator`; tidy's own refusal of a mailbox that does not exist stays (a
+# misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
 out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 [ "$rc" -ne 0 ] && ok "positive control: tidy of a mailbox nothing created still refuses" \
@@ -248,6 +249,6 @@ is "mail ensure operator exits 0" 0 "$rc"
 out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
-want   "install.sh ensures the operator mailbox" 'mail ensure operator' "$(cat "$HERE/../install.sh")"
+want   "install ensures the operator mailbox" 'tool_status("mail", &["ensure", "operator"])' "$(cat "$HERE/../install/src/bin/install.rs")"
 
 tl_summary
