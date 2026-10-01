@@ -103,6 +103,17 @@ fn run_capacity(args: &[String]) -> i32 {
 fn main() {
     let t0 = util::now_epoch();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `aeon aeon-named <pidfile>` (wave 4.23, sp-0ffox): lib.sh's own one-line shim target
+    // for `aeon_named` — the only caller left after aeon_name_take's in-process switch is
+    // cockpit-collect, across the crate boundary, so this stays a real subcommand rather
+    // than an in-process call. Stateless: no --home/conf resolution needed.
+    if args.first().map(String::as_str) == Some("aeon-named") {
+        let Some(pf) = args.get(1) else {
+            fatal("usage: aeon aeon-named <pidfile>");
+        };
+        print!("{}", aeon::naming::aeon_named(Path::new(pf)));
+        std::process::exit(0);
+    }
     if args.first().map(String::as_str) == Some("capacity") {
         std::process::exit(run_capacity(&args[1..]));
     }

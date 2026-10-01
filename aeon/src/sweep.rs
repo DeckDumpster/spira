@@ -37,7 +37,8 @@ impl Run<'_> {
                 return 0;
             }
         }
-        let name = self.sv("aeon_name_take", &s(&[&f])).text();
+        // In-process (wave 4.23, sp-0ffox) — see run.rs::take_name's own comment.
+        let name = crate::naming::aeon_name_take(self.run_dir(), &f);
         let actor = format!("aeon-{name}");
         for (k, v) in [
             ("SPIRA_AEON", name.clone()),
