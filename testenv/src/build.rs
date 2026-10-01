@@ -1,6 +1,7 @@
 //! One build tool: `cargo build --profile <p> --workspace` in the worktree under test,
 //! cargo's default `target/` (DESIGN.md §1, §6). The result is `target/<profile-dir>/`.
 
+use crate::runtime::cancelled;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -34,6 +35,9 @@ pub enum BuildError {
     /// The box's compilation cache (sccache) is required and absent (sp-z61hj): rc 3, the
     /// runner's environment — never a cold build of every dependency.
     NoCache(String),
+    /// cargo was killed because the run caught TERM/INT/HUP mid-build (sp-tcarr): rc 2, a
+    /// signal, never the candidate's rc 4 — nothing about the branch was judged.
+    Cancelled,
 }
 
 pub trait Builder: Sync {
@@ -105,6 +109,15 @@ impl Builder for Cargo {
                 unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL) };
                 let _ = child.wait();
                 return Err(BuildError::Deadline);
+            }
+            // TERM/INT/HUP mid-build (sp-tcarr): this loop otherwise only watches the
+            // deadline, so a signalled run sat here until cargo finished on its own —
+            // minutes, not the "stop launching, kill what is running" the signal asked for.
+            if cancelled() {
+                // SAFETY: signalling the process group of a child we spawned.
+                unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM) };
+                let _ = child.wait();
+                return Err(BuildError::Cancelled);
             }
             std::thread::sleep(Duration::from_millis(100));
         };

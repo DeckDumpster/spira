@@ -17,6 +17,10 @@ struct FakeBuilder {
     /// A pool directory whose lease files the build records as it starts (sp-f4ig1).
     watch: Option<PathBuf>,
     seen: Mutex<Vec<String>>,
+    /// Stand-in for a caught TERM/INT/HUP mid-build (sp-tcarr): the build returns
+    /// `BuildError::Cancelled` immediately, the way `Cargo::build` does once `cancelled()`
+    /// goes true, without this test needing a real signal.
+    cancel: bool,
 }
 
 impl FakeBuilder {
@@ -28,11 +32,18 @@ impl FakeBuilder {
             delay: Duration::ZERO,
             watch: None,
             seen: Mutex::new(vec![]),
+            cancel: false,
         }
     }
     fn slow(delay: Duration) -> Self {
         FakeBuilder {
             delay,
+            ..FakeBuilder::new(None)
+        }
+    }
+    fn cancelled() -> Self {
+        FakeBuilder {
+            cancel: true,
             ..FakeBuilder::new(None)
         }
     }
@@ -46,6 +57,9 @@ impl Builder for FakeBuilder {
         deadline: Option<Instant>,
     ) -> Result<Duration, BuildError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.cancel {
+            return Err(BuildError::Cancelled);
+        }
         if let Some(dir) = &self.watch {
             for e in fs::read_dir(dir).into_iter().flatten().flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
@@ -1179,6 +1193,25 @@ fn a_build_still_running_at_the_setup_cutoff_is_no_verdict_never_the_candidates_
         rows.contains("\"phases\":\"resolve:0,build:0\"") && rows.contains("\"rc\":2"),
         "{rows}"
     );
+}
+
+// ---- a caught signal mid-build ends the run, not just the wait (sp-tcarr) ---------------
+
+#[test]
+fn a_caught_signal_mid_build_is_a_terminal_fault_not_a_silent_hang() {
+    // Before this fix, Cargo::build's poll loop only ever checked the deadline: a
+    // SIGTERM/SIGINT/SIGHUP that arrived while cargo was running set the CANCEL flag but
+    // nothing downstream of the build looked at it until cargo finished on its own —
+    // minutes, not the "stop launching, kill what is running, tear down, exit" a caught
+    // signal is supposed to mean. FakeBuilder::cancelled() stands in for that signalled
+    // build returning BuildError::Cancelled the way the real one now does.
+    let w = World::new("signal-build");
+    let rt = runtime();
+    let b = FakeBuilder::cancelled();
+    let rc = w.run(&rt, &b, &["--suites", "test-a.sh", "topic"], "", &w.root);
+    assert_eq!(rc, 2, "a harness fault, never the candidate's rc 4");
+    assert_eq!(w.last(), "VERDICT FAULT rc=2 ran=0 reason=interrupted");
+    assert!(rt.suite_execs().is_empty(), "no suite ran against an unbuilt tree");
 }
 
 #[test]

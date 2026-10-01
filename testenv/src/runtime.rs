@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Set by SIGINT/SIGTERM: stop launching, kill what is running, tear down, exit.
+/// Set by SIGINT/SIGTERM/SIGHUP: stop launching, kill what is running, tear down, exit.
 pub static CANCEL: AtomicBool = AtomicBool::new(false);
 
 pub fn cancelled() -> bool {
@@ -20,11 +20,13 @@ extern "C" fn on_signal(_: libc::c_int) {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// TERM/INT/HUP (SIGKILL cannot be caught — `testenv wait` exists for that case, sp-tcarr).
 pub fn install_signal_handlers() {
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as usize);
-        libc::signal(libc::SIGTERM, on_signal as usize);
+        for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            libc::signal(s, on_signal as usize);
+        }
     }
 }
 

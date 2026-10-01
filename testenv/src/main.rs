@@ -85,6 +85,12 @@ fn main() -> ExitCode {
         let rc = testenv::testdb::main(&args[1..]);
         return ExitCode::from(rc.clamp(0, 255) as u8);
     }
+    // `testenv wait <out>` — block on a backgrounded run's own pid, not its VERDICT marker
+    // (sp-tcarr): a run SIGKILLed mid-flight never writes one.
+    if args.first().map(String::as_str) == Some("wait") {
+        let rc = testenv::wait::main(&args[1..]);
+        return ExitCode::from(rc.clamp(0, 255) as u8);
+    }
     // `testenv container …` — the fixture container's driver (DESIGN.md §12, sp-s0e1k). A
     // branch literally named `container` is `testenv -- container`.
     if args.first().map(String::as_str) == Some("container") {
@@ -127,6 +133,14 @@ fn main() -> ExitCode {
         })
     };
     runtime::install_signal_handlers();
+    // A panic unwinding out of `run::execute` (a bug, not a signal) would otherwise exit
+    // via Rust's default panic runtime with no VERDICT line at all — the same hang for a
+    // waiter as a SIGKILL, just self-inflicted (sp-tcarr). This is the `EXIT`-trap half of
+    // the contract: the hook always runs before the process actually exits on a panic.
+    std::panic::set_hook(Box::new(|info| {
+        println!("VERDICT FAULT rc=101 ran=0 reason=exit-101");
+        eprintln!("batch: panic: {info}");
+    }));
     let env = |k: &str| std::env::var(k).ok();
     let Some(harness) = Harness::locate(&env) else {
         eprintln!("batch: cannot find the harness (spira/testenv/Containerfile) above the testenv binary; set SPIRA_TESTENV_HARNESS");
