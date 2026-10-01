@@ -43,13 +43,62 @@ production_region() {
     fi | grep -av '^[[:space:]]*//' | tr -d '\000'
 }
 
+# A file handed over to tests WHOLESALE, via `#[cfg(test)] mod name;` naming it from a
+# SIBLING file, is never production code at all — even though nothing inside IT reads
+# `#[cfg(test)]`, because that gate lives in the file that imports it, not in this one.
+# sentinel/src/tests.rs (declared `#[cfg(test)] mod tests;` from sentinel/src/main.rs) is
+# exactly this shape: a contract-test module that pins SPIRA_TOML for its own save/restore
+# fixture, not a second parser. `production_region`'s single-file heuristic missed this
+# because the `#[cfg(test)]` line it looks for lives in the OTHER file; without this pass
+# it treats the whole module as production and flags the fixture's env::var call.
+# Populates the (caller-local) TEST_MODULE_SKIP associative array with every file reached
+# this way, resolved per Rust's own module-path rule: a declaring file that is the crate
+# root (`main.rs`/`lib.rs`) or a directory's `mod.rs` names siblings directly
+# (`dir/name.rs` or `dir/name/mod.rs`); any other declaring file `foo.rs` names them under
+# its own module directory (`dir/foo/name.rs` or `dir/foo/name/mod.rs`).
+build_test_module_skip_set() {
+    local root="$1" f dir base stem content prev line modname t1 t2
+    while IFS= read -r -d '' f; do
+        dir="$(dirname "$f")"
+        base="$(basename "$f")"
+        case "$base" in
+            main.rs|lib.rs|mod.rs) stem="" ;;
+            *) stem="${base%.rs}" ;;
+        esac
+        content="$(tr -d '\000' < "$f")"
+        prev=""
+        while IFS= read -r line; do
+            if [ "$prev" = '#[cfg(test)]' ]; then
+                modname=""
+                case "$line" in
+                    mod\ *\;) modname="${line#mod }"; modname="${modname%;}" ;;
+                    pub\ mod\ *\;) modname="${line#pub mod }"; modname="${modname%;}" ;;
+                esac
+                if [ -n "$modname" ]; then
+                    if [ -n "$stem" ]; then
+                        t1="$dir/$stem/$modname.rs"; t2="$dir/$stem/$modname/mod.rs"
+                    else
+                        t1="$dir/$modname.rs"; t2="$dir/$modname/mod.rs"
+                    fi
+                    [ -f "$t1" ] && TEST_MODULE_SKIP["$t1"]=1
+                    [ -f "$t2" ] && TEST_MODULE_SKIP["$t2"]=1
+                fi
+            fi
+            prev="$line"
+        done <<<"$content"
+    done < <(find "$root" -type f -name '*.rs' -not -path '*/target/*' -print0)
+}
+
 find_offenders() {
     local root="$1" f rel exempt region
+    declare -A TEST_MODULE_SKIP=()
+    build_test_module_skip_set "$root"
     while IFS= read -r -d '' f; do
         rel="${f#"$root"/}"
         case "$rel" in
             spira-config/src/*) continue ;;
         esac
+        [ -n "${TEST_MODULE_SKIP[$f]:-}" ] && continue
         exempt=0
         for e in $EXEMPT_TOML_FROM_STR; do
             [ "$rel" = "$e" ] && exempt=1
@@ -92,12 +141,28 @@ fn f() {
     let _doc: Foo = toml::from_str(&text).unwrap();
 }
 RS
+mkdir -p "$SCRATCH/gated-crate/src"
+cat > "$SCRATCH/gated-crate/src/main.rs" <<'RS'
+#[cfg(test)]
+mod tests;
+
+fn main() {}
+RS
+cat > "$SCRATCH/gated-crate/src/tests.rs" <<'RS'
+#[test]
+fn t() {
+    let saved = std::env::var("SPIRA_TOML").ok();
+    std::env::set_var("SPIRA_TOML", "/tmp/no-such-spira.toml");
+    let _ = saved;
+}
+RS
 
 offenders="$(find_offenders "$SCRATCH")"
 want "planted toml::from_str is flagged" "offender-crate/src/main.rs: calls toml::from_str" "$offenders"
 want "planted spira.toml path resolution is flagged" "offender-crate/src/main.rs: resolves spira.toml's path" "$offenders"
 nowant "spira-config's own parser is not flagged" "spira-config/src/lib.rs" "$offenders"
 nowant "desired-state's store.rs is exempt (its own document kind)" "store.rs" "$offenders"
+nowant "a whole-file #[cfg(test)] mod is exempt (sentinel's own tests.rs shape)" "gated-crate/src/tests.rs" "$offenders"
 
 echo
 echo "2. the real tree names no second parser"

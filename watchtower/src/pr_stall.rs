@@ -154,8 +154,15 @@ pub fn run(now: i64, landstate_dir: &Path, spira_home: &str, db: &str, home_repo
         ));
         return;
     }
-    for s in gather_stalled(landstate_dir, now, cfg) {
-        let repo_path = match seams::repo_root(spira_home, &s.repo) {
+    let stalled = gather_stalled(landstate_dir, now, cfg);
+    if stalled.is_empty() {
+        return;
+    }
+    // One registry snapshot for every stalled repo below, not one bash -c '. lib.sh; repo_root
+    // ...' subprocess per repo (sp-k6lku, "wave 4.13").
+    let reg = seams::registry(spira_home);
+    for s in stalled {
+        let repo_path = match reg.root(&s.repo) {
             Some(p) if Path::new(&p).join(".git").exists() => p,
             _ => continue,
         };

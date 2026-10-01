@@ -689,6 +689,32 @@ fn summon_only_gates_then_reads_ready_once() {
     assert!(sink.has("summon-only pass complete — 1 action(s)"));
 }
 
+/// Family K, wave 4.26: sentinel reads the pause file in-process now (never through the
+/// bash `capacity_paused`, which also ran the probe and could delete the file — a second
+/// probe owner alongside aeon's own, wave4-decomposition.md (c)3). This proves the gate
+/// still stops the pass, and that sentinel never touches the file it read.
+#[test]
+fn summon_only_respects_a_capacity_pause_without_probing_or_mutating_the_file() {
+    let (w, r, sink, clock) = setup("summon-cap");
+    std::fs::write(w.run.join("capacity-pause"), format!("{} iso why\n", NOW + 321)).unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "a capacity pause costs no bd call");
+    assert!(sink.has("summon-only: account out of capacity for another 321s — not summoning"));
+    assert!(w.run.join("capacity-pause").is_file(), "sentinel must not mutate the pause file aeon owns");
+}
+
+/// Fail closed (wave4-decomposition.md (c)3): an unreadable/corrupt pause file must gate
+/// summoning, never be read as "open" the way the bash `capacity_pause_until`'s `0` once
+/// did for both "no file" and "cannot parse it".
+#[test]
+fn summon_only_fails_closed_on_an_unreadable_capacity_pause_file() {
+    let (w, r, sink, clock) = setup("summon-cap-unknown");
+    std::fs::write(w.run.join("capacity-pause"), "not-a-number\n").unwrap();
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None), 0);
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "an unreadable pause file must gate, never fail open");
+    assert!(sink.has("summon-only: the capacity pause file could not be read — not summoning (failing closed)"));
+}
+
 // ---------------------------------------------------------------------------------------
 // CHECK 2 / 2c (lifecycle)
 
@@ -1228,8 +1254,41 @@ fn probe_failure_is_reported() {
     let e = crate::probe(&r, Path::new("/h"), true).unwrap_err();
     assert!(e.contains("rc=97"));
     let s = r.find(|_| true).unwrap();
-    assert_eq!(env_of(&s, "SENTINEL_PROBE_REPOS"), Some("1"));
+    // repos (sp-k6lku, "wave 4.13") no longer widens the probe's own bash seam — it is
+    // resolved in-process from @vars after a successful probe, so a failed probe never
+    // reaches that code at all, and the seam call itself carries no SENTINEL_PROBE_REPOS.
     assert_eq!(env_of(&s, "SENTINEL_LIB"), Some("/h/lib.sh"));
+}
+
+/// `resolve_repos` (sp-k6lku, "wave 4.13"): a trait seam over the registry, not a bash
+/// probe — the fixture here is a real repo-map FILE, the thing `spira_config::repos`
+/// itself reads, not a faked `repo_root`/`spira_landrefs` bash function (which is exactly
+/// what 4.12 found CHECK5/audit's own tests faking, and why that switch was reverted then).
+/// `spira` is unmapped but IS the home repo (so `root`/`queued` resolve through
+/// `SPIRA_HOME_REPO`); `other` is mapped with no declared `base` and no real git checkout,
+/// so `landrefs` is empty rather than guessed (same "refuse, never guess" contract the real
+/// seam had).
+#[test]
+fn resolve_repos_reads_the_registry_in_process_not_a_bash_probe() {
+    let d = testkit::TempDir::new("sentinel-resolve-repos");
+    let map = d.join("repo-map");
+    std::fs::write(&map, "other|/nonexistent/other|queue.local||\n").unwrap();
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert("SPIRA_REPO_MAP".to_string(), map.to_string_lossy().into_owned());
+    vars.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
+    vars.insert("SPIRA_REPO".to_string(), "/h".to_string());
+    vars.insert("SPIRA_REPO_DERIVED".to_string(), "/h".to_string());
+
+    let repos = crate::resolve_repos(&vars, Path::new("/h"));
+
+    let spira = repos.iter().find(|r| r.name == "spira").expect("home repo always present");
+    assert_eq!(spira.root, None, "unmapped — never a guessed default of the home checkout");
+    assert!(!spira.queued);
+
+    let other = repos.iter().find(|r| r.name == "other").expect("every mapped name, not only the home repo");
+    assert_eq!(other.root.as_deref(), Some("/nonexistent/other"));
+    assert!(other.queued, "queue.local counts as queued");
+    assert!(other.landrefs.is_empty(), "no declared base and no real checkout to ask — refuse, never guess");
 }
 
 // ENV VARS ARE PROCESS-GLOBAL (spira-config's own locate.rs/lib.rs tests guard the same

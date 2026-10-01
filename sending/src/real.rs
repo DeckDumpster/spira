@@ -40,22 +40,23 @@ impl Real {
         if a.rc != 0 {
             return Err(format!("the lib.sh context seam exited {}", a.rc));
         }
-        let mut repos = Vec::new();
         for rec in a.text.split('\0').filter(|s| !s.is_empty()) {
             let Some((k, v)) = rec.split_once('=') else { continue };
-            if k == "repo" {
-                let f: Vec<&str> = v.split(FIELD).collect();
-                if f.len() != 4 {
-                    return Err(format!("malformed repository record {v:?}"));
-                }
-                repos.push(Repo { name: f[0].into(), root: (f[1] == "1").then(|| PathBuf::from(f[2])), queued: f[3] == "1" });
-            } else {
-                r.settings.insert(k.into(), v.into());
-            }
+            r.settings.insert(k.into(), v.into());
         }
-        if repos.is_empty() {
-            return Err("spira_repos names no repository — nothing could be judged".into());
-        }
+        // spira_repos/repo_root/repo_land_queued (family U) in-process (sp-k6lku, "wave
+        // 4.13"), not this seam's own loop — Registry::all() always puts the home repo
+        // first, so (unlike the retired bash loop) this can no longer come back empty.
+        let reg = r.repo_registry();
+        let repos: Vec<Repo> = reg
+            .all()
+            .into_iter()
+            .map(|name| {
+                let root = reg.root(&name).map(PathBuf::from);
+                let queued = reg.land_queued(&name);
+                Repo { name, root, queued }
+            })
+            .collect();
         r.submitted_label = r.setting("submitted", "spira-submitted");
         Ok((r, repos))
     }
@@ -72,12 +73,13 @@ impl Real {
 
     /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
     /// `spira_landrefs`/`ref_remote` — the `Op::Base` seam used to shell into, one bash
-    /// subprocess per checkout). Built from THIS process's own environment, exactly as
-    /// `aeon::conf::Conf` and `cockpit_collect::io::repo_registry` already read it.
+    /// subprocess per checkout). `Registry::from_env` (sp-k6lku, following the structural
+    /// fix for sp-z3eyk) is the one production door onto a registry — building one from
+    /// a bare `std::env::vars()` directly, with no resolution, found NO map and NO
+    /// landref in production (conf.sh exports none of `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/
+    /// `SPIRA_REPO`/`SPIRA_REPO_DERIVED`); `from_env` resolves them in-process instead.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map: BTreeMap<String, String> = std::env::vars().collect();
-        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
-        spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
+        spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home)
     }
 
     /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's

@@ -30,9 +30,8 @@ pub trait Bd {
     fn close(&self, id: &str, reason: &str) -> bool;
 }
 
-/// `repo_root <name>` from `lib.sh`, unported (spira/lib.sh is last in the rewrite order —
-/// see the inventory, group 4). Resolved exactly as gate-check's Rust port resolves it: a
-/// `bash -c`, sourcing lib.sh, run once.
+/// `repo_root <name>` (family U), resolved in-process through `spira_config::repos`
+/// (sp-k6lku, "wave 4.13").
 pub trait Repo {
     /// `Some(path)` when the map has an entry AND that checkout has a `.git`; `None` otherwise
     /// — the two cases gh-intake.sh's caller collapses into one die().

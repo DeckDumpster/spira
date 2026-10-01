@@ -9,12 +9,12 @@
 # spira_destroy_branch called git branch -D unconditionally. A reclaim or slay
 # operation on a bead with unlanded commits would silently lose that work with no
 # error and no log entry from landing. This test exercises the complete stack —
-# real git repository, real beads database, real slay.sh — to verify that work
+# real git repository, real beads database, the real slay binary — to verify that work
 # is protected in both paths.
 #
 # Two complementary assertions:
 #
-#   SLAY PATH. slay.sh parks unlanded commits at refs/slain/<id> before calling
+#   SLAY PATH. slay parks unlanded commits at refs/slain/<id> before calling
 #   spira_destroy_branch with the "slain" bypass. The test verifies the commit
 #   survives deletion at that ref — that the durable copy was written BEFORE the
 #   branch was removed. A version that called git branch -D unconditionally would
@@ -31,7 +31,7 @@
 # refused or deleted everything would not pass silently
 # (law-absence-needs-a-positive-control).
 #
-# A REAL bd ON A THROWAWAY DATABASE (law-prefer-the-real-dependency): slay.sh
+# A REAL bd ON A THROWAWAY DATABASE (law-prefer-the-real-dependency): slay
 # reads the bead's status and repo label; a stub would drift. A real git fixture
 # with a bare remote for branch operations.
 #
@@ -153,7 +153,7 @@ else
     bad "fixture: landed branch should be seen as landed by content_landed" "returned non-zero"
 fi
 
-out="$(slay.sh --bead sp-s1 2>&1)"
+out="$(slay --bead sp-s1 2>&1)"
 rc=$?
 is "slay exits 0 for landed branch"       0  "$rc"
 is "landed branch is gone after slay"     1  "$(branch_exists spira/sp-s1; echo $?)"
@@ -165,7 +165,7 @@ teardown sp-s1
 # SLAY PATH — unlanded branch: work must be parked, not silently lost.
 #
 # This is the core scenario the defect hit. The aeon dies holding a branch with
-# committed but unlanded work. slay.sh must park the tip at refs/slain/<id> BEFORE
+# committed but unlanded work. slay must park the tip at refs/slain/<id> BEFORE
 # calling spira_destroy_branch (which bypasses the content fence with "slain").
 # The parked ref makes the commit reachable after the branch is gone.
 # ======================================================================================
@@ -185,7 +185,7 @@ else
     ok "fixture: content_landed correctly sees branch as unlanded"
 fi
 
-out="$(slay.sh --bead sp-s2 2>&1)"
+out="$(slay --bead sp-s2 2>&1)"
 rc=$?
 is "slay exits 0 for unlanded branch"              0  "$rc"
 is "unlanded branch is gone after slay"            1  "$(branch_exists spira/sp-s2; echo $?)"

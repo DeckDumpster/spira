@@ -373,12 +373,36 @@ fn main() -> ExitCode {
             not_active = candidates.iter().filter(|u| !systemctl.is_active(u)).cloned().collect();
         }
         if !not_active.is_empty() {
-            eprintln!("\ninstall: ERROR — these units are enabled but not active:");
-            for u in &not_active {
-                eprintln!("    {u}");
+            // sp-e5v53-4: inside a test fixture, a watcher (every `spira-watch-*` instance
+            // of the one template, DESIGN.md "the watcher template") reaches outside this
+            // box entirely — GitHub, mail, the forge — and a sandboxed container's point is
+            // exactly that it cannot. It genuinely not reaching active there says nothing about
+            // whether the units this run actually needs (the suite's own dependencies) are
+            // fine, so it is named — "exactly why not", never silently dropped — but does
+            // not fault a run that tests no watcher. Outside a test fixture this still
+            // faults: a watcher that cannot start in production is still worth knowing.
+            let in_testenv = nonempty_env("SPIRA_IN_TESTENV").is_some();
+            let split = install_units::split_not_active(&not_active, in_testenv);
+            if !split.warn_only.is_empty() {
+                eprintln!(
+                    "\ninstall: {} watcher unit(s) did not reach active inside this test \
+                     fixture — expected: a watcher reaches outside the container \
+                     (GitHub, mail, the forge), which a sandboxed fixture cannot, and no \
+                     suite here is what tests a watcher:",
+                    split.warn_only.len()
+                );
+                for u in &split.warn_only {
+                    eprintln!("    {u}");
+                }
             }
-            eprintln!("install: check journalctl --user -xe for details.");
-            return ExitCode::from(1);
+            if !split.fatal.is_empty() {
+                eprintln!("\ninstall: ERROR — these units are enabled but not active:");
+                for u in &split.fatal {
+                    eprintln!("    {u}");
+                }
+                eprintln!("install: check journalctl --user -xe for details.");
+                return ExitCode::from(1);
+            }
         }
     }
 

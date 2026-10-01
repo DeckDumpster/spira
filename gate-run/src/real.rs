@@ -1,6 +1,7 @@
 //! The production [`crate::ports::World`]: git, `/proc`, the filesystem, `setsid`.
 
 use crate::ports::World;
+use std::cell::OnceCell;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -9,30 +10,29 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct Real {
     pub home: PathBuf,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        Real { home }
+        Real { home, registry: OnceCell::new() }
     }
 
     fn exe(&self) -> PathBuf {
         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("gate-run"))
     }
+
+    /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
+    /// 4.13"), built once per process, in-process — replaces the two separate
+    /// `REPO_CONTEXT`/`LANDREF_SNIPPET` bash subprocesses `resolve_repo`/`landref` used to
+    /// shell out to, and the one-shot snapshot subprocess that replaced them: `from_env`
+    /// resolves `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` the
+    /// same way conf.sh does, in-process, when this (bare, unit-launched) process's own
+    /// environment lacks them (sp-z3eyk).
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
+    }
 }
-
-const REPO_CONTEXT: &str = r#"set -uo pipefail
-. "$1/lib.sh" >/dev/null 2>&1 || exit 96
-RN="$2"
-if [ -r "${SPIRA_REPO_MAP:-/nonexistent}" ] && r="$(repo_root "$RN")"; then
-    printf 'repo_root=%s\n' "$r"
-fi
-"#;
-
-const LANDREF_SNIPPET: &str = r#"set -uo pipefail
-. "$1/lib.sh" >/dev/null 2>&1 || exit 96
-spira_landref "$2"
-"#;
 
 impl World for Real {
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String> {
@@ -55,43 +55,14 @@ impl World for Real {
     }
 
     fn resolve_repo(&self, repo_name: &str) -> Result<PathBuf, String> {
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(REPO_CONTEXT)
-            .arg("gate-run-context")
-            .arg(&self.home)
-            .arg(repo_name)
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| format!("bash: {e}"))?;
-        let text = String::from_utf8_lossy(&o.stdout);
-        for line in text.lines() {
-            if let Some(v) = line.strip_prefix("repo_root=") {
-                if !v.is_empty() {
-                    return Ok(PathBuf::from(v));
-                }
-            }
-        }
-        Err(format!("gate-run: the repository map has no entry for '{repo_name}' — refusing to guess a checkout"))
+        self.registry()
+            .root(repo_name)
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("gate-run: the repository map has no entry for '{repo_name}' — refusing to guess a checkout"))
     }
 
     fn landref(&self, repo: &Path) -> Option<String> {
-        let o = Command::new("bash")
-            .arg("-c")
-            .arg(LANDREF_SNIPPET)
-            .arg("gate-run-landref")
-            .arg(&self.home)
-            .arg(repo)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?;
-        if o.status.success() {
-            let s = String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string();
-            if s.is_empty() { None } else { Some(s) }
-        } else {
-            None
-        }
+        spira_config::repos::landref(self.registry(), &repo.to_string_lossy())
     }
 
     fn exists(&self, p: &Path) -> bool {

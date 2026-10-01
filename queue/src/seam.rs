@@ -13,10 +13,7 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
-    Repos,
     TomlPath,
-    Readback,
-    LandMark,
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
@@ -47,9 +44,14 @@ unset __q __v
 . "$HERE/lib.sh" || exit 96
 "#;
 
-const CONTEXT: &str = r#"__n="${1:-}"; [ -n "$__n" ] || __n="$(spira_home_repo)"
-__p="$(repo_root "$__n" 2>/dev/null)"; __pok=$?
-__rem=""; [ "$__pok" -eq 0 ] && __rem="$(git -C "$__p" remote 2>/dev/null | tr '\n' ' ')"
+// family U (spira_home_repo/repo_root/repo_land/repo_field) and family W (spira_landref/
+// spira_publish_forge, dropped in sp-o88bx "wave 4.12") are no longer part of this script
+// (sp-k6lku, "wave 4.13"): real.rs's context() resolves the repo name through
+// spira_config::repos BEFORE calling this seam, passes the resolved name as `$1` (so the
+// SPIRA_QUEUE_CI_MAXSEC_<NAME>/_IDLE_SEC_<NAME> per-repo overrides below still key off it),
+// and fills in path/mode/map_land/map_base/remotes/landref/publish/home_repo in-process
+// afterward from the same registry.
+const CONTEXT: &str = r#"__n="${1:-}"
 __kv() { printf '%s=%s\0' "$1" "$2"; }
 printf '\036'
 __kv home "${SPIRA_HOME:-$HERE}"
@@ -66,14 +68,6 @@ __kv maxsec "${SPIRA_QUEUE_TRANSITION_MAXSEC:-1800}"
 __kv preflight "${SPIRA_PREFLIGHT_WALL_SECS:-240}"
 __kv db "${SPIRA_DB:-}"
 __kv bd "${SPIRA_BD:-bd}"
-__kv home_repo "$(spira_home_repo)"
-__kv name "$__n"
-__kv path_ok "$__pok"
-__kv path "$__p"
-__kv mode "$(repo_land "$__n")"
-__kv map_land "$(repo_field "$__n" land 2>/dev/null)"
-__kv map_base "$(repo_field "$__n" base 2>/dev/null)"
-__kv remotes "$__rem"
 __K="$(printf '%s' "$__n" | tr 'a-z-' 'A-Z_')"
 case "$__K" in *[!A-Z0-9_]*) __K="" ;; esac
 __v="SPIRA_QUEUE_CI_MAXSEC_$__K"; __kv ci_maxsec "${!__v:-${SPIRA_QUEUE_CI_MAXSEC:-3600}}"
@@ -88,13 +82,12 @@ exit 0
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
-        Op::Repos => "printf '\\036'\nspira_repos | while IFS= read -r __r; do [ -n \"$__r\" ] && printf '%s\\0' \"$__r\"; done\nexit \"${PIPESTATUS[0]}\"\n",
         Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
-        // spira_landref dropped (sp-o88bx, "wave 4.12"): the caller now resolves it
-        // in-process through spira_config::repos, rather than paying for an extra
-        // spira-config subprocess inside this already-running bash seam call.
-        Op::Readback => "printf '\\036%s\\0' \"$(repo_land \"$1\")\"\nexit 0\n",
-        Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
+        // spira_landref dropped (sp-o88bx, "wave 4.12") and repo_land with it (sp-k6lku,
+        // "wave 4.13"): readback() resolves both in-process through spira_config::repos
+        // now, so there is no Readback op left to call here. land_mark dropped the same
+        // way (sp-cnnt6, "wave 4.16"): landing-pass owns the landstate ledger's one write,
+        // reached through its own `mark` CLI, never this seam.
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",
         Op::ReleaseClaim => "release_claim \"$1\"\nexit $?\n",
@@ -196,17 +189,6 @@ pub fn split_answer(stdout: &str) -> (&str, &str) {
     }
 }
 
-/// Parse a `name\0` list (the Repos answer): empty names dropped, first occurrence kept.
-pub fn parse_names0(answer: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for n in answer.split('\0').map(str::trim).filter(|n| !n.is_empty()) {
-        if !out.iter().any(|o| o == n) {
-            out.push(n.to_string());
-        }
-    }
-    out
-}
-
 /// Parse the Context answer: `key=value\0` records.
 pub fn parse_kv0(answer: &str) -> std::collections::BTreeMap<String, String> {
     answer
@@ -224,7 +206,7 @@ mod tests {
     #[test]
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
-            Op::Context, Op::TomlPath, Op::Readback, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
+            Op::Context, Op::TomlPath, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Event, Op::Rebase,
             Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug,
@@ -239,13 +221,16 @@ mod tests {
     #[test]
     fn values_travel_on_stdin_with_newlines_and_empties_intact() {
         let _serial = crate::testutil::serial();
-        // The seam's own mechanism, against a stand-in lib.sh that defines land_mark as
+        // The seam's own mechanism, against a stand-in lib.sh that defines bead_reopen as
         // "print my arguments": proves argv is only `bash` and every value arrives whole.
+        // (land_mark is gone from this seam — sp-cnnt6, "wave 4.16" — so BeadReopen is the
+        // stand-in now; its own body hardcodes an empty third positional, which is what
+        // exercises the empty-value case this test is for.)
         let dir = crate::testutil::tmpdir("seam");
-        std::fs::write(dir.join("lib.sh"), "land_mark() { printf '[%s]' \"$@\"; }\n").unwrap();
+        std::fs::write(dir.join("lib.sh"), "bead_reopen() { printf '[%s]' \"$@\"; }\n").unwrap();
         let home = dir.to_str().unwrap();
         let mut child = Command::new("bash").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(&stdin_bytes(Op::LandMark, &[home, "sp-a", "RED", "", "line one\nline $(two) `x`"])).unwrap();
+        child.stdin.take().unwrap().write_all(&stdin_bytes(Op::BeadReopen, &[home, "sp-a", "RED", "line one\nline $(two) `x`"])).unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success());
         assert_eq!(String::from_utf8_lossy(&out.stdout), "[sp-a][RED][][line one\nline $(two) `x`]");

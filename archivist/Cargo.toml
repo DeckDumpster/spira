@@ -5,6 +5,7 @@ edition = "2021"
 description = "archivist — rescue a full session's unfinished business before it is cleared: the sweep and its per-session archive run, the drift-ordered candidate budget, the transcript digest, and the daily digest mail. Replaces spira/archivist.sh."
 
 [dependencies]
+aeon = { path = "../aeon" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 libc = "0.2"
