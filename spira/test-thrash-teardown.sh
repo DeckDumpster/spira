@@ -200,11 +200,16 @@ fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
 marker="$SPIRA_RUN/sp-tt-3.thrash"
 rm -f "$marker"
+echo "DIAG launch $(date '+%s.%N')"
 setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 
 _waited=0
 while [ ! -f "$marker" ] && [ "$_waited" -lt 100 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+echo "DIAG marker-wait-done $(date '+%s.%N') found=$([ -f "$marker" ] && echo yes || echo no)"
+echo "DIAG --- aeon log so far ---"
+cat "$TMP/out3" 2>/dev/null | sed 's/^/DIAGLOG /'
+echo "DIAG --- end aeon log ---"
 if [ ! -f "$marker" ]; then
     bad "thrash marker appeared before signalling" "not found after 10s"
     kill -TERM -"$aeon_pid" 2>/dev/null
