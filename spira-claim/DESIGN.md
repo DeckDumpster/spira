@@ -296,27 +296,21 @@ sp-j1q6o commit).
    test-attempts-sql.sh's SQL-text assertions retire with it).
 3. **spira/lib.sh:3275-3284 `attempts_of`** →
    `attempts_of() { "$SPIRA_CLAIM_BIN" attempts "$1"; }`
-4. **spira/lib.sh:3286-3308 `_requeue_return_causes_sql` + `reopens_of` (and their comment block from 3286)** →
-   `reopens_of() { "$SPIRA_CLAIM_BIN" requeues "$1" || printf '0'; }`
-   (keeps its old fail-open interface; no caller outside lib.sh uses it today.)
-5. **spira/lib.sh:5664-5667 `_check4_bulk_sql`** — delete.
-6. **spira/lib.sh:5680-5719 `check4_bulk_data`** →
-   ```bash
-   check4_bulk_data() {
-       local input="${1:-}"; [ -n "$input" ] || return 0
-       printf '%s\n' "$input" | "$SPIRA_CLAIM_BIN" counts
-   }
-   ```
-   (sentinel.sh:433 and :709's `_rc` check is unchanged: nonzero still means "decide
-   nothing this pass". test-poison.sh's `*"as rcl"*` failure seam becomes
-   `*"sql --json"*` or `SPIRA_BD` pointing at a failing stub.)
-7. **spira/lib.sh:5751-5793 `check4_decide`** →
-   ```bash
-   check4_decide() {
-       "$SPIRA_CLAIM_BIN" decide --poison-at "${POISON_AT:-3}" --requeue-at "${REQUEUE_AT:-5}" \
-           --reclaim-at "${RECLAIM_AT:-5}" -- "${1:-0}" "${2:-0}" "${3:-0}" "${4:-}" "${5:-0:0:0:0}" "${6:-0}"
-   }
-   ```
+4. **SUPERSEDED at sp-8itaf.** This item planned `reopens_of() { "$SPIRA_CLAIM_BIN" requeues
+   "$1" || printf '0'; }` as a shim "because no caller outside lib.sh uses it today" — but
+   by 2026-09-30 nothing called it at all: `attempts.sh`, its one caller, had already moved
+   into spira-claim outright at sp-rfodk. A shim with no caller is dead weight, so
+   `_requeue_return_causes_sql` and `reopens_of` were deleted outright instead.
+5. **SUPERSEDED at sp-8itaf.** `_check4_bulk_sql` deleted outright, as planned — confirmed
+   zero live callers remained.
+6. **SUPERSEDED at sp-8itaf.** This item planned a `check4_bulk_data` shim piping through
+   `"$SPIRA_CLAIM_BIN" counts`, but by 2026-09-30 it had no caller left either (sentinel.sh
+   is gone — the Rust sentinel crate never called the bash form). Deleted outright instead.
+7. **SUPERSEDED at sp-8itaf.** This item planned a `check4_decide` shim calling
+   `"$SPIRA_CLAIM_BIN" decide ...`. That CLI (`cmd_decide` in spira-claim/src/main.rs,
+   `decide::decide` in decide.rs) already exists independently of this plan; the bash
+   function itself had zero live callers left and was deleted outright rather than kept as
+   a shim nothing calls. `test-unpoison.sh` now calls `spira-claim decide` directly.
 8. **spira/lib.sh:1198-1246 `epic_parent_lookup`** →
    `epic_parent_lookup() { printf '%s' "$1" | "$SPIRA_CLAIM_BIN" epics; }`
 9. **spira/lib.sh:1264-1299 `epic_rank_rows`** →

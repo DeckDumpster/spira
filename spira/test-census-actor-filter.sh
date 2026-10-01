@@ -47,6 +47,12 @@ testdb_up census-actor-filter || {
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
+# bump_recur (lib.sh) was retired at sp-8itaf — zero live callers; the production writer
+# is now incident::ports::bump_recur (Rust). This suite's own subject is the actor filter
+# in census.sh's SQL, not who writes the event, so this local wrapper reaches the same
+# shared writer lib.sh's bump_recur did (BEADS_ACTOR included).
+recur_event() { _bump_write_event "${1:-}" recurred "${2:-unrecorded}"; }
+
 echo "test-census-actor-filter.sh"
 
 census_out() {
@@ -94,7 +100,7 @@ testdb_seed <<'JSONL'
 {"id":"sp-af4","title":"unclaimable recur bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-26T00:00:00Z"}
 JSONL
 BEADS_ACTOR="aeon-yojimbo" bump_requeue "sp-af3" rebase-conflict >/dev/null 2>&1
-BEADS_ACTOR="aeon-anima"   bump_recur   "sp-af4" unclaimable     >/dev/null 2>&1
+BEADS_ACTOR="aeon-anima"   recur_event  "sp-af4" unclaimable     >/dev/null 2>&1
 
 out="$(census_out)"
 want "sp-reopen-rebase-conflict still ranked with unchanged count" "1 sp-reopen-rebase-conflict" "$out"

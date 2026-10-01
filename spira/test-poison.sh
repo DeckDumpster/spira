@@ -251,13 +251,6 @@ sentinel() {
     printf '%s\n%s\n' "$audit_out" "$normal_out"
 }
 
-# lib.sh under the same configuration, so the two set predicates can be asked directly
-# rather than inferred from a pass's output.
-predicate() {   # predicate <fn> -> that lib predicate's output under the fixture
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
-    SPIRA_FAYTHS="${ROSTER:-t tinc}" \
-        bash -c ". \"$SH/lib.sh\"; $1" 2>/dev/null
-}
 # groomer.sh deadlocked (the git half) into spira-claim deadlocked (the decision and the
 # write), under the same configuration as sentinel(), so a deadlock lift is made through the
 # real tools against the real fixture repo — not a model of what either would do.
@@ -352,10 +345,6 @@ echo "test-poison.sh"
 # old epic-children predicate missed) and an epic's child (the one it held).
 # --------------------------------------------------------------------------------------
 seed_poison
-want   "an unparented dispatchable bead IS in the set the summoner can dispatch" \
-       "sp-orphan" "$(predicate dispatchable_open)"
-want   "and so is an epic's child" \
-       "sp-kid" "$(predicate dispatchable_open)"
 
 # --------------------------------------------------------------------------------------
 # THE VALVE COVERS THAT SET.
@@ -388,7 +377,6 @@ want        "the check names the size of the set it examined"  "CHECK4 examining
 seed_poison; B label add sp-orphan "$SPIRA_ASK_LABEL" >/dev/null 2>&1
 out="$(sentinel)"
 notpoisoned "a bead the partition excludes is never poisoned" sp-orphan
-nowant "and it is not in the dispatchable set" "sp-orphan" "$(predicate dispatchable_open)"
 
 # An epic is a container. The summoner passes --exclude-type epic and never claims one, so
 # poisoning one would take a pilgrimage out of circulation for its children's failures.

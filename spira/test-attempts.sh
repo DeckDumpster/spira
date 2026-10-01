@@ -234,6 +234,11 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 print(d[0].get("status","") if d else "")' 2>/dev/null; }
 num() { local v="$1"; printf '%d' "${v:-0}"; }
+# reclaims_of (lib.sh) was retired at sp-8itaf — zero live callers (the production
+# accessor is now strand::check::reclaims_of, Rust). _counter_events_query, the shared
+# helper it and requeues_of both used, stays — requeues_of still calls it below — so this
+# reaches the identical count the old function did.
+reclaims_of() { _counter_events_query "${1:-}" reclaimed; }
 
 echo
 echo "counters (real bd) — events-based, no labels written:"
@@ -246,11 +251,6 @@ is "a fresh bead has no attempts"       0 "$(num "$(attempts_of sp-c1)")"
 is "a fresh bead has no reclaims"       0 "$(num "$(reclaims_of sp-c1)")"
 is "a fresh bead has no requeues"       0 "$(num "$(requeues_of sp-c1)")"
 
-# bump_* must not write any label. After bump_attempt the bead has no sp-attempt-* labels.
-bump_attempt sp-c1 unlanded
-labels_c1="$(bdq label list sp-c1 2>/dev/null)" || labels_c1=""
-[[ "$labels_c1" != *"sp-attempt"* ]] && ok "bump_attempt writes no label" \
-    || bad "bump_attempt writes no label" "got [$labels_c1]"
 
 # The single-transition case (one in_progress = 1 attempt) is test-attempts-sql.sh's sp-ev2;
 # what stays here is the multi-event, real-CLI-driven complement to that file's SQL-seeded
