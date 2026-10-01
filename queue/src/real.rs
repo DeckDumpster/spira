@@ -4,6 +4,7 @@
 use std::cell::RefCell;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -11,12 +12,36 @@ use crate::model::{BeadRow, LandMode, LcBeadRow, RangeCommit};
 use crate::ports::*;
 use crate::seam::{self, Op};
 
+/// Close every fd >= 3 in the child before it execs. This process's own fds are already
+/// close-on-exec (Rust's std opens them that way), but a caller's lock fd this process
+/// never opened itself — inherited from whatever bash wrapper invoked `queue` (an
+/// `exec 9>…` lock with no O_CLOEXEC) — carries none of that protection. `gate.sh` and
+/// `testenv` are reached from here (observe-flake, the verdict pass's gate call), and
+/// testenv starts podman, whose conmon daemonizes and would hold such a leaked fd forever
+/// (sp-ohwg7). close_range is the fast path; a kernel too old for it (< 5.9) falls back to
+/// fcntl(F_SETFD) per fd.
+fn close_inherited_fds(cmd: &mut Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+            let r = libc::syscall(libc::SYS_close_range, 3u32, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC);
+            if r != 0 {
+                for fd in 3..4096 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
 /// Run `cmd` with stdout and stderr interleaved into one capture (the `2>&1` of a
 /// `$(…)`), through a temp file both descriptors share.
 fn run_combined(cmd: &mut Command) -> (i32, String) {
     let path = std::env::temp_dir().join(format!("queue-out-{}-{}", std::process::id(), unique()));
     let Ok(f) = File::create(&path) else { return (127, String::new()) };
     let Ok(f2) = f.try_clone() else { return (127, String::new()) };
+    close_inherited_fds(cmd);
     let rc = cmd.stdin(Stdio::null()).stdout(f).stderr(f2).status().ok().and_then(|s| s.code()).unwrap_or(127);
     let out = fs::read_to_string(&path).unwrap_or_default();
     let _ = fs::remove_file(&path);
@@ -30,10 +55,12 @@ fn unique() -> u64 {
 }
 
 fn ok(cmd: &mut Command) -> bool {
+    close_inherited_fds(cmd);
     cmd.stdin(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
 }
 
 fn stdout_of(cmd: &mut Command) -> Option<String> {
+    close_inherited_fds(cmd);
     let o = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     o.status.success().then(|| String::from_utf8_lossy(&o.stdout).to_string())
 }

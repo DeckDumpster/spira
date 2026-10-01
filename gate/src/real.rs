@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,6 +29,27 @@ pub fn install_signal_handlers() {
                 on_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
             );
         }
+    }
+}
+
+/// Close every fd ≥ 3 in the child before it execs (same primitive as testenv's own
+/// `detach`, testenv/src/testdb.rs), so a descendant this command starts that outlives it
+/// — podman's conmon, a cargo build's auto-started sccache server — never inherits a
+/// caller's lock fd this process did not open itself and so could not mark CLOEXEC
+/// (sp-ohwg7). `close_range` is the fast path; a kernel too old for it (< 5.9) falls back
+/// to `fcntl(F_SETFD)` per fd. Only async-signal-safe calls run between fork and exec.
+fn close_inherited_fds(cmd: &mut Command) {
+    unsafe {
+        cmd.pre_exec(|| {
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+            let r = libc::syscall(libc::SYS_close_range, 3u32, libc::c_uint::MAX, CLOSE_RANGE_CLOEXEC);
+            if r != 0 {
+                for fd in 3..4096 {
+                    libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                }
+            }
+            Ok(())
+        });
     }
 }
 
@@ -760,7 +782,14 @@ impl World for Real {
         }
         c.stdout(Stdio::from(wr)).stderr(Stdio::from(wr2));
         // Caught signals reset to their default at exec, so the trial does not inherit the
-        // handler; every descriptor this process opened is close-on-exec (DESIGN.md).
+        // handler; every descriptor THIS PROCESS opened is close-on-exec (DESIGN.md). That
+        // claim does not cover a descriptor this process never opened — one inherited from
+        // whatever spawned it (a bash lander's `exec 9>…` lock with no O_CLOEXEC, surviving
+        // this binary's own `exec -a` from gate.sh) — and the trial started here can run
+        // testenv, which starts podman, whose conmon daemonizes and outlives the trial,
+        // holding that fd (and the lock it names) forever (sp-ohwg7). close_inherited_fds
+        // drops every fd ≥ 3 right before exec so none of them reach the trial at all.
+        close_inherited_fds(&mut c);
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => return (127, format!("gate: cannot run the gate command: {e}")),
@@ -966,5 +995,64 @@ mod tests {
 
         assert_eq!(err, Err(format!("no config registry at {}", home.join("conf.d").display())));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-ohwg7: a podman conmon started by a gate trial held an flock the gate's CALLER
+    /// had open (a lander's `exec 9>…` lock, opened by bash with no O_CLOEXEC) for 53+
+    /// minutes after the caller exited. Reproduced here without podman: `cmd` backgrounds
+    /// a `sleep`, the same shape (a long-lived child, started from inside a locked
+    /// section, that outlives the trial) — before `close_inherited_fds`, it inherits the
+    /// open-but-not-CLOEXEC lock fd by plain fork, and the lock stays held after this test
+    /// drops its own reference.
+    #[test]
+    fn run_gate_never_lets_a_daemon_it_starts_inherit_the_callers_lock_fd() {
+        use crate::ports::World;
+        use std::ffi::CString;
+
+        let dir = testkit::TempDir::new("gate-run-gate-fd-leak");
+        let tree = dir.path();
+        let lockfile = dir.join("caller.lock");
+        let lock_c = CString::new(lockfile.as_os_str().as_encoded_bytes()).unwrap();
+
+        // Simulate the lander's own `exec 9>lockfile; flock 9`: opened directly via
+        // libc::open with no O_CLOEXEC — exactly what bash's redirection does, and
+        // exactly what std::fs::File never does (SAFETY: a plain open/flock on a path we
+        // own, cleaned up below).
+        let lock_fd = unsafe { libc::open(lock_c.as_ptr(), libc::O_WRONLY | libc::O_CREAT, 0o644) };
+        assert!(lock_fd >= 0, "open {}: {}", lockfile.display(), std::io::Error::last_os_error());
+        assert_eq!(unsafe { libc::flock(lock_fd, libc::LOCK_EX) }, 0, "acquire the caller's lock");
+
+        let real = super::Real::new(std::path::PathBuf::new());
+        let env: Vec<(String, String)> = vec![("PATH".into(), std::env::var("PATH").unwrap_or_default())];
+        let (rc, out) = real.run_gate(
+            tree,
+            &env,
+            "10",
+            "sleep 30 >/dev/null 2>&1 & echo $! > child.pid",
+        );
+        assert_eq!(rc, 0, "trial command: {out}");
+
+        // The caller exits: drop our own reference to the lock, exactly as the lander's
+        // own fd 9 closes when its process exits.
+        unsafe { libc::close(lock_fd) };
+
+        // A fresh probe, from a fresh fd: free unless some other open file description —
+        // the backgrounded "daemon", if it inherited one — still holds it.
+        let probe_fd = unsafe { libc::open(lock_c.as_ptr(), libc::O_WRONLY, 0) };
+        assert!(probe_fd >= 0);
+        let free = unsafe { libc::flock(probe_fd, libc::LOCK_EX | libc::LOCK_NB) } == 0;
+        if free {
+            unsafe { libc::flock(probe_fd, libc::LOCK_UN) };
+        }
+        unsafe { libc::close(probe_fd) };
+
+        // Clean up the daemon regardless of the assertion below.
+        if let Ok(s) = std::fs::read_to_string(tree.join("child.pid")) {
+            if let Ok(pid) = s.trim().parse::<i32>() {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+        }
+
+        assert!(free, "the backgrounded child inherited the caller's lock fd and is still holding it");
     }
 }
