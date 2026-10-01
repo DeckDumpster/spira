@@ -14,6 +14,8 @@
 //!   spira-config schema                 the JSON Schema spira.toml is validated against
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
+//!   spira-config fayth ...              the chamber registry (wave 4.22, sp-r5zd2) — names,
+//!                                       get, roster, task, lane, partitions, for-labels, model
 //!
 //! `validate`, `get` and `export` read `spira.toml` from: the file argument if given (`-` for
 //! stdin, named on purpose), else the same search `locate` reports — `$SPIRA_TOML` (exclusive:
@@ -31,6 +33,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use spira_config::chamber;
 use spira_config::locate::locate;
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
 use spira_config::{
@@ -510,6 +513,108 @@ fn cmd_convert(args: &[String]) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `$SPIRA_HOME`, or the refusal every `fayth` subcommand prints and fails on — the chamber
+/// lives at `<home>/chamber`, and every lib.sh caller this binary now backs already has
+/// `SPIRA_HOME` set by the time it calls one of these (conf.sh resolves it before lib.sh is
+/// sourced), so an unset value here means something upstream broke, not "use a guess".
+fn fayth_home() -> Result<PathBuf, String> {
+    match env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
+        _ => Err("SPIRA_HOME is not set".to_string()),
+    }
+}
+
+/// `fayth ...` — the chamber registry (wave 4.22, sp-r5zd2): `spira-config fayth <verb>`
+/// backs lib.sh's own `fayth_names`/`spira_fayths`/`spira_task_fayths`/`spira_lane_fayths`/
+/// `fayth_get`/`fayth_partitions`/`fayths_for_labels`/`persona_model`, each now a one-line
+/// shim onto one of these verbs.
+fn cmd_fayth(args: &[String]) -> ExitCode {
+    let home = match fayth_home() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("spira-config fayth: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let roster_override = env::var("SPIRA_FAYTHS").ok();
+    let roster_override = roster_override.as_deref();
+    match args.first().map(String::as_str) {
+        Some("names") => {
+            for n in chamber::fayth_names(&home) {
+                println!("{n}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("get") => match (args.get(1), args.get(2)) {
+            (Some(fayth), Some(var)) => {
+                let def = args.get(3).map(String::as_str).unwrap_or("");
+                print!("{}", chamber::fayth_get(&home, fayth, var, def));
+                ExitCode::SUCCESS
+            }
+            _ => {
+                eprintln!("usage: spira-config fayth get <fayth> <var> [default]");
+                ExitCode::FAILURE
+            }
+        },
+        Some("roster") => {
+            print!("{}", chamber::spira_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("task") => {
+            print!("{}", chamber::spira_task_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("lane") => {
+            print!("{}", chamber::spira_lane_fayths(&home, roster_override));
+            ExitCode::SUCCESS
+        }
+        Some("partitions") => {
+            for (labels, exclude) in chamber::fayth_partitions(&home, roster_override) {
+                println!("{labels}\t{exclude}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("for-labels") => match args.get(1) {
+            Some(labels) => {
+                for f in chamber::fayths_for_labels(&home, labels) {
+                    println!("{f}");
+                }
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config fayth for-labels <labels>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("model") => match args.get(1) {
+            Some(fayth) => {
+                let def = args.get(2).map(String::as_str);
+                print!("{}", chamber::persona_model(fayth, def));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config fayth model <fayth> [default]");
+                ExitCode::FAILURE
+            }
+        },
+        _ => {
+            eprintln!(
+                "usage: spira-config fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                 \n\
+                 \x20 names                           every persona in the chamber, one per line\n\
+                 \x20 get <fayth> <var> [default]      one field of a fayth\n\
+                 \x20 roster                           spira_fayths: the active roster, in priority order\n\
+                 \x20 task                             spira_task_fayths: the pool's summon set\n\
+                 \x20 lane                              spira_lane_fayths: the declared lane fayths\n\
+                 \x20 partitions                       fayth_partitions: labels\\texclude-labels, one per line\n\
+                 \x20 for-labels <labels>              fayths_for_labels: personas whose partition IS <labels>\n\
+                 \x20 model <fayth> [default]          persona_model: the model this persona launches under"
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -555,6 +660,7 @@ fn main() -> ExitCode {
         },
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
+        Some("fayth") => cmd_fayth(&args[1..]),
         Some("migrate") => match args.get(1) {
             Some(file) => cmd_migrate(file),
             None => {
@@ -564,7 +670,7 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|migrate> ...\n\
+                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|fayth|migrate> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -577,6 +683,7 @@ fn main() -> ExitCode {
                  \x20 unset <dotted.path> <file>\n\
                  \x20 schema\n\
                  \x20 path-tail\n\
+                 \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
                  \x20 migrate <file>"
             );
             ExitCode::FAILURE

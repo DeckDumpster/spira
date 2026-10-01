@@ -862,31 +862,18 @@ aeons_live_lanes() {
 # meant a persona that landed was not a persona that ran, and nothing said so; enumerating
 # the chamber makes installing a fayth the whole of installing a persona.
 # --------------------------------------------------------------------------------------
+# fayth_names, spira_fayths and its task/lane splits, fayth_get, fayth_partitions,
+# fayths_for_labels and persona_model (below) are SHIMS onto `spira-config fayth ...`
+# (wave 4.22, sp-r5zd2: the chamber registry's home is spira-config now — the chamber IS
+# config). The logic, including the leading-space quirk `spira_fayths` can carry when
+# there are no fixed fayths, lives in spira-config/src/chamber.rs; this file keeps the
+# names so the ~50 bash sourcers that call them need no change.
 fayth_names() {          # every persona defined in the chamber, one per line
-    local f n
-    for f in "$SPIRA_HOME"/chamber/*.fayth; do
-        [ -e "$f" ] || continue
-        n="${f##*/}"; printf '%s\n' "${n%.fayth}"
-    done
+    spira-config fayth names
 }
 
 spira_fayths() {         # the personas this harness runs, space separated, IN PRIORITY ORDER
-    # SPIRA_FAYTHS still overrides, because which personas a HOST runs is deployment
-    # configuration; the default is every fayth present rather than one name.
-    if [ -n "${SPIRA_FAYTHS:-}" ]; then printf '%s' "$SPIRA_FAYTHS"; return 0; fi
-    # THE ORDER IS NOW LOAD-BEARING, so the default may not be alphabetical. The pool is
-    # drawn down in this order, and `fayth_names` returned "builder ops" — which puts the
-    # elastic persona that scales to fill the box AHEAD of the on-call one, exactly backwards.
-    # Elastic personas sort last and everything else keeps its name order, so a host that
-    # configures nothing still gets a sensible priority instead of an alphabetical accident.
-    local f fixed="" elastic=""
-    for f in $(fayth_names); do
-        if [ "$(fayth_get "$f" FAYTH_ELASTIC 0)" = 1 ]
-        then elastic="$elastic $f"
-        else fixed="$fixed $f"
-        fi
-    done
-    printf '%s' "${fixed# }${elastic:+ }${elastic# }"
+    spira-config fayth roster
 }
 
 # spira_task_fayths -> the personas the sentinel's pool summons: everything that is not a
@@ -902,14 +889,7 @@ spira_fayths() {         # the personas this harness runs, space separated, IN P
 # alias so an operator's custom fayth still works after upgrading. Both say the same thing:
 # this persona is not drawn from SPIRA_MAX_AEONS.
 spira_task_fayths() {
-    local f out=""
-    for f in $(spira_fayths); do
-        [ "$(fayth_get "$f" FAYTH_SUMMON auto)" = auto ] || continue
-        [ "$(fayth_get "$f" FAYTH_ROLE task)" = party ] && continue
-        [ -n "$(fayth_get "$f" FAYTH_LANE "")" ] && continue
-        out="$out $f"
-    done
-    printf '%s' "${out# }"
+    spira-config fayth task
 }
 
 # spira_lane_fayths -> the personas that belong to a declared lane (FAYTH_LANE set).
@@ -924,15 +904,7 @@ spira_task_fayths() {
 # functions, because the mechanism (FAYTH_LANE present → not a task fayth) does not
 # require the name to be on the list.
 spira_lane_fayths() {
-    local f out=""
-    for f in $(spira_fayths); do
-        # THE SAME EXCLUSION AS THE TASK POOL, because the sentinel summons from BOTH lists
-        # and a persona kept out of one is summoned by the other. A lane is how a persona gets
-        # capacity of its own; FAYTH_SUMMON is whether anything may summon it at all.
-        [ "$(fayth_get "$f" FAYTH_SUMMON auto)" = auto ] || continue
-        [ -n "$(fayth_get "$f" FAYTH_LANE "")" ] && out="$out $f"
-    done
-    printf '%s' "${out# }"
+    spira-config fayth lane
 }
 
 # persona_model <fayth> [default] -> the model this persona launches under.
@@ -951,22 +923,11 @@ spira_lane_fayths() {
 # (cockpit, a sweep) must see a fayth edited after it started, and spira_toml_resolve's own
 # mtime check keeps a call that finds nothing stale cheap.
 persona_model() {
-    local name="$1" def="${2:-claude-opus-5}" toml v=""
-    toml="$(spira_toml_resolve)"
-    if [ -n "$toml" ]; then
-        v="$(spira-config get "persona.$name.model" "$toml" 2>/dev/null)"
-    fi
-    printf '%s' "${v:-$def}"
+    spira-config fayth model "$1" "${2:-}"
 }
 
 fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a fayth
-    local f="$1" var="$2" def="${3:-}" F="$SPIRA_HOME/chamber/$1.fayth"
-    [ -f "$F" ] || { printf '%s' "$def"; return 1; }
-    # A SUBSHELL, always. Sourcing a fayth sets FAYTH_* in the caller, so reading two
-    # personas in one loop without one leaves the second wearing the first's predicate —
-    # the same defect this section exists to close, arriving by a different route.
-    # shellcheck disable=SC1090
-    ( . "$F" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"" )
+    spira-config fayth get "$1" "$2" "${3:-}"
 }
 
 # READY_ARGS — the ONE definition of "a bead an aeon can take". Everything that counts
@@ -1915,25 +1876,12 @@ fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
 # sweep that silently watches nothing is indistinguishable from one that found nothing
 # (law-absence-needs-a-positive-control).
 fayth_partitions() {
-    local f l seen=""
-    for f in $(spira_fayths); do
-        l="$(fayth_get "$f" FAYTH_LABELS)"
-        [ -n "$l" ] || continue
-        case "$seen" in *"|$l|"*) continue ;; esac
-        seen="$seen|$l|"
-        printf '%s\t%s\n' "$l" "$(fayth_get "$f" FAYTH_EXCLUDE_LABELS)"
-    done
+    spira-config fayth partitions
     return 0
 }
 
 fayths_for_labels() {    # fayths_for_labels <labels> -> personas whose partition IS <labels>
-    # For the question "is anything working THESE beads". Counting every live aeon would
-    # let a running Ops aeon mask a genuinely starved plan, which is the same
-    # one-predicate-for-every-persona defect seen from the other side.
-    local want="$1" f
-    for f in $(fayth_names); do
-        [ "$(fayth_get "$f" FAYTH_LABELS)" = "$want" ] && printf '%s\n' "$f"
-    done
+    spira-config fayth for-labels "$1"
     return 0
 }
 
