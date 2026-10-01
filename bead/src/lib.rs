@@ -2,6 +2,11 @@
 //! (which does the `bdq`/`.fayth`/`schema.sh`/`mail` subprocess work) so the CLI's own
 //! rules — the lane-admission guard, label composition, the lint judge — are unit-testable
 //! with no database, no chamber and no subprocess.
+//!
+//! `bdq` (the module, not the `bead` binary's own bridge to it) is `bdq` the standalone
+//! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
+
+pub mod bdq;
 
 use std::collections::BTreeMap;
 

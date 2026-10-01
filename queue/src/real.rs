@@ -227,7 +227,7 @@ impl RealLib {
     /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` — same inputs `aeon::conf::Conf`
     /// and `cockpit_collect::io::repo_registry` already use.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let env_map = spira_config::repos::registry_env(std::env::vars().collect(), &self.home);
         let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
         spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
     }
@@ -390,16 +390,24 @@ impl Lib for RealLib {
         self.call(Op::Comment, &[id, text], false);
     }
     fn notify(&self, repo: &str, subject: &str, body: &str) {
-        self.call(Op::Notify, &[repo, subject, body], false);
+        // In-process (sp-hwjsq, "wave 4.32"): queue owns this family now, so its own seam
+        // call onto queue_notify_concierge is gone — lib.sh's copy is retired outright.
+        crate::ops::helpers::notify(repo, subject, body);
     }
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);
     }
     fn divergence(&self, repo: &str, path: &Path, forge: &str, local: &str) -> bool {
-        self.call(Op::Divergence, &[repo, &path.display().to_string(), forge, local], false).0 == 0
+        // In-process (sp-hwjsq, "wave 4.32"); lib.sh's queue_local_check_divergence is
+        // retired outright — nothing else ever called it.
+        crate::ops::helpers::check_divergence(repo, path, forge, local)
     }
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool {
-        self.call(Op::Push, &[&path.display().to_string(), remote, refspec], false).0 == 0
+        // In-process (sp-hwjsq, "wave 4.32"). Stderr discarded here, as the old seam body
+        // (`spira_git_push ... 2>/dev/null`) did for this call site specifically —
+        // spira_git_push itself never redirected anything; that stays the caller's choice,
+        // which is why the CLI shim for bash callers (below, in main.rs) does not.
+        ok(crate::ops::helpers::git_push_cmd(path, &["-q".to_string(), remote.to_string(), refspec.to_string()]).stderr(Stdio::null()))
     }
     fn rebase(&self, branch: &str, onto: &str, path: &Path, name: &str) -> Result<(), String> {
         let (rc, why) = self.answer(Op::Rebase, &[branch, onto, &path.display().to_string(), name]);
@@ -421,11 +429,31 @@ impl Lib for RealLib {
         }
     }
     fn sort_rows(&self, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)> {
-        let (_, ans) = self.answer(Op::SortRows, &[&path.display().to_string(), base, prio_json, rows]);
-        ans.lines().filter_map(|l| l.split_once(' ').map(|(a, b)| (a.to_string(), b.trim().to_string()))).collect()
+        // In-process (sp-hwjsq, "wave 4.32"): queue_sort_rows and its internal
+        // queue_is_suite_transition, both ported here. queue_is_suite_transition has no
+        // caller left at all once this goes in-process, so lib.sh's copy is retired
+        // outright; queue_sort_rows itself keeps a shim (test-queue-sort-large.sh,
+        // cockpit-collect still call it by name).
+        let with_trans: Vec<(String, String, i64, bool)> = crate::ops::helpers::parse_rows(rows)
+            .into_iter()
+            .map(|(id, tip, epoch)| {
+                let is_trans = crate::ops::helpers::is_suite_transition(path, &tip, base);
+                (id, tip, epoch, is_trans)
+            })
+            .collect();
+        let express_label = std::env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into());
+        let (ranked, warning) = crate::ops::helpers::sort_rows(&with_trans, prio_json, &express_label);
+        if let Some(w) = warning {
+            eprintln!("{w}");
+        }
+        ranked.into_iter().map(|r| (r.id, r.tip)).collect()
     }
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str) {
-        self.call(Op::CancelRuns, &[&forge.display().to_string(), &path.display().to_string(), branch], false);
+        // In-process (sp-hwjsq, "wave 4.32"); lib.sh's queue_cancel_branch_runs is retired
+        // outright — nothing else ever called it. Best-effort, as the old seam body
+        // (`... || true; exit 0`) was: a failed cancel is logged, never surfaced to the
+        // caller, who has no retry path of its own here (the next abandon does).
+        crate::ops::helpers::cancel_branch_runs(forge, path, branch, "QUEUE");
     }
     /// `spira-lc returned` — the caller verb that replaced lc.sh's `lc_returned` (sp-arpjt).
     /// Best-effort and silent, as the seam call was; the machine reads its own switch.
@@ -813,7 +841,6 @@ mod tests {
 git() { printf 'origin\nupstream\n'; }
 land_subject() { echo "noise on stdout"; printf 'spira: land %s — T' "$1"; }
 rebase_branch() { REBASE_FAILURE=conflict; return 1; }
-queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 000000009 1 0000000006 sp-a ta\n'; }
 "#,
         )
         .unwrap();
@@ -1012,10 +1039,200 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let lib = RealLib { home: home.to_path_buf() };
         assert_eq!(lib.land_subject("sp-a"), "spira: land sp-a — T");
         assert_eq!(lib.rebase("spira/sp-a", "origin/main", Path::new("/repo"), "spira"), Err("conflict".to_string()));
+        // sort_rows runs in process now (sp-hwjsq, "wave 4.32"): "/repo" does not exist, so
+        // the real `git diff` behind queue_is_suite_transition fails closed (not a
+        // transition) for both rows, same as the bash stub it replaced always answered.
         assert_eq!(
             lib.sort_rows(Path::new("/repo"), "b0", "[]", "sp-a ta 6\nsp-b tb 5\n"),
             vec![("sp-b".to_string(), "tb".to_string()), ("sp-a".to_string(), "ta".to_string())]
         );
+    }
+
+    // -------------------------------------------------------------------------- sp-hwjsq
+    // notify/divergence/push/sort_rows/cancel_runs run in process now ("wave 4.32"); these
+    // prove RealLib's own implementation against real git, a fake `mail` and a fake forge
+    // binary — not the TestLib fakes ops.rs tests use elsewhere.
+
+    #[test]
+    fn sort_rows_detects_a_real_suite_state_transition() {
+        let _serial = crate::testutil::serial();
+        let repo = crate::testutil::tmpdir("sort-trans-repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "a@b.c"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(repo.join("seed"), "x\n").unwrap();
+        git(&repo, &["add", "seed"]);
+        git(&repo, &["commit", "-q", "-m", "seed"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+
+        fs::create_dir_all(repo.join("spira")).unwrap();
+        fs::write(repo.join("spira/suite-state"), "state\n").unwrap();
+        git(&repo, &["add", "spira/suite-state"]);
+        git(&repo, &["commit", "-qm", "transition"]);
+        let trans_tip = git(&repo, &["rev-parse", "HEAD"]);
+
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        // sp-t carries the LATER epoch (2 vs. 1): the transition tiebreak must still put it
+        // first, ahead of certification age — sp-ihxa0's "tiebreak only within a priority"
+        // rule, not a rank of its own that could outrank arrival order the other way.
+        let out = lib.sort_rows(&repo, &base, "[]", &format!("sp-t {trans_tip} 2\nsp-p {base} 1\n"));
+        // sp-t (the transition) ranks first within the same (default) priority, despite
+        // its later epoch.
+        assert_eq!(out, vec![("sp-t".to_string(), trans_tip), ("sp-p".to_string(), base)]);
+    }
+
+    #[test]
+    fn divergence_alarms_once_per_foreign_tip_and_clears_when_healthy() {
+        let _serial = crate::testutil::serial();
+        let repo = crate::testutil::tmpdir("div-repo");
+        git(&repo, &["init", "-q"]);
+        git(&repo, &["config", "user.email", "a@b.c"]);
+        git(&repo, &["config", "user.name", "t"]);
+        fs::write(repo.join("f"), "base\n").unwrap();
+        git(&repo, &["add", "f"]);
+        git(&repo, &["commit", "-q", "-m", "base"]);
+        let local = git(&repo, &["rev-parse", "HEAD"]);
+        fs::write(repo.join("f"), "foreign\n").unwrap();
+        git(&repo, &["commit", "-qam", "foreign push"]);
+        let foreign = git(&repo, &["rev-parse", "HEAD"]);
+
+        let run = crate::testutil::tmpdir("div-run");
+        let queue_dir = run.join("queue");
+        fs::create_dir_all(&queue_dir).unwrap();
+        let mail_log = run.join("mail-log");
+        let bindir = crate::testutil::tmpdir("div-bin");
+        testkit::write_exe(bindir.join("mail"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\ncat >> {}\n", mail_log.display(), mail_log.display()));
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut p = std::ffi::OsString::from(bindir.path());
+        p.push(":");
+        p.push(&old_path);
+        std::env::set_var("PATH", &p);
+        std::env::set_var("SPIRA_QUEUE_DIR", &queue_dir);
+
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+
+        // Local ahead of forge (healthy): true, no alarm, no statefile.
+        assert!(lib.divergence("fixq", &repo, &local, &foreign));
+        assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
+
+        // Foreign commit on top of local: false, alarmed once.
+        assert!(!lib.divergence("fixq", &repo, &foreign, &local));
+        let alarmed_after_first = fs::read_to_string(queue_dir.join("fixq/divergence-alarmed")).unwrap();
+        assert_eq!(alarmed_after_first.trim(), foreign);
+        let mail_after_first = fs::read_to_string(&mail_log).unwrap();
+        assert!(mail_after_first.contains("fixq"), "{mail_after_first}");
+        assert!(mail_after_first.contains("foreign push"), "{mail_after_first}");
+
+        // Same foreign tip again: still false, but silent (no second mail).
+        fs::write(&mail_log, "").unwrap();
+        assert!(!lib.divergence("fixq", &repo, &foreign, &local));
+        assert_eq!(fs::read_to_string(&mail_log).unwrap(), "", "a repeated call against the SAME foreign tip must not re-alarm");
+
+        // Healthy again: the marker clears.
+        assert!(lib.divergence("fixq", &repo, &local, &foreign));
+        assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
+
+        std::env::set_var("PATH", &old_path);
+        std::env::remove_var("SPIRA_QUEUE_DIR");
+    }
+
+    #[test]
+    fn divergence_refuses_rather_than_guesses_when_queue_dir_is_unset() {
+        let _serial = crate::testutil::serial();
+        let prev = std::env::var_os("SPIRA_QUEUE_DIR");
+        std::env::remove_var("SPIRA_QUEUE_DIR");
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        assert!(!lib.divergence("fixq", Path::new("/repo"), "a", "b"));
+        if let Some(v) = prev {
+            std::env::set_var("SPIRA_QUEUE_DIR", v);
+        }
+    }
+
+    #[test]
+    fn push_adds_app_credentials_only_when_configured() {
+        let _serial = crate::testutil::serial();
+        let bindir = crate::testutil::tmpdir("push-bin");
+        let args_file = bindir.join("git-args");
+        testkit::write_exe(bindir.join("git"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", args_file.display()));
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut p = std::ffi::OsString::from(bindir.path());
+        p.push(":");
+        p.push(&old_path);
+        std::env::set_var("PATH", &p);
+
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+
+        std::env::remove_var("SPIRA_GH_APP_ID");
+        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
+        assert!(lib.push(Path::new("/repo"), "origin", "main"));
+        let plain = fs::read_to_string(&args_file).unwrap();
+        assert!(!plain.contains("credential.helper"), "{plain}");
+        assert!(plain.contains("push"), "{plain}");
+
+        fs::remove_file(&args_file).ok();
+        std::env::set_var("SPIRA_GH_APP_ID", "1");
+        std::env::set_var("SPIRA_GH_APP_INSTALLATION_ID", "2");
+        assert!(lib.push(Path::new("/repo"), "origin", "main"));
+        let with_creds = fs::read_to_string(&args_file).unwrap();
+        assert!(with_creds.contains("credential.helper"), "{with_creds}");
+        assert!(with_creds.contains("insteadOf=git@github.com:"), "{with_creds}");
+
+        std::env::remove_var("SPIRA_GH_APP_ID");
+        std::env::remove_var("SPIRA_GH_APP_INSTALLATION_ID");
+        std::env::set_var("PATH", &old_path);
+    }
+
+    #[test]
+    fn cancel_runs_logs_each_attempt_and_warns_loudly_on_a_failed_cancel() {
+        let _serial = crate::testutil::serial();
+        let run = crate::testutil::tmpdir("cancel-run");
+        std::env::set_var("SPIRA_RUN", run.path());
+        let bindir = crate::testutil::tmpdir("cancel-bin");
+        let forge = bindir.join("forge-fake.sh");
+        testkit::write_exe(
+            &forge,
+            r#"#!/bin/sh
+case "$1" in
+    runs-for-branch) printf '101 queued\n202 in_progress\n' ;;
+    run-cancel) [ "$3" = 202 ] && exit 1; exit 0 ;;
+esac
+"#,
+        );
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        lib.cancel_runs(&forge, Path::new("/repo"), "spira/queue/1");
+        let log = fs::read_to_string(run.join("landing.log")).unwrap();
+        assert!(log.contains("RUN_CANCEL ") && log.contains("run=101"), "{log}");
+        assert!(log.contains("RUN_CANCEL_FAILED") && log.contains("run=202"), "{log}");
+        std::env::remove_var("SPIRA_RUN");
+    }
+
+    #[test]
+    fn notify_mails_the_concierge_mailbox_by_default() {
+        let _serial = crate::testutil::serial();
+        let run = crate::testutil::tmpdir("notify-run");
+        let mail_log = run.join("mail-args");
+        let bindir = crate::testutil::tmpdir("notify-bin");
+        testkit::write_exe(&bindir.join("mail"), &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", mail_log.display()));
+        let old_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut p = std::ffi::OsString::from(bindir.path());
+        p.push(":");
+        p.push(&old_path);
+        std::env::set_var("PATH", &p);
+        std::env::remove_var("SPIRA_MAIL_SESSION_MAILBOX");
+
+        let home = minimal_home(":");
+        let lib = RealLib { home: home.to_path_buf() };
+        lib.notify("fixq", "test subject", "test body");
+        let seen = fs::read_to_string(&mail_log).unwrap();
+        assert!(seen.contains("send concierge"), "{seen}");
+        assert!(seen.contains("Merge queue: fixq test subject"), "{seen}");
+
+        std::env::set_var("PATH", &old_path);
     }
 
     // ---------------------------------------------------------------------------- sp-uwhx0

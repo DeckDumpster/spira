@@ -21,14 +21,9 @@ pub enum Op {
     CloseOnLand,
     GhCloseout,
     Comment,
-    Notify,
     Event,
-    Divergence,
-    Push,
     Rebase,
     LandSubject,
-    SortRows,
-    CancelRuns,
     FormatBatch,
     BaseConflict,
     PfGate,
@@ -96,14 +91,9 @@ fn body(op: Op) -> &'static str {
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::GhCloseout => "gh_issue_closeout \"$1\" \"$2\" \"$3\" || true\nexit 0\n",
         Op::Comment => "printf '%s' \"$2\" | bdq comment \"$1\" --stdin >/dev/null 2>&1 || true\nexit 0\n",
-        Op::Notify => "queue_notify_concierge \"$1\" \"$2\" \"$3\"\nexit 0\n",
         Op::Event => "spira_event \"$1\" - \"$2\" \"$3\" || true\nexit 0\n",
-        Op::Divergence => "queue_local_check_divergence \"$1\" \"$2\" \"$3\" \"$4\" >/dev/null 2>&1\nexit $?\n",
-        Op::Push => "spira_git_push \"$1\" -q \"$2\" \"$3\" 2>/dev/null\nexit $?\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\" 2>/dev/null; __rc=$?\nprintf '\\036%s' \"${REBASE_FAILURE:-}\"\nexit $__rc\n",
         Op::LandSubject => "printf '\\036%s' \"$(land_subject \"$1\")\"\nexit 0\n",
-        Op::SortRows => "PRIO_JSON=\"$3\"\nprintf '\\036'\nprintf '%s' \"$4\" | queue_sort_rows \"$1\" \"$2\" | awk '{print $5, $6}'\nexit 0\n",
-        Op::CancelRuns => "queue_cancel_branch_runs \"$1\" \"$2\" \"$3\" QUEUE || true\nexit 0\n",
         // FormatBatch/BaseConflict/PfGate used to source batch.sh for these bodies (`format_batch`,
         // `_base_conflict`, `_pf_gate`/`_pf_run`) — inlined here, batch.sh deleted, sp-uwhx0. Bodies
         // are otherwise unchanged from batch.sh's own (same reviewed shape), except PfGate: batch.sh
@@ -214,8 +204,8 @@ mod tests {
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
             Op::Context, Op::TomlPath, Op::LandMark, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
-            Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Notify, Op::Event, Op::Divergence, Op::Push, Op::Rebase,
-            Op::LandSubject, Op::SortRows, Op::CancelRuns, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
+            Op::CloseOnLand, Op::GhCloseout, Op::Comment, Op::Event, Op::Rebase,
+            Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug,
         ] {
             let s = script(op);
