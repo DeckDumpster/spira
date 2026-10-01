@@ -766,6 +766,13 @@ pub fn jitter(max: u64, seed: u64) -> u64 {
     z % (max + 1)
 }
 
+/// RUSTC_WRAPPER mode: does this invocation queue for a compile slot? Only a crate compile
+/// outside an admitted job does. `inherit` is [`INHERIT_ENV`]: a gate's builds carry it and
+/// never wait (DESIGN-admission.md D11).
+pub fn wrapper_waits(inherit: Option<&str>, rustc_args: &[String]) -> bool {
+    inherit.map_or(true, |t| t.trim().is_empty()) && is_compile(rustc_args)
+}
+
 /// Does this rustc argument list compile a crate? The probes (`-vV`, `--print …`) that
 /// `cargo metadata` makes too are not builds and never queue (DESIGN-admission.md D6).
 pub fn is_compile(args: &[String]) -> bool {

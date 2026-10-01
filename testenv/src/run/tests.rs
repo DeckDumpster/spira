@@ -1514,3 +1514,42 @@ fn a_full_test_pool_is_waited_for_visibly_and_never_failed() {
     assert!(w.has_line(|l| l.contains("batch: admitted to test slot 1 after ")));
     assert!(w.last().starts_with("VERDICT GREEN"), "{}", w.last());
 }
+
+/// sp-f4ig1-fix: a gate whose build would have to wait for compile slots still gets a verdict.
+/// Both pools are full (size 1, held by a live process that is not ours); under the gate's
+/// token the trial builds and tests at once, inside its --deadline, and says no waiting line.
+#[test]
+fn a_gate_trial_with_every_pool_full_still_gets_its_verdict() {
+    let mut w = World::new("admit-gate-full");
+    w.env.insert("SPIRA_ADMISSION".into(), "gate".into());
+    w.env.insert("SPIRA_COMPILE_PAR".into(), "1".into());
+    w.env.insert("SPIRA_TEST_PAR".into(), "1".into());
+    let start = spira_config::admission::Procs::start_of(&spira_config::admission::RealProcs, 1).expect("pid 1");
+    for pool in ["compile", "test"] {
+        let dir = w.root.join(format!("run/{pool}-admission"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("slot.1"), format!("pid=1 start={start} who=agent-build since={} waited=0 last=0 weight=4\n", spira_config::admission::now_epoch())).unwrap();
+    }
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let t0 = std::time::Instant::now();
+    assert_eq!(w.run(&rt, &b, &["--deadline", "300", "--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=0 (deadline 300s)");
+    assert!(t0.elapsed() < Duration::from_secs(5), "no wait: {:?}", t0.elapsed());
+    assert!(!w.has_line(|l| l.contains("waiting for a")), "{:?}", w.lines.lock().unwrap());
+    assert_eq!(b.calls.load(Ordering::SeqCst), 1, "it built");
+    // POSITIVE CONTROL: without the gate's token the same trial queues (and would wait for
+    // the holder; here it is freed after a moment so the test ends).
+    w.env.remove("SPIRA_ADMISSION");
+    let slot = w.root.join("run/compile-admission/slot.1");
+    let freer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1200));
+        let _ = fs::remove_file(slot);
+    });
+    sh(&w.repo, "git checkout -q topic && echo y > g && git add g && git commit -qm again && git checkout -q main");
+    let test_slot = w.root.join("run/test-admission/slot.1");
+    let _ = fs::remove_file(test_slot);
+    assert_eq!(w.run(&rt, &b, &["--deadline", "300", "--suites", "test-a.sh", "topic"], "", &w.root), 0);
+    freer.join().unwrap();
+    assert!(w.has_line(|l| l.contains("waiting for a compile slot: 4 of 1 held by agent-build")), "{:?}", w.lines.lock().unwrap());
+}

@@ -2846,3 +2846,24 @@ fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
 }
+
+/// sp-f4ig1-fix: a gate never loses its verdict to a compile-slot wait. Every command that can
+/// compile — the trial's own and the after-PASS release-bins, which runs outside the trial's
+/// environment — carries the gate's admission token, so spira-admit (env or cargo config) and
+/// testenv run it on the gate's slot without queueing behind agent builds.
+#[test]
+fn every_build_the_gate_runs_rides_on_the_gate_slot_including_release_bins() {
+    let f = Fake::new();
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    let ran = f.ran.borrow().clone();
+    assert!(ran.len() >= 2, "{ran:?}");
+    for (i, env) in ran.iter().enumerate() {
+        assert!(
+            env.iter().any(|(k, v)| k == "SPIRA_ADMISSION" && v == "gate"),
+            "command {i} ({}) runs outside the gate's slot: {env:?}",
+            f.cmds.borrow()[i]
+        );
+    }
+    // POSITIVE CONTROL: the release-bins command is the one that used to lack it.
+    assert_eq!(f.cmds.borrow().last().unwrap(), &crate::engine::release_bins_command());
+}

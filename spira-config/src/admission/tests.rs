@@ -477,3 +477,15 @@ fn the_pool_sizes_and_jitter_are_typed_config_keys_exported_to_the_shell() {
     assert!(w.0.is_empty(), "{:?}", w.0);
     assert_eq!((s.compile_par, s.test_par, s.summon_jitter), (Some(6), Some(3), Some(0)));
 }
+
+#[test]
+fn a_gates_compile_never_queues_in_the_wrapper() {
+    let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let compile = v(&["--crate-name", "gate", "-C", "opt-level=2"]);
+    assert!(!wrapper_waits(Some("gate"), &compile), "a gate's build rides its slot");
+    assert!(!wrapper_waits(Some("test:1"), &compile));
+    // POSITIVE CONTROL: the same compile outside an admitted job queues; probes never do.
+    assert!(wrapper_waits(None, &compile));
+    assert!(wrapper_waits(Some(" "), &compile), "an empty token is not an admission");
+    assert!(!wrapper_waits(None, &v(&["-vV"])));
+}

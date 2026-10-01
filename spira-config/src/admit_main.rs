@@ -62,8 +62,7 @@ fn main() -> ExitCode {
 /// compiler. Only a crate compile waits; probes and inherited jobs exec at once.
 fn wrapper(args: Vec<OsString>) -> ExitCode {
     let rest: Vec<String> = args[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    let inherited = var(admission::INHERIT_ENV);
-    if inherited.is_none() && admission::is_compile(&rest) {
+    if admission::wrapper_waits(var(admission::INHERIT_ENV).as_deref(), &rest) {
         if let Some(run) = run_dir() {
             let who = who();
             let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };

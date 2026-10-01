@@ -189,6 +189,13 @@ impl<'w, W: World> Trial<'w, W> {
                     w.eprint(&format!("gate: {}", wr.describe()));
                 }
                 self.s.build_env = wr.env();
+                // Every build the gate runs rides on the GATE's slot (sp-f4ig1-fix,
+                // DESIGN-admission.md D11): the token travels WITH the build environment, so no
+                // command that compiles — tools, unit phases, testenv's warm-copy build,
+                // release-bins — can reach the compile pool, even through the box's cargo config
+                // (`build.rustc-wrapper = spira-admit`), and no admission wait can spend the
+                // trial's budget.
+                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }
             Err(e) => self.s.cache_refusal = Some(e),
         }

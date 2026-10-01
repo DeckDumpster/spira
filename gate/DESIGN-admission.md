@@ -289,6 +289,27 @@ them release builds.
   (`SPIRA_TESTENV_MAX_CONCURRENT`, which gives up after `SPIRA_TESTENV_QUEUE_TIMEOUT`) stays
   as a backstop, and the test pool normally keeps it from ever engaging. Nothing else is
   dropped.
+* **D11: a gate's builds ride on the gate's slot, and never on the compile pool**
+  (sp-f4ig1-fix, after concierge/sp-yyk47's `NO_VERDICT reason=budget` on 2026-10-01). Of
+  the two remedies, this one was chosen over crediting compile waits to a phase's deadline.
+  A gate already holds the host-wide admission that pays for everything its trial runs, so a
+  second queue inside it would make its verdict depend on agent builds it cannot see. Crediting
+  the wait would keep the verdict but still put the gate behind agent builds. The token
+  `SPIRA_ADMISSION=gate` now travels **in the gate's build environment**
+  (`build_env`) as well as the trial's. Every command that can compile therefore carries it:
+  tools, unit phases, testenv's warm-copy build, and the after-PASS `--release-bins` (which
+  runs outside the trial environment and lacked the token before). That covers a cargo that
+  reaches `spira-admit` through the box's cargo config (`build.rustc-wrapper`) instead of
+  `RUSTC_WRAPPER`. `spira_config::admission::wrapper_waits` is the wrapper's one decision:
+  only a crate compile outside an admitted job queues.
+  **What the 05:43Z trial actually shows:** its testenv `__batch__` row is
+  `resolve:2,build:148` (setup share 150 s), with **no `admit-compile` phase** and no
+  `admission` row under its name. The tree's testenv inherited the gate's slot and did not
+  wait. The build itself was slow, because three admitted agent builds were compiling at full
+  width beside it, and the setup share expired. Contention like this is outside what admission
+  can see. It is a question for the setup share's size, or for whether `compile_par` should
+  count a running gate's build, and it is left to the Concierge (the statute rules out
+  slowing the agent builds instead).
 * **Finding, not fixed here.** Under `lifecycle_enforce`, the model's restricted environment
   (`aeon/src/restrict.rs`) carries neither `RUSTC_WRAPPER` nor cargo on its PATH. An enforced
   session therefore gets neither the build cache nor admission. That is the restriction's
