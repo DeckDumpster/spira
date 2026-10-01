@@ -54,8 +54,6 @@ unset __q __v
 
 const CONTEXT: &str = r#"__n="${1:-}"; [ -n "$__n" ] || __n="$(spira_home_repo)"
 __p="$(repo_root "$__n" 2>/dev/null)"; __pok=$?
-__lr=""; [ "$__pok" -eq 0 ] && __lr="$(spira_landref "$__p" 2>/dev/null)"
-__pf="$(spira_publish_forge "$__n" 2>/dev/null)"
 __rem=""; [ "$__pok" -eq 0 ] && __rem="$(git -C "$__p" remote 2>/dev/null | tr '\n' ' ')"
 __kv() { printf '%s=%s\0' "$1" "$2"; }
 printf '\036'
@@ -80,8 +78,6 @@ __kv path "$__p"
 __kv mode "$(repo_land "$__n")"
 __kv map_land "$(repo_field "$__n" land 2>/dev/null)"
 __kv map_base "$(repo_field "$__n" base 2>/dev/null)"
-__kv landref "$__lr"
-__kv publish "$__pf"
 __kv remotes "$__rem"
 __K="$(printf '%s' "$__n" | tr 'a-z-' 'A-Z_')"
 case "$__K" in *[!A-Z0-9_]*) __K="" ;; esac
@@ -99,7 +95,10 @@ fn body(op: Op) -> &'static str {
         Op::Context => CONTEXT,
         Op::Repos => "printf '\\036'\nspira_repos | while IFS= read -r __r; do [ -n \"$__r\" ] && printf '%s\\0' \"$__r\"; done\nexit \"${PIPESTATUS[0]}\"\n",
         Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
-        Op::Readback => "printf '\\036%s\\0%s\\0' \"$(repo_land \"$1\")\" \"$(spira_landref \"$1\" 2>/dev/null)\"\nexit 0\n",
+        // spira_landref dropped (sp-o88bx, "wave 4.12"): the caller now resolves it
+        // in-process through spira_config::repos, rather than paying for an extra
+        // spira-config subprocess inside this already-running bash seam call.
+        Op::Readback => "printf '\\036%s\\0' \"$(repo_land \"$1\")\"\nexit 0\n",
         Op::LandMark => "land_mark \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",

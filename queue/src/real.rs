@@ -220,6 +220,18 @@ impl RealLib {
         self.home.display().to_string()
     }
 
+    /// The repo registry, in-process (sp-o88bx, "wave 4.12": family W — `spira_landref`/
+    /// `spira_publish_forge` — joins the family-U lookups `context()`/`readback()` no
+    /// longer wait on a bash+spira-config round trip for). Built from THIS process's own
+    /// environment, exactly as `conf.sh`/lib.sh's own shims read `SPIRA_REPO_MAP`/
+    /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` — same inputs `aeon::conf::Conf`
+    /// and `cockpit_collect::io::repo_registry` already use.
+    fn repo_registry(&self) -> spira_config::repos::Registry {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
+        spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
+    }
+
     /// Run one seam op. `capture`: stdout is returned (logs before the answer mark are
     /// re-printed); otherwise stdout is inherited, as the bash call's was.
     fn call(&self, op: Op, vals: &[&str], capture: bool) -> (i32, String) {
@@ -297,13 +309,21 @@ impl Lib for RealLib {
                 incident_priority: Some(g("incident_priority")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "1".into()),
             },
         };
-        let publish = g("publish");
-        let publish = publish.trim().split_once(' ').map(|(a, b)| (a.to_string(), b.trim().to_string()));
+        // spira_landref/spira_publish_forge dropped from the CONTEXT seam body
+        // (sp-o88bx, "wave 4.12"): resolved in-process here instead, through the exact
+        // same spira_config::repos the bash shims they used to call now shell out to —
+        // so this agrees with repo_root's own (still-bash, family U) resolution by
+        // construction, not by coincidence.
+        let name = g("name");
+        let reg = self.repo_registry();
+        let landref = spira_config::repos::landref(&reg, &name).filter(|s| !s.is_empty());
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let publish = spira_config::repos::publish_forge(&reg, &name, &env_map);
         let r = RepoCtx {
-            name: g("name"),
+            name,
             path: (g("path_ok") == "0").then(|| PathBuf::from(g("path"))).filter(|p| !p.as_os_str().is_empty()),
             mode: LandMode::parse(&g("mode")).unwrap_or(LandMode::Push),
-            landref: Some(g("landref")).filter(|s| !s.is_empty()),
+            landref,
             map_land: g("map_land"),
             map_base: g("map_base"),
             publish,
@@ -325,8 +345,11 @@ impl Lib for RealLib {
     }
     fn readback(&self, name: &str) -> (String, String) {
         let (_, ans) = self.answer(Op::Readback, &[name]);
-        let mut it = ans.split('\0');
-        (it.next().unwrap_or("").to_string(), it.next().unwrap_or("").to_string())
+        let land = ans.split('\0').next().unwrap_or("").to_string();
+        // spira_landref dropped from the Readback seam body (sp-o88bx, "wave 4.12");
+        // resolved in-process instead, same as context()'s own landref above.
+        let landref = spira_config::repos::landref(&self.repo_registry(), name).unwrap_or_default();
+        (land, landref)
     }
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
         self.call(Op::LandMark, &[id, state, tip, reason], false);
@@ -770,8 +793,6 @@ spira_repos() { printf 'spira\nsvc\n\nspira\n'; }
 repo_root() { [ "$1" = spira ] && printf /repo || return 1; }
 repo_land() { printf queue.local; }
 repo_field() { case "$2" in land) echo queue.local;; base) echo local/main;; esac; }
-spira_landref() { printf local/main; }
-spira_publish_forge() { printf 'origin main\n'; }
 git() { printf 'origin\nupstream\n'; }
 land_subject() { echo "noise on stdout"; printf 'spira: land %s — T' "$1"; }
 rebase_branch() { REBASE_FAILURE=conflict; return 1; }
@@ -834,7 +855,44 @@ queue_sort_rows() { cat >/dev/null; printf '1 000000009 1 0000000005 sp-b tb\n1 
         let _serial = crate::testutil::serial();
         let home = stub_home();
         let lib = RealLib { home: home.to_path_buf() };
+
+        // spira_landref/spira_publish_forge are resolved in-process now (sp-o88bx, "wave
+        // 4.12"), through spira_config::repos against THIS process's real environment and
+        // a real git checkout — not through the stubbed lib.sh above, which still answers
+        // everything else context() asks (including repo_root's own fake "/repo", which is
+        // why `r.path` below is unaffected). A real repo-map + checkout stands in for them.
+        let repo = home.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        git(&["init", "-q", "-b", "trunk"]);
+        fs::write(repo.join("f"), "x").unwrap();
+        git(&["add", "f"]);
+        git(&["commit", "-q", "-m", "x"]);
+        git(&["branch", "-q", "local/main"]);
+        let map = home.join("repo-map");
+        fs::write(&map, format!("spira | {} | queue.local | local/main |  | \n", repo.display())).unwrap();
+        let prev_map = std::env::var("SPIRA_REPO_MAP").ok();
+        std::env::set_var("SPIRA_REPO_MAP", &map);
+
         let (s, r) = lib.context(Some("spira")).unwrap();
+
+        match prev_map {
+            Some(v) => std::env::set_var("SPIRA_REPO_MAP", v),
+            None => std::env::remove_var("SPIRA_REPO_MAP"),
+        }
+
         assert_eq!(s.run, PathBuf::from("/run/x"));
         assert_eq!(s.queue_dir, PathBuf::from("/run/x/queue"));
         assert_eq!(s.releases, None);
