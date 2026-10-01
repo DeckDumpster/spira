@@ -4261,8 +4261,17 @@ land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
 # queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,
 # the reconciler's mergeability check, cockpit-collect's "next up" pane) draws from. Kept
 # as a shim: queue-certified-list.sh and cockpit-collect still call this by name.
+#
+# EXECS `queue-helpers`, NOT `queue` — a SEPARATE binary, on purpose (same crate, a second
+# [[bin]]). The first cut named this subcommand on `queue` itself; that broke production
+# the moment it ran under any fixture that stubs `queue` by NAME on PATH to isolate
+# dispatch behaviour (sp-gypjk's convention — test-certify.sh's `queue-bin` stub is one).
+# The stub logs argv and returns 0; it has no idea it was just asked to do a real git
+# push, and the caller saw a quiet success with nothing moved. A plain git/mail primitive
+# must never share a name with the big multi-purpose operator CLI that tests routinely
+# replace wholesale.
 queue_certified_list() {
-    queue certified-list "$1"
+    queue-helpers certified-list "$1"
 }
 
 # queue_cancel_branch_runs and queue_is_suite_transition are RETIRED (sp-hwjsq,
@@ -4294,10 +4303,11 @@ queue_certified_list() {
 # Rust now (sp-hwjsq, "wave 4.32"), queue/src/ops/helpers.rs `sort_rows` — same ranking,
 # same fail-open contract — called in process from queue's own Lib::sort_rows. Kept as a
 # shim: test-queue-sort-large.sh and cockpit-collect still call this by name. PRIO_JSON is
-# written to a temp file and unset BEFORE this shim execs the `queue` binary, for exactly
-# the reason above: the payload must never cross a process boundary as an environment
-# variable, and an exec is still a process boundary even when the function calling it is
-# this thin.
+# written to a temp file and unset BEFORE this shim execs the `queue-helpers` binary (a
+# SEPARATE binary from `queue` itself — see queue_certified_list's note above; a stub of
+# `queue` must never also swallow this), for exactly the reason above: the payload must
+# never cross a process boundary as an environment variable, and an exec is still a
+# process boundary even when the function calling it is this thin.
 queue_sort_rows() {
     local repo="$1" base_sha="$2"
     local _pj="${PRIO_JSON:-[]}" _pjf _rc
@@ -4305,7 +4315,7 @@ queue_sort_rows() {
     _pjf="$(mktemp)" || return 1
     printf '%s' "$_pj" > "$_pjf"
     _pj=""
-    queue sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
+    queue-helpers sort-rows "$repo" "$base_sha" --prio-file "$_pjf" --express-label "${SPIRA_EXPRESS_LABEL:-express}"
     _rc=$?
     rm -f "$_pjf"
     return "$_rc"
@@ -4730,7 +4740,15 @@ for r in rows:
 # test-git-push-app.sh and landing-pass's own separate seam (a different crate, not
 # touched here) still call this by name. Neither this function nor the Rust it calls
 # redirects stdout or stderr — that stays the caller's choice, exactly as before.
+#
+# SCAR (sp-hwjsq, round 160): the first cut execed `queue git-push`, the operator CLI
+# itself. test-certify.sh stubs `queue` by NAME on PATH to isolate "queue step" dispatch
+# (sp-gypjk's convention), so production's push-mode landing silently hit that stub —
+# exit 0, nothing pushed, "not ok 30 - push-mode remote actually moved" — while every
+# suite this bead ran was one that never stubs `queue`, so nothing caught it before it
+# landed. Execs `queue-helpers` now, a SEPARATE binary (see queue_certified_list's note
+# above) immune to a `queue` stub, exactly because production pushes through this path.
 spira_git_push() {
     local repo="$1"; shift
-    queue git-push "$repo" "$@"
+    queue-helpers git-push "$repo" "$@"
 }
