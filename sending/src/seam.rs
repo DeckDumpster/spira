@@ -6,11 +6,13 @@
 //!
 //! sp-9envm moved the destruction chokepoint itself (the holder witnesses' liveness half,
 //! salvage, the verified deletions, the reap log) into Rust — `reap.rs`, called in-process
-//! from `real.rs` now, not through here. What is LEFT going through bash is only what has
-//! not moved yet: context (family U, repo registry), base (family W, `spira_landref`), the
-//! bead's own record and the two bd questions the liveness witness still needs
-//! (`spira_bead_status`/`spira_db_reachable`, family A/B) — and the label mutations, which
-//! are one-line bdq calls not worth a Rust reimplementation yet.
+//! from `real.rs` now, not through here. Base (family W — `spira_landref`/`spira_landrefs`/
+//! `ref_remote`) moved too (sp-o88bx, "wave 4.12"): `real.rs`'s `base()` calls
+//! `spira_config::repos` directly, no `Op::Base` seam left to retire-rather-than-port
+//! around. What is LEFT going through bash is only what has not moved yet: context
+//! (family U, repo registry), the bead's own record and the two bd questions the liveness
+//! witness still needs (`spira_bead_status`/`spira_db_reachable`, family A/B) — and the
+//! label mutations, which are one-line bdq calls not worth a Rust reimplementation yet.
 
 /// Precedes a seam's machine-readable answer on stdout; everything before it is lib.sh's
 /// own output (its `log` lines, salvage notes), passed through to ours.
@@ -21,7 +23,6 @@ pub const FIELD: char = '\u{1d}';
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
     Context,
-    Base,
     Bead,
     /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
     /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
@@ -32,7 +33,7 @@ pub enum Op {
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Base, Op::Bead, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -64,15 +65,6 @@ done
 exit 0
 "#;
 
-/// `landref FIELD landrefs FIELD remote` for one checkout; exit 1 when the land ref does not
-/// resolve (the repository is skipped, loudly).
-const BASE: &str = r#"__lr="$(spira_landref "$1")" || exit 1
-__refs="$(spira_landrefs "$1" 2>/dev/null)" || __refs="$__lr"
-__rm="$(ref_remote "$__lr" "$1")" || __rm=""
-printf '\036%s\035%s\035%s' "$__lr" "$__refs" "$__rm"
-exit 0
-"#;
-
 /// `bdjson show <id>` verbatim.
 const BEAD: &str = r#"printf '\036%s' "$(bdjson show "$1" 2>/dev/null)"
 exit 0
@@ -91,7 +83,6 @@ exit 0
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
-        Op::Base => BASE,
         Op::Bead => BEAD,
         Op::Status => STATUS,
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",

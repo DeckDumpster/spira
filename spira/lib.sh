@@ -4173,137 +4173,32 @@ bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if 
 # `chore/keep-cf-access-probe`. Deriving the land ref from HEAD would have answered
 # the remote form of that topic branch — a worse answer than the bug it replaced,
 # because it names a ref that exists.
+#
+# Ported to spira_config::repos (sp-o88bx, "wave 4.12", wave4-decomposition.md row W) — the
+# four rungs above, `ref_remote`/`ref_branch`'s split and `spira_landrefs`/
+# `spira_publish_forge`'s own callers all now live there, with this essay reproduced as that
+# module's own doc comment. Every function below is a one-line shim. `ref_branch` and
+# `qualify_base_ref` never consult the repo-map at all (they only ever shell to git on the
+# repo they are given), so unlike `spira_landref`/`spira_landrefs`/`spira_publish_forge` they
+# skip `_spira_config_repo`'s env threading and call `spira-config` directly.
 # --------------------------------------------------------------------------------------
 spira_landref() {        # spira_landref [repo-path-or-name] -> the base ref, or non-zero
-    local arg="${1:-}" name="" repo="" ref remote remotes
-    case "$arg" in
-        "")   name="$(spira_home_repo)" ;;
-        */*)  repo="$arg" ;;
-        *)    name="$arg" ;;
-    esac
-    if [ -z "$repo" ]; then repo="$(repo_root "$name")" || return 1; fi
-    [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-    [ -e "$repo/.git" ] || return 1
-
-    # 1 - declared. Verified to exist: a `base` naming a ref this checkout does not have is
-    # the very defect being fixed, and shipping it would only move the guess into the map.
-    #
-    # A row with no base column at all answers empty here and falls through to resolution -
-    # repo_field decides that on the row shape, which is the only thing that can tell a
-    # missing column from a declared one.
-    if [ -n "$name" ]; then
-        ref="$(repo_field "$name" base 2>/dev/null)"
-        if [ -n "$ref" ]; then
-            git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1 || return 1
-            printf '%s' "$ref"; return 0
-        fi
-    fi
-
-    # 2 - the remote's own declared default, as cached locally.
-    ref="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-    if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-        printf '%s' "$ref"; return 0
-    fi
-
-    remotes="$(git -C "$repo" remote 2>/dev/null)"
-
-    # 3 - ask the remote once. `origin` if there is one, otherwise the single remote there
-    # is; two unnamed remotes is a genuine ambiguity and is refused. set-head writes the ref
-    # rung 2 reads, so this happens once per repository and not once per pass.
-    if [ -n "$remotes" ]; then
-        if grep -qx origin <<< "$remotes"; then remote=origin
-        elif [ "$(wc -l <<< "$remotes")" = 1 ]; then remote="$remotes"
-        else remote=""; fi
-        if [ -n "$remote" ] \
-           && git -C "$repo" remote set-head "$remote" --auto >/dev/null 2>&1; then
-            ref="$(git -C "$repo" symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null)"
-            if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-                printf '%s' "$ref"; return 0
-            fi
-        fi
-        return 1
-    fi
-
-    # 4 - no remote at all: the repository's own current branch. Nothing can be stale
-    # against a remote that does not exist, so HEAD is the only truth there is. This is the
-    # test fixture's case, and the ONLY rung that consults a checkout's HEAD.
-    ref="$(git -C "$repo" symbolic-ref -q --short HEAD 2>/dev/null)"
-    if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-        printf '%s' "$ref"; return 0
-    fi
-    return 1
+    _spira_config_repo landref "${1:-}"
 }
-
-# Splitting a land ref into its two halves. `origin/master` is what a branch is MEASURED
-# against; `master` is what a push targets and what `gh pr create --base` wants; `origin` is
-# what a fetch names. Every call site did these two strips by hand as ${base#origin/} and a
-# literal `origin`, both of which are assumptions about a remote's name, and a remote need
-# not be called that. String operations, not lookups, so a caller holding a ref never re-resolves it.
-#
-# A queue.local row's ref is `local/main` — a LOCAL branch that happens to contain a slash,
-# not a remote-tracking one. Splitting on the first `/` unconditionally would read it as
-# remote `local`, branch `main`, and every caller below would then try to fetch a remote
-# that does not exist. So when a repo is given, the prefix only counts as a remote when
-# `git remote` actually lists it; otherwise the ref is answered as local, same as one with no
-# slash at all. Without a repo (a caller that predates this), the old unconditional split is
-# kept.
 ref_remote() {           # ref_remote <ref> [repo] -> its remote, or non-zero if the ref is local
-    local ref="${1:-}" repo="${2:-}" prefix remotes
-    case "$ref" in */*) prefix="${ref%%/*}" ;; *) return 1 ;; esac
-    if [ -n "$repo" ]; then
-        remotes="$(git -C "$repo" remote 2>/dev/null)"
-        grep -qx -- "$prefix" <<< "$remotes" || return 1
-    fi
-    printf '%s' "$prefix"
+    spira-config repo ref-remote "${1:-}" "${2:-}"
 }
 ref_branch() {           # ref_branch <ref> -> the branch name, without any remote
-    printf '%s' "${1#*/}"
+    spira-config repo ref-branch "${1:-}"
 }
 qualify_base_ref() {     # qualify_base_ref <ref> <repo> -> refs/remotes/... or original
-    # A bare origin/main is ambiguous when refs/heads/origin/main also exists. Use the
-    # fully-qualified remote-tracking ref so git commands resolve it deterministically.
-    local ref="$1" repo="$2" remote branch fq
-    remote="$(ref_remote "$ref" "$repo")" || { printf '%s' "$ref"; return 0; }
-    branch="$(ref_branch "$ref")"
-    fq="refs/remotes/$remote/$branch"
-    git -C "$repo" rev-parse --verify -q "$fq" >/dev/null 2>&1 \
-        && printf '%s' "$fq" || printf '%s' "$ref"
+    spira-config repo qualify-base-ref "$1" "$2"
 }
-
-# spira_landrefs <repo> -> the land ref, plus its local counterpart when that exists.
-# The commit graph is read across BOTH, because a commit can be on the local branch and not
-# yet pushed, or pushed and never pulled into this checkout. Two call sites asked this
-# question with a literal `main` appended, which for a `master`-based repository added a ref that is not
-# there and for a `master` repository omitted the only one that is. The strip is ${base#*/}
-# and not ${base#origin/}: a remote need not be called `origin`, so stripping that literal
-# leaves a ref like `upstream/master` unchanged and the local ref is silently never consulted.
-spira_landrefs() {
-    local repo="$1" base lo
-    base="$(spira_landref "$repo")" || return 1
-    printf '%s' "$base"
-    lo="${base#*/}"
-    if [ "$lo" != "$base" ] && git -C "$repo" rev-parse --verify -q "$lo" >/dev/null 2>&1; then
-        printf ' %s' "$lo"
-    fi
+spira_landrefs() {       # spira_landrefs <repo> -> the land ref, plus its local counterpart
+    _spira_config_repo landrefs "$1"
 }
-
-# spira_publish_forge <name> -> "<remote> <branch>": the forge target a queue.local
-# repository's publish queue fast-forwards on a green publish PR. Never ref_remote of the
-# land ref — under queue.local that ref is a bare local branch by design (spira_landref's
-# own callers refuse a remote-tracking base for this mode), so the forge target cannot be
-# derived from it and must be named instead. Defaults: the remote is "origin"
-# (SPIRA_PUBLISH_REMOTE, per-repo SPIRA_PUBLISH_REMOTE_<NAME> overrides it — a remote need
-# not be called origin); the branch is the land ref's own name with a leading "local/"
-# stripped (SPIRA_PUBLISH_BRANCH_<NAME> overrides that).
-spira_publish_forge() {
-    local name="$1" base key remote branch
-    base="$(spira_landref "$name" 2>/dev/null)" || return 1
-    key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
-    local remote_var="SPIRA_PUBLISH_REMOTE_$key" branch_var="SPIRA_PUBLISH_BRANCH_$key"
-    remote="${!remote_var:-${SPIRA_PUBLISH_REMOTE:-origin}}"
-    branch="${!branch_var:-${base#local/}}"
-    [ -n "$branch" ] || return 1
-    printf '%s %s\n' "$remote" "$branch"
+spira_publish_forge() {  # spira_publish_forge <name> -> "<remote> <branch>"
+    _spira_config_repo publish-forge "$1"
 }
 
 # --------------------------------------------------------------------------------------

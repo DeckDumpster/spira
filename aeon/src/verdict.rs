@@ -9,7 +9,7 @@ use std::path::Path;
 
 use crate::bd;
 use crate::decide::{self, Eviction, SopVerdict};
-use crate::ports::{s, Bd, Exec, Git, Seam};
+use crate::ports::{s, Bd, Exec, Git};
 use crate::run::Run;
 use crate::trace;
 use crate::util;
@@ -43,13 +43,14 @@ pub fn eviction_race_count(ledger_json: &str) -> i64 {
 /// the base tip (leftover commits from a prior attempt shift the depth), so checking only
 /// one of the two misses real commits in one direction.
 ///
-/// `spira_landrefs` (family W) is not yet ported — this still reaches it through the seam.
-pub fn verdict_committed(git: &dyn Git, seam: &dyn Seam, repo: &Path, branch: &str, id: &str, window: i64) -> bool {
+/// `land_refs` is `spira_landrefs`' own output (sp-o88bx, "wave 4.12": the caller now
+/// resolves it in-process through `spira_config::repos::landrefs`, not a seam call) —
+/// space-separated, empty when the land ref itself does not resolve.
+pub fn verdict_committed(git: &dyn Git, land_refs: &str, repo: &Path, branch: &str, id: &str, window: i64) -> bool {
     let subjects = git.git(repo, &["log", "--format=%s%n%b", "-n", &window.to_string(), branch]).stdout;
     if subjects.contains(id) {
         return true;
     }
-    let land_refs = seam.call("spira_landrefs", &s(&[&repo.display().to_string()])).stdout;
     let refs: Vec<&str> = land_refs.split_whitespace().collect();
     if refs.is_empty() {
         return false;
@@ -222,7 +223,12 @@ impl Run<'_> {
         let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
         let issue_type = row.as_ref().and_then(|r| r.issue_type.clone()).unwrap_or_default();
         let window = self.conf.n("SPIRA_VERDICT_WINDOW", 400);
-        let committed = verdict_committed(self.d.git, self.d.seam, &self.s.repo, &branch, &id, window);
+        let land_refs = match spira_config::repos::landrefs(&self.conf.repos, &repo) {
+            Some((base, Some(local))) => format!("{base} {local}"),
+            Some((base, None)) => base,
+            None => String::new(),
+        };
+        let committed = verdict_committed(self.d.git, &land_refs, &self.s.repo, &branch, &id, window);
         self.s.committed = committed;
         let cy = if committed { "yes" } else { "no" };
         let sup = if superseded { "1" } else { "0" };
@@ -310,9 +316,8 @@ impl Run<'_> {
         if st == "closed" && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
             let dirty = self.d.git.git(&work, &["status", "--porcelain", "--untracked-files=no"]).stdout.trim_end().to_string();
             if !dirty.is_empty() {
-                let lb = self.sv("_aeon_base", &s(&[&work.display().to_string()]));
-                let spd_base = if lb.success() {
-                    lb.stdout.lines().next().unwrap_or("HEAD").to_string()
+                let spd_base = if let Some(b) = spira_config::repos::landref(&self.conf.repos, &work.display().to_string()) {
+                    b
                 } else {
                     let h = self.d.git.git(&work, &["rev-parse", "--abbrev-ref", "HEAD"]);
                     if h.success() { h.text() } else { "HEAD".into() }
@@ -562,32 +567,22 @@ mod tests {
             Out::ok(text)
         }
     }
-    struct FakeSeam(&'static str);
-    impl Seam for FakeSeam {
-        fn call(&self, _f: &str, _a: &[String]) -> Out {
-            Out::ok(self.0)
-        }
-    }
-
     #[test]
     fn verdict_committed_walks_branch_then_landrefs() {
         let mut log = BTreeMap::new();
         log.insert("mybranch", "sp-a — the work");
         let git = FakeGit(log);
-        let seam = FakeSeam("");
-        assert!(verdict_committed(&git, &seam, Path::new("/repo"), "mybranch", "sp-a", 400), "committed on the branch itself");
-        assert!(!verdict_committed(&git, &seam, Path::new("/repo"), "mybranch", "sp-x", 400), "not committed anywhere");
+        assert!(verdict_committed(&git, "", Path::new("/repo"), "mybranch", "sp-a", 400), "committed on the branch itself");
+        assert!(!verdict_committed(&git, "", Path::new("/repo"), "mybranch", "sp-x", 400), "not committed anywhere");
 
         let mut log2 = BTreeMap::new();
         log2.insert("mybranch", "unrelated");
         log2.insert("local/main", "sp-a — landed earlier");
         let git2 = FakeGit(log2);
-        let seam2 = FakeSeam("local/main");
-        assert!(verdict_committed(&git2, &seam2, Path::new("/repo"), "mybranch", "sp-a", 400), "not on the branch, but on the landing ref");
+        assert!(verdict_committed(&git2, "local/main", Path::new("/repo"), "mybranch", "sp-a", 400), "not on the branch, but on the landing ref");
 
         // Empty landrefs short-circuits without a second git call that would need a ref.
-        let seam3 = FakeSeam("");
-        assert!(!verdict_committed(&git2, &seam3, Path::new("/repo"), "mybranch", "sp-a", 400));
+        assert!(!verdict_committed(&git2, "", Path::new("/repo"), "mybranch", "sp-a", 400));
     }
 
     // ---- delivers_verdict / close_verdict ----------------------------------------------
