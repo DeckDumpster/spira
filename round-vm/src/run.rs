@@ -130,7 +130,8 @@ if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
 # box's own address, which this VM already reaches for the mirror, is reused for the cache
 # store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to $6, this binary's OWN
-# resolved config (SPIRA_ROUND_VM_CACHE_HOME / spira.toml's round_vm_cache_home) — never
+# resolved config (SPIRA_ROUND_VM_CACHE_HOME, or the operator's config file — Config::load's
+# own doc comment names where) — never
 # the caller's ambient CARGO_HOME, and never empty: run()'s own preflight already refused
 # before this script was ever sent (sp-xjnzl-2, law-a-binary-resolves-the-config-it-reads).
 # sccache hashes a dependency's registry source path into its cache key, so a hit across
@@ -511,10 +512,11 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
     }
     if cfg.cache_home.is_none() {
         eprintln!(
-            "round-vm run: SPIRA_ROUND_VM_CACHE_HOME not set (and no round_vm_cache_home in \
-             spira.toml) — cannot resolve the VM-side CARGO_HOME; the template's own sccache \
-             lives wherever `round-vm template` was told to put it, and this binary refuses \
-             to guess (law-a-binary-resolves-the-config-it-reads). Set it to match."
+            "round-vm run: SPIRA_ROUND_VM_CACHE_HOME is not set, by environment or in the \
+             operator's own config file — cannot resolve the VM-side CARGO_HOME; the \
+             template's own sccache lives wherever `round-vm template` was told to put it, \
+             and this binary refuses to guess (law-a-binary-resolves-the-config-it-reads). \
+             Set it to match."
         );
         return 2;
     }
