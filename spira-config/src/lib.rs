@@ -625,6 +625,11 @@ pub struct SpiraSection {
     pub round_vm_max_retries: Option<String>,
     pub round_vm_retry_interval: Option<String>,
     pub round_vm_mirror_port: Option<String>,
+    /// sp-xjnzl-2: the VM-side `CARGO_HOME` every round-vm round and template build points
+    /// `sccache` at — read once here (never the caller's ambient `CARGO_HOME`,
+    /// `law-a-binary-resolves-the-config-it-reads`) so an operator sets it once in
+    /// `spira.toml` rather than exporting it into every systemd unit that calls `round-vm`.
+    pub round_vm_cache_home: Option<String>,
 }
 
 /// How a landed branch reaches its base — see `repo-map.example`'s own `land` column.

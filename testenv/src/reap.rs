@@ -1,13 +1,17 @@
-//! `target-reap` (sp-z61hj; spira-config/DESIGN-build-cache.md §2.4): remove the `target/`
-//! of a worktree whose bead is closed. Build output of finished work is the largest thing on
-//! the box's disk (159 dirs, 236 GiB measured 2026-09-30) and nothing reads it again.
+//! `target-reap` (sp-z61hj, then sp-x9kbg; spira-config/DESIGN-build-cache.md §2.4): remove
+//! the `target/` of a worktree whose branch has landed. Build output of finished work is the
+//! largest thing on the box's disk (236 GiB measured 2026-09-30, then 87 GB and 80 GB more
+//! removed by hand the day sp-x9kbg was filed) and nothing reads it again.
 //!
-//! Candidates are `<worktrees>/<bead id>/target` only — the aeon and Concierge convention.
-//! Gate trees and testenv slots are owned by the gate and testenv. One `bd show <ids…>
-//! --json` decides: `closed` is reaped; open, unknown, or an unreadable answer is kept (fail
-//! closed — never guess that work is finished).
+//! Candidates are `<worktrees>/<bead id>/target` and `<worktrees>/concierge-<bead id>/target`
+//! — the aeon and the Concierge's own worktree conventions. Gate trees and testenv slots are
+//! owned by the gate and testenv. The gate is per worktree, decided by [`crate::landed`]: its
+//! tip an ancestor of the ref its repo lands on is reaped, whatever the bead's status — a
+//! bead that stays open past landing, or is never filed at all, no longer holds the target/
+//! hostage (sp-x9kbg). Anything that cannot be told — no git answer, no resolvable landing
+//! ref — is kept (fail closed — never guess that work is finished), and so is anything whose
+//! tip is proven NOT an ancestor (commits still outstanding — never reaped).
 
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,36 +25,33 @@ pub fn is_bead_id(name: &str) -> bool {
         && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
 }
 
-/// `(bead id, <dir>/target)` for every bead-named worktree under `worktrees` that holds a
-/// `target` (a directory or a link), sorted by id.
-pub fn candidates(worktrees: &Path) -> Vec<(String, PathBuf)> {
-    let mut out: Vec<(String, PathBuf)> = fs::read_dir(worktrees)
+/// The bead id a worktree directory is named after — bare (`sp-x9kbg`, the aeon convention)
+/// or Concierge-prefixed (`concierge-sp-x9kbg`) — or `None` when the name is neither (a gate
+/// tree, a testenv slot, a round's own scratch dir: none of this crate's business).
+pub fn worktree_id(dirname: &str) -> Option<&str> {
+    let core = dirname.strip_prefix("concierge-").unwrap_or(dirname);
+    is_bead_id(core).then_some(core)
+}
+
+/// `(bead id, worktree dir, <dir>/target)` for every bead-named worktree under `worktrees`
+/// that holds a `target` (a directory or a link), sorted by id (then by dir, for the rare
+/// case the same bead has both an aeon and a Concierge worktree at once).
+pub fn candidates(worktrees: &Path) -> Vec<(String, PathBuf, PathBuf)> {
+    let mut out: Vec<(String, PathBuf, PathBuf)> = fs::read_dir(worktrees)
         .map(|rd| {
             rd.flatten()
                 .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    let t = e.path().join("target");
-                    (is_bead_id(&name) && e.path().is_dir() && fs::symlink_metadata(&t).is_ok()).then_some((name, t))
+                    let dirname = e.file_name().to_string_lossy().into_owned();
+                    let id = worktree_id(&dirname)?.to_string();
+                    let dir = e.path();
+                    let t = dir.join("target");
+                    (dir.is_dir() && fs::symlink_metadata(&t).is_ok()).then_some((id, dir, t))
                 })
                 .collect()
         })
         .unwrap_or_default();
     out.sort();
     out
-}
-
-/// `id → status` from `bd show … --json` output (an array of objects). Err when the text is
-/// not that shape: nothing is reaped on an answer that cannot be read.
-pub fn statuses(json: &str) -> Result<BTreeMap<String, String>, String> {
-    let v: serde_json::Value = serde_json::from_str(json.trim()).map_err(|e| format!("bd show --json: {e}"))?;
-    let arr = v.as_array().ok_or("bd show --json: not an array")?;
-    let mut m = BTreeMap::new();
-    for o in arr {
-        if let (Some(id), Some(st)) = (o.get("id").and_then(|x| x.as_str()), o.get("status").and_then(|x| x.as_str())) {
-            m.insert(id.to_string(), st.to_string());
-        }
-    }
-    Ok(m)
 }
 
 /// Bytes under `p`, not following links.
@@ -67,22 +68,20 @@ pub fn size_of(p: &Path) -> u64 {
 pub struct Reaped {
     pub removed: Vec<String>,
     pub bytes: u64,
-    pub kept_open: usize,
+    /// Proven NOT landed — commits outstanding. NEVER reaped, whatever the bead says.
+    pub kept_unlanded: usize,
+    /// Landed-ness could not be told at all (no git answer, no resolvable landing ref).
     pub kept_unknown: Vec<String>,
 }
 
-/// Reap: `show` answers `bd show <ids> --json` (Err = unreadable → nothing is removed).
-pub fn reap(worktrees: &Path, dry_run: bool, show: &dyn Fn(&[String]) -> Result<String, String>) -> Result<Reaped, String> {
-    let cands = candidates(worktrees);
+/// Reap: `landed(worktree_dir)` answers per worktree — `Some(true)` its tip is an ancestor
+/// of the ref its repo lands on (content landed), `Some(false)` commits are still
+/// outstanding, `None` it cannot be told. Only `Some(true)` is removed.
+pub fn reap(worktrees: &Path, dry_run: bool, landed: &dyn Fn(&Path) -> Option<bool>) -> Result<Reaped, String> {
     let mut out = Reaped::default();
-    if cands.is_empty() {
-        return Ok(out);
-    }
-    let ids: Vec<String> = cands.iter().map(|(i, _)| i.clone()).collect();
-    let st = statuses(&show(&ids)?)?;
-    for (id, t) in cands {
-        match st.get(&id).map(String::as_str) {
-            Some("closed") => {
+    for (id, dir, t) in candidates(worktrees) {
+        match landed(&dir) {
+            Some(true) => {
                 let n = size_of(&t);
                 if !dry_run {
                     let r = if fs::symlink_metadata(&t).map(|m| m.file_type().is_symlink()).unwrap_or(false) {
@@ -97,7 +96,7 @@ pub fn reap(worktrees: &Path, dry_run: bool, show: &dyn Fn(&[String]) -> Result<
                 out.bytes += n;
                 out.removed.push(id);
             }
-            Some(_) => out.kept_open += 1,
+            Some(false) => out.kept_unlanded += 1,
             None => out.kept_unknown.push(id),
         }
     }
@@ -108,14 +107,14 @@ pub fn reap(worktrees: &Path, dry_run: bool, show: &dyn Fn(&[String]) -> Result<
 pub fn describe(r: &Reaped, dry_run: bool) -> String {
     let verb = if dry_run { "would remove" } else { "removed" };
     let mut s = format!(
-        "target-reap: {verb} {} target dir(s), {} MiB{}; kept {} of open beads",
+        "target-reap: {verb} {} target dir(s), {} MiB{}; kept {} unlanded",
         r.removed.len(),
         r.bytes / (1024 * 1024),
         if r.removed.is_empty() { String::new() } else { format!(" ({})", r.removed.join(" ")) },
-        r.kept_open
+        r.kept_unlanded
     );
     if !r.kept_unknown.is_empty() {
-        s.push_str(&format!("; kept {} bd does not know ({})", r.kept_unknown.len(), r.kept_unknown.join(" ")));
+        s.push_str(&format!("; kept {} cannot tell ({})", r.kept_unknown.len(), r.kept_unknown.join(" ")));
     }
     s
 }
@@ -148,37 +147,76 @@ mod tests {
     }
 
     #[test]
-    fn a_closed_beads_target_goes_and_everything_else_stays() {
+    fn concierge_prefixed_dirs_resolve_to_the_bare_id_and_nothing_else_does() {
+        assert_eq!(worktree_id("sp-x9kbg"), Some("sp-x9kbg"));
+        assert_eq!(worktree_id("concierge-sp-x9kbg"), Some("sp-x9kbg"));
+        assert_eq!(worktree_id("concierge-sp-zs04v.3"), Some("sp-zs04v.3"));
+        for no in ["concierge-round-9", "concierge-", "round-9", "concierge-sp-s0e1k-shim"] {
+            assert_eq!(worktree_id(no), None, "{no}");
+        }
+    }
+
+    #[test]
+    fn a_landed_worktrees_target_goes_whatever_the_bead_says_or_the_dir_is_named() {
         let s = scratch("reap");
         wt(&s.1, "sp-done", 8192);
-        wt(&s.1, "sp-open", 4096);
-        wt(&s.1, "sp-ghost", 4096);
-        wt(&s.1, "round-9", 4096);
+        wt(&s.1, "concierge-sp-stuck", 2048); // sp-x9kbg: landed, bead never closes
+        wt(&s.1, "sp-open", 4096); // unlanded: commits outstanding
+        wt(&s.1, "sp-ghost", 4096); // landed-ness unknown
+        wt(&s.1, "round-9", 4096); // not bead-named at all
         fs::create_dir_all(s.1.join("sp-notarget")).unwrap();
-        let asked = std::cell::RefCell::new(Vec::new());
-        let show = |ids: &[String]| {
-            asked.borrow_mut().extend(ids.iter().cloned());
-            Ok(r#"[{"id":"sp-done","status":"closed"},{"id":"sp-open","status":"in_progress"}]"#.to_string())
+        let landed = |dir: &Path| -> Option<bool> {
+            match dir.file_name().unwrap().to_str().unwrap() {
+                "sp-done" | "concierge-sp-stuck" => Some(true),
+                "sp-open" => Some(false),
+                _ => None,
+            }
         };
-        let r = reap(&s.1, false, &show).unwrap();
-        assert_eq!(asked.borrow().as_slice(), &["sp-done", "sp-ghost", "sp-open"], "one bd call, bead-named worktrees with a target only");
-        assert_eq!(r.removed, vec!["sp-done".to_string()]);
-        assert!(r.bytes >= 8192);
-        assert_eq!((r.kept_open, r.kept_unknown.clone()), (1, vec!["sp-ghost".to_string()]));
+        let r = reap(&s.1, false, &landed).unwrap();
+        let mut removed = r.removed.clone();
+        removed.sort();
+        assert_eq!(removed, vec!["sp-done".to_string(), "sp-stuck".to_string()], "landed goes, whatever the dir naming");
+        assert!(r.bytes >= 8192 + 2048);
+        assert_eq!((r.kept_unlanded, r.kept_unknown.clone()), (1, vec!["sp-ghost".to_string()]));
         assert!(!s.1.join("sp-done/target").exists() && s.1.join("sp-done/src.rs").is_file(), "only the build output goes");
+        assert!(!s.1.join("concierge-sp-stuck/target").exists(), "landed, open bead or not, is still reaped");
         for kept in ["sp-open", "sp-ghost", "round-9"] {
             assert!(s.1.join(kept).join("target/aeon/x").is_file(), "{kept}");
         }
         let line = describe(&r, false);
-        assert!(line.starts_with("target-reap: removed 1 target dir(s)") && line.contains("sp-ghost"), "{line}");
+        assert!(line.contains("kept 1 unlanded") && line.contains("sp-ghost"), "{line}");
     }
 
     #[test]
-    fn an_unreadable_answer_reaps_nothing() {
-        let s = scratch("fail");
+    fn sp_x9kbg_red_a_landed_branch_with_an_open_bead_in_a_concierge_dir_is_kept_today() {
+        // THE REPORTED DEFECT (sp-x9kbg): a worktree whose content has landed still held
+        // its target/ forever when (a) its bead stayed open, or (b) its directory was
+        // named `concierge-<id>` rather than `<id>` — the old gate was bd status alone,
+        // consulted only for bead-named directories. Pinned here as a regression check:
+        // landed-ness alone decides now, so this reaps even with no bead answer at all.
+        let s = scratch("red");
+        wt(&s.1, "concierge-sp-open", 4096);
+        let r = reap(&s.1, false, &|_| Some(true)).unwrap();
+        assert_eq!(r.removed, vec!["sp-open".to_string()], "a landed branch's target must go, whatever the bead's status or the dir's name");
+    }
+
+    #[test]
+    fn unlanded_is_never_reaped_even_when_landed_ness_is_the_only_signal() {
+        let s = scratch("unlanded");
+        wt(&s.1, "sp-busy", 4096);
+        let r = reap(&s.1, false, &|_| Some(false)).unwrap();
+        assert_eq!(r.removed, Vec::<String>::new());
+        assert_eq!(r.kept_unlanded, 1);
+        assert!(s.1.join("sp-busy/target/aeon/x").is_file());
+    }
+
+    #[test]
+    fn unknown_landed_ness_reaps_nothing() {
+        let s = scratch("unknown");
         wt(&s.1, "sp-done", 10);
-        assert!(reap(&s.1, false, &|_| Err("bd show failed: timeout".into())).is_err());
-        assert!(reap(&s.1, false, &|_| Ok("Error: no database".into())).is_err());
+        let r = reap(&s.1, false, &|_| None).unwrap();
+        assert_eq!(r.removed, Vec::<String>::new());
+        assert_eq!(r.kept_unknown, vec!["sp-done".to_string()]);
         assert!(s.1.join("sp-done/target/aeon/x").is_file());
     }
 
@@ -186,7 +224,7 @@ mod tests {
     fn dry_run_removes_nothing_and_says_so() {
         let s = scratch("dry");
         wt(&s.1, "sp-done", 10);
-        let r = reap(&s.1, true, &|_| Ok(r#"[{"id":"sp-done","status":"closed"}]"#.into())).unwrap();
+        let r = reap(&s.1, true, &|_| Some(true)).unwrap();
         assert_eq!(r.removed, vec!["sp-done".to_string()]);
         assert!(s.1.join("sp-done/target/aeon/x").is_file());
         assert!(describe(&r, true).starts_with("target-reap: would remove 1"));
@@ -200,7 +238,7 @@ mod tests {
         fs::write(elsewhere.join("keep"), "x").unwrap();
         fs::create_dir_all(s.1.join("wt/sp-done")).unwrap();
         std::os::unix::fs::symlink(&elsewhere, s.1.join("wt/sp-done/target")).unwrap();
-        let r = reap(&s.1.join("wt"), false, &|_| Ok(r#"[{"id":"sp-done","status":"closed"}]"#.into())).unwrap();
+        let r = reap(&s.1.join("wt"), false, &|_| Some(true)).unwrap();
         assert_eq!(r.removed.len(), 1);
         assert!(elsewhere.join("keep").is_file());
     }
