@@ -377,4 +377,56 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// sp-1cdgq, round 2: the test above proves the WIRING using a synthetic `conf.d` it
+    /// writes itself — which is exactly why it did not catch the second collapse. Round 161
+    /// (sp-mz7dn) moved SPIRA_SUMMON_JITTER's resolution onto `--home`'s OWN `conf.d/`, not
+    /// wherever `lib.sh`/`conf.sh` happen to live (the old bash seam's decoupling), so a test
+    /// fixture `--home` with no `conf.d` at all resolves the whole generic registry pass to
+    /// nothing — `test-thrash-teardown.sh`'s fixture, still red with the identical
+    /// "pre-session death" signature even after `SPIRA_SUMMON_JITTER=0` was exported,
+    /// because no `conf.d` was ever copied into its `$SPIRA_HOME`.
+    ///
+    /// This test uses the REAL, checked-in `spira/conf.d` (this crate's own repo layout:
+    /// `aeon/` sits beside `spira/`) instead of fabricating one, so a future regression in
+    /// either direction — the registry file disappearing, `resolve()`'s generic pass
+    /// breaking, or a fixture that forgets to copy `conf.d` in — is caught the same way
+    /// production would actually hit it: through `Conf`, the way `run.rs`'s summon jitter
+    /// reads it, not just `snap.vars`.
+    #[test]
+    fn summon_jitter_reaches_conf_through_the_real_registry() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("spira");
+        assert!(home.join("conf.d").is_dir(), "this crate's own ../spira/conf.d must exist for this test to mean anything");
+
+        let dir = testkit::TempDir::new("aeon-conf-real-jitter");
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+
+        // No SPIRA_SUMMON_JITTER in snap.vars going in — matching production: wave 4.8
+        // retired it from the bash seam's own SNAPSHOT_VARS allowlist, so only
+        // merge_resolved_config can ever supply it now.
+        let mut snap = crate::seam::Snapshot::default();
+        let env = BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]);
+        merge_resolved_config(&mut snap, &home, &env);
+        let conf = Conf::new(&snap, &home);
+
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        match saved_jitter {
+            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
+            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
+        }
+
+        assert_eq!(
+            conf.n(spira_config::admission::JITTER_ENV, spira_config::admission::JITTER_DEFAULT as i64),
+            0,
+            "SPIRA_SUMMON_JITTER=0 in the environment did not reach Conf through the real spira/conf.d registry"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
