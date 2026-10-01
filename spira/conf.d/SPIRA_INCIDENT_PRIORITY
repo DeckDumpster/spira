@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=incident
+DOC=WHAT A MACHINE-OBSERVED INCIDENT IS WORTH BY DEFAULT. This was a bare 1 inside
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHAT A MACHINE-OBSERVED INCIDENT IS WORTH BY DEFAULT. This was a bare 1 inside
+    # incident.sh: every condition the harness noticed about itself opened at the most urgent
+    # band, whether or not anything was broken for anyone. The callers that mean P1 — a dead
+    # canary, a wedged landing, the watchtower's blockage checks — say so on the call, and are
+    # unaffected. What moves is everything that never chose, which is what filled the band.
+    : "${SPIRA_INCIDENT_PRIORITY:=3}"
+SPIRA_CONF_DEFAULT_EOF

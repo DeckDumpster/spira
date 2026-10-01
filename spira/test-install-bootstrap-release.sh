@@ -85,6 +85,7 @@ CLONE_B="$TMP/clone-b"
 mkdir -p "$CLONE_B/spira"
 cp "$HERE/install.sh" "$CLONE_B/install.sh"
 cp "$HERE/spira/conf.sh" "$CLONE_B/spira/conf.sh"
+cp -r "$HERE/spira/conf.d" "$HERE/spira/conf-gen.sh" "$CLONE_B/spira/"
 _release_rc=0
 _bootstrap_release "$RELEASES_B/bootstrap" "$RELEASES_B" "$CLONE_B" || _release_rc=$?
 wantrc "bootstrap: _bootstrap_release exits 0"          "0" "$_release_rc"

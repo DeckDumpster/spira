@@ -1,0 +1,14 @@
+TYPE=u32
+GROUP=thrash
+DOC=HOW MANY CONSECUTIVE thrash requeues at an UNCHANGED branch tip a bead tolerates
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY CONSECUTIVE thrash requeues at an UNCHANGED branch tip a bead tolerates
+    # before the requeue stops being free. A thrash requeue charges no attempt (the aeon
+    # was killed for stalling, not judged on its work), and that exemption is unbounded
+    # unless something notices the branch never moved between them — sp-gs24i got five
+    # summons across seven hours the same way, none of them charged. At this count the
+    # requeue is charged as an attempt instead, same as any other failed session, so the
+    # ordinary poison threshold eventually reaches a bead that keeps thrashing on the
+    # same commit.
+    : "${SPIRA_THRASH_STREAK_CAP:=2}"
+SPIRA_CONF_DEFAULT_EOF

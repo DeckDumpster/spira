@@ -1,0 +1,6 @@
+TYPE=string
+GROUP=exporter
+DOC=SPIRA_EXPORTER (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_EXPORTER:=}"
+SPIRA_CONF_DEFAULT_EOF

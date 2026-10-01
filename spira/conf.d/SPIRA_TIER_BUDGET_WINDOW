@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=tier
+DOC=HOW MANY TRAILING tsd ROWS a per-suite budget median spans (tier-budget.sh's, retired sp-wx2tw). A single sample
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY TRAILING tsd ROWS a per-suite budget median spans (tier-budget.sh's, retired sp-wx2tw). A single sample
+    # is noisy; a median across recent runs is what tells a slow box from a slow suite.
+    : "${SPIRA_TIER_BUDGET_WINDOW:=20}"
+SPIRA_CONF_DEFAULT_EOF

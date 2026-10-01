@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=concierge
+DOC=DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
+    : "${SPIRA_CONCIERGE_INBOX_DEDUP:=600}"
+SPIRA_CONF_DEFAULT_EOF

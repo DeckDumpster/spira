@@ -52,6 +52,7 @@ git -C "$B_REPO" push -q origin master
 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$B_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail"; chmod +x "$B_SH/mail"
 
 # Stub round-vm: batcher-cut's corpus step runs `round-vm run <worktree> --suites CSV
@@ -154,6 +155,7 @@ git -C "$V_REPO" push -q origin master
 git -C "$V_REPO" fetch -q origin
 mkdir -p "$V_RUN/worktree" "$V_SH" "$V_LANDSTATE" "$V_QUEUEDIR/$V_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$V_SH/"
 
 V_FORGE_STATUS_FILE="$TMP/verdict-forge-status"
 cat > "$V_SH/forge-fixture.sh" <<FORGE
@@ -227,6 +229,7 @@ git -C "$L_REPO" push -q origin master
 git -C "$L_REPO" fetch -q origin
 mkdir -p "$L_RUN/worktree" "$L_SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$L_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$L_SH/"
 printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2\nexit 0\n' \
     > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"

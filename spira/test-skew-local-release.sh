@@ -236,6 +236,7 @@ echo "refresh — no repo argument resolves the home repo's checkout via the rep
 # needs a real lib.sh (and the conf.sh it sources) to source at all, where skew.sh never did.
 FAKE_RELEASE_DIR="$TMP/fake-release-dir"; mkdir -p "$FAKE_RELEASE_DIR/spira"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$FAKE_RELEASE_DIR/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$FAKE_RELEASE_DIR/spira/"
 
 reset_releases; reset_stub
 activate "$C2"   # running matches the tip — refresh should report "nothing to deploy"

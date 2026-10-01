@@ -33,6 +33,7 @@ echo "test-queue-publish.sh"
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
 # the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
 # compiled binary in by name instead, so a bare `mail` found via $SH on PATH is the real

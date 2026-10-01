@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW MANY CONSECUTIVE TIMER TICKS may be skipped (lock held longer than LOCK_WAIT)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW MANY CONSECUTIVE TIMER TICKS may be skipped (lock held longer than LOCK_WAIT)
+    # before a starvation signal is emitted. Fires exactly once per gridlock event.
+    : "${SPIRA_QUEUE_LOCK_STARVE_MAX:=5}"
+SPIRA_CONF_DEFAULT_EOF

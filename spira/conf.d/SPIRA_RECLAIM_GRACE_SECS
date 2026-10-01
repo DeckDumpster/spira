@@ -1,0 +1,11 @@
+TYPE=u32
+GROUP=reclaim
+DOC=HOW LONG A WORKING BEAD'S LEASE MAY SIT EXPIRED BEFORE CHECK 2 CALLS THE WORKER DEAD,
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A WORKING BEAD'S LEASE MAY SIT EXPIRED BEFORE CHECK 2 CALLS THE WORKER DEAD,
+    # in seconds. ~2x a plausible lease TTL, so a briefly paused worker is not robbed of live
+    # work. When an aeon exits because its bead's only open dep carries the ask label,
+    # check2_protect_waiting holds the bead (spira-lc "wait") so the reaper skips it
+    # regardless of this window; the hold releases once the dep closes.
+    : "${SPIRA_RECLAIM_GRACE_SECS:=10800}"
+SPIRA_CONF_DEFAULT_EOF

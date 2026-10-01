@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=bd
+DOC=WHERE THE BD BINARY PIN LIVES. A pin file records which bd is installed —
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE BD BINARY PIN LIVES. A pin file records which bd is installed —
+    # its migration count, version string, sha256, and build flags — so doctor.sh
+    # can detect an unannounced rebuild before the loop tries to run. Default is
+    # machine-local (under SPIRA_RUN, which is gitignored), not in the harness tree.
+    # Populate it after every bd install with: spira/bd-pin.sh write
+    : "${SPIRA_BD_PIN:=$SPIRA_RUN/bd-pin}"
+SPIRA_CONF_DEFAULT_EOF

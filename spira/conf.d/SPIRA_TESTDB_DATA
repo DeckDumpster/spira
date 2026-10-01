@@ -1,0 +1,14 @@
+TYPE=string
+GROUP=testdb
+DOC=THE TEST FIXTURE SERVER, which is deliberately NOT the one holding real data. Fixtures
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE TEST FIXTURE SERVER, which is deliberately NOT the one holding real data. Fixtures
+    # on the production server leaked into it, slowed it as they piled up, and made their own
+    # cleanup a storm; a fixture build measured 6s against an empty server and 84s against
+    # production. This store is disposable — wiping it costs nothing but the next build.
+    # DERIVED, never a literal. A hardcoded operator path here is refused by
+    # inventory.sh, which the landing gate runs first and independently of the suites — so
+    # one literal default made origin/main refuse every branch, including the branches
+    # that would have removed it (sp-2p7o, landed 14:15, blocked everything until 15:0x).
+    : "${SPIRA_TESTDB_DATA:=$(_spira_join "$SPIRA_WORKSPACES" beads-test)}"
+SPIRA_CONF_DEFAULT_EOF

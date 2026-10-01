@@ -1,0 +1,19 @@
+TYPE=list
+GROUP=lanes
+DOC=THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
+    # SPIRA_MAX_AEONS. A lane fayth draws from its own FAYTH_MAX_CONCURRENT rather than from
+    # the pool, so the pool can be fully occupied by builders while the lane fayth still has
+    # room. This is what "ops cannot be starved by builders" has always meant; SPIRA_LANES
+    # makes it declared configuration rather than a property implied by FAYTH_ROLE=party.
+    # A new lane is added here and given a name; fayths join it with FAYTH_LANE=<name>.
+    # The ops and groomer lanes are declared by default because ops.fayth and groomer.fayth
+    # ship using them. The qa lane is declared alongside them because qa.fayth ships using it.
+    # The maechen lane is declared because maechen.fayth ships using it.
+    # The czar lane is declared because czar.fayth ships using it.
+    # A lane fayth still functions if its lane name is absent from this list (the mechanism is
+    # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
+    # reading SPIRA_LANES for the list of scheduled partitions.
+    : "${SPIRA_LANES:=ops groomer qa maechen czar}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=disk
+DOC=DISK FLOOR: the free-space percentage the reconciler's Disk invariant defends on
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DISK FLOOR: the free-space percentage the reconciler's Disk invariant defends on
+    # every path it checks, when no Composite DiskSpec names one. 15% (sp-lkfto.3): the
+    # incident this invariant exists for was noticed at 2.6 GB free of 62 GB — 4% — with
+    # every suite already running 2x slower from the IO pressure well before that.
+    : "${SPIRA_DISK_FLOOR_PCT:=15}"
+SPIRA_CONF_DEFAULT_EOF

@@ -110,6 +110,7 @@ JSON
 SH="$TMP/spira"
 mkdir -p "$SH"
 cp "$HERE/released-defects.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 chmod +x "$SH/released-defects.sh"
 
 REPO_MAP="$TMP/repo-map"

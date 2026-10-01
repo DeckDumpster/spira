@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=suite
+DOC=THE SUITE LIFECYCLE STATE FILE — path relative to the repository root.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE SUITE LIFECYCLE STATE FILE — path relative to the repository root.
+    # Read from the TREE UNDER TEST so the gate, CI and the hourly run judge the
+    # tree they carry rather than the installed copy. Transitions are written by
+    # suites.sh quarantine|disable|activate, which commit the file on a branch.
+    : "${SPIRA_SUITE_STATE_FILE:=spira/suite-state}"
+SPIRA_CONF_DEFAULT_EOF

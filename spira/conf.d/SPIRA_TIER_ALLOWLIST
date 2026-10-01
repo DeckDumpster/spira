@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=tier
+DOC=THE CHECKED-IN RATCHET: today's budget violators and the time each was measured at.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CHECKED-IN RATCHET: today's budget violators and the time each was measured at.
+    # Only shrinking it is legal — every other write is a lint failure.
+    : "${SPIRA_TIER_ALLOWLIST:=$SPIRA_HOME/tier-budget-allowlist}"
+SPIRA_CONF_DEFAULT_EOF

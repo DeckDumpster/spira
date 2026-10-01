@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=tier
+DOC=SPIRA_TIER_BUDGET_T1_MS (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_TIER_BUDGET_T1_MS:=1000}"
+SPIRA_CONF_DEFAULT_EOF

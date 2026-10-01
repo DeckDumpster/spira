@@ -79,6 +79,7 @@ mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
 # seam shells out to lib.sh's own land_mark/bead_reopen/bump_requeue/repo_root/repo_land/
 # spira_landref rather than re-deriving their side effects.
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/mail"; chmod +x "$SH/mail"
 
 # A REAL COPY OF THE CHAMBER, so bead.sh's own --for batcher can read batcher.fayth the same

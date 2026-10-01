@@ -68,6 +68,7 @@ git -C "$REPO" worktree remove "$TMP/side" 2>/dev/null || true
 
 mkdir -p "$TMP/spira-run"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/bdsim.py" "$TMP/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$TMP/"
 
 # Stub notes, no bd: one static fixture array, keyed by id. bdjson show reads
 # the "notes" field straight from here (lib.sh:bdq / SPIRA_BDJSON_FIXTURE).

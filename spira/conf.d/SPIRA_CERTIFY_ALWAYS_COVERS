@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=certify
+DOC=WHAT SPIRA_CERTIFY_SUITES=off STILL RUNS. Turning suites off at certification stopped
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHAT SPIRA_CERTIFY_SUITES=off STILL RUNS. Turning suites off at certification stopped
+    # thirty RED-on-timeout closed beads in 48 hours (sp-a5jpo scar, see SPIRA_CERTIFY_SUITES),
+    # but it also let a change to the harness's own shared library reach a batch unverified —
+    # a red there costs every branch riding with it, not just the one that broke it. Suites
+    # covering a glob in this list still run at certification, suites off or not; everything
+    # else waits for the batch's CI run as before. Space-separated globs.
+    : "${SPIRA_CERTIFY_ALWAYS_COVERS:=spira/lib.sh}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=base
+DOC=HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar-pass --pass
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A BASE REF'S OWN CI STATUS MAY COME BACK UNREADABLE before czar-pass --pass
+    # treats it as unreadable rather than a momentary gap between a push landing and
+    # GitHub creating the run object for it. In seconds; base-red RED itself fires with
+    # no grace — that half is urgency, not a race with GitHub's own bookkeeping.
+    : "${SPIRA_BASE_CI_UNREADABLE_GRACE_SECS:=120}"
+SPIRA_CONF_DEFAULT_EOF

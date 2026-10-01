@@ -223,6 +223,7 @@ git -C "$LREPO" push -q origin main
 git -C "$LREPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/gate.sh"; chmod +x "$SH/gate.sh"
 printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
 

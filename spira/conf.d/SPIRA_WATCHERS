@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=watchers
+DOC=THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE ONE LIST OF WHAT SHOULD BE WATCHING. One `daemon` row is one systemd unit, so this
+    # file decides what `install.sh` enables; pointing the key elsewhere is how an operator
+    # keeps their own rows out of a checkout they may push.
+    : "${SPIRA_WATCHERS:=$SPIRA_HOME/watchers}"
+SPIRA_CONF_DEFAULT_EOF

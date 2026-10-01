@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=capacity
+DOC=PROBE_TIMEOUT: seconds allowed for one probe request. A probe that times out is
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PROBE_TIMEOUT: seconds allowed for one probe request. A probe that times out is
+    # treated as refused — conservative, because a non-answering API is not evidence the
+    # account is open.
+    : "${SPIRA_CAPACITY_PROBE_TIMEOUT:=30}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=tier
+DOC=HOW FAR AN ALLOWLISTED SUITE MAY DRIFT ABOVE ITS RECORDED TIME before it fails, as a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW FAR AN ALLOWLISTED SUITE MAY DRIFT ABOVE ITS RECORDED TIME before it fails, as a
+    # percent. The allowlist itself may only shrink (spira-lint tier-budget-allowlist);
+    # this margin is what still catches a violator getting worse while grandfathered in.
+    : "${SPIRA_TIER_ALLOWLIST_MARGIN_PCT:=20}"
+SPIRA_CONF_DEFAULT_EOF

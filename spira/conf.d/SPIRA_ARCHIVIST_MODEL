@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=archivist
+DOC=A KEY BECAUSE THE JUDGEMENT IS THE PRODUCT. What is being asked for is which of a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # A KEY BECAUSE THE JUDGEMENT IS THE PRODUCT. What is being asked for is which of a
+    # thousand turns was a question nobody answered and which verdict generalises into law —
+    # not a summary. That is worth the strong model here, and a colleague running mostly
+    # routine sessions may reasonably disagree, which is what makes it configuration.
+    : "${SPIRA_ARCHIVIST_MODEL:=claude-opus-5}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=view
+DOC=The multiplexer session whose visible window the follower steers. Only ever consulted
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The multiplexer session whose visible window the follower steers. Only ever consulted
+    # when SPIRA_VIEW names something, so it costs an installation without one nothing.
+    : "${SPIRA_VIEW_SESSION:=cockpit}"
+SPIRA_CONF_DEFAULT_EOF

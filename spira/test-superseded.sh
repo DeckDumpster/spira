@@ -44,6 +44,7 @@ mkdir -p "$RUN/worktree" "$SH"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
    "$HERE/suite-covers.sh" "$SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): landing-pass's own `skew_refresh` resolves it
 # by bare name on PATH, which is `$SH` first here, so the binary must actually be there.
 cp "$(command -v skew)" "$SH/skew"

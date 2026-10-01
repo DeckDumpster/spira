@@ -47,6 +47,7 @@ cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
    "$HERE/yield.sh" "$HERE/suite-covers.sh" "$SH/"
 # `skew` is a compiled binary now (sp-yyk47): reached via `$TOOLS` on PATH below, not
 # copied here.
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"

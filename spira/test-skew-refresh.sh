@@ -280,6 +280,7 @@ QUEUE_NEW="$(git -C "$QREPO" rev-parse origin/main)"
 
 mkdir -p "$QSH" "$QRUN"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$QSH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$QSH/"
 # `skew` is a compiled binary now (sp-yyk47): landing-pass's own `skew_refresh` resolves it
 # by bare name on PATH, which is `$QSH` first here, so the binary must actually be there.
 cp "$(command -v skew)" "$QSH/skew"
@@ -317,6 +318,7 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # any of them but systemctl.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
 cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/suite-covers.sh "$LSH/" 2>/dev/null
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$LSH/"
 cp "$(command -v skew)" "$LSH/skew"
 cp "$(command -v mail)" "$LSH/mail"
 

@@ -326,6 +326,24 @@ fn build_makes_a_read_only_release_named_by_its_commit_whose_manifest_verifies()
 }
 
 #[test]
+fn build_runs_conf_gen_so_the_release_carries_the_generated_config() {
+    let gen = "#!/bin/bash\nd=$(dirname \"$0\")\necho keys > \"$d/conf.d.keys.generated.sh\"\n";
+    let w = World::with_git(FakeGit { extra: vec![("spira/conf-gen.sh".into(), gen.into(), true)], ..Default::default() });
+    w.build(A).unwrap();
+    assert_eq!(fs::read_to_string(w.rel(A).join("spira/conf.d.keys.generated.sh")).unwrap(), "keys\n");
+    assert!(matches!(Manifest::load(&w.rel(A)).unwrap().entries.get("spira/conf.d.keys.generated.sh"), Some(Entry::File(_))));
+}
+
+#[test]
+fn build_refuses_when_conf_gen_fails_and_leaves_no_release() {
+    let gen = "#!/bin/bash\necho broken registry >&2\nexit 3\n";
+    let w = World::with_git(FakeGit { extra: vec![("spira/conf-gen.sh".into(), gen.into(), true)], ..Default::default() });
+    let e = w.build(A).unwrap_err();
+    assert!(e.contains("conf-gen.sh failed") && e.contains("broken registry"), "{e}");
+    assert!(fs::symlink_metadata(w.rel(A)).is_err());
+}
+
+#[test]
 fn build_of_an_existing_release_does_not_rebuild_it() {
     let w = World::new();
     w.build(A).unwrap();

@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=overrides
+DOC=DECLARED OPERATOR OVERRIDES held against a production checkout — a hand edit that must
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # DECLARED OPERATOR OVERRIDES held against a production checkout — a hand edit that must
+    # survive `skew.sh refresh` until the bead that makes it permanent lands. Same directory
+    # family as SPIRA_CHAMBER_OVERLAY and for the same reason: operator state beside the
+    # repo-map, never inside a checkout `spira: land` can overwrite.
+    : "${SPIRA_OVERRIDES:=${XDG_CONFIG_HOME:-$HOME/.config}/spira/overrides}"
+SPIRA_CONF_DEFAULT_EOF

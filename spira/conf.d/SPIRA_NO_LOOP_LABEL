@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=no
+DOC=NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO-LOOP LABEL — marks a bead as intentionally unclaimable. READY_ARGS excludes it, so
+    # fayth_ready and detect_unclaimable_ready never see it. Without this label, a bead that
+    # must not be worked can only be expressed by accident; the unclaimable detector then files
+    # a remedy to make it claimable. Empty string disables the feature entirely.
+    : "${SPIRA_NO_LOOP_LABEL:=no-loop}"
+SPIRA_CONF_DEFAULT_EOF

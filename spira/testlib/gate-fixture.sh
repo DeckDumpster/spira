@@ -31,6 +31,7 @@ gate_fixture_init() {
     ln -sfn "$GATE_PATH_DIR" "$REL/bin"; ln -sfn "$SH" "$REL/spira"
     cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
        "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" "$SH/"
+    cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
     # `skew` is a compiled binary now (sp-yyk47): reached via `$REL/bin` (GATE_PATH_DIR,
     # above), never copied here — gate passes SPIRA_HOME="$SH" explicitly when it execs
     # skew (gate/src/real.rs's skew_foreign), so it finds this fixture's lib.sh/conf.sh

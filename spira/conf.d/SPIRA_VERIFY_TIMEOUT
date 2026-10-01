@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=verify
+DOC=HOW LONG AN ASK'S OWN VERIFY: COMMAND MAY RUN before cockpit/verify-asks.sh kills it and
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG AN ASK'S OWN VERIFY: COMMAND MAY RUN before cockpit/verify-asks.sh kills it and
+    # counts the ask as still open. A seam, not just a constant: a suite proving the kill
+    # happens at all cannot afford to wait out the real default.
+    : "${SPIRA_VERIFY_TIMEOUT:=120}"
+SPIRA_CONF_DEFAULT_EOF

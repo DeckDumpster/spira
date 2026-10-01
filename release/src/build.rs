@@ -100,6 +100,12 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
         return Err(format!("{sha} tracks bin/, which a release reserves for its binaries"));
     }
 
+    // GENERATED CONFIG (sp-5fw50): spira/conf.d.*.generated.sh are gitignored — derived from
+    // spira/conf.d/, never committed — so `git archive` does not carry them, and a read-only
+    // release cannot regenerate them lazily. spira/build-tarball.sh runs conf-gen.sh against
+    // its stage; this path never did, and round 133's release failed pre-activate on it.
+    regenerate_config(&stage).map_err(|e| format!("{sha}: {e}"))?;
+
     // The binaries: a named tested build (--bin-dir), or cargo's own build of the stage.
     let (out, _target_guard) = match &o.bin_dir {
         Some(d) => {
@@ -159,6 +165,24 @@ pub fn build(cfg: &Config, git: &dyn Git, cargo: &dyn Cargo, o: &BuildOpts) -> R
     stage_guard.0 = None;
     eprintln!("release: built {sha}: {} binaries, {} files", bins.len(), m.entries.len());
     Ok(Built { sha, dir, fresh: true })
+}
+
+/// Run `spira/conf-gen.sh` against a staged tree when it has one, refusing on failure. A
+/// tree without it (any repo but the harness) needs nothing generated.
+pub fn regenerate_config(stage: &Path) -> Result<(), String> {
+    let gen = stage.join("spira/conf-gen.sh");
+    if !gen.is_file() {
+        return Ok(());
+    }
+    let out = Command::new("bash").arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "conf-gen.sh failed against the staged tree ({}) — refusing to build a release with no generated config: {}",
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(())
 }
 
 /// Executables directly in `<rel>/bin` or `<rel>/spira` whose name is also a command in one

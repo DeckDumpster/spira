@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=groom
+DOC=THE LABEL APPLIED TO A BEAD WHEN THE GROOMER HAS ESCALATED IT. A bead carrying this
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE LABEL APPLIED TO A BEAD WHEN THE GROOMER HAS ESCALATED IT. A bead carrying this
+    # label is skipped on subsequent passes — an operator answer is pending. Without the
+    # label, every pass after the first escalation files a second note rather than waiting.
+    : "${SPIRA_GROOM_ASK_LABEL:=groom-asked}"
+SPIRA_CONF_DEFAULT_EOF

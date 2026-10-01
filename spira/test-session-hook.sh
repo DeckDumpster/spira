@@ -64,6 +64,7 @@ command -v mail >/dev/null 2>&1 || bail "mail is not on PATH"
 CLONE="$TMP/clone"
 mkdir -p "$CLONE/spira/hooks"
 cp "$HERE/conf.sh" "$CLONE/spira/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$CLONE/spira/"
 cp "$HERE/hooks/session.sh" "$CLONE/spira/hooks/"
 # `watchd`, `inbox-triage` (sp-48f6g) and `mail` (sp-ooh1k) are compiled binaries, not
 # scripts under spira/ to copy — the hook finds them on PATH, same as spira-config above.

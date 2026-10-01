@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=maechen
+DOC=THE MAECHEN PARTITION AND TUNING KNOBS. Maechen is the retrospective persona: it reads
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE MAECHEN PARTITION AND TUNING KNOBS. Maechen is the retrospective persona: it reads
+    # the failure distribution, names recurring classes, and cuts remedy beads.
+    #
+    # SPIRA_MAECHEN_LABEL — the sweep label that wakes Maechen. Read by maechen.fayth's
+    # predicate and by whatever trigger files sweep beads (sp-emzov). One definition keeps
+    # them consistent.
+    : "${SPIRA_MAECHEN_LABEL:=maechen-sweep}"
+SPIRA_CONF_DEFAULT_EOF

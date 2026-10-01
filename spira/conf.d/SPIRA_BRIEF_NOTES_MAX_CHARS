@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=brief
+DOC=THE HARD CEILING ON A BEAD'S NOTES TEXT IN A BRIEF, in characters, applied after the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE HARD CEILING ON A BEAD'S NOTES TEXT IN A BRIEF, in characters, applied after the
+    # recurrence fold above (or directly, for a bead whose notes carry no recurrence
+    # markers at all). Whatever exceeds it is cut from the front — the newest text is what
+    # the aeon needs, and truncation says so rather than silently rendering a partial note.
+    : "${SPIRA_BRIEF_NOTES_MAX_CHARS:=8000}"
+SPIRA_CONF_DEFAULT_EOF

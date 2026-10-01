@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=operator
+DOC=The name the operator's OWN comments are recorded under, so the attention panel can tell
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The name the operator's OWN comments are recorded under, so the attention panel can tell
+    # a reply of theirs from a reply of the agent's. Both write into the same thread, and a
+    # panel that cannot separate them announces the agent's own comment back to it as an answer.
+    : "${SPIRA_OPERATOR_ACTOR:=operator}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,9 @@
+TYPE=string
+GROUP=suites
+DOC=WHERE suites.sh's QUARANTINE MACHINERY RECORDS STATE — flake-observation windows,
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE suites.sh's QUARANTINE MACHINERY RECORDS STATE — flake-observation windows,
+    # clean-run counts, max-age mail flags. list/status read the same directory for whatever
+    # a suite's last real run left behind.
+    : "${SPIRA_SUITES_STATE:=$SPIRA_RUN/suites}"
+SPIRA_CONF_DEFAULT_EOF

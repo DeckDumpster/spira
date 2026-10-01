@@ -1,0 +1,16 @@
+TYPE=string
+GROUP=mouse
+DOC=MOUSE MODE, ON BY DEFAULT. The cockpit is panes the operator clicks into --
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # MOUSE MODE, ON BY DEFAULT. The cockpit is panes the operator clicks into --
+    # the attention panel especially -- and with mouse off a click does nothing at
+    # all: no error, no focus change, so it reads as a dead panel rather than as a
+    # setting. tmux defaults it off and there need not be a ~/.tmux.conf on the box,
+    # so the cockpit sets it itself rather than depending on one.
+    #
+    # THE TRADE IT MAKES. With mouse on, dragging selects into tmux's copy-mode
+    # instead of the terminal's own selection, so a terminal-native copy needs Shift
+    # held down. That is the whole cost, it is per-operator, and it is why this is a
+    # key and not a constant: set COCKPIT_MOUSE = off to keep native selection.
+    : "${COCKPIT_MOUSE:=on}"
+SPIRA_CONF_DEFAULT_EOF

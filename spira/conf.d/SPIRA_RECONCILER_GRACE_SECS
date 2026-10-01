@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=reconciler
+DOC=GRACE PERIOD: minutes a structural invariant may sit unsatisfied before the
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # GRACE PERIOD: minutes a structural invariant may sit unsatisfied before the
+    # reconciler acts. Ryan's default, 2026-09-25: five minutes — long enough that an
+    # ordinary blip (a timer mid-restart, a lock mid-acquire) never fires, short enough
+    # that "we knew we should be seeing 8 aeons" does not go unnoticed for hours.
+    : "${SPIRA_RECONCILER_GRACE_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

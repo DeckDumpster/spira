@@ -132,6 +132,7 @@ echo "    and a queue row swept in the same pass still fetches origin (positive 
 E_RUN="$TMP/e-run"; E_SH="$TMP/e-spira"
 mkdir -p "$E_RUN/worktree" "$E_SH"
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-covers.sh" "$E_SH/"
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$E_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/gate.sh"; chmod +x "$E_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/confine.sh"; chmod +x "$E_SH/confine.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$E_SH/skew"; chmod +x "$E_SH/skew"

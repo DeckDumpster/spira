@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=loom
+DOC=How long a parsed snapshot is held, in seconds. This bounds the cost by TIME rather
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # How long a parsed snapshot is held, in seconds. This bounds the cost by TIME rather
+    # than by viewer, so ten open tabs cost one query instead of ten. It is a cache and not a
+    # background job: nothing runs when nobody is looking, and 0 disables it.
+    : "${SPIRA_LOOM_CACHE_S:=15}"
+SPIRA_CONF_DEFAULT_EOF

@@ -1,0 +1,21 @@
+TYPE=u32
+GROUP=capacity
+DOC=CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # CAPACITY PROBE — while a pause is in force and its horizon is far out, the harness
+    # probes the account to detect early recovery. These keys gate that probe.
+    #
+    # PROBE_MODEL matches the builder persona's model: a probe that the builder's model
+    # cannot answer is evidence the account is genuinely out for builders. An operator
+    # whose pool uses a different model sets this key. Probe with the cheapest capable
+    # model — a refused probe costs nothing; a served one costs one minimal request.
+    #
+    # NO `:=` DEFAULT HERE. A literal default would fix this at conf.sh-sourcing time and
+    # could never track a builder model changed later — capacity_probe() (lib.sh) resolves
+    # the default itself, via persona_model builder, at the moment it actually probes. Left
+    # unset, this key stays purely an operator override.
+    # PROBE_INTERVAL: minimum seconds between probes. One per hour is enough — the reset
+    # time from a refusal is typically several hours, so a probe that keeps the pause for
+    # an hour costs nothing and one that lifts it early unblocks the whole queue.
+    : "${SPIRA_CAPACITY_PROBE_INTERVAL:=3600}"
+SPIRA_CONF_DEFAULT_EOF

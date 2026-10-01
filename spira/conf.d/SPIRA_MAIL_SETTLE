@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=mail
+DOC=SPIRA_MAIL_SETTLE (see spira/conf.sh history for rationale)
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_MAIL_SETTLE:=2}"
+SPIRA_CONF_DEFAULT_EOF

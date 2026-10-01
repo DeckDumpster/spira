@@ -1,0 +1,9 @@
+TYPE=list
+GROUP=mail
+DOC=HOW LONG BETWEEN WAKE RETRIES while a mailbox stays unread, in seconds, one step per
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG BETWEEN WAKE RETRIES while a mailbox stays unread, in seconds, one step per
+    # attempt; the last step repeats forever. A wake is a tmux keystroke with no ack of its
+    # own, so a dropped one looks identical to a delivered one until something asks again.
+    : "${SPIRA_MAIL_WAKE_BACKOFF:=15 60 300 900}"
+SPIRA_CONF_DEFAULT_EOF

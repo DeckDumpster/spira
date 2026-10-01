@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG THE FINAL PUBLISH MAY STAY PENDING before queue.sh to-forge gives up and
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG THE FINAL PUBLISH MAY STAY PENDING before queue.sh to-forge gives up and
+    # refuses the transition — the publish PR is left open for the normal cadence to settle.
+    # In seconds.
+    : "${SPIRA_QUEUE_TRANSITION_MAXSEC:=1800}"
+SPIRA_CONF_DEFAULT_EOF

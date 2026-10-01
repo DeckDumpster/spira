@@ -38,6 +38,11 @@
 #                                     is the suite's exit status, so it MUST be the last
 #                                     statement in the file (not called from a subshell,
 #                                     not followed by anything that resets $?).
+#   copy_conf_registry <dest-dir>    copy spira/conf.d/ and conf-gen.sh beside a fixture's
+#                                     own copy of conf.sh (sp-g3uwp) — every fixture that
+#                                     `cp`'s $HERE/conf.sh somewhere needs this too, or
+#                                     conf.sh's self-heal finds no registry to regenerate
+#                                     from and refuses to source at all.
 #   tl_subshell_safe                 call once, before the first assertion, when the
 #                                     suite's ok/bad calls run inside `( )` subshells —
 #                                     otherwise their writes to the counters never reach
@@ -204,6 +209,21 @@ wantrc() {  # wantrc <name> <expected-rc> <actual-rc>
 # produced no "test ... ok|FAILED" line at all is either a compile error (rc != 0 — the
 # crate's one thing to report as failed) or a filter that matched zero tests (rc = 0 —
 # nothing to report a case for, same as cargo itself saying nothing failed).
+# copy_conf_registry <dest-dir> — copy $HERE/conf.d/ and $HERE/conf-gen.sh into
+# <dest-dir> (created if needed). Every suite that `cp`'s $HERE/conf.sh into a fixture
+# needs this too (sp-g3uwp): conf.sh's own self-heal (_spira_conf_gen_ensure) resolves
+# the REAL file behind a *symlinked* conf.sh (readlink -f), so a fixture built with
+# `ln -sf` (install_fixture_build and friends in lib-test-install.sh) needs nothing
+# extra — but one that `cp`'s conf.sh loses that real path, and without its own
+# conf.d/ beside the copy, conf-gen.sh has nothing to read and conf.sh refuses to
+# source at all: "conf-gen.sh failed to regenerate ... refusing to run with a stale
+# or missing generated file."
+copy_conf_registry() {
+    local dest="${1:?copy_conf_registry needs a destination directory}"
+    mkdir -p "$dest"
+    cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$dest/"
+}
+
 report_cargo() {
     local out="$1" rc="$2" line name detail seen=0
     while IFS= read -r line; do

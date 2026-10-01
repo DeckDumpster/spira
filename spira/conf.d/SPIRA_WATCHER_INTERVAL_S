@@ -1,0 +1,10 @@
+TYPE=u32
+GROUP=watcher
+DOC=HOW OFTEN A WATCHER FIRES, in seconds. Used by incident.sh to distinguish
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW OFTEN A WATCHER FIRES, in seconds. Used by incident.sh to distinguish
+    # a bead closed while its condition was still live (closed within one interval
+    # before the next filing) from a genuine recurrence after a real fix.
+    # Default matches the observed 30-minute watchtower cadence.
+    : "${SPIRA_WATCHER_INTERVAL_S:=1800}"
+SPIRA_CONF_DEFAULT_EOF

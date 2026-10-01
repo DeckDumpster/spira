@@ -1,0 +1,7 @@
+TYPE=string
+GROUP=gh
+DOC=WHICH REPOSITORY LABEL to put on ingested beads. Default is the tracker name.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHICH REPOSITORY LABEL to put on ingested beads. Default is the tracker name.
+    : "${SPIRA_GH_INTAKE_BEAD_REPO:=}"
+SPIRA_CONF_DEFAULT_EOF
