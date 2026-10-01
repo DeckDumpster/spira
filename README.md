@@ -573,8 +573,8 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/seed.sh` | writes those statutes into a fresh database, and never over one already in force |
 | `cockpit/` | the decisions panel (Rust) and the ops pane — how a human sees what the harness is doing and answers what it asks. Generic; it reads whatever database it is pointed at |
 | `loom/` | Loom — a Rust read endpoint over the live beads graph with a per-request budget; refuses to start without a database so it cannot silently serve another harness's graph |
-| `systemd/` | unit TEMPLATES plus install.sh. The units in force on a machine are generated from these, never edited in place |
-| `install.sh` | the one entry point: nine sequential phases — preflight, conflict checks, config, build, database, units, hooks, cockpit, verify — ending with ready.sh |
+| `systemd/` | unit TEMPLATES. The units in force on a machine are generated from these, never edited in place |
+| `install/` | the installer crate (spira-install, units-install, unit-ensure, render-unit): nine sequential phases — preflight, conflict checks, config, build, database, units, hooks, cockpit, verify — ending with ready.sh |
 | `spira/uninstall.sh` | inverse of install.sh; walks owned.sh so the two cannot drift; instance-aware and refuses to guess when multiple instances are installed |
 | `spira/owned.sh` | single declaration of what one installation owns outside the checkout — the load-bearing contract walked by both installer and uninstaller |
 | `spira/ready.sh` | postflight: seven readiness checks after install; exit 3 when installed-but-not-ready |
