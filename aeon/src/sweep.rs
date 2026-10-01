@@ -24,14 +24,18 @@ impl Run<'_> {
             self.ledger.awake(self.now(), &f, "draining");
             return 0;
         }
-        let cp = self.d.seam.call("_aeon_capacity_paused", &[]);
-        for l in cp.stderr.lines() {
-            self.d.sink.out(l);
-        }
-        if cp.code == 0 {
-            self.log(&format!("{f}: the account is out of capacity for another {}s — not sweeping", cp.stdout));
-            self.ledger.awake(self.now(), &f, "paused");
-            return 0;
+        match self.capacity_check().state {
+            crate::capacity::Paused::Open => {}
+            crate::capacity::Paused::Paused(left) => {
+                self.log(&format!("{f}: the account is out of capacity for another {left}s — not sweeping"));
+                self.ledger.awake(self.now(), &f, "paused");
+                return 0;
+            }
+            crate::capacity::Paused::Unknown => {
+                self.log(&format!("{f}: the account's capacity pause file could not be read — not sweeping (failing closed)"));
+                self.ledger.awake(self.now(), &f, "paused");
+                return 0;
+            }
         }
         // In-process (wave 4.23, sp-0ffox) — see run.rs::take_name's own comment.
         let name = crate::naming::aeon_name_take(self.run_dir(), &f);

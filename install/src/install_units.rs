@@ -237,8 +237,7 @@ pub fn run(ctx: &Ctx) -> Report {
         apply(ctx, u, action);
         r.enabled_actions.push((u.clone(), action));
         if u == "dolt-beads.service" && !ctx.world_halted {
-            // Caller (orchestrator) does the bounded wait for the DB to answer; this port
-            // only preserves the ordering that makes the wait meaningful.
+            db_server_wait(ctx);
         }
     }
 
@@ -277,12 +276,80 @@ fn restart_active(ctx: &Ctx, unit: &str) {
     }
 }
 
+/// `_drain_oneshot` (systemd/install.sh, now gone with sp-31dm0's port): a changed unit whose
+/// backing service is a running oneshot is drained — polled until it finishes — before the
+/// restart that follows in [`apply`], rather than restarted out from under itself mid-pass.
+/// A long-running (non-oneshot) service is not drained; restarted directly. `SPIRA_DRAIN_INTERVAL`
+/// overrides the 2-second poll interval (tests set it to 0 to poll without sleeping); bounded
+/// at 300s, after which this proceeds anyway and says so.
 fn drain_oneshot(ctx: &Ctx, unit: &str) {
     let svc = if unit.ends_with(".timer") { format!("{}.service", unit.trim_end_matches(".timer")) } else { unit.to_string() };
     if !ctx.systemctl.is_active(&svc) || ctx.systemctl.unit_type(&svc) != "oneshot" {
+        return;
     }
-    // Real draining is a bounded poll against wall-clock time; left to the orchestrator's
-    // own retry loop in production. Tests exercise `decide`'s Restart branch directly.
+    println!("install: {svc} is mid-pass — waiting for it to finish");
+    let interval = crate::bootstrap::nonempty_env("SPIRA_DRAIN_INTERVAL").and_then(|v| v.parse::<u64>().ok()).unwrap_or(2);
+    let max = 300u64;
+    let mut waited = 0u64;
+    while waited < max {
+        if !ctx.systemctl.is_active(&svc) {
+            return;
+        }
+        if interval > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(interval));
+        }
+        waited += interval;
+    }
+    eprintln!("install: warning — {svc} did not finish within {max}s; proceeding");
+}
+
+/// `_db_server_wait` (systemd/install.sh, gone with sp-31dm0's port): after dolt-beads.service
+/// is applied, hold every timer behind it in the same `ordered` pass until `bd` can read the
+/// database — so a timer whose elapsed-since-boot condition is already met does not fire into
+/// a server still starting (acceptance phase B, 2026-09-26: units.sh listed dolt-beads.service
+/// near the end of ENABLE, after every timer; the sentinel ran first, logged DATABASE
+/// UNREADABLE, exited 1 and was left failed). No database yet (a first install before phase
+/// 3's seed) or no `bd` at all: nothing to wait for. A server that never answers is reported,
+/// not fatal — the end-state check and the units' own failures say what is wrong more
+/// precisely than a refusal here would. `SPIRA_INSTALL_DB_READY_WAIT` bounds the wait
+/// (seconds, default 60); `SPIRA_DRAIN_INTERVAL` paces it (default 2, tests set it to 0).
+fn db_server_wait(ctx: &Ctx) {
+    let db = ctx.host.db.as_str();
+    if db.is_empty() || !Path::new(db).join(".beads").is_dir() {
+        return;
+    }
+    let bd = crate::bootstrap::nonempty_env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
+    let interval = crate::bootstrap::nonempty_env("SPIRA_DRAIN_INTERVAL").and_then(|v| v.parse::<u64>().ok()).unwrap_or(2);
+    let max = crate::bootstrap::nonempty_env("SPIRA_INSTALL_DB_READY_WAIT").and_then(|v| v.parse::<u64>().ok()).unwrap_or(60);
+    let mut waited = 0u64;
+    let mut printed_waiting = false;
+    loop {
+        match Command::new(&bd).args(["-C", db, "sql", "select 1"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status() {
+            Ok(s) if s.success() => {
+                if waited > 0 {
+                    println!("install: beads database answering after {waited}s");
+                }
+                return;
+            }
+            Err(_) if !printed_waiting && waited == 0 => {
+                // bd cannot even be run (command -v would have failed) — nothing to wait for.
+                return;
+            }
+            _ => {}
+        }
+        if waited >= max {
+            break;
+        }
+        if !printed_waiting {
+            println!("install: waiting for the beads database before arming timers");
+            printed_waiting = true;
+        }
+        if interval > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(interval));
+        }
+        waited += interval.max(1);
+    }
+    eprintln!("install: warning — the beads database did not answer within {max}s; arming timers anyway");
 }
 
 /// Disable and delete any surviving un-suffixed `spira-*` unit — the naming scheme that

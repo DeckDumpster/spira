@@ -3,6 +3,8 @@
 
 pub mod bd;
 pub mod brief;
+pub mod capacity;
+pub mod capacity_cli;
 pub mod claim;
 pub mod conf;
 pub mod decide;

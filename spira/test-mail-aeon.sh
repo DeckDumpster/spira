@@ -30,7 +30,21 @@ testdb_up mailaeon || { echo "test-mail-aeon: could not build fixture db"; exit 
 bdq() { BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 export SPIRA_HOME="$TMP/home"; mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_HOME/hooks"
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
+# own in-process config registry (spira_config::resolve, aeon::conf::merge_resolved_config)
+# derives conf.d from THIS --home and now REFUSES to start if it is missing (sp-1cdgq) --
+# a --home with no conf.d used to resolve silently to nothing instead of refusing.
+cp -r "$HERE/conf.d" "$SPIRA_HOME/"
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; this is the real one, as aeon.sh sourced it
+# conf.d/conf-gen.sh ALSO HAVE TO BE HERE, not just reachable through lib.sh's source chain:
+# the aeon binary's own in-process config resolution (spira_config::resolve, wave 4.8)
+# reads conf.d/<KEY> straight off this literal SPIRA_HOME (home.join("conf.d")), never
+# through a symlink or source chain (that is `default_conf_d`'s own doc). Every other
+# fixture driving the real `aeon` binary already carries this copy (test-aeon-resume.sh,
+# test-aeon-chamber-overlay.sh, ...); without it, every generic registry key — SPIRA_MAIL
+# among them — silently resolves to "" because its conf.d/SPIRA_MAIL file is never found,
+# so part (d) below created no mailbox for the stub to see.
+cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf

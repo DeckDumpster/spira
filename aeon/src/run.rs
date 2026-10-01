@@ -230,12 +230,17 @@ impl<'a> Run<'a> {
         }
     }
 
-    fn capacity_paused(&self) -> Option<String> {
-        let o = self.d.seam.call("_aeon_capacity_paused", &[]);
-        for l in o.stderr.lines() {
-            self.d.sink.out(l);
+    /// `capacity_paused`, in-process now (wave 4.26 — family K's home is this crate; aeon
+    /// is the probe's one owner). Shared by `decline()` and `sweep()`.
+    pub(crate) fn capacity_check(&self) -> crate::capacity::Verdict {
+        let v = crate::capacity::check_and_probe(&self.conf, self.d.exec, self.now());
+        for l in &v.log {
+            self.log(l);
         }
-        (o.code == 0).then_some(o.stdout)
+        if v.clear_file {
+            let _ = std::fs::remove_file(self.conf.capacity_pause());
+        }
+        v
     }
 
     fn take_name(&mut self) {
@@ -319,10 +324,18 @@ impl<'a> Run<'a> {
             self.ledger.awake(self.now(), self.f(), "draining");
             return Some(0);
         }
-        if let Some(left) = self.capacity_paused() {
-            self.log(&format!("{}: the account is out of capacity for another {left}s — claiming nothing", self.f()));
-            self.ledger.awake(self.now(), self.f(), "paused");
-            return Some(0);
+        match self.capacity_check().state {
+            crate::capacity::Paused::Open => {}
+            crate::capacity::Paused::Paused(left) => {
+                self.log(&format!("{}: the account is out of capacity for another {left}s — claiming nothing", self.f()));
+                self.ledger.awake(self.now(), self.f(), "paused");
+                return Some(0);
+            }
+            crate::capacity::Paused::Unknown => {
+                self.log(&format!("{}: the account's capacity pause file could not be read — claiming nothing (failing closed)", self.f()));
+                self.ledger.awake(self.now(), self.f(), "paused");
+                return Some(0);
+            }
         }
         None
     }

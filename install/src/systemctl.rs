@@ -27,6 +27,12 @@ pub trait Systemctl {
     /// Names from `list-unit-files --no-legend <glob>` union `list-units --all --no-legend
     /// <glob>` — everything systemd currently knows about matching `glob`, deduplicated.
     fn list_matching(&self, glob: &str) -> Vec<String>;
+    /// Names from `list-units --state=active --no-legend <glob>` alone — currently RUNNING
+    /// units matching `glob`, not merely known to systemd. [`crate::checks::live_aeons`]'s one
+    /// caller: `spira_live_aeons` (lib.sh) queried `--state=active` and nothing else, and a
+    /// unit file left on disk or loaded-but-dead from a prior run must not read as a live
+    /// aeon disrupting this install.
+    fn list_active_matching(&self, glob: &str) -> Vec<String>;
 }
 
 pub struct RealSystemctl {
@@ -130,6 +136,16 @@ impl Systemctl for RealSystemctl {
         }
         seen.into_iter().collect()
     }
+    fn list_active_matching(&self, glob: &str) -> Vec<String> {
+        let (_, out, _) = self.run(&["list-units", "--state=active", "--no-legend", glob]);
+        let mut seen = std::collections::BTreeSet::new();
+        for line in out.lines() {
+            if let Some(name) = line.split_whitespace().next() {
+                seen.insert(name.to_string());
+            }
+        }
+        seen.into_iter().collect()
+    }
 }
 
 /// An in-memory double for tests: unit name -> (active, enabled-string, type).
@@ -214,6 +230,17 @@ impl Systemctl for FakeSystemctl {
             .borrow()
             .iter()
             .filter(|(_, u)| u.file_listed)
+            .map(|(n, _)| n.clone())
+            .filter(|n| if pat.is_empty() { n.as_str() == glob } else { n.starts_with(pre) && n.ends_with(suf) })
+            .collect()
+    }
+    fn list_active_matching(&self, glob: &str) -> Vec<String> {
+        let pat = glob.replace('*', "");
+        let (pre, suf) = glob.split_once('*').unwrap_or((glob, ""));
+        self.units
+            .borrow()
+            .iter()
+            .filter(|(_, u)| u.active)
             .map(|(n, _)| n.clone())
             .filter(|n| if pat.is_empty() { n.as_str() == glob } else { n.starts_with(pre) && n.ends_with(suf) })
             .collect()

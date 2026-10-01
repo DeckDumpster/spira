@@ -59,6 +59,18 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 CONFD="$HERE/conf.d"
 OUT_KEYS="$HERE/conf.d.keys.generated.sh"
 OUT_DEFAULTS="$HERE/conf.d.defaults.generated.sh"
+# PER-PROCESS TEMP NAMES (sp-wm2a3), not a fixed ".tmp" suffix: two processes that each
+# source conf.sh against the same, just-created-or-updated spira/ (the generated cache is
+# stale for both) used to race on ONE shared "$OUT_KEYS.tmp" — one process's `mv -f` renamed
+# it away a heartbeat before the other's own `mv -f` of that now-vanished path, which failed
+# ("cannot stat ...: No such file or directory") under this script's `set -e` and left the
+# loser's caller refusing to run at all ("refusing to run with a stale or missing generated
+# file"). Both writers compute byte-identical output from the same registry, so which one's
+# rename wins the final destination does not matter — only that neither clobbers the OTHER's
+# still-being-written temp file in between. Cleaned up on any exit so a killed run never
+# leaves a stray "*.tmp.<pid>" behind.
+TMP_SUFFIX=".tmp.$$"
+trap 'rm -f "$OUT_KEYS$TMP_SUFFIX" "$OUT_DEFAULTS$TMP_SUFFIX"' EXIT
 
 if [ ! -d "$CONFD" ]; then
     echo "conf-gen.sh: $CONFD does not exist — refusing to generate an empty allowlist" >&2
@@ -123,7 +135,7 @@ fi
     echo "SPIRA_CONF_KEYS=\""
     printf '%s\n' "${keys[@]}" | LC_ALL=C sort
     echo "\""
-} > "$OUT_KEYS.tmp"
+} > "$OUT_KEYS$TMP_SUFFIX"
 
 # -------- OUT_DEFAULTS: topologically sorted ": "${KEY:=...}"" / ": "${KEY=...}"" statements
 # for every key whose DEFAULT body actually contains one. --------
@@ -203,9 +215,9 @@ fi
     for k in "${order[@]}"; do
         printf '%s' "${DEFAULT_BODY[$k]}"
     done
-} > "$OUT_DEFAULTS.tmp"
+} > "$OUT_DEFAULTS$TMP_SUFFIX"
 
-mv -f "$OUT_KEYS.tmp" "$OUT_KEYS"
-mv -f "$OUT_DEFAULTS.tmp" "$OUT_DEFAULTS"
+mv -f "$OUT_KEYS$TMP_SUFFIX" "$OUT_KEYS"
+mv -f "$OUT_DEFAULTS$TMP_SUFFIX" "$OUT_DEFAULTS"
 
 echo "conf-gen.sh: ${#keys[@]} keys in the registry, ${#has_default[@]} with a generated default (${#order[@]} ordered); wrote $OUT_KEYS and $OUT_DEFAULTS" >&2

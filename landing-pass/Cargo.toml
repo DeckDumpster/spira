@@ -18,6 +18,7 @@ serde_json = "1"
 libc = "0.2"
 spira-config = { path = "../spira-config" }
 sending = { path = "../sending" }
+tsd = { path = "../tsd" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

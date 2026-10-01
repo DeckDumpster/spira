@@ -16,10 +16,16 @@
 # 2. persona_model's own fallback ladder, unit-tested directly: spira.toml override, missing
 #    entry -> built-in default, caller-supplied default, no spira.toml -> built-in, no
 #    spira-config binary -> built-in.
-# 3. capacity_probe defaults to the builder's own resolved model, not a bare literal.
-# 4. A stubbed claude captures argv, proving persona.builder.model reaches both of aeon.sh's
+# 3. A stubbed claude captures argv, proving persona.builder.model reaches both of aeon.sh's
 #    launch paths — and that spira.toml wins even when the fayth still declares a (now
 #    unused) FAYTH_MODEL of its own.
+#
+# capacity_probe's own "defaults to the builder's resolved model" case (previously T 3 here)
+# moved with the rest of family K into aeon::capacity (wave 4.26) — it is
+# aeon::conf::tests and aeon::capacity::tests now, not a bash source-grep against a
+# function lib.sh no longer defines at all (capacity_probe/capacity_probe_maybe are
+# retired outright, not shimmed — nothing but capacity_paused ever called them, and
+# that logic is the binary's own now).
 #
 # defect: sp-zs04v.4
 # covers: spira/lib.sh aeon/src/* concierge.sh spira/reflect.sh spira/conf.sh spira/chamber/*.fayth
@@ -84,14 +90,9 @@ fi
 want "reflect.sh reads SPIRA_REFLECT_MODEL" \
      'SPIRA_REFLECT_MODEL:-claude-opus-5' "$(cat "$HARNESS/spira/reflect.sh")"
 
-# THE CAPACITY PROBE DEFAULTS TO THE BUILDER'S MODEL, not its own bare literal.
-if grep -q -- '--model "\${SPIRA_CAPACITY_PROBE_MODEL:-claude-sonnet-4-6}"' "$HARNESS/spira/lib.sh"; then
-    bad "capacity_probe no longer hardcodes a fallback model" "still the old literal fallback"
-else
-    ok "capacity_probe no longer hardcodes a fallback model"
-fi
-want "capacity_probe falls back to persona_model builder" \
-     'SPIRA_CAPACITY_PROBE_MODEL:-$(persona_model builder)' "$(cat "$HARNESS/spira/lib.sh")"
+# capacity_probe's own "no longer hardcodes a fallback model" case moved to
+# aeon::capacity/aeon::conf (wave 4.26) — lib.sh no longer defines capacity_probe at all
+# (retired, not shimmed: see capacity_reset_at's own header comment).
 
 # ==========================================================================
 echo
@@ -132,30 +133,11 @@ is "no entry for this persona -> built-in" "claude-opus-5"        "$(resolve gro
 is "no entry, caller default -> caller's"  "caller-default"       "$(resolve groomer caller-default)"
 is "no spira.toml at all -> built-in"      "claude-opus-5"        "$(resolve builder '' /nonexistent/spira.toml)"
 
-# ==========================================================================
-echo
-echo "capacity_probe — defaults to persona.builder.model when unset:"
-# ==========================================================================
+# capacity_probe's own "defaults to persona.builder.model when unset" case moved with the
+# rest of family K into aeon::capacity/aeon::conf (wave 4.26); covered there by
+# aeon::conf::tests::enforce_env_wins_and_binary_presence_is_irrelevant (persona_model)
+# and aeon::capacity's own probe tests (the model string reaches the probe call).
 BIN="$T/bin"; mkdir -p "$BIN"
-cat > "$BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-printf '%s\n' "$@" > "$SHIM_ARGV_OUT"
-printf 'ok'
-exit 0
-SHIM
-chmod +x "$BIN/claude"
-
-_probe_argv="$T/probe-argv"
-rm -f "$_probe_argv"
-env -i PATH="$PATH" HOME="$FX_HOME" SPIRA_HOME="$HARNESS/spira" \
-    SPIRA_CONF=/nonexistent SPIRA_RUN="$T/run-probe" \
-    SPIRA_REPO_MAP=/nonexistent SPIRA_CHAMBER="$T/empty-chamber" \
-    SPIRA_TOML="$TOML" \
-    SPIRA_AGENT="$BIN/claude" SHIM_ARGV_OUT="$_probe_argv" \
-    bash -c '. "$1/lib.sh" >/dev/null 2>&1; unset SPIRA_CAPACITY_PROBE_MODEL; capacity_probe' \
-    _ "$HARNESS/spira" >/dev/null 2>&1
-want "capacity_probe's --model came from persona.builder.model" \
-     "toml-override-model" "$(cat "$_probe_argv" 2>/dev/null || true)"
 
 # ==========================================================================
 echo
