@@ -141,6 +141,49 @@ impl Builder for Cargo {
 mod tests {
     use super::*;
 
+    /// A real `cargo build` (no fakes), real signal-flag flip mid-build, real clock: proves
+    /// the poll loop in `Cargo::build` actually watches `cancelled()`, not just `--deadline`
+    /// (sp-tcarr). Without that check, this either returns `Ok` after the full 10s sleep
+    /// (never `Cancelled`) or simply takes ~10s instead of under 5 — either is the
+    /// regression this guards: a signalled build sitting until cargo finishes on its own.
+    #[test]
+    fn a_caught_signal_mid_build_is_cancelled_promptly_not_after_the_full_sleep() {
+        use crate::runtime::CANCEL;
+        use std::sync::atomic::Ordering;
+
+        let d = testkit::TempDir::new("build-signal-test");
+        std::fs::write(
+            d.join("Cargo.toml"),
+            "[package]\nname = \"slowbuild\"\nversion = \"0.1.0\"\nedition = \"2021\"\nbuild = \"build.rs\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            d.join("build.rs"),
+            "fn main() { std::thread::sleep(std::time::Duration::from_secs(10)); }\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(d.join("src")).unwrap();
+        std::fs::write(d.join("src/main.rs"), "fn main() { println!(\"ok\"); }\n").unwrap();
+
+        CANCEL.store(false, Ordering::SeqCst);
+        let flipper = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(1500));
+            CANCEL.store(true, Ordering::SeqCst);
+        });
+
+        let t0 = Instant::now();
+        let result = Cargo.build(&d, "dev", None);
+        let elapsed = t0.elapsed();
+        flipper.join().unwrap();
+        CANCEL.store(false, Ordering::SeqCst); // never leak into another test
+
+        assert_eq!(result, Err(BuildError::Cancelled), "{result:?}");
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "cancellation should be prompt; took {elapsed:?}"
+        );
+    }
+
     #[test]
     fn profile_directories() {
         assert_eq!(profile_dir("aeon"), "aeon");

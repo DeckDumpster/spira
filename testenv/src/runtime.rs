@@ -351,6 +351,19 @@ pub fn capture_bounded(mut cmd: Command, deadline: Option<Instant>) -> ExecOutco
 mod tests {
     use super::*;
 
+    /// `install_signal_handlers` must cover HUP, not just INT/TERM (sp-tcarr: testenv was
+    /// missing it — gate's own real.rs already caught all three). `raise()` delivers to the
+    /// calling thread synchronously, so the flag is visible the instant it returns.
+    #[test]
+    fn install_signal_handlers_catches_hup() {
+        CANCEL.store(false, Ordering::SeqCst);
+        install_signal_handlers();
+        unsafe { libc::raise(libc::SIGHUP) };
+        let caught = cancelled();
+        CANCEL.store(false, Ordering::SeqCst); // never leak into another test
+        assert!(caught, "SIGHUP should set the cancellation flag");
+    }
+
     #[test]
     fn tail_keeps_only_the_last_lines_of_the_output() {
         let o = ExecOutcome { rc: 5, output: "a\nb\nc\nd".into() };
