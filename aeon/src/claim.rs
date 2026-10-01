@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::bd::{self, BeadRow};
-use crate::ports::{Bd, Exec, Git, Seam};
+use crate::ports::{Bd, Exec, Git};
 use crate::util;
 
 /// `claim_retry <bd args…>`: the query with `--json`, retried; Ok(json_only(stdout)) — an
@@ -66,12 +66,14 @@ pub enum Selection {
 
 pub struct Selector<'a> {
     pub exec: &'a dyn Exec,
-    pub seam: &'a dyn Seam,
     pub git: &'a dyn Git,
     pub claim_bin: &'a str,
     pub fayth: &'a str,
     pub scratch: &'a Path,
     pub pid: u32,
+    /// spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+    /// `_aeon_repo_info` bash seam this used to shell into.
+    pub repos: &'a spira_config::repos::Registry,
 }
 
 impl Selector<'_> {
@@ -128,13 +130,17 @@ impl Selector<'_> {
         let mut names: Vec<String> = band.iter().map(|t| t.repo.clone()).collect();
         names.sort();
         names.dedup();
-        let info = self.seam.call("_aeon_repo_info", &names);
-        let repos: BTreeMap<String, (String, String)> = info
-            .stdout
-            .lines()
-            .filter_map(|l| {
-                let p: Vec<&str> = l.splitn(3, '\t').collect();
-                (p.len() == 3).then(|| (p[0].to_string(), (p[1].to_string(), p[2].to_string())))
+        // `_aeon_repo_info <names…>`: root + base ref per name, skipping any name whose
+        // root does not resolve to a real checkout — same filter the bash composite made.
+        let repos: BTreeMap<String, (String, String)> = names
+            .iter()
+            .filter_map(|n| {
+                let root = self.repos.root(n)?;
+                if !Path::new(&root).join(".git").exists() {
+                    return None;
+                }
+                let base = spira_config::repos::landref(self.repos, &root).unwrap_or_default();
+                Some((n.clone(), (root, base)))
             })
             .collect();
         let (mut ids, mut label) = (Vec::new(), None);
@@ -240,13 +246,6 @@ mod tests {
     fn scratch(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("aeon-claim-{name}"))
     }
-    struct FakeSeam(String);
-    impl Seam for FakeSeam {
-        fn call(&self, func: &str, _args: &[String]) -> Out {
-            assert_eq!(func, "_aeon_repo_info");
-            Out::ok(self.0.clone())
-        }
-    }
     struct FakeGit(i64);
     impl Git for FakeGit {
         fn git(&self, _d: &Path, args: &[&str]) -> Out {
@@ -255,8 +254,37 @@ mod tests {
         }
     }
 
-    fn sel<'a>(e: &'a FakeExec, s: &'a FakeSeam, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
-        Selector { exec: e, seam: s, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7 }
+    /// A registry mapping `svc` onto a REAL, if tiny, git checkout — `resumable()`
+    /// (sp-o88bx, "wave 4.12") now resolves the base ref in-process through
+    /// `spira_config::repos::landref`, which always shells to real git, so this is a real
+    /// checkout rather than a canned string. Its declared base is empty on purpose: rung 4
+    /// (no remote at all) resolves it to the checkout's own current branch, "main".
+    fn svc_registry(dir: &Path) -> spira_config::repos::Registry {
+        let repo = dir.join("svc-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        git(&["init", "-q", "-b", "main"]);
+        std::fs::write(repo.join("f"), "x").unwrap();
+        git(&["add", "f"]);
+        git(&["commit", "-q", "-m", "x"]);
+        let map = format!("svc | {}\n", repo.display());
+        spira_config::repos::Registry::new(Some(&map), &BTreeMap::new(), Path::new(""))
+    }
+
+    fn sel<'a>(e: &'a FakeExec, repos: &'a spira_config::repos::Registry, g: &'a FakeGit, dir: &'a Path) -> Selector<'a> {
+        Selector { exec: e, git: g, claim_bin: "spira-claim", fayth: "builder", scratch: dir, pid: 7, repos }
     }
 
     const READY: &str = r#"[{"id":"sp-a","priority":1,"labels":["repo:svc"]},{"id":"sp-b","priority":1,"labels":["repo:svc","branch:spira/x"]}]"#;
@@ -270,9 +298,9 @@ mod tests {
             tier: Out::ok("sp-a||svc|1|1|1\nsp-b|spira/x|svc|1|1|1\n"),
             rank: Out::ok("1\t1\t1\t0\tt\tsp-b\t\n1\t1\t1\t1\tt\tsp-a\t\n"),
         };
-        let s = FakeSeam("svc\t/r\torigin/main\n".into());
+        let repos = svc_registry(dir.path());
         let g = FakeGit(2);
-        let r = sel(&e, &s, &g, &dir).select(READY);
+        let r = sel(&e, &repos, &g, &dir).select(READY);
         assert_eq!(r, Selection::Ranked { ids: vec!["sp-b".into(), "sp-a".into()], resumable: vec!["sp-a".into(), "sp-b".into()], tier: Some("P1/P1".into()) });
         let calls = e.calls.lock().unwrap();
         assert_eq!(calls.len(), 3);
@@ -288,14 +316,14 @@ mod tests {
     fn lookup_or_rank_failure_is_claim_error_not_idle() {
         let dir = scratch("t2");
         let e = FakeExec { calls: Mutex::new(vec![]), epics: Out::fail(2, "x"), tier: Out::ok(""), rank: Out::ok("") };
-        let s = FakeSeam(String::new());
+        let repos = spira_config::repos::Registry::default();
         let g = FakeGit(0);
-        match sel(&e, &s, &g, &dir).select("[]") {
+        match sel(&e, &repos, &g, &dir).select("[]") {
             Selection::ClaimError { ledger, .. } => assert_eq!(ledger, "claim-error epic_parent_lookup failed rc=2"),
             o => panic!("{o:?}"),
         }
         let e2 = FakeExec { calls: Mutex::new(vec![]), epics: Out::ok("{}"), tier: Out::fail(2, ""), rank: Out::fail(7, "") };
-        match sel(&e2, &s, &g, &dir).select("[]") {
+        match sel(&e2, &repos, &g, &dir).select("[]") {
             Selection::ClaimError { ledger, log } => {
                 assert_eq!(ledger, "claim-error epic_rank_rows failed rc=7");
                 assert!(log.contains("not reporting idle"));
@@ -308,9 +336,9 @@ mod tests {
     fn a_branch_not_ahead_is_not_resumable() {
         let dir = scratch("t3");
         let e = FakeExec { calls: Mutex::new(vec![]), epics: Out::ok("{}"), tier: Out::ok("sp-a||svc|0|0|2\n"), rank: Out::ok("0\t0\t2\t1\tt\tsp-a\t\n") };
-        let s = FakeSeam("svc\t/r\torigin/main\n".into());
+        let repos = svc_registry(dir.path());
         let g = FakeGit(0);
-        assert_eq!(sel(&e, &s, &g, &dir).select("[]"), Selection::Ranked { ids: vec!["sp-a".into()], resumable: vec![], tier: None });
+        assert_eq!(sel(&e, &repos, &g, &dir).select("[]"), Selection::Ranked { ids: vec!["sp-a".into()], resumable: vec![], tier: None });
     }
 
     struct ClaimBd {
