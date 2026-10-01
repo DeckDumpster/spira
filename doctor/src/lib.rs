@@ -423,14 +423,23 @@ pub fn check_duckdb(w: &dyn World) -> Vec<Line> {
 const SCCACHE_INSTALL: &str = "cargo install sccache --locked --no-default-features --features webdav";
 
 pub fn check_sccache(w: &dyn World) -> Vec<Line> {
+    // Same gate as check_operator_channel: sccache is deps.toml's "operator" tier, not
+    // "runtime" — a fixture container (SPIRA_OPERATED=0) is deliberately without it
+    // (deps.toml's own waiver: "the fixture sets SPIRA_BUILD_CACHE=off ... on purpose
+    // instead of being refused"), so absence there is a WARN, not a FAIL. A real,
+    // operated box gets FAIL — the same box check_sccache was written for.
+    let operated = w.env("SPIRA_OPERATED").map(|v| v != "0").unwrap_or(true);
+    let make = |msg: String, detail: String| -> Line {
+        if operated { fail(msg, detail) } else { warn(msg, detail) }
+    };
     let Some(bin) = w.which("sccache") else {
-        return vec![fail(
-            "sccache is not on PATH",
+        return vec![make(
+            "sccache is not on PATH".into(),
             format!("every build refuses rather than compile every dependency cold (sp-z61hj). See deps.toml's sccache entry. Install: {SCCACHE_INSTALL}"),
         )];
     };
     let Some(help) = w.sccache_help() else {
-        return vec![fail(format!("sccache ({}) did not answer --help", bin.display()), "")];
+        return vec![make(format!("sccache ({}) did not answer --help", bin.display()), String::new())];
     };
     let has_webdav = help
         .lines()
@@ -439,7 +448,7 @@ pub fn check_sccache(w: &dyn World) -> Vec<Line> {
     if has_webdav {
         vec![ok(format!("sccache ({}) — webdav backend present", bin.display()))]
     } else {
-        vec![fail(
+        vec![make(
             format!("sccache ({}) was built without the webdav backend", bin.display()),
             format!(
                 "round-vm's shared cache (sccache-dav, sp-xjnzl) and this box's own builds both need it. \

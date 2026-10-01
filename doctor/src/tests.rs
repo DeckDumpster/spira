@@ -552,6 +552,16 @@ fn sccache_missing_fails_and_names_the_install_command() {
 }
 
 #[test]
+fn sccache_missing_only_warns_off_an_operated_box() {
+    // deps.toml's own waiver: a testenv fixture container sets SPIRA_BUILD_CACHE=off and
+    // carries no sccache at all, on purpose — SPIRA_OPERATED=0 is how check_operator_channel
+    // already tells a fixture from a real box, and this check uses the same gate.
+    let f = Fake::default();
+    f.set("SPIRA_OPERATED", "0");
+    assert_eq!(levels(&check_sccache(&f)), vec![Level::Warn]);
+}
+
+#[test]
 fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presence_alone() {
     let f = Fake::default();
     f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
