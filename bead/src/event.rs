@@ -149,11 +149,8 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn tmp(name: &str) -> std::path::PathBuf {
-        let p = std::env::temp_dir().join(format!("bead-event-test-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&p);
-        fs::create_dir_all(&p).unwrap();
-        p
+    fn tmp(name: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("bead-event-{name}"))
     }
 
     fn events_log(dir: &Path) -> String {
