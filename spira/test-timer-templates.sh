@@ -5,7 +5,7 @@
 # unit files instead of six suites each re-reading them.
 #
 # tier: T0
-# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service spira/collect.sh supervise/** UC-instance-lifecycle-31
+# covers: systemd/*.timer systemd/*.service systemd/units.sh systemd/render.py systemd/concierge.service systemd/beads-push.service cockpit-collect/src/* supervise/** UC-instance-lifecycle-31
 #
 # WHAT THIS GUARDS. Defect sp-7gklu: a timer template existed in systemd/ but was absent from
 # units.sh's UNITS array, so install.sh never wrote it to disk. Defect sp-mplcb: WatchdogSec

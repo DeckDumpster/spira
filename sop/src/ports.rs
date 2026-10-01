@@ -34,12 +34,15 @@ pub trait Proc {
     /// could not be run — fail closed, never read as clean.
     fn inventory_scan(&self, text: &str) -> Result<Vec<String>, String>;
 
-    /// The METRIC probe: `timeout <secs> <bin> <subcmd>`, or `timeout <secs> bash <bin>
-    /// <subcmd>` when `bash_prefix` is set. The bash prefix is not a guess from `bin`'s
-    /// name: the original script's `${SOP_METRIC_COCKPIT:+bash}` prefixes with `bash`
-    /// exactly when the caller OVERRODE the cockpit binary (`SOP_METRIC_COCKPIT` set to
-    /// anything), and never for the default `cockpit.sh` run bare off PATH — so the
-    /// caller, which knows whether an override was given, decides this, not `real.rs`.
+    /// The METRIC probe: `timeout <secs> <bin> probe <subcmd>` by default (cockpit-
+    /// collect's own subcommand, sp-kt4l3), or `timeout <secs> bash <bin> <subcmd>` when
+    /// `bash_prefix` is set. The bash prefix is not a guess from `bin`'s name: the
+    /// original script's `${SOP_METRIC_COCKPIT:+bash}` prefixes with `bash` exactly when
+    /// the caller OVERRODE the cockpit binary (`SOP_METRIC_COCKPIT` set to anything) — an
+    /// override runs bare, taking the subcmd directly, same as before cockpit-collect
+    /// existed — and never for the default, which `real.rs` inserts the `probe` arg for.
+    /// The caller, which knows whether an override was given, decides `bash_prefix`, not
+    /// `real.rs`.
     /// Returns raw stdout, or `None` on any failure (missing binary, non-zero exit,
     /// timeout) — `applied` treats `None` exactly like an unreadable metric.
     fn metric_probe(&self, bin: &str, bash_prefix: bool, subcmd: &str, timeout_secs: u64) -> Option<String>;

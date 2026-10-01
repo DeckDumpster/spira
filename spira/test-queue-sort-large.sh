@@ -2,7 +2,7 @@
 #
 # test-queue-sort-large.sh — queue_sort_rows returns every row however large PRIO_JSON is.
 #
-# WHAT THIS IS FOR. batch.sh and cockpit.sh both call
+# WHAT THIS IS FOR. batch.sh and cockpit-collect both call
 #
 #     PRIO_JSON="$prio_json" queue_sort_rows "$repo" "$base_sha"
 #

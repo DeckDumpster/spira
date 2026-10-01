@@ -3,6 +3,7 @@ members = [
     "auron",
     "loom",
     "cockpit/panel",
+    "cockpit-collect",
     "cockpit/ops",
     "broker",
     "czar-pass",

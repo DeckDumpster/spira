@@ -14,7 +14,7 @@
 #
 # defect: sp-mn8q
 # tier: T1
-# covers: spira/cockpit.sh spira/cockpit-sparklines.py cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/probes/core_detail.rs spira/cockpit-sparklines.py cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -25,12 +25,12 @@ echo "test-beads-sparklines.sh"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # ---------------------------------------------------------------------------
-# cockpit-sparklines.py is its own file (not a cockpit.sh heredoc extracted by
-# indentation), so this suite runs the real script cockpit.sh runs, unmodified.
+# cockpit-sparklines.py is its own file (not something inlined into the collector),
+# so this suite runs the real script cockpit-collect runs, unmodified.
 # ---------------------------------------------------------------------------
 SPARKLINES_PY="$HERE/cockpit-sparklines.py"
 if [ ! -f "$SPARKLINES_PY" ]; then
-    bad "extract" "cockpit-sparklines.py not found next to cockpit.sh"
+    bad "extract" "cockpit-sparklines.py not found next to cockpit-collect"
     echo ""
     echo "RESULTS: $_TL_PASS passed, $_TL_FAIL failed"
     exit 1

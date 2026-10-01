@@ -1,0 +1,263 @@
+//! `reachable_keys` — `SP_REACHABLE`/`SP_STRANDED`: a BFS over `blocks` edges from ready/
+//! in_progress seeds, the same reachability query `spira/cockpit.sh` ran in an embedded
+//! `python3 -c` (DESIGN.md "Design"). The BFS itself ([`reachable_bfs`]) is pure and unit
+//! tested directly; only the data gathering (bd, the ctrl file, the chamber) is impure.
+
+use super::{push, Kv};
+use crate::io;
+use serde_json::Value;
+use std::collections::{HashMap, HashSet, VecDeque};
+
+/// A label set that, if fully contained in a bead's labels, marks it a "stopper" — never
+/// reachable, never a seed. Suspended-fayth sets and the "no live partition matches" test
+/// are both expressed this way.
+pub type LabelSet = HashSet<String>;
+
+pub struct Bead {
+    pub id: String,
+    pub status: String,
+    pub labels: HashSet<String>,
+    /// ids this bead is blocked BY (open `blocks` dependencies pointing at it).
+    pub blocked_by: HashSet<String>,
+}
+
+fn is_stopper(labels: &HashSet<String>, ask: &str, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
+    if labels.contains(ask) || labels.contains("spira-poison") {
+        return true;
+    }
+    if suspended.iter().any(|s| s.iter().all(|l| labels.contains(l))) {
+        return true;
+    }
+    if !live.is_empty() && !live.iter().any(|s| s.iter().all(|l| labels.contains(l))) {
+        return true;
+    }
+    false
+}
+
+/// The BFS itself: seeds are in_progress beads, or open beads with no open blocker, both
+/// excluding stoppers. A downstream bead becomes reachable once every one of its open
+/// blockers already is. Returns `(reachable_count, total_work_count)`.
+pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelSet], live: &[LabelSet]) -> (usize, usize) {
+    let by_id: HashMap<String, &Bead> = beads.iter().map(|b| (b.id.clone(), b)).collect();
+    let all_ids: HashSet<String> = beads
+        .iter()
+        .filter(|b| !b.labels.contains("insight") && !b.labels.contains(ask))
+        .filter(|b| scope.is_empty() || b.labels.contains(scope))
+        .map(|b| b.id.clone())
+        .collect();
+
+    let mut blocker_of: HashMap<String, HashSet<String>> = all_ids.iter().map(|id| (id.clone(), HashSet::new())).collect();
+    let mut blocks: HashMap<String, HashSet<String>> = all_ids.iter().map(|id| (id.clone(), HashSet::new())).collect();
+    for b in beads {
+        if !all_ids.contains(&b.id) {
+            continue;
+        }
+        for up in &b.blocked_by {
+            if by_id.contains_key(up) {
+                blocker_of.get_mut(&b.id).unwrap().insert(up.clone());
+                if all_ids.contains(up) {
+                    blocks.entry(up.clone()).or_default().insert(b.id.clone());
+                }
+            }
+        }
+    }
+
+    let mut seeds: HashSet<String> = HashSet::new();
+    for b in beads {
+        if !all_ids.contains(&b.id) {
+            continue;
+        }
+        if is_stopper(&b.labels, ask, suspended, live) {
+            continue;
+        }
+        let blockers_empty = blocker_of.get(&b.id).map(|s| s.is_empty()).unwrap_or(true);
+        if b.status == "in_progress" || (b.status == "open" && blockers_empty) {
+            seeds.insert(b.id.clone());
+        }
+    }
+
+    let mut reachable: HashSet<String> = seeds.clone();
+    let mut q: VecDeque<String> = seeds.into_iter().collect();
+    while let Some(cur) = q.pop_front() {
+        for dn in blocks.get(&cur).cloned().unwrap_or_default() {
+            if reachable.contains(&dn) {
+                continue;
+            }
+            let dn_bead = by_id[&dn];
+            if is_stopper(&dn_bead.labels, ask, suspended, live) {
+                continue;
+            }
+            let all_blockers_reachable = blocker_of.get(&dn).map(|s| s.iter().all(|b| reachable.contains(b))).unwrap_or(true);
+            if all_blockers_reachable {
+                reachable.insert(dn.clone());
+                q.push_back(dn);
+            }
+        }
+    }
+    (reachable.len(), all_ids.len())
+}
+
+pub fn reachable_keys() -> Kv {
+    let mut out = Kv::new();
+    let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    let mut args = vec!["list", "--status", "open,in_progress", "--limit", "0"];
+    if !scope.is_empty() {
+        args.push("--label");
+        args.push(&scope);
+    }
+    let raw = io::bdjson(&args);
+    let Some(rows) = io::bd_rows(raw) else {
+        push(&mut out, "SP_REACHABLE", "?");
+        push(&mut out, "SP_STRANDED", "?");
+        return out;
+    };
+
+    let home = io::home_dir();
+    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string());
+
+    let mut live: Vec<LabelSet> = Vec::new();
+    if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {
+        for f in fayths.split_whitespace() {
+            if let Some(labels) = io::lib_call(&home, "fayth_get", &[f, "FAYTH_LABELS"]) {
+                let set: LabelSet = labels.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                if !set.is_empty() {
+                    live.push(set);
+                }
+            }
+        }
+    }
+
+    let mut suspended: Vec<LabelSet> = Vec::new();
+    let ctrl_path = std::env::var("SPIRA_CTRL").unwrap_or_default();
+    if !ctrl_path.is_empty() {
+        if let Ok(content) = std::fs::read_to_string(&ctrl_path) {
+            if let Ok(Value::Object(ctrl)) = serde_json::from_str::<Value>(&content) {
+                for (subj, ops) in &ctrl {
+                    let has_suspend = ops.as_array().map(|a| a.iter().any(|v| v.as_str() == Some("suspend"))).unwrap_or(false)
+                        || ops.as_object().map(|o| o.contains_key("suspend")).unwrap_or(false);
+                    if !has_suspend {
+                        continue;
+                    }
+                    let fayth_file = home.join("chamber").join(format!("{subj}.fayth"));
+                    if let Ok(content) = std::fs::read_to_string(&fayth_file) {
+                        if let Some(line) = content.lines().find(|l| l.starts_with("FAYTH_LABELS=")) {
+                            let v = line["FAYTH_LABELS=".len()..].trim();
+                            let set: LabelSet = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                            if !set.is_empty() {
+                                suspended.push(set);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let beads: Vec<Bead> = rows
+        .iter()
+        .filter_map(|b| {
+            let id = b.get("id").and_then(Value::as_str)?.to_string();
+            let status = b.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+            let labels: HashSet<String> = b.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
+            let blocked_by: HashSet<String> = b
+                .get("dependencies")
+                .and_then(Value::as_array)
+                .map(|deps| {
+                    deps.iter()
+                        .filter(|d| {
+                            let t = d.get("dependency_type").or_else(|| d.get("type")).and_then(Value::as_str);
+                            t == Some("blocks")
+                        })
+                        .filter_map(|d| d.get("depends_on_id").and_then(Value::as_str).map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(Bead { id, status, labels, blocked_by })
+        })
+        .collect();
+
+    let (reach, total) = reachable_bfs(&beads, &ask, &scope, &suspended, &live);
+    push(&mut out, "SP_REACHABLE", reach.to_string());
+    push(&mut out, "SP_STRANDED", (total - reach).to_string());
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn bead(id: &str, status: &str, labels: &[&str], blocked_by: &[&str]) -> Bead {
+        Bead {
+            id: id.to_string(),
+            status: status.to_string(),
+            labels: labels.iter().map(|s| s.to_string()).collect(),
+            blocked_by: blocked_by.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn ready_open_bead_with_no_blockers_is_reachable() {
+        let beads = vec![bead("sp-1", "open", &["plan"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        assert_eq!((reach, total), (1, 1));
+    }
+
+    #[test]
+    fn bead_behind_an_unresolved_blocker_is_stranded_until_it_resolves() {
+        let beads = vec![
+            bead("sp-1", "open", &["plan"], &[]),
+            bead("sp-2", "open", &["plan"], &["sp-1"]),
+        ];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        // sp-1 is a seed and reachable; sp-2's only blocker (sp-1) is reachable, so sp-2
+        // becomes reachable too via the BFS propagation.
+        assert_eq!((reach, total), (2, 2));
+    }
+
+    #[test]
+    fn ask_labelled_bead_is_excluded_from_the_universe_entirely() {
+        let beads = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        assert_eq!((reach, total), (0, 0));
+    }
+
+    #[test]
+    fn poisoned_bead_counts_as_stuck_work_not_reachable() {
+        let beads = vec![bead("sp-1", "open", &["plan", "spira-poison"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        assert_eq!((reach, total), (0, 1));
+    }
+
+    #[test]
+    fn bead_matching_no_live_partition_is_stranded() {
+        let live = vec![["fayth:builder".to_string()].into_iter().collect::<LabelSet>()];
+        let beads = vec![bead("sp-1", "open", &["plan"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &live);
+        assert_eq!((reach, total), (0, 1));
+    }
+
+    #[test]
+    fn scope_label_is_required_to_enter_the_universe() {
+        let beads = vec![bead("sp-1", "open", &["other-scope"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        assert_eq!((reach, total), (0, 0));
+    }
+
+    #[test]
+    fn in_progress_bead_is_always_a_seed_even_with_open_blockers() {
+        let beads = vec![
+            bead("sp-1", "open", &["plan", "needs-ryan"], &[]), // ask blocker, excluded from universe
+            bead("sp-2", "in_progress", &["plan"], &["sp-1"]),
+        ];
+        let (reach, _total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        assert!(reach >= 1);
+    }
+
+    #[test]
+    fn suspended_partition_stops_a_bead_even_when_seeded() {
+        let suspended = vec![["fayth:ops".to_string()].into_iter().collect::<LabelSet>()];
+        let beads = vec![bead("sp-1", "open", &["plan", "fayth:ops"], &[])];
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &suspended, &[]);
+        assert_eq!((reach, total), (0, 1));
+    }
+}

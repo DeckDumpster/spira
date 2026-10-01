@@ -6,8 +6,8 @@
 #   ./test-cockpit-czar-triggers.sh
 #
 # Before this suite, gap #1 of docs/test-plan/cockpit-observability.md: no test-*.sh
-# mentioned SP_CZAR or czar_triggers at all. Runs the real `cockpit.sh czar_triggers`
-# subcommand (registered in collect.sh's PROBES, not a full `once`) against a stub bd.
+# mentioned SP_CZAR or czar_triggers at all. Runs the real `cockpit-collect probe czar_triggers`
+# subcommand (registered in cockpit-collect's PROBES, not a full `once`) against a stub bd.
 #
 # sp-s088v.2: a bd call that produces no parseable JSON — empty stdout, or a
 # schema-mismatch line that bdjson's json_only filters to nothing — must render `?`
@@ -15,7 +15,7 @@
 # as a refusal before it can be coerced into the literal "[]".
 #
 # tier: T1
-# covers: spira/cockpit.sh
+# covers: cockpit-collect/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -32,7 +32,7 @@ run_czar() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BD="$bd_path" \
-        cockpit.sh czar_triggers 2>/dev/null
+        cockpit-collect probe czar_triggers 2>/dev/null
 }
 
 field() { printf '%s\n' "$1" | grep "^$2=" | sed "s/^$2=//"; }

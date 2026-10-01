@@ -21,7 +21,7 @@
 # single process instead of one `health.sh once` per case (1,844 lines + conf.sh, each).
 #
 # defect: sp-cof
-# covers: cockpit/ops/src/health.rs spira/cockpit.sh
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -414,7 +414,7 @@ echo "Part 2: collector fault injection — probe refusal must produce ?, not 0"
 echo
 
 # ---- Part 2: collector fault injection --------------------------------------------------
-# Run specific cockpit.sh subcommands with fake bd binaries and verify the output.
+# Run specific cockpit-collect subcommands with fake bd binaries and verify the output.
 # THREE MODES: (1) bd exits non-zero, (2) bdjson exits 0 and emits nothing, (3) the
 # same collector output feeds the pane and the pane renders ?.
 
@@ -430,7 +430,7 @@ chmod +x "$TMP/bin/bd-fail"
 printf '#!/bin/sh\nprintf ""\nexit 0\n' > "$TMP/bin/bd-zero-empty"
 chmod +x "$TMP/bin/bd-zero-empty"
 
-# run_probe <subcommand> <SPIRA_BD-binary> [extra-env-vars...] -> output of cockpit.sh <subcommand>
+# run_probe <subcommand> <SPIRA_BD-binary> [extra-env-vars...] -> output of cockpit-collect <subcommand>
 # AN EXPLICIT MINIMAL ENVIRONMENT. Ambient configuration silently decides verdicts:
 # a suite that inherits a real spira.conf would assert against one box
 # (law-gates-run-in-a-clean-environment). BD_TIMEOUT=1 fails fast against a fake bd.
@@ -444,7 +444,7 @@ run_probe() {
         SPIRA_REPO_MAP="$TMP/no-map" \
         BD_TIMEOUT=1 \
         "$@" \
-        cockpit.sh "$sub" 2>/dev/null
+        cockpit-collect probe "$sub" 2>/dev/null
 }
 mkdir -p "$TMP/run"
 
