@@ -82,6 +82,7 @@ mkdir -p "$SH"
 for f in release.sh unhold.sh lib.sh conf.sh suite-covers.sh; do
     [ -f "$HERE/$f" ] && cp "$HERE/$f" "$SH/"
 done
+copy_conf_registry "$SH"
 chmod +x "$SH/release.sh"
 
 REPO_MAP="$TMP/repo-map"

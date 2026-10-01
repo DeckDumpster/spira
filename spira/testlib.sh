@@ -222,6 +222,10 @@ copy_conf_registry() {
     local dest="${1:?copy_conf_registry needs a destination directory}"
     mkdir -p "$dest"
     cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$dest/"
+    # Generate now, so the fixture's first `source conf.sh` has nothing to regenerate and
+    # prints nothing into a suite capturing a command's output with 2>&1 (sp-gt0ta).
+    bash "$dest/conf-gen.sh" >/dev/null 2>&1 \
+        || { echo "copy_conf_registry: conf-gen.sh failed in $dest" >&2; return 1; }
 }
 
 report_cargo() {

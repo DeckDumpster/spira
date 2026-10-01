@@ -102,7 +102,9 @@ _spira_conf_gen_ensure() {   # _spira_conf_gen_ensure <keys|defaults> -> sources
         done
     fi
     if [ -n "$_stale" ]; then
-        bash "$_dir/conf-gen.sh" \
+        # To stderr: sourcing conf.sh must never write to the caller's stdout, which a script
+        # capturing its own output (release.sh's tag name) would otherwise swallow (sp-gt0ta).
+        bash "$_dir/conf-gen.sh" >&2 \
             || { echo "spira: conf-gen.sh failed to regenerate conf.d.*.generated.sh — refusing to run with a stale or missing generated file" >&2; return 1; }
     fi
     # shellcheck disable=SC1090

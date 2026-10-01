@@ -236,17 +236,17 @@ for k, v in sorted(d.items()):
     is "thrash lines do not inflate SP_AEON_WORKED" "1" "$worked_count"
 fi
 
-# ---- Part 6: SPIRA_THRASH_MINUTES in conf.sh ----------------------------------------
+# ---- Part 6: SPIRA_THRASH_MINUTES in the conf.d registry --------------------------------
 echo
-echo "conf.sh: SPIRA_THRASH_MINUTES has a default value"
+echo "conf.d: SPIRA_THRASH_MINUTES has a default value"
 
-CONF="$HERE/conf.sh"
-if [ ! -f "$CONF" ]; then
-    bad "conf.sh exists" "not found"
+# conf.sh's keys and defaults are generated from spira/conf.d/, one file per key (sp-g3uwp).
+KEYF="$HERE/conf.d/SPIRA_THRASH_MINUTES"
+if [ ! -f "$KEYF" ]; then
+    bad "conf.d registers SPIRA_THRASH_MINUTES" "no $KEYF"
 else
-    want "conf.sh defines SPIRA_THRASH_MINUTES" "SPIRA_THRASH_MINUTES" "$(cat "$CONF")"
-    # Extract the default and verify it is a number.
-    default_val="$(grep 'SPIRA_THRASH_MINUTES' "$CONF" | grep -o '[0-9]\+' | head -1)"
+    ok "conf.d registers SPIRA_THRASH_MINUTES"
+    default_val="$(sed -n "/^DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'/,/^SPIRA_CONF_DEFAULT_EOF/p" "$KEYF" | grep -o ':=[0-9]\+' | tr -d ':=' | head -1)"
     case "${default_val:-}" in
         [0-9]*) ok "SPIRA_THRASH_MINUTES default is a number ($default_val)" ;;
         *)      bad "SPIRA_THRASH_MINUTES default is a number" "got [${default_val:-}]" ;;
