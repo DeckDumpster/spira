@@ -13,6 +13,12 @@
 //! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
 //! no longer shell into this seam for it at all — not even through a lib.sh shim.
 //!
+//! `aeon_name_take` is dropped the same way (wave 4.23, sp-0ffox): this crate was its
+//! only caller, so `run.rs::take_name`/`sweep.rs::sweep` now call `crate::naming` directly
+//! and lib.sh's own `aeon_name_take` is retired outright, not shimmed. `aeon_count` and
+//! `fayth_free` stay on the seam — their owning crate is `strand`, not this one, so the
+//! unchanged bash names (now one-line shims) are still the right way to reach them.
+//!
 //! `land_state` and `land_mark` are dropped the same way (sp-cnnt6, "wave 4.16" — family S,
 //! the landstate ledger, now owned by landing-pass): `verdict.rs`/`teardown.rs` read the
 //! ledger file directly in-process, and the one write (`verdict.rs`'s cited-on-main mark)
@@ -40,7 +46,7 @@ while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_rebase|\
     _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
-    aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
+    aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|\
