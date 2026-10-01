@@ -261,7 +261,7 @@ for pkg in meta['packages']:
     # escalation-hook.sh pattern-matches "mail.sh ... --kind question|suit" verbatim, and an
     # operator's own aerc config (outside version control) may still say
     # "outgoing = <release>/spira/mail.sh". A same-directory symlink is the whole fix, same
-    # pattern sp-6onps used for world.sh/slay.sh/aeons.sh/ctrl.sh below: bare-name PATH
+    # pattern sp-6onps uses for world.sh/slay.sh/aeons.sh/ctrl.sh below: bare-name PATH
     # lookup for either spelling resolves to the identical binary, and it costs nothing to
     # keep once every caller is repointed. Two locations, because the callers above name
     # $SPIRA_HOME/mail.sh (spira/) specifically, not just whatever bin/ resolves on PATH.
@@ -269,6 +269,19 @@ for pkg in meta['packages']:
         [ -e "$stage/bin/mail.sh" ] || ln -s mail "$stage/bin/mail.sh"
         [ -e "$stage/spira/mail.sh" ] || ln -s ../bin/mail "$stage/spira/mail.sh"
     fi
+
+    # sp-6onps: world.sh, ctrl.sh, aeons.sh and slay.sh are the `world`/`ctrl`/`aeons`/
+    # `slay` binaries now (a cargo bin target's name can't carry a dot), but the operator
+    # surface — chamber briefs, skills, every test suite that spells one of these by its
+    # old name — still calls them by the bare `.sh` name. A same-directory symlink is the
+    # whole fix: bare-name PATH lookup for either spelling resolves to the identical
+    # binary, and it costs nothing to keep once every caller is eventually repointed.
+    local _alias
+    for _alias in world ctrl aeons slay; do
+        if [ -f "$stage/bin/$_alias" ] && [ ! -e "$stage/bin/$_alias.sh" ]; then
+            ln -s "$_alias" "$stage/bin/$_alias.sh"
+        fi
+    done
 
     # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (a compat
     # symlink is not a binary this loop names; sha256sum would dereference it to the exact
@@ -278,6 +291,11 @@ for pkg in meta['packages']:
     for _i in "${!_bin_names[@]}"; do
         local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
         printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"
+    done
+    for _alias in world ctrl aeons slay; do
+        [ -L "$stage/bin/$_alias.sh" ] || continue
+        local _h; _h="$(sha256sum "$stage/bin/$_alias.sh" | awk '{print $1}')"
+        printf 'bin/%s.sh %s\n' "$_alias" "$_h" >> "$stage/MANIFEST"
     done
 
     # Pack. -C to the parent so the top-level entry is the versioned directory.

@@ -35,40 +35,42 @@ pub struct Timers {
     pub suspended: std::collections::BTreeSet<String>,
 }
 
+// world.sh and ctrl.sh are the `world` and `aeons`/`ctrl` binaries now (sp-6onps) — a
+// compiled binary cannot be sourced, so WORLD_LIB=1/CTRL_LIB=1 stopped being possible.
+// `world.sh timer-priority` and `ctrl.sh suspended` are the machine-readable seams each
+// binary grew for exactly this: callers that used to source them for a list/map now read
+// one subcommand's stdout once instead. Both are invoked by bare name on the launcher's
+// PATH (sp-gypjk) — `spira_home` is no longer part of the path, so it is accepted but
+// unused, kept only so this function's signature does not ripple into its caller.
 const TIMERS_SCRIPT: &str = r#"
 set -uo pipefail
-WORLD_LIB=1 . "$1/world.sh" >/dev/null 2>&1 || exit 97
-declare -A CTRL_SUSPENDED=()
-CTRL_LIB=1 . "$1/ctrl.sh" >/dev/null 2>&1 || exit 98
-ctrl_load_suspended CTRL_SUSPENDED
-for b in "${TIMER_PRIORITY[@]}"; do printf 'T\t%s\n' "$b"; done
-for k in "${!CTRL_SUSPENDED[@]}"; do printf 'S\t%s\n' "$k"; done
+world.sh timer-priority || exit 97
+printf '\0'
+ctrl.sh suspended || exit 98
 "#;
 
 /// Reads `TIMER_PRIORITY` and the suspended-base set through one `bash -c`. `None` means
-/// the seam itself failed (world.sh or ctrl.sh could not be sourced) — the caller treats
-/// that as "cannot check", not as "nothing is disabled" (law-absence-needs-a-positive-control).
-pub fn timer_priority_and_suspended(spira_home: &str) -> Option<Timers> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(TIMERS_SCRIPT)
-        .arg("_")
-        .arg(spira_home)
-        .output()
-        .ok()?;
+/// the seam itself failed (`world.sh timer-priority` or `ctrl.sh suspended` could not run)
+/// — the caller treats that as "cannot check", not as "nothing is disabled"
+/// (law-absence-needs-a-positive-control).
+pub fn timer_priority_and_suspended(_spira_home: &str) -> Option<Timers> {
+    let out = Command::new("bash").arg("-c").arg(TIMERS_SCRIPT).output().ok()?;
     if !out.status.success() {
         return None;
     }
-    let text = String::from_utf8_lossy(&out.stdout);
-    let mut priority = Vec::new();
-    let mut suspended = std::collections::BTreeSet::new();
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("T\t") {
-            priority.push(rest.to_string());
-        } else if let Some(rest) = line.strip_prefix("S\t") {
-            suspended.insert(rest.to_string());
-        }
-    }
+    let split = out.stdout.iter().position(|&b| b == 0)?;
+    let (pri_bytes, rest) = out.stdout.split_at(split);
+    let priority: Vec<String> = String::from_utf8_lossy(pri_bytes)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    let suspended: std::collections::BTreeSet<String> = String::from_utf8_lossy(&rest[1..])
+        .lines()
+        .filter_map(|l| l.split('\t').next())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
     Some(Timers {
         priority,
         suspended,
@@ -146,20 +148,30 @@ mod tests {
         assert_eq!(repo_root("/does/not/exist", "spira"), None);
     }
 
+    /// world.sh/ctrl.sh are the `world`/`ctrl` binaries now (sp-6onps): the seam calls
+    /// them by bare name on PATH, so the fixture is a fake PATH entry, not a sourceable
+    /// bash library — `world.sh timer-priority` and `ctrl.sh suspended` are the only
+    /// contract this function depends on.
+    fn with_fake_path<T>(dir: &std::path::Path, f: impl FnOnce() -> T) -> T {
+        let saved = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{saved}", dir.display()));
+        let r = f();
+        std::env::set_var("PATH", saved);
+        r
+    }
+
     #[test]
     fn timer_priority_and_suspended_reads_the_fixture_shape() {
         let d = testkit::TempDir::new("wt-seams-timers");
-        std::fs::write(
+        testkit::write_exe(
             d.join("world.sh"),
-            "TIMER_PRIORITY=(spira-sentinel spira-watchtower)\n",
-        )
-        .unwrap();
-        std::fs::write(
+            "#!/usr/bin/env bash\nprintf 'spira-sentinel\\nspira-watchtower\\n'\n",
+        );
+        testkit::write_exe(
             d.join("ctrl.sh"),
-            "ctrl_load_suspended() { local -n m=\"$1\"; m[spira-watchtower]=1; }\n",
-        )
-        .unwrap();
-        let t = timer_priority_and_suspended(d.to_str().unwrap()).unwrap();
+            "#!/usr/bin/env bash\nprintf 'spira-watchtower\\tbecause\\n'\n",
+        );
+        let t = with_fake_path(&d, || timer_priority_and_suspended("unused")).unwrap();
         assert_eq!(t.priority, vec!["spira-sentinel", "spira-watchtower"]);
         assert!(t.suspended.contains("spira-watchtower"));
         assert!(!t.suspended.contains("spira-sentinel"));
@@ -168,7 +180,13 @@ mod tests {
     #[test]
     fn timer_priority_and_suspended_is_none_when_world_sh_is_missing() {
         let d = testkit::TempDir::new("wt-seams-timers-missing");
-        assert!(timer_priority_and_suspended(d.to_str().unwrap()).is_none());
+        // A confined PATH (never the inherited one) — this box's own release may well
+        // have a real world.sh/ctrl.sh on it, which would defeat "missing" entirely.
+        let saved = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:/usr/bin:/bin", d.display()));
+        let r = timer_priority_and_suspended("unused");
+        std::env::set_var("PATH", saved);
+        assert!(r.is_none());
     }
 
     #[test]

@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "mail",
+    "spira-ctrl",
+    "spira-world",
     "auron",
     "loom",
     "cockpit/panel",
