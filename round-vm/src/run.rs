@@ -110,6 +110,21 @@ rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
+# sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
+# box's own address, which this VM already reaches for the mirror, is reused for the cache
+# store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to the LITERAL path the
+# host's own builds use: sccache hashes a dependency's registry source path into its cache
+# key, so a hit across machines needs that path byte-identical, not merely consistent
+# (spira-config/DESIGN-build-cache.md §2.5; re-verified against sccache 0.18.0's own
+# generate_hash_key for this bead). A read or write this box's store refuses degrades to a
+# cache miss, never a build failure (sccache's own RemoteStorage tolerates both) — so an
+# unreachable store costs speed, not a round.
+export CARGO_HOME="/home/ryan/.cargo"
+mkdir -p "$CARGO_HOME/bin"
+export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
+export SCCACHE_IGNORE_SERVER_IO_ERROR=1
+export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
+export SCCACHE_WEBDAV_KEY_PREFIX="/"
 t0=$(date +%s)
 if ! cargo build -q --profile release --workspace; then
     echo "round-vm: the round's workspace build failed" >&2
@@ -119,7 +134,7 @@ echo "round-vm: built the round in $(( $(date +%s) - t0 ))s" >&2
 rel_sha="$(target/release/release build "$(git rev-parse HEAD)" --repo "$HOME/round-work" --bin-dir "$HOME/round-work/target/release" --releases "$HOME/round-releases")"
 export SPIRA_RELEASE="$HOME/round-releases/$rel_sha"
 export SPIRA_REPO="$HOME/round-work"
-export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export PATH="$SPIRA_RELEASE/bin:$SPIRA_RELEASE/spira:$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 got="$(command -v spira-config || true)"
 if [ "$got" != "$SPIRA_RELEASE/bin/spira-config" ]; then
     echo "round-vm: spira-config resolves to ${got:-nothing}, not the staged release $SPIRA_RELEASE" >&2
@@ -759,6 +774,22 @@ mod tests {
         assert!(!REMOTE_SCRIPT.contains("cargo run"), "testenv runs from the staged release by name");
         assert!(REMOTE_SCRIPT.contains(LAUNCHER_ENV));
         assert!(REMOTE_SCRIPT.contains("exit 4"), "a failed workspace build is testenv's build-failure code");
+    }
+
+    #[test]
+    fn the_round_s_build_shares_the_hosts_own_cache_not_a_vm_local_one() {
+        // sp-xjnzl: CARGO_HOME, RUSTC_WRAPPER and the webdav endpoint must all be set
+        // BEFORE the launcher's first `cargo build` — that build, not just testenv's
+        // in-place one, is the one the original fault actually hit.
+        let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"/home/ryan/.cargo\"").expect("CARGO_HOME set to the host's literal path");
+        let wrapper = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"$CARGO_HOME/bin/sccache\"").expect("RUSTC_WRAPPER set outright, by absolute path");
+        let endpoint = REMOTE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the webdav endpoint reuses the VM's own host_addr, the same address the mirror already uses");
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        assert!(cache_home < build && wrapper < build && endpoint < build, "the cache must be wired up before the first build, not just before testenv's");
+        // The VM's PATH must still find cargo/rustc (the pre-existing $HOME/.cargo/bin,
+        // rustup's own shims) AND the new CARGO_HOME/bin (where sccache now installs) —
+        // neither replaces the other.
+        assert!(REMOTE_SCRIPT.contains("$CARGO_HOME/bin:$HOME/.cargo/bin:"));
     }
 
     #[test]
