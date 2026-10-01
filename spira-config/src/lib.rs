@@ -1014,6 +1014,16 @@ pub fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<(
     std::fs::rename(&tmp, path)
 }
 
+/// Serializes `doc` and writes it to `path` atomically — [`write_atomic`] plus the one
+/// `toml::to_string_pretty` call every writer outside this crate would otherwise need its
+/// own copy of (sp-6onps: `aeons.sh`, now the `aeons` binary in `spira-world`, is exactly
+/// that caller). Kept here, not duplicated at the call site, so `config-fence`'s "only
+/// spira-config names or parses the config" contract holds without a new allow-list entry.
+pub fn serialize_and_write(path: &std::path::Path, doc: &SpiraToml) -> Result<(), String> {
+    let text = toml::to_string_pretty(doc).map_err(|e| format!("{}: {e}", path.display()))?;
+    write_atomic(path, &text).map_err(|e| format!("{}: {e}", path.display()))
+}
+
 /// Reads one dotted path out of an already-validated document — `spira.max_aeons`,
 /// `repo.service.mode`, `persona.builder.lease.minutes` — for `spira-config get`.
 pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {

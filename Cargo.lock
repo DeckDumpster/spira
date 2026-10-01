@@ -1164,6 +1164,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spira-ctrl"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "spira-desired-state"
 version = "1.0.0"
 dependencies = [
@@ -1205,6 +1214,16 @@ name = "spira-supervise"
 version = "1.0.0"
 dependencies = [
  "libc",
+ "testkit",
+]
+
+[[package]]
+name = "spira-world"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "spira-config",
+ "spira-ctrl",
  "testkit",
 ]
 

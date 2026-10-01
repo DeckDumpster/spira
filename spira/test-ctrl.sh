@@ -23,7 +23,7 @@
 # green for as long as the box happens to be in the state its author had.
 #
 # tier: T1
-# covers: spira/ctrl.sh UC-instance-lifecycle-45
+# covers: spira-ctrl/src/main.rs UC-instance-lifecycle-45
 # hermetic-ok: SPIRA_CTRL env pins control file; SPIRA_SYSTEMCTL stubs systemctl
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -46,7 +46,7 @@ ctrl() {
         SPIRA_CTRL="$CTRL_FILE" \
         SPIRA_INSTANCE=prod \
         SPIRA_SYSTEMCTL="$TMP/sc" \
-        ctrl.sh "$@"
+        ctrl "$@"
 }
 
 # write_sc <active_unit> <enabled_unit> [masked_units...]

@@ -220,7 +220,7 @@ fn one(o: &Opts, t: Thresholds, w: &mut dyn World, id: &str, out: &mut String) -
         return fail(
             out,
             format!(
-                "held by {h} — live work is never touched: let that aeon finish (or stop it: spira/slay.sh --bead {id}), then re-run"
+                "held by {h} — live work is never touched: let that aeon finish (or stop it: slay.sh --bead {id}), then re-run"
             ),
         );
     }

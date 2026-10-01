@@ -255,12 +255,31 @@ for pkg in meta['packages']:
         chmod +x "$stage/bin/${_bin_names[$_i]}"
     done
 
-    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary.
+    # sp-6onps: world.sh, ctrl.sh, aeons.sh and slay.sh are the `world`/`ctrl`/`aeons`/
+    # `slay` binaries now (a cargo bin target's name can't carry a dot), but the operator
+    # surface — chamber briefs, skills, every test suite that spells one of these by its
+    # old name — still calls them by the bare `.sh` name. A same-directory symlink is the
+    # whole fix: bare-name PATH lookup for either spelling resolves to the identical
+    # binary, and it costs nothing to keep once every caller is eventually repointed.
+    local _alias
+    for _alias in world ctrl aeons slay; do
+        if [ -f "$stage/bin/$_alias" ] && [ ! -e "$stage/bin/$_alias.sh" ]; then
+            ln -s "$_alias" "$stage/bin/$_alias.sh"
+        fi
+    done
+
+    # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (and per
+    # compat symlink, which sha256sum dereferences, so its hash is simply the real binary's).
     printf 'commit %s\ntimestamp %s\nrepo %s\n' "$sha" "$ts" "$repo_name" > "$stage/MANIFEST"
     [ -n "$release_repo" ] && printf 'release-repo %s\n' "$release_repo" >> "$stage/MANIFEST"
     for _i in "${!_bin_names[@]}"; do
         local _h; _h="$(sha256sum "$stage/bin/${_bin_names[$_i]}" | awk '{print $1}')"
         printf 'bin/%s %s\n' "${_bin_names[$_i]}" "$_h" >> "$stage/MANIFEST"
+    done
+    for _alias in world ctrl aeons slay; do
+        [ -L "$stage/bin/$_alias.sh" ] || continue
+        local _h; _h="$(sha256sum "$stage/bin/$_alias.sh" | awk '{print $1}')"
+        printf 'bin/%s.sh %s\n' "$_alias" "$_h" >> "$stage/MANIFEST"
     done
 
     # Pack. -C to the parent so the top-level entry is the versioned directory.

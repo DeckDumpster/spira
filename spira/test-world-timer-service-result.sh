@@ -22,7 +22,7 @@
 #
 # defect: sp-2z9y
 # tier: T1
-# covers: spira/world.sh
+# covers: spira-world/src/bin/world.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -37,7 +37,10 @@ CALLS="$TMP/sc-calls"
 export CALLS
 mkdir -p "$SH" "$RUN"
 
-cp "$HERE/world.sh" "$HERE/conf.sh" "$SH/"
+WORLD_BIN="$(command -v world || true)"
+[ -n "$WORLD_BIN" ] && [ -x "$WORLD_BIN" ] || { echo "test-world-timer-service-result.sh: the world binary is not on PATH" >&2; exit 1; }
+cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
+cp "$HERE/conf.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
 
 # write_sc ACTIVE_TIMER SVC_RESULT
@@ -78,7 +81,7 @@ world_status() {
     PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_DB="$TMP/no-db" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" \
-        bash "$SH/world.sh" status 2>&1
+        "$SH/world.sh" status 2>&1
 }
 
 # --------------------------------------------------------------------------------------

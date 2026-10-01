@@ -456,16 +456,16 @@ tells you when somebody did.
 ## Running it
 
 ```sh
-spira/world.sh status        # what is up, what is down, what is running
-spira/world.sh stop          # halt the loop: no summons, no landing, no live workers
-spira/world.sh start
+bin/world.sh status           # what is up, what is down, what is running
+bin/world.sh stop             # halt the loop: no summons, no landing, no live workers
+bin/world.sh start
 
 spira/sentinel.sh --report   # the gap, changing nothing
 spira/strand.sh report       # work that exists and is not moving, with the reason
 watchtower --show            # the pipeline's vital signs
 spira/suites.sh list         # every suite, where it runs, what it claims to cover
 
-spira/slay.sh --bead <id>      # stop one aeon cleanly and make its bead say what is true
+bin/slay.sh --bead <id>       # stop one aeon cleanly and make its bead say what is true
 spira/hold.sh <bead-id>      # claim a bead for a non-aeon actor
 spira/release.sh <bead-id>
 ```

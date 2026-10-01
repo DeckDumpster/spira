@@ -249,7 +249,7 @@ fn refuse_when_held_by_bd_assignee() {
     assert_eq!(code, EXIT_FAILED);
     assert!(out.contains("FAIL pz3: held by aeon-test (in_progress)"), "{out}");
     assert!(out.contains("let that aeon finish"), "{out}");
-    assert!(out.contains("spira/slay.sh --bead pz3"), "the refusal names the exit: {out}");
+    assert!(out.contains("slay.sh --bead pz3"), "the refusal names the exit: {out}");
     assert_eq!(f.writes(), 0, "{:?}", f.trail);
     assert!(f.lc["pz3"].poisoned());
 }
