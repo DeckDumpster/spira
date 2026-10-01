@@ -50,6 +50,34 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # functions that once stood in for those two calls are retired too (sp-uwhx0): their only
 # caller was batch.sh's stale-certification sweep, itself retired with batch.sh — nothing
 # else called them (grepped). Call `spira-lc certify`/`spira-lc resubmit` directly.
+#
+# WHY THIS FILE STILL EXISTS (sp-hlng2, "wave 4.37", the close-out bead for the lib.sh/
+# conf.sh peel — wave4-decomposition.md). Every function below either IS log/die, or IS a
+# shim: the family-by-family move named in that plan has landed, in-process callers read
+# the owning crate directly, and a bash caller that still types the OLD name by habit —
+# `repo_root`, `land_mark`, `content_landed`, `bdq`, whatever — reaches the same logic one
+# subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
+# function here that is not a shim fails the gate unless it is named, with why, in
+# `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
+# `ready_count` (and the bare `READY_ARGS` array); `fayth_free`; aeon.sh's own bead-machine
+# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `content_landed`/
+# `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
+# with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
+# family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
+# own inputs — see that allow file for the reasoning on each, not repeated here.
+#
+# THIS FILE'S OWN DELETION IS THEREFORE BLOCKED ON GROUPS 5-7 OF
+# wiki/projects/spira/remaining-bash-inventory.md (operator surface, install/units, persona
+# passes), not on anything left to port here. About twenty of THEIR scripts still `.
+# "$HERE/lib.sh"` for a name this file shims — acceptance-local.sh, branch-guard.sh,
+# branch-sweep.sh, cadence.sh, citations.sh, deploy.sh, disk-remedy.sh, escape-classify.sh,
+# fleet-status.sh, gate-locks.sh, groom-trigger.sh, held.sh, hold.sh, holds.sh,
+# pr-notify.sh, publish-backlog.sh, queue-certified-list.sh, released-defects.sh,
+# release.sh, review.sh, tokens.sh, unhold.sh — plus roughly fifty of this directory's own
+# `test-*.sh` suites that exercise a shim (or one of the allow-listed functions) directly
+# as bash, rather than through the crate's own unit tests. Wave 4 does not own any of
+# those; this file goes away only once each is rewritten in its own turn ("rewrite when
+# touched", the inventory's own words for groups 5-7) and stops sourcing it.
 unset _spira_lib_dir
 export BEADS_NO_AUTO_IMPORT=1
 mkdir -p "$SPIRA_RUN"

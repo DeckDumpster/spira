@@ -881,6 +881,53 @@ needed more.
 
 ---
 
+## Rule `lib-sh-shims`
+
+Written for the wave-4 close-out audit (sp-hlng2, "wave 4.37: close-out, lib.sh is shims
+only"). The family-by-family peel of `wave4-decomposition.md` only stays "lib.sh is shims
+only" if nothing quietly grows real logic back into the file every earlier bead emptied.
+
+**Intent.** Every function left in `spira/lib.sh` and `spira/conf.sh` is a one-line shim
+onto a binary (the `log`/`die` prelude excepted) or it has a named, reasoned line in this
+rule's allow list.
+
+**Check.** Parse `name() {` … lone `}` regions out of each file (this file's own very
+consistent style: the header at column 0, the body indented, a lone `}` closing it — a
+one-liner like `log() { printf …; }` is also recognised). A function's body is a SHIM when
+every statement is set-up — a `local`/plain assignment, env-threading ahead of a call — or
+delegation: one call to a known Spira binary, or to another function already defined
+earlier in the same file (calling a sibling shim is still a shim, however much work the
+sibling itself does). It is a REAL BODY — and needs an allow-list entry — when the body
+has a loop (`while`/`for`/`until`), an `if` carrying an `else`/`elif` branch (a bare
+`if … ; then … fi` guard with no else is set-up, not logic — the shape
+`_counter_events_query` and `lc_release_bead` both use), an inline interpreter script
+(`python3 -c`, `perl -e`), or two or more invocations of an external command that is
+neither a delegate nor a sibling function (in practice, raw `git` plumbing run more than
+once — `content_landed`'s ancestor-then-merge-tree proof is the motivating case).
+
+**Allow list.** `spira-lint/lib-sh-shims-allow`, `<file>:<function>` per line. An entry
+naming a function that no longer exists in that file is refused — the list shrinks by
+removing the line, not by leaving it to rot. The full audit this rule's own allow list
+reflects — every real-bodied function, why, and what blocks porting or retiring it — is in
+the sp-hlng2 bead report, not repeated here; most are blocked on groups 5-7 of
+`wiki/projects/spira/remaining-bash-inventory.md` (operator surface, install/units, persona
+passes — out of wave 4's scope), and `conf.sh`'s own locator/bootstrap family is blocked
+structurally: it is the logic that finds and, if needed, converts the config *before* any
+`spira-config` subprocess call can be made, so it cannot itself shim onto that subprocess.
+
+**Positive control.** A planted function with two raw `git` calls, shaped exactly like
+`content_landed`, is caught by the crate's own unit test — there is no separate "fence:
+checked" line; spira-lint's own summary line covers this rule, like most others.
+
+**Known limits.** This is a heuristic over the file's own consistent style, not a bash
+parser: a case label's own command, written on the same line as the label, is never
+re-examined for a foreign call (no function in either file does that today), and the
+command splitter does not track quoting, so a `;`/`&&`/`||`/`|` inside a quoted string on
+the same line as another command could misparse. Good enough for this file; not meant to
+generalise to shell with a different shape.
+
+---
+
 ## Tests
 
 Each rule has, in its own module:
