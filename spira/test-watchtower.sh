@@ -40,7 +40,7 @@
 #
 # defect: sp-86q8
 # tier: T1
-# covers: watchtower/src/* landing-pass/src/* spira/cockpit.sh spira/lib.sh aeon/src/*
+# covers: landing-pass/src/* cockpit-collect/src/* spira/lib.sh aeon/src/* watchtower/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -292,7 +292,7 @@ echo "the strand ledger is reported by class, not by size:"
 # a dead worker and a sweep spent four commands hunting for a holder that never existed.
 #
 # THE FIXTURE GOES THROUGH THE REAL COLLECTOR (law-prefer-the-real-dependency). The classifier
-# under test is `cockpit.sh strands`, the same function probe calls, and its output IS the
+# under test is `cockpit-collect probe strands`, the same function probe calls, and its output IS the
 # snapshot the renderer then reads — so the seam between the two programs is exercised rather
 # than imagined. Writing a cockpit.env by hand here would assert against whichever key names
 # the test author remembered, which is exactly the drift the split was made to stop.
@@ -300,7 +300,7 @@ ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
     env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        cockpit.sh strands 2>/dev/null
+        cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
     printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1
@@ -357,7 +357,7 @@ k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
 k="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
-        cockpit.sh strands 2>/dev/null)"
+        cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
 # A SNAPSHOT FROM A COLLECTOR PREDATING THE SPLIT RENDERS `?`. The two halves are briefly
@@ -676,8 +676,8 @@ nowant "and no routine sweep bead"          "Spira sweep" "$subjects"
 echo
 echo "the repo-label vital signs render from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh repo_labels computes SP_REPO_UNMAPPED and SP_REPO_ABSENT;
-# watchtower reads them from the snapshot and renders them in 'The graph' section.
+# THE SEAM THIS COVERS. cockpit-collect probe repo_labels computes SP_REPO_UNMAPPED and SP_REPO_ABSENT;
+# watchtower.sh reads them from the snapshot and renders them in 'The graph' section.
 # Tests here drive the renderer through a hand-written cockpit.env, the same pattern used
 # for the strand ledger — no database query is made from inside watchtower.
 #
@@ -713,8 +713,8 @@ nowant "and the absent zero is not ?" "absent ?" "$snap"
 echo
 echo "the Sending vital signs render from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh writes SP_UNSENT, SP_UNSENT_OLDEST_H, SP_UNADOPTED and
-# SP_SENT_FAILED into cockpit.env; watchtower reads them and renders them in 'The Sending'
+# THE SEAM THIS COVERS. cockpit-collect writes SP_UNSENT, SP_UNSENT_OLDEST_H, SP_UNADOPTED and
+# SP_SENT_FAILED into cockpit.env; watchtower.sh reads them and renders them in 'The Sending'
 # section. Missing keys must render `?` (an unread probe is not a clean probe), and zero must
 # render as zero (a system with no unsent work should say so, not report unknown).
 #
@@ -957,7 +957,7 @@ echo "unadopted escalation body names the branches from SP_UNADOPTED_NAMES:"
 # THE SEAM THIS COVERS. The original body carried a listing command using the tag-dereference
 # form %(*refname:short) which appends ^{} to every branch name, and `bd show` without
 # -C SPIRA_DB — two independent defects each producing 100% false positives (sp-gjpc).
-# The collector (cockpit.sh) already knows which branches are unadopted when it counts
+# The collector (cockpit-collect) already knows which branches are unadopted when it counts
 # SP_UNADOPTED; those names are now emitted as SP_UNADOPTED_NAMES. The body must report
 # what the collector measured, not re-derive it from a separate command.
 #
@@ -994,8 +994,8 @@ want "body falls back to (unavailable) when key absent" "unavailable" "$body"
 echo
 echo "the duplicate-ref vital sign renders from cockpit.env:"
 # ======================================================================================
-# THE SEAM THIS COVERS. cockpit.sh writes SP_DUP_REFS and SP_DUP_BEADS into cockpit.env;
-# watchtower reads them and renders them in 'The graph' section. Missing keys must render
+# THE SEAM THIS COVERS. cockpit-collect writes SP_DUP_REFS and SP_DUP_BEADS into cockpit.env;
+# watchtower.sh reads them and renders them in 'The graph' section. Missing keys must render
 # '?' (a failed probe must not displace the suspicion), and zero must render as zero (a clean
 # dedup path should say so, not report unknown).
 #

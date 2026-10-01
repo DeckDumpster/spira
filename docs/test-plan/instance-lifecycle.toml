@@ -246,10 +246,20 @@ id = "UC-instance-lifecycle-41"
 tier = "T1"
 statement = "`world.sh stop` stops active work units (resolved instance-qualified name, plain fallback), never stops cockpit/loom/landing, spares CI watchers unless `--hard`, and exits non-zero without printing STOPPED on any failed stop"
 
+[use_case.uncovered]
+reason = "world.sh is the `world` binary now (sp-6onps); the work-service exclusion moved to `spira_world::proc::is_excluded_work_service`, covered by that function's cargo unit tests. test-world-decide.sh, the one T1 suite whose `# covers:` line named this use case, sourced world.sh/ctrl.sh as bash libraries (WORLD_LIB=1/CTRL_LIB=1) and was retired — sourcing a compiled binary is not possible. T2 coverage (test-world.sh, test-work-services-exclusion.sh) is unchanged and still exercises this behaviour end to end; plan-matrix's suite-header scan just cannot see the T1 half now that it is a cargo test rather than a spira/test-*.sh suite."
+date = "2026-09-30"
+bead = "sp-6onps"
+
 [[use_case]]
 id = "UC-instance-lifecycle-42"
 tier = "T1"
 statement = "`world.sh start` starts timers except those ctrl-suspended or systemd-disabled, revives non-oneshot watchers stopped by `--hard`, and leaves active ones alone"
+
+[use_case.uncovered]
+reason = "the `_start_action` decision table moved to `spira_world::sysctl::start_action`'s cargo unit tests (sp-6onps); test-world-decide.sh, its one T1 home, sourced world.sh/ctrl.sh as bash libraries and cannot survive both becoming compiled binaries. T2 coverage (test-world.sh) is unchanged."
+date = "2026-09-30"
+bead = "sp-6onps"
 
 [[use_case]]
 id = "UC-instance-lifecycle-43"
@@ -260,6 +270,11 @@ statement = "`world.sh drain` touches no unit and writes a stamp with a resume h
 id = "UC-instance-lifecycle-44"
 tier = "T1"
 statement = "`world.sh status` reports landing, live gate and landing workers from `/proc`, DRAINING, active CI watchers and `svc: <result>` for a failed last run, saying 'unknown' (not 'inactive') for an unresolvable unit"
+
+[use_case.uncovered]
+reason = "the status-row decision (`_status_timer_row`) moved to `spira_world::sysctl::status_timer_row`'s cargo unit tests (sp-6onps); test-world-decide.sh, its one T1 home, sourced world.sh/ctrl.sh as bash libraries and cannot survive both becoming compiled binaries. T2 /proc coverage (test-world.sh, test-world-timer-service-result.sh) is unchanged."
+date = "2026-09-30"
+bead = "sp-6onps"
 
 [[use_case]]
 id = "UC-instance-lifecycle-45"

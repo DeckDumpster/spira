@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira/world.sh spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira-world/src/bin/world.rs spira/watchd.sh spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
@@ -45,7 +45,7 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 SERVICE="$HERE/../systemd/spira-mail-deliver.service"
-WORLD=world.sh   # invoked by name on the suite's PATH (sp-gypjk)
+WORLD=world   # the world binary, by name on the suite PATH (sp-gypjk; world.sh retired by sp-6onps)
 WATCHD="$HERE/watchd.sh"
 
 echo

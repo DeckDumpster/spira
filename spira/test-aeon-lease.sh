@@ -1,31 +1,29 @@
 #!/usr/bin/env bash
 #
-# test-aeon-lease.sh — liveness lease (renew on trace growth, lapse on silence) and the
-#   thrash wall (trip only when the deliverable fuse AND the session's own age both clear
-#   SPIRA_THRASH_MINUTES), both decided by the single extracted `hb_tick`.
+# test-aeon-lease.sh — liveness lease: aeon_lease_minutes (lib.sh) renders the pane
+#   countdown from the deadline file, and fayth_get proves the shipped chamber fayths
+#   declare the lease minutes they actually mean.
 #
 #   ./test-aeon-lease.sh
 #
 # MERGED FROM test-thrash-wall.sh (sp-eq8a4.2.2): the lease and the thrash wall used to be
 # two copies of aeon.sh's heartbeat subshell, one per suite, each re-deriving the same three
-# `if`s the tick actually runs. `hb_tick` in lib.sh is now the one thing under test in both
-# halves below — these suites called their own inline copies before, which proved the copy
-# self-consistent, never the aeon (Ryan's review named this directly).
+# `if`s the tick actually runs.
 #
-# The lease mechanism replaces the STALL_BEATS/model_idle apparatus with a single rule:
-# if the trace file grows, the lease renews; if it does not grow for FAYTH_LEASE_MINUTES,
-# the aeon is killed. These tests also cover:
-#
-#   fayth_lease_seconds — FAYTH_LEASE_MINUTES is the one knob, converted to seconds
-#   hb_wait_outcome     — a killed sleep child is a shutdown; anything else is not
-#   lapse record        — lapsed event + $SPIRA_RUN/lapsed/<bead>-<ts> file
-#   regression case     — aeon whose trailing trace line is a result still trips
+# RETIRED (sp-j89pd, wave 4.2): fayth_lease_seconds, hb_wait_outcome and hb_tick (lib.sh) had
+# zero live callers — the renew/lapse/thrash decision is now aeon::decide::hb_tick
+# (aeon/src/decide.rs), exercised by its own `hb_tick_table` unit test (whose comment names
+# this file and test-thrash.sh as the bash rows it replaces). The trip decision's T1 table
+# is deleted with them; aeon_lease_minutes and fayth_get below are unaffected and stay.
+# UC-aeon-execution-08's statement (the lease renew/lapse/kill table) has no remaining bash
+# suite and is marked [use_case.uncovered] in docs/test-plan/aeon-execution.toml (see §13
+# there); UC-aeon-execution-09 (the thrash wall) stays covered by test-thrash.sh.
 #
 # No database, no network, under a second.
 #
 # defect: sp-9ix, sp-sv34w
 # tier: T1
-# covers: spira/lib.sh aeon/src/* spira/cockpit.sh cockpit/ops/src/health.rs UC-aeon-execution-08 UC-aeon-execution-09
+# covers: spira/lib.sh aeon/src/* cockpit-collect/src/* cockpit/ops/src/health.rs
 # scar: the STALL_BEATS/model_idle apparatus was replaced by a liveness lease on trace growth; suites covering the old mechanism were testing code that no longer ran.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -41,15 +39,6 @@ alm() {
         SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$run_dir" \
         ${now_arg:+SPIRA_NOW="$now_arg"} \
         bash -c '. "$1"/lib.sh; aeon_lease_minutes "$2"' _ "$HERE" "$bead" 2>/dev/null
-}
-
-# hbt <prev_mtime> <cur_mtime> <now> <deadline> <fuse> <wall> <session_start> -> hb_tick's
-# real output, called through the same lib.sh aeon.sh sources — never a copy.
-hbt() {
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        bash -c '. "$1"/lib.sh; hb_tick "$2" "$3" "$4" "$5" "$6" "$7" "$8"' \
-        _ "$HERE" "$@" 2>/dev/null
 }
 
 echo "aeon_lease_minutes — deadline file is the single source for the pane"
@@ -92,20 +81,6 @@ result="$(alm "" "$RUN")"
 is "an empty bead id renders ?" "?" "$result"
 
 echo
-echo "fayth_lease_seconds — FAYTH_LEASE_MINUTES is the one knob the heartbeat reads"
-
-fls() {
-    local minutes="${1:-}"
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-        bash -c '. "$1"/lib.sh; fayth_lease_seconds "$2"' _ "$HERE" "$minutes"
-}
-is "no declared minutes defaults to a 600s (10m) lease" "600" "$(fls)"
-is "90 declared minutes is a 5400s lease"               "5400" "$(fls 90)"
-is "70 declared minutes is a 4200s lease"                "4200" "$(fls 70)"
-is "60 declared minutes is a 3600s lease"                "3600" "$(fls 60)"
-is "10 declared minutes is a 600s lease"                 "600" "$(fls 10)"
-
-echo
 echo "the shipped chamber fayths declare what the aeon actually enforces"
 # defect: every fayth declared FAYTH_LEASE_MINUTES beside a FAYTH_LEASE_SECONDS=600 that
 # silently overrode it — the builder's declared 90-minute lease was a 10-minute lease in
@@ -124,79 +99,5 @@ for fy in builder czar groomer maechen ops spike; do
         ok "$fy.fayth does not declare the dead FAYTH_LEASE_SECONDS key"
     fi
 done
-
-echo
-echo "hb_wait_outcome — a killed sleep child is a shutdown; every other failure is not"
-
-hwo() {
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 SPIRA_CONF="$TMP/no.conf" \
-        bash -c '. "$1"/lib.sh; hb_wait_outcome "$2"' _ "$HERE" "$1"
-}
-is "wait rc=0 (sleep ran to completion) is ok"          "ok"       "$(hwo 0)"
-is "wait rc=143 (killed by TERM) is a shutdown"         "shutdown" "$(hwo 143)"
-is "wait rc=130 (killed by INT) is a shutdown"          "shutdown" "$(hwo 130)"
-is "wait rc=137 (killed by KILL) is a shutdown"         "shutdown" "$(hwo 137)"
-is "wait rc=127 (no such pid — fork lost the race) is a retry, not a shutdown" "retry" "$(hwo 127)"
-is "wait rc=2 (an ordinary nonzero exit) is a retry, not a shutdown"           "retry" "$(hwo 2)"
-
-# THE OFFENDER THIS REPLACES: the old watchdog treated any nonzero wait as a shutdown and
-# broke out of its loop with nothing logged and no marker written — the exact failure
-# observed on an oversubscribed host, where the sleep child could not be forked in time.
-# Prove the check can tell the difference before trusting it to.
-naive_outcome() { [ "${1:-0}" -eq 0 ] 2>/dev/null && printf ok || printf shutdown; }
-is "the retired logic misreads rc=127 as a shutdown (the bug this replaces)" \
-    "shutdown" "$(naive_outcome 127)"
-
-echo
-echo "hb_tick — trace growth always renews, regardless of deadline or fuse"
-
-# Growth wins even when the deadline has already passed and the fuse/wall would otherwise
-# trip: aeon.sh's own loop always extends the deadline before either other check can see the
-# old one, so a tick that grew can never also lapse or thrash in the same pass.
-is "grew, deadline already past, fuse past wall too → still renew" "renew" \
-    "$(hbt 100 200 1000 500 99 20 0)"
-is "grew, everything otherwise idle → renew" "renew" "$(hbt 100 200 1000 2000 0 20 0)"
-
-echo
-echo "hb_tick — silence past the deadline lapses, before the thrash wall is even asked"
-
-is "unchanged trace, deadline in the future → ok" "ok" "$(hbt 100 100 1000 2000 0 20 0)"
-is "unchanged trace, now at the deadline → lapse" "lapse" "$(hbt 100 100 2000 2000 0 20 0)"
-is "unchanged trace, now past the deadline → lapse" "lapse" "$(hbt 100 100 2001 2000 0 20 0)"
-# Lapse takes priority over thrash: both conditions hold, and the tick must report the one
-# that gets the session killed with the right marker (.lapsed, not .thrash).
-is "silent AND stalled past the wall, but deadline already past → lapse wins" "lapse" \
-    "$(hbt 100 100 90000 2000 43 20 0)"
-
-echo
-echo "hb_tick — thrash wall trips only when the fuse AND the session's own age clear it"
-# sp-sv34w: aeon_fuse_minutes is a repository fact whose clock started before this session,
-# so a bead whose worktree went idle before it was reclaimed reads past the wall the moment
-# it is claimed. The fix requires BOTH the fuse and the session's own elapsed time to clear
-# the wall before a trip fires — a session 0 minutes old cannot have stalled for 43 minutes.
-
-# session_start pinned so (now - session_start)/60 gives an exact minute count.
-is "old fuse (43m) + fresh session (0m) → ok, no trip"            "ok" "$(hbt 5 5 1000 999999999 43 20 1000)"
-is "old fuse (43m) + session just under the wall (19m) → ok"      "ok" "$(hbt 5 5 $((1000+19*60)) 999999999 43 20 1000)"
-is "fuse at the wall (20m) + session just under (19m) → ok"       "ok" "$(hbt 5 5 $((1000+19*60)) 999999999 20 20 1000)"
-
-is "old fuse (43m) + session past the wall (21m) → thrash"        "thrash" "$(hbt 5 5 $((1000+21*60)) 999999999 43 20 1000)"
-is "fuse at the wall + session at the wall (both 20m) → thrash"    "thrash" "$(hbt 5 5 $((1000+20*60)) 999999999 20 20 1000)"
-is "large fuse + large session → thrash"                          "thrash" "$(hbt 5 5 $((1000+60*60)) 999999999 82 20 1000)"
-
-is "fuse=? (probe failed) + old session → ok, never trips"        "ok" "$(hbt 5 5 $((1000+30*60)) 999999999 "?" 20 1000)"
-is "fuse below the wall (5m) + old session (30m) → ok"            "ok" "$(hbt 5 5 $((1000+30*60)) 999999999 5 20 1000)"
-is "fuse=0 + old session (30m) → ok"                              "ok" "$(hbt 5 5 $((1000+30*60)) 999999999 0 20 1000)"
-
-echo
-echo "THE KEY REGRESSION, STRUCTURALLY GONE: hb_tick never sees trace content"
-# sp-9ix: the old model_idle detector read elapsed_time_seconds on the trailing heartbeat, so
-# a trailing `result` line (a turn boundary) classified as elapsed=0 and "acting", and a
-# session that then hung reported "acting" forever. hb_tick takes only mtimes — it has no
-# argument through which trailing JSON could reach it, so that whole regression class is not
-# merely fixed but unrepresentable in its inputs. An unchanged mtime past the deadline lapses
-# no matter what the trace's last line says.
-is "unchanged mtime past deadline lapses regardless of trace content (no such input exists)" \
-    "lapse" "$(hbt 42 42 100000 99999 0 20 0)"
 
 tl_summary

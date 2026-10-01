@@ -108,7 +108,7 @@ is "attempts are still 0 after timeout calls" 0 "$(num "$(attempts_of sp-t3)")"
 
 # ======================================================================================
 # SP_OPS_AGE: active session reports 0, not a stale log mtime.
-# Tests the aeon_alive + pid-file logic added to cockpit.sh's probe function.
+# Tests the aeon_alive + pid-file logic cockpit-collect's now_keys probe uses.
 # Run inline (sourcing lib.sh and the logic directly) rather than via the full probe,
 # which requires a live beads db and a configured git repo.
 # ======================================================================================
@@ -116,10 +116,12 @@ echo
 echo "SP_OPS_AGE (cockpit logic):"
 
 RUN="$TMP/run"; mkdir -p "$RUN"
-# age_of is defined in cockpit.sh, not lib.sh. Inline it here so the test runs standalone.
+# age_of is defined in cockpit-collect (io::mtime_age_secs), not lib.sh. Inline it here so
+# the test runs standalone.
 age_of() { local f="$1" m; m="$(stat -c %Y "$f" 2>/dev/null)" || { printf '?'; return; }
            [ -n "$m" ] || { printf '?'; return; }; printf '%d' $(( $(date +%s) - m )); }
-# Inline the ops-age logic from cockpit.sh to test it independently of the rest of probe.
+# Inline the ops-age logic from cockpit-collect's now_keys to test it independently of
+# the rest of the probe.
 ops_age_of() {   # ops_age_of <run-dir> -> 0 if live, else log mtime age in seconds
     local run="$1" age pf
     age="$(age_of "$run/ops.log")"

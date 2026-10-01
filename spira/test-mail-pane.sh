@@ -2,11 +2,11 @@
 # test-mail-pane.sh — ops pane MAIL section and mail.sh done command.
 #
 # Seeds a fixture maildir with one new, one read, and one replied message,
-# drives cockpit.sh mail to produce snapshot keys, renders health.sh once,
+# drives cockpit-collect probe mail to produce snapshot keys, renders health.sh once,
 # and asserts the three states appear. A failed probe renders ?, never 0.
 #
 # tier: T1
-# covers: cockpit/ops/src/health.rs spira/cockpit.sh spira/mail.sh spira/collect.sh
+# covers: cockpit-collect/src/* spira/mail.sh cockpit/ops/src/health.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -105,10 +105,10 @@ rflag_reply="$(ls "$SPIRA_MAIL/concierge/cur" | grep "^$msgid2" | grep -c ':2,.*
 is "R flag set on original after reply" "1" "$rflag_reply"
 
 # ==========================================================================
-# cockpit.sh mail — probe keys from fixture maildir
+# cockpit-collect probe mail — probe keys from fixture maildir
 # ==========================================================================
 echo
-echo "cockpit.sh mail: produces correct state keys"
+echo "cockpit-collect probe mail: produces correct state keys"
 
 MAIL_DIR="$TMP/mail2"
 mkdir -p "$MAIL_DIR/concierge/"{new,cur,tmp}
@@ -124,8 +124,8 @@ printf 'From: Operator <op@h>\nSubject: Read message\nDate: %s\n\nbody\n' \
 printf 'From: Operator <op@h>\nSubject: Done message\nDate: %s\n\nbody\n' \
     "$(date -u '+%a, %d %b %Y %H:%M:%S +0000')" > "$MAIL_DIR/concierge/cur/done-msg:2,R"
 
-keys="$(SPIRA_MAIL="$MAIL_DIR" cockpit.sh mail 2>/dev/null)"
-isz "cockpit.sh mail exits 0" "$?"
+keys="$(SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null)"
+isz "cockpit-collect probe mail exits 0" "$?"
 
 want "SP_MAIL_UNREAD=1" "SP_MAIL_UNREAD=1" "$keys"
 want "SP_MAIL_N=3"      "SP_MAIL_N=3"      "$keys"
@@ -142,10 +142,10 @@ echo "health.sh: MAIL section renders NEW/READ/DONE"
 SNAP="$TMP/cockpit.env"
 BUDGET="$TMP/budget.env"
 touch "$BUDGET"
-# Build a minimal snapshot from cockpit.sh mail probe output
+# Build a minimal snapshot from cockpit-collect probe mail probe output
 {
     printf 'SP_AT=%s\n' "$(date +%s)"
-    SPIRA_MAIL="$MAIL_DIR" cockpit.sh mail 2>/dev/null
+    SPIRA_MAIL="$MAIL_DIR" cockpit-collect probe mail 2>/dev/null
     # Minimal keys for health.sh to not crash
     printf 'SP_AEONS=0\nSP_SENTINEL_AGE=5\nSP_OPS_AGE=5\nSP_AURON_AGE=5\n'
     printf 'SP_SENTINEL_TIMER=1\nSP_OPS_TIMER=1\nSP_AURON_TIMER=1\nSP_AURON_FIRING=0\n'

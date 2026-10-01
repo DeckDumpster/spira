@@ -87,29 +87,19 @@ pub fn watch_names() -> Result<Vec<String>, String> {
     Ok(text.split_whitespace().map(|u| u.strip_prefix("spira-watch@").unwrap_or(u).strip_suffix(".service").unwrap_or(u).to_string()).collect())
 }
 
-/// `ctrl.sh`'s suspended set, read once. A missing/failing `ctrl.sh` means nothing is
-/// suspended, matching the bash fallback.
+/// `ctrl suspended`'s TSV (`subject<TAB>reason` per line, sp-6onps) — the control plane
+/// moved from a bash library (`CTRL_LIB=1 . ctrl.sh`) to a compiled binary, which cannot be
+/// sourced, so install.sh now reads every suspension once this way instead of parsing
+/// `ctrl.sh list --json`'s render. A missing/failing `ctrl` means nothing is suspended,
+/// matching the bash fallback.
 pub fn suspended_set() -> std::collections::BTreeSet<String> {
-    let out = Command::new("ctrl.sh").arg("list").arg("--json").output();
+    let out = Command::new("ctrl").arg("suspended").output();
     let Ok(out) = out else { return Default::default() };
     if !out.status.success() {
         return Default::default();
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let mut out_set = std::collections::BTreeSet::new();
-    for chunk in text.split("\"subject\"") {
-        if !chunk.starts_with(|c: char| c == ':' || c.is_whitespace()) {
-            continue;
-        }
-        let Some(name_start) = chunk.find('"') else { continue };
-        let rest = &chunk[name_start + 1..];
-        let Some(name_end) = rest.find('"') else { continue };
-        let name = &rest[..name_end];
-        if rest[name_end..].split("\"suspended\"").nth(1).map(|s| s.trim_start().starts_with(':') && s.trim_start()[1..].trim_start().starts_with("true")).unwrap_or(false) {
-            out_set.insert(name.to_string());
-        }
-    }
-    out_set
+    text.lines().filter_map(|l| l.split('\t').next()).filter(|s| !s.is_empty()).map(str::to_string).collect()
 }
 
 pub fn unit_dir() -> PathBuf {

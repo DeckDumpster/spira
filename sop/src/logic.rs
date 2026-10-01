@@ -211,7 +211,7 @@ pub fn applied(
                     let metric_raw = cockpit_out.as_deref().and_then(|o| extract_metric_value(o, metric_key));
                     let fixed = metric_raw.as_deref().map(is_zero).unwrap_or(false);
                     if fixed {
-                        metric_note = format!("METRIC {metric_key}=0: fix confirmed by cockpit.sh {metric_subcmd}.");
+                        metric_note = format!("METRIC {metric_key}=0: fix confirmed by cockpit-collect probe {metric_subcmd}.");
                     } else {
                         held = "unknown".to_string();
                         let shown = metric_raw.clone().unwrap_or_else(|| "?".to_string());

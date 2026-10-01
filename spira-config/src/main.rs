@@ -4,6 +4,7 @@
 //!                                       also refuses a [spira] with no id_prefix (sp-k6m1m)
 //!   spira-config get <dotted.path>      one value read out of the document
 //!   spira-config export --sh            `[spira]` as quoted KEY=value lines
+//!   spira-config locate                 the spira.toml path in force, or a refusal naming why
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
@@ -11,9 +12,14 @@
 //!   spira-config path-tail              the box's `spira.path` tail, or a refusal naming why
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
 //!
-//! `validate`, `get` and `export` read `spira.toml` from: the file argument if one is
-//! given, else `$SPIRA_TOML`, else `./spira.toml`, else stdin — the same "explicit, then
-//! configured, then derived" order `conf.sh` itself uses for `spira.conf`.
+//! `validate`, `get` and `export` read `spira.toml` from: the file argument if given (`-` for
+//! stdin, named on purpose), else the same search `locate` reports — `$SPIRA_TOML` (exclusive:
+//! a pinned path that is not a file means no config, not "keep looking"), else
+//! `${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml`, else `/etc/spira/spira.toml` (no
+//! `$SPIRA_REPO` tier — sp-9hwim removed it from `conf.sh`'s matching bash search; see
+//! `DESIGN-locate.md`). With no file argument and nothing resolvable, these refuse by name
+//! (`NotFound`/`LegacyOnly`) instead of the prior fallback guesses — a `./spira.toml` that
+//! happened to be in the current directory, or blocking forever on stdin — fail-closed, sp-hconl.
 
 use std::env;
 use std::fs;
@@ -21,11 +27,47 @@ use std::io::Read;
 use std::path::Path;
 use std::process::ExitCode;
 
+use spira_config::locate::locate;
 use spira_config::{
-    convert, discover, export_sh, get_path, json_schema, load, migrate_goal_to_id_prefix_in_file,
-    set_path, shrink_reason, tail_refusals, unset_path, validate, validate_strict, write_atomic,
-    SpiraToml,
+    convert, discover, export_sh, get_path, json_schema, load,
+    migrate_goal_to_id_prefix_in_file, set_path, shrink_reason, tail_refusals, unset_path,
+    validate, validate_strict, write_atomic, LocateOutcome, SpiraToml,
 };
+
+/// The message `locate`'s CLI surface and `read_input`'s no-file-argument path both print on
+/// refusal — one wording, so a diagnostic and an actual read failure never disagree about
+/// what was tried.
+fn describe_locate_failure(outcome: &LocateOutcome) -> String {
+    match outcome {
+        LocateOutcome::Found(p) => unreachable!("describe_locate_failure called on Found({p:?})"),
+        LocateOutcome::NotFound { tried } => format!(
+            "no spira.toml found; tried: {}",
+            tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        ),
+        LocateOutcome::LegacyOnly { conf, tried } => format!(
+            "{} exists but no spira.toml — run `spira-config convert` first; tried: {}",
+            conf.display(),
+            tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+fn cmd_locate() -> ExitCode {
+    match locate(None) {
+        LocateOutcome::Found(p) => {
+            println!("{}", p.display());
+            ExitCode::SUCCESS
+        }
+        outcome @ LocateOutcome::NotFound { .. } => {
+            eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
+            ExitCode::from(1)
+        }
+        outcome @ LocateOutcome::LegacyOnly { .. } => {
+            eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
+            ExitCode::from(2)
+        }
+    }
+}
 
 fn read_input(file: Option<&str>) -> Result<String, String> {
     match file {
@@ -37,19 +79,16 @@ fn read_input(file: Option<&str>) -> Result<String, String> {
             Ok(s)
         }
         Some(f) => fs::read_to_string(f).map_err(|e| format!("{f}: {e}")),
-        None => {
-            if let Ok(p) = env::var("SPIRA_TOML") {
-                return fs::read_to_string(&p).map_err(|e| format!("{p}: {e}"));
+        // FAIL CLOSED (sp-hconl): no file argument means "resolve it the same way conf.sh
+        // does", never "guess the current directory" or "block on stdin" — the two things
+        // this branch did before. An unresolvable config names every path it tried instead
+        // of guessing.
+        None => match locate(None) {
+            LocateOutcome::Found(p) => {
+                fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
             }
-            if Path::new("spira.toml").exists() {
-                return fs::read_to_string("spira.toml").map_err(|e| e.to_string());
-            }
-            let mut s = String::new();
-            std::io::stdin()
-                .read_to_string(&mut s)
-                .map_err(|e| e.to_string())?;
-            Ok(s)
-        }
+            outcome => Err(describe_locate_failure(&outcome)),
+        },
     }
 }
 
@@ -419,6 +458,7 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+        Some("locate") => cmd_locate(),
         Some("convert") => cmd_convert(&args[1..]),
         Some("set") => match (args.get(1), args.get(2), args.get(3)) {
             (Some(path), Some(value), Some(file)) => cmd_set(path, value, file),
@@ -445,11 +485,12 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|convert|set|unset|schema|path-tail|migrate> ...\n\
+                "usage: spira-config <validate|get|export|locate|convert|set|unset|schema|path-tail|migrate> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
+                 \x20 locate\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\

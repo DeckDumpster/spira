@@ -55,8 +55,10 @@ if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/spira/lib.sh"; then
 else
     ok "lib.sh no longer reads FAYTH_MODEL"
 fi
-want "aeon_claude_argv calls persona_model" \
-     'persona_model "${FAYTH:-}"' "$(cat "$HARNESS/spira/lib.sh")"
+# aeon_claude_argv (lib.sh) retired dead (sp-j89pd, wave 4.2: zero live callers) — the
+# argv table, including its persona_model call, is now aeon/src/run.rs; the real launch
+# paths exercised below (aeon.sh launch paths — a stubbed claude captures argv) already
+# prove persona.builder.model reaches it end to end.
 
 if grep -qE '\$\{?FAYTH_MODEL' "$HARNESS/concierge.sh"; then
     bad "concierge.sh no longer reads FAYTH_MODEL" "still present"
@@ -66,15 +68,13 @@ fi
 want "concierge.sh's MODEL resolution calls persona_model" \
      'MODEL="$(persona_model "$FAYTH")"' "$(cat "$HARNESS/concierge.sh")"
 
-# THE TWO HARD-CODED MODELS. Both must now be config keys, not bare literals in the
-# claude invocation itself.
-if grep -q -- '--model claude-haiku-4-5-20251001' "$HARNESS/spira/lib.sh"; then
-    bad "the liveness judge no longer hardcodes its model" "still a bare literal"
-else
-    ok "the liveness judge no longer hardcodes its model"
-fi
-want "the liveness judge reads SPIRA_LIVENESS_MODEL" \
-     'SPIRA_LIVENESS_MODEL:-claude-haiku-4-5-20251001' "$(cat "$HARNESS/spira/lib.sh")"
+# THE HARD-CODED MODEL below must be a config key, not a bare literal in the claude
+# invocation itself. The liveness judge's own such check (still_waiting, lib.sh) is gone
+# along with the function: still_waiting had zero live callers — the STALL_BEATS/model_idle
+# apparatus it was part of was already replaced by the trace-growth lease (test-aeon-lease.sh
+# scar) before sp-j89pd (wave 4.2) deleted the dead bash — so there is no longer a liveness-
+# judge invocation anywhere to hardcode a model in. SPIRA_LIVENESS_MODEL's conf.sh default
+# (spira/conf.sh:1995) is now a config-core concern, not this bead's.
 
 if grep -q -- '--model claude-opus-5' "$HARNESS/spira/reflect.sh"; then
     bad "reflect.sh no longer hardcodes its model" "still a bare literal"

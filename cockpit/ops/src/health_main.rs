@@ -19,9 +19,22 @@ fn env_nonempty(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|v| !v.is_empty())
 }
 
-/// `stty size` first (an ioctl, needs no terminfo); `tput lines`/`$LINES` as fallbacks. Five
-/// is a deliberately pessimistic floor: under-rendering marks a drop count and is visible;
-/// over-rendering scrolls the top of the pane away in silence.
+/// `TIOCGWINSZ` on whichever of stdout/stdin/stderr is a tty, then `$LINES`/`$COLUMNS`.
+///
+/// THE BUG THIS REPLACES (found on the operator's own live pane within a day of landing):
+/// the original shelled out to `stty size`, and `std::process::Command::output()` gives the
+/// child a *null* stdin, never the parent's own tty — so `stty size` failed with "standard
+/// input: Inappropriate ioctl for device" on literally every call, in every pane, always,
+/// and `term_size` fell to its hardcoded small default every single tick. A direct ioctl on
+/// this PROCESS's own fds has no such gap: there is no child to lose the tty across.
+///
+/// NEVER A SMALL DEFAULT (the operator's own instruction after this incident): the final
+/// fallback, reached only when no fd is a tty and neither env var is set, is 24×80 — the
+/// oldest conventional terminal size there is — never the 5-row "pessimistic" floor the
+/// original chose. A pane that is actually 5 rows tall still gets the same real ioctl
+/// reading it always got; this fallback is for the no-tty case only (piped output, a
+/// fixture with neither $LINES nor $COLUMNS set), where there is no "real" size to under- or
+/// over-guess from.
 fn term_rows() -> i64 {
     term_size().0
 }
@@ -29,22 +42,14 @@ fn term_cols() -> i64 {
     term_size().1
 }
 fn term_size() -> (i64, i64) {
-    if let Ok(out) = Command::new("stty").arg("size").output() {
-        if out.status.success() {
-            let s = String::from_utf8_lossy(&out.stdout);
-            let mut it = s.split_whitespace();
-            if let (Some(r), Some(c)) = (it.next(), it.next()) {
-                if let (Ok(r), Ok(c)) = (r.parse::<i64>(), c.parse::<i64>()) {
-                    if r > 0 && c > 0 {
-                        return (r, c);
-                    }
-                }
-            }
+    for fd in [libc::STDOUT_FILENO, libc::STDIN_FILENO, libc::STDERR_FILENO] {
+        if let Some(rc) = cockpit_ops::health::term::winsize_of_fd(fd) {
+            return rc;
         }
     }
-    let r = std::env::var("LINES").ok().and_then(|s| s.parse().ok()).filter(|&v: &i64| v > 0).unwrap_or(5);
-    let c = std::env::var("COLUMNS").ok().and_then(|s| s.parse().ok()).filter(|&v: &i64| v > 0).unwrap_or(80);
-    (r, c)
+    let r = std::env::var("LINES").ok().and_then(|s| s.parse().ok()).filter(|&v: &i64| v > 0);
+    let c = std::env::var("COLUMNS").ok().and_then(|s| s.parse().ok()).filter(|&v: &i64| v > 0);
+    (r.unwrap_or(24), c.unwrap_or(80))
 }
 
 fn read_snapshot(path: &Path) -> (String, bool) {
@@ -312,9 +317,23 @@ fn main() {
                 let _ = std::io::stdout().flush();
             };
             ctrlc_like_setup(cleanup);
+            install_sigwinch_handler();
             loop {
                 paint(&mut last_frame);
-                std::thread::sleep(std::time::Duration::from_secs(tick));
+                // Sleep in short slices rather than one flat `sleep(tick)`, so a resize
+                // (SIGWINCH) repaints within a fraction of a second instead of waiting out
+                // whatever is left of the current tick — belt-and-suspenders on top of the
+                // plain re-read every tick, which already picks up a resize on its own.
+                let slice = std::time::Duration::from_millis(200);
+                let mut waited = std::time::Duration::ZERO;
+                let target = std::time::Duration::from_secs(tick);
+                while waited < target {
+                    if take_sigwinch() {
+                        break;
+                    }
+                    std::thread::sleep(slice.min(target - waited));
+                    waited += slice;
+                }
                 if !conf_file.is_empty() && conf_mtime(&conf_file) != conf_mtime_0 {
                     eprintln!("health: config changed — restarting");
                     let exe = std::env::current_exe().unwrap_or_else(|_| "health".into());
@@ -353,6 +372,29 @@ fn ctrlc_like_setup(cleanup: impl Fn() + Send + 'static) {
             signal(sig, handler);
         }
     }
+}
+
+static SIGWINCH_SEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// SIGWINCH's default disposition is already "ignore", so installing a handler changes no
+/// behaviour on its own — this exists so the loop can notice a resize and repaint sooner
+/// than the next full tick (see the `loop` arm's sleep-in-slices). The handler itself does
+/// only the one thing a signal handler may safely do here: flip an atomic flag.
+fn install_sigwinch_handler() {
+    extern "C" fn handler(_sig: i32) {
+        SIGWINCH_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    extern "C" {
+        fn signal(signum: i32, handler: extern "C" fn(i32)) -> usize;
+    }
+    unsafe {
+        signal(libc::SIGWINCH, handler);
+    }
+}
+
+/// Has a SIGWINCH landed since the last call? Consumes the flag either way.
+fn take_sigwinch() -> bool {
+    SIGWINCH_SEEN.swap(false, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// `exec()` in place (matching `exec bash "$0" loop`): the pane's process must not exit and

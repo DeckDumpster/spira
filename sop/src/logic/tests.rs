@@ -70,7 +70,7 @@ impl Clock for FakeClock {
 }
 
 fn env() -> Env {
-    Env { word_cap: 250, why_cap: 400, actor: "tester".to_string(), cockpit_bin: "cockpit.sh".to_string(), cockpit_bash_prefix: false }
+    Env { word_cap: 250, why_cap: 400, actor: "tester".to_string(), cockpit_bin: "cockpit-collect".to_string(), cockpit_bash_prefix: false }
 }
 
 const GOOD: &str = "SYMPTOM: disk is full\nCHECK: df -h\nFIX: clear /tmp\n";

@@ -1,0 +1,29 @@
+[package]
+name = "spira-world"
+version = "1.0.0"
+edition = "2021"
+description = "spira-world — stop/start/drain/resume the loop, the aeon fleet ceiling, and slaying one aeon cleanly. Replaces spira/world.sh, spira/aeons.sh, spira/slay.sh."
+
+[lib]
+name = "spira_world"
+path = "src/lib.rs"
+
+[[bin]]
+name = "world"
+path = "src/bin/world.rs"
+
+[[bin]]
+name = "aeons"
+path = "src/bin/aeons.rs"
+
+[[bin]]
+name = "slay"
+path = "src/bin/slay.rs"
+
+[dependencies]
+spira-ctrl = { path = "../spira-ctrl" }
+spira-config = { path = "../spira-config" }
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

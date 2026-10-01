@@ -21,7 +21,7 @@
 # cases already live in the fixture-driven suite for that probe.
 #
 # tier: T2
-# covers: spira/cockpit.sh spira/bdsim.py cockpit/panel/src/store.rs loom/static/model.js
+# covers: cockpit-collect/src/* spira/bdsim.py cockpit/panel/src/store.rs loom/static/model.js
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -48,7 +48,7 @@ run_probe() {    # run_probe <subcommand> [env KEY=val ...]
         SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" SPIRA_ASK_LABEL=needs-ryan \
         SPIRA_CI_LABEL=awaiting-ci \
         "$@" \
-        cockpit.sh "$sub" 2>/dev/null
+        cockpit-collect probe "$sub" 2>/dev/null
 }
 field() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }
 

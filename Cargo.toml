@@ -1,8 +1,11 @@
 [workspace]
 members = [
+    "spira-ctrl",
+    "spira-world",
     "auron",
     "loom",
     "cockpit/panel",
+    "cockpit-collect",
     "cockpit/ops",
     "broker",
     "czar-pass",
