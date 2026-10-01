@@ -134,10 +134,9 @@ eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 # which is also where D12's two "every section present" loops merge into one.
 eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
 
-# land_mark_at writes an EXPLICIT epoch into the record content (land_mark always stamps
-# `date +%s`, so a fixture cannot make it name a chosen age). Used only where a T1 case
-# needs a deterministic since_land, not for the positive control above.
-eval "$(sed -n '/^land_mark_at() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
+# land_mark_at (lib.sh) is gone (retired dead at sp-27hsi: no caller left, and nothing below
+# ever actually called this extraction — the deterministic-age T1 cases further down write
+# LANDSTATE records directly with printf/touch -d instead). Nothing to lift here any more.
 
 if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
     land_mark sp-ctl LANDED deadbeef spira

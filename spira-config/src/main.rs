@@ -5,6 +5,9 @@
 //!   spira-config get <dotted.path>      one value read out of the document
 //!   spira-config export --sh            `[spira]` as quoted KEY=value lines
 //!   spira-config locate                 the spira.toml path in force, or a refusal naming why
+//!   spira-config resolve --sh [file]    env > toml > derived defaults, as KEY='value' lines
+//!                                       for the typed export set (sp-eekjm; SPIRA_HOME and
+//!                                       SPIRA_REPO come from this process's own environment)
 //!   spira-config convert ...            spira.conf + repo-map + *.fayth -> spira.toml
 //!   spira-config set <path> <v> <file>  write one value into <file> in place
 //!   spira-config unset <path> <file>    remove one value from <file> in place
@@ -21,13 +24,15 @@
 //! (`NotFound`/`LegacyOnly`) instead of the prior fallback guesses — a `./spira.toml` that
 //! happened to be in the current directory, or blocking forever on stdin — fail-closed, sp-hconl.
 
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use spira_config::locate::locate;
+use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
 use spira_config::{
     convert, discover, export_sh, get_path, json_schema, load,
     migrate_goal_to_id_prefix_in_file, set_path, shrink_reason, tail_refusals, unset_path,
@@ -205,6 +210,72 @@ fn cmd_path_tail() -> ExitCode {
     }
     println!("{tail}");
     ExitCode::SUCCESS
+}
+
+/// `resolve --sh [file]` — `spira_config::resolve()`'s typed export set as `KEY='value'`
+/// lines (sp-eekjm, "wave 4.4: spira-config resolve"). `SPIRA_HOME`/`SPIRA_REPO` come from
+/// THIS process's own environment, never self-located — the one caller that will matter,
+/// `conf.sh`'s own `eval "$(spira-config resolve --sh)"` (a later bead, sp-ubcgo), has
+/// already derived both by the time it gets here, exactly as it derives them today. `file`,
+/// if given, pins the `spira.toml` to read the same way `validate`/`get`/`export` already
+/// do; with no argument, it is located the same way `spira-config locate` reports (no
+/// `$SPIRA_TOML`/`$SPIRA_CONF` pin here means "no config file", not a search failure).
+fn cmd_resolve_sh(file: Option<&str>) -> ExitCode {
+    let home = match env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => PathBuf::from(h),
+        _ => {
+            eprintln!("spira-config resolve: SPIRA_HOME is not set — this must be derived by the caller (conf.sh), never self-located");
+            return ExitCode::FAILURE;
+        }
+    };
+    let repo = match env::var("SPIRA_REPO") {
+        Ok(r) if !r.is_empty() => PathBuf::from(r),
+        _ => {
+            eprintln!("spira-config resolve: SPIRA_REPO is not set — this must be derived by the caller (conf.sh), never self-located");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let toml_path = match file {
+        Some(f) => Some(PathBuf::from(f)),
+        None => locate(None).found(),
+    };
+    let doc = match toml_path {
+        Some(p) => match fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display())).and_then(|t| validate(&t)) {
+            Ok(d) => Some(d),
+            Err(e) => {
+                eprintln!("spira-config resolve: {e}");
+                return ExitCode::FAILURE;
+            }
+        },
+        None => None,
+    };
+
+    let conf_d = home.join("conf.d");
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    match resolve(ResolveInput { env: &env_map, home: &home, repo: &repo, toml: doc.as_ref(), conf_d: &conf_d }) {
+        Ok(resolved) => {
+            for w in &resolved.warnings {
+                eprintln!("{w}");
+            }
+            print!("{}", resolved.to_sh(EXPORT_KEYS));
+            ExitCode::SUCCESS
+        }
+        Err(ResolveError::Containment(violations)) => {
+            for v in &violations {
+                eprintln!("{v}");
+            }
+            eprintln!(
+                "spira: containment check failed for instance {} — halting",
+                env::var("SPIRA_INSTANCE").unwrap_or_default()
+            );
+            ExitCode::FAILURE
+        }
+        Err(ResolveError::Registry(e)) => {
+            eprintln!("spira-config resolve: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn cmd_schema() -> ExitCode {
@@ -459,6 +530,14 @@ fn main() -> ExitCode {
             }
         }
         Some("locate") => cmd_locate(),
+        Some("resolve") => {
+            if args.get(1).map(String::as_str) == Some("--sh") {
+                cmd_resolve_sh(args.get(2).map(String::as_str))
+            } else {
+                eprintln!("usage: spira-config resolve --sh [file]");
+                ExitCode::FAILURE
+            }
+        }
         Some("convert") => cmd_convert(&args[1..]),
         Some("set") => match (args.get(1), args.get(2), args.get(3)) {
             (Some(path), Some(value), Some(file)) => cmd_set(path, value, file),
@@ -485,12 +564,13 @@ fn main() -> ExitCode {
         },
         _ => {
             eprintln!(
-                "usage: spira-config <validate|get|export|locate|convert|set|unset|schema|path-tail|migrate> ...\n\
+                "usage: spira-config <validate|get|export|locate|resolve|convert|set|unset|schema|path-tail|migrate> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
                  \x20 export --sh [file]\n\
                  \x20 locate\n\
+                 \x20 resolve --sh [file]\n\
                  \x20 convert --conf F --repo-map F [--fayth F]... [--home DIR] [--out F]\n\
                  \x20         [--force-shrink]\n\
                  \x20 set <dotted.path> <value> <file>\n\
