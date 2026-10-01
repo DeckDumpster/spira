@@ -44,6 +44,7 @@ fn toml_value(s: &SpiraSection, key: &str) -> Option<String> {
         "SPIRA_ROUND_VM_MAX_RETRIES" => &s.round_vm_max_retries,
         "SPIRA_ROUND_VM_RETRY_INTERVAL" => &s.round_vm_retry_interval,
         "SPIRA_ROUND_VM_MIRROR_PORT" => &s.round_vm_mirror_port,
+        "SPIRA_ROUND_VM_CACHE_HOME" => &s.round_vm_cache_home,
         _ => return None,
     };
     v.clone()
@@ -77,10 +78,16 @@ pub struct Config {
     pub host_key: PathBuf,
     pub host_pubkey: PathBuf,
     pub host_addr: Option<String>,
-    /// sp-xjnzl: this operator's own `CARGO_HOME` — read exactly like cargo itself reads
-    /// it, never a hardcoded literal (a literal would name one operator's box in a crate
-    /// every clone of this repository ships). `None`: a round runs with no cross-machine
-    /// compilation-cache sharing, degraded but not refused.
+    /// sp-xjnzl-2: the VM-side `CARGO_HOME` every round and every template build points
+    /// `sccache` at — this binary's OWN config key (`SPIRA_ROUND_VM_CACHE_HOME` / spira.toml's
+    /// `round_vm_cache_home`), never the CALLER's ambient `CARGO_HOME`
+    /// (`law-a-binary-resolves-the-config-it-reads`). A systemd unit never sets `CARGO_HOME`
+    /// the way an interactive shell happens to, so reading it ambiently is not "usually
+    /// right, occasionally unset" — it is wrong the moment anything but a hand-run shell
+    /// calls this binary, and the production sweep hit exactly that: the VM's own ambient
+    /// default (`/root/.cargo`) does not match where the template actually put `sccache`.
+    /// `None` here is refused by every caller that needs it (run's and template's own
+    /// preflight), never silently defaulted.
     pub cache_home: Option<String>,
     pub vcpus: u32,
     pub maxpar: u32,
@@ -131,7 +138,7 @@ impl Config {
             ssh_user: src.get("SPIRA_ROUND_VM_SSH_USER").unwrap_or_else(|| "root".into()),
             ssh_port: num(src, "SPIRA_ROUND_VM_SSH_PORT", 22)?,
             host_addr: src.get("SPIRA_ROUND_VM_HOST_ADDR"),
-            cache_home: src.get("CARGO_HOME"),
+            cache_home: src.get("SPIRA_ROUND_VM_CACHE_HOME"),
             vcpus: num(src, "SPIRA_ROUND_VM_VCPUS", 16)?,
             maxpar: num(src, "SPIRA_ROUND_VM_MAXPAR", 16)?,
             retry_interval: Duration::from_secs(num(src, "SPIRA_ROUND_VM_RETRY_INTERVAL", 60)?),
@@ -263,14 +270,19 @@ mod tests {
         assert_eq!(c.retry_interval, Duration::from_secs(60));
         assert_eq!(c.mailbox, "operator");
         assert!(c.host_addr.is_none());
-        assert!(c.cache_home.is_none(), "no hardcoded literal — unset CARGO_HOME means no cache sharing, not a fabricated path");
+        assert!(c.cache_home.is_none(), "no hardcoded literal and no ambient CARGO_HOME read — unset is unset, refused by run's and template's own preflight");
     }
 
     #[test]
-    fn cache_home_reads_cargo_home_exactly_like_cargo_itself_does() {
-        // sp-xjnzl: this is a plain CARGO_HOME read via the same env-first Source every
-        // other key uses, never a path baked into the source — see BatchJob::cache_home.
+    fn cache_home_reads_its_own_dedicated_key_never_the_ambient_cargo_home() {
+        // sp-xjnzl-2: a bare CARGO_HOME in the caller's environment must NOT leak in — the
+        // production fault this bead fixes was exactly that leak (a systemd unit's own
+        // ambient default, /root/.cargo, silently used in place of the template's actual
+        // one). Only this binary's own key, env or spira.toml, ever sets cache_home.
         let c = Config::load(&map(&[("SPIRA_RUN", "/r"), ("CARGO_HOME", "/opt/spira/cargo")])).unwrap();
+        assert!(c.cache_home.is_none(), "a bare CARGO_HOME must never be read");
+
+        let c = Config::load(&map(&[("SPIRA_RUN", "/r"), ("SPIRA_ROUND_VM_CACHE_HOME", "/opt/spira/cargo")])).unwrap();
         assert_eq!(c.cache_home.as_deref(), Some("/opt/spira/cargo"));
     }
 

@@ -1,13 +1,18 @@
-//! target-reap [--dry-run] [--worktrees DIR] — remove the target/ of every worktree whose bead
-//! is closed (sp-z61hj; testenv::reap, spira-config/DESIGN-build-cache.md §2.4).
+//! target-reap [--dry-run] [--worktrees DIR] — remove the target/ of every worktree whose
+//! branch has landed (sp-z61hj, then sp-x9kbg; testenv::reap, testenv::landed,
+//! spira-config/DESIGN-build-cache.md §2.4).
 //!
-//! Reads SPIRA_RUN (worktrees default to $SPIRA_RUN/worktree) and SPIRA_DB (the bead store
-//! `bd -C` reads). Exit 0 on a completed pass, 1 when bd could not answer or a removal failed
-//! (nothing guessed), 2 on usage or a missing variable.
+//! Reads SPIRA_RUN (worktrees default to $SPIRA_RUN/worktree) and SPIRA_HOME (the harness
+//! this binary resolves its own repo registry against — law-a-binary-resolves-the-config-
+//! it-reads: no shim onto a `bd` subprocess, no bead status consulted at all). Exit 0 on a
+//! completed pass (even one that reaped nothing), 1 when a removal failed (nothing else is
+//! fatal — a worktree whose landed-ness cannot be told is simply kept), 2 on usage or a
+//! missing variable.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::process::{Command, ExitCode, Stdio};
-use testenv::reap;
+use std::process::ExitCode;
+use testenv::{landed, reap};
 
 fn main() -> ExitCode {
     let mut dry = false;
@@ -31,34 +36,22 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let Some(db) = var("SPIRA_DB") else {
-        eprintln!("target-reap: SPIRA_DB is empty — refusing to let bd auto-discover a store");
+    let Some(home) = var("SPIRA_HOME") else {
+        eprintln!("target-reap: SPIRA_HOME is empty — refusing to let the repo registry auto-discover");
         return ExitCode::from(2);
     };
-    // One bd call; an id bd does not know makes it exit non-zero while still printing the
-    // others, so the answer is read from stdout and judged by its shape (reap::statuses).
-    let show = |ids: &[String]| -> Result<String, String> {
-        let o = Command::new("timeout")
-            .arg("60")
-            .arg("bd")
-            .arg("-C")
-            .arg(&db)
-            .arg("show")
-            .args(ids)
-            .arg("--json")
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .map_err(|e| format!("cannot run bd: {e}"))?;
-        Ok(String::from_utf8_lossy(&o.stdout).into_owned())
-    };
-    match reap::reap(&dir, dry, &show) {
+    let home = PathBuf::from(home);
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let reg = spira_config::repos::Registry::from_env(env, &home);
+    let landed_fn = |wt: &std::path::Path| landed::landed(&reg, wt);
+
+    match reap::reap(&dir, dry, &landed_fn) {
         Ok(r) => {
             println!("{}", reap::describe(&r, dry));
             ExitCode::SUCCESS
         }
         Err(e) => {
-            println!("target-reap: {e} — nothing removed on an answer it cannot read");
+            println!("target-reap: {e}");
             ExitCode::from(1)
         }
     }

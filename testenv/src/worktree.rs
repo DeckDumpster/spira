@@ -51,7 +51,9 @@ pub fn scratch_room(base: &Path, min_free_mib: u64, min_mem_mib: u64) -> Result<
     Ok(())
 }
 
-fn free_mib(p: &Path) -> Option<u64> {
+/// `statvfs(p)` free MiB. `pub(crate)` so [`crate::warm::shed`] and the runner can probe the
+/// same scratch root this module refuses allocations against.
+pub(crate) fn free_mib(p: &Path) -> Option<u64> {
     let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
     // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };

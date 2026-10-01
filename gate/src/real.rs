@@ -88,6 +88,8 @@ const VARS: &[&str] = &[
     "SPIRA_GATE_TARGET_CAP_MIB",
     "SPIRA_GATE_TARGET_MIN_FREE_MIB",
     "SPIRA_GATE_TARGET_MIN_MEM_MIB",
+    // sp-s8v5r: the shared floor testenv's warm-slot shedding also reads — same tmpfs.
+    "SPIRA_TMPFS_SHED_FREE_MIB",
     "SPIRA_RELEASE",
     "HOME",
 ];

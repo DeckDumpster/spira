@@ -575,8 +575,8 @@ impl Scripts for RealScripts {
     fn czar_fence(&self, class: &str) -> bool {
         ok(Command::new("czar-fence.sh").arg(class))
     }
-    fn release(&self, args: &[String], db: &str) -> RunOut {
-        match Command::new("release").args(args).env("SPIRA_DB", db).stdin(Stdio::null()).output() {
+    fn release(&self, bin: &Path, args: &[String], db: &str) -> RunOut {
+        match Command::new(bin).args(args).env("SPIRA_DB", db).stdin(Stdio::null()).output() {
             Ok(o) => RunOut {
                 rc: o.status.code().unwrap_or(127),
                 out: String::from_utf8_lossy(&o.stdout).to_string(),
