@@ -462,6 +462,9 @@ mod tests {
         let home = dir.join("home");
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
+        // sp-1cdgq-2: a missing conf.d is now a named registry error, so any fixture
+        // whose SPIRA_HOME runs real config resolution needs the directory to exist.
+        fs::create_dir_all(home.join("conf.d")).unwrap();
         let xdg_data = dir.join("xdg-data");
         let xdg_config = dir.join("xdg-config"); // empty: no config file for discover() to pick up
         fs::create_dir_all(&xdg_config).unwrap();
@@ -500,6 +503,9 @@ mod tests {
         let home = dir.join("home");
         fs::create_dir_all(&home).unwrap();
         fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
+        // sp-1cdgq-2: a missing conf.d is now a named registry error, so any fixture
+        // whose SPIRA_HOME runs real config resolution needs the directory to exist.
+        fs::create_dir_all(home.join("conf.d")).unwrap();
         let xdg_data = dir.join("xdg-data");
         let xdg_config = dir.join("xdg-config");
         fs::create_dir_all(&xdg_config).unwrap();

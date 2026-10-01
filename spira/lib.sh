@@ -216,104 +216,35 @@ json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an i
 # it, including the caller's own, so a `pgrep -f 'aeon.sh builder'` inside a script named
 # in that pattern reports itself alive. pgrep may nominate; /proc decides, on the actual
 # argv of the recorded pid.
+#
+# aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes are SHIMS onto `strand aeon-alive
+# / aeon-count / aeons-live-total / aeons-live-lanes` (wave 4.23, sp-0ffox: lib.sh family E
+# -> strand, the owning crate; collapses the bead/cockpit-collect copies of aeon_alive onto
+# this same implementation). The logic — including the exclude-unit threading through
+# aeon_count and the FAYTH_NAME resolution in aeons_live_lanes — lives in
+# strand/src/probe.rs now; this file keeps the names so bash sourcers (fleet-status.sh,
+# hold.sh) need no change.
+#
+# aeons_live_lanes ALONE threads SPIRA_HOME/SPIRA_FAYTHS through explicitly: conf.sh
+# deliberately never exports either (a fact about this one copy of the harness, not
+# configuration — see _spira_config_fayth's own comment), so a bare exec would see neither
+# and silently count zero lane aeons forever, the exact shape of sp-nki5w's scar. The other
+# three need only SPIRA_RUN/SPIRA_SUMMON/SPIRA_SYSTEMCTL, all already exported.
 # --------------------------------------------------------------------------------------
 aeon_alive() {           # aeon_alive <pidfile> -> 0 if the recorded pid is a live aeon
-    local pf="$1" pid
-    [ -f "$pf" ] || return 1
-    pid="$(cat "$pf" 2>/dev/null)"
-    [ -n "${pid:-}" ] || return 1
-    [ -d "/proc/$pid" ] || return 1
-    # argv[0..] must actually be our runner, not a recycled pid. Capture, THEN match:
-    # `tr ... | grep -q` under pipefail returns 141 when grep closes the pipe on the first
-    # match, so the live case is exactly the one that could read as dead — and a liveness
-    # test that false-negatives lets the reaper rob an aeon that is still working
-    # (law-no-grep-q-under-pipefail).
-    local cmd; cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
-    grep -qE '(^|/)aeon( |$)|aeon\.sh' <<< "$cmd" || return 1
-    return 0
+    strand aeon-alive "$1"
 }
 
-# aeon_count <fayth> [exclude-unit] -> how many aeons of that fayth are genuinely running.
-#
-# THE UNIT LIST, NOT THE PID FILE, for the same reason aeons_live_total reads units: aeon.sh
-# writes its pidfile only after it claims a bead, so a fast re-summon landing in that gap
-# counted the slot as free a second time (sp-0y2av). ${SPIRA_SYSTEMCTL:-systemctl}, not bare
-# systemctl, so a suite can stub the fleet without a real user session.
-#
-# EXCLUDE-UNIT IS THE CALLER'S OWN UNIT, when the caller is itself a live aeon of this
-# fayth. systemd-run's transient unit exists before aeon.sh's capacity check ever runs, so a
-# sweep or a claim counting units of its own fayth was counting itself — "1/1 at capacity"
-# on the very first aeon, respawning forever without ever seeing a free slot (sp-0hnm6).
-# Callers outside an aeon's own unit (the sentinel's CHECK 7, watchtower's fleet total) pass
-# nothing and get the old, unfiltered count.
-#
-# THE PID FALLBACK IS FOR SUITES, not for production, exactly as aeons_live_total's own. It
-# never sees this bug: aeon.sh writes its own pidfile only after this check has already run.
-aeon_count() {
-    local fayth="$1" exclude="${2:-}" n=0 pf
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        n="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units "spira-aeon-${fayth}-*" --no-legend 2>/dev/null \
-            | awk -v ex="$exclude" '$1 != ex' | wc -l)"
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for pf in "$SPIRA_RUN"/aeon-"$fayth"-*.pid; do
-        [ -e "$pf" ] || continue
-        if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-    done
-    printf '%d' "$n"
+aeon_count() {           # aeon_count <fayth> [exclude-unit] -> live aeons of that persona
+    strand aeon-count "$@"
 }
 
-# aeons_live_total -> how many aeons exist right now, across every persona and every lane.
-#
-# THE UNIT LIST, NOT THE PID FILES, and that difference is the whole point of this function.
-# aeon.sh writes its pidfile only after it has claimed a bead (aeon.sh:509), while
-# systemd-run returns the moment the transient unit exists — so within a single sentinel
-# pass an aeon summoned one second ago is invisible to any pid-file count. A ceiling built
-# on that count does not clamp the second summon of the same pass, which is precisely the
-# lag that let a pool of one run a builder and an ops aeon in the same second on
-# 2026-09-09 21:46:47. The unit is authoritative the instant it is asked for.
-#
-# THE PID FALLBACK IS FOR SUITES, not for production: a test overrides SPIRA_SUMMON with a
-# stub, no unit is ever created, and a systemd count would be 0 forever — a ceiling that
-# never binds and never says so. Counting pid files there keeps the ceiling testable, and
-# the lag does not apply because a stub does not race.
-aeons_live_total() {
-    local n=0 pf
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        # `| wc -l` and never `grep -c`: grep exits 1 on no matches, which under pipefail
-        # turns an idle fleet into a failed read (law-no-grep-q-under-pipefail, same shape).
-        n="$(systemctl --user list-units 'spira-aeon-*' --no-legend 2>/dev/null | wc -l)"
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for pf in "$SPIRA_RUN"/aeon-*.pid; do
-        [ -e "$pf" ] || continue
-        if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-    done
-    printf '%d' "$n"
+aeons_live_total() {     # how many aeons exist right now, across every persona and lane
+    strand aeons-live-total
 }
 
-# aeons_live_lanes -> how many lane aeons exist right now, across all lane fayths.
-aeons_live_lanes() {
-    local n=0 f fn
-    if [ "${SPIRA_SUMMON:-systemd-run}" = systemd-run ]; then
-        for f in $(spira_lane_fayths); do
-            fn="$(fayth_get "$f" FAYTH_NAME "$f")"
-            n=$(( n + $(systemctl --user list-units "spira-aeon-${fn}-*" --no-legend 2>/dev/null | wc -l) ))
-        done
-        printf '%d' "${n:-0}"
-        return
-    fi
-    for f in $(spira_lane_fayths); do
-        fn="$(fayth_get "$f" FAYTH_NAME "$f")"
-        local pf
-        for pf in "$SPIRA_RUN"/aeon-"$fn"-*.pid; do
-            [ -e "$pf" ] || continue
-            if aeon_alive "$pf"; then n=$((n+1)); else rm -f "$pf"; fi
-        done
-    done
-    printf '%d' "$n"
+aeons_live_lanes() {     # how many lane aeons exist right now, across all lane fayths
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" strand aeons-live-lanes
 }
 
 # --------------------------------------------------------------------------------------
@@ -1057,6 +988,18 @@ park_unmapped() {
 # has no arithmetic to get wrong: a role that never competes cannot be starved.
 # THE POOL IS A CEILING, NOT A FLOOR. It only ever lowers what a persona may start, so a
 # host that sets nothing behaves exactly as before.
+#
+# DELIBERATELY NOT SHIMMED (wave 4.23, sp-0ffox), unlike aeon_count/aeons_live_total above.
+# strand/src/probe.rs carries its own Rust copy of this same arithmetic for any FUTURE
+# in-process Rust caller, but THIS body stays bash: it calls fayth_get/aeon_count BY NAME,
+# and six suites (test-summon-fayth.sh, test-aeon-elastic-concurrency.sh, test-fayth.sh,
+# test-builder-qa-proposed.sh, test-czar-partition.sh, test-dependents.sh) redefine those
+# bash functions after sourcing this file, to control fayth_free's inputs without a real
+# process table. Reducing fayth_free itself to a one-line exec shim would move that
+# arithmetic into a separate process where a bash-level override of aeon_count can never
+# reach it again (the EXEC-BOUNDARY TRAP) — breaking every one of those suites for no
+# behavior change in production (aeon_count below is itself already a shim, so fayth_free
+# calling it by name already reaches strand exactly as a one-line shim would).
 fayth_free() {           # fayth_free <fayth> [pool-remaining] [exclude-unit]
     local f="$1" pool="${2:-}" exclude="${3:-}" max have free
     max="$(fayth_get "$f" FAYTH_MAX_CONCURRENT 1)"; max="${max:-1}"
@@ -2035,43 +1978,18 @@ poison_asked_clear() {
 #
 # Named for the aeons of Spira, which is the whole reason the system carries that name.
 # The prefix stays `aeon-` so every existing count that greps for it still works.
+#
+# aeon_name_take is RETIRED (wave 4.23, sp-0ffox), not shimmed: its only caller, besides
+# its own definition, was this crate's own seam call from run.rs/sweep.rs — a whole-tree
+# grep found no bash caller and no other Rust seam reaching it — so `aeon` now computes it
+# in-process (aeon/src/naming.rs) with no lib.sh round trip left to shim. SPIRA_AEON_NAMES
+# moves there too (the `NAMES` constant); nothing else read it.
+#
+# aeon_named keeps a one-line shim: cockpit-collect still calls it by name, across the
+# crate boundary.
 # --------------------------------------------------------------------------------------
-SPIRA_AEON_NAMES="valefor ifrit ixion shiva bahamut yojimbo anima cindy sandy mindy"
-
-aeon_name_take() {       # aeon_name_take <fayth> -> a name not currently in use
-    local f="$1" n live
-    live=" $(for pf in "$SPIRA_RUN"/aeon-*.name; do [ -e "$pf" ] || continue
-                 p="${pf%.name}"; [ -f "$p.pid" ] && aeon_alive "$p.pid" && cat "$pf"; done | tr '\n' ' ') "
-    # DO NOT REUSE THE NAME THE LAST AEON HAD. Picking the first free name meant two
-    # consecutive sessions were both "valefor", so the pane looked like one agent switching
-    # beads when it was one dying and another starting — which hid the fact that a bead had
-    # been dropped with work in flight. A cursor makes consecutive aeons distinguishable.
-    local last cursor=0
-    last="$(cat "$SPIRA_RUN/.aeon-name-cursor" 2>/dev/null || echo 0)"
-    case "$last" in ''|*[!0-9]*) last=0 ;; esac
-    local total=0; for n in $SPIRA_AEON_NAMES; do total=$((total+1)); done
-    local tries=0
-    while [ "$tries" -lt "$total" ]; do
-        cursor=$(( (last + 1 + tries) % total ))
-        local idx=0
-        for n in $SPIRA_AEON_NAMES; do
-            if [ "$idx" -eq "$cursor" ]; then
-                case "$live" in *" $n "*) ;; *)
-                    printf '%s' "$cursor" > "$SPIRA_RUN/.aeon-name-cursor"
-                    printf '%s' "$n"; return 0 ;;
-                esac
-            fi
-            idx=$((idx+1))
-        done
-        tries=$((tries+1))
-    done
-    # More concurrent aeons than names is not an error, just unusual; fall back to a
-    # numbered one rather than reusing a name and making two of them indistinguishable.
-    printf 'aeon%s' "$(date +%s | tail -c 4)"
-}
-
 aeon_named() {           # aeon_named <pidfile> -> the name held by that aeon, if any
-    local pf="$1"; [ -f "${pf%.pid}.name" ] && cat "${pf%.pid}.name" 2>/dev/null || printf '?'
+    aeon aeon-named "$1"
 }
 
 # --------------------------------------------------------------------------------------
@@ -3853,25 +3771,10 @@ recut_onto() {
 }
 
 
-# --------------------------------------------------------------------------------------
-# LIVE-AEON CHECK. promote.sh and systemd/install.sh both reset the production checkout,
-# which rewrites aeon.sh and lib.sh in place. Running aeons are executing those files;
-# an in-place reset disrupts them (law-replace-running-scripts-atomically). Both callers
-# share this function so the check cannot drift between them.
-#
-# Returns the list of active aeon unit names for the current instance (one per line),
-# or nothing when no aeons are running.
-#
-# Uses ${SPIRA_SYSTEMCTL:-systemctl}. Tests inject a mock via SPIRA_PATH, which conf.sh
-# prepends to PATH so bare `systemctl` resolves to the mock without a variable override.
-# --------------------------------------------------------------------------------------
-spira_live_aeons() {
-    local sc="${SPIRA_SYSTEMCTL:-systemctl}"
-    "$sc" --user list-units --state=active --no-legend \
-        "spira-aeon-*-${SPIRA_INSTANCE}.service" 2>/dev/null \
-        | tr -s ' \t' '\n\n' \
-        | grep -E "^spira-aeon-[^[:space:]]+-${SPIRA_INSTANCE}\.service$" | sort -u || true
-}
+# spira_live_aeons RETIRED (wave 4.23, sp-0ffox): its callers, promote.sh and
+# systemd/install.sh, are both gone — the install crate's own `checks::live_aeons`
+# (install/src/checks.rs, reimplemented directly against its own Systemctl port) is the
+# live-aeon guard now, independent of lib.sh. A whole-tree grep found no remaining caller.
 
 # _prune_candidates retired with activate.sh (sp-jsnbm): release install-tarball's own
 # prune (release/src/install.rs) replaces it; nothing else called this function.

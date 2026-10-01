@@ -410,28 +410,13 @@ fn age_of(path: &Path) -> String {
     io::mtime_age_secs(path).map(|s| s.to_string()).unwrap_or_else(|| "?".to_string())
 }
 
-/// `aeon_alive` (`lib.sh`): the recorded pid must be live AND its argv must actually be an
-/// aeon runner, never a recycled pid — `grep -qE '(^|/)aeon( |$)|aeon\.sh'` on the
-/// NUL-joined-as-spaces cmdline. Reimplemented natively (no regex crate in this workspace;
-/// this runs once per live aeon on the 5s tier, so a `bash`-bridge round trip per pidfile
-/// would be the wrong cost to pay) rather than bridged, unlike the `lib.sh` helpers that do
-/// real work — this one is three token comparisons.
+/// `aeon_alive` (`lib.sh`): the one canonical implementation (`strand::probe::aeon_alive`,
+/// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies"), called in-process —
+/// a Rust-to-Rust call costs nothing extra over this crate's own former copy, unlike the
+/// `bash`-bridge round trip per pidfile this probe still avoids for the `lib.sh` helpers
+/// that do real work (this one was always three token comparisons).
 fn aeon_alive(pidfile: &Path) -> bool {
-    let Some(pid) = io::read_trim(pidfile).and_then(|s| s.trim().parse::<i64>().ok()) else {
-        return false;
-    };
-    if !io::proc_exists(pid) {
-        return false;
-    }
-    let Some(cmd) = io::proc_cmdline(pid) else { return false };
-    is_aeon_cmd(&cmd)
-}
-
-fn is_aeon_cmd(cmd: &str) -> bool {
-    if cmd.contains("aeon.sh") {
-        return true;
-    }
-    cmd.split(' ').any(|tok| tok == "aeon" || tok.ends_with("/aeon"))
+    strand::probe::aeon_alive(pidfile)
 }
 
 /// `show <bead>` -> (priority, sanitized title, repo name), `?`/empty on any failure.
@@ -1156,12 +1141,14 @@ mod tests {
     }
 
     #[test]
-    fn is_aeon_cmd_matches_the_bash_regex() {
-        assert!(is_aeon_cmd("/usr/local/bin/aeon builder sp-1"));
-        assert!(is_aeon_cmd("bash /release/spira/aeon.sh builder"));
-        assert!(is_aeon_cmd("aeon"));
-        assert!(!is_aeon_cmd("/usr/bin/claude --dangerous"));
-        assert!(!is_aeon_cmd("aeon-something else"));
+    fn aeon_alive_delegates_to_strands_canonical_predicate() {
+        // Wave 4.23 (sp-0ffox) retired this crate's own cmdline check; the positive/negative
+        // controls for the predicate now live with strand's own suite. This just confirms
+        // the probe reaches it rather than a local reimplementation.
+        let dir = testkit::TempDir::new("cockpit-collect-aeon-alive");
+        let pf = dir.join("x.pid");
+        std::fs::write(&pf, "999999999").unwrap();
+        assert!(!aeon_alive(&pf), "a pid that does not exist is never alive");
     }
 
     #[test]

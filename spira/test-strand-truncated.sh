@@ -136,10 +136,23 @@ FAYTH_MAX_CONCURRENT=1
 FAYTH_TIMEOUT_SECONDS=3600
 FAYTH2
 done
-# Stubs: pilgrimage, strand, sending, reflect all exit 0 with no output.
-for _s in pilgrimage.sh strand sending reflect.sh; do
+# Stubs: pilgrimage, sending, reflect all exit 0 with no output.
+for _s in pilgrimage.sh sending reflect.sh; do
     printf '#!/bin/sh\n' > "$TMP/stubs2/$_s"; chmod +x "$TMP/stubs2/$_s"
 done
+# strand ALSO backs lib.sh's aeon_alive/aeon_count/aeons_live_total/aeons_live_lanes shims
+# now (wave 4.23, sp-0ffox) — a bare no-op here would make `$(aeon_count ...)` inside
+# lib.sh's pass-start summary print nothing, not "0", and blow up the arithmetic that adds
+# it (this case has two task fayths, alpha and beta, so that summary line IS computed).
+# A plain no-op is still correct for strand's OWN verbs (report/check/throttle-state).
+cat > "$TMP/stubs2/strand" <<'STRANDSTUB'
+#!/bin/sh
+case "$1" in
+    aeon-alive) exit 1 ;;
+    aeon-count|aeons-live-total|aeons-live-lanes) printf '0' ;;
+esac
+STRANDSTUB
+chmod +x "$TMP/stubs2/strand"
 _libs "$TMP/stubs2"
 # systemctl stub: says unit is inactive so the landing dispatch path runs cleanly.
 printf '#!/bin/sh\necho inactive\n' > "$TMP/stubs2/mock-systemctl"; chmod +x "$TMP/stubs2/mock-systemctl"
