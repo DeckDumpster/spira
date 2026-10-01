@@ -236,8 +236,7 @@ impl Run<'_> {
 
         // ---- eviction race ----
         if !restricted && st == "closed" && committed && !superseded {
-            let ls = self.sv("land_state", &s(&[&id]));
-            let ls = if ls.success() { ls.text() } else { String::new() };
+            let ls = self.conf.land_state(&id);
             let reasons = self.conf.s("LAND_EVICTION_REASONS");
             let cap_at = self.conf.n("SPIRA_EVICTION_ESCALATE_AT", 3);
             if !ls.is_empty() && decide::eviction_reopen(&ls, "", 0, &reasons, cap_at) != Eviction::None {
@@ -469,7 +468,9 @@ impl Run<'_> {
                     };
                     if !cited.is_empty() {
                         self.log(&format!("{f}: {id} closed behind {base} but notes cite {cited} on {base} — retiring as landed"));
-                        self.sdo("land_mark", &s(&[&id, "LANDED", &cited, "cited-on-main"]));
+                        // landing-pass owns the landstate ledger's one writer (sp-cnnt6,
+                        // "wave 4.16") — `landing-pass mark`, not the lib.sh seam.
+                        let _ = self.d.exec.exec("landing-pass", &s(&["mark", &id, "LANDED", &cited, "cited-on-main"]), None, None);
                         if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("fix on {base} cited in notes as {cited}"), "cited-landed"])) != 0 {
                             self.log(&format!("{f}: {id} branch retire failed"));
                         }
