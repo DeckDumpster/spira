@@ -6,13 +6,14 @@
 #
 # gap G4 (docs/test-plan/landing-merge-queue.md section 6): the writer is one literal
 # string, produced at three call sites, but it has two independent readers — lib.sh's
-# landed()/landed_sha(), and gh-issue-backfill.sh's own git log --grep search, which does
-# not call landed() at all (it takes the first ancestry match by id, no subject-shape
-# check). Nothing before this suite built ONE fixture and asked both readers about it;
-# CLOSED != LANDED (law-closed-is-not-landed) depends on them agreeing.
+# landed()/landed_sha(), and `gh-intake backfill`'s own git log --grep search (ported
+# from gh-issue-backfill.sh, sp-j3fim, "wave 4.31"), which does not call landed() at all
+# (it takes the first ancestry match by id, no subject-shape check). Nothing before this
+# suite built ONE fixture and asked both readers about it; CLOSED != LANDED
+# (law-closed-is-not-landed) depends on them agreeing.
 #
 # tier: T2
-# covers: spira/lib.sh spira/gh-issue-backfill.sh queue/src/* landing-pass/src/*
+# covers: spira/lib.sh gh-intake/src/* queue/src/* landing-pass/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -87,12 +88,13 @@ is "landed_sha(): a longer id's titled commit does not shadow this id's own" \
 
 # ============================================================================
 echo
-echo "THE OTHER READER — gh-issue-backfill.sh's own ancestry search agrees with landed_sha():"
-# gh-issue-backfill.sh does not call landed()/landed_sha(); it runs its own git log
-# --grep="\$id" ancestry search (no subject-shape filter) and trusts the first hit. On
-# this fixture — one candidate commit, the writer form itself — the two readers must
-# name the same sha, or CHECK 5's ancestry-based verdict and the backfill's github-issue
-# close are deciding "landed" from different evidence.
+echo "THE OTHER READER — gh-intake backfill's own ancestry search agrees with landed_sha():"
+# gh-intake backfill (ported from gh-issue-backfill.sh, sp-j3fim "wave 4.31") does not
+# call landed()/landed_sha(); it runs its own git log --grep="\$id" ancestry search (no
+# subject-shape filter) and trusts the first hit. On this fixture — one candidate commit,
+# the writer form itself — the two readers must name the same sha, or CHECK 5's
+# ancestry-based verdict and the backfill's github-issue close are deciding "landed" from
+# different evidence.
 # ============================================================================
 GHLOG="$TMP/gh.log"
 mkdir -p "$TMP/bin"
@@ -116,13 +118,13 @@ JSONL
 : > "$GHLOG"
 out="$(SPIRA_GH="$TMP/bin/gh" GHLOG="$GHLOG" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
      SPIRA_RUN="$RUN" SPIRA_HOME="$SH" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO" \
-     SPIRA_REPO_MAP="$SH/repo-map" PATH="$SH:$PATH" gh-issue-backfill.sh --dry-run 2>&1)"
+     SPIRA_REPO_MAP="$SH/repo-map" gh-intake backfill --dry-run 2>&1)"
 
 BACKFILL_SHA_PREFIX="$(printf '%s\n' "$out" | grep -oE 'as [0-9a-f]{8}' | awk '{print $2}')"
 if [ -n "$BACKFILL_SHA_PREFIX" ]; then
-    ok "gh-issue-backfill.sh (dry-run) reports a landed sha for sp-fix"
+    ok "gh-intake backfill (dry-run) reports a landed sha for sp-fix"
 else
-    bad "gh-issue-backfill.sh (dry-run) reports a landed sha for sp-fix" "got: $out"
+    bad "gh-intake backfill (dry-run) reports a landed sha for sp-fix" "got: $out"
 fi
 is "the two readers name the same commit" "${LIB_SHA:0:8}" "${BACKFILL_SHA_PREFIX:-}"
 

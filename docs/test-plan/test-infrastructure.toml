@@ -255,3 +255,13 @@ statement = "A suite skipping (77) on consecutive timed passes files a `suite-sk
 reason = "file_skip's suite-skip filing lived only in suites.sh's cmd_run, retired with the background suites sweep"
 date = "2026-09-26"
 bead = "sp-b99nj"
+
+[[use_case]]
+id = "UC-covers-01"
+tier = "T1"
+statement = "test-dummy.sh's own id (never a catalogued use case — a probe token the suite put on its own # covers: line to exercise suite_uc_of/suite-select header uc end to end), covering spira/test-dummy.sh's demonstration of suite_covers_of/suite_requires_of over spira/suite-covers.sh."
+
+[use_case.uncovered]
+reason = "test-dummy.sh retired (wave 4.36, sp-bobsp: suite-covers.sh's bash accessors replaced by suite-select/src/header.rs, read through `suite-select header ...`); its parser coverage is cargo test -p suite-select now, not a spira/test-*.sh suite"
+date = "2026-10-01"
+bead = "sp-bobsp"
