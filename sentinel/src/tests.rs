@@ -880,7 +880,7 @@ fn check4_poisons_asks_mails_and_clears() {
     // the ask: evidence carries the bead, the repo and the trace; marked once accepted
     let ask = r
         .find(|s| {
-            s.prog == "mail.sh" && s.args.iter().any(|a| a.contains("change the approach"))
+            s.prog == "mail" && s.args.iter().any(|a| a.contains("change the approach"))
         })
         .unwrap();
     assert!(env_of(&ask, "SPIRA_MAIL_REPEAT_CONSIDERED").is_none());
@@ -895,7 +895,7 @@ fn check4_poisons_asks_mails_and_clears() {
     // the requeue mail
     let rq = r
         .find(|s| {
-            s.prog == "mail.sh" && s.args.iter().any(|a| a.contains("requeued 5 times"))
+            s.prog == "mail" && s.args.iter().any(|a| a.contains("requeued 5 times"))
         })
         .unwrap();
     assert_eq!(

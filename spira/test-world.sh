@@ -62,7 +62,7 @@ WORLD_BIN="$(command -v world || true)"
 cp "$WORLD_BIN" "$SH/world.sh"; chmod +x "$SH/world.sh"
 cp "$HERE/conf.sh" "$SH/"
 # slay.sh is called by `stop` for live aeons; stub it so no real aeons are touched.
-printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay.sh"; chmod +x "$SH/slay.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/slay"; chmod +x "$SH/slay"
 
 # The systemctl stub. It records every call; what it answers depends on the service asked for.
 # ACTIVE_SVC controls which service is "active" for the current test.

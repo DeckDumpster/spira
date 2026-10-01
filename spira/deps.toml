@@ -309,6 +309,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v gate-run)\""
 
 [[dep]]
+name = "inbox-triage"
+tier = "release"
+purpose = "Spira's inbox-triage binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v inbox-triage)\""
+
+[[dep]]
 name = "intent-report"
 tier = "release"
 purpose = "Spira's intent-report binary, from the release's bin/"
@@ -335,6 +342,13 @@ tier = "release"
 purpose = "Spira's loom binary, from the release's bin/"
 version_min = ""
 version_probe = "readlink -f \"$(command -v loom)\""
+
+[[dep]]
+name = "mail"
+tier = "release"
+purpose = "Spira's mail binary, from the release's bin/ — Maildir send/read/sendmail/tidy (replaces spira/mail.sh, sp-ooh1k)"
+version_min = ""
+version_probe = "readlink -f \"$(command -v mail)\""
 
 [[dep]]
 name = "panel"
@@ -554,6 +568,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v units-install)\""
 
 [[dep]]
+name = "watchd"
+tier = "release"
+purpose = "Spira's watchd binary, from the release's bin/"
+version_min = ""
+version_probe = "readlink -f \"$(command -v watchd)\""
+
+[[dep]]
 name = "work"
 tier = "release"
 purpose = "Spira's work binary, from the release's bin/"
@@ -608,3 +629,33 @@ tier = "optional"
 purpose = "health's terminal-size probe for its own pane (falls back to $LINES/$COLUMNS, then a fixed default when absent)"
 version_min = ""
 version_probe = "stty --version"
+
+# COMPAT NAMES (sp-6onps-compat, the P0 this closes). The operator surface — chamber
+# briefs, skills, every test suite not yet repointed — still spells several retired bash
+# scripts by their old `.sh` name. Both release-building paths (spira/build-tarball.sh,
+# and release/src/build.rs's `release build`/`release stage`, the path `queue land-local`
+# actually takes) read this one table and symlink `bin/<alias>` -> `<name>` and
+# `spira/<alias>` -> `../bin/<name>`, so a release built by EITHER path carries every
+# compat name — the bug this closes was that only build-tarball.sh knew this list, and
+# `release build` (what every real deploy goes through) never did, so c26c3a7d8 shipped
+# with none of them in bin/ or spira/. Shrink-only in spirit: an entry comes off once
+# every caller of that old name is gone, never grows for a newly retired script by habit.
+[[compat]]
+name = "world"
+alias = "world.sh"
+
+[[compat]]
+name = "ctrl"
+alias = "ctrl.sh"
+
+[[compat]]
+name = "aeons"
+alias = "aeons.sh"
+
+[[compat]]
+name = "slay"
+alias = "slay.sh"
+
+[[compat]]
+name = "mail"
+alias = "mail.sh"

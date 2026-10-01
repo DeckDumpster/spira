@@ -46,10 +46,11 @@ CONF="${SPIRA_CONF_FILE:-}"
 # so the one question is whether each name resolves; each missing one is named.
 # --------------------------------------------------------------------------------------
 # The binaries come from deps.toml's release tier — one list, not a second literal here.
-# world.sh is the `world` binary now (sp-6onps) and deps.toml's release tier already
-# names it (alongside ctrl/aeons/slay) — spira_deps_list release covers all four without
-# a hand-written suffix entry; mail.sh and gate.sh are still bash and stay listed by hand.
-SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')mail.sh gate.sh"
+# world.sh is the `world` binary now (sp-6onps) and mail.sh is the `mail` binary now
+# (sp-ooh1k); deps.toml's release tier already names both (alongside ctrl/aeons/slay) —
+# spira_deps_list release covers all of them without a hand-written suffix entry.
+# gate.sh is still bash and stays listed by hand.
+SPIRA_RELEASE_TOOLS="$(spira_deps_list release | tr '\n' ' ')gate.sh"
 doctor_check_release_tools() {
     local t missing="" n=0
     for t in $SPIRA_RELEASE_TOOLS; do
@@ -431,16 +432,16 @@ doctor_check_failed_units() {
 }
 
 # --------------------------------------------------------------------------------------
-# ORPHAN WATCH UNITS (sp-07yxy). watchd.sh prune disables and removes a retired daemon
+# ORPHAN WATCH UNITS (sp-07yxy). `watchd prune` disables and removes a retired daemon
 # row's unit; this is the check for when prune was never run — an enabled
 # spira-watch-*-<instance>.service whose watcher name has no `daemon` row in the manifest
 # runs on against a target that no longer exists, and fails, unnoticed, until this asks.
 # --------------------------------------------------------------------------------------
 doctor_check_orphan_units() {
     local sc="${SPIRA_SYSTEMCTL:-systemctl}" inst="${SPIRA_INSTANCE:-prod}" out rows
-    if ! rows="$(watchd.sh manifest 2>/dev/null)"; then
+    if ! rows="$(watchd manifest 2>/dev/null)"; then
         FAIL "cannot read the watcher manifest" \
-             "Check: watchd.sh manifest"
+             "Check: watchd manifest"
         return
     fi
     local known=" " name kind rest
@@ -469,7 +470,7 @@ doctor_check_orphan_units() {
         wname="${unit#spira-watch-}"; wname="${wname%-"$inst".service}"
         case "$known" in *" $wname "*) continue ;; esac
         FAIL "$unit is enabled but '$wname' has no daemon row in the manifest" \
-             "Check: watchd.sh prune"
+             "Check: watchd prune"
         n=$((n+1))
     done <<< "$out"
     [ "$n" -eq 0 ] && OK "no orphan spira-watch units"

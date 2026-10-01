@@ -22,7 +22,7 @@
 #      than guessing it away.
 #   6. BRANCHES WITH NO PR (T2: real git, stubbed gh) — pr-mode only; unchanged from before.
 #   7. THE MANIFEST ROW is a daemon now, not a log fed by an external timer — this is what
-#      lets `watchd.sh status` show it active instead of external.
+#      lets `watchd status` show it active instead of external.
 #   8. EVERY TRANSITION IS ALSO MAILED to the concierge mailbox directly (`--kind event`),
 #      not only logged — delivery this way does not depend on a session holding an
 #      in-session Monitor or on the watch-notify escalation timer.
@@ -33,7 +33,7 @@
 # never a hand-written model of what `gh` would say.
 #
 # tier: T1
-# covers: spira/pr-notify.sh spira/watchers spira/mail.sh spira/mail/kinds UC-operator-channel-38
+# covers: spira/pr-notify.sh spira/watchers mail/src/* spira/mail/kinds UC-operator-channel-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -325,7 +325,7 @@ hasnt "branch with a PR is not reported" "$(cat "$TMP/out")" "⚠ BRANCH spira/t
 
 # ====================================================================================
 # 7. THE MANIFEST ROW IS A DAEMON, not a log fed by an external timer — this is what lets
-#    `watchd.sh status` show pr-notify active instead of external, and what puts it on the
+#    `watchd status` show pr-notify active instead of external, and what puts it on the
 #    same generic spira-watch@ rendering test-units-lint.sh already checks.
 # ====================================================================================
 echo

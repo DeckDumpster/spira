@@ -450,6 +450,71 @@ pub fn try_take(
     Ok((Take::Busy { holders: live }, ended))
 }
 
+/// What [`take_now`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Now {
+    /// A lease was written at `slot`; `held_before` units were already held by others
+    /// (> size: this lease oversubscribes the pool).
+    Took { slot: u64, held_before: u64, fresh: bool },
+    /// An ancestor of the holder already holds a lease in this pool.
+    Inherited { slot: u64 },
+}
+
+/// A GATE's build takes a compile lease WITHOUT WAITING (sp-f4ig1-fix, DESIGN-admission.md
+/// D11): written at once whatever the pool holds — oversubscribing it when full — so the
+/// gate never waits, while agent leases (which must fit, [`try_take`]) queue behind it until
+/// it is released. Already ours and inherited-from-an-ancestor behave as in [`try_take`].
+pub fn take_now(run: &Path, pool: Pool, size: u64, me: &Holder, now: u64, procs: &dyn Procs) -> std::io::Result<(Now, Vec<Ended>)> {
+    let dir = pool.dir(run);
+    let _m = Mutex::lock(&dir)?;
+    let (live, ended, _) = reap(&dir, pool, size, procs);
+    let held_before: u64 = live.iter().filter(|l| !l.is(me)).map(|l| l.weight.max(1)).sum();
+    if let Some(l) = live.iter().find(|l| l.is(me)) {
+        return Ok((Now::Took { slot: l.slot, held_before, fresh: false }, ended));
+    }
+    let anc = ancestors(me.pid, procs);
+    if let Some(l) = live.iter().find(|l| anc.contains(&l.pid)) {
+        return Ok((Now::Inherited { slot: l.slot }, ended));
+    }
+    let n = (1..).find(|n| !live.iter().any(|l| l.slot == *n)).unwrap_or(1);
+    let l = Lease { slot: n, pid: me.pid, start: me.start, who: me.who.clone(), since: now, waited: 0, last: now, weight: me.weight.max(1) };
+    write_atomic(&dir.join(format!("slot.{n}")), &l.render())?;
+    Ok((Now::Took { slot: n, held_before, fresh: true }, ended))
+}
+
+/// The log line of a fresh [`take_now`].
+pub fn take_now_line(pool: Pool, size: u64, slot: u64, weight: u64, held_before: u64) -> String {
+    let over = if held_before + weight > size { format!(" — oversubscribed: {} of {size} held", held_before + weight) } else { String::new() };
+    format!("gate build took {} slot {slot} (weight {weight}) without waiting{over}; new agent builds queue behind it", pool.name())
+}
+
+/// [`take_now`] for process `holder_pid`, as a [`Guard`] that releases on drop. Never fails
+/// the job: an unusable pool directory is said and the build runs unleased.
+/// `q.inherit` is not consulted: the caller already knows this is a gate's build.
+pub fn take_now_guard(q: &Request, size: u64, procs: &dyn Procs, say: &mut dyn FnMut(&str)) -> Guard {
+    let (run, pool) = (q.run, q.pool);
+    let Some(me) = holder_for(q.holder_pid, q.who, q.weight, procs) else {
+        return Guard::inherited(pool, "none");
+    };
+    match take_now(run, pool, size, &me, now_epoch(), procs) {
+        Ok((Now::Took { slot, held_before, fresh }, ended)) => {
+            record(run, &ended);
+            if fresh {
+                say(&take_now_line(pool, size, slot, me.weight, held_before));
+            }
+            Guard { run: run.to_path_buf(), pool, size, slot, me: Some(me), waited: 0, token: format!("{}:{slot}", pool.name()) }
+        }
+        Ok((Now::Inherited { slot }, ended)) => {
+            record(run, &ended);
+            Guard::inherited(pool, &format!("{}:{slot}", pool.name()))
+        }
+        Err(e) => {
+            say(&format!("admission: {} pool at {} unusable ({e}) — the gate build runs unleased", pool.name(), pool.dir(run).display()));
+            Guard::inherited(pool, "none")
+        }
+    }
+}
+
 /// Release `slot` if it still names `me`; the ended lease for telemetry.
 pub fn release(run: &Path, pool: Pool, size: u64, slot: u64, me: &Holder, now: u64) -> Option<Ended> {
     let dir = pool.dir(run);
@@ -764,6 +829,36 @@ pub fn jitter(max: u64, seed: u64) -> u64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^= z >> 31;
     z % (max + 1)
+}
+
+/// What the RUSTC_WRAPPER does with one rustc invocation (DESIGN-admission.md §3.3, D11).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WrapperAction {
+    /// Exec the compiler at once: a probe, or a job already admitted to a non-gate slot.
+    Exec,
+    /// Queue for a compile slot first (an agent's build).
+    Wait,
+    /// A gate's build: take a compile lease for the cargo without waiting, then exec.
+    TakeNow,
+}
+
+/// The wrapper's one decision. `inherit` is [`INHERIT_ENV`]: `gate` (or `gate:<n>`) marks a
+/// gate's build, any other non-empty value a job admitted elsewhere.
+pub fn wrapper_action(inherit: Option<&str>, rustc_args: &[String]) -> WrapperAction {
+    if !is_compile(rustc_args) {
+        return WrapperAction::Exec;
+    }
+    match inherit.map(str::trim).filter(|t| !t.is_empty()) {
+        None => WrapperAction::Wait,
+        Some(t) if is_gate_token(t) => WrapperAction::TakeNow,
+        Some(_) => WrapperAction::Exec,
+    }
+}
+
+/// Is this [`INHERIT_ENV`] value a gate's?
+pub fn is_gate_token(t: &str) -> bool {
+    let t = t.trim();
+    t == "gate" || t.starts_with("gate:")
 }
 
 /// Does this rustc argument list compile a crate? The probes (`-vV`, `--print …`) that

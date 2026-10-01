@@ -41,7 +41,7 @@ _emit() { printf '%s\n' "$1"; }
 _report() {
     local line="$1"
     _emit "$line"
-    mail.sh send concierge \
+    mail send concierge \
         --from "Publish Backlog <publish-backlog@spira>" \
         --subject "publish-backlog: $line" \
         --kind event <<MAILEOF >/dev/null || printf 'publish-backlog: mail send failed for: %s\n' "$line" >&2
@@ -190,7 +190,7 @@ cmd_watch() {
 
 # SOURCEABLE, AND SILENT WHEN IT IS: a T1 test wanting only _pb_backlog or _pb_tick_repo
 # (pure functions once the repo-map and fixture repos are set up) would otherwise trigger a
-# live repo-map scan on source — the same seam pr-notify.sh and watchd.sh already open.
+# live repo-map scan on source — the same seam pr-notify.sh and watchd already open.
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     case "${1:-}" in
         --show|-s|"") _pb_tick ;;

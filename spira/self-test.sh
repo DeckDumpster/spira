@@ -14,6 +14,16 @@ MANIFEST="$REL/MANIFEST"
 fail=0
 while IFS= read -r line; do
     case "$line" in
+        bin/*" -> "*)
+            # A compat alias (sp-nhf25): verify it as a link, never by hashing its target.
+            name="${line%% -> *}"
+            target="${line#* -> }"
+            path="$REL/$name"
+            if [ ! -L "$path" ] || [ "$(readlink "$path")" != "$target" ] || [ ! -x "$path" ]; then
+                printf 'self-test: FAIL %s: not a link to an executable %s\n' "$name" "$target" >&2
+                fail=1
+            fi
+            ;;
         bin/*)
             name="${line%% *}"
             want="${line#* }"

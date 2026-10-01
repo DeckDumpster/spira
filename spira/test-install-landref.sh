@@ -20,7 +20,7 @@
 # The fence fires before any directory creation or file write, so a refusal must leave
 # the box exactly as it was.
 #
-# THE FENCE IS TESTED IN ISOLATION by making watchd.sh a stub (exits 0, no output),
+# THE FENCE IS TESTED IN ISOLATION by making watchd a stub (exits 0, no output),
 # so the only failure path that can fire before the fence is the path-collision check
 # (skipped via SPIRA_CONF=/nonexistent). The fence fires; everything after it would need
 # a full systemctl environment and is not what this suite covers.
@@ -78,7 +78,9 @@ git -C "$CLONE" push -q origin main
 # ---------------------------------------------------------------------------
 # Minimal harness fixture. units-install resolves the landref check directly against
 # git (install::checks::check_landref), sp-31dm0. conf.sh and lib.sh are symlinked so
-# spira_landref (still read by other tools) is available too. watchd.sh is stubbed: exits 0 with no output, so the watcher
+# spira_landref (still read by other tools) is available too. `watchd` (sp-48f6g: a
+# compiled binary, @SPIRA_PROD_ROOT@/bin/watchd, not a script sourced from spira/) is
+# stubbed: exits 0 with no output, so the watcher
 # manifest loop has nothing to do and does not interfere.
 # ---------------------------------------------------------------------------
 FIXTURE="$TMP/harness"
@@ -90,16 +92,17 @@ done
 ln -s "$HERE/conf.sh"  "$FIXTURE/spira/conf.sh"
 ln -s "$HERE/lib.sh"   "$FIXTURE/spira/lib.sh"
 
-cat > "$FIXTURE/spira/watchd.sh" <<'WATCHD'
+# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
+. "$HERE/lib-test-install.sh"
+install_fixture_release_bins "$FIXTURE"
+# Override the generic stub with one units.sh's `watchd units` call needs: no watchers.
+cat > "$FIXTURE/bin/watchd" <<'WATCHD'
 #!/usr/bin/env bash
 # Stub: no watchers.
 [ "${1:-}" = "units" ] && { echo ""; exit 0; }
 exit 0
 WATCHD
-chmod +x "$FIXTURE/spira/watchd.sh"
-# Unit binaries (sp-gypjk): the units ExecStart $FIXTURE/bin/<tool>, the release layout.
-. "$HERE/lib-test-install.sh"
-install_fixture_release_bins "$FIXTURE"
+chmod +x "$FIXTURE/bin/watchd"
 
 # Mock systemctl: always reports no aeons, never active (so the live-aeon fence
 # does not fire and we reach the end-state check, which also needs to be silent).
@@ -140,7 +143,7 @@ inst() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        "PATH=$MOCK_BIN:$FIXTURE/spira:$GIT_BIN:$PATH" \
+        "PATH=$MOCK_BIN:$FIXTURE/bin:$FIXTURE/spira:$GIT_BIN:$PATH" \
         "HOME=$TMP/home" \
         SPIRA_CONF=/nonexistent \
         "SPIRA_REPO=$repo" \

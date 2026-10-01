@@ -62,24 +62,20 @@ pub fn host_from_env(instance: &str) -> HostValues {
     }
 }
 
-/// `watchd.sh units` — the watcher manifest. Still bash (not this bead's scope); called by
-/// bare name exactly as units.sh did.
-///
-/// `systemd/units.sh` reached `watchd.sh` after `conf.sh` was already sourced, so
-/// `SPIRA_WATCHERS` had conf.sh's own default (`$SPIRA_HOME/watchers`, conf.sh line ~877)
-/// applied for free; this binary does not source conf.sh, and a batch-container or minimal
-/// test env can invoke it with `SPIRA_WATCHERS` unset, which `watchd.sh` itself does not
-/// default — same gap class as `bootstrap::host_from_env`'s render defaults, closed the same
-/// way: apply the one default `watchd.sh` actually needs here, in this process's own
-/// environment for the child, not the caller's.
+/// `watchd units` — the watcher manifest. `watchd.sh` is retired (sp-48f6g: rewritten to
+/// the `watchd` crate); called by bare name exactly as units.sh did, just the new binary
+/// name. `watchd` shells into `conf.sh` itself for everything conf.sh would otherwise
+/// derive (`watchd::context`'s one seam), so `SPIRA_WATCHERS`'s own conf.sh default
+/// (`$SPIRA_HOME/watchers`) reaches it for free as long as `SPIRA_HOME` is set — this
+/// fallback stays as a second line of defense for a minimal env that sets neither.
 pub fn watch_names() -> Result<Vec<String>, String> {
     let watchers = nonempty_env("SPIRA_WATCHERS").or_else(|| nonempty_env("SPIRA_HOME").map(|h| format!("{h}/watchers")));
-    let mut cmd = Command::new("watchd.sh");
+    let mut cmd = Command::new("watchd");
     cmd.arg("units");
     if let Some(w) = watchers {
         cmd.env("SPIRA_WATCHERS", w);
     }
-    let out = cmd.output().map_err(|e| format!("cannot run watchd.sh: {e}"))?;
+    let out = cmd.output().map_err(|e| format!("cannot run watchd: {e}"))?;
     if !out.status.success() {
         return Err("the watcher manifest is malformed".into());
     }

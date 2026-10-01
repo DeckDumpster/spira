@@ -11,11 +11,12 @@
 # by bare name on PATH (the workspace is always built under testenv — the same convention
 # test-reconciler.sh's `command -v reconciler` already relies on), not symlinked into the
 # fixture. The fixture still symlinks the *templates* (systemd/*.service/.timer/.yaml) and
-# the bash libraries the binaries still shell out to (conf.sh, lib.sh, watchd.sh,
-# suite-covers.sh) — everything this crate itself owns now lives in the binary, not the tree.
+# the bash libraries the binaries still shell out to (conf.sh, lib.sh, suite-covers.sh) —
+# everything this crate itself owns now lives in the binary, not the tree. `watchd.sh` is
+# also retired (sp-48f6g: the `watchd` binary); not symlinked for the same reason.
 #
 # install_fixture_build <fixture-root>
-#   Symlinks the real systemd/*.{service,timer,yaml} and spira/{conf.sh,watchd.sh,lib.sh,
+#   Symlinks the real systemd/*.{service,timer,yaml} and spira/{conf.sh,lib.sh,
 #   suite-covers.sh} into <fixture-root>/{systemd,spira}; writes an empty watchers manifest
 #   and repo-map.example, a no-op `release` stub (install_fixture_release_stub below; found
 #   by bare name on PATH, so a caller puts <fixture-root>/spira first on it), and
@@ -73,7 +74,7 @@ install_fixture_build() {
         [ -e "$f" ] || continue
         ln -sf "$f" "$fixture/systemd/$(basename "$f")"
     done
-    for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$fixture/spira/$f"
     done
     printf '# empty — test fixture\n' > "$fixture/spira/watchers"
@@ -113,6 +114,21 @@ _install_fixture_unit_bins() {
 }
 INSTALL_FIXTURE_UNIT_BINS="$(_install_fixture_unit_bins)"
 
+# Exec targets outside bin/ (sp-m6ow8): a unit may exec a script under the root, spira/
+# (@SPIRA_PROD@) or cockpit/ (@SPIRA_PROD_COCK@) — concierge.sh, mail.sh, moot-sweep.sh. Derived
+# from the program word of Exec* lines only, so neither an argument nor a Documentation= path
+# becomes a stub.
+_install_fixture_root_execs() {
+    local sysd
+    sysd="$(cd "$(dirname "${BASH_SOURCE[0]}")/../systemd" 2>/dev/null && pwd)" || return 1
+    grep -h '^Exec[A-Za-z]*=' "$sysd"/*.service "$sysd"/*.timer 2>/dev/null \
+        | sed 's|^Exec[A-Za-z]*=[-:+!]*||; s|[[:space:]].*||' \
+        | grep -o '^@SPIRA_PROD\(_ROOT\|_COCK\)\?@/[^[:space:]]*' \
+        | sed -e 's|^@SPIRA_PROD_ROOT@/||' -e 's|^@SPIRA_PROD_COCK@/|cockpit/|' -e 's|^@SPIRA_PROD@/|spira/|' \
+        | grep -v '^bin/' | sort -u | tr '\n' ' '
+}
+INSTALL_FIXTURE_ROOT_EXECS="$(_install_fixture_root_execs)"
+
 # install_fixture_release_bins <prod-root> -> no-op stubs at <prod-root>/bin/<tool> for every
 # binary a unit template ExecStarts.
 install_fixture_release_bins() {
@@ -125,6 +141,18 @@ install_fixture_release_bins() {
     for b in $INSTALL_FIXTURE_UNIT_BINS; do
         printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/$b"
         chmod +x "$dir/$b"
+    done
+    # Stub a target only where nothing stands, and only inside the fixture: install_fixture_prod
+    # symlinks the real tree's top-level entries, and writing through one would edit the checkout.
+    local root parent
+    root="$(cd "$1" && pwd -P)"
+    for b in $INSTALL_FIXTURE_ROOT_EXECS; do
+        [ -e "$1/$b" ] || [ -L "$1/$b" ] && continue
+        mkdir -p "$(dirname "$1/$b")"
+        parent="$(cd "$(dirname "$1/$b")" && pwd -P)"
+        case "$parent/" in "$root"/*) ;; *) continue ;; esac
+        printf '#!/usr/bin/env bash\nexit 0\n' > "$1/$b"
+        chmod +x "$1/$b"
     done
 }
 
@@ -174,18 +202,14 @@ mk_install_fixture() {
         [ -e "$f" ] || continue
         ln -sf "$f" "$systemd/$(basename "$f")"
     done
-    for f in conf.sh lib.sh watchd.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$_LIB_INSTALL_SELF/$f" ] && ln -sf "$_LIB_INSTALL_SELF/$f" "$spira/$f"
     done
     printf '# empty\n' > "$spira/watchers"
     printf '# empty\n' > "$spira/repo-map.example"
-    # concierge.service and beads-push.service ExecStart @SPIRA_PROD_ROOT@/concierge.sh and
-    # .../beads-push.sh (repo-root scripts, not under bin/), and units-install refuses a unit
-    # whose ExecStart target is not executable. SPIRA_PROD is pinned to $fixture/spira by
-    # every caller of this fixture, so PROD_ROOT is $fixture — these two need to exist there.
-    for f in concierge.sh beads-push.sh; do
-        [ -e "$_LIB_INSTALL_SELF/../$f" ] && ln -sf "$_LIB_INSTALL_SELF/../$f" "$fixture/$f"
-    done
+    # Root/spira/cockpit exec targets outside bin/ (concierge.sh, mail.sh, moot-sweep.sh, ...)
+    # are stubbed by install_fixture_release_bins (sp-m6ow8), which every caller of this
+    # fixture also calls — not duplicated here.
 
     FAKE_ORIGIN="$tmp/origin.git"
     FAKE_REPO="$tmp/fakerepo"
@@ -247,7 +271,7 @@ tinstall_fixture() {   # tinstall_fixture <dir>
         [ -e "$f" ] || continue
         ln -sf "$f" "$dir/systemd/$(basename "$f")"
     done
-    for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
+    for f in conf.sh lib.sh suite-covers.sh; do
         [ -e "$src/$f" ] && ln -sf "$src/$f" "$dir/spira/$f"
     done
     printf '# empty — test fixture\n' > "$dir/spira/watchers"

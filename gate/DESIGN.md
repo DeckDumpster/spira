@@ -930,6 +930,68 @@ filter hold to).
   per suite and not unconditionally — a trial whose only red suite is absent on the base, or
   whose base's own broad run already happens to mention it, never pays for it.
 
+### Scar: the targeted rerun used bare `testenv`, invisible until this bead made it primary
+
+Landed 2026-09-30 23:17Z; base-untestable went from 1 in 52 gates to 7 in 50 within hours
+(concierge/sp-ooh1k, sp-aufxu, sp-31dm0). `gate.steps` here declares `bin SPIRA_TESTENV_BIN
+testenv` — "the release's testenv could not run such a branch's suites at all" (sp-isom7) —
+but both the targeted rerun (`base_rerun_cmd`, pre-existing since sp-hh5h0) and this bead's
+own image-tag query called bare `testenv` on the release's PATH regardless, because the code
+computing them sat **outside** the `if let (Some(bdef), Some(base_tools)) = …` block that
+holds the base's own tool bindings — a scoping accident, not a deliberate choice. Bare
+`testenv` exits 127 for a tree it cannot run; `base_rerun_cmd`'s own case clause maps that to
+NO_VERDICT. `base_out` then never gained the suite's line at all — not run, not red — so
+`parse::attribute` returned `BaseUntestable`, indistinguishable from a rerun that genuinely
+could not judge. Invisible at 1/52 (the old mirror answered most suites directly; only a
+selection mismatch ever reached the rerun); common once this bead made the rerun the primary
+path for every red suite on such a tree.
+
+**Fix:** `base_bdef`/`base_tools_ref` are read once, right after the `if let` closes (from
+the same `base_gate`/`base_tools` it no longer consumes by value), and both the image-tag
+query and the rerun now run through `with_bins`, and name `"${SPIRA_TESTENV_BIN:-testenv}"`
+rather than a bare name — the environment variable when the base's own tree declares one,
+the same bare name as always when it does not. No repository without a tree-owned `bin`
+testenv sees any behavior change. `cargo test -p gate`'s
+`a_tree_owned_testenv_reruns_through_its_own_binary_never_bare_testenv` and
+`the_image_tag_query_also_uses_the_tree_owned_testenv` fix this as a positive control: a
+fixture with `bin SPIRA_TESTENV_BIN testenv` declared, a branch red on a suite the base does
+not share, must attribute `branch-red` — never `base-untestable` — and the rerun's own env
+must carry the tree-keyed binary path, not nothing.
+
+**Lesson for the next port out of this `if let`:** anything computed inside depends on that
+scope ending where the destructuring does; a value needed later must be re-derived from the
+`Option` it was matched out of (`.as_ref()`, not by value) rather than assumed to still be
+in reach.
+
+### Scar: the rerun never named the repo, so testenv could not resolve its base ref
+
+Found 2026-10-01, hours after the scar above landed: concierge/sp-g3uwp (red on
+`test-persona-model.sh`) and sp-ooh1k (red on `test-install-dolt-*`) both still ended
+`base-untestable` — but `gate.log`'s own `phases=` named a real `base-rerun` wall time (13,
+25, 26 s — not the earlier scar's instant 0-1 s), so the rerun was genuinely attempted this
+time, not skipped. A fault that reaches the rerun, reproduced directly: `testenv --suites
+<suite> <rev>`, no repo argument, no `$SPIRA_REPO` in the environment (never set in the gate
+command's `env -i` — "The gate command's environment" above), faults `VERDICT FAULT rc=2
+reason=base-ref`, "batch: cannot resolve the base ref" — `resolve_repo` falls back to the
+harness root, whose basename matches no configured repository, so `landref` finds no `base`
+column for it. `base_rerun_cmd` has never passed the repo as a second argument, since
+sp-hh5h0 — unlike the repository's own gate string, which always does
+(`"$SPIRA_TESTENV_BIN" --deadline … --suites … "$SPIRA_GATE_BRANCH" "$SPIRA_GATE_REPO"`,
+`gate.steps`). A second, independent omission in the same pre-existing call the first scar
+also lived in — invisible for the same reason: rare before this bead made the rerun the
+primary path, each omission its own failure mode once it was.
+
+**Fix:** `base_rerun_cmd` names `"$SPIRA_GATE_REPO"` as well, in the same position the real
+gate string puts it.
+
+**Also fixed in the same pass: the verdict said nothing about why.** `Attribution::
+BaseUntestable`'s message never included `base_out` at all — a fault that reached the rerun
+(or the base's own fences) left a diagnosis sitting unused in a variable the message simply
+didn't read. It now does: a tail of `base_out` when the base side produced anything, naming
+this exact fault (or whichever one happens next); an explicit "produced no output at all"
+only when it is true. A reader should never have to go read `gate.log`'s phases to learn
+whether the base was even tried.
+
 ## Admission: visible, logged, re-read (sp-q20wb)
 
 Seen 2026-09-30 ~19:05Z: two Concierge landing gates sat 20 minutes behind

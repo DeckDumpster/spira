@@ -51,7 +51,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
        spira-claim audit --candidates F [--events F] [--lifecycle F]        (every partition's own bd list, exclusions dropped)
-       spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer.sh's)
+       spira-claim deadlocked [--apply] --merge-status F [--actor NAME]     (§9; the git check is groomer's)
   thresholds: --poison-at N (3) --requeue-at N (5) --reclaim-at N (5)
   common:     --db PATH  --timeout-s N (60)
   exit: 0 answered, 1 usage, 2 cannot tell (stdout empty); unpoison also 3 = a bead failed;
@@ -66,7 +66,7 @@ struct Args {
     all: Vec<(String, String)>,
 }
 
-const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run"];
+const BOOL_FLAGS: &[&str] = &["--json", "--top-tier", "--count", "--watch", "--dry-run", "--apply"];
 
 impl Args {
     fn parse(raw: &[String]) -> Result<Args, String> {
@@ -704,7 +704,7 @@ fn cmd_audit(a: &Args, env: &mut Env) -> Outcome {
     Outcome::ok(audit::run(&audit::Opts { enforce }, &candidates, &events_by, lc.as_ref()))
 }
 
-/// `deadlocked`'s merge-status input comes from `groomer.sh deadlocked`, which does the git
+/// `deadlocked`'s merge-status input comes from `groomer deadlocked`, which does the git
 /// legwork this binary deliberately does not (DESIGN.md §7, §9). The write is unpoison's
 /// `Live`, reused rather than duplicated, so a lift is provably the same call.
 fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {

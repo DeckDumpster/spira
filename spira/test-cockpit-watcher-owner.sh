@@ -7,7 +7,7 @@
 #      watcher's systemd unit is installed.  Test asserts the running watcher's
 #      pid is the one systemctl started — the unit's MainPID.
 #
-#   2. FAILED UNIT ESCALATION NAMES THE LOCK HOLDER. watchd.sh notify must
+#   2. FAILED UNIT ESCALATION NAMES THE LOCK HOLDER. watchd notify must
 #      include the pid holding the lock and the lock path in the escalation
 #      when a daemon unit is in failed/inactive state and an orphan holds the
 #      lock that keeps the unit from starting.
@@ -20,12 +20,12 @@
 #             line — proves the orphan probe is live.
 #
 # tier: T1
-# covers: cockpit/remote/cockpit-remote spira/watchd.sh
+# covers: cockpit/remote/cockpit-remote watchd/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
 CR="$HERE/../cockpit/remote/cockpit-remote"
-WATCHD="$HERE/watchd.sh"
+WATCHD="$(command -v watchd)" || { echo "watchd is not on PATH" >&2; exit 1; }
 
 
 echo "test-cockpit-watcher-owner.sh"
@@ -93,27 +93,35 @@ cat > "$FAKE_HOME/conf.sh" <<'CONFEOF'
 watch_unit_name() { printf 'spira-watch-view-test.service'; }
 CONFEOF
 
-# watchd.sh: manifest returns a daemon row pointing at the cockpit-remote binary.
-cat > "$FAKE_HOME/watchd.sh" <<WDEOF
+# watchd (sp-48f6g: a compiled binary, looked up by bare name — cockpit-remote's own
+# _watch_unit_name does `command -v watchd`, so this stub goes on PATH ahead of the real
+# one, never referenced by a constructed "$h/watchd" path): manifest returns a daemon row
+# pointing at the cockpit-remote binary.
+cat > "$FAKE_HOME/watchd" <<WDEOF
 #!/usr/bin/env bash
 case "\${1:-}" in manifest) printf 'view|daemon|%s watch|\n' "$CR" ;; esac
 WDEOF
-chmod +x "$FAKE_HOME/watchd.sh"
+chmod +x "$FAKE_HOME/watchd"
 
-# mail.sh: deposits escalation mail so asks() can count it.
-cat > "$FAKE_HOME/mail.sh" <<'MAILEOF'
+# mail: deposits escalation mail so asks() can count it.
+cat > "$FAKE_HOME/mail" <<'MAILEOF'
 #!/usr/bin/env bash
 mkdir -p "$SPIRA_MAIL/operator/new"
 cat > "$SPIRA_MAIL/operator/new/$(date +%s%N)"
 exit 0
 MAILEOF
-chmod +x "$FAKE_HOME/mail.sh"
+chmod +x "$FAKE_HOME/mail"
 
 # ===========================================================================
-echo
-echo "PART 1 — _wd_orphan_lock: finds a process holding a lock"
-# ===========================================================================
-
+# PART 1 (retired sp-48f6g) used to source watchd.sh and call its internal
+# _wd_orphan_lock directly. watchd.sh is now the compiled binary `watchd`, which has no
+# internal function to source — the orphan-lock probe (Ops::Real::orphan_lock) is exercised
+# only through the real dependency it exists to serve, `watchd notify`'s escalation, which
+# PART 2 below already drives end to end against this exact fixture: no orphan → no "pid "
+# line (positive control), orphan present → names its pid and the lock path, orphan killed
+# → the next fresh condition escalates clean again. Nothing PART 1 checked in isolation is
+# left unchecked; it is checked at the one boundary this binary can still be driven through.
+#
 # A test binary with a unique name that acquires a lock on its first argument.
 # Uses trap+subshell pattern: the bash process holds fd 9 while a background
 # child runs WITHOUT fd 9 (closed before exec), so killing bash releases the
@@ -131,43 +139,9 @@ chmod +x "$ORPHAN_BIN"
 
 ORPHAN_LOCK="$TMP/orphan-watch.lock"
 
-# Helper: source watchd.sh and call _wd_orphan_lock with a given target.
-call_orphan_lock() {
-    local target="$1"
-    env -i HOME="$TMP/home" PATH="$PATH" \
-        SPIRA_CONF=/nonexistent SPIRA_RUN="$RUN" \
-        SPIRA_INSTANCE=test SPIRA_WATCHERS="$TMP/watchers" \
-        bash << EOF
-. "$WATCHD" 2>/dev/null
-_wd_orphan_lock "$target"
-EOF
-}
-
-# POSITIVE CONTROL: with no orphan running, the function returns nothing.
-out="$(call_orphan_lock "$ORPHAN_BIN $ORPHAN_LOCK" 2>/dev/null || true)"
-is "pc: no orphan → _wd_orphan_lock returns nothing" "" "$out"
-
-# Start the orphan binary directly so _wd_orphan_lock can find it by cmdline.
-"$ORPHAN_BIN" "$ORPHAN_LOCK" & ORPHAN_PID="$!"
-if ! wait_locked "$ORPHAN_LOCK"; then
-    bad "pc: orphan holds the lock" "fixture failed to acquire lock"
-else
-    ok "pc: orphan holds the lock (positive control)"
-fi
-
-# Now the function must return pid + lock path.
-out="$(call_orphan_lock "$ORPHAN_BIN $ORPHAN_LOCK" 2>/dev/null || true)"
-want "found: output contains the pid"       "$ORPHAN_PID" "$out"
-want "found: output contains the lock path" "$ORPHAN_LOCK" "$out"
-
-# Kill the orphan; function must clear.
-kill "$ORPHAN_PID" 2>/dev/null; wait "$ORPHAN_PID" 2>/dev/null || true
-out="$(call_orphan_lock "$ORPHAN_BIN $ORPHAN_LOCK" 2>/dev/null || true)"
-is "clear: after orphan exits, _wd_orphan_lock returns nothing" "" "$out"
-
 # ===========================================================================
 echo
-echo "PART 2 — watchd.sh notify: escalation names lock holder for a failed unit"
+echo "PART 2 — watchd notify: escalation names lock holder for a failed unit"
 # ===========================================================================
 
 MAN="$TMP/watchers"
@@ -198,8 +172,8 @@ printf '%s\n' "$(( $(date +%s) - 7200 ))" > "$UF"
 run_notify() {
     rm -rf "$MAIL"; mkdir -p "$MAIL"
     rm -f "$WDIR/notify-health.escalated"
-    # The fake home's mail.sh stub and the mock binaries go FIRST on PATH: watchd calls
-    # mail.sh and systemctl by name (sp-gypjk).
+    # The fake home's mail stub and the mock binaries go FIRST on PATH: watchd calls
+    # mail and systemctl by name (sp-gypjk).
     env -i \
         HOME="$TMP/home" \
         PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
@@ -212,7 +186,7 @@ run_notify() {
         SPIRA_HOME="$FAKE_HOME" \
         SPIRA_NOTIFY_AGE=0 \
         SPIRA_ACTIONABLE=WAKEME \
-        bash "$WATCHD" notify 2>/dev/null || true
+        "$WATCHD" notify 2>/dev/null || true
 }
 
 # POSITIVE CONTROL: no orphan → escalation fires but contains no "pid N holds" line.
@@ -284,7 +258,7 @@ chmod +x "$MOCK_BIN/tmux"
 run_cr() {
     env -i \
         HOME="$TMP/fake-home" \
-        PATH="$MOCK_BIN:$PATH" \
+        PATH="$FAKE_HOME:$MOCK_BIN:$PATH" \
         TMPDIR="$TMP" \
         SPIRA_HOME="$FAKE_HOME" \
         COCKPIT_SELF="$CR" \

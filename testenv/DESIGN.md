@@ -157,7 +157,7 @@ parses spira.toml or the repo-map itself (law-config-through-the-cli-only).
 | `SPIRA_BATCH_SUITE_DIR` | `<worktree>/spira` | — |
 | `SPIRA_BATCH_SKIP_INSTALL` | — | — |
 | `SPIRA_BATCH_TIERS` | `T2,T3` | — |
-| `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `mail.sh` / `incident.sh` on PATH (sp-gypjk) | — |
+| `SPIRA_BATCH_MAIL_CMD` / `SPIRA_BATCH_INCIDENT_CMD` | `mail` / `incident.sh` on PATH (sp-gypjk) | — |
 | `SPIRA_SUITE_STATE_FILE` | `spira/suite-state` | — |
 | `SPIRA_SKIP_ALLOWLIST_FILE` (new, §3.7) | `spira/skip-allowlist.tsv` | — |
 | `SPIRA_GATE_SELECT_HEAD` | `<branch>` | — |
@@ -180,7 +180,7 @@ testenv owns orchestration; these stay separate components with their own contra
 | this executable's `container` subcommand (§12; was `spira/testenv.sh`), run as a child against the harness copy `Harness::locate` found — a gate-built testenv therefore drives the tree under test's own image closure, sp-isom7 | `tag` (image build-closure hash), `up --name --checkout` (image acquisition, boot, linger, cargo-volume ownership), `probe`, `down --name --volumes` |
 | `podman` | `exec`, `container inspect`, `container exists`, `ps -a`, `stop`, `rm`, `volume rm` |
 | `spira/gate-diag.sh`, `spira/gate-timing.sh` | red diagnostics table / batch-timing ledger row |
-| `spira/mail.sh`, `spira/incident.sh` | a refused repeat of a cached red: one Concierge note per key (payload on stdin), one incident (payload on stdin) |
+| `mail`, `spira/incident.sh` | a refused repeat of a cached red: one Concierge note per key (payload on stdin), one incident (payload on stdin) |
 
 ## 3. Schema
 
@@ -537,7 +537,7 @@ follows the same rule against a different release:
 `SPIRA_ARTIFACTS`, `SPIRA_ARTIFACTS_ROOT`, `SPIRA_TEST_PLAN_BIN` and `TESTDB_TESTENV` are
 gone: nothing in the tree reads them, and a suite finds `testenv`, `test-plan` and every
 other tool by name. `testlib.sh` does not touch PATH. Host-side helpers (`gate-timing.sh`,
-`gate-diag.sh`, `incident.sh`, `mail.sh`) run on testenv's own PATH — the running release's,
+`gate-diag.sh`, `incident.sh`, `mail`) run on testenv's own PATH — the running release's,
 set by whoever launched testenv. testenv still strips an inherited `SPIRA_ARTIFACTS` from
 cargo and `testenv.sh`, as hygiene against a stale shell.
 

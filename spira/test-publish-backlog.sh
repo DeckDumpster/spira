@@ -10,7 +10,7 @@
 # fixture working, not the check being unable to fire at all
 # (law-absence-needs-a-positive-control).
 #
-# REAL MAIL, NOT A STUB: mail.sh runs for real so a test can assert the actual inbox line
+# REAL MAIL, NOT A STUB: mail runs for real so a test can assert the actual inbox line
 # landed in $RUN/mail/concierge/new/*, the same seam test-pr-notify.sh uses for its own
 # "every transition is mailed" assertions.
 #
@@ -28,7 +28,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 
 SH="$TMP/spira"; mkdir -p "$SH"
 cp -r "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null || true
-cp -r "$HERE/mail" "$SH/mail" 2>/dev/null || true
+# mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
+# the pre-existing kinds/ directory (spira/mail/kinds), not the tool — symlink the real
+# compiled binary in by name instead.
+ln -sf "$(command -v mail)" "$SH/mail"
 chmod +x "$SH"/*.sh 2>/dev/null || true
 
 # --- fixture repo 1: queue.local, the alarm's own target -------------------------------
@@ -58,6 +61,8 @@ pb() {
     SPIRA_HOME_REPO=fixlocal \
     SPIRA_REPO="$REPO" \
     SPIRA_RUN="$RUN" \
+    SPIRA_MAIL="$RUN/mail" \
+    SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
     SPIRA_REPO_MAP="$RMAP" \
     SPIRA_LOCAL_BACKLOG_COUNT="${BKCOUNT:-50}" \
     SPIRA_LOCAL_BACKLOG_AGE="${BKAGE:-10800}" \

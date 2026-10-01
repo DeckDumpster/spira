@@ -3,7 +3,7 @@
 //! that shadows one (release::build::clashes). Nine phases: preflight, conflict checks,
 //! config, build, database, units, hooks, cockpit, verify. Every tool this phase sequence
 //! calls that has not itself moved to Rust yet (`doctor.sh`, `configure.sh`, `build.sh`,
-//! `seed.sh`, `mail.sh`, `release session-hook`, `release intake`, `exclude.sh`, `ready.sh`)
+//! `seed.sh`, `mail`, `release session-hook`, `release intake`, `exclude.sh`, `ready.sh`)
 //! is invoked by bare name on the launcher `PATH`, exactly as `install.sh` did — none of
 //! them are this bead's scope.
 //!
@@ -330,9 +330,9 @@ fn main() -> ExitCode {
         }
     }
     if opts.dry {
-        would("run: mail.sh ensure operator");
-    } else if tool_status("mail.sh", &["ensure", "operator"]) != 0 {
-        eprintln!("install: phase units failed — could not create the operator mailbox (mail.sh ensure operator)");
+        would("run: mail ensure operator");
+    } else if tool_status("mail", &["ensure", "operator"]) != 0 {
+        eprintln!("install: phase units failed — could not create the operator mailbox (mail ensure operator)");
         return ExitCode::from(2);
     }
 

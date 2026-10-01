@@ -506,7 +506,7 @@ $findings
 MAILEOF
 )"
     local notify_out notify_rc
-    notify_out="$(printf '%s\n' "$_body" | mail.sh send operator \
+    notify_out="$(printf '%s\n' "$_body" | mail send operator \
         --from "Skew check <skew@spira>" \
         --subject "$_subj" \
         --kind question \

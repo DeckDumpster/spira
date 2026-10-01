@@ -241,7 +241,7 @@ impl Run<'_> {
                 let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
                 let hit = if o.success() { o.text() } else { String::new() };
                 if !hit.is_empty() {
-                    self.bead_reopen(UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer.sh depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
+                    self.bead_reopen(UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
                     self.ts_print(&format!("{f}: {id} REOPENED — close reason contains statute phrase: {hit}. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>"));
                     st = "open".into();
                     self.requeue(UNFINISHED_REASON, format!("Close reason contained a statute phrase (\"{hit}\"). File the remainder as a bead, cite its id in the reason, then re-close."));
@@ -263,7 +263,7 @@ impl Run<'_> {
                 let aj = if aj.is_empty() { "[]".to_string() } else { aj };
                 let unproven = self.sv("groom_claims_verified", &s(&[&new, &aj, &self.s.session_epoch.to_string()])).text();
                 if !unproven.is_empty() {
-                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail.sh send operator --kind question, then re-run the pass."));
+                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
                     groom_silent = true;

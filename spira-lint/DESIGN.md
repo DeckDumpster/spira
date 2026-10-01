@@ -784,6 +784,101 @@ regress in a program that has no bash text to carry the regression; see
 `gh-intake/DESIGN.md` §2 and §5. Retired rather than ported, per rule one of the rewrite
 wave: a check whose subject is gone has no caller left to serve.
 
+## Rule `script-callers`
+
+New (sp-9y0gf; widened to Rust string literals, units and the watchers manifest the same
+day, sp-yv4b3). Prototyped as the Concierge scratchpad `sp-missing-scan.py`, which this
+rule's suite half is a direct port of.
+
+**Intent.** A rewrite that deletes or renames a script leaves its callers pointed at
+nothing, and the gate attributes the resulting red to the base, not the branch that broke
+it — `test-batch-red-main.sh` invoked the retired `verdict.sh` for days before anyone
+noticed it was never going to pass again. Four callers broke the same way in one day
+(`test-batch-red-main.sh` → `verdict.sh`; `queue-watch`/`batcher-cut`/`czar-pass`'s
+`SPIRA_FORGE` default → `forge.sh`; `test-mail-deliver.sh`'s `WORLD=world.sh`) because
+nothing read a Rust default or a bare suite variable for the name of a script
+(law-a-rename-repoints-no-reader).
+
+**Scope**, four kinds of caller:
+- `spira/test-*.sh`, directly in `spira/` — suites.
+- Every `*.rs` outside `target/`.
+- `systemd/*.service`, `systemd/*.timer` — unit templates.
+- `spira/watchers`, exactly.
+
+**Suites.** Parsed with `lex::shell`. For every command, `payload_argv::resolve` (shared:
+the same `env`/`command`/`exec`/`nohup` unwrap payload-argv-lint already carries) finds the
+word actually run, after skipping a leading pass-through placeholder (`"${@}"`, `"$@"`,
+`"$*"`, `"${*}"` — `env -i … "${@}" "$WORLD" start`'s shape). That word, and the next one
+when it is an interpreter/loader (`bash`, `sh`, `python3`, `python`, `source`, `.`), are the
+candidates. A candidate names a script two ways:
+1. `$SH`, `${HERE}`, `$SPIRA_HOME` (braced or not) followed by `/` and a `*.sh`/`*.py` path,
+   anywhere in the word — resolved as `spira/<path>`.
+2. a bare variable the same file assigned a literal, unexpanded, slash-free `*.sh`/`*.py`
+   name (`WORLD=world.sh` then `"$WORLD"`) — resolved as `spira/<name>`.
+
+A resolved path missing from the tree is a finding, **unless** the same file creates that
+exact basename itself: a redirect (`>`, `>>`, `>|`, `<>`, `&>`, `&>>`) onto it, or it is an
+argument to `cp`/`install`/`ln`/`tee`/`write_exe` — `test-world-drain-deadline.sh`'s
+`printf … > "$SH/aeon.sh"` before `bash "$SH/aeon.sh"`, and every `test-world-*.sh`'s
+`cp "$WORLD_BIN" "$SH/world.sh"`, are exempt this way, deliberately: `SH` there is pointed
+at a sandbox, and the suite's whole point is to exercise the real binary under that name.
+
+**Rust string literals.** `lex::rust` classifies the file; every byte run classified
+`Literal` (never `Comment`, never plain `Code` — `self.sh()` is not a path) is scanned for
+`[A-Za-z0-9_./-]*\.(?:sh|py)`. A slash-free match resolves under `spira/`; a slash-bearing
+one is read as the exact path the author wrote. **Test code is out of scope entirely**,
+upstream of the scan — not an allow list, a classifier: [`crate::rust_test`] (lifted out of
+`tmp-leak`, sp-qgfdi, so the two rules cannot define "is this test code" two different ways)
+marks a file test code as a whole by path (`tests/…`, `tests.rs`) or inner
+`#![cfg(test)]`, and marks the byte ranges of every `#[cfg(test)]` item (and, transitively,
+every file a `mod` declared inside one of those loads). Without this, the rule's own crate
+alone produced over a thousand hits — every rule's own fixture tree spells a `*.sh` name as
+test data, which is exactly what it should do and exactly what this rule must not read as a
+tree reference. A missing path is still exempt when the same file writes it first:
+`fs::write`/`File::create`/`File::create_new`/`fs::rename`/`fs::copy` naming the basename
+within 200 bytes of the call — a renderer that writes the script before running it.
+
+**Unit templates and the watchers manifest.** Comment lines (`#` or `;` leading) are
+blanked first — the watchers manifest's header is almost entirely prose explaining the file
+format, and reads full of script names that are not rows. Two forms, over what is left:
+`@PLACEHOLDER@/path.sh`, resolved through a known-placeholder table (`SPIRA_HOME`/
+`SPIRA_PROD` → `spira/`, `SPIRA_PROD_ROOT` → the repo root, `SPIRA_COCKPIT`/
+`SPIRA_PROD_COCK` → `cockpit/`) — an unrecognised placeholder resolves nothing rather than
+guess; and a bare `name.sh`/`name.py` token at a word boundary (line start, whitespace, or
+`|` — the watchers manifest's field separator), resolved under `spira/`, the one place a
+release's own scripts live on the launcher's PATH (sp-gypjk, matching `deps-lint`'s
+`SYSTEM_ALLOW` reasoning for the same convention).
+
+**Exempt.** Nothing by path beyond what each scan already excludes above (test code for
+the Rust scan; a file's own creation of the target for the suite and Rust scans).
+
+**Allow list.** `spira-lint/script-callers-allow`: exact repo-relative paths, shrink-only —
+the `fence-scripts`/`tmp-leak` shape (every finding for a listed path is suppressed, not
+one occurrence; a listed path with no findings left is itself a finding, so the list stays
+exact). Seeded at authorship with exactly one entry, `spira-world/src/bin/world.rs`: this
+rule's own first run against the real tree caught `world stop`/`drain --deadline` still
+spawning the retired `spira/slay.sh` (`Command::new("slay.sh")`, sp-6onps repointed
+`world.sh`/`aeons.sh`/`ctrl.sh` but missed this one) — genuine, but not a trivial fix here:
+a dozen suites stub a fake `$SH/slay.sh` on PATH to intercept the call, so repointing the
+binary needs every one of those renamed in the same change. Left listed, named, and
+reported rather than folded into this delivery; the allow file's own comment carries the
+fix. Every OTHER file this rule's authorship run found (the suite-side `WORLD=world.sh` in
+`test-mail-deliver.sh`, sp-yv4b3's three Rust defaults, already fixed before sp-9y0gf) was
+trivial and is fixed, not listed.
+
+**Refuses** (exit 3): no file in scope across all four kinds. **Positive control:**
+`fence: script-callers checked <n> callers` — one count across every file kind it read,
+only on a clean run (the same "only claim 'checked' when it is true" convention
+`testdb-mode-lint`/`bd-stdin-lint`/`incident-cause-lint` use).
+
+**Known limits.** The suite scan's `env` unwrap does not special-case every option `env`
+takes (only `-u`/`--unset` consumes a following word; any other `-x` is assumed to take
+none), and a candidate placed after two nested wrapper commands the unwrap does not know
+about is missed, never falsely flagged. The Rust scan's "written nearby" exemption is a
+200-byte window after the call, not a parsed argument list — a destination computed far
+from its `fs::write` call could still be missed as a false finding; none in the real tree
+needed more.
+
 ---
 
 ## Tests

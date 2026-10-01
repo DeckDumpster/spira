@@ -805,15 +805,15 @@ spira_conf_defaults() {
     : "${SPIRA_MEMORIES_CACHE=$SPIRA_RUN/memories-cache.json}"
     : "${SPIRA_MEMORIES_CACHE_AGE:=300}"
     : "${SPIRA_MAIL:=$SPIRA_RUN/mail}"
-    # MUTES OUTGOING MAIL: mail.sh files a muted message straight into `cur/` (seen), never
+    # MUTES OUTGOING MAIL: mail files a muted message straight into `cur/` (seen), never
     # `new/`, so it is recorded but wakes no reader. Replaces the local-overrides tracked
-    # edit to spira/mail.sh (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
+    # edit to mail (sp-9hwim, design runtime-is-a-release #5) — same on/off, now a
     # config key instead of an uncommitted patch to a checked-out file. Off by default: mail
     # flows normally unless an operator sets it, in spira.toml or the environment.
     : "${SPIRA_MAIL_MUTE:=0}"
     : "${SPIRA_MAIL_KINDS:=$SPIRA_HOME/mail/kinds}"
     # THE CONCIERGE READS ITS MAIL THROUGH THE DURABLE INBOX, NOT A KEYSTROKE. inbox-append.sh
-    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage.sh
+    # only ever appends a line to SPIRA_CONCIERGE_INBOX; the concierge's own inbox-triage
     # Monitor is what reaches the session, so a burst of mail can never land mid-keystroke in
     # the operator's own half-written message the way a keystroke wake could. An operator who
     # wants the old keystroke-wake reader back for another mailbox still sets
@@ -835,12 +835,12 @@ spira_conf_defaults() {
     : "${SPIRA_MAIL_TIDY_FRESH:=86400}"
     : "${SPIRA_MAIL_INDEX:=$SPIRA_MAIL/index}"
     # THE CONCIERGE'S DURABLE INBOX. Every watcher and mail-deliver appends one line here
-    # (inbox-append.sh); the concierge's inbox-triage.sh Monitor tails it, drops echoes and
+    # (inbox-append.sh); the concierge's inbox-triage Monitor tails it, drops echoes and
     # duplicates, and passes what needs action — never a keystroke into the pane.
     : "${SPIRA_CONCIERGE_INBOX:=$SPIRA_RUN/watchd/concierge-inbox.log}"
     # DEDUP WINDOW, seconds: the same triaged line within this window is suppressed.
     : "${SPIRA_CONCIERGE_INBOX_DEDUP:=600}"
-    # THE KEEPER'S THRESHOLDS. If no inbox-triage.sh Monitor has been running for
+    # THE KEEPER'S THRESHOLDS. If no inbox-triage Monitor has been running for
     # SPIRA_CONCIERGE_INBOX_STALL seconds while the inbox holds lines it has not seen, the
     # keeper re-arms with ONE wake (held by concierge.sh wake until the input line is empty),
     # then waits SPIRA_CONCIERGE_INBOX_BACKOFF before it will wake again.
@@ -2383,6 +2383,13 @@ spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the b
 }
 
 # --------------------------------------------------------------------------------------
+# SPIRA_ID_PREFIX and every SPIRA_MAIL* key joined this list for sp-ooh1k: `mail` is a
+# compiled binary now and cannot re-derive them the way mail.sh did, by sourcing this file
+# itself in its own process. A bash caller that pins a non-default value (a test fixture,
+# `SPIRA_MAIL_LOCAL_TIDY_FRESH=...`) must still see `mail` agree — this is not the
+# SPIRA_HOME/SPIRA_REPO fence above SPIRA_CONF_KEYS: those are facts about where the caller
+# itself lives, never configuration: these are ordinary operational config, exactly like
+# SPIRA_RUN and SPIRA_DB already exported below.
 export COCKPIT_BOTTOM_PCT \
     COCKPIT_CLIENT_IDLE_SECS \
     COCKPIT_CLIPBOARD \
@@ -2411,6 +2418,7 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_GH_INTAKE_PRIORITY \
     SPIRA_GH_INTAKE_REPO \
     SPIRA_GROOM_ASK_LABEL \
+    SPIRA_ID_PREFIX \
     SPIRA_INCIDENT_LABEL \
     SPIRA_INCIDENT_PRIORITY \
     SPIRA_INSTANCE \
@@ -2426,6 +2434,13 @@ export COCKPIT_BOTTOM_PCT \
     SPIRA_LOOM_BUDGET_MS \
     SPIRA_LOOM_CACHE_S \
     SPIRA_LOOM_READY_GRACE \
+    SPIRA_MAIL \
+    SPIRA_MAIL_INDEX \
+    SPIRA_MAIL_KINDS \
+    SPIRA_MAIL_MUTE \
+    SPIRA_MAIL_REPEAT_WINDOW \
+    SPIRA_MAIL_SESSION_MAILBOX \
+    SPIRA_MAIL_TIDY_FRESH \
     SPIRA_MIRROR \
     SPIRA_NO_LOOP_LABEL \
     SPIRA_OPERATOR \

@@ -9,7 +9,7 @@ pub trait Alarm {
     fn raise(&self, reason: &str);
 }
 
-/// Mails through the harness's own `mail.sh send` (a subprocess, never reimplemented),
+/// Mails through the harness's own `mail send` (a subprocess, never reimplemented),
 /// invoked by name on the launcher's PATH (sp-gypjk); `mail` is a field only so a unit test
 /// can hand in a recorder.
 pub struct MailAlarm {

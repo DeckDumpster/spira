@@ -17,7 +17,7 @@
 # because a pane and a daemon fail for different reasons.
 #
 # WHAT COUNTS AS "THE CODE" OF A WATCHER. Not simply the unit's ExecStart, because every
-# watcher unit's ExecStart is the DISPATCHER — `watchd.sh exec <name>` — and the program a
+# watcher unit's ExecStart is the DISPATCHER — `watchd exec <name>` — and the program a
 # watcher actually runs is the row's target. So a pass compares the unit's start against the
 # newest of:
 #
@@ -25,9 +25,15 @@
 #   the row's target program                the watcher itself
 #   the shell and python files BESIDE it    the libraries it sources; the measured failure
 #                                           was a rewritten library, not a rewritten target
-#   watchd.sh                               the dispatcher that resolves the row
 #   the manifest                            what the row says the target IS
 #   conf.sh and the config file in force    every path and label the watcher reads
+#
+# `watchd` ITSELF dropped out of this list (sp-48f6g: watchd.sh rewritten to a compiled Rust
+# binary). A bash dispatcher's own mtime belonged here because sourcing it meant the
+# in-process parser could be stale; a compiled binary invoked by bare name has no mtime this
+# pass can compare against a watcher's OWN start time the same way (the binary is shared
+# across every watcher and every restart of watch-refresh.sh itself re-execs the current
+# one) — see the note below `wr_pass` calling `watchd manifest` instead of sourcing it.
 #
 # The sibling sweep is deliberately restricted to `*.sh` and `*.py`. A watcher's directory
 # also holds state it writes while running, and a check that stat'ed all of it would restart
@@ -35,19 +41,21 @@
 #
 # MTIME, NOT A CONTENT HASH. A checkout that rewrites mtime without changing content costs
 # one harmless restart, and that is the cheaper mistake. The meter that says when this stops
-# being adequate is the per-watcher restart counter `watchd.sh` keeps — rendered as the
-# RESTARTS column of `watchd.sh status` — and a number climbing without an edit behind it is
+# being adequate is the per-watcher restart counter `watchd` keeps — rendered as the
+# RESTARTS column of `watchd status` — and a number climbing without an edit behind it is
 # the evidence that would justify hashing (law-take-the-simple-fix-with-a-meter). Which is
-# why the restart below is issued through `cmd_restart` and not through `systemctl`: that
-# command is where a restart is counted, so a restart around it is one the meter never sees.
+# why the restart below is issued through `watchd restart <name>` and not through
+# `systemctl`: that command is where a restart is counted, so a restart around it is one the
+# meter never sees.
 #
 # IT MUST BE CHEAP. It runs every minute on a box that may be running production on very few
 # cores, and an unbounded loop here is the thing the fencing law is named for. So a steady
-# pass costs exactly TWO execs — one `systemctl show` for every unit at once, one `stat` for
-# every path at once — and runs no other program at all. It never opens the database: a
+# pass costs one `systemctl show` for every unit at once, one `stat` for every path at once,
+# plus — since sp-48f6g — one `watchd manifest` exec to read the rows (the manifest parser
+# used to be a bash function this script sourced in-process at no exec cost at all; a
+# compiled binary cannot be sourced, and shelling out to it once per pass is the accepted
+# cost of that rewrite, not a design this file chose). It never opens the database: a
 # staleness check that queried the store would be the very failure it exists to detect.
-# Everything else is done in-process, which is why the manifest is parsed by sourcing
-# `watchd.sh` rather than by running it.
 #
 # A PASS THAT CANNOT SEE FAILS LOUDLY AND RESTARTS NOTHING. A malformed manifest, or a
 # `systemctl` that will not answer, exits non-zero with the reason — never a quiet pass,
@@ -56,9 +64,6 @@
 set -uo pipefail
 _wr_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_wr_here/conf.sh"
-# Sourced, not run: the manifest parser is a function, so reading the manifest costs no fork
-# and no exec. watchd.sh runs nothing when it is sourced.
-. "$_wr_here/watchd.sh"
 unset _wr_here
 
 # The properties one call asks for. `--timestamp=unix` is what makes the answer a bare epoch
@@ -86,15 +91,15 @@ wr_pass() {
     local -A files=()          # watcher name -> newline-separated paths that are its code
     local -A want=()           # every path to stat, deduplicated
 
-    # A MALFORMED MANIFEST RESTARTS NOTHING. watchd_rows has already named each fault on
-    # stderr; acting on the rows that happened to parse would restart some watchers and
+    # A MALFORMED MANIFEST RESTARTS NOTHING. `watchd manifest` has already named each fault
+    # on stderr; acting on the rows that happened to parse would restart some watchers and
     # silently leave the rest pinned, which is worse than doing nothing loudly.
-    rows="$(watchd_rows)" || return 1
+    rows="$(watchd manifest)" || return 1
 
-    # What every watcher's staleness is measured against, whoever it is: the dispatcher that
-    # resolves its row, the manifest that holds the row, and the two files that carry every
-    # path and label it will read.
-    local -a common=("$SPIRA_HOME/watchd.sh" "$SPIRA_HOME/conf.sh" "$SPIRA_WATCHERS")
+    # What every watcher's staleness is measured against, whoever it is: the manifest that
+    # holds the row, and conf.sh and the config file in force, which carry every path and
+    # label the watcher reads.
+    local -a common=("$SPIRA_HOME/conf.sh" "$SPIRA_WATCHERS")
     [ -n "${SPIRA_CONF_FILE:-}" ] && common+=("$SPIRA_CONF_FILE")
 
     local -a argv sibs
@@ -231,12 +236,13 @@ ${estart[$u]}"
         # act on.
         printf '%s restarting %s: %s is newer than the process (%s >= %s)\n' \
             "$(wr_stamp)" "$u" "$culprit" "$newest" "$s"
-        # THROUGH `cmd_restart`, NEVER PAST IT. That is the one verb that restarts a watcher,
-        # and it is where the meter is bumped once systemd has agreed. Issuing the restart
-        # straight to `systemctl` from here would still restart the watcher — and silently
-        # cost the counter its meaning, which is the number the mtime heuristic is answerable
-        # for. It is called by name rather than bare, which would restart every watcher.
-        if ! cmd_restart "$name"; then
+        # THROUGH `watchd restart <name>`, NEVER PAST IT. That is the one verb that restarts
+        # a watcher, and it is where the meter is bumped once systemd has agreed. Issuing
+        # the restart straight to `systemctl` from here would still restart the watcher —
+        # and silently cost the counter its meaning, which is the number the mtime heuristic
+        # is answerable for. It is called by name rather than bare, which would restart
+        # every watcher.
+        if ! watchd restart "$name" >/dev/null; then
             printf '%s watch-refresh: restarting %s FAILED\n' "$(wr_stamp)" "$u" >&2
         fi
     done
@@ -249,7 +255,7 @@ wr_sigterm() { kill -TERM "$1" 2>/dev/null || true; }
 # Where to look for process information. Tests override this to a scratch tree.
 WR_PROC_ROOT="${WR_PROC_ROOT:-/proc}"
 
-# wr_reap_orphans [dry] — terminate any watch-answers.sh or `watchd.sh exec` process whose
+# wr_reap_orphans [dry] — terminate any watch-answers.sh or `watchd exec` process whose
 # cgroup is not under spira-watch@.
 #
 # WHY /proc, NOT pgrep -f. pgrep -f matches the CALLER's command line: a script whose body
@@ -281,7 +287,7 @@ wr_reap_orphans() {
     local -a candidates=()
     while IFS= read -r f; do
         candidates+=("${f%/cmdline}")
-    done < <(grep -ral 'watch-answers\.sh\|watchd\.sh' \
+    done < <(grep -ral 'watch-answers\.sh\|watchd' \
                  "$WR_PROC_ROOT"/[0-9]*/cmdline 2>/dev/null)
 
     [ "${#candidates[@]}" -gt 0 ] || return 0
@@ -298,14 +304,16 @@ wr_reap_orphans() {
         while IFS= read -r -d '' v; do parts+=("$v"); done < "$dir/cmdline" 2>/dev/null
         [ "${#parts[@]}" -gt 0 ] || continue
 
+        # `watchd` (sp-48f6g: a compiled binary, no bash/sh wrapper — argv[0] names it
+        # directly) alongside the still-bash `watch-answers.sh`, which a wrapper may still
+        # be running past.
         prog=""; verb_idx=1
         case "${parts[0]##*/}" in
             watch-answers.sh) prog=watch-answers.sh ;;
-            watchd.sh)        prog=watchd.sh ;;
+            watchd)           prog=watchd ;;
             bash|sh|dash)
                 case "${parts[1]:-}" in
                     */watch-answers.sh) prog=watch-answers.sh; verb_idx=2 ;;
-                    */watchd.sh)        prog=watchd.sh;        verb_idx=2 ;;
                 esac ;;
         esac
         [ -n "$prog" ] || continue
@@ -315,7 +323,7 @@ wr_reap_orphans() {
         # `exec` (the supervised daemon verb) should ever be a reap target; in practice exec
         # processes are inside spira-watch@ anyway, so the cgroup guard below would protect
         # them too — this is belt-and-braces.
-        [ "$prog" = watchd.sh ] && [ "${parts[$verb_idx]:-}" = tail ] && continue
+        [ "$prog" = watchd ] && [ "${parts[$verb_idx]:-}" = tail ] && continue
 
         argv="${parts[*]}"
 

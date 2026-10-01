@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-mail-tidy.sh — mail.sh tidy: archive old, answered and closed operator mail.
+# test-mail-tidy.sh — mail tidy: archive old, answered and closed operator mail.
 #
-# mail.sh tidy <mailbox> moves messages to archive/cur unless they should be kept.
+# mail tidy <mailbox> moves messages to archive/cur unless they should be kept.
 # A message is KEPT only if one of these holds:
 #   1. Its bead ID refers to an open, ask-labelled bead.
 #   2. It is unread and younger than SPIRA_MAIL_TIDY_FRESH.
@@ -24,7 +24,7 @@
 # startup (test-plan-2026-09-23 §3 row 08, coverage-map DEMOTE-TO-T2).
 #
 # tier: T2
-# covers: spira/mail.sh spira/conf.sh UC-operator-channel-08
+# covers: mail/src/* spira/conf.sh UC-operator-channel-08
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -39,7 +39,7 @@ export SPIRA_ASK_LABEL=asks-test    # non-default: catches hardcoded literals
 export SPIRA_MAIL_TIDY_FRESH=3600   # non-default: 1h window
 export SPIRA_DB="$TMP/db"
 
-MAIL=mail.sh   # invoked by name on the suite's PATH (sp-gypjk)
+MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 OLD_AGE=7200    # older than SPIRA_MAIL_TIDY_FRESH
 URGENT_MAX_S=604800
 
@@ -233,7 +233,7 @@ echo "=== Fresh install: a mailbox install created but no mail ever reached ==="
 # never-used install it did not exist and the first tidy (its timer fires the moment it is
 # enabled on a box up longer than OnBootSec) exited 1 — "tidy: operator: mailbox not found"
 # — and left spira-mail-tidy FAILED, which deploy's pre-health check refuses on. install.sh
-# now creates it with `mail.sh ensure operator`; tidy's own refusal of a mailbox that does
+# now creates it with `mail ensure operator`; tidy's own refusal of a mailbox that does
 # not exist stays (a misconfigured SPIRA_MAIL must not tidy silently).
 FRESH="$TMP/fresh-mail"
 out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
@@ -241,13 +241,13 @@ out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
                 || bad "positive control: tidy of a mailbox nothing created still refuses" "rc=0"
 want "positive control: and says why" "mailbox not found" "$out"
 SPIRA_MAIL="$FRESH" "$MAIL" ensure operator; rc=$?
-is "mail.sh ensure operator exits 0" 0 "$rc"
+is "mail ensure operator exits 0" 0 "$rc"
 [ -d "$FRESH/operator/new" ] && [ -d "$FRESH/operator/cur" ] && [ -d "$FRESH/operator/tmp" ] \
     && ok  "ensure creates the operator maildir (new, cur, tmp)" \
     || bad "ensure creates the operator maildir (new, cur, tmp)" "$(ls -R "$FRESH" 2>&1 | head -5)"
 out="$(SPIRA_MAIL="$FRESH" "$MAIL" tidy operator 2>&1)"; rc=$?
 is     "tidy of the ensured, empty mailbox exits 0" 0 "$rc"
 nowant "and does not report it missing" "mailbox not found" "$out"
-want   "install.sh ensures the operator mailbox" 'mail.sh ensure operator' "$(cat "$HERE/../install.sh")"
+want   "install.sh ensures the operator mailbox" 'mail ensure operator' "$(cat "$HERE/../install.sh")"
 
 tl_summary

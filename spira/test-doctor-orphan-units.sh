@@ -18,7 +18,7 @@
 #    health.
 #
 # tier: T1
-# covers: spira/doctor.sh spira/watchd.sh
+# covers: spira/doctor.sh watchd/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -38,7 +38,7 @@ exit 0
 FAKESCRIPT
 chmod +x "$BIN/bd"
 
-# The manifest doctor_check_orphan_units reads through watchd.sh manifest — a scratch file,
+# The manifest doctor_check_orphan_units reads through watchd manifest — a scratch file,
 # never the real installation's, per SPIRA_WATCHERS below.
 MAN="$TMP/watchers"
 

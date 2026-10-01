@@ -241,7 +241,7 @@ FYIs, notifications and alerts — because chat is a log, and a log cannot hold 
   side-channel log, so any session can read what was decided.
 - **An escalation is a decision request, not a problem report**: the question with a default,
   what is blocked until it is answered, and what it costs to reverse the wrong choice.
-  `mail.sh send operator --kind question|decision` files one, and a default is close to
+  `mail send operator --kind question|decision` files one, and a default is close to
   mandatory.
 - **Nothing in the pane closes an alert** — only whatever asserted a self-clearing condition
   may retract it. A hand-closed alert whose condition still holds comes straight back, which
@@ -249,7 +249,7 @@ FYIs, notifications and alerts — because chat is a log, and a log cannot hold 
 - **A failed probe renders `?`, never 0.** A panel reporting a broken check as all-clear
   displaces the suspicion that would have prompted a look.
 - **The operator's answer arrives as mail, from every surface that takes one.** A reply to an
-  escalation closes its tracking bead through `mail.sh sendmail`; the pane's own close or
+  escalation closes its tracking bead through `mail sendmail`; the pane's own close or
   comment on a decision delivers the same way. Either lands in the concierge's mailbox, and
   `spira-mail-deliver` wakes the reader — there is no bead-scanning watcher to duplicate it.
 
@@ -264,7 +264,7 @@ failed systemd unit, an arbitrary payload, or a spool flush. `release intake ins
 `OnFailure=` drop-ins over `SPIRA_ALERT_GLOB` so a failed unit files itself; dedup keys on the
 unit name, so a recurrence labels the open incident rather than filing a second one.
 
-**The archivist** (`archivist.sh`) rescues a session's unfinished business before it is cleared
+**The archivist** (`archivist`) rescues a session's unfinished business before it is cleared
 — questions asked and never answered, findings never filed, verdicts never recorded. It reads
 the transcript from disk rather than the conversation, costing that session no turn and no
 tokens: a persistence step that adds turns makes the problem worse in exactly the sessions that

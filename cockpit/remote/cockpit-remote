@@ -253,9 +253,12 @@ watcher_running() { ( flock -n 8 8>>"$LOCK" ) 2>/dev/null && return 1 || return 
 _watch_unit_name() {
     local h="${SPIRA_HOME:-}"
     [ -n "$h" ] || h="$(head -1 "${XDG_CONFIG_HOME:-$HOME/.config}/spira/harness" 2>/dev/null)"
-    [ -n "$h" ] && [ -f "$h/watchd.sh" ] || return 1
+    # `watchd` (sp-48f6g: a compiled binary, no longer a script at "$h/watchd.sh") is
+    # invoked by bare name, never by a constructed path — the launcher's PATH is what
+    # makes that bare name the release's own copy.
+    [ -n "$h" ] && command -v watchd >/dev/null 2>&1 || return 1
     local row
-    row="$(bash "$h/watchd.sh" manifest 2>/dev/null \
+    row="$(watchd manifest 2>/dev/null \
         | awk -F'|' -v s="$SELF" '$2=="daemon" && $3==(s " watch") { print $1; exit }')"
     [ -n "$row" ] || return 1
     { set +u; . "$h/conf.sh" 2>/dev/null; } || return 1

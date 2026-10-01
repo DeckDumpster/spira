@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-groomer-unpoison.sh — groomer.sh unpoison: lift spira-poison when the charge was the
+# test-groomer-unpoison.sh — groomer unpoison: lift spira-poison when the charge was the
 #   harness's fault, crediting the attempt instead of erasing it silently.
 #
 #   ./test-groomer-unpoison.sh
@@ -26,7 +26,7 @@
 # stub was never called.
 #
 # tier: T1
-# covers: spira/groomer.sh spira/conf.sh spira-claim/*
+# covers: groomer/src/* spira/conf.sh spira-claim/*
 # defect: sp-0qp7s
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -63,14 +63,14 @@ STUB
 chmod +x "$STUB_CLAIM"
 
 run_groomer() {
-    env -i HOME="$T" PATH="$STUB_DIR:$HERE:/usr/bin:/bin" \
+    env -i HOME="$T" PATH="$STUB_DIR:$PATH" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
         CLAIM_LOG_PATH="$CLAIM_LOG" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUN" \
-        groomer.sh "$@" 2>&1
+        groomer "$@" 2>&1
 }
 
 echo "test-groomer-unpoison.sh"

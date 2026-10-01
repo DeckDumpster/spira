@@ -172,7 +172,7 @@ deliver() {   # deliver <addr> <epic-id> <subject> <body>
     case "$addr" in
         "$SPIRA_OPERATOR_ACTOR"|operator|cockpit)
             [ "$DRY" = 1 ] && { log "  would notify $SPIRA_OPERATOR: $subject"; return 0; }
-            mail.sh send operator \
+            mail send operator \
                 --from "Pilgrimage <pilgrimage@spira>" \
                 --subject "$subject" \
                 --kind note <<MAILEOF >/dev/null 2>&1

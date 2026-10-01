@@ -21,7 +21,7 @@
 #   cat > "$FA_BIN/claude" <<'SHIM' ... SHIM
 #   fa_run_aeon; is "..." "..." "$(fa_status sp-x-1)"
 #
-# covers: spira/aeon.sh spira/lib.sh spira/mail.sh
+# covers: spira/aeon.sh spira/lib.sh mail/src/*
 set -uo pipefail
 
 fa_setup() {   # fa_setup <tag> — build the fixture once

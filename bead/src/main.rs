@@ -54,7 +54,7 @@ fn main() {
 }
 
 // =========================================================================================
-// Subprocess bridges — everything that is lib.sh's/schema.sh's/mail.sh's own logic, not
+// Subprocess bridges — everything that is lib.sh's/schema.sh's/mail's own logic, not
 // bead.sh's. See DESIGN.md "What ported vs what stayed bash".
 // =========================================================================================
 
@@ -213,8 +213,11 @@ fn aeon_alive(pidfile: &str) -> bool {
     })
 }
 
-fn mail_send(home: &str, aeon_id: &str, body: &str) {
-    let mut child = match Command::new(format!("{home}/mail.sh"))
+fn mail_send(aeon_id: &str, body: &str) {
+    // mail, by name on the launcher's PATH (sp-gypjk) — never a constructed
+    // "$SPIRA_HOME/mail.sh" path: mail.sh is a compat symlink now (sp-ooh1k), not the
+    // tool, and "never construct a path to a Spira tool" is the rule this was breaking.
+    let mut child = match Command::new("mail")
         .arg("send")
         .arg(aeon_id)
         .arg("--from")
@@ -528,14 +531,14 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         changed.push_str("Description updated.");
     }
 
-    notify_live_aeon(home, &id, &changed);
+    notify_live_aeon(&id, &changed);
     rc
 }
 
 /// The aeon-mail notify tail of `amend`: the first `$SPIRA_RUN/aeon-*-<id>.pid` that names a
 /// live aeon, provided its mailbox still exists (the aeon may have already exited between
 /// the glob and the check — `break`, not `continue`, on a missing mailbox, matching the bash).
-fn notify_live_aeon(home: &str, id: &str, changed: &str) {
+fn notify_live_aeon(id: &str, changed: &str) {
     let run = match env::var("SPIRA_RUN") {
         Ok(r) if !r.is_empty() => r,
         _ => return,
@@ -561,7 +564,7 @@ fn notify_live_aeon(home: &str, id: &str, changed: &str) {
         if !Path::new(&mailbox_new).is_dir() {
             break;
         }
-        mail_send(home, &format!("aeon-{id}"), changed);
+        mail_send(&format!("aeon-{id}"), changed);
         break;
     }
 }

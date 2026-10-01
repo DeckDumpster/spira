@@ -141,7 +141,7 @@ grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the pa
 | `inference.cooldown` | r/w | `<epoch>` | — |
 | `sending.base` | r/w (audit) | `<repo>=<sha>` lines | — |
 | `poison-asked/<id>`, `requeue-asked/<id>`, `reclaim-asked/<id>` | r, append | one count per line | lib.sh (`spira-claim unpoison` clears `poison-asked`) |
-| `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer.sh deadlocked`, spira-claim/DESIGN.md §9) |
+| `poison-lifted/<id>` | r | last line = count lifted at | written by `spira-claim deadlocked` (via `groomer deadlocked`, spira-claim/DESIGN.md §9) |
 | `landstate/<id>` | r | `<STATE> <tip> …` | the landing pass |
 | `<id>.log` | existence (CHECK 5), trace tail (ask) | aeon session log | aeon.sh |
 | `roster-warn` stamp (`$SPIRA_ROSTER_WARN_STAMP`) | r/w | sorted excluded fayths | lib.sh |
@@ -177,7 +177,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 |---|---|
 | CHECK 2 | spira-lc Hold/Unhold `wait`, HolderDead; an events row `reclaimed stale-lease` (bd sql); `bd note` |
 | CHECK 3 | `bd recompute-blocked` |
-| CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail.sh |
+| CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail |
 | CHECK 5 | `incident.sh file`; `bd close --force <incident> --reason-file -` |
 | seams | whatever lib.sh does in CHECK 3b, 3c, 7, 7c and 7d, unchanged |
 
@@ -238,7 +238,7 @@ Dead ones are deleted, as `aeon_count` does.
 |---|---|---|
 | CHECK 1 | `$SPIRA_HOME/pilgrimage.sh check` | output passed through; `^PILGRIMAGE COMPLETE` counted → progress |
 | CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
-| CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail.sh send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
+| CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
 | CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
 | CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
@@ -301,7 +301,7 @@ source commits it was recovered from are named.
 | **4 (poisoned?)** | The `spira-poison` bd label. Every partition excludes it, so a poisoned bead is not in the dispatchable set. `decide`'s `poisoned` argument is the label | The lifecycle `poison` hold |
 | **4 (poison)** | `bd label add <id> spira-poison`. The note ends `… no persona can claim it again while the label stands.` Source: `e08d8982b^` | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
 | **4 (stale clear)** | Snapshot beads carrying `spira-poison`, not closed, not an epic or event. `clear` means `bd label remove <id> spira-poison` | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
-| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail.sh. Identical in both modes | ← |
+| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail. Identical in both modes | ← |
 | **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own. Children run with `SPIRA_LIFECYCLE_ENFORCE=0` | Children run with it `1` |
 
 **Children.** The switch reaches everything this process starts:
@@ -915,7 +915,7 @@ named unit tests.
 | 37 | `test-deploy.sh:140,433` | the stub moves to `current/bin/sentinel` |
 | 39 | `spira/sending.sh:488` | `lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true` | `if [ "${SPIRA_LIFECYCLE_ENFORCE:-0}" = 1 ]; then lc_content_on_base "$id" "merge-tree:$(git -C "$REPO" rev-parse "$LANDREF" 2>/dev/null)" sending >/dev/null 2>&1 \|\| true; else bdq label add "$id" content-landed >/dev/null 2>&1 \|\| true; fi` (restores CHECK 5's `content-landed` exemption in OFF mode) |
 | 40 | `strand` crate (`check.rs` `act_ghost`/`lc_holder_dead`; the wait-held exemption in `probe.rs`) | spira-lc only | behind `SPIRA_LIFECYCLE_ENFORCE`. OFF: `bd reclaim --id <id> --older-than 1s`, and the exemption reads the `spira-waiting-operator` label. That is strand's own change, not made here (§2.9 gaps) |
-| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (its exclusion-free sibling `all_partition_members`, moved out of the retired `spira/attempts.sh` at sp-rfodk, is what `groomer.sh deadlocked` calls now). |
+| 38 | lib.sh functions left with no production caller | `check2_protect_waiting` (1363), `check2c_lc_consistency` (2335), `check2_reclaim_stale` (2348) — ported to `lifecycle.rs`; `check8_should_judge` (1697); `check4_closed_branched` (5600); `ready_cache_populate` (1563); `roster_warnings` (1051) | delete **after** the suites that drive them are retired: `test-check2-reclaim.sh`, `test-check2-reaper.sh`, `test-reclaim-escalated.sh` (→ `lifecycle::tests`), `test-check8-progressed.sh`, `test-roster-warn.sh` (→ `tests::roster_warnings_name_each_left_out_persona_once`), `test-poison.sh`/`test-sentinel-store-reads.sh` references. Not required for the cutover to work; `dispatchable_open` stays (its exclusion-free sibling `all_partition_members`, moved out of the retired `spira/attempts.sh` at sp-rfodk, is what `groomer deadlocked` calls now). |
 
 **Source greps that break when the file goes.** Each greps sentinel.sh's text; point it at
 `sentinel/src/*.rs`, or at lib.sh where the text now lives:

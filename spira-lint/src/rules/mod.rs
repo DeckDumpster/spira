@@ -14,6 +14,7 @@ pub mod gate_workflow;
 pub mod payload_argv;
 pub mod plan_lint;
 pub mod plan_matrix;
+pub mod script_callers;
 pub mod scratch_fence;
 pub mod script_exec;
 pub mod testdb_mode_lint;

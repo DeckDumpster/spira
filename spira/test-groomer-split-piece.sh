@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-groomer-split-piece.sh — groomer.sh split-piece gives every piece of a split its own
+# test-groomer-split-piece.sh — groomer split-piece gives every piece of a split its own
 #                                branch; a bare `bd create --parent` does not.
 #
 #   ./test-groomer-split-piece.sh
@@ -25,14 +25,14 @@
 # child is that its branch EQUALS spira/<child-id>, not merely that it differs from the
 # parent's — a bug that produced some OTHER wrong branch would defeat a negative-only check.
 #
-# Driven against a real bd (testdb.sh) rather than the argv-recording stub test-groomer.sh
+# Driven against a real bd (testdb.sh) rather than the argv-recording stub test-groomer
 # uses elsewhere in this file's siblings, because the property under test IS bd's own label-
 # inheritance behaviour on --parent — a stub that only records arguments cannot exhibit it
 # (law-prefer-the-real-dependency).
 #
 # defect: sp-gseub
 # tier: T1
-# covers: spira/groomer.sh spira/lib.sh spira/chamber/groomer.md
+# covers: groomer/src/* spira/lib.sh spira/chamber/groomer.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -89,7 +89,7 @@ seed sp-tgsp-orig "parent, split via split-piece"
 bd -C "$SPIRA_DB" set-state sp-tgsp-orig "branch=spira/sp-tgsp-orig" >/dev/null 2>&1
 bd -C "$SPIRA_DB" label add sp-tgsp-orig "delivers:beads" >/dev/null 2>&1
 
-child="$(groomer.sh split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
+child="$(groomer split-piece sp-tgsp-orig --title "piece one" --type task -l "plan,repo:fixture" 2>"$TMP/err")"
 rc=$?
 is "split-piece exits 0" "0" "$rc"
 [ -n "$child" ] || { echo "test-groomer-split-piece: split-piece returned no id" >&2; exit 1; }
@@ -117,7 +117,7 @@ echo
 # ======================================================================================
 echo "split-piece: usage errors"
 # ======================================================================================
-groomer.sh split-piece >/dev/null 2>&1
+groomer split-piece >/dev/null 2>&1
 is "split-piece with no id exits 1" "1" "$?"
 
 echo

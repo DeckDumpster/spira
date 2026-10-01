@@ -188,7 +188,20 @@ impl<'w, W: World> Trial<'w, W> {
                 if wr == spira_config::build::Wrapper::Off {
                     w.eprint(&format!("gate: {}", wr.describe()));
                 }
-                self.s.build_env = wr.env();
+                // Every cargo the gate runs — tools, unit phases, the build fence's `make build`,
+                // release-bins — goes through `spira-admit` with the GATE's token (sp-f4ig1-fix,
+                // DESIGN-admission.md D11): it takes a compile lease for that cargo WITHOUT
+                // WAITING (oversubscribing a full pool), so the gate never queues and agent builds
+                // queue behind it instead of competing at full width. testenv's own build does
+                // the same in-process. The token also keeps every other admission inherited.
+                // Without spira-admit on PATH (an older release) the plain wrapper still carries
+                // the token: the gate never waits, it just holds nothing.
+                let who = format!("gate:{br}");
+                self.s.build_env = match w.which(spira_config::admission::BIN) {
+                    Some(admit) => wr.admitted_env(&admit, ctx.var("SPIRA_RUN"), &who),
+                    None => wr.env(),
+                };
+                self.s.build_env.push((spira_config::admission::INHERIT_ENV.to_string(), "gate".to_string()));
             }
             Err(e) => self.s.cache_refusal = Some(e),
         }
@@ -812,7 +825,7 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         });
-        if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools) {
+        if let (Some((base_cmd, bdef)), Some(base_tools)) = (base_gate.as_ref(), base_tools.as_ref()) {
             // A branch red before its suites step ran (a fence, the selector) is judged on the
             // base's fences only: the base's suites answer no question this red asks, and they
             // were most of every such base trial's wall (sp-govet: base-gate 164-501 s behind
@@ -861,6 +874,12 @@ impl<'w, W: World> Trial<'w, W> {
                 format!("gate: signalled during the base trial for {br}"),
             );
         }
+        // sp-kqger fix: the base's own `bin` tools (if its tree declares any, e.g. a
+        // tree-owned testenv, sp-isom7) outlive the `if let` above, so the image-tag query
+        // and the targeted rerun below can use them too — never bare names on the release's
+        // PATH, which may not resolve at all for a tree whose testenv it cannot run.
+        let base_bdef: Option<&def::Def> = base_gate.as_ref().and_then(|(_, d)| d.as_ref());
+        let base_tools_ref: Option<&Tools> = base_tools.as_ref().and_then(Option::as_ref);
 
         // EACH RED IS JUDGED ON THE BASE ON THAT SUITE (sp-hh5h0). A branch red the base
         // trial did not run — its selection differed, or --deadline deferred it — is run on
@@ -900,13 +919,17 @@ impl<'w, W: World> Trial<'w, W> {
                         let t = w.now();
                         let (tag_rc, tag_out) = w.run_gate(
                             &tree,
-                            &env(
-                                &base_rev,
-                                "testenv image tag (sp-kqger base-suite cache)",
-                                &Composition::Fences,
+                            &with_bins(
+                                env(
+                                    &base_rev,
+                                    "testenv image tag (sp-kqger base-suite cache)",
+                                    &Composition::Fences,
+                                ),
+                                base_bdef,
+                                base_tools_ref,
                             ),
                             &timeout,
-                            "testenv container tag",
+                            "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag",
                         );
                         self.s
                             .phases
@@ -938,12 +961,16 @@ impl<'w, W: World> Trial<'w, W> {
                 let t = w.now();
                 let (r, o) = w.run_gate(
                     &tree,
-                    &env(
-                        &base_rev,
-                        "base trial — the branch's red suites the base trial did not run",
-                        &Composition::Suites {
-                            why: "base-rerun".into(),
-                        },
+                    &with_bins(
+                        env(
+                            &base_rev,
+                            "base trial — the branch's red suites the base trial did not run",
+                            &Composition::Suites {
+                                why: "base-rerun".into(),
+                            },
+                        ),
+                        base_bdef,
+                        base_tools_ref,
                     ),
                     &timeout,
                     &rerun,
@@ -1025,8 +1052,22 @@ impl<'w, W: World> Trial<'w, W> {
                     "gate: {name}'s own gate fails against {base} — this branch did not cause it.\ngate: command: {cmd}\ngate: red on {base}: {reds}\n--- {base}'s own output ---\n{}\n--- this branch's output ---\n{}\ngate: fix the repository, or clear that command from {map}.",
                     parse::tail_bytes(&base_out, 8000), parse::tail_bytes(&out, 4000)))
             }
-            Attribution::BaseUntestable => v(NOVERDICT, "base-untestable", format!(
-                "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: and the same command could not be tried against {base}, so whose fault this is\ngate: cannot be established — refusing to charge it to the branch on a guess.")),
+            Attribution::BaseUntestable => {
+                // sp-e5v53-2: name exactly why, from whatever the base side actually
+                // produced — the fences' own failure when base_ran never became true at
+                // all, or the targeted rerun's own fault output (a testenv VERDICT FAULT,
+                // its stderr) when it ran but could not judge. An attempt that produced
+                // nothing at all is said as that, never silently as "cannot be established"
+                // alone — a reader should never have to go read gate.log's phases to learn
+                // whether the base was tried.
+                let why = if base_out.trim().is_empty() {
+                    "gate: the base side produced no output at all — see gate.log's phases for whether it ran.".to_string()
+                } else {
+                    format!("--- {base}'s own attempt ---\n{}", parse::tail_bytes(&base_out, 4000))
+                };
+                v(NOVERDICT, "base-untestable", format!(
+                    "gate: {name}'s own gate failed: {cmd}\n{out}\ngate: and the same command could not be tried against {base}, so whose fault this is\ngate: cannot be established — refusing to charge it to the branch on a guess.\n{why}"))
+            }
         }
     }
 
@@ -1408,8 +1449,30 @@ pub fn base_rerun_cmd(suites: &[String]) -> String {
         .map(String::as_str)
         .filter(|s| crate::compose::is_suite_name(s))
         .collect();
+    // `${SPIRA_TESTENV_BIN:-testenv}` (sp-kqger fix): a tree that owns its own testenv
+    // (`bin SPIRA_TESTENV_BIN testenv` in gate.steps, sp-isom7 — "the release's testenv
+    // could not run such a branch's suites at all") needs THAT binary here too, never the
+    // release's bare name on PATH, which may not even resolve. `with_bins` sets the
+    // variable when the base's own definition declares one; unset, this falls back to
+    // bare `testenv` exactly as it always did. Scar: before this, every targeted rerun
+    // against such a tree exited 127 near-instantly, mapped to NO_VERDICT base-untestable
+    // — invisible while this path was rare, then most of every red gate once sp-kqger
+    // made it the primary one.
+    //
+    // `"$SPIRA_GATE_REPO"` (sp-e5v53-2 fix): the repository gate string always passes
+    // testenv its repo as a second positional argument; this call never did, since sp-hh5h0.
+    // Without it, `resolve_repo` falls back to `$SPIRA_REPO` (never set in the gate
+    // command's `env -i` environment — DESIGN.md "The gate command's environment") or the
+    // harness root, whose basename rarely matches a configured repo, so `landref` finds no
+    // `base` column for it and the whole call faults `VERDICT FAULT rc=2 reason=base-ref`
+    // before a single suite runs — mapped by the case clause below to NO_VERDICT, so
+    // `base_out` never gains the suite's line at all: `BaseUntestable`, indistinguishable
+    // from a rerun that genuinely could not judge. Scar: concierge/sp-g3uwp (red on
+    // test-persona-model.sh) and sp-ooh1k (red on test-install-dolt-*), both after sp-e5v53
+    // had already fixed the bare-`testenv`-name defect — a second, independent omission in
+    // the same pre-existing call.
     format!(
-        "{BASE_RERUN_MARK}_b=0; testenv --suites {} \"$SPIRA_GATE_BRANCH\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
+        "{BASE_RERUN_MARK}_b=0; \"${{SPIRA_TESTENV_BIN:-testenv}}\" --suites {} \"$SPIRA_GATE_BRANCH\" \"$SPIRA_GATE_REPO\" || _b=$?; case \"$_b\" in 2|3|127) exit 75;; *) exit \"$_b\";; esac",
         list.join(",")
     )
 }

@@ -71,7 +71,7 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-24 | `attempts.sh deadlocked` lists poisoned-but-cleanly-mergeable beads (WOULD) and keeps branchless ones (KEEP with a reason). A dry run changes nothing. `--apply` lifts poison, keeps the attempt record and notes why. | C, R | T2 | batch |
 | UC-aeon-execution-25 | A repeated lane-cap timeout files an ask saying "timed out" (lane too small), not "change the approach". | O | T1 (stub mail) | cert |
 | UC-aeon-execution-26 | `slay.sh` writes the `.slain` marker first. The default reopens, unassigns and removes the worktree and branch. `--close` adds `spira-dropped`. `--keep-work` keeps. Uncommitted work is saved as a patch plus a wip commit, and unique work is parked at `refs/slain/<id>`. Bad ids, positional args and a duplicate `--bead` exit 2 and change nothing. | C, R, FC | T2 + T1 args | batch / cert |
-| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist.sh` rely on). | K | doctor preflight (not CI) | doctor |
+| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist` rely on). | K | doctor preflight (not CI) | doctor |
 
 
 Machine-readable declarations live in `docs/test-plan/aeon-execution.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
@@ -95,7 +95,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 08 | test-aeon-lease.sh (7 real `aeon_lease_minutes` cases; 5 cases test `hb_check`, **a copy inside the test**); test-aeon-heartbeat.sh (not run; tests `heartbeat_model_idle`, `youngest_in_subtree` and `subtree_has_flock`, none of which is called anywhere outside lib.sh) | T1 / 4; NA | KEEP test-aeon-lease.sh, rewritten to call an extracted `hb_tick`. DELETE test-aeon-heartbeat.sh along with the three dead lib.sh functions. |
 | 09 | test-thrash-wall.sh (9/10 asserts test `thrash_check`, a copy); test-thrash.sh::{no worktree ?, just-written 0, stale ~90m, live gate suppresses, dead gate pid} + 9 grep/line-order checks + cockpit-metrics cases | T1 / 3; T1+grep / 30 | MERGE test-thrash-wall INTO test-aeon-lease (`hb_tick` table). KEEP the probe cases of test-thrash.sh as T2 (~3 s). SOURCE-GREP: replace its 9 greps with disposition rows. Move the metrics cases to the cockpit area. |
 | 10 | test-attempts.sh::{empty trace refused … charging rule over every outcome} (~20 pure asserts); test-aeon-yield-headless.sh (2 aeon runs, 3 asserts, one phrasing); test-aeon-exit.sh / test-aeon-ledger.sh (indirect) | T1-in-T2 file / 30; T3 / 15 | KEEP as T1 (split test-attempts.sh: classifier half → `test-session-outcome.sh`, T1). DEMOTE-TO-T1: `session_yield_headless` gets a phrasing table (today it has no direct test). |
-| 11 | test-aeon-decision-blocked.sh (2 runs); test-aeon-operator-wait.sh (2 runs + 2 greps); test-aeon-presession-death.sh; test-aeon-yield-headless.sh; test-timeout.sh (8 line-order greps); test-thrash.sh::{.thrash after .slain, no increment, requeue-thrash present}; test-attempts.sh::{cleanup disarms errexit, requeue path exits before classification, not-judged bump_requeue grep} | T3 / 11+14+15+15, grep | DEMOTE-TO-T1: a 13-branch disposition table plus precedence rows. MERGE-INTO e2e: the Unlanded control, decision-blocked, operator-wait and pre-session. SOURCE-GREP (all line-order greps): replace with table rows. For operator-wait's `mail.sh` marker grep (`grep -c` == 1), run `mail.sh send kind=question` with BEAD_ID set as a T1 test. |
+| 11 | test-aeon-decision-blocked.sh (2 runs); test-aeon-operator-wait.sh (2 runs + 2 greps); test-aeon-presession-death.sh; test-aeon-yield-headless.sh; test-timeout.sh (8 line-order greps); test-thrash.sh::{.thrash after .slain, no increment, requeue-thrash present}; test-attempts.sh::{cleanup disarms errexit, requeue path exits before classification, not-judged bump_requeue grep} | T3 / 11+14+15+15, grep | DEMOTE-TO-T1: a 13-branch disposition table plus precedence rows. MERGE-INTO e2e: the Unlanded control, decision-blocked, operator-wait and pre-session. SOURCE-GREP (all line-order greps): replace with table rows. For operator-wait's `mail` marker grep (`grep -c` == 1), run `mail send kind=question` with BEAD_ID set as a T1 test. |
 | 12 | test-requeue.sh::{rebase-conflict requeue ×7 asserts, session did not close control, pair} | T3 / 294 (server mode) | MERGE-INTO e2e (one rebase-conflict run on an embedded store; the "did not close" control duplicates the e2e Unlanded row) |
 | 13 | test-aeon-verdict.sh (13 runs, ~45 asserts); test-delivers-parity.sh (awk-extracts `case "$_dtype"` from both scripts and evals it) | T3 / 77; T1 / 1 | DEMOTE-TO-T1: extract `close_verdict` / `delivers_verdict` into lib.sh and call it from aeon.sh and sentinel.sh. The landref walk becomes T2 (git only). DELETE test-delivers-parity.sh (SOURCE-GREP; the extraction makes parity true by construction). Keep 2 e2e rows (committed, no-commit reopen). |
 | 14 | test-aeon-eviction-race.sh (7 runs) | T3 / 43 | DEMOTE-TO-T1 (`eviction_reopen <landstate> <tip> <recent>` table, 7 rows + cap row) + 1 e2e row |
@@ -111,7 +111,7 @@ Cost is the CI seconds of the whole file (main push). "e2e" means the proposed s
 | 22 | test-poison.sh::{operator asked, ask body, event recorded, event not mailed, already-poisoned}; test-poison-edge.sh::{ask title, BRANCH line ×2}; test-poison-ask.sh::{asks once, cleared label no re-arm, fourth attempt re-asks} | T3 / (above) | DEMOTE-TO-T1 (ask formatting and the `poison-asked` dedup key); the ask-title assertion is duplicated verbatim in 2 files |
 | 23 | test-requeue-cap.sh (6 asserts, 213 s); test-requeue-cap-accept.sh (7 asserts, 235 s) | T3 / 448 | MERGE both INTO check4-unit (the cap/dedup/exemption rows) + 1 row in the T3 poison pass. The reclaim cap has no test (G11). |
 | 24 | test-requeue.sh::{deadlock sweep dry run, --apply} | T3 / (in 294) | Move to T2 `test-deadlock-sweep.sh` (stub the landability check or use a 1-commit temp repo; no aeon runs) |
-| 25 | test-timeout.sh::{at-limit call produces an ask, ask says timed out} | T2 / (in 156) | DEMOTE-TO-T1 (stub mail.sh; no bd needed). DELETE the `ops_age_of`/`age_of` cases: they test copies of cockpit.sh inlined in the test. Re-home them to the cockpit area against the real function. Also DELETE the `timeouts_of`/`bump_timeout` dead-stub asserts. |
+| 25 | test-timeout.sh::{at-limit call produces an ask, ask says timed out} | T2 / (in 156) | DEMOTE-TO-T1 (stub mail; no bd needed). DELETE the `ops_age_of`/`age_of` cases: they test copies of cockpit.sh inlined in the test. Re-home them to the cockpit area against the real function. Also DELETE the `timeouts_of`/`bump_timeout` dead-stub asserts. |
 | 26 | test-slay.sh (16 groups, ~60 asserts) | T2 / 60 | KEEP (T2). Arg refusals and `-h` → T1 (~-10 s). SOURCE-GREP: the marker-first grep on a section comment becomes a behaviour check (a stub `kill` records whether `.slain` exists). |
 | 27 | test-aeon-launch-grammar.sh (NA: needs the real claude binary) | T4-ish / NA | DELETE from the suite list; move the 2 checks into `doctor.sh` |
 
@@ -146,7 +146,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | Close verdict + delivers types | aeon.sh ~1834-2021; sentinel.sh `case "$_dtype"` | test-aeon-verdict.sh (13 runs), test-delivers-parity.sh (awk + eval of source) | `close_verdict <bd-show JSON> <committed yes/no>` and `delivers_verdict` in lib.sh, called by both scripts |
 | Eviction-race decision | aeon.sh 1899-1930 | test-aeon-eviction-race.sh (7 runs) | `eviction_reopen "<state tip at reason>" <cur_tip> <recent_count>` → reopen/stale/cap/none |
 | CHECK 4 decision | sentinel.sh ~311-400 | 7 server-mode suites (~1,400 s) | `check4_decide attempts requeues reclaims labels asked_stamp` + env thresholds → `poison\|clear\|ask\|requeue-mail\|reclaim-mail\|none`; `check4_bulk_data` already supplies the inputs in one query |
-| Poison ask/requeue mail formatting + dedup key | sentinel.sh | test-poison*.sh via mail.sh stub | `poison_ask_body id attempts branch_commits log_excerpt`; dedup = `run/poison-asked/<id>.<n>` existence |
+| Poison ask/requeue mail formatting + dedup key | sentinel.sh | test-poison*.sh via mail stub | `poison_ask_body id attempts branch_commits log_excerpt`; dedup = `run/poison-asked/<id>.<n>` existence |
 | Session spend parser | lib.sh python block ~2190-2236 + aeon.sh per-attempt segmenting | test-aeon-ledger.sh (8 aeon runs) | call the parser directly on fixture trace files; expose `trace_segment <log> <attempt>` |
 | `session_yield_headless` | lib.sh | 2 aeon runs, one phrasing | direct call on fixture logs (already a pure predicate; no test calls it) |
 | Brief rendering | aeon.sh 1183-1222 (RESUME/SLAIN), 1549-1580 (DEADLINE), 1634 (ALREADY_DONE) | test-aeon-resume.sh, test-aeon-verdict.sh (20 runs) | `render_resume_brief <count> <last_subject>`, `render_deadline_brief <at> <now>`; the count stays T2 (temp git) |
@@ -155,7 +155,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | Read-after-claim poison | aeon.sh 430-446 | grep only | `bead_has_label <json> spira-poison` |
 | Wiki commit selection | aeon.sh wiki section (~1304, ~1819) | test-aeon-wiki-dirty.sh (4 runs, 6 repos) | `wiki_new_since <snapshot> <porcelain>` minus tasks.md |
 | Close guards (SOP, groom, close-reason, prod-dirty override) | aeon.sh post-session; `close-reason-flags.py` | test-ops-closing.sh (15 runs), test-groom-escalation-check.sh (5 runs) | `close-reason-flags.py` is already standalone, so unit it directly; `sop_rule_verdict <ledger> <bead> <epoch>`; `groom_claims_verified <log> <ask-json> <epoch>` |
-| Timeout ask loop | lib.sh `spira_ask_timeout_loop` | test-timeout.sh on server-mode Dolt (156 s) | already a function; stub mail.sh, no bd |
+| Timeout ask loop | lib.sh `spira_ask_timeout_loop` | test-timeout.sh on server-mode Dolt (156 s) | already a function; stub mail, no bd |
 | slay argument parsing | slay.sh | real testdb per case | parse before `testdb`/bd is touched; unit with no store |
 
 ## 6. Gaps
@@ -165,7 +165,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | G1 | **Lease-lapse teardown**: `bump_lapsed`, the `$SPIRA_RUN/lapsed/<id>-<ts>` record, the note, claim release, ledger `lapsed` and the attempt being charged | aeon.sh 754-770. No test greps `bump_lapsed` or `ledger_done … lapsed`. test-aeon-lease.sh tests a copy of the tick, not cleanup. |
 | G2 | Thrash teardown **behaviour**: requeue event `thrash`, no attempt charged, note, ledger `requeue-thrash` | aeon.sh 736-747; only line-order and awk greps in test-thrash.sh |
 | G3 | Timeout disposition: rc 124 with nothing committed → no charge, note, ledger `timeout`; and rc 124 **with** a commit falls through | aeon.sh 826-836; test-timeout.sh checks only line order |
-| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist.sh |
+| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist |
 | G5 | Aeon-side handling of a slain bead (release, ledger `slain`, no charge) | aeon.sh 727-734; test-slay.sh tests slay.sh, not the aeon's cleanup |
 | G6 | Gate still running when the bead is **open** → released, ledger `gate-unfinished`, no charge | aeon.sh 772-790; test-aeon-gate-close-silent.sh covers only the closed-bead switch |
 | G7 | Read-after-claim poison race → release, ledger `poison-raced` | aeon.sh 430-446; grep in test-timeout.sh only |
@@ -523,3 +523,24 @@ end to end through the real `aeon` binary.
 
 `sp-wkgyc` asked where `aeon_disposition`'s declared set now lives: `aeon/src/decide.rs`
 (`NoteKey`, `Disposition`, `pub fn disposition`), not lib.sh.
+
+## 14. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
+
+`test-holds.sh` (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
+catalogued `UC-` of its own — it predates this area's numbered use cases and was never
+folded in) went red in `concierge/sp-aufxu`'s landing gate under the full parallel
+corpus, in its T5 case only: a claiming aeon's own rendered prompt should name the
+"Files already in flight" holds section and the open bead already touching the fixture
+path, and the capture came back empty both times (`wanted [...] in []`) rather than
+wrong. T1–T4 (the pure `bead_named_paths`/`render_holds_brief` logic and `holds.sh`
+against a real store) stayed green throughout.
+
+Run alone through `./target/release/testenv`, once on `concierge/sp-aufxu` and once on
+`local/main`: green on both. Per law-a-test-that-flips-is-deleted, deleted rather than
+fixed on a branch that does not touch its subject. Root-cause-and-re-add filed as
+sp-caetu — T5 claims a real bead through a real aeon inside the container, and the
+leading theory is that its prompt-capture step is what goes silently empty under cgroup
+memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 suites),
+rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
+marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
+entry is orphaned by its removal — this section is the only record of what it checked.

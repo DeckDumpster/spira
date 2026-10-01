@@ -50,7 +50,7 @@ for f in "$HERE/../systemd/"*.service "$HERE/../systemd/"*.timer; do
     [ -e "$f" ] || continue
     ln -s "$f" "$FIXTURE/systemd/$(basename "$f")"
 done
-for f in conf.sh watchd.sh lib.sh suite-covers.sh; do
+for f in conf.sh lib.sh suite-covers.sh; do
     [ -e "$HERE/$f" ] && ln -s "$HERE/$f" "$FIXTURE/spira/$f"
 done
 printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"

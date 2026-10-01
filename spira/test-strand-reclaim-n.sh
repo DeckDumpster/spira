@@ -32,14 +32,14 @@ testdb_up strandreclaimn || { echo "test-strand-reclaim-n: could not build fixtu
 mkdir -p "$TMP/run" "$TMP/home"
 # THE STRAND IS A BINARY (strand.sh is gone), invoked by name from the tree's build on PATH.
 
-# mail.sh stub — the two rows below never reach escalation (RECLAIM_AT defaults to 5, well
+# mail stub — the two rows below never reach escalation (RECLAIM_AT defaults to 5, well
 # above the single reclaim each row here earns), but a stub is cheap insurance against a
 # real send if that ever changes.
-cat > "$TMP/home/mail.sh" <<'STUB'
+cat > "$TMP/home/mail" <<'STUB'
 #!/usr/bin/env bash
 exit 0
 STUB
-chmod +x "$TMP/home/mail.sh"
+chmod +x "$TMP/home/mail"
 
 # TWO ghost rows, disposition "act" — the branch that reads $n. Neither id needs to be a
 # real bead: bump_reclaim writes a raw events-table row keyed on the id string, and the

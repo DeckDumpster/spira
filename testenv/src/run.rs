@@ -602,8 +602,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         }
     };
     // HOST-WIDE ADMISSION (sp-f4ig1): the build takes a compile slot, the container through
-    // teardown a test slot — one at a time, never both. Under a gate (SPIRA_ADMISSION) the
-    // gate's slot covers both. Waiting never fails; it is said on stderr.
+    // teardown a test slot — one at a time, never both. Under a gate (SPIRA_ADMISSION=gate) the
+    // gate's slot covers the test phase, and the build takes its compile lease WITHOUT WAITING
+    // (DESIGN-admission.md D11): the gate never queues, agent builds queue behind it. Waiting
+    // never fails; it is said on stderr.
     let admit = |pool: admission::Pool, weight: u64| -> admission::Guard {
         let inherit = (deps.env)(admission::INHERIT_ENV);
         let who = [admission::WHO_ENV, "SPIRA_WORK_BEAD_ID", "BEAD_ID"]
@@ -613,6 +615,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         let size_of = || {
             admission::size(pool, (deps.env)(pool.size_env()).as_deref(), admission::Host::read())
         };
+        if pool == admission::Pool::Compile && inherit.as_deref().is_some_and(admission::is_gate_token) {
+            let gate_who = format!("gate:{who}");
+            let q = admission::Request { run: &s.run, pool, holder_pid: std::process::id(), who: &gate_who, inherit: None, weight };
+            return admission::take_now_guard(&q, size_of(), &admission::RealProcs, &mut |l: &str| deps.log(l));
+        }
         let q = admission::Request {
             run: &s.run,
             pool,
@@ -1964,7 +1971,7 @@ fn refuse_repeat(
     let csv = red_suites.replace(' ', ",");
     let short = &key[..16];
     if !already_notified {
-        let mail = s.mail_cmd.clone().or_else(|| deps.which("mail.sh"));
+        let mail = s.mail_cmd.clone().or_else(|| deps.which("mail"));
         if let Some(mail) = mail.filter(|m| m.is_file()) {
             let tip = git(&repo.path, &["rev-parse", "--verify", "-q", br])
                 .unwrap_or_else(|_| "unknown".into());
