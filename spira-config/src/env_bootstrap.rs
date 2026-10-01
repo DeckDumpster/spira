@@ -324,8 +324,23 @@ mod tests {
 
     #[test]
     fn bootstrap_sh_resolves_bd_when_unset() {
-        let out = bootstrap_sh("/release/bin", "", "/fixture-home", "");
-        assert!(out.contains("SPIRA_BD='bd'"), "{out}");
+        // Hermetic regardless of the host/container: path_tail's fixed tail always ends in
+        // real system directories (/usr/local/bin, /usr/bin, /bin), and the testenv
+        // container genuinely ships a `bd` at /usr/local/bin/bd (spira/testenv/Containerfile)
+        // for the suites' own use. A literal `"bd"` fallback assertion here is true on a bare
+        // host but false inside that container, which finds the real one first — not a bug,
+        // just a second real `bd` earlier in this test's search than the author pictured.
+        // Plant a controlled, uniquely-named executable in `<home>/.cargo/bin`, which
+        // path_tail places ahead of every hardcoded system directory, so resolution is
+        // deterministic no matter what else is installed on the box.
+        let dir = testkit::TempDir::new("spira-config-env-bootstrap-bootstrap-sh-unset");
+        let cargo_bin = dir.path().join(".cargo/bin");
+        fs::create_dir_all(&cargo_bin).unwrap();
+        let bd = cargo_bin.join("bd");
+        testkit::write_exe(&bd, "#!/bin/sh\nexit 0\n");
+
+        let out = bootstrap_sh("/release/bin", "", &dir.path().to_string_lossy(), "");
+        assert!(out.contains(&format!("SPIRA_BD='{}'", bd.to_string_lossy())), "{out}");
         assert!(out.starts_with("PATH="), "{out}");
     }
 
