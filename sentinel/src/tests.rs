@@ -1234,10 +1234,10 @@ fn sending_7c_7d_count_what_their_seams_report() {
         }
         if s.args.iter().any(|a| a == "worktree") {
             ok(&porcelain2)
-        } else if s.args.iter().any(|a| a == "status") {
-            ok("") // every holder's worktree is clean
-        } else if s.args.iter().any(|a| a == "log") {
-            ok("") // no inherited commits on sp-c2's holder worktree
+        } else if s.args.iter().any(|a| a == "status" || a == "log") {
+            // "status": every holder's worktree is clean. "log": no inherited commits on
+            // sp-c2's holder worktree.
+            ok("")
         } else {
             None
         }

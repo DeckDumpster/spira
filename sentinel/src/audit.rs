@@ -132,7 +132,7 @@ impl<'a> Sentinel<'a> {
     /// CHECK 7c — ready beads no persona can claim: name them, file one incident each.
     /// Native now (wave 4.28, sp-fbqsv): the bash seams S7/S8 are retired.
     pub fn check7c(&self, snap: &Snapshot) {
-        let snap_ready_raw = (!snap.ready_raw.is_empty()).then(|| snap.ready_raw.as_str());
+        let snap_ready_raw = (!snap.ready_raw.is_empty()).then_some(snap.ready_raw.as_str());
         let out = self.detect_unclaimable_ready(snap_ready_raw);
         let out = out.trim_end_matches('\n');
         if out.is_empty() {
