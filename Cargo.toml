@@ -33,6 +33,7 @@ members = [
     "spira-lint",
     "rebase-stale",
     "round-vm",
+    "sccache-dav",
     "spira-claim",
     "strand",
     "testenv",

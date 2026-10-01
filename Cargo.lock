@@ -1007,6 +1007,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "sccache-dav"
+version = "1.0.0"
+dependencies = [
+ "axum",
+ "httpdate",
+ "testkit",
+ "tokio",
+]
+
+[[package]]
 name = "schemars"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
