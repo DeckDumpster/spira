@@ -86,7 +86,7 @@ git -C "$REPO" add -A
 # first prove it could have found something" (law-absence-needs-a-positive-control).
 # Plant the bad case and require the guard to say so, then believe it when it is silent.
 # ---------------------------------------------------------------------------------------
-out="$(env -i HOME="$TMP" PATH="$GIT_BIN:/usr/bin:/bin" \
+out="$(env -i HOME="$TMP" PATH="$GIT_BIN:$SPIRA_CONFIG_BIN:/usr/bin:/bin" \
     GIT_COMMITTER_NAME="aeon-shiva" GIT_COMMITTER_EMAIL="aeon-shiva@spira.local" \
     SPIRA_CONF="$TMP/none.conf" SPIRA_REPO="$REPO" \
     SPIRA_REPO_MAP="$TMP/none.map" SPIRA_DB="$TMP/none.db" \
