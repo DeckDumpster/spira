@@ -57,6 +57,10 @@ pub trait Host {
     /// This process's own binary's path (`std::env::current_exe`), so a sibling binary from
     /// the same build can be found by name. `None` when the OS cannot answer.
     fn current_exe(&self) -> Option<PathBuf>;
+    /// Builds `spira-config` (release profile) in `repo_root` and returns its binary path,
+    /// or `None` on any failure. The fallback `stage_spira_config` takes when no sibling of
+    /// this process's own binary exists.
+    fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf>;
     fn temp_log(&self) -> PathBuf;
     fn sleep(&self, d: Duration);
     fn now(&self) -> u64;
@@ -359,29 +363,44 @@ impl Driver<'_> {
     /// `self.err`) when no sibling exists: the Containerfile's `COPY` then fails the build
     /// loudly rather than running doctor-check against a silently-absent manifest reader.
     fn stage_spira_config(&self, dir: &Path) -> Option<PathBuf> {
-        let Some(exe) = self.host.current_exe() else {
-            self.err("testenv: cannot resolve this process's own path — skipping the spira-config stage for doctor-check");
-            return None;
+        let sibling = self
+            .host
+            .current_exe()
+            .and_then(|exe| exe.parent().map(|p| p.join("spira-config")))
+            .filter(|p| self.host.is_file(p));
+        let source = match sibling {
+            Some(p) => p,
+            // No sibling next to THIS invocation of testenv — a caller that built only
+            // `-p testenv` (the gate's own host-side container step does; round-vm's
+            // REMOTE_SCRIPT and TEMPLATE_SCRIPT build both explicitly, so this path is for
+            // every OTHER caller). Build it ourselves rather than depend on every caller
+            // remembering to: a doctor-check that needs a prerequisite the caller forgot is
+            // the same silent-absence failure mode this whole fix exists to close.
+            None => {
+                let Some(repo_root) = dir.parent() else {
+                    self.err("testenv: cannot find the repository root above the harness — skipping the spira-config stage for doctor-check");
+                    return None;
+                };
+                self.err("testenv: no spira-config next to this binary — building it now (cargo build --release -p spira-config)");
+                match self.host.build_spira_config(repo_root) {
+                    Some(p) => p,
+                    None => {
+                        self.err(&format!(
+                            "testenv: could not build spira-config in {} — the Containerfile's doctor-check step needs it on PATH",
+                            repo_root.display()
+                        ));
+                        return None;
+                    }
+                }
+            }
         };
-        let Some(sibling) = exe.parent().map(|p| p.join("spira-config")) else {
-            return None;
-        };
-        if !self.host.is_file(&sibling) {
-            self.err(&format!(
-                "testenv: no spira-config next to this binary ({}) — build the workspace \
-                 (`cargo build --profile <p> --workspace`), not just `-p testenv`, before a \
-                 cold image build; the Containerfile's doctor-check step needs it on PATH",
-                sibling.display()
-            ));
-            return None;
-        }
         let dest = dir.join(DOCTOR_CHECK_SPIRA_CONFIG);
-        if self.host.copy_file(&sibling, &dest) {
+        if self.host.copy_file(&source, &dest) {
             Some(dest)
         } else {
             self.err(&format!(
                 "testenv: could not stage spira-config into the build context ({} -> {})",
-                sibling.display(),
+                source.display(),
                 dest.display()
             ));
             None
@@ -402,7 +421,14 @@ impl Driver<'_> {
             "testenv: close to twenty minutes; a heartbeat line follows at least every {hb}s —"
         ));
         self.err("testenv: silence past that means stuck, not slow.");
-        let staged_spira_config = self.stage_spira_config(&dir);
+        let Some(staged_spira_config) = self.stage_spira_config(&dir) else {
+            // Both the sibling check and the on-demand build (stage_spira_config's own
+            // fallback) failed: refuse now, with the reason already on stderr, rather than
+            // run a podman build the Containerfile's own COPY step would only fail deep
+            // inside, confusingly.
+            self.err("testenv: refusing the image build — no spira-config to stage for doctor-check (see above)");
+            return false;
+        };
         let log = self.host.temp_log();
         let start = self.host.now();
         let args = vec![
@@ -426,9 +452,7 @@ impl Driver<'_> {
         self.host.remove(&log);
         // Staged only to cross into the build context (sp-xjnzl's doctor-check fix below);
         // never left behind in the checkout either way the build went.
-        if let Some(p) = &staged_spira_config {
-            self.host.remove(p);
-        }
+        self.host.remove(&staged_spira_config);
         if rc == 0 {
             return true;
         }
@@ -1128,6 +1152,20 @@ impl Host for RealHost {
     }
     fn current_exe(&self) -> Option<PathBuf> {
         std::env::current_exe().ok()
+    }
+    fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
+        let ok = std::process::Command::new("cargo")
+            .args(["build", "--release", "-p", "spira-config"])
+            .current_dir(repo_root)
+            .stdin(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            return None;
+        }
+        let bin = repo_root.join("target/release/spira-config");
+        bin.is_file().then_some(bin)
     }
     fn temp_log(&self) -> PathBuf {
         std::env::temp_dir().join(format!(
