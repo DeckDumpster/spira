@@ -5,6 +5,8 @@
 //! seams — `bash -c '. "$LIB"; <func> "$@"'` — rather than re-deriving the detection
 //! logic. Production shells out for real; tests use a recording fake.
 
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -45,11 +47,45 @@ pub trait Seam {
 
 pub struct LibSeam {
     pub lib_sh: PathBuf,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl LibSeam {
     pub fn new(lib_sh: PathBuf) -> LibSeam {
-        LibSeam { lib_sh }
+        LibSeam { lib_sh, registry: OnceCell::new() }
+    }
+
+    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), built once per
+    /// process from a single snapshot of the vars [`spira_config::repos::Registry::new`]
+    /// needs, instead of a fresh `bash -c '. lib.sh; repo_root ...'`/`spira_landrefs`
+    /// subprocess per call — [`Seam::repo_root`] and [`Seam::land_base`] both read it.
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| {
+            let script = ". \"$0\" >/dev/null 2>&1 || exit 97\n\
+                for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
+                printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
+            let out = Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .arg(&self.lib_sh)
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+            let mut env: BTreeMap<String, String> = BTreeMap::new();
+            if let Ok(o) = out {
+                for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
+                    if let Some((k, v)) = rec.split_once('=') {
+                        env.insert(k.to_string(), v.to_string());
+                    }
+                }
+            }
+            let map_text = env
+                .get("SPIRA_REPO_MAP")
+                .filter(|p| !p.is_empty())
+                .and_then(|p| std::fs::read_to_string(p).ok());
+            let home = self.lib_sh.parent().map(Path::to_path_buf).unwrap_or_default();
+            spira_config::repos::Registry::new(map_text.as_deref(), &env, &home)
+        })
     }
 
     fn run(&self, args: &[&str]) -> Result<String, String> {
@@ -132,12 +168,13 @@ impl Seam for LibSeam {
     fn repo_root(&self, name: &str) -> Result<String, String> {
         // repo_root exits non-zero for an unmapped name; that is "no path", not an error
         // this seam should propagate — the caller reads the empty string the same way.
-        Ok(self.run(&["repo_root", name]).unwrap_or_default())
+        // spira_config::repos (sp-k6lku, "wave 4.13") in-process, not a bash seam call.
+        Ok(self.registry().root(name).unwrap_or_default())
     }
 
     fn land_base(&self, repo_path: &str) -> Result<String, String> {
-        let refs = self.run(&["spira_landrefs", repo_path]).unwrap_or_default();
-        Ok(refs.split_whitespace().next().unwrap_or("").to_string())
+        // spira_landrefs (sp-k6lku, "wave 4.13") in-process, not a bash seam call.
+        Ok(spira_config::repos::landrefs(self.registry(), repo_path).map(|(base, _)| base).unwrap_or_default())
     }
 
     fn lc_held_poison(&self, id: &str) -> bool {

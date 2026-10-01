@@ -4,6 +4,8 @@
 //! resolution in Rust a second time (DESIGN.md §4: lib.sh stays the one authority).
 
 use crate::ports::{StatusRow, World};
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -27,42 +29,46 @@ pub fn lib_sh_sources(home: &Path) -> bool {
 
 pub struct Real {
     pub home: PathBuf,
+    registry: OnceCell<spira_config::repos::Registry>,
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        Real { home }
+        Real { home, registry: OnceCell::new() }
     }
 
-    /// Source lib.sh, then run `body` with `args` as `$1`, `$2`, ... Captures stdout only,
-    /// trimmed of a trailing newline; stderr is discarded. Exit code 96 (never a real lib.sh
-    /// exit) means lib.sh itself failed to source, which every caller here treats as "empty".
-    fn seam(&self, body: &str, args: &[&str]) -> String {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        let out = Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(self.home.join("lib.sh"))
-            .args(args)
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output();
-        out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
-    }
-
-    fn seam_ok(&self, body: &str, args: &[&str]) -> bool {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
-        Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg(self.home.join("lib.sh"))
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+    /// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), built once per
+    /// process from a single `. lib.sh` snapshot of the four variables [`Registry::new`]
+    /// needs (`SPIRA_HOME_REPO`, `SPIRA_REPO`, `SPIRA_REPO_DERIVED`, `SPIRA_REPO_MAP`), in
+    /// place of a fresh `bash -c '. lib.sh; <fn>'` subprocess per lookup — `repo_names`,
+    /// `repo_root`, `repo_field`, `home_repo`, `repo_land`, `landref`, `ref_remote` and
+    /// `ref_branch` below all read this same registry in-process instead.
+    fn registry(&self) -> &spira_config::repos::Registry {
+        self.registry.get_or_init(|| {
+            let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
+                for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
+                printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
+            let out = Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .arg(self.home.join("lib.sh"))
+                .stdin(Stdio::null())
+                .stderr(Stdio::null())
+                .output();
+            let mut env: BTreeMap<String, String> = BTreeMap::new();
+            if let Ok(o) = out {
+                for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
+                    if let Some((k, v)) = rec.split_once('=') {
+                        env.insert(k.to_string(), v.to_string());
+                    }
+                }
+            }
+            let map_text = env
+                .get("SPIRA_REPO_MAP")
+                .filter(|p| !p.is_empty())
+                .and_then(|p| std::fs::read_to_string(p).ok());
+            spira_config::repos::Registry::new(map_text.as_deref(), &env, &self.home)
+        })
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> (bool, String) {
@@ -81,35 +87,40 @@ impl Real {
 
 impl World for Real {
     fn repo_names(&self) -> Vec<String> {
-        self.seam("repo_names", &[]).lines().map(String::from).collect()
+        self.registry().names()
     }
     fn repo_root(&self, name: &str) -> Option<PathBuf> {
-        let out = self.seam("repo_root \"$1\" 2>/dev/null", &[name]);
-        if out.is_empty() { None } else { Some(PathBuf::from(out)) }
+        self.registry().root(name).map(PathBuf::from)
     }
     fn repo_field(&self, name: &str, field: &str) -> Option<String> {
-        let out = self.seam("repo_field \"$1\" \"$2\" 2>/dev/null", &[name, field]);
-        if out.is_empty() { None } else { Some(out) }
+        let col = match field {
+            "path" => spira_config::repos::Column::Path,
+            "land" => spira_config::repos::Column::Land,
+            "base" => spira_config::repos::Column::Base,
+            "format" => spira_config::repos::Column::Format,
+            "gate" => spira_config::repos::Column::Gate,
+            "lanes" => spira_config::repos::Column::Lanes,
+            _ => return None,
+        };
+        self.registry().field(name, col)
     }
     fn same_repo(&self, a: &Path, b: &Path) -> bool {
-        self.seam_ok("spira_same_repo \"$1\" \"$2\"", &[&a.to_string_lossy(), &b.to_string_lossy()])
+        spira_config::repos::same_repo(&a.to_string_lossy(), &b.to_string_lossy())
     }
     fn home_repo(&self) -> String {
-        self.seam("spira_home_repo", &[])
+        self.registry().home_repo().to_string()
     }
     fn landref(&self, repo: &Path) -> Option<String> {
-        let out = self.seam("spira_landref \"$1\" 2>/dev/null", &[&repo.to_string_lossy()]);
-        if out.is_empty() { None } else { Some(out) }
+        spira_config::repos::landref(self.registry(), &repo.to_string_lossy())
     }
     fn repo_land(&self, name: &str) -> String {
-        self.seam("repo_land \"$1\" 2>/dev/null", &[name])
+        self.registry().land(name)
     }
     fn ref_remote(&self, base: &str, repo: &Path) -> Option<String> {
-        let out = self.seam("ref_remote \"$1\" \"$2\" 2>/dev/null", &[base, &repo.to_string_lossy()]);
-        if out.is_empty() { None } else { Some(out) }
+        spira_config::repos::ref_remote(base, Some(&repo.to_string_lossy()))
     }
     fn ref_branch(&self, base: &str) -> String {
-        self.seam("ref_branch \"$1\"", &[base])
+        spira_config::repos::ref_branch(base)
     }
 
     fn is_git_repo(&self, p: &Path) -> bool {
