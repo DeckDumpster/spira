@@ -150,10 +150,12 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
 
     m.units.push(t("spira-loom.service", true));
 
-    // sccache-dav (sp-xjnzl): the box's shared compilation cache over WebDAV. Its own
-    // address and storage root are the unit's Environment= lines (systemd/sccache-dav.service),
-    // not something this manifest or conf.sh resolves — see that unit's own comment for why.
-    m.units.push(t("sccache-dav.service", true));
+    // sccache-dav.service: a template whose Environment= lines bind one box's own LAN
+    // address (systemd/sccache-dav.service) — it cannot become active inside a test
+    // fixture's isolated network namespace, nor on a fresh box before an operator has
+    // picked that box's address. Declined here like spira-lc.service, installed by hand
+    // when an operator is ready to deploy it for real (sp-xjnzl).
+    m.optional.push("sccache-dav.service".into());
 
     m.units.push(t("spira-broker.service", false));
     m.units.push(t("spira-broker.timer", inputs.broker_enable));
