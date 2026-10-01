@@ -88,6 +88,13 @@ _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
 _TL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$_TL_SELF/suite-covers.sh"
+
+# NO SUMMON JITTER IN SUITES (sp-1cdgq). aeon sleeps a random 0..SPIRA_SUMMON_JITTER seconds
+# (default 20) before its session starts, so a batch summoned together does not start in
+# lockstep. A suite driving the real binary paid that per launch, and one whose deadline was
+# shorter than the jitter flipped about half the time (test-thrash-teardown). A suite that tests
+# the jitter itself sets its own value after sourcing this.
+export SPIRA_SUMMON_JITTER="${SPIRA_SUMMON_JITTER:-0}"
 _TL_TIER="$(suite_tier_of "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite_uc_of "${BASH_SOURCE[1]:-$0}")"
 # THE SUITE'S PATH IS THE LAUNCHER'S (sp-isom7). testenv stages the tree under test as a
