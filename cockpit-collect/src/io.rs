@@ -93,7 +93,7 @@ pub fn home_dir() -> PathBuf {
 pub fn bootstrap_config() {
     let home = home_dir();
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
-    let repo_derived = spira_config::resolve::derive_repo_filesystem(&home);
+    let repo_derived = spira_config::resolve::derive_repo_filesystem(&home, &env_map);
     let repo = env_map
         .get("SPIRA_REPO")
         .filter(|s| !s.is_empty())

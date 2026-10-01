@@ -89,12 +89,23 @@ pub fn default_conf_d(home: &Path) -> std::path::PathBuf {
 /// does not exist) returns `home` itself, matching bash's `SPIRA_REPO_DERIVED=""` as a
 /// non-empty placeholder a caller can still pass on rather than inventing its own
 /// empty-path special case.
-pub fn derive_repo_filesystem(home: &Path) -> std::path::PathBuf {
+///
+/// `env` is the EXPLICIT environment the git subprocess runs with (`.env_clear()` plus
+/// exactly this map, scrubbed) — never this process's own ambient environment. Two
+/// reasons: it is the same per-copy-fact discipline every other function here follows
+/// (never reading `std::env` straight), and it is what makes the scrub itself testable —
+/// a unit test can hand in a `GIT_DIR`-poisoned map without mutating the real process
+/// environment, which a parallel `cargo test` run shares across every thread (the exact
+/// race a `std::env::set_var`-based version of this test caused: another thread's own
+/// unrelated `git` spawn, running concurrently with the lock this test held, inherited
+/// the poison anyway, because inheritance does not consult any Rust-level lock).
+pub fn derive_repo_filesystem(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
+    let scrubbed = env
+        .iter()
+        .filter(|(k, _)| !matches!(k.as_str(), "GIT_DIR" | "GIT_WORK_TREE" | "GIT_INDEX_FILE" | "GIT_PREFIX"));
     let toplevel = std::process::Command::new("git")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_PREFIX")
+        .env_clear()
+        .envs(scrubbed)
         .arg("-C")
         .arg(home)
         .args(["rev-parse", "--show-toplevel"])
@@ -122,7 +133,7 @@ pub fn derive_repo_filesystem(home: &Path) -> std::path::PathBuf {
 pub fn derive_home_repo(home: &Path, env: &BTreeMap<String, String>) -> std::path::PathBuf {
     match env.get("SPIRA_REPO").filter(|s| !s.is_empty()) {
         Some(r) => std::path::PathBuf::from(r),
-        None => derive_repo_filesystem(home),
+        None => derive_repo_filesystem(home, env),
     }
 }
 
@@ -1017,12 +1028,20 @@ mod tests {
         assert_eq!(derive_home_repo(&home, &e), Path::new("/explicit/override"));
     }
 
+    // derive_repo_filesystem runs its git subprocess with exactly this map (`.env_clear()`
+    // plus it) — PATH must be in it for the real `git` binary to be found at all.
+    fn env_with_path(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        let mut m = env(pairs);
+        m.entry("PATH".to_string()).or_insert_with(|| std::env::var("PATH").unwrap_or_default());
+        m
+    }
+
     #[test]
     fn derive_home_repo_uses_git_toplevel() {
         let ws = testkit::TempDir::new("spira-config-derive-repo-git");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[]);
+        let e = env_with_path(&[]);
         let got = derive_home_repo(&home, &e).canonicalize().unwrap();
         let want = repo.canonicalize().unwrap();
         assert_eq!(got, want);
@@ -1033,34 +1052,37 @@ mod tests {
         let ws = testkit::TempDir::new("spira-config-derive-repo-noparent");
         let (home, repo) = fixture_home_repo(&ws);
         // deliberately NOT a git repo: no `git init`
-        let e = env(&[]);
+        let e = env_with_path(&[]);
         let got = derive_home_repo(&home, &e).canonicalize().unwrap();
         let want = repo.canonicalize().unwrap();
         assert_eq!(got, want);
     }
-
-    // ENV VARS ARE PROCESS-GLOBAL: every test below that mutates one takes `crate::ENV_LOCK`
-    // — the ONE crate-wide lock (sp-dh4fv) — for its whole body, never a module-private
-    // lock of its own: two locks that never contend is not a lock at all, exactly the bug
-    // sp-dh4fv fixed in lib.rs/locate.rs.
 
     #[test]
     fn derive_home_repo_scrubs_the_git_hook_environment() {
         // conf.sh's own scar: a git hook runs with GIT_DIR exported, and --show-toplevel
         // under that answers the -C directory itself (<repo>/spira) instead of climbing to
         // <repo> — one level too deep — unless GIT_DIR (and friends) are scrubbed first.
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        //
+        // NEVER std::env::set_var here: derive_repo_filesystem runs its git subprocess
+        // with `.env_clear().envs(env)` — the EXPLICIT map this test hands it, never this
+        // process's own ambient environment — specifically so a "GIT_DIR is poisoned" case
+        // like this one is testable without mutating real process-global state that a
+        // PARALLEL test's own unrelated `git` spawn would otherwise inherit regardless of
+        // any Rust-level lock (the race an earlier, `std::env::set_var`-based version of
+        // this test actually caused: `cargo test -p spira-config` at its default 32-wide
+        // thread pool flaked across unrelated repos.rs tests that never touch GIT_DIR
+        // themselves — only `--test-threads=1` hid it, by accident).
         let ws = testkit::TempDir::new("spira-config-derive-repo-hook");
         let (home, repo) = fixture_home_repo(&ws);
         run_git(&repo, &["init", "-q"]);
-        let e = env(&[]);
         let fake_git_dir = home.join(".git-hook-fake");
         std::fs::create_dir_all(&fake_git_dir).unwrap();
-        std::env::set_var("GIT_DIR", &fake_git_dir);
-        std::env::set_var("GIT_WORK_TREE", &home);
+        let e = env_with_path(&[
+            ("GIT_DIR", fake_git_dir.to_str().unwrap()),
+            ("GIT_WORK_TREE", home.to_str().unwrap()),
+        ]);
         let got = derive_home_repo(&home, &e).canonicalize().unwrap();
-        std::env::remove_var("GIT_DIR");
-        std::env::remove_var("GIT_WORK_TREE");
         let want = repo.canonicalize().unwrap();
         assert_eq!(got, want, "a scrubbed GIT_DIR must still climb to the real toplevel");
     }

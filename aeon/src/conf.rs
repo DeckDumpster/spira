@@ -232,7 +232,7 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
 /// Best-effort, same as every other config read in this binary: a containment refusal or
 /// an unreadable registry leaves `snap.vars` exactly as the seam call alone produced it.
 pub fn merge_resolved_config(snap: &mut crate::seam::Snapshot, home: &Path, env: &BTreeMap<String, String>) {
-    let repo_derived = spira_config::resolve::derive_repo_filesystem(home);
+    let repo_derived = spira_config::resolve::derive_repo_filesystem(home, env);
     let repo = env
         .get("SPIRA_REPO")
         .filter(|s| !s.is_empty())
