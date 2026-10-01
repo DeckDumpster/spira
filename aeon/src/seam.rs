@@ -270,7 +270,7 @@ mod tests {
     }
 
     /// sp-1cdgq: SPIRA_SUMMON_JITTER must be in SNAPSHOT_VARS, or no value a caller sets —
-    /// env, spira.toml, a test's own override — ever reaches `Conf` at all: `Conf::new`
+    /// env, the resolved config file, a test's own override — ever reaches `Conf` at all: `Conf::new`
     /// builds its map from `snap.vars` (the allowlisted subset `_aeon_snapshot` was asked
     /// for), never from `snap.env` (the unfiltered `env -0` dump also on the wire). A knob
     /// missing from this list is not "defaulted" — it is unreachable, silently, with no
