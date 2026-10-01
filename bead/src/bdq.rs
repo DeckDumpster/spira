@@ -139,6 +139,28 @@ fn schema_delete_fields(args: &[String]) -> (String, String) {
 // The three create-time fences.
 // =========================================================================================
 
+/// The `repo:<val>` token out of a comma-joined labels string, same extraction
+/// `_bdq_check_repo_label` and incident.sh's own (ported) check both need: the LAST
+/// `repo:`-prefixed token wins when more than one is present in the same labels string
+/// (matching `last_labels_value`'s "last --labels flag wins" shape one level up, for the
+/// argv-based caller; a plain already-joined labels string, as incident's caller already
+/// has one, has at most one `repo:` token in practice, so "first match" and "last match"
+/// agree there).
+fn repo_label_value(labels: &str) -> Option<&str> {
+    labels.split(',').find_map(|t| t.strip_prefix("repo:"))
+}
+
+/// Whether a `repo:<val>` claim is acceptable: no claim at all (`val` empty — the same
+/// `[ -z "$repo_val" ]` bash's own fence short-circuits on), the home repo, or a name the
+/// map carries. Shared core of `check_repo_label` (bdq's own argv-parsing entry point) and
+/// incident's `invalid_repo_label` (decide.rs — `incident.sh` never goes through `bdq`'s argv
+/// at all, so it calls this directly with its own already-known `home_repo`/`known_repos`).
+/// One table of "what is a valid repo claim" for both, rather than the empty-value edge case
+/// living in one copy and not the other.
+pub fn repo_label_allowed(repo_val: &str, home_repo: &str, known: &[String]) -> bool {
+    repo_val.is_empty() || repo_val == home_repo || known.iter().any(|n| n == repo_val)
+}
+
 /// `_bdq_check_repo_label`. `registry` is this process's repo registry (built from
 /// `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/`$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO`,
 /// read by the caller — see `src/bin/bdq.rs::build_registry`). Returns the refusal message
@@ -148,15 +170,9 @@ pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> 
     if labels.is_empty() {
         return None;
     }
-    let repo_val = labels.split(',').find_map(|t| t.strip_prefix("repo:"))?;
-    if repo_val.is_empty() {
-        return None;
-    }
-    if repo_val == registry.home_repo() {
-        return None;
-    }
+    let Some(repo_val) = repo_label_value(&labels) else { return None };
     let mut names = registry.names();
-    if names.iter().any(|n| n == repo_val) {
+    if repo_label_allowed(repo_val, registry.home_repo(), &names) {
         return None;
     }
     names.sort();
@@ -164,22 +180,16 @@ pub fn check_repo_label(args: &[String], registry: &Registry) -> Option<String> 
     Some(format!("spira: repo:{repo_val} is not in the repo map; valid keys: {valid}\n"))
 }
 
-/// `_bdq_check_destructive`. `ask_label` is `$SPIRA_ASK_LABEL` (conf.sh always exports it;
-/// the bash original hard-refuses to run at all with it unset — callers here are expected to
-/// have already resolved it the same way, see `src/bin/bdq.rs`). Case-insensitive; the
-/// returned refusal names the matched phrase in its ORIGINAL case, same as bash's
+/// The destructive-vocabulary regexes, shared by `check_destructive` (bdq's own
+/// argv-parsing entry point) and incident's `destructive_phrase` (decide.rs — `incident.sh`
+/// never goes through `bdq`'s argv either, so it builds its own "<title> <desc>" text and
+/// calls this directly). One pattern table for both, so a tightened regex here reaches every
+/// caller and a narrower hand-rolled substring check in a second copy cannot quietly accept
+/// text the real fence would have refused (or refuse text the real fence would have let
+/// through — `\bdaemon-reload\b` not matching "mydaemon-reloaded" is the test that pins
+/// this). Case-insensitive; returns the matched phrase in its ORIGINAL case, same as bash's
 /// `grep -io` capture.
-pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
-    let (title, desc, labels) = destructive_fields(args);
-    if labels.split(',').any(|l| l == ask_label) {
-        return None;
-    }
-    // Mirrors bash's `[ -z "${text# }" ]`: text is always "<title> <desc>", which strips to
-    // empty iff both are empty — i.e. iff text is exactly one space.
-    let text = format!("{title} {desc}");
-    if text == " " {
-        return None;
-    }
+pub fn destructive_match(text: &str) -> Option<String> {
     const PATTERNS: &[&str] = &[
         r"world\.sh +stop",
         r"spira-world +down",
@@ -191,14 +201,39 @@ pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
     ];
     for p in PATTERNS {
         let re = regex::RegexBuilder::new(p).case_insensitive(true).build().expect("static pattern");
-        if let Some(m) = re.find(&text) {
-            return Some(format!(
-                "spira: bead contains \"{}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels, or reword to remove the destructive step.\n",
-                m.as_str()
-            ));
+        if let Some(m) = re.find(text) {
+            return Some(m.as_str().to_string());
         }
     }
     None
+}
+
+/// `_bdq_check_destructive`. `ask_label` is `$SPIRA_ASK_LABEL` (conf.sh always exports it;
+/// the bash original hard-refuses to run at all with it unset — callers here are expected to
+/// have already resolved it the same way, see `src/bin/bdq.rs`).
+pub fn check_destructive(args: &[String], ask_label: &str) -> Option<String> {
+    let (title, desc, labels) = destructive_fields(args);
+    if labels.split(',').any(|l| l == ask_label) {
+        return None;
+    }
+    // Mirrors bash's `[ -z "${text# }" ]`: text is always "<title> <desc>", which strips to
+    // empty iff both are empty — i.e. iff text is exactly one space.
+    let text = format!("{title} {desc}");
+    if text == " " {
+        return None;
+    }
+    destructive_match(&text).map(|phrase| {
+        format!(
+            "spira: bead contains \"{phrase}\" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels, or reword to remove the destructive step.\n",
+        )
+    })
+}
+
+/// The schema-migrations-DELETE regex, shared the same way [`destructive_match`] is.
+pub fn schema_delete_match(text: &str) -> bool {
+    static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
+    let re = regex::RegexBuilder::new(PATTERN).case_insensitive(true).build().expect("static pattern");
+    re.is_match(text)
 }
 
 /// `_bdq_check_schema_delete`. Not bypassed by `needs-ryan` (sp-1khst) — this check takes no
@@ -209,9 +244,7 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
     if text == " " {
         return None;
     }
-    static PATTERN: &str = r"delete[[:space:]]+from[[:space:]]+schema_migrations";
-    let re = regex::RegexBuilder::new(PATTERN).case_insensitive(true).build().expect("static pattern");
-    if re.is_match(&text) {
+    if schema_delete_match(&text) {
         return Some(
             "spira: bead contains \"DELETE FROM schema_migrations\" — this SQL is refused\n\
              even with needs-ryan because it was escalated and approved three times while wrong.\n\

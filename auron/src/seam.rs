@@ -10,6 +10,27 @@
 //! no fayth of its own. `bash -c <FIXED>` with every datum NUL-framed on stdin, same as
 //! aeon's, for the same reason: a bead body can be arbitrarily long and an argv has a
 //! kernel ceiling (law-payloads-go-on-stdin).
+//!
+//! NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+//! rejected, not overlooked). `_auron_bdq` has no Rust-side logic of its own to retire: it
+//! sources `lib.sh`, whose own `bdq`/`_bdq_check_*`/`json_only` are already one-line shims
+//! onto `bead::bdq` (sp-w3h16, wave 4.14), so every call through this seam already reaches
+//! the one real implementation — this file is in sp-pwmlj's scope as a bridge to verify,
+//! not a copy to fix.
+//!
+//! The hard blocker this used to have is gone: `main.rs` no longer needs this seam to
+//! resolve configuration at all (sp-mz7dn, wave 4.8, landed the same day as this bead —
+//! `_auron_snapshot` is retired outright, replaced by `spira_config::resolve_for_process`
+//! in-process, which this seam's own `FIXED` script no longer even lists in its allowlist).
+//! That resolution already carries everything `bead::bdq`'s create-time fences would need
+//! in-process (the repository map's fields, `SPIRA_ASK_LABEL`, `SPIRA_DB`). What is left on
+//! this seam is narrower than before: only `_auron_bdq` (the actual `bd` mutation —
+//! `bdops::create`/`update`/`close`/`label_*`) and `_auron_bead_reopen` (not yet ported,
+//! landstate withdrawal rules live in `lib.sh` only). Switching `bdops::create` et al. onto
+//! a direct `bdq`-binary call fed from `main.rs`'s already-resolved config is now a small,
+//! well-scoped follow-on rather than the exec-boundary hazard it would have been before
+//! sp-mz7dn — left to its own bead (`law-decompose-by-deliverable`) rather than folded into
+//! this one, since it touches `bdops.rs`'s construction, not just this seam.
 
 use std::path::PathBuf;
 

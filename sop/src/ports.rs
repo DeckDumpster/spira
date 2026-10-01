@@ -10,6 +10,17 @@
 /// last in the rewrite order (the inventory, group 4) and Ryan's standing instruction during
 /// the cutover was "leave lib.sh alone" — so every call here shells out to it exactly as
 /// `gate-check`'s Rust port already shells out to `repo_root` (same seam, same reason).
+///
+/// NOT COLLAPSED onto a direct `bdq`-binary call (sp-pwmlj, wave 4.15 — considered and
+/// rejected). `lib.sh`'s own `bdq`/`bdjson` are already one-line shims onto `bead::bdq`
+/// (sp-w3h16), so `real.rs`'s seam has no competing Rust logic to retire — it reaches the
+/// one real implementation already. The bash hop still earns its keep here: none of
+/// `remember`/`recall`/`forget`/`memories_json`/`note` ever call `bd create`, so the three
+/// create-time fences never fire, but a fresh `conf.sh` sourcing is still how `SPIRA_DB`
+/// reaches this process at all — this crate's own contract (DESIGN.md §3) is "`SPIRA_DB`
+/// implicitly, via `lib.sh`", not a value `sop`'s own caller is guaranteed to export.
+/// Skipping the sourcing would need that resolved in-process first (wave4-decomposition.md
+/// rows 4–6, not yet landed).
 pub trait Bd {
     /// `bdq remember --key <key> <text>`.
     fn remember(&self, key: &str, text: &str) -> bool;
