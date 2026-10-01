@@ -9,8 +9,9 @@
 //!                                                           is DEGRADED, never healthy
 //!
 //! Common flags: --run DIR (SPIRA_RUN), --db DIR (SPIRA_DB), --home DIR (SPIRA_HOME, where
-//! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML, $SPIRA_REPO,
-//! $XDG_CONFIG_HOME/spira, /etc/spira).
+//! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML,
+//! $XDG_CONFIG_HOME/spira, /etc/spira — no $SPIRA_REPO tier; matches conf.sh's bash search
+//! as of sp-9hwim, sp-hconl).
 //!
 //! Runs as a watchd `daemon` row, so a reader latches on with `watchd.sh tail queue-watch`
 //! instead of hand-rolling a pipeline over the queue's log.
