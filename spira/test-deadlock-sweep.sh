@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-deadlock-sweep.sh — `groomer.sh deadlocked` (the git half) into `spira-claim
+# test-deadlock-sweep.sh — `groomer deadlocked` (the git half) into `spira-claim
 # deadlocked` (the decision and the write) lists poisoned beads whose work is finished and
 # would land cleanly (WOULD), keeps the ones that really failed (KEEP with a reason),
 # changes nothing without --apply, and --apply lifts the poison while leaving the attempt
@@ -17,14 +17,16 @@
 # shape test-lc-hold.sh and test-check2-reaper.sh use — a stub `spira-lc hold`/`held` would
 # only prove this suite's own model of spira-lc agrees with itself.
 #
-# THE GIT HALF STAYS BASH, ON PURPOSE (spira-claim/DESIGN.md §7, §9): `groomer.sh deadlocked`
-# resolves the candidate's repository and land ref and asks git whether spira/<id> merges;
-# `spira-claim deadlocked` never touches git, decides from the verdict it is handed, and does
-# the write. This suite exercises both halves together, through the real groomer.sh and the
-# real spira-claim binary — not a model of either.
+# THE GIT HALF STAYS OUTSIDE spira-claim, ON PURPOSE (spira-claim/DESIGN.md §7, §9):
+# `groomer deadlocked` resolves the candidate's repository and land ref and asks git
+# whether spira/<id> merges; `spira-claim deadlocked` never touches git, decides from the
+# verdict it is handed, and does the write. Rewritten into Rust at sp-aufxu (`groomer`'s
+# own `src/deadlocked.rs`, reached the same way `groomer sweep` reaches lib.sh's
+# detectors); this suite exercises both halves together, through the real `groomer`
+# binary and the real spira-claim binary — not a model of either.
 #
 # tier: T2
-# covers: spira/groomer.sh spira/lib.sh spira-claim/* UC-aeon-execution-24
+# covers: groomer/src/deadlocked.rs spira/lib.sh spira-claim/* UC-aeon-execution-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -131,7 +133,7 @@ cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via
 notes()   { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 lib() { bash -c ". \"$SPIRA_HOME/lib.sh\"; $1" 2>/dev/null; }
 count_of() { local c; c="$(lib "attempts_of $1")"; printf '%s' "${c:-0}"; }
-cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/groomer.sh" "$SPIRA_HOME/"
+cp "$HERE/lib.sh" "$HERE/conf.sh" "$SPIRA_HOME/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SPIRA_HOME/"
 
 echo "test-deadlock-sweep.sh"
@@ -151,7 +153,7 @@ for b in sp-rq-s sp-rq-k; do
 done
 sweep() { SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_DB="$SPIRA_DB" \
           SPIRA_REPO_MAP="$SPIRA_REPO_MAP" SPIRA_REPO="$REPO" SPIRA_FAYTHS=builder \
-          bash "$SPIRA_HOME/groomer.sh" deadlocked "$@" 2>&1; }
+          groomer deadlocked "$@" 2>&1; }
 out="$(sweep)"
 want "the deadlocked bead is named"            "WOULD    sp-rq-s" "$out"
 want "the genuinely failed one is kept"        "KEEP     sp-rq-k" "$out"

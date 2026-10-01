@@ -14,14 +14,14 @@
 #    coverage end to end through the real `aeon` binary.
 # 2. Each production fayth declares the right value: ops/maechen/groomer/czar → none,
 #    builder/spike → repo.
-# 3. archivist.sh passes --add-dir <wiki> when SPIRA_WIKI is set.
+# 3. archivist passes --add-dir <wiki> when SPIRA_WIKI is set.
 #    Positive control: when SPIRA_WIKI is unset, --add-dir is absent.
 #
 # The stub agent writes its argv to a file and exits 0. conf.sh replaces $PATH, so a
 # PATH shim would reach the real model — SPIRA_AGENT is the only safe injection point.
 #
 # defect: sp-1f56o
-# covers: aeon/src/* spira/lib.sh spira/archivist.sh spira/chamber/ops.fayth
+# covers: aeon/src/* spira/lib.sh archivist/src/* spira/chamber/ops.fayth
 #   spira/chamber/maechen.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
 #   spira/chamber/builder.fayth spira/chamber/spike.fayth
 set -uo pipefail
@@ -88,7 +88,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_AGENT="$BIN/claude" \
     SPIRA_WIKI="$WIKI_DIR" \
     TMP="$TMP" \
-    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_wiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 want "archivist: --add-dir in argv when SPIRA_WIKI set" "--add-dir"  "$argv_arc_wiki"
@@ -109,7 +109,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_CHAMBER="$HERE/chamber" \
     SPIRA_AGENT="$BIN/claude" \
     TMP="$TMP" \
-    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 nowant "archivist: no --add-dir when SPIRA_WIKI unset" "--add-dir" "$argv_arc_nowiki"

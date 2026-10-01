@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
 #
-# test-groomer-litter-predicate.sh — groomer-litter-predicate.py: an unmapped-repo bead
+# test-groomer-litter-predicate.sh — groomer's litter predicate: an unmapped-repo bead
 #   with no description is litter (closeable); one with a description is left for the
 #   model pass. Table-tested against canned bead JSON — no database.
 #
 #   ./test-groomer-litter-predicate.sh
 #
+# groomer-litter-predicate.py is gone: the predicate is now `groomer`'s own
+# src/litter.rs, ported directly (pure JSON-in, judgement-out — no reason to keep it a
+# subprocess). `groomer __litter` is the same stdin-in, two-line-stdout-out contract the
+# Python had, kept as an internal CLI verb so this suite (and anyone debugging by hand)
+# can still drive the predicate standalone rather than through the whole sweep.
+#
 # tier: T1
-# covers: spira/groomer-litter-predicate.py
+# covers: groomer/src/litter.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 predicate() {   # predicate <bead-json> -> "HAS_CONTENT <0|1>\nMETA <text>"
-    printf '%s' "$1" | groomer-litter-predicate.py
+    printf '%s' "$1" | groomer __litter
 }
 
 echo "test-groomer-litter-predicate.sh"

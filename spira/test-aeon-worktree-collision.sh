@@ -112,7 +112,7 @@ run_aeon
     || bad "setup: bead A got its own worktree" "missing $SPIRA_RUN/worktree/sp-cw-a/.git; out=$(cat "$TMP/out" 2>/dev/null)"
 
 # THE PLANTED OFFENDER: bead B's branch: label names bead A's branch — exactly what `bd
-# create --parent` hands a child that inherits its parent's label (bead.sh lint, groomer.sh).
+# create --parent` hands a child that inherits its parent's label (bead.sh lint, groomer).
 seed sp-cw-b
 bd -C "$SPIRA_DB" set-state sp-cw-b "branch=spira/sp-cw-a" >/dev/null 2>&1
 run_aeon

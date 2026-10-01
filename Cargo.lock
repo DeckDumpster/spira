@@ -25,6 +25,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "archivist"
+version = "1.0.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "testkit",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -396,6 +406,15 @@ dependencies = [
  "serde_json",
  "sha2",
  "ureq",
+]
+
+[[package]]
+name = "groomer"
+version = "1.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "testkit",
 ]
 
 [[package]]
