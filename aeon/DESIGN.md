@@ -135,8 +135,9 @@ Append-only, one line per write, `O_APPEND`, no lock. Timestamp is UTC second pr
   `full-aeon-fixture.sh`, and many suites. `lib.sh capacity_pause_set` also appends a
   `CAPACITY paused until …` line to the same file (it is called through the seam).
 
-After each `done` line: `_tsd_aeon_session` (seam, tsd family `aeon-session`) and
-`rapid_recur_check` run (native, `aeon::run::Run::rapid_recur_check`).
+After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34, tsd family
+`aeon-session`; lib.sh's own copy is retired) and `rapid_recur_check` run (native,
+`aeon::run::Run::rapid_recur_check`).
 
 ### 2.5 Files read and written
 
@@ -464,12 +465,9 @@ is reimplemented in Rust, §6):
 | `bead_reopen` | every reopen (landstate WITHDRAWN, label removal, release, cause row, note) |
 | `bump_requeue`, `bump_lapsed`, `write_lapse_record`, `thrash_streak_bump`, `requeues_of` | event rows / thrash metadata / the display count on a requeue note |
 | `capacity_reset_at`, `capacity_pause_set` | the account's capacity window |
-| `trace_last`, `aeon_fuse_minutes` | trace readers shared with sentinel/strand/cockpit |
-| `spira_landrefs` | `verdict_committed`'s landing-ref fallback (family W, unported) |
+| `spira_landrefs`, `spira_landref` | `verdict_committed`'s landing-ref fallback; the heartbeat's fuse resolves its base the same way (family W, unported) |
 | `eviction_reopen`'s inputs: `land_state`, `land_mark` | landstate |
-| `bead_is_work_type`, `bead_named_paths`, `bead_cited_commit_on_base`, `other_beads_on_conflicts`, `spira_destroy_branch` | helpers shared with landing |
-| `groom_claims_verified`, `wiki_write_paths`, `wiki_commit_paths` | verdict/wiki helpers |
-| `_tsd_aeon_session` | after each `done` line |
+| `bead_is_work_type`, `bead_cited_commit_on_base`, `other_beads_on_conflicts`, `spira_destroy_branch` | helpers shared with landing |
 
 `session_outcome`, `session_yield_headless`, `open_ask_blocker`, `verdict_committed`,
 `close_verdict`, `delivers_verdict` and `rapid_recur_check`/`rapid_recur_streak` were the
@@ -477,8 +475,19 @@ last aeon-only lib.sh functions this seam reached — ported natively into `aeon
 `aeon::verdict` and `aeon::run::Run::rapid_recur_check` at sp-8kqww (wave 4.33) and deleted
 from lib.sh (zero callers left once aeon stopped shelling out for them).
 
+`trace_last`, `aeon_fuse_minutes`, `aeon_lease_minutes`, `trace_stats`, `trace_tail`,
+`wiki_write_paths`, `wiki_commit_paths`, `groom_claims_verified`, `bead_named_paths` and
+`_tsd_aeon_session` were the trace/heartbeat family (P), the live pair of the brief/memories
+family (Q) and the aeon half of the tsd producers (AC) — ported into `aeon::trace` at
+sp-27d3d (wave 4.34) and deleted from lib.sh. cockpit-collect and sentinel, which read the
+same trace through `trace_stats`/`trace_tail`/`aeon_fuse_minutes`/`aeon_lease_minutes`,
+now depend on this crate and call `aeon::trace` in-process instead of `io::lib_call` or a
+bash seam. `aeon_fuse_minutes`'s one remaining external read — the base ref, family W,
+unported — is `spira_landref`, called once per beat and handed to it as an already-resolved
+`Option<i64>` commit timestamp.
+
 Cost: ~0.2 s per call (sourcing lib.sh). A claim run makes ~15-25 calls; the heartbeat makes
-one per beat (`aeon_fuse_minutes`).
+one per beat (`spira_landref`, skipped when the repo name is empty).
 
 Other subprocess seams are the scripts aeon.sh already called (§2.7), invoked the same way.
 

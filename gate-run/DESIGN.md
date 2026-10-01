@@ -70,9 +70,9 @@ One directory per `(repo-name, branch)`, slug-named the same way:
 
 | file | written by | read by |
 |---|---|---|
-| `pid` | `--exec`, first line of its life | `alive()`, `lib.sh::aeon_fuse_minutes`, `cockpit.sh` |
-| `started` | `--exec`, right after `pid` | `elapsed()`, the same two bash readers |
-| `out` | `--exec`, gate.sh's combined stdout+stderr | `report()`, the same two bash readers (mtime) |
+| `pid` | `--exec`, first line of its life | `alive()`, `aeon::trace::aeon_fuse_minutes` (sp-27d3d, wave 4.34 — was `lib.sh::aeon_fuse_minutes`), `cockpit.sh` |
+| `started` | `--exec`, right after `pid` | `elapsed()`, the same two readers |
+| `out` | `--exec`, gate.sh's combined stdout+stderr | `report()`, the same two readers (mtime) |
 | `suites` | `--exec`, last, only on a fresh PASS | `report()` on a `0` |
 | `rc` | `--exec`, written-then-renamed **last** | `report()`, `alive()`'s absence check |
 | `key` | the managing call, before spawning | `stale_key()` |

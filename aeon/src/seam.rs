@@ -26,11 +26,10 @@ case "$__aeon_fn" in
     lc_bead_verified|park_unmapped|repo_root|repo_land|repo_land_queued|\
     spira_home_repo|qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|trace_last|spira_landrefs|\
-    aeon_fuse_minutes|land_state|\
-    land_mark|bead_is_work_type|bead_named_paths|bead_cited_commit_on_base|\
-    other_beads_on_conflicts|spira_destroy_branch|groom_claims_verified|\
-    wiki_write_paths|wiki_commit_paths|_tsd_aeon_session) ;;
+    capacity_pause_set|spira_landrefs|spira_landref|\
+    land_state|\
+    land_mark|bead_is_work_type|bead_cited_commit_on_base|\
+    other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac
 . "$__aeon_lib" || exit 98

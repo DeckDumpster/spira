@@ -82,10 +82,6 @@ close_landed_queue_waiters 2>/dev/null || true"#;
 pub const EVENT: &str = r#"IFS= read -r -d '' _k; IFS= read -r -d '' _t; IFS= read -r -d '' _ti; IFS= read -r -d '' _de
 spira_event "$_k" "$_t" "$_ti" "$_de" || true"#;
 
-/// S6 — trace_tail: line 1 the session log path, line 2 the line count.
-pub const TRACE_TAIL: &str = r#"IFS= read -r _f; IFS= read -r _n
-trace_tail "$_f" "$_n""#;
-
 /// S7 — CHECK 7c's detector.
 pub const DETECT_UNCLAIMABLE: &str = "detect_unclaimable_ready 2>/dev/null";
 /// S8 — one incident per unclaimable bead; S7's output on stdin.
@@ -108,7 +104,6 @@ mod tests {
             LAND_ESCALATE,
             CHECK3B,
             EVENT,
-            TRACE_TAIL,
             DETECT_UNCLAIMABLE,
             FILE_UNCLAIMABLE,
             DETECT_COLLISIONS,

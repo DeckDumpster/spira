@@ -804,7 +804,7 @@ counter semantics lib.sh functions had when they ran in-process.
 | S3 | land-escalate | `IFS= read -r why; ev="$(cat)"; land_escalate "$why" "$ev"` | line 1 = subject tail, rest = evidence | inherited |
 | S4 | check3b | `mark_queue_waiters 2>/dev/null \|\| true; close_landed_queue_waiters 2>/dev/null \|\| true` (`mark_open_children` is CHECK 3c, in Rust) | — | inherited |
 | S5 | event | `IFS= read -r -d '' k; IFS= read -r -d '' t; IFS= read -r -d '' ti; IFS= read -r -d '' de; spira_event "$k" "$t" "$ti" "$de" \|\| true` | 4 NUL-terminated fields | — |
-| S6 | trace-tail | `IFS= read -r f; IFS= read -r n; trace_tail "$f" "$n"` | path, count | captured |
+| S6 | ~~trace-tail~~ | retired (sp-27d3d, wave 4.34): `trace_tail` was lib.sh; `check4.rs` now calls `aeon::trace::trace_tail` in-process (`SPIRA_TRACE_MARK` read from S0's `@vars`), no seam | — | — |
 | S7 | detect-unclaimable | `detect_unclaimable_ready 2>/dev/null` | — | captured |
 | S8 | file-unclaimable | `file_unclaimable_incidents "$(cat)"` | S7's output | inherited |
 | S9 | detect-collisions | `detect_branch_collisions 2>/dev/null` | — | captured |
