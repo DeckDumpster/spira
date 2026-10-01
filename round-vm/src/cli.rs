@@ -261,6 +261,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
         a.vmid.clone(),
         cfg.host_addr.as_deref().unwrap_or(""),
         a.toolchain.as_deref().unwrap_or(""),
+        cfg.cache_home.as_deref().unwrap_or(""),
     ) {
         Ok(b) => {
             println!("{} {}", b.vmid, b.image);

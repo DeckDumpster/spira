@@ -554,7 +554,7 @@ fn sccache_missing_fails_and_names_the_install_command() {
 #[test]
 fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presence_alone() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/home/ryan/.cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
     *f.sccache_help.borrow_mut() = Some(
         "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    false\n    OSS:       false\n".into(),
     );
@@ -567,7 +567,7 @@ fn sccache_present_but_built_without_webdav_fails_rather_than_passing_on_presenc
 #[test]
 fn sccache_with_webdav_enabled_passes() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/home/ryan/.cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
     *f.sccache_help.borrow_mut() = Some(
         "Usage: sccache ...\n\nEnabled features:\n    S3:        false\n    WebDAV:    true\n    OSS:       false\n".into(),
     );
@@ -577,7 +577,7 @@ fn sccache_with_webdav_enabled_passes() {
 #[test]
 fn sccache_present_but_unresponsive_to_help_fails() {
     let f = Fake::default();
-    f.which.borrow_mut().insert("sccache".into(), "/home/ryan/.cargo/bin/sccache".into());
+    f.which.borrow_mut().insert("sccache".into(), "/opt/spira/cargo/bin/sccache".into());
     // sccache_help left at its default None: the binary could not be run (permissions,
     // a wrapper script that shadows the real one, etc).
     let lines = check_sccache(&f);

@@ -351,6 +351,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v loom)\""
 
 [[dep]]
+name = "sccache-dav"
+tier = "release"
+purpose = "Spira's sccache-dav binary (sp-xjnzl), from the release's bin/ — the box's shared WebDAV compilation cache store."
+version_min = ""
+version_probe = "readlink -f \"$(command -v sccache-dav)\""
+
+[[dep]]
 name = "mail"
 tier = "release"
 purpose = "Spira's mail binary, from the release's bin/ — Maildir send/read/sendmail/tidy (replaces spira/mail.sh, sp-ooh1k)"

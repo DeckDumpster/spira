@@ -76,6 +76,11 @@ pub struct BatchJob {
     pub suites: Option<String>,
     pub maxpar: u32,
     pub toolchain: Option<String>,
+    /// sp-xjnzl: this operator's own `CARGO_HOME` (read from the caller's own environment,
+    /// never hardcoded — a literal path names one operator's box, which this crate ships to
+    /// everyone who clones it). Empty: the VM's own ambient default applies, no cache
+    /// sharing with the host.
+    pub cache_home: Option<String>,
 }
 
 /// The VM side, reached only by address.
@@ -105,21 +110,23 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6"
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
 # box's own address, which this VM already reaches for the mirror, is reused for the cache
-# store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to the LITERAL path the
-# host's own builds use: sccache hashes a dependency's registry source path into its cache
-# key, so a hit across machines needs that path byte-identical, not merely consistent
-# (spira-config/DESIGN-build-cache.md §2.5; re-verified against sccache 0.18.0's own
-# generate_hash_key for this bead). A read or write this box's store refuses degrades to a
-# cache miss, never a build failure (sccache's own RemoteStorage tolerates both) — so an
-# unreachable store costs speed, not a round.
-export CARGO_HOME="/home/ryan/.cargo"
+# store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to the operator's own literal
+# path (passed in as $6, never hardcoded — a literal path names one operator's box):
+# sccache hashes a dependency's registry source path into its cache key, so a hit across
+# machines needs that path byte-identical, not merely consistent (spira-config/DESIGN-
+# build-cache.md §2.5; re-verified against sccache 0.18.0's own generate_hash_key for this
+# bead). Empty cache_home: the VM's own ambient CARGO_HOME applies, no cache sharing. A
+# read or write this box's store refuses degrades to a cache miss, never a build failure
+# (sccache's own RemoteStorage tolerates both) — so an unreachable store costs speed, not a
+# round.
+export CARGO_HOME="${cache_home:-$HOME/.cargo}"
 mkdir -p "$CARGO_HOME/bin"
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
 export SCCACHE_IGNORE_SERVER_IO_ERROR=1
@@ -175,6 +182,7 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.suites.clone().unwrap_or_default(),
         job.maxpar.to_string(),
         job.toolchain.clone().unwrap_or_default(),
+        job.cache_home.clone().unwrap_or_default(),
     ];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -531,6 +539,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         suites: args.suites.clone(),
         maxpar,
         toolchain: args.toolchain.clone(),
+        cache_home: cfg.cache_home.clone(),
     };
     let t0 = Instant::now();
     let Some(spool_dir) = args.attr_spool.clone() else {
@@ -781,7 +790,7 @@ mod tests {
         // sp-xjnzl: CARGO_HOME, RUSTC_WRAPPER and the webdav endpoint must all be set
         // BEFORE the launcher's first `cargo build` — that build, not just testenv's
         // in-place one, is the one the original fault actually hit.
-        let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"/home/ryan/.cargo\"").expect("CARGO_HOME set to the host's literal path");
+        let cache_home = REMOTE_SCRIPT.find("export CARGO_HOME=\"${cache_home:-$HOME/.cargo}\"").expect("CARGO_HOME comes from the operator's own env (cache_home), never a hardcoded literal — a literal names one operator's box");
         let wrapper = REMOTE_SCRIPT.find("export RUSTC_WRAPPER=\"$CARGO_HOME/bin/sccache\"").expect("RUSTC_WRAPPER set outright, by absolute path");
         let endpoint = REMOTE_SCRIPT.find("export SCCACHE_WEBDAV_ENDPOINT=\"http://${host_addr}:9431\"").expect("the webdav endpoint reuses the VM's own host_addr, the same address the mirror already uses");
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
@@ -790,12 +799,20 @@ mod tests {
         // rustup's own shims) AND the new CARGO_HOME/bin (where sccache now installs) —
         // neither replaces the other.
         assert!(REMOTE_SCRIPT.contains("$CARGO_HOME/bin:$HOME/.cargo/bin:"));
+        assert!(!REMOTE_SCRIPT.contains("/home/"), "no literal home directory — cache_home is an operator-supplied argument, not a hardcoded path");
     }
 
     #[test]
     fn remote_command_keeps_empty_arguments_in_place() {
-        let cmd = remote_command(&BatchJob { host_addr: "10.0.0.1".into(), mirror_port: 9430, suites: None, maxpar: 16, toolchain: Some("1.82.0".into()) });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0'");
+        let cmd = remote_command(&BatchJob {
+            host_addr: "10.0.0.1".into(),
+            mirror_port: 9430,
+            suites: None,
+            maxpar: 16,
+            toolchain: Some("1.82.0".into()),
+            cache_home: Some("/opt/spira/cargo".into()),
+        });
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -1017,7 +1034,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' ''"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
