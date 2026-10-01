@@ -589,13 +589,22 @@ SPIRA_TOML_FILE="$(spira_toml_resolve)"
 # holding some keys resolved and the rest silently empty — the one failure mode this cutover
 # must not reintroduce. `command -v` first distinguishes "not on PATH" (name SPIRA_RELEASE,
 # the usual cause) from any other refusal, which `spira-config` already explains on its own
-# stderr before exiting non-zero. `exit`, not `return`: a `return 1` from the last command of
-# the `&&` that would otherwise call this only aborts a `set -e` CALLER that happens to check
-# it (aerc/accept-default.sh) — `exit` holds whether or not the sourcing script opted into
-# errexit.
+# stderr before exiting non-zero.
+#
+# `return`, NOT `exit` (unlike spira_toml_read's old exit-127 case this replaces): a handful
+# of callers — schema.sh, schema-apply.sh, configure.sh — source conf.sh as
+# `. conf.sh || true` ON PURPOSE, because they have their own bash-level fallback for every
+# value they read (schema_name's `${SPIRA_ASK_LABEL:-needs-operator}`, for one) and would
+# rather degrade than die when the box's spira-config cannot be resolved. `exit` kills the
+# whole process before that guard ever runs — a sourced script's `exit` is not catchable by
+# `||`, only a `return` is — so it defeated every one of those callers' own explicit choice
+# (sp-ubcgo: caught by the gate's own literal-lint step misreading schema.sh's fallback
+# names as real ones). A caller that does NOT guard the `.`/`source` with `||` still sees
+# this non-zero and, immediately after, every derived key unset — not a quieter failure,
+# a differently-shaped one: this shell never holds a PARTIALLY resolved value either way.
 if ! command -v spira-config >/dev/null 2>&1; then
     printf 'spira: spira-config not found on PATH — SPIRA_RELEASE is unset, or the launcher PATH omits the release, so configuration cannot be resolved from this box'"'"'s own tools\n' >&2
-    exit 1
+    return 1
 fi
 if [ -n "$SPIRA_TOML_FILE" ]; then
     _spira_resolved="$(SPIRA_HOME="$SPIRA_HOME" SPIRA_REPO="$SPIRA_REPO" spira-config resolve --sh-all --conf-d "$_spira_conf_real_dir/conf.d" "$SPIRA_TOML_FILE")"
@@ -605,7 +614,7 @@ fi
 _spira_resolved_rc=$?
 if [ "$_spira_resolved_rc" -ne 0 ]; then
     unset _spira_resolved _spira_resolved_rc
-    exit 1
+    return 1
 fi
 eval "$_spira_resolved"
 unset _spira_resolved _spira_resolved_rc
