@@ -116,7 +116,7 @@ directly — tmux gives a new pane the tmux server's environment, so a bare bina
 without `COCKPIT_DB`.
 
 **His answer arrives as mail, not as something you go read off a bead.** A reply to an
-escalation closes its tracking bead through `mail.sh sendmail`; the pane's own close or
+escalation closes its tracking bead through `mail sendmail`; the pane's own close or
 comment on a decision mails the concierge the same way. Both land in this session's mailbox
 and `spira-mail-deliver` wakes you — there is nothing to attach a Monitor to, and no bead list
 to re-scan for what he said.

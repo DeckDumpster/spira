@@ -1,7 +1,7 @@
 //! The impure boundary: lib.sh's capacity machinery (shared, cross-process state this
 //! crate must not re-derive — `aeon.sh` reads and writes the same pause file), the three
 //! external tools archivist.sh always shelled out to (`ctx-meter.sh`, `archive.sh`,
-//! `mail.sh`), and the agent process itself. Production shells out for real; every test
+//! `mail`), and the agent process itself. Production shells out for real; every test
 //! in this crate runs against a recording `FakeSeam`.
 
 use std::collections::HashMap;
@@ -45,9 +45,9 @@ pub trait Seam {
     fn ctx_meter_env(&self, transcript: &Path) -> HashMap<String, String>;
     /// `archive.sh lineage <session> --json`, raw JSON-lines rows.
     fn archive_lineage(&self, session: &str) -> String;
-    /// `mail.sh send operator --from "Archivist <archivist@spira>" --subject <subject>
+    /// `mail send operator --from "Archivist <archivist@spira>" --subject <subject>
     /// --kind note --digest`, body on stdin. `Ok(true)`: sent. `Ok(false)`: refused by
-    /// mail.sh's own lint (not this crate's concern to retry). `Err`: could not run it.
+    /// mail's own lint (not this crate's concern to retry). `Err`: could not run it.
     fn mail_send_digest(&self, subject: &str, body: &str) -> Result<bool, String>;
     /// Run the agent once, stdout+stderr both to `spec.logfile`, stdin `spec.task_stdin`.
     /// Returns the process exit code (124 is `timeout`'s own convention for "killed by
@@ -151,15 +151,15 @@ impl Seam for RealSeam {
     }
 
     fn mail_send_digest(&self, subject: &str, body: &str) -> Result<bool, String> {
-        let mut child = Command::new("mail.sh")
+        let mut child = Command::new("mail")
             .args(["send", "operator", "--from", "Archivist <archivist@spira>", "--subject", subject, "--kind", "note", "--digest"])
             .stdin(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("mail.sh: {e}"))?;
+            .map_err(|e| format!("mail: {e}"))?;
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(body.as_bytes());
         }
-        let st = child.wait().map_err(|e| format!("mail.sh: {e}"))?;
+        let st = child.wait().map_err(|e| format!("mail: {e}"))?;
         Ok(st.success())
     }
 

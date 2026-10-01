@@ -312,11 +312,13 @@ echo "queue.local — land then refresh, then rollback by ref move:"
 # ===========================================================================
 # The container tier's own three cases: skew refresh following local/main in a real
 # harness checkout; land then refresh; rollback by ref move. Every assertion below runs
-# against the real queue and release binaries and skew (a compiled binary, sp-yyk47)
-# copied verbatim into a scratch SPIRA_HOME — no stand-in for any of them but systemctl.
+# against the real queue and release binaries and skew and mail (both compiled binaries
+# now, sp-yyk47 and sp-ooh1k) copied verbatim into a scratch SPIRA_HOME — no stand-in for
+# any of them but systemctl.
 LSH="$TMP/local-spira"; mkdir -p "$LSH"
-cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/mail.sh "$HERE"/suite-covers.sh "$LSH/" 2>/dev/null
+cp "$HERE"/lib.sh "$HERE"/conf.sh "$HERE"/suite-covers.sh "$LSH/" 2>/dev/null
 cp "$(command -v skew)" "$LSH/skew"
+cp "$(command -v mail)" "$LSH/mail"
 
 LREPO="$TMP/local-repo"
 git init -q -b trunk "$LREPO"

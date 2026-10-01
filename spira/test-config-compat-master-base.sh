@@ -52,7 +52,7 @@ git -C "$B_REPO" push -q origin master
 git -C "$B_REPO" fetch -q origin
 mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail.sh"; chmod +x "$B_SH/mail.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail"; chmod +x "$B_SH/mail"
 
 # Stub round-vm: batcher-cut's corpus step runs `round-vm run <worktree> --suites CSV
 # --maxpar N --toolchain V --results-dir DIR` (sp-o3o6z) and reads each suite's result
@@ -168,7 +168,7 @@ case "\$cmd" in
 esac
 FORGE
 chmod +x "$V_SH/forge-fixture.sh"
-printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/mail.sh"; chmod +x "$V_SH/mail.sh"
+printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/mail"; chmod +x "$V_SH/mail"
 # Stubs are injected by NAME: the fixture home $V_SH goes first on PATH (sp-gypjk).
 printf '#!/usr/bin/env bash\ntrue\n' > "$V_SH/testenv"; chmod +x "$V_SH/testenv"
 printf '%s | %s | queue | origin/master | | |\n' "$V_REPONAME" "$V_REPO" > "$V_SH/repo-map"

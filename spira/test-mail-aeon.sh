@@ -16,7 +16,7 @@
 # (d): aeon.sh run with a stub agent that immediately closes the bead.
 #
 # tier: T3
-# covers: spira/bead.sh spira/mail.sh aeon/src/* UC-operator-channel-12
+# covers: spira/bead.sh mail/src/* aeon/src/* UC-operator-channel-12
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -35,7 +35,9 @@ export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN"
 export SPIRA_MAIL="$TMP/mail"
 export SPIRA_CONF=""   # prevent reading a real spira.conf
 
-cp "$HERE/mail.sh" "$SPIRA_HOME/"
+
+# mail.sh is gone (sp-ooh1k): bead.sh now calls the compiled `mail` binary by bare name, and
+# the suite's PATH (testenv --with-bins) already carries it — no fixture copy needed.
 cp "$HERE/hooks/aeon-mail-deliver.sh" "$SPIRA_HOME/hooks/"
 # The aeon arms its worktree through worktree-hooks.sh (the tree's, by name), which composes
 # <home>/hooks/pre-commit into the worktree's hook: the fixture home carries a pass-through

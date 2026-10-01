@@ -177,7 +177,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 |---|---|
 | CHECK 2 | spira-lc Hold/Unhold `wait`, HolderDead; an events row `reclaimed stale-lease` (bd sql); `bd note` |
 | CHECK 3 | `bd recompute-blocked` |
-| CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail.sh |
+| CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail |
 | CHECK 5 | `incident.sh file`; `bd close --force <incident> --reason-file -` |
 | seams | whatever lib.sh does in CHECK 3b, 3c, 7, 7c and 7d, unchanged |
 
@@ -238,7 +238,7 @@ Dead ones are deleted, as `aeon_count` does.
 |---|---|---|
 | CHECK 1 | `$SPIRA_HOME/pilgrimage.sh check` | output passed through; `^PILGRIMAGE COMPLETE` counted → progress |
 | CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
-| CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail.sh send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
+| CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
 | CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
 | CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
 | CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
@@ -301,7 +301,7 @@ source commits it was recovered from are named.
 | **4 (poisoned?)** | The `spira-poison` bd label. Every partition excludes it, so a poisoned bead is not in the dispatchable set. `decide`'s `poisoned` argument is the label | The lifecycle `poison` hold |
 | **4 (poison)** | `bd label add <id> spira-poison`. The note ends `… no persona can claim it again while the label stands.` Source: `e08d8982b^` | Hold poison (`spira-lc event`). The note ends `… while the hold stands.` No bd label |
 | **4 (stale clear)** | Snapshot beads carrying `spira-poison`, not closed, not an epic or event. `clear` means `bd label remove <id> spira-poison` | Beads the lifecycle rows hold `poison` on. `clear` means Unhold poison |
-| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail.sh. Identical in both modes | ← |
+| **4 (counts, asks)** | spira-claim over the bd events trail, the asked stamps, mail. Identical in both modes | ← |
 | **5, 6, 6b, 7, 7c, 7d, 8** | No lifecycle read or write of their own. Children run with `SPIRA_LIFECYCLE_ENFORCE=0` | Children run with it `1` |
 
 **Children.** The switch reaches everything this process starts:

@@ -2,7 +2,7 @@
 //! (DESIGN.md). [`state`], [`candidates`], [`digest`], [`transcripts`], [`prompt`] and
 //! [`config`] are pure or fs-only and table-tested directly. [`seam`] is the impure
 //! boundary onto lib.sh's capacity machinery and the external tools (`ctx-meter.sh`,
-//! `archive.sh`, `mail.sh`, the agent CLI). [`lock`] is the two flocks one archive run
+//! `archive.sh`, `mail`, the agent CLI). [`lock`] is the two flocks one archive run
 //! holds. [`run`] composes all of it into `sweep`, `list`, `now`, `mark`, `state`,
 //! `record` and `digest-send`.
 

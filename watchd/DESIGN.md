@@ -32,9 +32,10 @@ canonical reader is now this binary.
   exported* into its own process, via a one-shot subshell ("the seam", `context.rs`) — the same
   pattern `gate` and `queue-watch` already use for `lib.sh`. No config-resolution logic is
   reimplemented here.
-* **`mail.sh`, `mail-health.sh`.** Both stay bash (a different rewrite wave). `watchd` execs
-  them exactly as the bash did: `mail.sh send …` for an escalation, `mail-health.sh` as the
-  second half of `notify`.
+* **`mail`, `mail-health.sh`.** `mail` was rewritten and retired from bash by sp-ooh1k;
+  `mail-health.sh` stays bash (a different rewrite wave). `watchd` execs both exactly as the
+  bash execed `mail.sh`/`mail-health.sh`: `mail send …` for an escalation, `mail-health.sh`
+  as the second half of `notify`.
 * **`watch-refresh.sh`, `doctor.sh`, `install.sh`, `units.sh`, `cockpit/rebuild.sh`,
   `cockpit/remote/cockpit-remote`.** These call `watchd`; only their call sites move to the
   new bare name in this change, not their own logic.
@@ -158,6 +159,6 @@ unchanged with a unit test asserting it.
   `mail_ask`, `orphan_lock`): `status`'s three-column logic, `notify`'s two-half behaviour
   (backlog vs. dead watcher), `restart`'s all-vs-one framing — without a systemd user manager
   or a mailbox.
-* **Cannot be verified without a real systemd/tmux/mail.sh**: exercised instead by parity runs
+* **Cannot be verified without a real systemd/tmux/mail**: exercised instead by parity runs
   against the bash on this box (below) and left to the round's integration tier per
   `gate-unit-round-integration-2026-09-29`.

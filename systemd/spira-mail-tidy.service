@@ -1,6 +1,6 @@
 [Unit]
 Description=Spira mail tidy — archive answered, closed and stale mail from operator inbox
-Documentation=file://@SPIRA_HOME@/mail.sh
+Documentation=file://@SPIRA_PROD_ROOT@/mail/DESIGN.md
 After=default.target
 
 [Service]
@@ -11,7 +11,7 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
-ExecStart=@SPIRA_PROD@/mail.sh tidy operator
+ExecStart=@SPIRA_PROD_ROOT@/bin/mail tidy operator
 TimeoutStartSec=120
 StandardOutput=append:@SPIRA_RUN@/mail-tidy.log
 StandardError=append:@SPIRA_RUN@/mail-tidy.log

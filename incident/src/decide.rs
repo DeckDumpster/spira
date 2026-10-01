@@ -1,7 +1,7 @@
 //! Pure decision logic for the intake (DESIGN.md). Nothing here touches a process, a
 //! clock, a file or the network — every fact a function needs is a parameter, so every
 //! one of them is a table-driven unit test with no fixture database. The IO layer
-//! (`real.rs`) is the only place that calls out to `bd`, `mail.sh` or the filesystem.
+//! (`real.rs`) is the only place that calls out to `bd`, `mail` or the filesystem.
 
 use sha2::{Digest, Sha256};
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test-verdict-flow.sh — mail.sh sendmail: bead closing and decision-bead verdict flow-back.
+# test-verdict-flow.sh — mail sendmail: bead closing and decision-bead verdict flow-back.
 #
 # ONE testdb where four suites each built their own (docs/test-plan/operator-channel.md
 # rows 14-16, 18-19, 24; clusters D1/D2): test-mail-decision-ask.sh,
 # test-mail-decision-ask-no-bead.sh, test-mail-sendmail.sh's non-routing cases,
 # test-sentinel.sh's land_escalate cases, and test-archivist-cited-bead.sh's surviving
 # assert (the blocking-edge guard logs its refusal — archivist itself was never run by
-# that suite, only mail.sh's own guard, which every question-with-bead send already exercises
+# that suite, only mail's own guard, which every question-with-bead send already exercises
 # here). Reply ROUTING (no bead cited, no db needed) moved to test-mail.sh (row 17) — it does
 # not belong on a testdb it never reads.
 #
@@ -17,7 +17,7 @@
 #     the raw paragraph would still read "closed" and pass the weaker assertion.
 #
 # tier: T3
-# covers: spira/mail.sh spira/lib.sh spira/conf.sh aerc/accept-default.sh UC-operator-channel-14 UC-operator-channel-15 UC-operator-channel-16 UC-operator-channel-18 UC-operator-channel-19 UC-operator-channel-24
+# covers: mail/src/* spira/lib.sh spira/conf.sh aerc/accept-default.sh UC-operator-channel-14 UC-operator-channel-15 UC-operator-channel-16 UC-operator-channel-18 UC-operator-channel-19 UC-operator-channel-24
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -41,13 +41,7 @@ export SPIRA_HOME="$TMP/home"
 export SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
 
-MAIL="$HERE/mail.sh"
-run() { bash "$MAIL" "$@"; }
-
-# Sourced (not run): mail.sh's main guard makes this safe, and it is how the T1 _suit_reason
-# table below calls the seam directly instead of forking mail.sh per row.
-# shellcheck disable=SC1090
-. "$MAIL"
+run() { mail "$@"; }
 
 bead_status() {
     bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
@@ -312,21 +306,14 @@ want "the verdict is the message's default" "take the accept-test default" "$(be
 want "work bead note contains the operator verdict" "take the accept-test default" "$(bead_notes "$BEAD_ACC")"
 
 # ==========================================================================
-# UC-18 / G-03 — suit verdict words -> close reason, at the T1 seam (no bd, no Maildir).
+# UC-18 / G-03 — suit verdict words -> close reason. This table used to call the sourced
+# bash seam `_suit_reason` directly (T1, no fork per row). mail is a compiled binary now
+# (sp-ooh1k): the table moved verbatim to mail/src/bead.rs's own unit tests
+# (`suit_reason_maps_uphold_retire_amend`, `cargo test -p mail`), case for case including
+# the case-insensitive uphold, the amend-with-clause and amend-with-no-clause forms, the
+# unrecognised-word passthrough, and the non-suit-kind-never-mapped guard. The real close
+# below (one uphold, end to end through sendmail) still runs here.
 # ==========================================================================
-echo
-echo "UC-18/G-03: _suit_reason maps verdict words to close reasons (T1 table)"
-
-is "uphold -> upheld"                    "upheld"           "$(_suit_reason suit "uphold this one")"
-is "Uphold (case-insensitive) -> upheld" "upheld"            "$(_suit_reason suit "Uphold.")"
-is "retire -> retired"                   "retired"           "$(_suit_reason suit "retire the statute")"
-is "amend: <clause> -> the clause"       "add a new clause"  "$(_suit_reason suit "amend: add a new clause")"
-is "amend with no clause -> amended"     "amended"           "$(_suit_reason suit "amend")"
-is "G-03: unrecognised suit word is left unmapped" \
-   "overruled, try again" "$(_suit_reason suit "overruled, try again")"
-is "a non-suit kind is never mapped, even with a suit word" \
-   "uphold this one" "$(_suit_reason question "uphold this one")"
-
 echo
 echo "UC-18: one real close — uphold closes the suit bead with reason 'upheld'"
 
@@ -366,17 +353,17 @@ is "original stays unmodified (not marked replied) when close fails" "1" \
 echo
 echo "UC-24: land_escalate reaches the operator unless an OPEN ask with the subject exists"
 
-# land_escalate shells out to `mail.sh` by name (sp-gypjk), so this section puts a scratch
-# dir carrying a logging stub first on PATH rather than the real mail.sh under test above —
-# the other sections here are about mail.sh itself, this one is about lib.sh's caller contract.
+# land_escalate shells out to `mail` by name (sp-gypjk), so this section puts a scratch
+# dir carrying a logging stub first on PATH rather than the real mail under test above —
+# the other sections here are about mail itself, this one is about lib.sh's caller contract.
 LESC_HOME="$TMP/landesc-home"; mkdir -p "$LESC_HOME"
 MAIL_LOG="$TMP/mail.log"
-cat > "$LESC_HOME/mail.sh" <<MAILSH
+cat > "$LESC_HOME/mail" <<MAILSH
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$MAIL_LOG"
 cat >/dev/null
 MAILSH
-chmod +x "$LESC_HOME/mail.sh"
+chmod +x "$LESC_HOME/mail"
 
 acted=0
 act() { acted=$((acted+1)); }

@@ -1,5 +1,5 @@
 //! Everything skew.sh's ported logic needs from the world, as a trait (DESIGN.md §4).
-//! `real.rs` implements it against the host (git, bd, release, gh, mail.sh, overrides.sh,
+//! `real.rs` implements it against the host (git, bd, release, gh, mail, overrides.sh,
 //! install.sh, exclude.sh, and the lib.sh repository-map seam); `tests.rs` implements it as a
 //! fake recording calls and returning canned data — the same technique `forge`'s `FakeGh`
 //! and `gate-check`'s fakes use.
@@ -73,8 +73,9 @@ pub trait World {
     fn install_diff(&self, installer: &Path) -> (i32, String);
     /// `gh release list --repo <slug> --json tagName,isDraft` -> Ok(json) or Err(stderr's first line).
     fn gh_release_list(&self, slug: &str) -> Result<String, String>;
-    /// `mail.sh send operator --from "Skew check <skew@spira>" --subject <subject> --kind
-    /// question --default <default_action>`, body on stdin -> Ok or Err(combined output).
+    /// `mail send operator --from "Skew check <skew@spira>" --subject <subject> --kind
+    /// question --default <default_action>` (the `mail` binary, was `mail.sh`, sp-ooh1k),
+    /// body on stdin -> Ok or Err(combined output).
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String>;
 
     // ---- filesystem / env ----

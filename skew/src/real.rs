@@ -287,7 +287,10 @@ impl World for Real {
         }
     }
     fn mail_send_question(&self, subject: &str, body: &str, default_action: &str) -> Result<(), String> {
-        let mut child = Command::new("mail.sh")
+        // mail.sh is the `mail` binary now (sp-ooh1k); deps.toml's compat table keeps a
+        // spira/mail.sh symlink but skew.sh's own fix called the real name directly
+        // rather than lean on that transitional shim -- matched here, sp-yyk47.
+        let mut child = Command::new("mail")
             .args(["send", "operator", "--from", "Skew check <skew@spira>", "--subject", subject, "--kind", "question", "--default", default_action])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

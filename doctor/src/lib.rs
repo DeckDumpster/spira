@@ -135,12 +135,12 @@ fn conf_display(w: &dyn World) -> String {
 // ============================================================================ release tools
 
 pub fn check_release_tools(w: &dyn World) -> Vec<Line> {
-    // world.sh is the `world` binary now (sp-6onps) and deps.toml's release tier already
-    // names it (alongside ctrl/aeons/slay) -- deps_list_release() covers all four without
-    // a hand-written suffix entry; mail.sh and gate.sh are still bash and stay listed by
-    // hand.
+    // world.sh is the `world` binary now (sp-6onps) and mail.sh is the `mail` binary now
+    // (sp-ooh1k); deps.toml's release tier already names both (alongside ctrl/aeons/
+    // slay) -- deps_list_release() covers all of them without a hand-written suffix
+    // entry. gate.sh is still bash and stays listed by hand.
     let mut tools = w.deps_list_release();
-    tools.extend(["mail.sh".to_string(), "gate.sh".to_string()]);
+    tools.push("gate.sh".to_string());
     let mut missing = String::new();
     for t in &tools {
         if w.which(t).is_none() {

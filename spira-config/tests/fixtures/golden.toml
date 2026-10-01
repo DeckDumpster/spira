@@ -124,7 +124,7 @@ tools = [
     "Bash(git -C * rev-parse*)",
     "Bash(*sop*)",
     "Bash(*incident.sh*)",
-    "Bash(*mail.sh*)",
+    "Bash(*mail *)",
     "Bash(*testenv *)",
     "Read",
     "Glob",

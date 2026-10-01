@@ -162,7 +162,7 @@ pub fn triage_poison(bd: &dyn Bd, seam: &dyn Seam, id: &str, verdict: &str, evid
 /// This refusal is in the code, not a sentence in a brief.
 pub fn unwanted() -> CmdResult {
     refused(
-        "groomer: REFUSED — closing a bead as unwanted is a policy decision, not a hygiene operation.\ngroomer: escalate to Ryan: mail.sh send operator --from \"<sender>\" --subject \"<question>\" --kind question --default \"close <id> as unwanted\"",
+        "groomer: REFUSED — closing a bead as unwanted is a policy decision, not a hygiene operation.\ngroomer: escalate to Ryan: mail send operator --from \"<sender>\" --subject \"<question>\" --kind question --default \"close <id> as unwanted\"",
     )
 }
 

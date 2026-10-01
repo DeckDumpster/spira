@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# test-mail-real-senders.sh — real harness emitters pass mail.sh's own lint (gap G-05,
+# test-mail-real-senders.sh — real harness emitters pass mail's own lint (gap G-05,
 # UC-operator-channel-05).
 #
 # test-migrate-ask.sh used to lint hand-copied sender bodies, so a regression in a real
 # emitter's actual message construction went unseen (it tested copies, not the senders).
-# This calls each emitter's real code — not a re-typed body — with mail.sh pointed at a
+# This calls each emitter's real code — not a re-typed body — with mail pointed at a
 # scratch Maildir and with no lint override, so the running message actually clears
-# mail.sh's send path.
+# mail's send path.
 #
 # COVERAGE: land_escalate (lib.sh) is a standalone function reachable without standing up
 # a database or systemd — sourced directly. watchd and skew are both compiled binaries now
@@ -18,8 +18,8 @@
 # incident.sh's SIN escalation is driven through incident-stub-bd.py (a genuinely stateful
 # fake bd, not a canned response — test-sin-exempt.sh already established that it reproduces
 # the create-then-recur sequence faithfully) rather than a real bd store: what this suite
-# checks is that the message incident.sh builds clears mail.sh's own lint, which needs the
-# real mail.sh, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
+# checks is that the message incident.sh builds clears mail's own lint, which needs the
+# real mail, not a real database. Standing up a real recurrence count is test-sin-exempt.sh
 # and test-incident-recur-cause.sh's job, not this one's.
 #
 # archivist's sweep, driven for real over a fabricated transcript that ctx-meter.sh measures
@@ -29,7 +29,7 @@
 # daily digest is the only path to the operator — so nothing here should ever reach the mailbox.
 #
 # tier: T2
-# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py spira/mail.sh incident/* UC-operator-channel-05
+# covers: spira/lib.sh watchd/* skew/src/* spira/incident.sh archivist/src/* spira/ctx-meter.sh spira/incident-stub-bd.py mail/src/* incident/* UC-operator-channel-05
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -55,7 +55,7 @@ chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD"
 export SPIRA_DB="$TMP/db"
 
-unread() { mail.sh count operator 2>/dev/null; }
+unread() { mail count operator 2>/dev/null; }
 
 echo
 echo "lib.sh: land_escalate (question)"
@@ -79,7 +79,7 @@ echo "watchd: notify's escalate/ask (question)"
 # source and call directly. Drives the real escalation path end to end instead: a one-line
 # manifest, a planted backlog old enough to fire on the first pass, `watchd notify` run for
 # real against this scratch SPIRA_RUN/SPIRA_MAIL/SPIRA_BD — the same "real sender, real
-# mail.sh" contract every other emitter in this suite is held to.
+# mail" contract every other emitter in this suite is held to.
 command -v watchd >/dev/null 2>&1 || bail "watchd is not on PATH"
 WD_WATCHERS="$TMP/watchd-watchers"
 printf 'realsender|log|%s/realsender.log\n' "$SPIRA_RUN" > "$WD_WATCHERS"
@@ -98,7 +98,7 @@ echo "skew: escalate (question)"
 # Instead, drive the real `skew check --escalate` through a real NOT-LATEST scenario — the
 # same minimal fixture test-skew-escalate.sh builds for its own coverage of escalate()'s
 # error handling — so this suite still exercises the real send path against the real
-# mail.sh, with no lint override, the property this suite exists to prove.
+# mail, with no lint override, the property this suite exists to prove.
 SKEW_REPO="$TMP/skew-repo"
 git init -q -b main "$SKEW_REPO"
 git -C "$SKEW_REPO" config user.email t@t; git -C "$SKEW_REPO" config user.name t
@@ -134,8 +134,8 @@ SIN_LOG="$TMP/sin-bd.log"
 SIN_AT=2
 
 # file_sin_incident <ref> <title> <payload> — a real incident.sh subprocess against
-# incident-stub-bd.py, with the real mail.sh (SPIRA_HOME/SPIRA_MAIL from the suite-wide
-# exports above) so the SIN message actually clears mail.sh's lint.
+# incident-stub-bd.py, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
+# exports above) so the SIN message actually clears mail's lint.
 file_sin_incident() {
     local ref="$1" title="$2" payload="$3"
     printf '%s' "$payload" | \
@@ -219,10 +219,10 @@ is "archivist sweep records the item the stub filed"   "1"    "$items"
 is "archivist sweep sends no mail with nothing queued for the digest" "$before" "$after"
 
 # THE LINT ITSELF STILL REFUSES THAT SHAPE: a `--kind note` from archivist@spira with no
-# `--digest` is exactly the ad hoc per-finding note mail.sh's guard exists to stop. This is
+# `--digest` is exactly the ad hoc per-finding note mail's guard exists to stop. This is
 # what G-05 exists to catch, so the guard is worth pinning directly even though nothing in
 # archivist sends this shape any more.
-lint_err="$(printf 'body' | mail.sh send operator \
+lint_err="$(printf 'body' | mail send operator \
     --from "Archivist <archivist@spira>" --subject "isolated repro" --kind note 2>&1 >/dev/null)"
 rc=$?
 is "the isolated repro also fails" "1" "$rc"

@@ -33,7 +33,7 @@ fn main() -> ExitCode {
         }
     };
     let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
-    let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail.sh".to_string());
+    let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
     let spira_home = std::env::var("SPIRA_HOME").unwrap_or_else(|_| ".".to_string());
 
     let repo = std::env::var("SPIRA_GH_INTAKE_REPO").unwrap_or_default();

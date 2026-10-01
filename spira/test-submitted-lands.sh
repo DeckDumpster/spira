@@ -61,7 +61,7 @@ printf 'fixture | %s | push | origin/main | |\n' "$REPO" > "$SPIRA_REPO_MAP"
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$SPIRA_HOME/$1"; }
 stub confine.sh 'exit 0'
-stub mail.sh    'exit 0'
+stub mail    'exit 0'
 stub gh         'exit 1'
 gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
 gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }

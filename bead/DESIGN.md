@@ -77,7 +77,9 @@ Rust cutover was "leave lib.sh alone"):**
   format is shell, not a value to be reparsed," so this follows that precedent rather than
   writing a second, partial shell-fragment parser.
 - `schema.sh type-of <kind>` / `schema.sh kinds` (kind→bd-type mapping; schema.sh is group 4).
-- `mail.sh send` (`amend`'s live-aeon notify).
+- `mail send` (`amend`'s live-aeon notify; `mail.sh` itself was rewritten and retired by
+  sp-ooh1k — a compat symlink remains for callers outside this tree, but this crate calls
+  the real `mail` binary by bare name).
 
 ## Parity
 

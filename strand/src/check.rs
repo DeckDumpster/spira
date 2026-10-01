@@ -551,9 +551,9 @@ fn escalate(cfg: &Config, part: &str, kind: &str, id: &str, detail: &str, action
         format!("{detail} — nothing in the plan below it can move until this clears")
     };
     let body = escalation_body(&title, action, &why, &ctx);
-    // mail.sh, by name on the launcher's PATH (sp-gypjk).
+    // mail, by name on the launcher's PATH (sp-gypjk).
     let _ = probe::run(
-        "mail.sh",
+        "mail",
         &["send", "operator", "--from", "Strand check <strand@spira>", "--subject", &title, "--kind", "question", "--default", action],
         Some(body.as_bytes()),
         &[],

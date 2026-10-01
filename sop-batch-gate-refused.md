@@ -24,10 +24,10 @@ grep -E "BATCH REFUSED|rebuilt batch.*red" "$SPIRA_RUN/landing.log" | head -1
 
 3. **Escalate once** (lines 419-427): Mail operator once per unique refused member set using a flag file guard. Includes red suite names and batch member list so operator can identify which branch broke.
 
-4. **Visible logging** (lines 407, 432-434): Write "BATCH REFUSED" line to landing.log before escalation attempt — visible even if mail.sh fails (law-total-blockage-announces-itself).
+4. **Visible logging** (lines 407, 432-434): Write "BATCH REFUSED" line to landing.log before escalation attempt — visible even if mail fails (law-total-blockage-announces-itself).
 
 Operator action: Identify which member branch introduced the gate failure; that branch should be ejected from the queue or fixed in-place.
 
-**ESCALATE:** If mail.sh is broken or operator cannot unblock the failing branch.
+**ESCALATE:** If mail is broken or operator cannot unblock the failing branch.
 
 **REF:** spira/batch.sh; law-total-blockage-announces-itself; law-repeating-conditions-escalate-once

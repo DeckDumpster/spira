@@ -118,11 +118,11 @@ STUBREL
 chmod +x "$STUBBIN/release"
 reset_stub() { rm -f "$STUBCTL/verify_fail" "$STUBCTL/status_output"; }
 
-# A quiet mail.sh: the LOCAL-BEHIND refresh scenario below escalates unconditionally
+# A quiet mail: the LOCAL-BEHIND refresh scenario below escalates unconditionally
 # (queue.local's own _refresh_check_only, unchanged by this bead), and this suite is not
 # about the mail path — that is test-skew-escalate.sh's job.
-printf '#!/usr/bin/env bash\nexit 0\n' > "$STUBBIN/mail.sh"
-chmod +x "$STUBBIN/mail.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$STUBBIN/mail"
+chmod +x "$STUBBIN/mail"
 
 run_check() {
     local run_dir; run_dir="$(mktemp -d "$TMP/run-XXXXX")"

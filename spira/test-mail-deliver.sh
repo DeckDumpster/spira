@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T2
-# covers: systemd/spira-mail-deliver.service spira-world/src/bin/world.rs watchd/* spira/watchers spira/spira-mail-deliver.sh spira/mail.sh spira/mail-health.sh spira/conf.sh UC-operator-channel-10
+# covers: systemd/spira-mail-deliver.service spira-world/src/bin/world.rs watchd/* spira/watchers spira/spira-mail-deliver.sh mail/src/* spira/mail-health.sh spira/conf.sh UC-operator-channel-10
 #
 # PROPERTIES UNDER TEST
 # ---------------------
@@ -182,7 +182,7 @@ BASE_ENV=(
 run_notify() {
     # SPIRA_MAIL_REPEAT_WINDOW=0: this section sends several DISTINCT escalations to
     # operator with the SAME literal subject ("A watcher has stopped producing events") in
-    # one shared SPIRA_RUN — mail.sh's own repeat-check would otherwise silently swallow
+    # one shared SPIRA_RUN — mail's own repeat-check would otherwise silently swallow
     # every one after the first, which is correct anti-spam behaviour in production and
     # exactly wrong for a test proving each condition escalates on its own.
     env -i "${BASE_ENV[@]}" \
@@ -373,7 +373,7 @@ done
 first_seen="$(_wake_count "$ATT2")"
 
 env -i HOME="$TMP/home" PATH="$PATH" SPIRA_MAIL="$WMAIL2" SPIRA_CONF=/nonexistent \
-    mail.sh read wakebox >/dev/null 2>&1
+    mail read wakebox >/dev/null 2>&1
 
 sleep 2.5
 loop_exited=0; _bg_exited "$LOOP2_PID" 30 && loop_exited=1

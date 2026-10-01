@@ -212,7 +212,7 @@ is dispatch, not a fresh incident.
 **Fix**
 
 ```
-Do not attempt partial builder work. Check `mail.sh list operator` for a reply; if
+Do not attempt partial builder work. Check `mail list operator` for a reply; if
 none and one was already sent, do not resend (law-repeating-conditions-escalate-once).
 Fix is outside Ops: re-type to a builder lane with a wall long enough for research plus
 repro. Past ~10 identical reclaims, stop writing a full note each time -- record
@@ -528,7 +528,7 @@ Bead reclaimed by 3+ consecutive sessions, each re-confirming an unanswered
 ```
 bd show <bead-id> | grep -c Escalat   # may read 0 even when SYMPTOM clearly
   matches -- don't treat 0 as disconfirming, read the bead body too.
-  Also: bd show sp-wb7ip  # if open, mail.sh send operator hangs, delivers nothing.
+  Also: bd show sp-wb7ip  # if open, mail send operator hangs, delivers nothing.
 ```
 
 **Fix**
@@ -795,7 +795,7 @@ pinning which mechanism fired for a given bead needs the landing pass's own log
 **Symptom**
 
 ```
-mail.sh send <mailbox> --kind question --default X lints
+mail send <mailbox> --kind question --default X lints
   `section "Question" is empty` / `section "Default" is empty` even with
   --subject/--default set; guessed body flags (--body, --message,
   --question, positional, "-" heredoc) rejected as unknown option.
@@ -807,7 +807,7 @@ mail.sh send <mailbox> --kind question --default X lints
 **Check**
 
 ```
-printf 'Question: q?\nDefault: x\n' | timeout 8 mail.sh send operator \
+printf 'Question: q?\nDefault: x\n' | timeout 8 mail send operator \
     --from "Ops <ops@spira>" --subject test --kind question --default x
   Reproduces the empty-section lint. Confirmed 2026-09-27 (sp-wkonl),
   re-confirmed 2026-09-28 (sp-hqq0q): question.md requires
@@ -822,7 +822,7 @@ printf 'Question: q?\nDefault: x\n' | timeout 8 mail.sh send operator \
 ```
 No body flag exists. Supply all three in one attempt, avoid
   iterating on lint errors:
-    printf '## Question\n<q>\n\n## Default\n<d>\n' | mail.sh send <mailbox> \
+    printf '## Question\n<q>\n\n## Default\n<d>\n' | mail send <mailbox> \
       --from "Ops <ops@spira>" --subject "<topic, no leading id>" \
       --kind question --default "<d>" --bead <id>
   Subject must not lead with a bead id. A non-decision bead refuses a
@@ -849,14 +849,14 @@ A hang with no lint error is sop-mail-send-loom-splice-hang,
 **Symptom**
 
 ```
-mail.sh send operator backgrounds/hangs then exits 124 under a short timeout.
+mail send operator backgrounds/hangs then exits 124 under a short timeout.
   Reproduces deterministically with a fresh throwaway message.
 ```
 
 **Check**
 
 ```
-strace -f -tt -o /tmp/trace.log timeout 8 mail.sh send operator --from X --subject Y --kind question --default Z
+strace -f -tt -o /tmp/trace.log timeout 8 mail send operator --from X --subject Y --kind question --default Z
   Confirms if trace ends in a bare `cat` (execve(.../cat,["cat"])) whose fd0 is
   S_IFSOCK, dup2'd from a bash-coproc fd (pipe2, fd>=10), blocked forever in
   splice(0,NULL,1,NULL,...) past strace's own ceiling.
@@ -867,7 +867,7 @@ strace -f -tt -o /tmp/trace.log timeout 8 mail.sh send operator --from X --subje
 ```
 Not Ops-actionable — code defect. loom.sh/loom binary were confirmed running,
   port 8788 open, no stale lock, mailboxes small: this is not an environment fault.
-  Builder fix: wrap the coprocess-output read/cat step in mail.sh's loom-backed send
+  Builder fix: wrap the coprocess-output read/cat step in mail's loom-backed send
   path with a real deadline; SPIRA_LOOM_BUDGET_MS=1500 is set but not enforced on
   this path. See REF for full trace analysis.
 ```
@@ -883,8 +883,8 @@ File the builder-fix bead with plain `bd create --type bug` (no
   incident->incident handoff with no builder ever touching the code. Confirmed
   2026-09-27: sp-ic5pu was filed via incident.sh, got re-summoned as Ops, and
   closed itself pointing back at sp-wb7ip. Re-filed correctly as sp-znoj6 via
-  bare `bd create`. If mail.sh send operator is the only escalation channel and
-  it's down, escalate via `bd note` directly; don't retry mail.sh.
+  bare `bd create`. If mail send operator is the only escalation channel and
+  it's down, escalate via `bd note` directly; don't retry mail.
 ```
 
 **Reference** — wiki/notes/mail-send-loom-splice-hang.md
@@ -963,7 +963,7 @@ Once escalated, immediately upgrade the incident<->decision-bead relation to
 the same finding and died at the wall because this was left as relates-to.
 
 Confirm mail delivery before trusting a prior session's claim that it sent -
-`mail.sh send` can hang and get backgrounded; a task output of only
+`mail send` can hang and get backgrounded; a task output of only
 "[killed]" means it never sent. Resend backgrounded, don't retry foreground.
 ```
 
@@ -1587,7 +1587,7 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Fix** — _attr_notify_red is now called from _q_attribute on every red verdict path (ejection, together-only halve, requeue-all). No manual intervention is needed once the fixed verdict.sh (sp-uu8oy, commit 43a136f) is in force. To confirm: run test-verdict.sh via testenv-batch.sh — case 8.5 covers the together-only path.
 
-**Escalate** — If notifications are still absent after the fix, check mail.sh is reachable from the verdict context and that SPIRA_MAIL_DIR is set. A stuck mail-deliver service would queue the notification without delivering it — check spira-mail-deliver.service status.
+**Escalate** — If notifications are still absent after the fix, check mail is reachable from the verdict context and that SPIRA_MAIL_DIR is set. A stuck mail-deliver service would queue the notification without delivering it — check spira-mail-deliver.service status.
 
 **Reference** — sp-uu8oy
 
@@ -1631,7 +1631,7 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 **Symptom** — Re-run refused: SPIRA_VERDICT_REPEAT_CONSIDERED not set/too short. Recurrence suggests environmental, not code defect.
 
-**Check** — First: `bd -C $SPIRA_DB show <branch-bead>` — if CLOSED OUTCOME:landed, confirm the cited commit is an ancestor of origin/main (`git merge-base --is-ancestor <sha> origin/main`). If landed, the incident is stale/moot — close citing that commit. Otherwise: aeons can't run testenv-batch.sh (no SSH); verify the first refusal mailed Concierge: `mail.sh list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT once (sp-0dgzr/sp-58zvx). Also check for a round-assembly bead — moot until the round assembles.
+**Check** — First: `bd -C $SPIRA_DB show <branch-bead>` — if CLOSED OUTCOME:landed, confirm the cited commit is an ancestor of origin/main (`git merge-base --is-ancestor <sha> origin/main`). If landed, the incident is stale/moot — close citing that commit. Otherwise: aeons can't run testenv-batch.sh (no SSH); verify the first refusal mailed Concierge: `mail list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT once (sp-0dgzr/sp-58zvx). Also check for a round-assembly bead — moot until the round assembles.
 
 **Fix** — Landed already: close citing the commit, nothing else. Not landed: re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a code fix (new tree = new key). Round-assembly member: close citing the round bead. Mail absent: file/link the mailer bug once, close citing it. Don't re-investigate the suite red — it belongs to the branch owner.
 

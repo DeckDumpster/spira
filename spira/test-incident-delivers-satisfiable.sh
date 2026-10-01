@@ -30,7 +30,7 @@ echo "test-incident-delivers-satisfiable.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 mkdir -p "$TMP/home" "$TMP/run"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail.sh"; chmod +x "$TMP/home/mail.sh"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
 
 export STUB_BD_STATE="$TMP/state.json" STUB_BD_LOG="$TMP/bd.log"
 

@@ -7,10 +7,10 @@
 #
 # WHAT THIS SUITE IS FOR
 # ----------------------
-# escalate() in skew was swallowing both streams of the mail.sh call
+# escalate() in skew was swallowing both streams of the mail call
 # (>/dev/null 2>&1), so a failing send produced no output in skew.log and the
 # divergence went unreported for an entire day while the timer ran every hour.
-# This suite proves the fix: a failing send, and a missing mail.sh path, both
+# This suite proves the fix: a failing send, and a missing mail path, both
 # produce output on stdout and return non-zero.
 #
 # THE POSITIVE CONTROL IS FIRST (law-absence-needs-a-positive-control). Before
@@ -79,7 +79,7 @@ ln -s "spira-${TS1}" "$RELEASES/current"
 # lib.sh), not the mail-stub-only *_HOME directory that goes first on PATH. `skew` (a
 # compiled binary, sp-yyk47) resolves lib.sh through SPIRA_HOME, unlike skew.sh, which found
 # it beside its OWN script regardless of SPIRA_HOME's value — so *_HOME (which holds only a
-# stub mail.sh) was always safe to name there for bash, but would make `skew` exit 3 before
+# stub mail) was always safe to name there for bash, but would make `skew` exit 3 before
 # it ever reached the escalate() path this suite exists to test.
 run_skew() {
     local run_dir
@@ -135,13 +135,13 @@ echo "positive control — successful notify appears on stdout:"
 GOOD_HOME="$TMP/good-home"
 GOOD_BODY="$TMP/good-body"
 mkdir -p "$GOOD_HOME"
-cat > "$GOOD_HOME/mail.sh" <<EOFM
+cat > "$GOOD_HOME/mail" <<EOFM
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
 echo "mail sent"
 cat > "$GOOD_BODY"
 EOFM
-chmod +x "$GOOD_HOME/mail.sh"
+chmod +x "$GOOD_HOME/mail"
 
 good_out="$(run_skew SPIRA_HOME="$HERE" PATH="$GOOD_HOME:$PATH")"; good_rc=$?
 # NOT-LATEST was found; exit 1 is correct.
@@ -151,7 +151,7 @@ want "positive control: escalation noted on stdout" "escalated" "$good_out"
 # Body must be non-empty — an empty body is indistinguishable from a correct one
 # by exit code alone (law-absence-needs-a-positive-control).
 [ -s "$GOOD_BODY" ] && ok "body is non-empty" \
-    || bad "body is non-empty" "mail.sh received an empty body"
+    || bad "body is non-empty" "mail received an empty body"
 want "body contains ## Question" "## Question" "$(cat "$GOOD_BODY")"
 want "body contains ## Default"  "## Default"  "$(cat "$GOOD_BODY")"
 
@@ -161,12 +161,12 @@ echo "failing notify — failure message appears on stdout, returns non-zero:"
 # ===========================================================================
 BAD_HOME="$TMP/bad-home"
 mkdir -p "$BAD_HOME"
-cat > "$BAD_HOME/mail.sh" <<'EOF'
+cat > "$BAD_HOME/mail" <<'EOF'
 #!/usr/bin/env bash
 echo "bad-notify: simulated failure from test fixture" >&2
 exit 1
 EOF
-chmod +x "$BAD_HOME/mail.sh"
+chmod +x "$BAD_HOME/mail"
 
 fail_out="$(run_skew SPIRA_HOME="$HERE" PATH="$BAD_HOME:$PATH")"; fail_rc=$?
 is  "failing notify exits 1" "1" "$fail_rc"
@@ -176,25 +176,25 @@ want "failing notify output included"    "simulated failure" "$fail_out"
 
 # ===========================================================================
 echo
-echo "read-only mode — check without --escalate must not call mail.sh:"
+echo "read-only mode — check without --escalate must not call mail:"
 # ===========================================================================
 SENTINEL_DIR="$(mktemp -d "$TMP/sentinel-XXXXX")"
 SENTINEL_HOME="$TMP/sentinel-home"
 mkdir -p "$SENTINEL_HOME"
-cat > "$SENTINEL_HOME/mail.sh" <<EOF
+cat > "$SENTINEL_HOME/mail" <<EOF
 #!/usr/bin/env bash
 touch "$SENTINEL_DIR/fired"
 exit 0
 EOF
-chmod +x "$SENTINEL_HOME/mail.sh"
+chmod +x "$SENTINEL_HOME/mail"
 
 ro_out="$(run_skew_ro SPIRA_HOME="$HERE" PATH="$SENTINEL_HOME:$PATH")"; ro_rc=$?
 is  "read-only exits 1 (divergence found)" "1" "$ro_rc"
-[ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: mail.sh not called" \
-    || bad "read-only: mail.sh not called" "sentinel file was created"
+[ ! -f "$SENTINEL_DIR/fired" ] && ok "read-only: mail not called" \
+    || bad "read-only: mail not called" "sentinel file was created"
 want   "read-only: NOT-LATEST finding still printed" "NOT-LATEST" "$ro_out"
 nowant "read-only: no 'escalated' line"              "escalated"  "$ro_out"
-nowant "read-only: no 'mail.sh not found' line"      "mail.sh not found" "$ro_out"
+nowant "read-only: no 'mail not found' line"      "mail not found" "$ro_out"
 
 # ===========================================================================
 echo
@@ -204,7 +204,7 @@ DEDUPE_HOME="$TMP/dedupe-home"
 DEDUPE_COUNT="$TMP/dedupe-count"
 printf '0' > "$DEDUPE_COUNT"
 mkdir -p "$DEDUPE_HOME"
-cat > "$DEDUPE_HOME/mail.sh" <<EOFN
+cat > "$DEDUPE_HOME/mail" <<EOFN
 #!/usr/bin/env bash
 [ "\${1:-}" = send ] || exit 0
 count=\$(cat "$DEDUPE_COUNT" 2>/dev/null || echo 0)
@@ -212,7 +212,7 @@ printf '%d' \$((count+1)) > "$DEDUPE_COUNT"
 echo "mail sent"
 cat >/dev/null
 EOFN
-chmod +x "$DEDUPE_HOME/mail.sh"
+chmod +x "$DEDUPE_HOME/mail"
 
 DEDUPE_RUN="$(mktemp -d "$TMP/dedup-run-XXXXX")"
 
