@@ -42,6 +42,10 @@ fa_setup() {   # fa_setup <tag> — build the fixture once
 
     FA_HOME="$FA_TMP/home"; mkdir -p "$FA_HOME/chamber"
     printf '. "%s/lib.sh"\n' "$HERE" > "$FA_HOME/lib.sh"   # the aeon binary sources <home>/lib.sh; the real one, as aeon.sh did
+    # conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-aeon-world-stop.sh, ...): aeon's
+    # own in-process config registry derives conf.d from THIS --home and now REFUSES to
+    # start if it is missing (sp-1cdgq) — every suite built on this shared fixture needs it.
+    cp -r "$HERE/conf.d" "$FA_HOME/"
     FA_RUN="$FA_TMP/run"; mkdir -p "$FA_RUN"
     FA_REPO_MAP="$FA_TMP/repo-map"
     export SPIRA_HOME="$FA_HOME" SPIRA_RUN="$FA_RUN" SPIRA_REPO_MAP="$FA_REPO_MAP"

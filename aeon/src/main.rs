@@ -90,7 +90,9 @@ fn run_capacity(args: &[String]) -> i32 {
         fatal("cannot find the harness's spira/ directory (set SPIRA_HOME)")
     };
     let mut snap = seam::Snapshot::default();
-    conf::merge_resolved_config(&mut snap, &home, &original);
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("config resolution: {e}"));
+    }
     conf::merge_capacity_env(&mut snap, &original);
     let conf = Conf::new(&snap, &home);
     let env = Env::new(original.clone(), snap.env.clone());
@@ -136,7 +138,9 @@ fn main() {
         Ok(s) => s,
         Err(e) => fatal(&format!("{}: {e}: {}", cli.fayth, raw.stderr.lines().next().unwrap_or(""))),
     };
-    conf::merge_resolved_config(&mut snap, &home, &original);
+    if let Err(e) = conf::merge_resolved_config(&mut snap, &home, &original) {
+        fatal(&format!("{}: config resolution: {e}", cli.fayth));
+    }
     conf::merge_capacity_env(&mut snap, &original);
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);
