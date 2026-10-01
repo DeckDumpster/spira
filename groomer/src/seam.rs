@@ -162,7 +162,18 @@ impl Seam for LibSeam {
     }
 
     fn bead_repo(&self, id: &str) -> Result<String, String> {
-        self.run(&["bead_repo", id])
+        // bdq (family A) is a compiled binary now (sp-w3h16, "wave 4.14", landed
+        // concurrently with this bead) — `bead_repo`'s only non-registry step no longer
+        // needs lib.sh sourced at all. `bdq state <id> repo` inherits this process's own
+        // SPIRA_DB/SPIRA_BD exactly as the bash shim's `command bdq "$@"` did; `state` is
+        // not a create, so it never touches the repo-label fence's registry build either.
+        let out = Command::new("bdq").arg("state").arg(id).arg("repo").stdin(Stdio::null()).stderr(Stdio::null()).output();
+        let name = match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => String::new(),
+        };
+        let name = if name.starts_with('(') { String::new() } else { name };
+        Ok(if name.is_empty() { self.registry().home_repo().to_string() } else { name })
     }
 
     fn repo_root(&self, name: &str) -> Result<String, String> {
