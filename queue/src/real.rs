@@ -831,8 +831,8 @@ mod tests {
     /// `spira_home_repo`/`spira_repos`/`repo_root`/`repo_land`/`repo_field` (family U) are
     /// NOT faked here (sp-k6lku, "wave 4.13"): they are no longer a bash seam call at all,
     /// so a test exercising them sets `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` and writes a real
-    /// repo-map file instead — the same fixture `spira_config::repos` itself reads, not a
-    /// stand-in for it.
+    /// map file at that path instead — the same fixture `spira_config::repos` itself reads,
+    /// not a stand-in for it.
     fn stub_home() -> testkit::TempDir {
         let d = crate::testutil::tmpdir("reallib");
         fs::write(

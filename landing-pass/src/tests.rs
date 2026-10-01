@@ -1478,8 +1478,8 @@ fn the_context_answer_parses_into_settings_and_rows() {
     // repo_land) moved in-process (sp-k6lku, "wave 4.13"), same as the base-ref columns
     // (family W, sp-o88bx "wave 4.12"): parse_context no longer reads "repo=" records off
     // the wire at all — it builds the list from spira_config::repos against a real
-    // repo-map, read here from SPIRA_REPO_MAP/SPIRA_HOME_REPO (serialised: process-global
-    // state). Neither "/h" nor the blank path below is a real checkout, so every base-ref
+    // SPIRA_REPO_MAP, read here from that same env var plus SPIRA_HOME_REPO (serialised:
+    // process-global state). Neither "/h" nor the blank path below is a real checkout, so every base-ref
     // field reads None/empty, same as `repo_root` answering nothing — this test is about
     // the kv/record split and the repo list's shape, not git (see seam.rs's own
     // integration test for that resolution exercised against real git).

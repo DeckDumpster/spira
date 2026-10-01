@@ -300,7 +300,7 @@ mod tests {
         // and spira_landref/ref_remote/ref_branch/qualify_base_ref/spira_publish_forge
         // (family W, sp-o88bx "wave 4.12") are both dropped from the CONTEXT script —
         // parse_context resolves all of them in-process through spira_config::repos
-        // against a REAL repo-map and REAL checkouts now, not stubbed bash functions, so
+        // against a REAL SPIRA_REPO_MAP and REAL checkouts now, not stubbed bash functions, so
         // "h" and "o" are real git repositories rather than bare `.git` markers, and
         // SPIRA_REPO_MAP/SPIRA_HOME_REPO are real env (serialised: process-global state).
         let _serial = crate::testutil::serial();
