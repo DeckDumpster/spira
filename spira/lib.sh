@@ -3694,37 +3694,12 @@ spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust
 SPIRA_EVENT_COOLDOWN="${SPIRA_EVENT_COOLDOWN:-3600}"
 
 spira_event() {          # spira_event <kind> <target|-> <title> [detail]
-    local kind="${1:-}" target="${2:--}" title="${3:-}" detail="${4:-}"
-    local dir="$SPIRA_RUN/events" key f now last=0 supp=0
-    [ -n "$kind" ] && [ -n "$title" ] || return 1
-    [ "$target" = "-" ] && target=""
-
-    mkdir -p "$dir" 2>/dev/null || return 1
-    key="$(printf '%s@%s' "$kind" "${target:-plan}" | tr -c 'a-zA-Z0-9._@-' '_')"
-    f="$dir/$key"
-    now="${SPIRA_NOW:-$(date -u +%s)}"
-    find "$dir" -maxdepth 1 -type f -mmin +"$(( (SPIRA_EVENT_COOLDOWN * 2) / 60 + 1 ))" -delete 2>/dev/null
-    [ -s "$f" ] && read -r last supp < "$f"
-    case "${last:-}" in ''|*[!0-9]*) last=0 ;; esac
-    case "${supp:-}" in ''|*[!0-9]*) supp=0 ;; esac
-
-    if [ "$last" -gt 0 ] && [ "$(( now - last ))" -lt "$SPIRA_EVENT_COOLDOWN" ]; then
-        printf '%s %s\n' "$last" "$(( supp + 1 ))" > "$f"
-        return 0
-    fi
-    [ "$supp" -gt 0 ] \
-        && title="$title (+$supp more since $(date -u -d "@$last" +%H:%MZ 2>/dev/null || echo 'the last one'))"
-    printf '%s 0\n' "$now" > "$f"
-
-    # Events are informational — they go to the event log, not the operator mailbox.
-    # Operator asks (question/decision mails) are sent directly by the callers that have
-    # the context to write them properly. Claims, reopens, landings, and similar transitions
-    # belong in the log; the operator's mailbox holds only decisions.
-    printf '%s\tkind: %s\ttarget: %s\t%s%s\n' \
-        "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$kind" "${target:--}" "$title" \
-        "${detail:+$(printf '\t%s' "$detail")}" \
-        >> "$SPIRA_RUN/events.log" 2>/dev/null || true
-    return 0
+    # Ported to `bead event` (sp-ogu8x, wave 4.24, family Z — events are the audit trail
+    # census/tsd/cockpit read, and now have one writer instead of lib.sh plus strand's own
+    # copy; see bead/DESIGN.md "event"). SPIRA_RUN/SPIRA_EVENT_COOLDOWN/SPIRA_NOW are
+    # already in this process's environment (none of the three is an unexported conf.sh
+    # derivation), so nothing needs re-threading across this exec, unlike `bdq`'s shim.
+    command bead event "$@"
 }
 
 # The status witness, and the seam a suite drives it through. `--status-from` is the honest

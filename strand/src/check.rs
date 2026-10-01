@@ -3,7 +3,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::Path;
 
 use crate::classify::{Facts, Partition, Store};
@@ -401,72 +400,17 @@ fn attempts_of(cfg: &Config, id: &str) -> Option<i64> {
     probe::sql_count(cfg, &q)
 }
 
-/// lib.sh spira_event: one line in `$SPIRA_RUN/events.log`, with a per-key cooldown kept in
-/// `$SPIRA_RUN/events/<key>` ("<last> <suppressed>").
+/// lib.sh `spira_event`: one line in `$SPIRA_RUN/events.log`, with a per-key cooldown kept
+/// in `$SPIRA_RUN/events/<key>` ("<last> <suppressed>"). Delegates to `bead::event::emit`
+/// (sp-ogu8x, wave 4.24, family Z) — the owning crate now that the family has one — rather
+/// than keeping this function's own prior, independent copy of the same algorithm; see
+/// `bead/DESIGN.md` "event" for why (two writers of the same file shapes is the drift this
+/// retirement exists to close) and for the one behavioural fix it carried (the logged
+/// timestamp is the real wall clock, not this function's own `timefmt::now()`, exactly as
+/// the bash's fresh `date -u` call never read `$SPIRA_NOW` either).
 pub fn spira_event(cfg: &Config, kind: &str, target: &str, title: &str, detail: &str) {
     let Some(run_dir) = cfg.run.as_ref() else { return };
-    let dir = run_dir.join("events");
-    if fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let target = if target == "-" { "" } else { target };
-    let key: String = format!("{kind}@{}", if target.is_empty() { "plan" } else { target })
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '@' | '-') { c } else { '_' })
-        .collect();
-    let now = timefmt::now();
-    let cooldown = cfg.event_cooldown;
-    // Prune cooldown files well past their window.
-    let max_age = std::time::Duration::from_secs((((cooldown * 2) / 60 + 1) * 60).max(60) as u64);
-    if let Ok(rd) = fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let old = e
-                .metadata()
-                .ok()
-                .filter(|m| m.is_file())
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.elapsed().ok())
-                .is_some_and(|el| el > max_age);
-            if old {
-                let _ = fs::remove_file(e.path());
-            }
-        }
-    }
-    let f = dir.join(&key);
-    let (last, supp) = fs::read_to_string(&f)
-        .ok()
-        .map(|s| {
-            let mut it = s.split_whitespace();
-            (
-                it.next().and_then(|x| x.parse::<i64>().ok()).unwrap_or(0),
-                it.next().and_then(|x| x.parse::<i64>().ok()).unwrap_or(0),
-            )
-        })
-        .unwrap_or((0, 0));
-    if last > 0 && now - last < cooldown {
-        let _ = fs::write(&f, format!("{} {}\n", last, supp + 1));
-        return;
-    }
-    let mut title = title.to_string();
-    if supp > 0 {
-        title.push_str(&format!(" (+{supp} more since {})", timefmt::utc_hhmm(last)));
-    }
-    let _ = fs::write(&f, format!("{now} 0\n"));
-    let mut line = format!(
-        "{}\tkind: {}\ttarget: {}\t{}",
-        timefmt::utc_stamp(now),
-        kind,
-        if target.is_empty() { "-" } else { target },
-        title
-    );
-    if !detail.is_empty() {
-        line.push('\t');
-        line.push_str(detail);
-    }
-    line.push('\n');
-    if let Ok(mut fh) = fs::OpenOptions::new().create(true).append(true).open(run_dir.join("events.log")) {
-        let _ = fh.write_all(line.as_bytes());
-    }
+    let _ = bead::event::emit(run_dir, cfg.event_cooldown, timefmt::now(), kind, target, title, detail);
 }
 
 pub fn title_for(part: &str, kind: &str, id: &str) -> String {

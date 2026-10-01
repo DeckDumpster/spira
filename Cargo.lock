@@ -1317,6 +1317,7 @@ dependencies = [
 name = "strand"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "libc",
  "serde",
  "serde_json",

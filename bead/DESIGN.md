@@ -245,3 +245,96 @@ copy; collapsing it onto `bead::bdq` is the whole point of 4.15, not this bead),
 `auron/src/seam.rs`'s `_auron_bdq() { bdq "$@"; }`, which already calls the bash `bdq` and so
 is unaffected either way — it exercises the new shim without any change here. `bead`'s own
 `BDQ_SCRIPT` bridge (`src/main.rs`) is the fifth; see the Decisions note above.
+
+## event (sp-ogu8x, wave 4.24)
+
+`spira/lib.sh`'s `spira_event` — the harness's one rate-limited outcome stream, `$SPIRA_RUN/
+events.log` plus a per-(kind, target) cooldown file in `$SPIRA_RUN/events/` — is now
+`bead::event::emit` (`bead/src/event.rs`) plus a `bead event` subcommand. `lib.sh` keeps a
+one-line shim with the same name, since every caller (the `aeon`, `gate-check`,
+`landing-pass`, `queue` and `sentinel` seams) types `spira_event` by that bare name, not
+`bead event`:
+
+```
+spira_event() { command bead event "$@"; }
+```
+
+**Contract, unchanged byte for byte:** `spira_event <kind> <target|-> <title> [detail]`,
+returning `1` for an empty kind/title or an uncreatable `$SPIRA_RUN/events` dir, `0`
+otherwise (a log-append failure is swallowed, as the bash's own `|| true` swallowed it). One
+line lands in `events.log` per (kind, target) per `SPIRA_EVENT_COOLDOWN` seconds (default
+3600); a repeat inside the window increments a suppressed count that rides out, as `(+N
+more since HH:MMZ)`, on the next emission the window allows.
+
+**No env re-threading needed, unlike `bdq`'s shim:** `SPIRA_RUN`, `SPIRA_EVENT_COOLDOWN` and
+`SPIRA_NOW` are not `conf.sh` derivations that go unexported — `SPIRA_RUN` is on `conf.sh`'s
+export list, `SPIRA_EVENT_COOLDOWN` is a plain `${VAR:-default}` read with no config step at
+all, and `SPIRA_NOW` is only ever a test fixture's own temporary assignment (which crosses
+an exec by the same ordinary environment-table rule a real export does). The shim calls
+`command bead event "$@"` with nothing extra.
+
+**The logged timestamp is not the injected clock, on purpose, matching the bash exactly.**
+The bash's `now="${SPIRA_NOW:-$(date -u +%s)}"` governs the cooldown *decision* and what
+gets written into the cooldown file, but the `events.log` line's own timestamp column comes
+from a separate, fresh `$(date -u '+%Y-%m-%dT%H:%M:%SZ')` call — the real wall clock, even
+under a test's `SPIRA_NOW` override. `bead::event::emit` keeps the same split: its `now`
+parameter governs the cooldown math and file; `wall_clock_now()` (a real `SystemTime::now()`,
+never reading `SPIRA_NOW`) stamps the log line. **Found and fixed in the same bead:**
+`strand/src/check.rs`'s own prior Rust port of this function (written before this family had
+an owning crate — see below) used its one `now` for both, which is indistinguishable from
+correct in production (`SPIRA_NOW` is never set outside a test) and wrong only under a
+clock-seam test that neither suite ever asserted the timestamp column's value, so it was
+never caught.
+
+**`strand`'s own duplicate now calls through here instead of keeping a second copy.**
+`strand/src/check.rs` wrote a complete, independently-tested native port of `spira_event`
+(its own `pub fn spira_event(cfg, kind, target, title, detail)`, using its own
+`src/timefmt.rs`) to emit `branch.reclaimed`, predating this family's assignment to an
+owning crate. Two writers of the same `events.log`/`events/<key>` file shapes is exactly the
+drift this bead exists to retire — census/tsd/cockpit readers parse what either one writes,
+so a hand-kept second copy is a second thing to drift the day one of them changes. `strand`
+now depends on `bead` as a library and `spira_event` is a thin wrapper: same name, same call
+site (`strand/src/check.rs:299`, `spira_event(cfg, "branch.reclaimed", id, ...)`, which is
+also spira-lint's `event-taxonomy` WIRED needle for that kind — untouched, so the rule still
+finds it), body now `bead::event::emit(run_dir, cfg.event_cooldown, now, kind, target, title,
+detail)`.
+
+**A second, small `civil_from_days`/`utc_stamp`/`utc_hhmm` copy, not a shared crate.**
+`strand/src/timefmt.rs` already has these (plus RFC 3339 parsing and a local-time variant
+`bead::event` does not need); rather than carve out a new shared crate for three pure
+functions neither test suite nor caller is blocked on, `bead/src/event.rs` carries its own
+copy of the same algorithm (Howard Hinnant's `days_from_civil`/`civil_from_days`), with a
+unit test cross-checked against `timefmt`'s own test case. Revisit if a third crate ever
+needs UTC formatting without a date crate.
+
+**One named difference, unreachable by every real caller:** `$SPIRA_RUN/events` is built by
+the bash as a literal string join (`"$SPIRA_RUN/events"`), so an unset `SPIRA_RUN` resolves
+to the absolute `/events`. `bead event`'s CLI reads `SPIRA_RUN` into a `PathBuf` and joins
+`"events"` onto it, so an unset/empty `SPIRA_RUN` resolves to the *relative* `events`
+instead. Unreached in practice — `conf.sh` always sets `SPIRA_RUN`, and every suite that
+exercises this path sets it explicitly — named here because the parity rule asks for every
+intended difference to be, not because it is expected to matter.
+
+**spira-lint's `event-taxonomy` rule (`spira-lint/src/rules/event_taxonomy.rs`) needed no
+table change.** Its `WIRED` list (the kinds "no suite can drive") already names five `.rs`
+call sites, none of them `spira/lib.sh` or any file this bead touches; the shell-side
+positive control (`any_site`, a literal `spira_event <kind> ` in a `spira/*.sh` direct
+child) was already false on this tree before this bead — `rapid_recur_check`'s was the last
+such literal call site, retired at sp-8kqww (wave 4.33) — so the rule already relies solely
+on the `WIRED` Rust sites, unaffected by `lib.sh`'s body becoming a shim. Verified by running
+both `cargo test -p spira-lint` and the real `event-taxonomy` rule against this branch's
+tree: unchanged pass, same findings (none).
+
+**`spira/test-event.sh` retired, not ported — its subject is now a Rust unit test.**
+Every assertion (the positive control, the dash-for-plan target, the single-repeat and
+26-storm suppression, six distinct beads, the suppressed-count message, the
+faster-than-window loop, and the two refusals) has a `bead::event` test with the same name
+and fixture shape, now run under `cargo test -p bead` instead of a real-time suite (the bash
+suite's own header: "T1 + sleeps, 11s" per `docs/test-plan/cockpit-observability.md`'s
+retirement table, row 20 — this port needs no `sleep`, since `now`/`SPIRA_NOW` were already
+an injected clock, not a real one, in both the bash and the Rust). `spira/tier-budget-
+allowlist`'s `test-event.sh` line is deleted with it (the allowlist only shrinks).
+`test-gate-tree.sh`, `test-queue-ops.sh`, `test-landing.sh` and `test-poison.sh` still assert
+on `events.log` content as a side effect of their own subject (queue/landing/poison/gate-tree
+decisions) and are untouched — they exercise the shim exactly as they exercised the
+function, through the real seam.
