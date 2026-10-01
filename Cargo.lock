@@ -193,6 +193,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "serde_json",
+ "spira-claim",
  "spira-config",
  "testkit",
 ]
@@ -1201,6 +1202,7 @@ dependencies = [
 name = "spira-claim"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "lifecycle",
  "serde",
  "serde_json",
