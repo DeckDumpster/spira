@@ -148,6 +148,7 @@ touch -d '+1 minute' "$CHAMBER/builder.fayth"
 
 resolved="$(env -i PATH="$PATH" HOME="$FIXHOME" \
     SPIRA_CONF=/nonexistent \
+    SPIRA_TOML="$REAL_TOML" \
     SPIRA_WATCHERS="$HARNESS/spira/watchers" \
     SPIRA_CHAMBER="$CHAMBER" \
     bash -c ". '$HARNESS/spira/conf.sh'; spira_toml_resolve" 2>/dev/null)"
