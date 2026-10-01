@@ -46,28 +46,12 @@ pub fn oneline_log_matches(repo: Option<&str>, rev: &str, needles: &[&str]) -> u
         .count() as u32
 }
 
-/// `. "$SPIRA_HOME/lib.sh"; spira_landref "$repo"` — lib.sh is out of this bead's scope
-/// (DESIGN.md §3); this is the one call site that needs its base-ref resolution, reached
-/// exactly the way `--disabled-timer-check` reaches world.sh/ctrl.sh: a fixed `bash -c`
-/// seam, never a second hand-written resolver.
+/// `spira_landref "$repo"` — the base ref `repo` lands on. In-process via
+/// [`crate::seams::registry`] (sp-k6lku, "wave 4.13") and `spira_config::repos::landref`;
+/// was `. "$SPIRA_HOME/lib.sh"; spira_landref "$repo"`.
 pub fn spira_landref(spira_home: &str, repo: &str) -> Option<String> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(r#". "$1/lib.sh" >/dev/null 2>&1 && spira_landref "$2""#)
-        .arg("_")
-        .arg(spira_home)
-        .arg(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    let reg = crate::seams::registry(spira_home);
+    spira_config::repos::landref(&reg, repo)
 }
 
 #[cfg(test)]

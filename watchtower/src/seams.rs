@@ -4,28 +4,36 @@
 //! that crosses the boundary travels as argv to the fixed script or as NUL/tab-delimited
 //! stdout, the same discipline `sentinel/src/seams.rs` documents for its own lib.sh seams.
 
+use std::collections::BTreeMap;
 use std::process::Command;
 
-/// `. "$SPIRA_HOME/lib.sh"; repo_root "<repo>"` — the registered repository's filesystem
-/// path, or `None` if lib.sh could not be loaded or the repo is unregistered.
+/// The repo registry (`spira_config::repos`, sp-k6lku "wave 4.13"), resolved once from a
+/// single snapshot of `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED`/`SPIRA_REPO_MAP` —
+/// in place of a fresh `bash -c '. lib.sh; repo_root ...'` subprocess per call. `spira_home`
+/// is `lib_sh_dir()`'s own output (the directory holding lib.sh), matching every other
+/// caller here.
+pub fn registry(spira_home: &str) -> spira_config::repos::Registry {
+    let script = ". \"$0\" >/dev/null 2>&1 || exit 96\n\
+        for __v in SPIRA_HOME_REPO SPIRA_REPO SPIRA_REPO_DERIVED SPIRA_REPO_MAP; do \
+        printf '%s=%s\\0' \"$__v\" \"${!__v-}\"; done";
+    let out = Command::new("bash").arg("-c").arg(script).arg(format!("{spira_home}/lib.sh")).output();
+    let mut env: BTreeMap<String, String> = BTreeMap::new();
+    if let Ok(o) = out {
+        for rec in String::from_utf8_lossy(&o.stdout).split('\0') {
+            if let Some((k, v)) = rec.split_once('=') {
+                env.insert(k.to_string(), v.to_string());
+            }
+        }
+    }
+    let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+    spira_config::repos::Registry::new(map_text.as_deref(), &env, std::path::Path::new(spira_home))
+}
+
+/// `repo_root "<repo>"` — the registered repository's filesystem path, or `None` if the
+/// repo is unregistered. In-process via [`registry`] (sp-k6lku, "wave 4.13"); was
+/// `. "$SPIRA_HOME/lib.sh"; repo_root "<repo>"`.
 pub fn repo_root(spira_home: &str, repo: &str) -> Option<String> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(r#". "$1/lib.sh" >/dev/null 2>&1 && repo_root "$2""#)
-        .arg("_")
-        .arg(spira_home)
-        .arg(repo)
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() {
-        None
-    } else {
-        Some(s)
-    }
+    registry(spira_home).root(repo)
 }
 
 pub struct Timers {
