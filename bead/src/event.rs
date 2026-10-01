@@ -128,8 +128,17 @@ pub fn emit(run_dir: &Path, cooldown: i64, now: i64, kind: &str, target: &str, t
         line.push_str(detail);
     }
     line.push('\n');
-    if let Ok(mut fh) = fs::OpenOptions::new().create(true).append(true).open(run_dir.join("events.log")) {
-        let _ = fh.write_all(line.as_bytes());
+    // An event that cannot be written is said, never swallowed (sp-0c1wz): it is the audit
+    // trail census and attribution read, and an rc 0 with nothing written reads as recorded.
+    let path = run_dir.join("events.log");
+    let written = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut fh| fh.write_all(line.as_bytes()));
+    if let Err(e) = written {
+        eprintln!("spira_event: cannot write {}: {e}", path.display());
+        return Err(());
     }
     Ok(())
 }
@@ -159,6 +168,14 @@ mod tests {
 
     fn rows(dir: &Path) -> usize {
         events_log(dir).lines().filter(|l| !l.is_empty()).count()
+    }
+
+    /// sp-0c1wz: a log that cannot be opened is an error, not a silent Ok.
+    #[test]
+    fn an_unwritable_log_is_an_error_not_a_silent_ok() {
+        let d = tmp("unwritable");
+        fs::create_dir_all(d.path().join("events.log")).unwrap();
+        assert!(emit(d.path(), 0, 1, "k", "sp-x", "title", "").is_err());
     }
 
     #[test]

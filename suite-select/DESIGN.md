@@ -28,7 +28,7 @@ compute is a refusal (exit 75), never an empty or a full selection by accident.
 
 | module | what |
 |---|---|
-| `header` | the suite header parser: `covers_of` (first `# covers:` line plus continuation lines), `tier_of`, `selects_on_of`. The one Rust copy: spira-lint and batcher-cut read it from here. |
+| `header` | the suite header parser: `covers_of` (first `# covers:` line plus continuation lines), `tier_of`, `selects_on_of`, `requires_of`, `exclusive_of`, `uc_of` (the `UC-<area>-NN` tokens off `covers_of`), `testenv_unmet` (pure predicate; the caller supplies its own `in_testenv`/`in_container` evidence). The one Rust copy — spira-lint, batcher-cut and the `header` CLI subcommand all read it from here. Retired `spira/suite-covers.sh` onto this module and the CLI below (wave 4.36, sp-bobsp); the bash file is left on disk, unsourced, only because old fixtures still copy it next to lib.sh/conf.sh. |
 | `glob` | `case_match`: bash `case "$f" in $pat)` matching — `*` crosses `/`. |
 | `names` | `is_suite_name` (`test-<x>.sh`, `[A-Za-z0-9._-]`), `split_list` (comma or whitespace). The gate crate's re-entry check and base re-run use these. |
 | `corpus` | `Corpus::load(dir)` / `Corpus::load_named(dir, names)`: every `test-*.sh` with its parsed header, sorted by name (bytes). |
@@ -46,6 +46,7 @@ suite-select select (--all | --base <ref> --head <ref> | --files <path>)
                     [--report-file <path>] [--no-all-fallback] [--no-nocov] [--tiers <csv>]
 suite-select gate <base> <head>
 suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--suite-dir <dir>]
+suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>
 ```
 
 * **stdout**: suite names (basenames), one per line. `select` prints them in selection order;
@@ -57,6 +58,21 @@ suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--sui
 * **exit**: `0` a selection (possibly empty, meaning nothing to run); `1` a changed source
   file no suite claims (the branch's fault; `select: unclaimed source file: <path>`); `2`
   usage; **`75` refused** — the selector could not compute a selection, and says why.
+
+### `header` — the bash callers' door onto the parser
+
+`plan-lint.sh`, `suite-coverage-json.sh`, `escape-classify.sh`, `testenv-guard.sh` and
+`testlib.sh` (`spira/suite-covers.sh`'s five real callers) shell out to this instead of
+sourcing bash accessors — one process per query, by bare name on the launcher's PATH, the
+same convention `lib.sh`'s `spira-config` shims already carry. Each query prints its
+value(s) on stdout and exits 0, EXCEPT `testenv-unmet`, which is a predicate: exit 0 means
+unmet (bail), exit 1 means met or not declared — mirroring the bash callers' `if
+suite_testenv_unmet ...; then`. A file that cannot be read is treated as empty text (every
+undeclared-header case already has a defined meaning — "run always", "not required" — so a
+missing file is never a hard error here, same as the bash's `2>/dev/null || true`).
+`testenv-unmet` alone also reads `SPIRA_IN_TESTENV` from the environment and checks
+`/run/.containerenv`/`/.dockerenv` on disk, mirroring `suite_in_container`'s own rule that a
+variable alone is never evidence (law-guard-binds-the-caller).
 
 ### Refusals (exit 75)
 

@@ -61,6 +61,43 @@
 set -uo pipefail
 . "$(dirname "$0")/lib.sh"
 
+# --------------------------------------------------------------------------------------
+# THE GATE OUTCOME PROTOCOL (wave4-decomposition.md row C5; bead sp-wqj3o, "wave 4.10: small
+# conf.sh families") — this file is the only remaining bash caller of either function
+# (grepped across the whole tree twice), so they live here now instead of in conf.sh.
+# SPIRA_GATE_NOVERDICT/SPIRA_GATE_BASEFAIL themselves stay in conf.sh's own export list
+# (now computed by `spira_config::resolve()` as fixed values, never settable).
+#
+# FOUR OUTCOMES, AND WHOSE FAULT EACH ONE IS:
+#
+#   PASS       0   judged, and good                     -> land it
+#   FAIL       1   judged, and bad                      -> the BRANCH is at fault
+#   BASE_FAIL 76   the same suites fail on the base     -> the BASE is at fault
+#   NO_VERDICT 75  not judged at all                    -> the MACHINERY is at fault
+#
+# BASE_FAIL and NO_VERDICT may never reopen a bead and never charge an attempt (sp-p4rl,
+# sp-d21, sp-io5j, sp-snyj, sp-1aex) — a lock, a timeout or somebody else's red main could,
+# and repeatedly did, walk finished work to poison and then report it as the branch's
+# failure.
+# --------------------------------------------------------------------------------------
+spira_gate_outcome() {   # spira_gate_outcome <status> -> PASS|FAIL|BASE_FAIL|NO_VERDICT
+    case "${1:-}" in
+        0)  echo PASS ;;
+        75) echo NO_VERDICT ;;
+        76) echo BASE_FAIL ;;
+        *)  echo FAIL ;;
+    esac
+}
+
+# Does this outcome say the BRANCH is at fault? The one question this file's own `record`
+# actually asks.
+spira_gate_blames_branch() {   # spira_gate_blames_branch <status> -> 0 if the branch is at fault
+    case "${1:-}" in
+        0|75|76) return 1 ;;
+        *)       return 0 ;;
+    esac
+}
+
 # UNDER THE RUNTIME DIRECTORY AND SO NOT A CONFIG KEY, by the same rule as the verdict cache
 # and the gate log: the harness put it there, and a colleague who moves SPIRA_RUN moves this
 # with it. The environment may still point it somewhere else, which is the seam the suite

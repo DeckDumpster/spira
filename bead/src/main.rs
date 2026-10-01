@@ -660,7 +660,15 @@ fn cmd_event(args: &[String]) -> i32 {
     // leading slash, which every real caller's conf.sh-derived environment avoids by
     // always setting SPIRA_RUN. Matched here as a plain string join, not `Path::join` on an
     // empty base (which would silently go relative instead) — see DESIGN.md "event".
-    let run_dir = PathBuf::from(env::var("SPIRA_RUN").unwrap_or_default());
+    // Unset or empty SPIRA_RUN is refused by name (sp-0c1wz): the old join made a relative
+    // path and the event vanished with rc 0. Every real caller's conf.sh environment sets it.
+    let run_dir = match env::var("SPIRA_RUN") {
+        Ok(v) if !v.is_empty() => PathBuf::from(v),
+        _ => {
+            eprintln!("spira_event: SPIRA_RUN is unset — refusing rather than drop the event");
+            return 2;
+        }
+    };
     let cooldown: i64 = env::var("SPIRA_EVENT_COOLDOWN").ok().and_then(|v| v.parse().ok()).unwrap_or(3600);
     let now: i64 = env::var("SPIRA_NOW").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
         std::time::SystemTime::now()

@@ -22,7 +22,13 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
     return 1 2>/dev/null || exit 1
 }
 . "$_spira_lib_dir/conf.sh"
-. "$_spira_lib_dir/suite-covers.sh"
+# suite-covers.sh is NOT sourced here (wave 4.36, sp-bobsp): nothing in lib.sh calls its
+# accessors, and the five scripts that do (plan-lint.sh, suite-coverage-json.sh,
+# escape-classify.sh, testenv-guard.sh, testlib.sh) now call `suite-select header ...`
+# instead — the one Rust parser (suite-select/src/header.rs) that spira-lint and
+# batcher-cut already read. The bash file itself is left on disk, unsourced: dozens of
+# install/lib fixtures still `cp`/`ln -s` it alongside lib.sh/conf.sh from before this
+# change, and none of them need editing since nothing reads the copy either.
 # FAYTH SHIMS NOW EXEC spira-config (wave 4.22, sp-r5zd2: fayth_get and friends below are
 # one-line shims onto `spira-config fayth ...`). A `.fayth` file is sourced inside THAT
 # binary's own subprocess, which inherits only the real process environment — not this

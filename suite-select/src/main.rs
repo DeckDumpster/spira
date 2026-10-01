@@ -3,20 +3,24 @@
 //!   suite-select select (--all | --base <ref> --head <ref> | --files <path>) [options]
 //!   suite-select gate <base> <head>
 //!   suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--suite-dir <dir>]
+//!   suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>
 //!
-//! Exit: 0 a selection; 1 an unclaimed source file; 2 usage; 75 refused.
+//! Exit: 0 a selection; 1 an unclaimed source file; 2 usage; 75 refused. `header
+//! testenv-unmet` is a predicate: exit 0 means unmet (the bash callers' `if ... ; then`).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use suite_select::budget::{self, TierCaps};
 use suite_select::corpus::Corpus;
+use suite_select::header;
 use suite_select::io::{self, RealGit};
 use suite_select::select::{self, Buckets, Fail, Options, Selection};
 use suite_select::{gate, timing, Refusal, EXIT_REFUSED, EXIT_UNCLAIMED, EXIT_USAGE};
 
 const USAGE: &str = "usage: suite-select select (--all | --base <ref> --head <ref> | --files <path>) [--repo <path>] [--suite-dir <dir>] [--mode-file <path>] [--report-file <path>] [--no-all-fallback] [--no-nocov] [--tiers <csv>]
        suite-select gate <base> <head>
-       suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--suite-dir <dir>]";
+       suite-select budget --budget-secs <n> [--parallel-width <n>] [--runs <n>] [--suite-dir <dir>]
+       suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>";
 
 fn env(k: &str) -> Option<String> {
     std::env::var(k).ok()
@@ -39,6 +43,7 @@ fn main() {
         Some("select") => cmd_select(&args[1..]),
         Some("gate") => cmd_gate(&args[1..]),
         Some("budget") => cmd_budget(&args[1..]),
+        Some("header") => cmd_header(&args[1..]),
         Some("-h") | Some("--help") => {
             println!("{USAGE}");
             0
@@ -323,4 +328,62 @@ fn cmd_budget(args: &[String]) -> i32 {
         println!("{n}");
     }
     0
+}
+
+/// Suite-header text at `path`, or empty when it cannot be read — the same fail-soft the
+/// bash accessors carried (`2>/dev/null || true`): a missing or unreadable file is an
+/// undeclared header, never a hard error, because every caller already treats "undeclared"
+/// as its own valid (usually "run always"/"not required") case.
+fn read_header(path: &str) -> String {
+    std::fs::read_to_string(path).unwrap_or_default()
+}
+
+/// `suite_in_container`: true only with STRUCTURAL evidence of running inside a container
+/// (podman writes `/run/.containerenv`, docker `/.dockerenv`) — never from a variable alone,
+/// which is forgeable by exactly the actor the guard exists to bind (law-guard-binds-the-caller).
+fn in_container() -> bool {
+    Path::new("/run/.containerenv").exists() || Path::new("/.dockerenv").exists()
+}
+
+fn cmd_header(args: &[String]) -> i32 {
+    let [sub, file] = args else {
+        return usage("header takes (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>");
+    };
+    let text = read_header(file);
+    match sub.as_str() {
+        "covers" => {
+            println!("{}", header::covers_of(&text).unwrap_or_default().join(" "));
+            0
+        }
+        "tier" => {
+            println!("{}", header::tier_of(&text).unwrap_or_default());
+            0
+        }
+        "uc" => {
+            println!("{}", header::uc_of(&text).join(" "));
+            0
+        }
+        "requires" => {
+            println!("{}", header::requires_of(&text).join(" "));
+            0
+        }
+        "exclusive" => {
+            println!("{}", header::exclusive_of(&text).unwrap_or_default());
+            0
+        }
+        "selects-on" => {
+            println!("{}", header::selects_on_of(&text).join(" "));
+            0
+        }
+        "testenv-unmet" => {
+            let in_testenv = env("SPIRA_IN_TESTENV").as_deref() == Some("1");
+            let reqs = header::requires_of(&text);
+            if header::testenv_unmet(&reqs, in_testenv, in_container()) {
+                0
+            } else {
+                1
+            }
+        }
+        other => usage(&format!("unknown header query: {other}")),
+    }
 }
