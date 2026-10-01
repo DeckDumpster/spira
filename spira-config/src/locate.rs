@@ -116,10 +116,12 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome {
 mod tests {
     use super::*;
 
-    // ENV VARS ARE PROCESS-GLOBAL (same hazard lib.rs's own discover tests guard against):
-    // every test holding SPIRA_TOML/SPIRA_CONF/SPIRA_REPO/XDG_CONFIG_HOME/HOME takes this
-    // lock for its whole body.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // ENV VARS ARE PROCESS-GLOBAL (same hazard lib.rs's own discover tests guard
+    // against): every test holding SPIRA_TOML/SPIRA_CONF/SPIRA_REPO/XDG_CONFIG_HOME/HOME
+    // takes `crate::ENV_LOCK` — the ONE crate-wide lock (sp-dh4fv) — for its whole body,
+    // so this module's tests serialize against lib.rs's own env-mutating tests too. A
+    // second, module-private `ENV_LOCK` here is exactly the bug this bead fixed: two locks
+    // that never contend with each other are not a lock.
     static SCRATCH_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
     fn scratch_dir(tag: &str) -> testkit::TempDir {
@@ -140,7 +142,7 @@ mod tests {
     /// without a real operator `~/.config/spira/spira.toml` on the machine running the suite
     /// making it pass for the wrong reason.
     fn with_cleared_env<R>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
-        let _g = ENV_LOCK.lock().unwrap();
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
         let saved: Vec<(&str, Option<String>)> =
             names.iter().map(|n| (*n, env::var(n).ok())).collect();

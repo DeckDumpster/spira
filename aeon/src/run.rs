@@ -371,7 +371,7 @@ impl<'a> Run<'a> {
         let ready = if ready.trim().is_empty() { "[]".to_string() } else { ready };
         let claim_bin = self.claim_bin.clone();
         let who = format!("{}/{}", self.f(), self.s.aeon);
-        let sel = Selector { exec: self.d.exec, seam: self.d.seam, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid };
+        let sel = Selector { exec: self.d.exec, git: self.d.git, claim_bin: &claim_bin, fayth: &self.fayth.name, scratch: &self.conf.run, pid: self.pid, repos: &self.conf.repos };
         let (ids, resumable, tier) = match sel.select(&ready) {
             Selection::ClaimError { log, ledger } => {
                 self.log(&log);
@@ -485,10 +485,11 @@ impl<'a> Run<'a> {
         // base ref itself is left to work()'s own base block below, which refuses it exactly
         // as it always has — this check only ever fires when there is a stack to merge).
         if !self.s.stack.is_empty() {
-            let b = self.sv("_aeon_base", &s(&[&self.s.repo.display().to_string()]));
-            let base = b.stdout.lines().next().unwrap_or("").to_string();
-            if b.success() && !base.is_empty() {
-                let mut base_fq = self.sv("qualify_base_ref", &s(&[&base, &self.s.repo.display().to_string()])).text();
+            // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+            // _aeon_base/qualify_base_ref bash seam.
+            let base = spira_config::repos::landref(&self.conf.repos, &self.s.repo.display().to_string()).unwrap_or_default();
+            if !base.is_empty() {
+                let mut base_fq = spira_config::repos::qualify_base_ref(&base, &self.s.repo.display().to_string());
                 if base_fq.is_empty() {
                     base_fq = base.clone();
                 }
@@ -596,22 +597,23 @@ impl<'a> Run<'a> {
         self.check_stop()?;
 
         // ---- the base: a freshly fetched remote-tracking ref, never guessed ----
-        let b = self.sv("_aeon_base", &s(&[&self.s.repo.display().to_string()]));
-        if !b.success() {
+        // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
+        // _aeon_base/qualify_base_ref bash seam.
+        let repo_disp = self.s.repo.display().to_string();
+        let Some(base) = spira_config::repos::landref(&self.conf.repos, &repo_disp) else {
             self.log(&format!("{}: {bead} names repo:{}, whose land ref cannot be resolved", self.f(), self.s.repo_name));
             let map = self.conf.s("SPIRA_REPO_MAP");
             self.note(&format!("Released by aeon.sh: repo:{} has no resolvable default branch — {map} declares no `base` for it, its remote publishes no HEAD, and it is not a local-only repository. Give it a base column. Refusing to guess: a branch cut from a guessed base rebases onto a ref nobody chose, and `main` is a guess that is wrong wherever a repository still uses `master`.", self.s.repo_name));
             return Err(Abort::Exit(1));
-        }
-        let mut lines = b.stdout.lines();
-        self.s.base = lines.next().unwrap_or("").to_string();
-        self.s.base_branch = lines.next().unwrap_or("").to_string();
-        self.s.base_remote = lines.next().unwrap_or("").to_string();
+        };
+        self.s.base_branch = spira_config::repos::ref_branch(&base);
+        self.s.base_remote = spira_config::repos::ref_remote(&base, Some(&repo_disp)).unwrap_or_default();
+        self.s.base = base;
         if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
             self.log(&format!("{}: fetch of {} failed — basing on a possibly stale {}", self.f(), self.s.base_remote, self.s.base));
         }
         if self.s.stack.is_empty() {
-            self.s.base_fq = self.sv("qualify_base_ref", &s(&[&self.s.base, &self.s.repo.display().to_string()])).text();
+            self.s.base_fq = spira_config::repos::qualify_base_ref(&self.s.base, &repo_disp);
             if self.s.base_fq.is_empty() {
                 self.s.base_fq = self.s.base.clone();
             }
@@ -1079,6 +1081,7 @@ impl<'a> Run<'a> {
             bd: self.d.bd,
             sink: self.d.sink,
             clock: self.d.clock,
+            repos: self.conf.repos.clone(),
         };
         let stop = Arc::clone(&self.stop);
         let shutdown = Arc::clone(&self.hb_shutdown);
@@ -1103,6 +1106,11 @@ pub struct RealBeat<'a> {
     pub bd: &'a dyn Bd,
     pub sink: &'a dyn Sink,
     pub clock: &'a (dyn Fn() -> i64 + Sync),
+    /// spira_config::repos (sp-o88bx, "wave 4.12"): the heartbeat's base-ref read
+    /// (family W, spira_landref) in-process, no longer through the seam. Owned, not
+    /// borrowed: the heartbeat thread outlives `start_heartbeat`'s own `&self`, and
+    /// `Registry` is cheap to clone (a repo-map's rows, a handful of strings).
+    pub repos: spira_config::repos::Registry,
 }
 
 impl Beat for RealBeat<'_> {
@@ -1113,14 +1121,10 @@ impl Beat for RealBeat<'_> {
         session::mtime(&self.logf)
     }
     fn fuse(&self) -> String {
-        // `base` (family W, base refs — not yet ported) still reaches lib.sh's
-        // spira_landref through the seam; everything else here is native.
-        let base: Option<String> = if self.repo_name.is_empty() {
-            None
-        } else {
-            let o = self.seam.call("spira_landref", &s(&[&self.repo_name]));
-            (o.success() && !o.text().is_empty()).then(|| o.text())
-        };
+        // `base` (family W, base refs): spira_config::repos in-process (sp-o88bx, "wave
+        // 4.12"), not the spira_landref seam.
+        let base: Option<String> =
+            if self.repo_name.is_empty() { None } else { spira_config::repos::landref(&self.repos, &self.repo_name) };
         let commit_ahead_ts = base.as_deref().and_then(|b| {
             let o = self.git.git(&self.work, &["log", "--format=%ct", "-1", &format!("{b}..HEAD")]);
             o.success().then(|| o.text()).filter(|t| !t.is_empty()).and_then(|t| t.parse::<i64>().ok())

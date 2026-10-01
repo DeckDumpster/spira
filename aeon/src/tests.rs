@@ -104,7 +104,6 @@ impl Bd for FakeBd {
 
 struct FakeSeam {
     w: W,
-    repo: PathBuf,
     answers: BTreeMap<&'static str, Out>,
 }
 
@@ -120,11 +119,8 @@ impl Seam for FakeSeam {
             "fayth_free" => Out::ok("1"),
             "_aeon_capacity_paused" => Out::fail(1, ""),
             "aeon_name_take" => Out::ok("ifrit"),
-            "_aeon_base" => Out::ok("main\nmain\n\n"),
-            "qualify_base_ref" => Out::ok("main"),
             "_aeon_rebase" => Out::ok(""),
             "_aeon_thrash_meta" => Out::ok("\n\n\n"),
-            "_aeon_repo_info" => Out::ok(format!("fixture\t{}\tmain\n", self.repo.display())),
             "release_own_claim" => {
                 let id = args[0].clone();
                 if w.status.get(&id).map(|s| s.as_str()) == Some("in_progress") {
@@ -136,10 +132,6 @@ impl Seam for FakeSeam {
                 w.status.insert(args[0].clone(), "open".into());
                 Out::ok("")
             }
-            // spira_landrefs: no landing ref configured in these fixtures — verdict_committed
-            // (now native, aeon/src/verdict.rs) falls back to this only when the branch
-            // itself carries no commit naming the bead; empty means "nothing to walk".
-            "spira_landrefs" => Out::ok(""),
             "bead_is_work_type" => {
                 if ["task", "bug", "feature", "chore"].contains(&args[0].as_str()) {
                     Out::ok("")
@@ -286,7 +278,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     let conf = Conf::new(&snap, &f.home);
     let fayth = Fayth::from_vars("builder", &vars);
     let bd = FakeBd(Arc::clone(&f.w));
-    let seam = FakeSeam { w: Arc::clone(&f.w), repo: f.repo.clone(), answers: seam_answers };
+    let seam = FakeSeam { w: Arc::clone(&f.w), answers: seam_answers };
     let git = RealGit { env: &env };
     let exec = FakeExec(Arc::clone(&f.w));
     let launcher = FakeLauncher { w: Arc::clone(&f.w), seen: Mutex::new(vec![]), act };
@@ -689,9 +681,14 @@ fn slain_mid_session_is_free_and_exits_143() {
 fn a_worktree_failure_is_a_pre_session_death() {
     let f = fx("presession");
     seed(&f, "sp-d");
-    let mut a = BTreeMap::new();
-    a.insert("qualify_base_ref", Out::ok("refs/heads/no-such-base"));
-    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, no_session());
+    // Block worktree creation directly by pre-occupying the target path with a plain file:
+    // `git worktree add` then refuses regardless of which base ref is in play.
+    // qualify_base_ref can no longer be fed a bogus ref to force this — spira_config::repos'
+    // port (sp-o88bx, "wave 4.12") only ever returns a ref it has itself verified exists.
+    let work = f.run.join("worktree").join("sp-d");
+    std::fs::create_dir_all(work.parent().unwrap()).unwrap();
+    std::fs::write(&work, "occupied").unwrap();
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(o.code, 1);
     assert!(o.log.contains("FATAL could not create a worktree at"));
     let l = ledger_lines(&o);

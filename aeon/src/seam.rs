@@ -5,6 +5,13 @@
 //! (and so conf.sh) and the fayth exactly as aeon.sh did at its top, refuses any function
 //! not on its allowlist, and calls it. Inside bash a function's arguments are not a
 //! process argv, so no payload size can hit E2BIG (law-payloads-go-on-stdin).
+//!
+//! `_aeon_base`/`_aeon_repo_info`, `qualify_base_ref`/`spira_landrefs`, and the bare
+//! `spira_landref` sp-27d3d added for the heartbeat's fuse (concurrently with this bead)
+//! are all dropped from the allowlist (sp-o88bx, "wave 4.12"): family W
+//! (`spira_landref`/`ref_remote`/`ref_branch`/`qualify_base_ref`/`spira_landrefs`) now
+//! resolves in-process through `spira_config::repos`, so `run.rs`/`verdict.rs`/`claim.rs`
+//! no longer shell into this seam for it at all — not even through a lib.sh shim.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -20,14 +27,13 @@ IFS= read -r -d '' __aeon_fn || exit 96
 __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
-    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|_aeon_repo_info|_aeon_base|\
+    _aeon_snapshot|_aeon_capacity_paused|_aeon_rebase|\
     _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
     aeon_name_take|aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
-    qualify_base_ref|spira_prune_worktrees|bead_reopen|bump_requeue|\
+    spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|capacity_reset_at|\
-    capacity_pause_set|spira_landrefs|spira_landref|\
-    land_state|\
+    capacity_pause_set|land_state|\
     land_mark|bead_is_work_type|bead_cited_commit_on_base|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
@@ -72,23 +78,6 @@ _aeon_rebase() {
     rebase_branch "$@" >&2; local __rc=$?
     printf '%s' "${REBASE_CONFLICTS:-}"
     return $__rc
-}
-_aeon_repo_info() {
-    local __n __root __base
-    for __n in "$@"; do
-        __root="$(repo_root "$__n" 2>/dev/null)" || continue
-        [ -d "$__root/.git" ] || continue
-        __base="$(spira_landref "$__root")" || __base=""
-        printf '%s\t%s\t%s\n' "$__n" "$__root" "$__base"
-    done
-}
-_aeon_base() {
-    local __b __r
-    __b="$(spira_landref "$1")" || return 1
-    printf '%s\n' "$__b"
-    printf '%s\n' "$(ref_branch "$__b")"
-    __r="$(ref_remote "$__b" "$1")" || __r=""
-    printf '%s\n' "$__r"
 }
 _aeon_thrash_meta() {
     printf '%s\n' "$(bead_metadata "$1" thrash_streak)"

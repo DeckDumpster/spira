@@ -2,7 +2,7 @@
 name = "bead"
 version = "0.1.0"
 edition = "2021"
-description = "bead — file a bead through the contract, lint the store against it, report it, wire a blocks edge (sp-g9mhe, replaces spira/bead.sh)."
+description = "bead — file a bead through the contract, lint the store against it, report it, wire a blocks edge (sp-g9mhe, replaces spira/bead.sh). Also carries bdq: the harness's one chokepoint for invoking bd, its create-time safety fences, and bdjson/json_only/json_count/ghq (sp-w3h16, wave 4.14, replaces spira/lib.sh's bdq family)."
 
 [lib]
 name = "bead"
@@ -12,7 +12,12 @@ path = "src/lib.rs"
 name = "bead"
 path = "src/main.rs"
 
+[[bin]]
+name = "bdq"
+path = "src/bin/bdq.rs"
+
 [dependencies]
+regex = "1"
 serde_json = "1"
 spira-config = { path = "../spira-config" }
 

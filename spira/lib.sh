@@ -60,237 +60,62 @@ mkdir -p "$SPIRA_RUN"
 # canned-JSON file and bdsim.py answers `list`/`show`/`memories` from that file instead of a
 # live store. Query shapes bdsim.py does not simulate stay on real bd, in
 # test-cockpit-bd-contract.sh.
+# bdq AND ITS THREE CREATE-TIME FENCES ARE NOW bead::bdq (sp-w3h16, wave 4.14,
+# wave4-decomposition.md row A, safety note (c1)): one library plus a `bdq` binary every
+# caller already types by that bare name. Every fence, the czar-fence dispatch, the
+# SPIRA_BDJSON_FIXTURE route, the empty-SPIRA_DB refusal, the SOP_APPLIED_TRACE wrapper and
+# the invalid-connection retry loop moved with it — see bead/src/bdq.rs and
+# bead/src/bin/bdq.rs.
+#
+# EXEC-BOUNDARY TRAP: conf.sh deliberately never exports SPIRA_HOME, SPIRA_REPO,
+# SPIRA_REPO_DERIVED, SPIRA_HOME_REPO or SPIRA_REPO_MAP (each a per-copy fact, not
+# configuration — conf.sh's own comment on SPIRA_REPO_DERIVED says why). The repo-label fence
+# reads the repo registry IN-PROCESS now (spira_config::repos::Registry, not another
+# `spira-config repo ...` shell-out), so the binary needs these five in its OWN environment —
+# `command bdq` only inherits what this shim threads through explicitly, the same shape
+# `_spira_config_repo` above already uses. Every other value `bdq` reads (SPIRA_DB, SPIRA_BD,
+# SPIRA_ASK_LABEL, SPIRA_RUN) is already on conf.sh's own export list; SPIRA_FAYTH/
+# SPIRA_CZAR_CLASS/SPIRA_CZAR_TRIGGER_BEAD/SPIRA_BDJSON_FIXTURE/BD_TIMEOUT/
+# SPIRA_BDQ_CONN_RETRIES/SOP_APPLIED_TRACE* are never conf.sh keys at all — set (if at all) by
+# whatever already-exported environment spawned this shell — so none of those need
+# re-threading here.
+#
+# `command bdq` (not a bare `bdq`) bypasses this very function: bash's own function lookup
+# shadows a same-named command on PATH, so an unqualified `bdq "$@"` inside this function
+# would recurse into itself forever.
 bdq() {
-    # Refuse a repo: label at create time if it has no repo-map entry, naming valid keys.
-    # A bad label is refused here, before bd is called, so no bead is created and no summon
-    # is wasted reaching the summon-time unmapped-repo fence (law-bake-rules-into-tools).
-    [ "${1:-}" = create ] && { _bdq_check_repo_label "$@" || return 1; }
-    # Refuse a bead whose title or description contains vocabulary that halts the harness,
-    # unless needs-ryan is already on it — which is the label that makes such a bead correct.
-    [ "${1:-}" = create ] && { _bdq_check_destructive "$@" || return 1; }
-    # Refuse DELETE FROM schema_migrations regardless of needs-ryan. This SQL was recommended
-    # by escalation beads (which carry needs-ryan) three times; needs-ryan means "Ryan will
-    # review" — it does not mean the SQL is correct. (sp-1khst)
-    [ "${1:-}" = create ] && { _bdq_check_schema_delete "$@" || return 1; }
-    if [ "${SPIRA_FAYTH:-}" = czar ] && [ -n "${SPIRA_CZAR_CLASS:-}" ]; then
-        case "${1:-}" in
-            reopen)
-                czar-fence.sh "${SPIRA_CZAR_CLASS}" || return 1 ;;
-            update|close)
-                if [ "${2:-}" != "${SPIRA_CZAR_TRIGGER_BEAD:-__none__}" ]; then
-                    czar-fence.sh "${SPIRA_CZAR_CLASS}" || return 1
-                fi ;;
-        esac
-    fi
-    if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then
-        bdsim.py "$SPIRA_BDJSON_FIXTURE" "$@"
-        return $?
-    fi
-    # Refuse rather than fall through to bd's own auto-discovery: bd -C "" does not
-    # error, it walks up from $PWD to find a store, which for anything run from
-    # inside an operator's harness checkout resolves to that operator's real,
-    # production database. A silent SPIRA_DB propagation loss must become a
-    # loud failure here, not a write to the wrong database (sp-agdzk / sp-25b7s).
-    if [ -z "${SPIRA_DB:-}" ]; then
-        echo "bdq: refusing - SPIRA_DB is empty/unset (would fall through to bd auto-discovery)" >&2
-        return 1
-    fi
-    # A pooled Dolt connection the server already dropped surfaces on the next query as
-    # "invalid connection" — the Go driver detects it dead before sending anything, so the
-    # query never ran and retrying it is exactly as safe as the first attempt. install.sh
-    # already retries `bd init` once on this identical string; every other bd call goes
-    # through here, so this is the one place that covers all of them (sp-ydog2).
-    #
-    # SOP_APPLIED_TRACE=1 logs wall-clock start/end around the whole retry loop below, which
-    # every bd subprocess call in the codebase goes through (including the three `sop
-    # applied` makes: bdjson memories, and the bead-note write). Off by default — a `date`
-    # call and an append are cheap, but this runs on every bd invocation in the harness, so
-    # it stays gated rather than always-on. Follow-up to sp-ohnz7 (the bash sop.sh's applied()
-    # ledger/wiki-regen contention): the hangs it reproduced only appear under real
-    # concurrent dolt load and could not safely be forced (law-probe-a-fixture-not-
-    # production), so this turns "time it under load" into "read the trace from the next
-    # hang that happens naturally" (sp-h54i5).
-    local _sop_trace_file _sop_t0
-    if [ "${SOP_APPLIED_TRACE:-}" = 1 ]; then
-        _sop_trace_file="${SOP_APPLIED_TRACE_FILE:-${SPIRA_RUN:-/tmp}/sop/trace.log}"
-        mkdir -p "$(dirname "$_sop_trace_file")" 2>/dev/null || true
-        _sop_t0="$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')"
-    fi
-    local _bdq_try=1 _bdq_tries="${SPIRA_BDQ_CONN_RETRIES:-2}" _bdq_rc _bdq_err
-    _bdq_err="$(mktemp)"
-    while :; do
-        timeout "${BD_TIMEOUT:-180}" "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@" 2>"$_bdq_err"
-        _bdq_rc=$?
-        if [ "$_bdq_rc" -eq 0 ] || [ "$_bdq_try" -ge "$_bdq_tries" ] \
-                || ! grep -q "invalid connection" "$_bdq_err"; then
-            break
-        fi
-        _bdq_try=$((_bdq_try + 1))
-    done
-    cat "$_bdq_err" >&2
-    rm -f "$_bdq_err"
-    if [ -n "${_sop_trace_file:-}" ]; then
-        printf '%s start=%s end=%s rc=%s tries=%s argv=%s\n' "$$" "$_sop_t0" \
-            "$(date -u '+%Y-%m-%dT%H:%M:%S.%NZ')" "$_bdq_rc" "$_bdq_try" "$*" \
-            >> "$_sop_trace_file" 2>/dev/null || true
-    fi
-    return "$_bdq_rc"
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
+    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
+        command bdq "$@"
 }
 
+# Each of these three is also called directly, by name, from several test suites
+# (test-repo-label.sh, test-destructive-bead.sh) — not only from inside bdq() above — so each
+# gets its own shim onto the binary's `__fence` subcommand rather than relying on bdq()'s own
+# dispatch to reach them.
 _bdq_check_repo_label() {   # _bdq_check_repo_label <create-args> -> 0 or refuse
-    local arg next_is_labels=0 labels="" repo_val valid
-    for arg in "$@"; do
-        if [ "$next_is_labels" = 1 ]; then
-            labels="$arg"; next_is_labels=0; continue
-        fi
-        case "$arg" in
-            --labels|-l) next_is_labels=1 ;;
-            --labels=*)  labels="${arg#--labels=}" ;;
-        esac
-    done
-    [ -z "$labels" ] && return 0
-    repo_val="$(printf '%s\n' "$labels" | tr ',' '\n' | grep '^repo:' | head -1 | cut -c6-)"
-    [ -z "$repo_val" ] && return 0
-    # The home repo is always a valid target. repo_names reads the repo-map file,
-    # which lists satellite repos only — the home repo is handled by spira_home_repo()
-    # and is never in that file.
-    [ "$repo_val" = "$(spira_home_repo)" ] && return 0
-    valid="$(repo_names 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
-    if ! repo_names 2>/dev/null | grep -qxF "$repo_val"; then
-        printf 'spira: repo:%s is not in the repo map; valid keys: %s\n' \
-            "$repo_val" "${valid:-<map not found>}" >&2
-        return 1
-    fi
-    return 0
+    SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_REPO="${SPIRA_REPO:-}" \
+    SPIRA_REPO_DERIVED="${SPIRA_REPO_DERIVED:-}" SPIRA_HOME_REPO="${SPIRA_HOME_REPO:-}" \
+    SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
+        command bdq __fence repo-label "$@"
 }
 
 _bdq_check_destructive() {  # _bdq_check_destructive <create-args> -> 0 or refuse
-    # Refuse a bead whose title or description names a procedure that halts the harness —
-    # world.sh stop, spira-world down, systemd/install.sh, daemon-reload, systemctl
-    # stop/restart of a spira-* unit, schema migrations, or the phrase "world stopped" —
-    # unless needs-ryan is already on the bead, which is what makes such a bead correct.
-    #
-    # THE SCAR THIS CLOSES. sp-6ylz had "needs the world stopped" in its own title and was
-    # dispatchable anyway. An aeon ran world.sh stop from step 2 and killed the sentinel
-    # timer, the ops timer, both watchers, and three live aeons including itself. The filer
-    # had written the danger into the title and still filed it dispatchable; a rule that
-    # requires remembering at file time is a resolution, not a mechanism. (sp-6hdi)
-    local arg next="" labels="" title="" desc="" saw_create=0 positioned=0
-    for arg in "$@"; do
-        if [ -n "$next" ]; then
-            case "$next" in
-                labels)      labels="$arg" ;;
-                title)       title="$arg"; positioned=1 ;;
-                description) desc="$arg" ;;
-            esac
-            next=""; continue
-        fi
-        case "$arg" in
-            --labels|-l)       next=labels ;;
-            --labels=*)        labels="${arg#--labels=}" ;;
-            --title)           next=title ;;
-            --title=*)         title="${arg#--title=}"; positioned=1 ;;
-            -d|--description)  next=description ;;
-            --description=*)   desc="${arg#--description=}" ;;
-            -*)                ;;
-            *)
-                if [ "$saw_create" = 0 ]; then saw_create=1  # skip "create"
-                elif [ "$positioned" = 0 ]; then title="$arg"; positioned=1
-                fi ;;
-        esac
-    done
-
-    # needs-ryan is the label that makes a halting bead correct — if it is already there,
-    # the filer has already acknowledged the danger.
-    # NO LITERAL, AND NO FALLBACK. This line and the one in ask_already_open below read the
-    # same name and disagreed about it: this one hardcoded a value while that one read
-    # ${SPIRA_ASK_LABEL:-...}. Since the code default differs from the configured value, a
-    # default install left this fence with no bypass at all and refused every legitimate
-    # halting bead. A fallback here would only move the disagreement one step; conf.sh
-    # guarantees the variable, so an unset one is a broken environment and must say so
-    # rather than silently match nothing — matching nothing fails OPEN.
-    local _ask="${SPIRA_ASK_LABEL:?SPIRA_ASK_LABEL is unset — source conf.sh}"
-    printf '%s\n' "$labels" | tr ',' '\n' | grep -qxF "$_ask" && return 0
-
-    local text="$title $desc"
-    [ -z "${text# }" ] && return 0
-
-    # Each pattern is a case-insensitive ERE covering one class of halting procedure.
-    local patterns=(
-        'world\.sh +stop'
-        'spira-world +down'
-        'systemd/install\.sh'
-        '\bdaemon-reload\b'
-        'systemctl +(stop|restart) +spira-'
-        'schema +migrat'
-        'world +stopped'
-    )
-    local matched="" p
-    for p in "${patterns[@]}"; do
-        matched="$(printf '%s\n' "$text" | grep -ioE "$p" | head -1)" && [ -n "$matched" ] && break
-        matched=""
-    done
-    [ -z "$matched" ] && return 0
-
-    # literal-ok: operator-facing message text; it names the label to a human, it does not compare against it
-    printf 'spira: bead contains "%s" — procedures that halt the harness require needs-ryan.\nAdd needs-ryan to --labels, or reword to remove the destructive step.\n' \
-        "$matched" >&2
-    return 1
+    command bdq __fence destructive "$@"
 }
 
 _bdq_check_schema_delete() {  # _bdq_check_schema_delete <create-args> -> 0 or refuse
-    # Refuse any bead whose title or description contains DELETE FROM schema_migrations,
-    # regardless of needs-ryan. Unlike the general destructive-vocabulary check, needs-ryan
-    # does not bypass this one: three escalation beads carried needs-ryan and still recommended
-    # this SQL, and the third was approved. needs-ryan records that Ryan will decide; it does
-    # not assert that the recommended action is correct. (sp-1khst)
-    #
-    # The SQL removes migration rows from the Dolt database backing the beads store. Once
-    # committed through DOLT_COMMIT this is not recoverable without a backup restore.
-    # Rebuilding bd to match the database cursor is always the correct response to a real
-    # schema mismatch; see bd-pin.sh. A false mismatch — the common case — resolves with
-    # `bd migrate schema`, which reports the actual state rather than grepping error strings.
-    local arg next="" title="" desc="" saw_create=0 positioned=0
-    for arg in "$@"; do
-        if [ -n "$next" ]; then
-            case "$next" in
-                title)       title="$arg"; positioned=1 ;;
-                description) desc="$arg" ;;
-            esac
-            next=""; continue
-        fi
-        case "$arg" in
-            --title)           next=title ;;
-            --title=*)         title="${arg#--title=}"; positioned=1 ;;
-            -d|--description)  next=description ;;
-            --description=*)   desc="${arg#--description=}" ;;
-            -*)                ;;
-            *)
-                if [ "$saw_create" = 0 ]; then saw_create=1
-                elif [ "$positioned" = 0 ]; then title="$arg"; positioned=1
-                fi ;;
-        esac
-    done
-
-    local text="$title $desc"
-    [ -z "${text# }" ] && return 0
-
-    printf '%s\n' "$text" | grep -iqE 'DELETE[[:space:]]+FROM[[:space:]]+schema_migrations' || return 0
-
-    printf 'spira: bead contains "DELETE FROM schema_migrations" — this SQL is refused\n' >&2
-    # literal-ok: operator-facing message text, not a comparison
-    printf 'even with needs-ryan because it was escalated and approved three times while wrong.\n' >&2
-    printf 'Run `bd migrate schema` and include its output in the escalation instead.\n' >&2
-    printf 'The correct response to a real mismatch is rebuilding bd (see bd-pin.sh),\n' >&2
-    printf 'not deleting migration rows from the database.\n' >&2
-    return 1
+    command bdq __fence schema-delete "$@"
 }
 
 # `gh` gets the same treatment and for the same reason. The pull-request landing path is the
 # part of this harness that reaches OUTSIDE the box, so it is the part that most needs a
 # fixture — and, like bd, a stub cannot be put in front of it by prepending to PATH, because
 # the export above throws that away.
-ghq() { timeout "${GH_TIMEOUT:-120}" "${SPIRA_GH:-gh}" "$@"; }
+# Moved with bdq into bead::bdq (sp-w3h16, wave4-decomposition.md row B): GH_TIMEOUT and
+# SPIRA_GH are never conf.sh keys, so nothing needs re-exporting across the exec boundary.
+ghq() { command bdq __ghq "$@"; }
 
 log() { printf '%s spira: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 die() { log "FATAL $*" >&2; exit 1; }
@@ -308,7 +133,11 @@ host_cores() {
 
 # `bd --json` can print warnings on stdout before the payload, so never pipe it straight
 # into a parser. This strips anything before the first JSON token.
-json_only() { sed -n '/^[[{]/,$p'; }
+# Moved into bead::bdq (sp-w3h16, wave4-decomposition.md row B) as a pure stdin filter;
+# json_only here is a generic pipe filter (pilgrimage.sh and others pipe arbitrary output
+# through it, not only bdq's own), so it keeps its own `__json_only` subcommand rather than
+# being folded into bdjson's.
+json_only() { command bdq __json_only; }
 
 bdjson() { bdq "$@" --json 2>/dev/null | json_only; }
 
@@ -377,12 +206,8 @@ for i in rows:
 
 # How many rows a `bd --json` payload carries. Never `| wc -l` and never a grep: the payload
 # is one line, and a warning printed before it would be counted as a row.
-json_count() {           # stdin: JSON; stdout: an integer, 0 on anything unparseable
-    python3 -c 'import sys, json
-try: d = json.load(sys.stdin)
-except Exception: d = []
-print(len(d if isinstance(d, list) else [d]))' 2>/dev/null || echo 0
-}
+# Moved into bead::bdq (sp-w3h16, wave4-decomposition.md row B).
+json_count() { command bdq __json_count; }           # stdin: JSON; stdout: an integer, 0 on anything unparseable
 
 # --------------------------------------------------------------------------------------
 # Liveness. NEVER pgrep -f: the pattern is a substring of any command line that mentions
@@ -4173,137 +3998,32 @@ bead_repo() {            # bead_repo <id> -> its repo name, or the home repo if 
 # `chore/keep-cf-access-probe`. Deriving the land ref from HEAD would have answered
 # the remote form of that topic branch — a worse answer than the bug it replaced,
 # because it names a ref that exists.
+#
+# Ported to spira_config::repos (sp-o88bx, "wave 4.12", wave4-decomposition.md row W) — the
+# four rungs above, `ref_remote`/`ref_branch`'s split and `spira_landrefs`/
+# `spira_publish_forge`'s own callers all now live there, with this essay reproduced as that
+# module's own doc comment. Every function below is a one-line shim. `ref_branch` and
+# `qualify_base_ref` never consult the repo-map at all (they only ever shell to git on the
+# repo they are given), so unlike `spira_landref`/`spira_landrefs`/`spira_publish_forge` they
+# skip `_spira_config_repo`'s env threading and call `spira-config` directly.
 # --------------------------------------------------------------------------------------
 spira_landref() {        # spira_landref [repo-path-or-name] -> the base ref, or non-zero
-    local arg="${1:-}" name="" repo="" ref remote remotes
-    case "$arg" in
-        "")   name="$(spira_home_repo)" ;;
-        */*)  repo="$arg" ;;
-        *)    name="$arg" ;;
-    esac
-    if [ -z "$repo" ]; then repo="$(repo_root "$name")" || return 1; fi
-    [ -n "$name" ] || name="$(repo_name_at "$repo" 2>/dev/null)" || name=""
-    [ -e "$repo/.git" ] || return 1
-
-    # 1 - declared. Verified to exist: a `base` naming a ref this checkout does not have is
-    # the very defect being fixed, and shipping it would only move the guess into the map.
-    #
-    # A row with no base column at all answers empty here and falls through to resolution -
-    # repo_field decides that on the row shape, which is the only thing that can tell a
-    # missing column from a declared one.
-    if [ -n "$name" ]; then
-        ref="$(repo_field "$name" base 2>/dev/null)"
-        if [ -n "$ref" ]; then
-            git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1 || return 1
-            printf '%s' "$ref"; return 0
-        fi
-    fi
-
-    # 2 - the remote's own declared default, as cached locally.
-    ref="$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)"
-    if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-        printf '%s' "$ref"; return 0
-    fi
-
-    remotes="$(git -C "$repo" remote 2>/dev/null)"
-
-    # 3 - ask the remote once. `origin` if there is one, otherwise the single remote there
-    # is; two unnamed remotes is a genuine ambiguity and is refused. set-head writes the ref
-    # rung 2 reads, so this happens once per repository and not once per pass.
-    if [ -n "$remotes" ]; then
-        if grep -qx origin <<< "$remotes"; then remote=origin
-        elif [ "$(wc -l <<< "$remotes")" = 1 ]; then remote="$remotes"
-        else remote=""; fi
-        if [ -n "$remote" ] \
-           && git -C "$repo" remote set-head "$remote" --auto >/dev/null 2>&1; then
-            ref="$(git -C "$repo" symbolic-ref -q --short "refs/remotes/$remote/HEAD" 2>/dev/null)"
-            if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-                printf '%s' "$ref"; return 0
-            fi
-        fi
-        return 1
-    fi
-
-    # 4 - no remote at all: the repository's own current branch. Nothing can be stale
-    # against a remote that does not exist, so HEAD is the only truth there is. This is the
-    # test fixture's case, and the ONLY rung that consults a checkout's HEAD.
-    ref="$(git -C "$repo" symbolic-ref -q --short HEAD 2>/dev/null)"
-    if [ -n "$ref" ] && git -C "$repo" rev-parse --verify -q "$ref" >/dev/null 2>&1; then
-        printf '%s' "$ref"; return 0
-    fi
-    return 1
+    _spira_config_repo landref "${1:-}"
 }
-
-# Splitting a land ref into its two halves. `origin/master` is what a branch is MEASURED
-# against; `master` is what a push targets and what `gh pr create --base` wants; `origin` is
-# what a fetch names. Every call site did these two strips by hand as ${base#origin/} and a
-# literal `origin`, both of which are assumptions about a remote's name, and a remote need
-# not be called that. String operations, not lookups, so a caller holding a ref never re-resolves it.
-#
-# A queue.local row's ref is `local/main` — a LOCAL branch that happens to contain a slash,
-# not a remote-tracking one. Splitting on the first `/` unconditionally would read it as
-# remote `local`, branch `main`, and every caller below would then try to fetch a remote
-# that does not exist. So when a repo is given, the prefix only counts as a remote when
-# `git remote` actually lists it; otherwise the ref is answered as local, same as one with no
-# slash at all. Without a repo (a caller that predates this), the old unconditional split is
-# kept.
 ref_remote() {           # ref_remote <ref> [repo] -> its remote, or non-zero if the ref is local
-    local ref="${1:-}" repo="${2:-}" prefix remotes
-    case "$ref" in */*) prefix="${ref%%/*}" ;; *) return 1 ;; esac
-    if [ -n "$repo" ]; then
-        remotes="$(git -C "$repo" remote 2>/dev/null)"
-        grep -qx -- "$prefix" <<< "$remotes" || return 1
-    fi
-    printf '%s' "$prefix"
+    spira-config repo ref-remote "${1:-}" "${2:-}"
 }
 ref_branch() {           # ref_branch <ref> -> the branch name, without any remote
-    printf '%s' "${1#*/}"
+    spira-config repo ref-branch "${1:-}"
 }
 qualify_base_ref() {     # qualify_base_ref <ref> <repo> -> refs/remotes/... or original
-    # A bare origin/main is ambiguous when refs/heads/origin/main also exists. Use the
-    # fully-qualified remote-tracking ref so git commands resolve it deterministically.
-    local ref="$1" repo="$2" remote branch fq
-    remote="$(ref_remote "$ref" "$repo")" || { printf '%s' "$ref"; return 0; }
-    branch="$(ref_branch "$ref")"
-    fq="refs/remotes/$remote/$branch"
-    git -C "$repo" rev-parse --verify -q "$fq" >/dev/null 2>&1 \
-        && printf '%s' "$fq" || printf '%s' "$ref"
+    spira-config repo qualify-base-ref "$1" "$2"
 }
-
-# spira_landrefs <repo> -> the land ref, plus its local counterpart when that exists.
-# The commit graph is read across BOTH, because a commit can be on the local branch and not
-# yet pushed, or pushed and never pulled into this checkout. Two call sites asked this
-# question with a literal `main` appended, which for a `master`-based repository added a ref that is not
-# there and for a `master` repository omitted the only one that is. The strip is ${base#*/}
-# and not ${base#origin/}: a remote need not be called `origin`, so stripping that literal
-# leaves a ref like `upstream/master` unchanged and the local ref is silently never consulted.
-spira_landrefs() {
-    local repo="$1" base lo
-    base="$(spira_landref "$repo")" || return 1
-    printf '%s' "$base"
-    lo="${base#*/}"
-    if [ "$lo" != "$base" ] && git -C "$repo" rev-parse --verify -q "$lo" >/dev/null 2>&1; then
-        printf ' %s' "$lo"
-    fi
+spira_landrefs() {       # spira_landrefs <repo> -> the land ref, plus its local counterpart
+    _spira_config_repo landrefs "$1"
 }
-
-# spira_publish_forge <name> -> "<remote> <branch>": the forge target a queue.local
-# repository's publish queue fast-forwards on a green publish PR. Never ref_remote of the
-# land ref — under queue.local that ref is a bare local branch by design (spira_landref's
-# own callers refuse a remote-tracking base for this mode), so the forge target cannot be
-# derived from it and must be named instead. Defaults: the remote is "origin"
-# (SPIRA_PUBLISH_REMOTE, per-repo SPIRA_PUBLISH_REMOTE_<NAME> overrides it — a remote need
-# not be called origin); the branch is the land ref's own name with a leading "local/"
-# stripped (SPIRA_PUBLISH_BRANCH_<NAME> overrides that).
-spira_publish_forge() {
-    local name="$1" base key remote branch
-    base="$(spira_landref "$name" 2>/dev/null)" || return 1
-    key="$(printf '%s' "$name" | tr 'a-z-' 'A-Z_')"
-    local remote_var="SPIRA_PUBLISH_REMOTE_$key" branch_var="SPIRA_PUBLISH_BRANCH_$key"
-    remote="${!remote_var:-${SPIRA_PUBLISH_REMOTE:-origin}}"
-    branch="${!branch_var:-${base#local/}}"
-    [ -n "$branch" ] || return 1
-    printf '%s %s\n' "$remote" "$branch"
+spira_publish_forge() {  # spira_publish_forge <name> -> "<remote> <branch>"
+    _spira_config_repo publish-forge "$1"
 }
 
 # --------------------------------------------------------------------------------------
