@@ -316,6 +316,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v gate-run)\""
 
 [[dep]]
+name = "gh-intake"
+tier = "release"
+purpose = "Spira's gh-intake binary, from the release's bin/ — ingest, and (sp-j3fim) the GitHub closeout/unlanded-scan/backfill verbs landing-pass and queue call directly"
+version_min = ""
+version_probe = "readlink -f \"$(command -v gh-intake)\""
+
+[[dep]]
 name = "inbox-triage"
 tier = "release"
 purpose = "Spira's inbox-triage binary, from the release's bin/"

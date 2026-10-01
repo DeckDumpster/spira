@@ -385,8 +385,13 @@ impl Lib for RealLib {
     fn bead_close_on_land(&self, id: &str, sha: &str) {
         self.call(Op::CloseOnLand, &[id, sha], false);
     }
+    /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
+    /// moved natively into gh-intake; this crate shells to the compiled binary by bare
+    /// name now, the same way `land_mark` shells to `landing-pass` — no lib.sh snippet
+    /// backs this any more. stdout/stderr inherit straight through, exactly as the
+    /// dropped seam call's own `capture: false` did.
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path) {
-        self.call(Op::GhCloseout, &[id, sha, &repo.display().to_string()], false);
+        let _ = Command::new("gh-intake").args(["closeout", id, sha, &repo.display().to_string()]).status();
     }
     fn comment(&self, id: &str, text: &str) {
         self.call(Op::Comment, &[id, text], false);

@@ -17,3 +17,6 @@ serde_json = "1"
 sha2 = "0.10"
 spira-config = { path = "../spira-config" }
 ureq = { version = "2", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

@@ -657,6 +657,11 @@ pub struct Live {
     pub asked_dir: PathBuf,
     pub ask_label: String,
     pub beads_actor: String,
+    /// `landing-pass`, by name on PATH, same as `spira-lc` (sp-gypjk) — `bead_reopen`'s own
+    /// reads/writes of the landstate ledger (wave 4.19, row I) go through its CLI, never a
+    /// `landing-pass = { path = ... }` crate dependency (store.rs's own rule: the only I/O
+    /// here is reading bd and spira-lc through their CLIs; landing-pass joins that list).
+    pub landing_pass: String,
 }
 
 impl Live {
@@ -678,8 +683,28 @@ impl Live {
         store::run_full(c, self.store.timeout, None)
     }
 
+    /// `landing-pass <args>`, to completion — `bead_reopen`'s own `land_state`/`land_mark`
+    /// reads/writes.
+    fn land(&self, args: &[&str]) -> Result<store::Ran, String> {
+        let mut c = Command::new(&self.landing_pass);
+        c.args(args);
+        store::run_full(c, self.store.timeout, None)
+    }
+
     fn audit_log(&self) -> PathBuf {
         self.run_dir.join("audit.log")
+    }
+
+    /// `$SPIRA_RUN/landstate` — `None` when `run_dir` was never resolved (no `--db`-style
+    /// override exists for this one; `bead_reopen`'s own `.ejected` sidecar write is
+    /// best-effort either way, exactly like bash's own unset-`$SPIRA_RUN` path, where
+    /// `$LANDSTATE` is empty and every touch of it is already wrapped in `|| true`).
+    fn landstate_dir(&self) -> Option<PathBuf> {
+        if self.run_dir.as_os_str().is_empty() {
+            None
+        } else {
+            Some(self.run_dir.join("landstate"))
+        }
     }
 }
 
@@ -810,6 +835,53 @@ impl World for Live {
         let dir = self.run_dir.join("poison-lifted");
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         std::fs::write(dir.join(id), format!("{attempts}\n")).map_err(|e| e.to_string())
+    }
+}
+
+// ---------------------------------------------------------------------------------------
+// `reopen::World` (wave 4.19, row I) — written here, not in reopen.rs, so it can reach
+// `Live`'s private `bd`/`bd_ok`/`land` helpers directly, the same split `deadlocked`
+// already draws ("the write is unpoison's Live, reused rather than duplicated").
+
+impl crate::reopen::World for Live {
+    fn land_state(&mut self, id: &str) -> Option<crate::reopen::LandState> {
+        let r = self.land(&["state", id]).ok()?;
+        if r.code != 0 {
+            return None;
+        }
+        crate::reopen::parse_land_state(&r.stdout)
+    }
+
+    fn land_mark_withdrawn(&mut self, id: &str, tip: &str, reason: &str) {
+        let _ = self.land(&["mark", id, "WITHDRAWN", tip, reason]);
+    }
+
+    fn write_ejected(&mut self, id: &str, suites: &str) {
+        let Some(dir) = self.landstate_dir() else { return };
+        let tmp = dir.join(format!("{id}.ejected.{}", std::process::id()));
+        if std::fs::write(&tmp, suites).is_ok() {
+            let _ = std::fs::rename(&tmp, dir.join(format!("{id}.ejected")));
+        }
+    }
+
+    fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
+        self.bd_ok(&["reopen", id], None).map(|_| ())
+    }
+
+    fn remove_submitted_label(&mut self, id: &str, label: &str) {
+        let _ = self.bd_ok(&["label", "remove", id, label], None);
+    }
+
+    fn release_claim(&mut self, id: &str) -> Result<(), String> {
+        self.store.release_claim(id)
+    }
+
+    fn write_reopen_event(&mut self, id: &str, cause: &str) {
+        let _ = crate::counters::write_event(&self.store, &self.beads_actor, id, "reopen", cause);
+    }
+
+    fn note(&mut self, id: &str, text: &str) -> Result<(), String> {
+        self.bd_ok(&["note", id, "--stdin"], Some(text.as_bytes())).map(|_| ())
     }
 }
 

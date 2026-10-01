@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/testlib.sh UC-testlib-01 UC-testlib-02 UC-testlib-03 UC-testlib-04 UC-testlib-05 UC-testlib-06 UC-testlib-07
+# covers: spira/testlib.sh UC-testlib-01 UC-testlib-02 UC-testlib-03 UC-testlib-04 UC-testlib-05 UC-testlib-06 UC-testlib-07 suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$HERE/testlib.sh"

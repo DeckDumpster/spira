@@ -53,8 +53,8 @@
 # stable, unique, human-readable name; a second identifier alongside it would be a second
 # thing to keep in sync with nothing enforcing that they agree.
 #
-# HEADER CONVENTIONS, read by the runner (suite-covers.sh), not by this file at suite
-# run time:
+# HEADER CONVENTIONS, read by the runner (suite-select, via `suite-select header ...`),
+# not by this file at suite run time:
 #   # tier: T0..T4          how expensive a suite is, declared by its author
 #   # covers: <space-separated tokens>   a path glob (existing convention) or a UC id
 #                           of the form UC-<area>-NN (the catalogue sp-qu948 defines);
@@ -86,8 +86,6 @@ _TL_COUNTS=""
 _TL_LAST_S=$SECONDS
 _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
-_TL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-. "$_TL_SELF/suite-covers.sh"
 
 # NO SUMMON JITTER IN SUITES (sp-1cdgq). aeon sleeps a random 0..SPIRA_SUMMON_JITTER seconds
 # (default 20) before its session starts, so a batch summoned together does not start in
@@ -95,13 +93,14 @@ _TL_SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # shorter than the jitter flipped about half the time (test-thrash-teardown). A suite that tests
 # the jitter itself sets its own value after sourcing this.
 export SPIRA_SUMMON_JITTER="${SPIRA_SUMMON_JITTER:-0}"
-_TL_TIER="$(suite_tier_of "${BASH_SOURCE[1]:-$0}")"
-_TL_UC="$(suite_uc_of "${BASH_SOURCE[1]:-$0}")"
 # THE SUITE'S PATH IS THE LAUNCHER'S (sp-isom7). testenv stages the tree under test as a
 # release and sets every suite's PATH outright from it ($SPIRA_RELEASE/bin, then
 # $SPIRA_RELEASE/spira), so a suite resolves tools by bare name exactly as production does.
-# This library never touches PATH.
-unset _TL_SELF
+# This library never touches PATH — which is also why `suite-select` below (wave 4.36,
+# sp-bobsp: suite-covers.sh retired onto `suite-select header ...`) resolves by bare name
+# rather than a path built from this file's own location.
+_TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
+_TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 
 _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
@@ -316,7 +315,7 @@ tl_summary() {
 # A suite declaring `# requires: testenv` (systemctl on a user manager, install/uninstall,
 # production paths) refuses here, before any of its own code runs, when SPIRA_IN_TESTENV
 # is not 1 — the one thing a statute could not stop (sp-nxvjm) a structural check can.
-if suite_testenv_unmet "${BASH_SOURCE[1]:-$0}"; then
+if suite-select header testenv-unmet "${BASH_SOURCE[1]:-$0}"; then
     bail "requires: testenv — run via testenv, not directly (SPIRA_IN_TESTENV != 1)"
 fi
 

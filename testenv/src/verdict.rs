@@ -20,7 +20,10 @@ pub struct KeyInputs {
     pub tree: String,
     pub image_tag: String,
     pub suites: Vec<String>,
-    /// sha256 of the runner executable, then suite-covers.sh (the selector is linked in: the executable covers it, sp-wx2tw).
+    /// sha256 of the runner executable, then the `suite-select` binary (the in-process
+    /// selector is linked in and the executable already covers it, sp-wx2tw; the binary is
+    /// separate because testlib.sh/testenv-guard.sh/plan-lint.sh shell out to it for a
+    /// suite's own header — wave 4.36, sp-bobsp, retiring suite-covers.sh's bytes here).
     pub harness_hash: String,
     pub mode: Mode,
     pub producer: Producer,
