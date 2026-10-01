@@ -336,4 +336,45 @@ mod tests {
         assert_eq!(snap.vars.get("SPIRA_CI_PARK_MAX").map(String::as_str), Some("9"), "a registry key resolve() covers must reach snap.vars in-process");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    /// sp-1cdgq's own regression (SPIRA_SUMMON_JITTER unreachable because SNAPSHOT_VARS
+    /// never carried it) is superseded by this bead, not re-broken: the name moved to
+    /// RETIRED_SNAPSHOT_VARS (seam.rs), resolved in-process here instead. Proves the same
+    /// guarantee their bash-seam test proved — an env override reaches `Conf` — through
+    /// the new path, plus the toml side their test could not reach at all.
+    #[test]
+    fn merge_resolved_config_reaches_a_retired_registry_key_env_can_still_override() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let saved_toml = std::env::var("SPIRA_TOML").ok();
+        let saved_jitter = std::env::var("SPIRA_SUMMON_JITTER").ok();
+        let dir = testkit::TempDir::new("aeon-conf-jitter");
+        let home = dir.join("spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(
+            home.join("conf.d/SPIRA_SUMMON_JITTER"),
+            "TYPE=string\nGROUP=summon\nDOC=test\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # no default, matches the real registry entry\nSPIRA_CONF_DEFAULT_EOF\n",
+        )
+        .unwrap();
+        std::env::set_var("SPIRA_TOML", dir.join("no-such-config.toml"));
+        std::env::set_var("SPIRA_SUMMON_JITTER", "0");
+
+        let mut snap = crate::seam::Snapshot::default();
+        merge_resolved_config(&mut snap, &home, &BTreeMap::from([("SPIRA_SUMMON_JITTER".to_string(), "0".to_string())]));
+
+        match saved_toml {
+            Some(v) => std::env::set_var("SPIRA_TOML", v),
+            None => std::env::remove_var("SPIRA_TOML"),
+        }
+        match saved_jitter {
+            Some(v) => std::env::set_var("SPIRA_SUMMON_JITTER", v),
+            None => std::env::remove_var("SPIRA_SUMMON_JITTER"),
+        }
+
+        assert_eq!(
+            snap.vars.get("SPIRA_SUMMON_JITTER").map(String::as_str),
+            Some("0"),
+            "SPIRA_SUMMON_JITTER is set in the environment handed to merge_resolved_config but never reaches snap.vars"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

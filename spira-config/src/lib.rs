@@ -23,6 +23,7 @@ pub mod build;
 pub mod chamber;
 pub mod containment;
 pub mod convert;
+pub mod env_bootstrap;
 pub mod eval;
 pub mod legacy_map;
 pub mod locate;

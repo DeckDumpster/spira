@@ -135,6 +135,17 @@ pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
     "SPIRA_MAX_AEONS", "SPIRA_VERDICT_WINDOW", "SPIRA_EVICTION_ESCALATE_AT",
     "SPIRA_GH_API", "SPIRA_WORKFLOW_ONLY_PATHS", "SPIRA_CLAIM_RETRIES",
     "SPIRA_CLAIM_RETRY_DELAY_S",
+    // sp-1cdgq (landed after this bead branched) added SPIRA_SUMMON_JITTER to the bash
+    // SNAPSHOT_VARS list to fix a real bug: aeon_sh's own `conf.n(JITTER_ENV, ...)` fell
+    // back to its 20s default forever because this registry key (spira/conf.d's own —
+    // string-typed, no generated default, resolves empty unless set via the environment
+    // or the resolved config document) was never on the allowlist `_aeon_snapshot` was
+    // asked for. Superseded
+    // here rather than ported: resolve() already reads it correctly from either source
+    // (verified: env override and a toml `summon_jitter` field both reach it), so it
+    // belongs with every other registry key resolved in-process, not back in the bash
+    // seam's own arg list.
+    "SPIRA_SUMMON_JITTER",
 ];
 
 /// conf.sh's resolution, captured once (DESIGN.md §3).
@@ -282,5 +293,21 @@ mod tests {
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
         assert_eq!(s.claim_exclude, "x:builder:p");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// sp-1cdgq found SPIRA_SUMMON_JITTER unreachable because it was missing from
+    /// SNAPSHOT_VARS (this seam's own bash allowlist). Wave 4.8 moves the fix: the name
+    /// is deliberately NOT in SNAPSHOT_VARS any more (it is a `RETIRED_SNAPSHOT_VARS`
+    /// registry key now, resolved in-process — see that list's own doc), so the seam
+    /// call itself must no longer carry it; `conf::tests::merge_resolved_config_reaches_
+    /// a_retired_registry_key_env_can_still_override` (conf.rs) is the test that now
+    /// proves the end-to-end guarantee sp-1cdgq's own test proved for the bash path.
+    #[test]
+    fn summon_jitter_is_no_longer_asked_of_the_bash_seam() {
+        assert!(
+            !SNAPSHOT_VARS.contains(&"SPIRA_SUMMON_JITTER"),
+            "SPIRA_SUMMON_JITTER is resolved in-process now (RETIRED_SNAPSHOT_VARS) — asking the bash seam for it too would just mean two sources of truth"
+        );
+        assert!(RETIRED_SNAPSHOT_VARS.contains(&"SPIRA_SUMMON_JITTER"));
     }
 }

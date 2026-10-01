@@ -227,7 +227,7 @@ impl RealLib {
     /// `SPIRA_HOME_REPO`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` — same inputs `aeon::conf::Conf`
     /// and `cockpit_collect::io::repo_registry` already use.
     fn repo_registry(&self) -> spira_config::repos::Registry {
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let env_map = spira_config::repos::registry_env(std::env::vars().collect(), &self.home);
         let map_text = env_map.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| fs::read_to_string(p).ok());
         spira_config::repos::Registry::new(map_text.as_deref(), &env_map, &self.home)
     }
