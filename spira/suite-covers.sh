@@ -1,15 +1,19 @@
-# suite-covers.sh — shared # covers: accessor. Sourced, never executed.
+# suite-covers.sh — RETIRED (wave 4.36, sp-bobsp). Nothing sources this file any more:
+# the one Rust parser lives in suite-select/src/header.rs, read through the
+# `suite-select header (covers|tier|uc|requires|exclusive|selects-on|testenv-unmet) <file>`
+# CLI. plan-lint.sh, suite-coverage-json.sh, escape-classify.sh, testenv-guard.sh and
+# testlib.sh all call that binary now; lib.sh no longer sources this file either.
 #
-# ONE PARSER, ONE PLACE. suites.sh and gate-touched.sh both reach this file (the
-# latter via lib.sh); neither carries its own parser. A second implementation is
-# how two callers drift: one parsed with grep | sed while the other used sed -n,
-# and nothing enforced that they agreed (sp-dt8u).
+# LEFT ON DISK ON PURPOSE. A few dozen install/lib test fixtures still `cp`/`ln -s` this
+# file alongside lib.sh/conf.sh into a scratch directory — a leftover from when lib.sh
+# sourced it unconditionally. None of them read the copy for anything any more, so
+# deleting the file would cost editing every one of those cp/ln lists for zero behavior
+# change; out of this bead's scope (repointing the five real callers above). A later
+# sweep can drop both the copies and this file together.
 #
-# THE RULE THIS ENCODES. A suite with no # covers: line covers everything and must
-# never be skipped for want of a declaration. A malformed covers: line (empty after
-# stripping the prefix) is treated the same way — the caller sees empty and must
-# interpret that as "run always", never as "skip".
-# covers: spira/suites.sh spira/gate-touched.sh
+# The functions below are DEAD CODE, kept only so a stray `. suite-covers.sh` in some
+# fixture does not explode; do not add a new caller. See suite-select/src/header.rs for
+# the live parser and its own tests for the contract.
 
 suite_covers_of() {  # suite_covers_of <file-path> -> the # covers: globs, or empty
     # Empty return means "covers everything" — callers must treat it as "run always",

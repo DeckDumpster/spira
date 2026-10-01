@@ -5,20 +5,19 @@
 #   suite-coverage-json.sh                working tree's spira/test-*.sh
 #   suite-coverage-json.sh --ref <ref>     spira/test-*.sh as they existed at <ref>
 #
-# ONE PARSER: this sources spira/suite-covers.sh (suite_tier_of/suite_covers_of) rather than
-# re-reading the header format itself, so the JSON this emits can never drift from what
-# suites.sh and gate-touched.sh already agree a header means.
+# ONE PARSER: this calls `suite-select header tier|covers` rather than re-reading the header
+# format itself, so the JSON this emits can never drift from what the selector and
+# batcher-cut already agree a header means (suite-select/src/header.rs).
 #
 # --ref reads suites out of git history, not the working tree, so a caller can compare a
 # branch's tip against its base (spira/plan-lint.sh --orphans) without a second checkout.
 #
 # tier: T0
-# covers: spira/suite-coverage-json.sh spira/suite-covers.sh
+# covers: spira/suite-coverage-json.sh suite-select/
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
 [ -n "$ROOT" ] || ROOT="$(cd "$HERE/.." && pwd -P)"
-. "$HERE/suite-covers.sh"
 
 json_escape() {
     local s="$1"
@@ -29,8 +28,8 @@ json_escape() {
 
 emit_one() {  # emit_one <path-for-json> <file-on-disk>
     local rel="$1" f="$2" tier cov first=1
-    tier="$(suite_tier_of "$f")"
-    cov="$(suite_covers_of "$f")"
+    tier="$(suite-select header tier "$f")"
+    cov="$(suite-select header covers "$f")"
     printf '{"path":"%s","tier":' "$(json_escape "$rel")"
     if [ -n "$tier" ]; then
         printf '"%s"' "$(json_escape "$tier")"
