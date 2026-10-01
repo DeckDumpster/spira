@@ -2,11 +2,15 @@
 //! stdin followed by the operation's values, each NUL-terminated — the construction
 //! landing-pass uses (law-payloads-go-on-stdin). The first two values of every call are
 //! `$SPIRA_HOME` (lib.sh's directory) and the `--status-from` file (empty for none), so a
-//! suite's status seam governs EVERY witness a destruction asks, as it did when one bash
-//! process ran the whole sweep.
+//! suite's status seam governs every bd question this still asks through bash.
 //!
-//! Only lib.sh's chokepoints go through here: context, the holder witnesses, the bead's
-//! record, and the verified deletions. Every decision is Rust (sweep.rs).
+//! sp-9envm moved the destruction chokepoint itself (the holder witnesses' liveness half,
+//! salvage, the verified deletions, the reap log) into Rust — `reap.rs`, called in-process
+//! from `real.rs` now, not through here. What is LEFT going through bash is only what has
+//! not moved yet: context (family U, repo registry), base (family W, `spira_landref`), the
+//! bead's own record and the two bd questions the liveness witness still needs
+//! (`spira_bead_status`/`spira_db_reachable`, family A/B) — and the label mutations, which
+//! are one-line bdq calls not worth a Rust reimplementation yet.
 
 /// Precedes a seam's machine-readable answer on stdout; everything before it is lib.sh's
 /// own output (its `log` lines, salvage notes), passed through to ours.
@@ -18,27 +22,17 @@ pub const FIELD: char = '\u{1d}';
 pub enum Op {
     Context,
     Base,
-    Witness,
     Bead,
-    Send,
+    /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
+    /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
+    Status,
     CloseOnLand,
-    DestroyWorktree,
-    Prune,
     LabelAdd,
+    LabelRemove,
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[
-    Op::Context,
-    Op::Base,
-    Op::Witness,
-    Op::Bead,
-    Op::Send,
-    Op::CloseOnLand,
-    Op::DestroyWorktree,
-    Op::Prune,
-    Op::LabelAdd,
-];
+pub const ALL: &[Op] = &[Op::Context, Op::Base, Op::Bead, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -79,37 +73,30 @@ printf '\036%s\035%s\035%s' "$__lr" "$__refs" "$__rm"
 exit 0
 "#;
 
-/// exit 0 and the reason when somebody may be home; exit 1 when nobody is.
-const WITNESS: &str = r#"__why="$(spira_holder_witnesses "$1")" || exit 1
-printf '\036%s' "$__why"
-exit 0
-"#;
-
 /// `bdjson show <id>` verbatim.
 const BEAD: &str = r#"printf '\036%s' "$(bdjson show "$1" 2>/dev/null)"
 exit 0
 "#;
 
-/// send_branch's recheck and the verified deletion, in one process so nothing can claim the
-/// bead between the two: exit 10 + why when held; else spira_reap_landed_branch's own
-/// status with SPIRA_REAP_ERR as the answer.
-const SEND: &str = r#"if __why="$(spira_holder_witnesses "$1")"; then printf '\036%s' "$__why"; exit 10; fi
-spira_reap_landed_branch "$1" "$2" "$3" "$4" "$5"; __rc=$?
-printf '\036%s' "${SPIRA_REAP_ERR:-}"
-exit $__rc
+/// `<0|1>` (db reachable) FIELD `<status>` — the two bd-backed questions
+/// `reap::holder_witnesses` asks through `BdProbe`, calling the still-bash
+/// `spira_db_reachable`/`spira_bead_status` so the status seam (a suite's
+/// `spira_status_seam`) keeps governing both exactly as it did before the chokepoint moved.
+const STATUS: &str = r#"__ok=0; spira_db_reachable && __ok=1
+__st="$(spira_bead_status "$1" 2>/dev/null)"
+printf '\036%s\035%s' "$__ok" "$__st"
+exit 0
 "#;
 
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
         Op::Base => BASE,
-        Op::Witness => WITNESS,
         Op::Bead => BEAD,
-        Op::Send => SEND,
+        Op::Status => STATUS,
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
-        Op::DestroyWorktree => "spira_destroy_worktree \"$1\" \"$2\" \"$3\" \"$4\"\nexit $?\n",
-        Op::Prune => "spira_prune_worktrees \"$1\"\nexit 0\n",
         Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
+        Op::LabelRemove => "bdq label remove \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
     }
 }
 

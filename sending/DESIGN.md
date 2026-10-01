@@ -85,13 +85,16 @@ holder witnesses say nobody is home, is removed through `spira_destroy_worktree`
 `bash -s sending.seam.sh` reading a fixed script from stdin followed by NUL-terminated
 values (the landing-pass construction, law-payloads-go-on-stdin). The first two values are
 `$SPIRA_HOME` and the `--status-from` file, loaded into `spira_status_seam` before every
-operation, so a suite's status map governs every witness a destruction asks — as it did
-when one bash process ran the whole sweep. The ops are the chokepoints only: context
-(settings and repositories), base (`spira_landref`/`spira_landrefs`/`ref_remote`),
-witness (`spira_holder_witnesses`), bead (`bdjson show`), send (the mid-send witness
-recheck **and** `spira_reap_landed_branch`, in one process so nothing can claim the bead
-between them), close-on-land, destroy-worktree, prune, label-add. lib.sh's own output
-(`log` lines, salvage notes) is passed through in order.
+operation, so a suite's status map governs every bd question the chokepoint still asks
+through bash — as it did when one bash process ran the whole sweep. **Since sp-9envm
+(wave 4.20) the ops are only what has not moved to Rust**: context (settings and
+repositories, family U), base (`spira_landref`/`spira_landrefs`/`ref_remote`, family W),
+bead (`bdjson show`, family A/B), status (`spira_db_reachable` + `spira_bead_status` in one
+call — the one bd question `reap::holder_witnesses` cannot answer itself), close-on-land
+(`bead_close_on_land`, family R), label-add/label-remove (`bdq label add|remove`, family
+A). Witness, send, destroy-worktree and prune are gone from this seam: `World for Real`
+calls `reap.rs` in-process for all four now. lib.sh's own output (`log` lines) is still
+passed through in order for the ops that remain.
 
 ## 5. Decisions
 
@@ -99,10 +102,34 @@ between them), close-on-land, destroy-worktree, prune, label-add. lib.sh's own o
   candidate homes; the Sending's domain is branch and worktree reaping through lib.sh's
   chokepoints and git. spira-lc is the lifecycle machine's client and must not grow a git
   and lib.sh dependency; the Sending calls it for one event, by bare name.
-- **Decisions in Rust, destruction in lib.sh.** The verified deletion (salvage, the two
-  liveness witnesses, the CERTIFIED/BATCHED guard, the content fence, the reap log) is the
-  one chokepoint every deleter shares; porting a second copy here would recreate the
-  six-site problem lib.sh's DESTRUCTION section exists to end. It moves when lib.sh does.
+- **Decisions in Rust, destruction in lib.sh — superseded by sp-9envm (wave 4.20).** This
+  decision held that porting the verified deletion a second time would recreate the
+  six-site problem lib.sh's DESTRUCTION section exists to end, and said it moves "when
+  lib.sh does." lib.sh's DESTRUCTION section (`spira_destroy_worktree`, `spira_destroy_branch`,
+  `spira_reap_landed_branch`, `spira_prune_worktrees`, `salvage`, `hold_alive`,
+  `holder_alive`, `spira_holder_witnesses`, `worktree_of`, `spira_caller`, `spira_reaplog`)
+  is now this crate's `reap.rs`, called in-process by `World for Real`'s own
+  `witness`/`send`/`destroy_worktree`/`prune` — no bash seam call for any of them any more.
+  Those lib.sh functions are now one-line shims calling a `sending` CLI
+  (`destroy-worktree`/`destroy-branch`/`reap-landed-branch`/`prune`/`salvage`/`witness`,
+  plus `hold-alive`/`holder-alive`/`worktree-of`/`caller`/`reaplog`), so the 50-odd bash
+  sourcers keep working unchanged, per wave4-decomposition.md's "shims, not a big bang."
+  **What did not move**: `spira_landref`/`ref_remote` (family W) and
+  `bdjson`/`bdq`/`spira_bead_status`/`spira_db_reachable`/`spira_status_seam` (families
+  A/B) are still bash — `reap.rs` reaches them through the EXISTING `Base`/`Status`(new,
+  replacing `Witness`/`Send`/`DestroyWorktree`/`Prune`)/`Bead` seam ops, parameterized via a
+  small `BdProbe` trait rather than hand-rolled a second time. **One wrinkle this forced**:
+  `spira_status_seam` now also materializes a real FILE (`$SPIRA_STATUS_FILE`) alongside its
+  bash array, because the `sending` binary has no bash array to read; every shim threads it
+  through as `--status-from`. **Other crates' own bash seams** (aeon, gate, landing-pass,
+  spira-world's `slay`) that call these now-shimmed lib.sh functions by name keep working
+  unchanged too — cutting them over to call `sending::reap` in-process is explicitly a
+  follow-up bead (wave4-decomposition.md's plan: "the Rust seams of the crate that owns the
+  family switch to in-process calls [in this bead]; other crates' seams switch in follow-up
+  beads"). `held.sh --drop-empty` is the one bash caller that changed: it used to delete
+  empty branches with a raw `git branch -D` under `SPIRA_REF_SANCTIONED=1`, bypassing the
+  chokepoint entirely; it now calls `spira_destroy_branch` (the shim) so an empty branch
+  still gets the holder-witness and reap-log treatment every other deletion gets.
 - **Fails closed on its context.** The shell sourced lib.sh and carried on if that failed,
   sweeping nothing and exiting 0 — a clean-looking pass. The binary exits 2 when the
   context seam fails or names no repository.
@@ -130,3 +157,12 @@ a CERTIFIED branch the chokepoint refuses), same lib.sh, same stub bd and gh: st
 identical after timestamp normalization, refs/remote refs/worktree registrations
 identical, exit identical, for a full pass, `--dry-run`, and a one-bead run, against both
 the old and the new lib.sh. The only differences are the intended ones in §5.
+
+**sp-9envm's own intended differences**, same category as §5's existing two (the caller
+chain naming `sending.seam.sh`/`sending.sh`): the reap log's `[by …]` chain now has one
+MORE hop when a bash caller reaches the chokepoint through a shim (`… -> sending`, where
+the bash process that ran `spira_destroy_worktree` used to be the innermost name) and one
+FEWER when `sending`'s own sweep reaps a branch in-process (no `sending.seam.sh` hop at
+all). No suite asserts the chain's content (checked: `git grep '\[by ' spira/test-*.sh`
+finds nothing), only the REFUSED/REMOVED/FAILED/SALVAGE lines before it, which are
+byte-for-byte unchanged.

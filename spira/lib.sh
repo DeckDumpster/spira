@@ -5860,123 +5860,52 @@ spira_publish_forge() {
 
 # --------------------------------------------------------------------------------------
 # worktree_of <branch> [repo] -> the registered worktree path holding it, or empty.
-# Read from `git worktree list --porcelain` rather than guessed from the bead id, so a
-# worktree someone put somewhere else is still found.
+# Ported to Rust (sp-9envm, wave 4.20): the library is `sending::reap`, called in-process
+# by the `sending` binary itself; this is a one-line shim for bash callers.
 # --------------------------------------------------------------------------------------
 worktree_of() {
-    local br="$1" repo="${2:-$(repo_root)}"
-    git -C "$repo" worktree list --porcelain 2>/dev/null | python3 -c '
-import sys
-want = "refs/heads/" + sys.argv[1]
-path = None
-for line in sys.stdin:
-    line = line.rstrip("\n")
-    if line.startswith("worktree "): path = line[9:]
-    elif line.startswith("branch ") and line[7:] == want and path:
-        print(path); break
-' "$br" 2>/dev/null
+    sending worktree-of "$1" "${2:-$(repo_root)}"
 }
 
 # --------------------------------------------------------------------------------------
-# hold_alive <pidfile> -> 0 if the recorded pid is a live process. Unlike aeon_alive this
-# does NOT check argv, because the holder can be any process — a brain session, the
-# concierge, a hand-run tool. The recycled-pid risk is accepted: a hold is short-lived
-# manual work, and a false positive only delays reclamation, while a false negative (the
-# aeon_alive failure this fixes) steals work out from under an operator mid-landing.
+# hold_alive <pidfile> -> 0 if the recorded pid is a live process. Ported to Rust
+# (sp-9envm); see `sending::reap::hold_alive` for the rationale (unlike aeon_alive this does
+# NOT check argv, because the holder can be any process).
 # --------------------------------------------------------------------------------------
 hold_alive() {
-    local pf="$1" pid
-    [ -f "$pf" ] || return 1
-    pid="$(cat "$pf" 2>/dev/null)"
-    [ -n "${pid:-}" ] || return 1
-    [ -d "/proc/$pid" ] || return 1
-    return 0
+    sending hold-alive "$1"
 }
 
 # --------------------------------------------------------------------------------------
-# holder_alive <id> -> 0 if a live process is working this bead. Checks BOTH hold
-# pidfiles (non-aeon actors: brain session, concierge, hand-run tools) and aeon pidfiles.
-# The two use different liveness tests: a hold is checked by pid only (the holder can be
-# anything), an aeon is checked by pid AND argv (a recycled pid must not resurrect a dead
-# aeon's claim). Both satisfy the SAME predicate the reaper reads, so the two can never
-# disagree.
+# holder_alive <id> -> 0 if a live process is working this bead. Ported to Rust (sp-9envm);
+# see `sending::reap::holder_alive` for the rationale (checks BOTH hold pidfiles and aeon
+# pidfiles, by different liveness tests, satisfying the SAME predicate the reaper reads).
 # --------------------------------------------------------------------------------------
 holder_alive() {
-    local id="$1" pf
-    for pf in "$SPIRA_RUN"/hold-"$id".pid; do
-        [ -e "$pf" ] || continue
-        hold_alive "$pf" && return 0
-    done
-    for pf in "$SPIRA_RUN"/aeon-*-"$id".pid; do
-        [ -e "$pf" ] || continue
-        aeon_alive "$pf" && return 0
-    done
-    return 1
+    sending holder-alive "$1"
 }
 
 # ======================================================================================
 # DESTRUCTION. Every removal of a bead's worktree or branch goes through this section, and
 # nothing outside it may call `git worktree remove`, `git branch -D` or `rm -rf` on a tree.
 #
-# WHY IT IS ONE SITE. A bead's worktree and branch were both destroyed while its aeon was
-# mid-edit and its lease was live, taking forty minutes of uncommitted work, writing no
-# salvage, and NAMING THE BEAD IN NO LOG — the Sending's own passes bracket the deletion and
-# report the tree HELD on one side and 0 reaped on the other, so the actor was some other
-# process entirely. It had happened twenty times to the same bead, every note reading
-# "Reclaimed by strand.sh", which is the signature an aeon leaves when its workspace vanishes
-# underneath it: twenty aeons spent re-deriving work the harness then ate.
-#
-# The lesson is not "fix that caller". Deletion was SPREAD ACROSS SIX SITES, each with its own
-# guard or none, reachable by anything that sources this file with the default environment —
-# including a test suite run from the installed tree, which is how an operator's real
-# checkouts were once swept (see test-sending.sh's own header). A rule enforced at six sites
-# is a rule enforced at whichever of them the next caller does not use. So the rule lives at
-# one site, it is unconditional, and it does not care who is calling.
-#
-# WHAT IT REFUSES, and why each is not optional:
-#
-#   • A path outside `$SPIRA_RUN/worktree/`. A deleter handed anything else has been
-#     misconfigured — a fixture that forgot to set SPIRA_RUN, a repo-map naming a real
-#     checkout — and misconfiguration must not be able to reach `rm -rf`.
-#   • TWO liveness witnesses, not one. `holder_alive` reads a pidfile that is absent for the
-#     seconds between `bd ready --claim` and the aeon writing it; the bead's status is stale
-#     for as long as it takes a killed aeon's lease to be reclaimed. Either alone has a blind
-#     spot the other covers, so BOTH must say nobody is home.
-#   • A status witness that could not be examined at all. An unreachable database answers
-#     "not in_progress" exactly as a genuinely open bead does, and the wrong one of those
-#     reads as permission (law-absence-needs-a-positive-control). The probe is proved able to
-#     answer once per process before any absence is believed.
-#   • A salvage that did not succeed. Salvage runs BEFORE the removal, and its failure aborts
-#     the removal rather than being stepped over.
-#
-# And it LOGS EVERY DECISION, naming the bead and the calling program, to $SPIRA_REAPLOG —
-# so the next occurrence is one `grep` rather than four hours of correlating timestamps.
+# PORTED TO RUST (sp-9envm, wave 4.20: `sending::reap`, plus a `sending` CLI with
+# `destroy-worktree`/`destroy-branch`/`reap-landed-branch`/`prune`/`salvage`/`witness`
+# verbs). Every function below is now a one-line shim; the chokepoint itself, its full
+# rationale (why it is one site, what it refuses and why), and its tests live there. This
+# keeps working for the 50-odd bash sourcers unchanged — see sending/DESIGN.md §5 for what
+# moved and sending/src/reap.rs's own header for the refusal list, reproduced from here.
 # ======================================================================================
 SPIRA_REAPLOG="${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}"
 
-# The program that reached the chokepoint, read from /proc rather than matched against a
-# command line: a pattern matches the searcher's own argv, which is how `pgrep -f` reported
-# a collector healthy by finding the shell that was killing it. Walks the ancestor chain,
-# because the interesting name is rarely the immediate one — `sending.sh` tells you nothing,
-# `test-repo.sh -> sending.sh` tells you everything.
+# The program that reached the chokepoint. Ported to Rust (sp-9envm); see
+# `sending::reap::spira_caller`.
 spira_caller() {
-    local pid=$$ n=0 out="" cmd first
-    while [ "$n" -lt 6 ] && [ "$pid" != 1 ] && [ -r "/proc/$pid/cmdline" ]; do
-        cmd="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null | grep -v '^-' | head -3 | tr '\n' ' ')"
-        first="$(printf '%s' "$cmd" | tr ' ' '\n' | grep -E '\.(sh|py)$' | head -1)"
-        [ -n "$first" ] && out="$(basename "$first")${out:+ -> $out}"
-        pid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null)" || break
-        [ -n "${pid:-}" ] || break
-        n=$((n+1))
-    done
-    printf '%s' "${out:-unknown}"
+    sending caller
 }
 
-spira_reaplog() {        # spira_reaplog <verb> <id> <detail>
-    mkdir -p "$(dirname "$SPIRA_REAPLOG")" 2>/dev/null
-    printf '%s %-9s %-22s %s [by %s]\n' \
-        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "${3:-}" "$(spira_caller)" \
-        >> "$SPIRA_REAPLOG" 2>/dev/null || true
+spira_reaplog() {        # spira_reaplog <verb> <id> <detail> — ported to Rust (sp-9envm)
+    sending reaplog "$1" "$2" "${3:-}"
 }
 
 # --------------------------------------------------------------------------------------
@@ -6132,14 +6061,27 @@ spira_event() {          # spira_event <kind> <target|-> <title> [detail]
 
 # The status witness, and the seam a suite drives it through. `--status-from` is the honest
 # manual entry point too: it says exactly what the caller believes about each bead.
+#
+# SPIRA_STATUS_FILE, added by sp-9envm: a real FILE holding the same rows, for the `sending`
+# binary's own `--status-from` (it has no bash array to read). A `-` caller's rows exist only
+# on this function's stdin, so they are materialized to a temp file here; a real path is used
+# as given. Every shim this file's now-ported chokepoint functions call threads this through
+# with `${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"}`, so a suite's status seam
+# governs the Rust implementation exactly as it governed the bash one.
 declare -A SPIRA_STATUS_MAP=()
 SPIRA_STATUS_SEAM=0
+SPIRA_STATUS_FILE=""
 spira_status_seam() {    # spira_status_seam <file|-> — load the map once
-    local sid sst
+    local sid sst src="$1"
+    if [ "$src" = - ]; then
+        src="$(mktemp "${TMPDIR:-/tmp}/spira-status-seam.XXXXXX")"
+        cat > "$src"
+    fi
     while IFS=$'\t' read -r sid sst; do
         [ -n "${sid:-}" ] && SPIRA_STATUS_MAP["$sid"]="${sst:-}"
-    done < <(if [ "$1" = - ]; then cat; else cat "$1"; fi)
+    done < "$src"
     SPIRA_STATUS_SEAM=1
+    SPIRA_STATUS_FILE="$src"
 }
 
 spira_bead_status() {    # <id> -> open|in_progress|blocked|closed|"" (unknown)
@@ -6172,334 +6114,54 @@ spira_db_reachable() {
 }
 
 # spira_holder_witnesses <id> -> 0 and prints WHY somebody may be home; 1 if nobody is.
+# Ported to Rust (sp-9envm); see `sending::reap::holder_witnesses`.
 spira_holder_witnesses() {
-    local id="$1" st
-    if holder_alive "$id"; then
-        printf 'a live process holds it'; return 0
-    fi
-    if ! spira_db_reachable; then
-        printf 'the bead database did not answer, so the status witness proves nothing'; return 0
-    fi
-    st="$(spira_bead_status "$id")"
-    if [ "$st" = in_progress ]; then
-        # bd's in_progress can be stale once a caller releases the claim through spira-lc
-        # instead of bd (sp-rlyl0: slay.sh's HolderDead) — trust it UNLESS the lifecycle row
-        # exists and positively says the claim is gone (any state but WORKING). A row this
-        # cannot read at all (lifecycle off, no binary, DB down, not yet classified) proves
-        # nothing either way, so bd's own signal still governs then. `spira-lc state` answers
-        # rc 2 with the switch off, exactly as lc.sh's lc_show did (sp-arpjt); with it on,
-        # every caller now gets this read, not only the ones that had sourced lc.sh — which
-        # can only make the check LESS restrictive, never more.
-        local _lcstate
-        if _lcstate="$(spira-lc state "$id" 2>/dev/null)"; then
-            [ -n "$_lcstate" ] && [ "$_lcstate" != WORKING ] && return 1
-        fi
-        printf 'in_progress — the lease has not been released'; return 0
-    fi
-    return 1
+    sending witness ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1"
 }
 
-# --------------------------------------------------------------------------------------
-# Salvage before destroying, and REFUSE TO DESTROY IF IT FAILS. Anything uncommitted in a
-# dead aeon's worktree is usually scratch — the aeon's real work is committed, which is what
-# made the branch eligible — but "usually" is not a licence, and it has cost real work: the
-# uncommitted state WAS the work, forty minutes of it, four times over.
-#
-# UNTRACKED FILES ARE CARRIED BY CONTENT, not by name. `git diff HEAD` cannot see them, so
-# the old salvage listed them and let them go — and a new file is exactly what an aeon
-# building something has most of, so the patch was emptiest precisely when it mattered most.
-# They go into a tar beside the patch, filtered by `--exclude-standard` so a build directory
-# does not turn a salvage into a gigabyte.
-#
-# THE FILENAME CARRIES A TIMESTAMP because the old one did not. Every reap of a bead wrote
-# `<id>.patch`, so twenty reaps of one bead left exactly one patch: nineteen salvages destroyed
-# by the salvage machinery itself, silently, each one reported as a success.
-# --------------------------------------------------------------------------------------
-SALVAGED=""
-salvage() {              # salvage <label> <worktree-path> -> 0 saved or nothing to save
-    local id="$1" w="$2" dirty out="$SPIRA_RUN/reaped" stamp base rc=0 untracked
-    SALVAGED=""
-    # A worktree whose status cannot be read is not a clean one; it is a question. Fail
-    # closed — the caller aborts its removal.
-    if ! dirty="$(git -C "$w" status --porcelain 2>/dev/null)"; then
-        spira_reaplog SALVAGE "$id" "cannot read the status of $w — refusing to call it clean"
-        return 1
-    fi
-    [ -n "$dirty" ] || return 0
-    mkdir -p "$out" || { spira_reaplog SALVAGE "$id" "cannot create $out"; return 1; }
-    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    base="$out/$id.$stamp"
-    # `|| true` on the diff, and the verdict taken from the FILE rather than the group. A
-    # worktree whose branch ref was deleted underneath it has an unborn HEAD, so `git diff
-    # HEAD` legitimately fails there — and that is the orphan case, the one where salvage
-    # matters most. Letting its exit status stand as the group's turned every orphan salvage
-    # into a refusal. What is actually being asked is "did the bytes get written".
-    {
-        printf '# %s — uncommitted at reap time, %s\n' "$id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        printf '# tracked changes are below; untracked file CONTENT is in %s\n' "$(basename "$base").untracked.tar"
-        printf '%s\n\n' "$dirty"
-        git -C "$w" diff HEAD 2>/dev/null || true
-    } > "$base.patch" 2>/dev/null
-    [ -s "$base.patch" ] || rc=1
-
-    untracked="$(git -C "$w" ls-files --others --exclude-standard 2>/dev/null)"
-    if [ -n "$untracked" ]; then
-        git -C "$w" ls-files --others --exclude-standard -z 2>/dev/null \
-            | tar -C "$w" --null -T - -cf "$base.untracked.tar" 2>/dev/null || rc=1
-        [ -s "$base.untracked.tar" ] || rc=1
-    fi
-
-    if [ "$rc" -ne 0 ]; then
-        spira_reaplog SALVAGE "$id" "FAILED to write $base.patch — the removal must not proceed"
-        return 1
-    fi
-    SALVAGED="$base.patch"
-    spira_reaplog SALVAGE "$id" "wrote $base.patch${untracked:+ and $base.untracked.tar}"
-    printf '  salvaged uncommitted changes to %s\n' "$base.patch"
-    return 0
+# salvage <label> <worktree-path> -> 0 saved or nothing to save. Ported to Rust (sp-9envm);
+# see `sending::reap::salvage` for the untracked-file-by-content and timestamped-filename
+# rationale. $SALVAGED is dropped: nothing outside this file ever read it.
+salvage() {
+    sending salvage "$1" "$2"
 }
 
-# --------------------------------------------------------------------------------------
-# spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove
-# --------------------------------------------------------------------------------------
+# spira_destroy_worktree <id> <path> <repo> <why> -> 0 removed or nothing to remove. Ported
+# to Rust (sp-9envm); see `sending::reap::destroy_worktree`.
 spira_destroy_worktree() {
-    local id="$1" w="$2" repo="$3" why="${4:-}" held path_id
-    [ -n "$w" ] || return 0
-    # ABSENT DIRECTORY FIRST — before the fence. A path whose directory no longer exists
-    # needs no removal: only a registry prune to clear the dangling entry. git worktree prune
-    # touches nothing on disk, so it is safe regardless of where the path points. The fence
-    # below guards rm -rf; it does not apply here.
-    if [ ! -e "$w" ]; then
-        # The directory has already gone but its REGISTRATION may not have, and a live
-        # registration is enough to make `git branch -D` refuse — which is how an interrupted
-        # reap leaves a branch that can never be deleted. Nothing here is left to salvage or
-        # destroy, so clear the entry (through the prune that repairs rather than orphans)
-        # and report success.
-        spira_prune_worktrees "$repo" >/dev/null 2>&1
-        return 0
-    fi
-    # THE FENCE. A deleter handed a path outside the harness's own scratch directory has been
-    # misconfigured — a fixture that forgot to set SPIRA_RUN, a repo-map naming a real
-    # checkout — and a misconfigured caller must not rm -rf an arbitrary path. The
-    # absent-directory case is handled above; the fence guards only paths whose directories exist.
-    case "$w" in
-        "$SPIRA_RUN/worktree/"?*) ;;
-        *) spira_reaplog REFUSED "$id" "$w is not under $SPIRA_RUN/worktree — refusing to remove it"
-           return 1 ;;
-    esac
-    if held="$(spira_holder_witnesses "$id")"; then
-        spira_reaplog REFUSED "$id" "worktree $w — $held"
-        return 1
-    fi
-    # A WORKTREE PATH IS KEYED ON THE BEAD (its directory name) independent of whichever
-    # branch happens to be checked out inside it. A caller that derives $id from a landed
-    # BRANCH name, not from this path, can be a different bead than the one live inside
-    # it — a child bead created sharing its parent's branch label leaves a worktree
-    # directory that names the child while the branch inside it names the parent, so the
-    # parent's own landing swept the child's still-running worktree out from under it
-    # (sp-87csm). The path's own id is checked as well whenever it differs.
-    path_id="$(basename "$w")"
-    if [ "$path_id" != "$id" ] && held="$(spira_holder_witnesses "$path_id")"; then
-        spira_reaplog REFUSED "$id" "worktree $w — $held (as $path_id)"
-        return 1
-    fi
-    if ! salvage "$id" "$w"; then
-        spira_reaplog REFUSED "$id" "worktree $w — salvage failed, so the removal is abandoned"
-        return 1
-    fi
-    # Logged BEFORE the act as well as after: a process killed between the two leaves a
-    # record that it was about to delete this tree. The absence of that one line turned the
-    # incident this section exists for into a four-hour forensic exercise.
-    spira_reaplog REMOVING "$id" "worktree $w ($why)"
-    git -C "$repo" worktree remove --force "$w" 2>/dev/null \
-        || { rm -rf "$w"; spira_prune_worktrees "$repo"; }
-    if [ -e "$w" ]; then
-        spira_reaplog FAILED "$id" "worktree $w survived removal"
-        return 1
-    fi
-    spira_reaplog REMOVED "$id" "worktree $w"
-    return 0
+    sending destroy-worktree ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4"
 }
 
-# --------------------------------------------------------------------------------------
 # spira_destroy_branch <id> <branch> <repo> <why> [caller] -> 0 gone, 1 refused or survived.
-# The witnesses are re-read rather than inherited from the worktree removal: they are two
-# /proc reads and a cached status, and the alternative is a decision made before the act.
-#
-# CONTENT, NOT ANCESTRY. This function guards its deletion with content_landed, the same
-# predicate the Sending uses to SELECT branches for deletion — "would merging this branch
-# change the base tree?" An empty-commit branch (e.g. a review-only bead) passes: its diff
-# is empty, so the merge is a no-op, and the content is already on the base. Ancestry alone
-# answers "not landed" about such a branch forever, because the squash commit is not a
-# direct ancestor — which is precisely why the selector rejected ancestry as the question.
-# The fence must ask the same question or the two sides contradict: the selector says yes,
-# the fence says no, and the branch accretes refusals until a human notices.
-#
-# CALLER EXCEPTIONS. Pass a non-empty fifth argument when the caller has already verified
-# that deletion is safe, so the content check is not repeated here:
-#   "sending"  — the Sending's selector already ran content_landed (or the superseded
-#                exception), and send_branch confirmed liveness once more before this call.
-#   "slain"    — slay.sh has already parked any unlanded commits at refs/slain/<id>; the
-#                branch still carries content not on the base, but the durable copy is no
-#                longer in refs/heads alone, so deletion is safe.
-#   "archived" — the Sending's orphan archive (sending binary) has already parked a bead-less branch's unlanded
-#                commits at refs/archive/<branch> and verified the write reads back, the
-#                same durable-copy-exists reasoning as "slain".
-# Any other non-empty value is treated the same way (future callers that have verified
-# safety by their own means). An empty fifth argument applies the content fence.
-# --------------------------------------------------------------------------------------
+# Ported to Rust (sp-9envm); see `sending::reap::destroy_branch` for the CERTIFIED/BATCHED
+# guard, the holder witnesses, the checked-out-worktree guard and the CALLER EXCEPTIONS
+# ("sending"/"slain"/"archived"/anything else all skip the content fence; empty applies it).
 spira_destroy_branch() {
-    local id="$1" br="$2" repo="$3" why="${4:-}" caller="${5:-}" held wt err base
-    git -C "$repo" show-ref --verify -q "refs/heads/$br" || return 0
-    # CERTIFIED/BATCHED GUARD. A branch whose landstate is CERTIFIED or BATCHED is in the
-    # merge queue. batch.sh selects by ref; deleting the ref drops the branch from the next
-    # batch with no log line. No caller bypass: even the Sending must not race verdict.sh's
-    # LANDED write.
-    local _ls_file="${SPIRA_RUN:-}/landstate/$id"
-    if [ -r "$_ls_file" ]; then
-        local _lstate
-        read -r _lstate _ < "$_ls_file" 2>/dev/null || _lstate=""
-        case "${_lstate:-}" in
-            CERTIFIED|BATCHED)
-                SPIRA_DESTROY_ERR="certified-queued"
-                spira_reaplog REFUSED "$id" "branch $br — landstate is $_lstate; not deleting a queued branch"
-                return 1 ;;
-        esac
-    fi
-    if held="$(spira_holder_witnesses "$id")"; then
-        spira_reaplog REFUSED "$id" "branch $br — $held"
-        return 1
-    fi
-    # A branch a worktree still holds is not deletable, and forcing the issue by pruning the
-    # registration out from under it is how a live tree becomes an orphan.
-    wt="$(worktree_of "$br" "$repo")"
-    if [ -n "$wt" ] && [ -e "$wt" ]; then
-        spira_reaplog REFUSED "$id" "branch $br is checked out at $wt"
-        return 1
-    fi
-    # CONTENT FENCE. The fence fires only when the caller has not already verified safety.
-    # NEVER use ancestry (merge-base --is-ancestor) here: that rejects empty-commit branches
-    # whose squash commit is not a direct ancestor, contradicting the selector that approved them.
-    if [ -z "$caller" ] \
-       && base="$(spira_landref "$repo" 2>/dev/null)" \
-       && git -C "$repo" rev-parse -q --verify "$base" >/dev/null 2>&1; then
-        if ! content_landed "$repo" "$br" "$base"; then
-            spira_reaplog REFUSED "$id" "branch $br — content not on $base, refusing to destroy unlanded work ($why)"
-            return 1
-        fi
-    fi
-    spira_reaplog REMOVING "$id" "branch $br ($why)"
-    # SPIRA_REF_SANCTIONED is what the reference-transaction hook reads. Set it ONLY
-    # here and on this one command: every guard that makes a deletion safe — the
-    # content_landed check above, the worktree check, the reaplog entry — has already
-    # run by this line. Exporting it any wider would hand the override to the callers
-    # the hook exists to stop.
-    err="$(SPIRA_REF_SANCTIONED=1 git -C "$repo" branch -D "$br" 2>&1)"
-    if git -C "$repo" show-ref --verify -q "refs/heads/$br"; then
-        spira_reaplog FAILED "$id" "branch $br survived deletion: $(head -1 <<< "$err")"
-        SPIRA_DESTROY_ERR="$(head -1 <<< "$err")"
-        return 1
-    fi
-    spira_reaplog REMOVED "$id" "branch $br"
-    return 0
+    local _err; _err="$(sending destroy-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
+    local _rc=$?
+    SPIRA_DESTROY_ERR="$_err"
+    return $_rc
 }
 
-# --------------------------------------------------------------------------------------
 # spira_reap_landed_branch <id> <branch> <repo> <why> [caller] -> 0 sent, 1 failed, 2 refused
-# (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2.
-#
-# THE ONE SEQUENCE EVERY DELETER OF A LANDED BRANCH SHARES: remove the worktree, then the
-# branch, then its remote counterpart — worktree first because git refuses to delete a
-# branch a worktree still holds, which was sending.sh's whole reason to exist (see its own
-# header). <caller> is passed straight through to spira_destroy_branch: empty runs its
-# content-landed fence (never a tip comparison; refuses when <branch>'s diff is not on the
-# repository's own base), non-empty skips it for a caller that already established safety
-# by other means (spira_destroy_branch's own CALLER EXCEPTIONS list).
-# --------------------------------------------------------------------------------------
+# (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2. Ported to Rust
+# (sp-9envm); see `sending::reap::reap_landed_branch`. Still resolves the land ref and its
+# remote itself (through the unchanged `spira_landref`/family-W seam the `sending` binary
+# already has, not through bash), so `bead_close_on_land` — the production hot path for
+# every landing, still bash — keeps working unchanged.
 spira_reap_landed_branch() {
-    local id="$1" br="$2" repo="$3" why="${4:-landed}" caller="${5:-}" w rem
-    SPIRA_REAP_ERR=""
-    w="$(worktree_of "$br" "$repo")"
-    if [ -n "$w" ] && ! spira_destroy_worktree "$id" "$w" "$repo" "$why"; then
-        SPIRA_REAP_ERR="worktree $w was not removed — see ${SPIRA_REAPLOG:-the reap log}"
-        return 1
-    fi
-    SPIRA_DESTROY_ERR=""
-    if ! spira_destroy_branch "$id" "$br" "$repo" "$why" "$caller"; then
-        if [ "${SPIRA_DESTROY_ERR:-}" = "certified-queued" ]; then
-            SPIRA_REAP_ERR="certified-queued"
-            return 2
-        fi
-        SPIRA_REAP_ERR="branch $br not deleted: ${SPIRA_DESTROY_ERR:-refused — content not landed, held, or checked out; see ${SPIRA_REAPLOG:-the reap log}}"
-        return 1
-    fi
-    rem="$(ref_remote "$(spira_landref "$repo" 2>/dev/null)" "$repo" 2>/dev/null)" || rem=""
-    if [ -n "$rem" ] && git -C "$repo" rev-parse --verify -q "$rem/$br" >/dev/null 2>&1; then
-        spira_git_push "$repo" -q "$rem" --delete "$br" 2>/dev/null \
-            && log "reap $id: deleted $rem/$br"
-    fi
-    # THE branch: LABEL GOES WITH THE REF (law-branch-affinity-is-recorded): a bead reopened
-    # after this would otherwise be handed the name of a ref that no longer exists.
-    bdq label remove "$id" "branch:$br" >/dev/null 2>&1 || true
-    return 0
+    local _err; _err="$(sending reap-landed-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
+    local _rc=$?
+    SPIRA_REAP_ERR="$_err"
+    return $_rc
 }
-
 
 # spira_prune_worktrees <repo> — `git worktree prune`, with the one case it gets wrong.
-#
-# Prune is safe on the reading everyone has of it: it drops admin entries for directories
-# that are already gone, and one witness is plenty for a directory that does not exist. But
-# an entry is ALSO prunable when the worktree's own `.git` file is missing or unreadable
-# while the directory is entirely intact and full of work. Pruning that entry frees the
-# branch for `git branch -D` and leaves a live tree registered nowhere — the exact state
-# PASS 2 of the Sending then classifies as an orphan and removes.
-#
-# So: anything prune would drop whose DIRECTORY STILL EXISTS is repaired instead, and every
-# entry that really is pruned is named in the reap log. `git worktree repair` restores the
-# link both ways and is a no-op on a healthy tree.
-# --------------------------------------------------------------------------------------
-# `prune --dry-run --verbose` reports on STDERR, not stdout. Reading it with a plain `2>/dev/null`
-# — the shape every other git call in this harness uses — yields nothing at all, and a guard
-# fed an empty list approves everything (law-absence-needs-a-positive-control).
+# Ported to Rust (sp-9envm); see `sending::reap::prune_worktrees` for the repair-not-prune
+# rationale (an entry whose directory still exists would otherwise free its branch and
+# leave a live tree registered nowhere).
 spira_prune_worktrees() {
-    local repo="$1" line name path common still=0
-    common="$(git -C "$repo" rev-parse --git-common-dir 2>/dev/null)" || return 0
-    case "$common" in /*) ;; *) common="$repo/$common" ;; esac
-
-    _spira_prunable_path() {   # <entry-name> -> the worktree directory git recorded for it
-        local gd; gd="$(cat "$common/worktrees/$1/gitdir" 2>/dev/null)"; printf '%s' "${gd%/.git}"
-    }
-
-    while IFS= read -r line; do
-        case "$line" in "Removing "*) ;; *) continue ;; esac
-        name="${line#Removing }"; name="${name#worktrees/}"; name="${name%%:*}"
-        [ -n "$name" ] || continue
-        path="$(_spira_prunable_path "$name")"
-        if [ -n "$path" ] && [ -d "$path" ]; then
-            spira_reaplog REPAIRED "$name" "prune would have dropped a worktree whose directory EXISTS at $path — repairing instead"
-            git -C "$repo" worktree repair "$path" >/dev/null 2>&1
-        else
-            spira_reaplog PRUNED "$name" "$line"
-        fi
-    done < <(git -C "$repo" worktree prune -n -v 2>&1 >/dev/null)
-
-    # Re-read after the repairs. `git worktree prune` has no way to skip one entry, so if any
-    # live directory is STILL prunable the only safe move is not to prune at all: a leaked
-    # admin entry is untidy, and unregistering a tree an aeon is working in is not recoverable.
-    while IFS= read -r line; do
-        case "$line" in "Removing "*) ;; *) continue ;; esac
-        name="${line#Removing }"; name="${name#worktrees/}"; name="${name%%:*}"
-        path="$(_spira_prunable_path "$name")"
-        if [ -n "$path" ] && [ -d "$path" ]; then
-            spira_reaplog REFUSED "$name" "still prunable with its directory intact at $path — skipping the prune entirely"
-            still=1
-        fi
-    done < <(git -C "$repo" worktree prune -n -v 2>&1 >/dev/null)
-    unset -f _spira_prunable_path
-    [ "$still" = 1 ] && return 1
-
-    git -C "$repo" worktree prune 2>/dev/null
-    return 0
+    sending prune "$1"
 }
 
 # --------------------------------------------------------------------------------------

@@ -8,6 +8,10 @@ description = "sending — the Sending: delete the branch and worktree of every 
 serde_json = "1"
 spira-config = { path = "../spira-config" }
 
+[lib]
+name = "sending"
+path = "src/lib.rs"
+
 [[bin]]
 name = "sending"
 path = "src/main.rs"
