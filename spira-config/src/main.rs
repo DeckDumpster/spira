@@ -42,6 +42,20 @@
 //!   spira-config migrate <file>         one-time: a pre-k6m1m goal implies id_prefix (sp-oppza)
 //!   spira-config fayth ...              the chamber registry (wave 4.22, sp-r5zd2) — names,
 //!                                       get, roster, task, lane, partitions, for-labels, model
+//!   spira-config unit <base> [kind]      `spira_unit` (wave 4.10, sp-wqj3o): the unit name
+//!                                       this installation has loaded, or '?' when neither
+//!                                       the instance-qualified nor the plain form is known
+//!                                       to systemd; reads SPIRA_INSTANCE, SPIRA_SYSTEMCTL
+//!   spira-config unit --watch <name>    `watch_unit_name`: pure string formatting, no
+//!                                       systemctl call; reads SPIRA_INSTANCE (default prod)
+//!   spira-config deps list [tier]        `spira_deps_list` (wave 4.10, sp-wqj3o): deps.toml's
+//!                                       declared program names, optionally filtered
+//!   spira-config deps tier|purpose|absent <bin>
+//!                                       `spira_bin_tier`/`_purpose`/`_absent`: one declared
+//!                                       field, or its fallback for an undeclared name
+//!   spira-config deps require <bin>...  `spira_require`: exit 1 naming each bin not on PATH
+//!                                       plus its purpose; `deps list`/`tier`/`purpose`/
+//!                                       `absent`/`require` all read SPIRA_HOME/deps.toml
 //!
 //! `validate`, `get` and `export` read `spira.toml` from: the file argument if given (`-` for
 //! stdin, named on purpose), else the same search `locate` reports — `$SPIRA_TOML` (exclusive:
@@ -380,6 +394,105 @@ fn cmd_check_bd() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+/// `unit <base> [kind]` / `unit --watch <name>` (sp-wqj3o, "wave 4.10") — `conf.sh`'s own
+/// `spira_unit`/`watch_unit_name`, now one-line shims onto this. `SPIRA_INSTANCE` and
+/// `SPIRA_SYSTEMCTL` are read from the environment, same not-yet-exported reason as every
+/// other `cmd_*` function here that reads a per-copy fact `conf.sh` passes explicitly.
+fn cmd_unit(args: &[String]) -> ExitCode {
+    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
+    if args.first().map(String::as_str) == Some("--watch") {
+        return match args.get(1) {
+            Some(name) => {
+                println!("{}", spira_config::unit::watch_unit_name(name, &instance));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config unit --watch <name>");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    let Some(base) = args.first() else {
+        eprintln!("usage: spira-config unit <base> [service|timer]");
+        return ExitCode::FAILURE;
+    };
+    let kind = args.get(1).map(String::as_str).unwrap_or("service");
+    let systemctl = env::var("SPIRA_SYSTEMCTL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "systemctl".to_string());
+    println!("{}", spira_config::unit::resolve_unit(base, kind, &instance, &systemctl));
+    ExitCode::SUCCESS
+}
+
+/// `deps.toml`, resolved the same per-copy way every other `cmd_*` function here reads
+/// `SPIRA_HOME`: the caller's own fact, passed explicitly rather than assumed ambient.
+fn deps_path() -> PathBuf {
+    PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default()).join("deps.toml")
+}
+
+/// `deps list|tier|purpose|absent|require ...` (sp-wqj3o, "wave 4.10") — `conf.sh`'s own
+/// `spira_deps_list`/`spira_bin_tier`/`spira_bin_purpose`/`spira_bin_absent`/`spira_require`,
+/// now reading `deps.toml` in-process ([`spira_config::deps`]) instead of a `python3
+/// tomllib` subshell `conf.sh` ran unconditionally at every source of itself.
+fn cmd_deps(args: &[String]) -> ExitCode {
+    let deps = spira_config::deps::load(&deps_path());
+    match args.first().map(String::as_str) {
+        Some("list") => {
+            for name in spira_config::deps::list(&deps, args.get(1).map(String::as_str)) {
+                println!("{name}");
+            }
+            ExitCode::SUCCESS
+        }
+        Some("tier") => match args.get(1) {
+            Some(bin) => {
+                println!("{}", spira_config::deps::tier_of(&deps, bin));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config deps tier <bin>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("purpose") => match args.get(1) {
+            Some(bin) => {
+                println!("{}", spira_config::deps::purpose_of(&deps, bin));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config deps purpose <bin>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("absent") => match args.get(1) {
+            Some(bin) => {
+                println!("{}", spira_config::deps::absent_of(&deps, bin));
+                ExitCode::SUCCESS
+            }
+            None => {
+                eprintln!("usage: spira-config deps absent <bin>");
+                ExitCode::FAILURE
+            }
+        },
+        Some("require") if args.len() > 1 => {
+            let bins: Vec<&str> = args[1..].iter().map(String::as_str).collect();
+            let path = env::var("PATH").unwrap_or_default();
+            let conf_file = env::var("SPIRA_CONF_FILE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "spira.conf".to_string());
+            match spira_config::deps::require(&deps, &bins, &path, &conf_file) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(msg) => {
+                    eprint!("{msg}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        _ => {
+            eprintln!("usage: spira-config deps <list [tier]|tier <bin>|purpose <bin>|absent <bin>|require <bin>...>");
+            ExitCode::FAILURE
+        }
     }
 }
 
@@ -1129,6 +1242,8 @@ fn main() -> ExitCode {
         Some("schema") => cmd_schema(),
         Some("path-tail") => cmd_path_tail(),
         Some("fayth") => cmd_fayth(&args[1..]),
+        Some("unit") => cmd_unit(&args[1..]),
+        Some("deps") => cmd_deps(&args[1..]),
         Some("migrate") => match args.get(1) {
             Some(file) => cmd_migrate(file),
             None => {
@@ -1139,7 +1254,8 @@ fn main() -> ExitCode {
         _ => {
             eprintln!(
                 "usage: spira-config <validate|get|export|locate|resolve|env-bootstrap|check-bd|\n\
-                 \x20       convert|set|unset|writeback|schema|path-tail|fayth|migrate|repo> ...\n\
+                 \x20       convert|set|unset|writeback|schema|path-tail|fayth|unit|deps|\n\
+                 \x20       migrate|repo> ...\n\
                  \n\
                  \x20 validate [file]\n\
                  \x20 get <dotted.path> [file]\n\
@@ -1156,6 +1272,9 @@ fn main() -> ExitCode {
                  \x20 schema\n\
                  \x20 path-tail\n\
                  \x20 fayth <names|get|roster|task|lane|partitions|for-labels|model> ...\n\
+                 \x20 unit <base> [service|timer]\n\
+                 \x20 unit --watch <name>\n\
+                 \x20 deps <list [tier]|tier <bin>|purpose <bin>|absent <bin>|require <bin>...>\n\
                  \x20 migrate <file>\n\
                  \x20 repo <field|names|all|home-repo|root|land|land-queued|gate|format|base|\n\
                  \x20      name-at|same|containment-check> ..."
