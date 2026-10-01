@@ -49,6 +49,13 @@ mkdir -p "$T/run" "$T/chamber" "$T/bin"
 # lib.sh from $HERE, exactly test-lifecycle-enforce-gate.sh's own SPIRA_HOME/lib.sh trick.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
 
+# conf.d IS COPIED IN (matching test-aeon-sweep.sh, test-lifecycle-enforce-gate.sh, ...):
+# aeon derives its config registry from --home/SPIRA_HOME and now REFUSES to start if
+# conf.d is missing (sp-1cdgq) -- a --home with no conf.d used to resolve silently to
+# nothing instead of refusing. Without this, `aeon --escape` below dies at config
+# resolution before it ever reaches escape.rs's own logic.
+cp -r "$HERE/conf.d" "$T/"
+
 # A MINIMAL ENVIRONMENT, non-default everywhere so that assertions cannot pass by reading
 # literals out of conf.sh (law-gates-run-in-a-clean-environment).
 export SPIRA_RUN="$T/run"

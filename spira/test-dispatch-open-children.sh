@@ -30,7 +30,7 @@
 #
 # defect: sp-zazkt
 # tier: T2
-# covers: spira/lib.sh sentinel/src/* spira/conf.sh
+# covers: spira/lib.sh sentinel/src/* spira/conf.sh spira-claim/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
