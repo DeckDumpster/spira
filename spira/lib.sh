@@ -718,72 +718,15 @@ except Exception:
 # sp-du8bv): it decides from the pass's one store snapshot instead of one `bd children` per
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
-# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon can claim it.
-#
-# <suites>, when given, is a comma-separated list of suites this withdrawal is known to have
-# reddened. Written to $LANDSTATE/<id>.ejected — the sidecar gate.sh already reads
-# unconditionally — so the next certification forces them via SPIRA_GATE_EJECTED_SUITES
-# instead of running fences-only and rediscovering the same red (law-a-retry-must-change-an-input).
-#
-# REOPENING IS NOT ENOUGH. `bd reopen` keeps the assignee, and `bd ready --claim` skips any
-# bead that has one even though `bd ready` lists it — so a bead reopened by the landing
-# pass (a rebase conflict, a red gate) or by the aeon's own closed-without-commit check went
-# back into the graph wearing a dead aeon's name and was never claimed again. Seven sat that
-# way for four to eight hours at P0 while aeons took P1 work around them, and every one of
-# the 23 reopens the landing log holds had the same defect. Clearing the assignee is what
-# makes a reopen a reopen; it is done here so no site can forget it.
-#
-# RETURNS NON-ZERO IF ANY SUB-OPERATION FAILED, so a caller that needs to know — verdict.sh's
-# _attr_eject, which must not report an ejection that never reopened the bead (sp-vjfv6) —
-# can branch on it. Every other call site fires this under `set -e` and does not check the
-# return, so each is suffixed `|| true`: a bd refusal must not abort the caller partway,
-# leaving a bead reopened with no record of WHY. bd's refusal is reported on stderr where the
-# harness log keeps it either way.
-#
-# <cause> is a stable slug (gate-red, rebase-conflict, closed-without-commit, …) written
-# as a harness event row so census can break sp-reopen into classified subclasses.
-# It is written AFTER bd's own `reopened` event, under event_type='reopen', so the two
-# rows are distinct and the census never double-counts a harness reopen.
+# bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
+# can claim it: withdraws a CERTIFIED landstate (unless <cause> is admission-exempt — see
+# _census_deliberate_reopen_causes below), writes the <suites> sidecar, reopens, strips the
+# submitted label, releases the claim and records the cause. Ported to spira-claim (wave
+# 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
+# and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
+# bdq reopen, release_claim or the note each separately failed.
 bead_reopen() {
-    local id="$1" cause="${2:-unrecorded}" note="${3:-}" suites="${4:-}" rc=0
-    # A CERTIFIED bead reopened here must stop being admissible: the batch builder
-    # selects on landstate alone, and WITHDRAWN is a state it never admits. Every
-    # reopen goes through this one function, so this is the one place that can't
-    # be skipped by a caller that forgot.
-    #
-    # EXCEPT THE SUBMITTED CONVERSION (sp-qsona). aeon.sh's teardown "reopens" a work bead
-    # its own session closed only to carry SPIRA_SUBMITTED_LABEL until the landing pass
-    # closes it — the work is done and certification proceeds from submitted, so a
-    # CERTIFIED record written moments earlier (the session's own queue.sh submit, or
-    # aeon.sh's self-certify, sp-u9f82) must stay admissible. Withdrawing it here would
-    # strand every converted bead: open, submitted, and never batched. This is the only
-    # cause admission-exempt in _census_deliberate_reopen_causes (below): eject is also
-    # deliberate for census, but a CERTIFIED-unbatched eject still needs to withdraw.
-    local _wd_st _wd_tip
-    read -r _wd_st _wd_tip _ <<< "$(land_state "$id" 2>/dev/null)"
-    if [ "${_wd_st:-}" = CERTIFIED ] && ! _census_reopen_admission_exempt "$cause"; then
-        local _wd_reason="$cause"
-        [ -n "$suites" ] && _wd_reason="$cause suites=$suites"
-        land_mark "$id" WITHDRAWN "${_wd_tip:-none}" "$_wd_reason"
-    fi
-    if [ -n "$suites" ]; then
-        printf '%s' "$suites" > "$LANDSTATE/$id.ejected.$$" 2>/dev/null \
-            && mv -f "$LANDSTATE/$id.ejected.$$" "$LANDSTATE/$id.ejected" 2>/dev/null || true
-    fi
-    bdq reopen "$id" >/dev/null 2>&1 || rc=1
-    # A REOPEN MEANS REWORK, so a submitted bead stops being submitted. SPIRA_SUBMITTED_LABEL
-    # is excluded from every claim (fayth_exclude), so a bead the landing pass reopens for a
-    # conflict or a red gate while it still carries the label is open, unclaimable and never
-    # landed — stranded. The submitted conversion itself (work-close-converted) is the one
-    # reopen that ADDS the label, right after this call, and is left alone.
-    if ! _census_reopen_admission_exempt "$cause"; then
-        bdq label remove "$id" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
-    fi
-    release_claim "$id" || rc=1
-    _bump_write_event "$id" reopen "$cause" || rc=1
-    [ -n "$note" ] && { bdq note "$id" "$note" >/dev/null 2>&1 || rc=1; }
-    [ "$rc" = 0 ] || printf 'bead_reopen: %s — bd refused the reopen, the release or the note\n' "$id" >&2
-    return "$rc"
+    spira-claim reopen "$@"
 }
 
 # --------------------------------------------------------------------------------------
@@ -804,7 +747,7 @@ bead_reopen() {
 # correct one, and --force is how a sweep robs a live worker.
 # --------------------------------------------------------------------------------------
 release_claim() {        # release_claim <id> -> 0 if the assignee is now clear
-    bdq assign "$1" "" >/dev/null 2>&1
+    spira-claim release "$1"
 }
 
 # ---- lifecycle: the bead machine, via spira-lc (design §3.1.1, §3.5) -----------------
@@ -1830,29 +1773,18 @@ _census_class_fold_map() {
 # line — the single declared list of reopen causes that are the system working, not a
 # fault (law-a-deliberate-state-is-not-a-fault): firing queue.sh eject, or converting a
 # closed work bead to submitted, is a correct outcome, so census must count these but
-# never rank them for a Maechen remedy (sp-eiatd). Kept adjacent to _census_class_fold_map
-# above, the same way that fold is kept adjacent to the SQL that uses it — both
-# bead_reopen (below) and _census_events_sql/_census_deliberate_sql read this one list.
-#
-# <admission-exempt> marks the one behavior specific to work-close-converted: whether the
-# CERTIFIED landstate and the submitted label survive the reopen. work-close-converted is
-# bookkeeping (aeon.sh's teardown carrying a finished bead to the landing pass), not
-# rework, so it alone stays admissible. Every other deliberate cause — eject withdraws a
-# CERTIFIED-but-unbatched bead that DOES need rework — still needs WITHDRAWN written and
-# the label stripped, or batch.sh's second line of defence (its own comment: "every eject
-# strips the label") would re-admit a bead the operator just pulled from the queue.
+# never rank them for a Maechen remedy (sp-eiatd). Both bead_reopen and
+# _census_events_sql/_census_deliberate_sql read this one list; it now lives in
+# spira-claim (wave 4.19, sp-3wfcb, row I) since bead_reopen does — this and
+# _census_reopen_admission_exempt are shims so row M's SQL producers below see the exact
+# same declared set without a second copy to drift (see spira-claim/src/reopen.rs).
 _census_deliberate_reopen_causes() {
-    printf 'work-close-converted 1\n'
-    printf 'eject 0\n'
+    spira-claim deliberate-causes
 }
 
 # _census_reopen_admission_exempt <cause> -> 0 (stays CERTIFIED/submitted) or 1 (does not)
 _census_reopen_admission_exempt() {
-    local _c _exempt
-    while read -r _c _exempt; do
-        [ "$_c" = "$1" ] && [ "$_exempt" = 1 ] && return 0
-    done <<< "$(_census_deliberate_reopen_causes)"
-    return 1
+    spira-claim deliberate-exempt "$1"
 }
 
 # _census_deliberate_causes_sql_list -> a quoted, comma-separated SQL IN-list of every
