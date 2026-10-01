@@ -62,14 +62,25 @@ fn main() -> ExitCode {
 /// compiler. Only a crate compile waits; probes and inherited jobs exec at once.
 fn wrapper(args: Vec<OsString>) -> ExitCode {
     let rest: Vec<String> = args[1..].iter().map(|a| a.to_string_lossy().into_owned()).collect();
-    let inherited = var(admission::INHERIT_ENV);
-    if inherited.is_none() && admission::is_compile(&rest) {
-        if let Some(run) = run_dir() {
-            let who = who();
-            let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
-            let g = admission::acquire_real(&q, &mut |l: &str| say(l));
-            // The lease is the cargo's, not ours: it ends when the cargo does.
-            std::mem::forget(g);
+    match admission::wrapper_action(var(admission::INHERIT_ENV).as_deref(), &rest) {
+        admission::WrapperAction::Exec => {}
+        admission::WrapperAction::Wait => {
+            if let Some(run) = run_dir() {
+                let who = who();
+                let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
+                let g = admission::acquire_real(&q, &mut |l: &str| say(l));
+                // The lease is the cargo's, not ours: it ends when the cargo does.
+                std::mem::forget(g);
+            }
+        }
+        admission::WrapperAction::TakeNow => {
+            // A gate's build (D11): a lease for the cargo at once, oversubscribing a full pool.
+            if let Some(run) = run_dir() {
+                let who = who();
+                let q = admission::Request { run: &run, pool: Pool::Compile, holder_pid: std::os::unix::process::parent_id(), who: &who, inherit: None, weight: admission::build_weight(&rest) };
+                let g = admission::take_now_guard(&q, admission::size_from_env(Pool::Compile), &RealProcs, &mut |l: &str| say(l));
+                std::mem::forget(g);
+            }
         }
     }
     let (prog, argv): (OsString, &[OsString]) = match var(admission::INNER_ENV) {

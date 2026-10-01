@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # timeout: 150
 #
-# test-groomer-incident-reroute.sh — groomer.sh sweep reroutes an incident bead whose branch
+# test-groomer-incident-reroute.sh — groomer sweep reroutes an incident bead whose branch
 #   already carries a commit to the builders' partition (sp-18v9k).
 #
 # THE ROOT CAUSE. "sp-7zg1j is filed as an Ops incident, but what's left is a code change" was
@@ -23,7 +23,7 @@
 #
 # tier: T2
 # defect: sp-18v9k
-# covers: spira/groomer.sh spira/lib.sh spira/conf.sh
+# covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"
@@ -62,7 +62,7 @@ run_sweep() {
         SPIRA_CI_LABEL=awaiting-ci \
         SPIRA_SPIKE_LABEL=spike \
         SPIRA_SCOPE_LABEL=spira \
-        groomer.sh sweep "$@" 2>&1
+        groomer sweep "$@" 2>&1
 }
 
 labels_of() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }

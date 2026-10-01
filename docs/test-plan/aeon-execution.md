@@ -71,7 +71,7 @@ Where it runs: **cert** = certification/every commit, **batch** = batch CI, **ma
 | UC-aeon-execution-24 | `attempts.sh deadlocked` lists poisoned-but-cleanly-mergeable beads (WOULD) and keeps branchless ones (KEEP with a reason). A dry run changes nothing. `--apply` lifts poison, keeps the attempt record and notes why. | C, R | T2 | batch |
 | UC-aeon-execution-25 | A repeated lane-cap timeout files an ask saying "timed out" (lane too small), not "change the approach". | O | T1 (stub mail) | cert |
 | UC-aeon-execution-26 | `slay.sh` writes the `.slain` marker first. The default reopens, unassigns and removes the worktree and branch. `--close` adds `spira-dropped`. `--keep-work` keeps. Uncommitted work is saved as a patch plus a wip commit, and unique work is parked at `refs/slain/<id>`. Bad ids, positional args and a duplicate `--bead` exit 2 and change nothing. | C, R, FC | T2 + T1 args | batch / cert |
-| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist.sh` rely on). | K | doctor preflight (not CI) | doctor |
+| UC-aeon-execution-27 | The installed agent CLI accepts `--system-prompt-snapshot on` (the external contract `aeon.sh`/`archivist` rely on). | K | doctor preflight (not CI) | doctor |
 
 
 Machine-readable declarations live in `docs/test-plan/aeon-execution.toml` (schema: `test-plan/schema/catalogue.schema.json`), read by `spira/plan-lint.sh`.
@@ -165,7 +165,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | G1 | **Lease-lapse teardown**: `bump_lapsed`, the `$SPIRA_RUN/lapsed/<id>-<ts>` record, the note, claim release, ledger `lapsed` and the attempt being charged | aeon.sh 754-770. No test greps `bump_lapsed` or `ledger_done … lapsed`. test-aeon-lease.sh tests a copy of the tick, not cleanup. |
 | G2 | Thrash teardown **behaviour**: requeue event `thrash`, no attempt charged, note, ledger `requeue-thrash` | aeon.sh 736-747; only line-order and awk greps in test-thrash.sh |
 | G3 | Timeout disposition: rc 124 with nothing committed → no charge, note, ledger `timeout`; and rc 124 **with** a commit falls through | aeon.sh 826-836; test-timeout.sh checks only line order |
-| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist.sh |
+| G4 | Capacity lost mid-session in a bead aeon → `capacity_pause_set`, release, ledger `capacity`, no charge | aeon.sh 715-726; `capacity_reset_at` is referenced only by test-archivist |
 | G5 | Aeon-side handling of a slain bead (release, ledger `slain`, no charge) | aeon.sh 727-734; test-slay.sh tests slay.sh, not the aeon's cleanup |
 | G6 | Gate still running when the bead is **open** → released, ledger `gate-unfinished`, no charge | aeon.sh 772-790; test-aeon-gate-close-silent.sh covers only the closed-bead switch |
 | G7 | Read-after-claim poison race → release, ledger `poison-raced` | aeon.sh 430-446; grep in test-timeout.sh only |
@@ -493,3 +493,54 @@ Verified: `bash spira/testenv-batch.sh --suites test-aeon-teardown-e2e.sh,
 test-deadlock-sweep.sh,test-session-result-fields.sh,test-session-yield-headless.sh,
 test-testlib-migrated.sh,test-aeon-resume.sh spira/sp-g44ke` — all green. `plan-lint.sh
 --orphans` against the pre-consolidation tip reports no UC left uncovered.
+
+## 13. Wave 4.2: dead lib.sh functions retired (sp-j89pd)
+
+25 lib.sh functions with zero live callers (every Rust seam site and bash sourcer already
+reimplements the logic natively: aeon/src/decide.rs, brief.rs, ledger.rs, run.rs, worktree.rs)
+are deleted outright rather than ported: `outcome_charges`, `aeon_disposition`,
+`session_result_fields`, both `bead_has_label` definitions, `spira_trace_mark`,
+`trace_segment`, `still_waiting`, `fayth_lease_seconds`, `hb_wait_outcome`, `hb_tick`,
+`world_stop_decide`, `sop_rule_verdict`, `aeon_settings`, `aeon_claude_argv`,
+`render_resume_brief`, `render_slain_brief`, `render_deadline_brief`, `bound_bead_notes`,
+`render_holds_brief`, `aeon_own_unit`, `fayth_fenced`, `eviction_reopen`,
+`worktree_move_aside`, `worktree_evict_foreign`.
+
+Suites that only exercised these functions directly are deleted with them:
+`test-session-result-fields.sh`, `test-brief-notes.sh`, `test-aeon-worktree-evict-foreign.sh`,
+`test-aeon-settings-guard-allowlist.sh`. Suites that mixed a dead row with a still-live one
+(`test-aeon-disposition.sh`, `test-aeon-world-stop.sh`, `test-aeon-resume.sh`,
+`test-aeon-lease.sh`, `test-holds.sh`, `test-aeon-eviction-race.sh`,
+`test-aeon-prompt-layers.sh`, `test-fayth-project-instructions.sh`, `test-persona-model.sh`)
+keep their e2e/live rows and lose only the dead-function row. UC-aeon-execution-03 and
+UC-aeon-execution-08 lose their last covering suite and are marked `[use_case.uncovered]` in
+the TOML catalogue, citing the Rust unit tests that now prove the same behaviour
+(`aeon::tests::poison_raced_releases_and_records`, `aeon::decide::tests::hb_tick_table`).
+UC-aeon-execution-09 and UC-aeon-execution-11 remain covered by `test-thrash.sh` and by
+`test-aeon-teardown-e2e.sh`/`test-rapid-recur.sh`/`test-thrash-teardown.sh` respectively —
+neither suite called the retired functions directly, both already exercise the behaviour
+end to end through the real `aeon` binary.
+
+`sp-wkgyc` asked where `aeon_disposition`'s declared set now lives: `aeon/src/decide.rs`
+(`NoteKey`, `Disposition`, `pub fn disposition`), not lib.sh.
+
+## 14. test-holds.sh deleted as a flip (sp-aufxu, 2026-10-01)
+
+`test-holds.sh` (`spira/holds.sh`, `lib.sh`'s `bead_named_paths`/`render_holds_brief`, no
+catalogued `UC-` of its own — it predates this area's numbered use cases and was never
+folded in) went red in `concierge/sp-aufxu`'s landing gate under the full parallel
+corpus, in its T5 case only: a claiming aeon's own rendered prompt should name the
+"Files already in flight" holds section and the open bead already touching the fixture
+path, and the capture came back empty both times (`wanted [...] in []`) rather than
+wrong. T1–T4 (the pure `bead_named_paths`/`render_holds_brief` logic and `holds.sh`
+against a real store) stayed green throughout.
+
+Run alone through `./target/release/testenv`, once on `concierge/sp-aufxu` and once on
+`local/main`: green on both. Per law-a-test-that-flips-is-deleted, deleted rather than
+fixed on a branch that does not touch its subject. Root-cause-and-re-add filed as
+sp-caetu — T5 claims a real bead through a real aeon inside the container, and the
+leading theory is that its prompt-capture step is what goes silently empty under cgroup
+memory/CPU contention (the pass that caught this peaked at ~5.5GiB across 79 suites),
+rather than the suite being wrong about what it expects. No `[use_case.uncovered]`
+marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
+entry is orphaned by its removal — this section is the only record of what it checked.

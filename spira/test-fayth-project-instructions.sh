@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
 #
 # test-fayth-project-instructions.sh — FAYTH_PROJECT_INSTRUCTIONS=none gets
-#   --setting-sources user (aeon_claude_argv, lib.sh — the one function both the sweep and
-#   the bead call site build their argv through); archivist gets --add-dir for brain's
-#   CLAUDE.md.
+#   --setting-sources user (the one argv table both the sweep and the bead call site build
+#   through, now aeon/src/run.rs); archivist gets --add-dir for brain's CLAUDE.md.
 #
 #   ./test-fayth-project-instructions.sh
 #
 # WHAT IS TESTED
 # --------------
-# 1. aeon_claude_argv with FAYTH_PROJECT_INSTRUCTIONS=none produces --setting-sources user;
-#    repo (or unset) does not. See test-aeon-prompt-layers.sh for the rest of
-#    aeon_claude_argv's table (this file keeps the mechanism's own name in its history).
+# 1. RETIRED (sp-j89pd, wave 4.2): a direct-call row against aeon_claude_argv (lib.sh,
+#    zero live callers) used to live here under this bead's original defect id. See
+#    test-aeon-prompt-layers.sh's T3 and test-persona-model.sh for the same table's
+#    coverage end to end through the real `aeon` binary.
 # 2. Each production fayth declares the right value: ops/maechen/groomer/czar → none,
 #    builder/spike → repo.
-# 3. archivist.sh passes --add-dir <wiki> when SPIRA_WIKI is set.
+# 3. archivist passes --add-dir <wiki> when SPIRA_WIKI is set.
 #    Positive control: when SPIRA_WIKI is unset, --add-dir is absent.
 #
 # The stub agent writes its argv to a file and exits 0. conf.sh replaces $PATH, so a
 # PATH shim would reach the real model — SPIRA_AGENT is the only safe injection point.
 #
 # defect: sp-1f56o
-# covers: aeon/src/* spira/lib.sh spira/archivist.sh spira/chamber/ops.fayth
+# covers: aeon/src/* spira/lib.sh archivist/src/* spira/chamber/ops.fayth
 #   spira/chamber/maechen.fayth spira/chamber/groomer.fayth spira/chamber/czar.fayth
 #   spira/chamber/builder.fayth spira/chamber/spike.fayth
 set -uo pipefail
@@ -45,28 +45,6 @@ SHIM
 chmod +x "$BIN/claude"
 
 echo "test-fayth-project-instructions.sh"
-
-# ==========================================================================================
-echo
-echo "T1: aeon_claude_argv — FAYTH_PROJECT_INSTRUCTIONS=none gets --setting-sources user"
-# ==========================================================================================
-# The full argv table (model, tools, --settings gating on aeon_settings) lives in
-# test-aeon-prompt-layers.sh; this row is kept here under its original defect id.
-ARGV_HOME="$TMP/argv-home"; mkdir -p "$ARGV_HOME/hooks"
-argv_for_pi() {   # argv_for_pi <FAYTH_PROJECT_INSTRUCTIONS>
-    env -i PATH="$PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
-        SPIRA_HOME="$ARGV_HOME" SPIRA_CONF="$TMP/no.conf" SPIRA_RUN="$TMP/run" \
-        ${1:+FAYTH_PROJECT_INSTRUCTIONS="$1"} \
-        bash -c '. "$1"/lib.sh; aeon_claude_argv --append-system-prompt-file /dev/null' \
-        _ "$HERE" 2>/dev/null
-}
-
-argv_none="$(argv_for_pi none)"
-want "none fayth: --setting-sources in argv"  "--setting-sources" "$argv_none"
-want "none fayth: sources value is user"      "$(printf -- '--setting-sources\nuser')" "$argv_none"
-
-argv_repo="$(argv_for_pi repo)"
-nowant "repo fayth: --setting-sources absent" "--setting-sources" "$argv_repo"
 
 # ==========================================================================================
 echo
@@ -110,7 +88,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_AGENT="$BIN/claude" \
     SPIRA_WIKI="$WIKI_DIR" \
     TMP="$TMP" \
-    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_wiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 want "archivist: --add-dir in argv when SPIRA_WIKI set" "--add-dir"  "$argv_arc_wiki"
@@ -131,7 +109,7 @@ env -i HOME="$TMP/home" PATH="$PATH" \
     SPIRA_CHAMBER="$HERE/chamber" \
     SPIRA_AGENT="$BIN/claude" \
     TMP="$TMP" \
-    archivist.sh now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
+    archivist now "$PROJ_DIR/test-session.jsonl" 2>/dev/null || true
 argv_arc_nowiki="$(cat "$TMP/claude-argv" 2>/dev/null || true)"
 
 nowant "archivist: no --add-dir when SPIRA_WIKI unset" "--add-dir" "$argv_arc_nowiki"

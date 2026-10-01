@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 sha2 = "0.10"
 toml = "0.8"
+serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 spira-config = { path = "../spira-config" }
 

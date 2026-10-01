@@ -47,7 +47,6 @@ test-aeon-prod-dirty.sh	T1	56.5
 test-aeon-prompt-layers.sh	T1	67.0
 test-aeon-resume-collision.sh	T1	15.5
 test-aeon-resume.sh	T1	50.5
-test-aeon-settings-guard-allowlist.sh	T1	3.5
 test-aeon-sweep.sh	T1	41.0
 test-aeon-wiki-concurrent.sh	T1	6.0
 test-aeon-wiki-dirty.sh	T1	49.0

@@ -10,7 +10,6 @@ spira/test-aeon-resume-collision.sh
 spira/test-aeon-resume.sh
 spira/test-aeon-wiki-dirty.sh
 spira/test-aeon-worktree-collision.sh
-spira/test-aeon-worktree-evict-foreign.sh
 # literal-ok: a file path, not the world-stop literal itself
 spira/test-aeon-world-stop.sh
 spira/test-batch-owner.sh
@@ -56,7 +55,6 @@ spira/test-fayth-project-instructions.sh
 spira/test-fayth-ready-error.sh
 spira/test-git-push-app.sh
 spira/test-groom-escalation-check.sh
-spira/test-holds.sh
 spira/test-install-dolt-ready.sh
 spira/test-install-dolt.sh
 spira/test-install-hooks-artifact.sh

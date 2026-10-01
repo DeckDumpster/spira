@@ -9,7 +9,7 @@
 # claimed, but nothing about the input changes between claims (law-a-retry-must-change-an-
 # input): a bead whose branch: label is squatted by another bead's canonical worktree died
 # — or looped — on every summon. A bead whose own DEFAULT branch is the squatted one (a
-# parent shadowed by a child that inherited its name before groomer.sh stopped copying it)
+# parent shadowed by a child that inherited its name before groomer stopped copying it)
 # can never self-correct at all, because renaming to its own default changes nothing.
 #
 # THE SECOND DEFECT (sp-vcxmz). Parking with $SPIRA_ASK_LABEL is right when a human has to
