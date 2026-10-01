@@ -230,6 +230,15 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
         eprintln!("round-vm template: SPIRA_ROUND_VM_HOST_KEY not readable: {}", cfg.host_key.display());
         return 2;
     }
+    if cfg.cache_home.is_none() {
+        eprintln!(
+            "round-vm template: SPIRA_ROUND_VM_CACHE_HOME not set (and no round_vm_cache_home \
+             in spira.toml) — refusing to build a template whose own CARGO_HOME a round later \
+             has to guess (law-a-binary-resolves-the-config-it-reads). Set it once; every round \
+             cloned from this template will then agree with it."
+        );
+        return 2;
+    }
     let (commit, _) = match host.head(&a.tree_dir) {
         Ok(h) => h,
         Err(e) => {

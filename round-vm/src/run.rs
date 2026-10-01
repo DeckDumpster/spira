@@ -114,18 +114,34 @@ host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6"
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
 cd ~/round-work
+# sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
+# conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
+# sequentially, before the suite batch starts. Every suite's own container sources
+# conf.sh (directly, or through a tool like watchd that shells into it), and conf.sh
+# regenerates these itself when they are stale or missing (conf-gen.sh) — on the HOST's
+# long-lived checkout that is already warm almost always, so the regeneration path is
+# barely exercised; on a FRESH VM clone every single one of 400+ suites hits "missing"
+# on its first conf.sh sourcing, all at once, at --maxpar. Warming it here, before any
+# suite runs, means every one of them finds it already fresh and never regenerates at
+# all — this is what test-install-migrate.sh's intermittent "the watcher manifest is
+# malformed" (watchd's own conf.sh sourcing failing) traced back to.
+bash spira/conf-gen.sh >&2 || true
 if [ -n "$toolchain" ]; then export RUSTUP_TOOLCHAIN="$toolchain"; fi
 # sp-xjnzl: ONE compilation cache shared with the host itself, not a VM-local one — the
 # box's own address, which this VM already reaches for the mirror, is reused for the cache
-# store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to the operator's own literal
-# path (passed in as $6, never hardcoded — a literal path names one operator's box):
+# store too (sccache-dav/DESIGN.md). CARGO_HOME is overridden to $6, this binary's OWN
+# resolved config (SPIRA_ROUND_VM_CACHE_HOME, or the operator's config file — Config::load's
+# own doc comment names where) — never
+# the caller's ambient CARGO_HOME, and never empty: run()'s own preflight already refused
+# before this script was ever sent (sp-xjnzl-2, law-a-binary-resolves-the-config-it-reads).
 # sccache hashes a dependency's registry source path into its cache key, so a hit across
 # machines needs that path byte-identical, not merely consistent (spira-config/DESIGN-
 # build-cache.md §2.5; re-verified against sccache 0.18.0's own generate_hash_key for this
-# bead). Empty cache_home: the VM's own ambient CARGO_HOME applies, no cache sharing. A
-# read or write this box's store refuses degrades to a cache miss, never a build failure
-# (sccache's own RemoteStorage tolerates both) — so an unreachable store costs speed, not a
-# round.
+# bead). The `${cache_home:-...}` below is belt-and-suspenders only — Source::get already
+# filters out an empty value into None, which the Rust-side preflight refuses on — never a
+# real fallback path in production. A read or write this box's store refuses degrades to a
+# cache miss, never a build failure (sccache's own RemoteStorage tolerates both) — so an
+# unreachable store costs speed, not a round.
 export CARGO_HOME="${cache_home:-$HOME/.cargo}"
 mkdir -p "$CARGO_HOME/bin"
 export RUSTC_WRAPPER="$CARGO_HOME/bin/sccache"
@@ -494,6 +510,16 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         eprintln!("round-vm run: SPIRA_ROUND_VM_HOST_KEY not readable: {}", cfg.host_key.display());
         return 2;
     }
+    if cfg.cache_home.is_none() {
+        eprintln!(
+            "round-vm run: SPIRA_ROUND_VM_CACHE_HOME is not set, by environment or in the \
+             operator's own config file — cannot resolve the VM-side CARGO_HOME; the \
+             template's own sccache lives wherever `round-vm template` was told to put it, \
+             and this binary refuses to guess (law-a-binary-resolves-the-config-it-reads). \
+             Set it to match."
+        );
+        return 2;
+    }
     let (commit_sha, tree_sha) = match env.host.head(&args.tree_dir) {
         Ok(h) => h,
         Err(e) => {
@@ -766,6 +792,19 @@ mod tests {
     }
 
     #[test]
+    fn conf_gen_is_warmed_once_before_the_workspace_build_and_the_suite_batch() {
+        // sp-xjnzl-2: a fresh clone never carries conf.sh's gitignored generated fragments,
+        // so every suite's own conf.sh sourcing would otherwise regenerate them independently
+        // the moment the batch goes parallel — warming once, here, means none of them do.
+        let clone = REMOTE_SCRIPT.find("git clone").unwrap();
+        let warm = REMOTE_SCRIPT.find("bash spira/conf-gen.sh").unwrap();
+        let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(clone < warm && warm < build && build < batch, "conf-gen.sh must be warmed after the clone but before either the workspace build or the suite batch");
+        assert!(REMOTE_SCRIPT.contains("bash spira/conf-gen.sh >&2 || true"), "non-fatal: conf.sh's own per-suite self-heal is still the fallback if this one warm attempt fails");
+    }
+
+    #[test]
     fn the_vm_is_a_launcher_release_path_set_outright_before_any_harness_script() {
         let build = REMOTE_SCRIPT.find("cargo build -q --profile release --workspace").unwrap();
         let stage = REMOTE_SCRIPT.find("release build").unwrap();
@@ -990,6 +1029,7 @@ mod tests {
         let mut src = BTreeMap::new();
         src.insert("SPIRA_RUN".to_string(), run_dir.to_string_lossy().to_string());
         src.insert("SPIRA_ROUND_VM_HOST_ADDR".to_string(), "192.168.1.10".to_string());
+        src.insert("SPIRA_ROUND_VM_CACHE_HOME".to_string(), "/opt/spira/cargo".to_string());
         src.insert("SPIRA_ROUND_VM_HOST_KEY".to_string(), key.to_string_lossy().to_string());
         src.insert("SPIRA_ROUND_VM_SSH_TRIES".to_string(), "2".to_string());
         src.insert("SPIRA_ROUND_VM_BOOT_POLL".to_string(), "0".to_string());
@@ -1034,7 +1074,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo'"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -1127,7 +1167,15 @@ mod tests {
         let mut fx3 = fixture();
         fx3.cfg.host_key = fx3.d.path().join("no-such-key");
         assert_eq!(go(&fx3, &FakeRemote::green(), &tree(&fx3)), 2);
-        for f in [&fx, &fx2, &fx3] {
+
+        // sp-xjnzl-2: never an ambient CARGO_HOME fallback — unset is refused, named, before
+        // any VM is touched. The exact fault a production sweep hit when its systemd unit
+        // (unlike an interactive shell) never set CARGO_HOME at all.
+        let mut fx4 = fixture();
+        fx4.cfg.cache_home = None;
+        assert_eq!(go(&fx4, &FakeRemote::green(), &tree(&fx4)), 2);
+
+        for f in [&fx, &fx2, &fx3, &fx4] {
             assert_eq!(f.fp.count("clone"), 0);
         }
     }

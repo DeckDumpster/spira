@@ -62,9 +62,10 @@ pub const TEMPLATE_WORK: &str = "/root/template-work";
 
 /// Runs on the template VM, in `$1` (the unpacked tree), `$2` (this box's own LAN address,
 /// empty to skip the cache), `$3` (the toolchain to install, empty to leave whatever
-/// `cargo`/`rustc` already resolve to on the template's own PATH) and `$4` (the operator's
-/// own `CARGO_HOME`, empty to leave the template's ambient default — never a literal in
-/// this source, which a literal would tie to one operator's box). The image is BUILT here
+/// `cargo`/`rustc` already resolve to on the template's own PATH) and `$4` (this binary's
+/// own resolved `CARGO_HOME` — `cli.rs`'s `template()` refuses before this script is ever
+/// sent if it is unset, sp-xjnzl-2: never a literal in this source, which would tie it to
+/// one operator's box, and never empty here in practice). The image is BUILT here
 /// — podman's default `--layers` keeps every step's cache in the store the template
 /// carries. Every other spira-testenv tag goes (a loaded image has no cache and only costs
 /// disk). The cargo registry is warmed from the tree's lockfile. The key round-vm delivered
