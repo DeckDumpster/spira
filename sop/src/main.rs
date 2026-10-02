@@ -109,10 +109,7 @@ fn print_report(r: &logic::Report) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let default_home = std::env::var("SPIRA_RELEASE")
-        .map(|r| format!("{r}/spira"))
-        .unwrap_or_else(|_| ".".to_string());
-    let spira_home = env_or("SPIRA_HOME", &default_home);
+    let spira_home = harness_home().to_string_lossy().into_owned();
     let bd = RealBd { spira_home };
     let proc = RealProc;
     let clock = RealClock;
