@@ -87,7 +87,7 @@ landing() {
     SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
-        PATH="$SH:$PATH" landing-pass land 2>&1
+        SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 seed() {
