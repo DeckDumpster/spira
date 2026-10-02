@@ -1098,11 +1098,8 @@ mod pool_history_tests {
     use super::*;
     use batcher::core::adaptive_n;
 
-    fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("batcher-cut-poolhist-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
+    fn tmpdir(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("batcher-cut-poolhist-{tag}"))
     }
 
     fn write_round(dir: &Path, repo: &str, members: &str, duration_ms: &str) {
