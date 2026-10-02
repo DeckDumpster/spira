@@ -341,9 +341,10 @@ pub fn waits_on(assertion_text: &str) -> Option<Id> {
             end += 1;
         }
         let candidate = &assertion_text[start..end];
-        // Require at least one digit after "sp-" so prose like "sp-" alone, or a word that
-        // merely starts with it, is never mistaken for a bead id.
-        if candidate.len() > 3 && candidate[3..].chars().any(|c| c.is_ascii_digit()) {
+        // A digit, or the full five-letter suffix current ids are minted with, keeps prose
+        // like "sp-" alone or "sp-ish" from being mistaken for a bead id.
+        let base = candidate[3..].split('.').next().unwrap_or("");
+        if base.chars().any(|c| c.is_ascii_digit()) || (base.len() == 5 && base.bytes().all(|b| b.is_ascii_lowercase())) {
             return Some(candidate.trim_end_matches('.').to_string());
         }
         i = end.max(start + 1);
