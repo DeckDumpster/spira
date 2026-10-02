@@ -131,13 +131,18 @@ run_deploy() {
         bash "$HERE/cutover-deploy.sh" --repo demo "$@"
 }
 
+DROPIN="$TMP/skip-check.conf"; : > "$DROPIN"
+
 echo
 echo "the deploy step runs end to end on an aged install:"
-out="$(run_deploy 2>&1)"; rc=$?
+out="$(run_deploy --remove-dropin "$DROPIN" 2>&1)"; rc=$?
 [ "$rc" = 0 ] || printf '%s\n' "$out" >&2
 wantrc "cutover-deploy.sh exits 0" 0 "$rc"
 want "it reports the flip" "flipping lifecycle_enforce" "$out"
 want "it ran the classifier" "classifying the quiesced store" "$out"
+
+[ ! -e "$DROPIN" ]; wantrc "the named drop-in is removed" 0 $?
+want "it reports the removal" "removed drop-in" "$out"
 
 echo
 echo "the flip landed in a freshly created spira.toml:"
@@ -169,7 +174,7 @@ wantrc "positive control: spira_lc's own INSERT succeeds" 0 $?
 
 echo
 echo "a second run is idempotent:"
-out2="$(run_deploy 2>&1)"; rc2=$?
+out2="$(run_deploy --remove-dropin "$DROPIN" 2>&1)"; rc2=$?
 [ "$rc2" = 0 ] || printf '%s\n' "$out2" >&2
 wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
 
