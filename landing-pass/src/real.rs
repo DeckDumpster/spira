@@ -285,7 +285,7 @@ impl<'a> Lib for RealLib<'a> {
         self.seam.call(Op::Event, &[kind, id, title, detail]);
     }
     /// lib.sh `spira_land_noverdict` — ported natively (sp-31hjr; was the S5 seam). A
-    /// harness-fault reason is counted and escalated BY CLASS (repo+reason), since a dead
+    /// host-wide reason (see `is_host_wide_reason`) is counted and escalated BY CLASS (repo+reason), since a dead
     /// container makes every branch fail identically; any other reason is per-branch. The
     /// class window resets after `noverdict_class_window` so a fault that went away and
     /// came back later escalates again rather than being silenced forever.
@@ -294,7 +294,7 @@ impl<'a> Lib for RealLib<'a> {
         let _ = std::fs::create_dir_all(&dir);
         let max = self.s.noverdict_max as u64;
 
-        if reason == "harness-fault" {
+        if crate::ask::is_host_wide_reason(reason) {
             let key = crate::util::branch_key(&format!("{repo}-{reason}"));
             let file = dir.join(&key);
             let asked = dir.join(format!("{key}.asked"));
