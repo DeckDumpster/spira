@@ -1780,3 +1780,44 @@ fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
     let r = resolve_repo(None, &mk(&hash_dir)).unwrap();
     assert_eq!(r.name, "abc123");
 }
+
+#[test]
+fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
+    let w = World::new("linked-wt");
+    let linked = w.root.join("deadbeef");
+    sh(&w.repo, &format!("git worktree add -q {} topic", linked.display()));
+    let cfg_path = w.root.join("spira.toml");
+    fs::write(
+        &cfg_path,
+        format!("[repo.mapped]\npath = \"{}\"\nmode = \"queue.local\"\nbase = \"main\"\n", w.repo.display()),
+    )
+    .unwrap();
+    let cfg = spira_config::load(&cfg_path).unwrap();
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let env = |_: &str| None;
+    let stdin = || String::new();
+    let out = |_: &str| {};
+    let deps = |config| Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness { root: w.harness.clone() },
+        env: &env,
+        config,
+        stdin: &stdin,
+        out: &out,
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: vec![],
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: w.runner_exe(),
+    };
+    let arg = linked.display().to_string();
+    let unmapped = resolve_repo(Some(&arg), &deps(None)).unwrap();
+    assert_eq!(unmapped.name, "deadbeef", "positive control: with no map the dir name is the fallback");
+    let d = deps(Some(&cfg));
+    let found = resolve_repo(Some(&arg), &d).unwrap();
+    assert_eq!(found.name, "mapped");
+    assert_eq!(landref(&found, &d).as_deref(), Some("main"));
+}
