@@ -227,9 +227,7 @@ mod tests {
 
     fn fake_systemctl(dir: &Path) -> String {
         let p = dir.join("systemctl");
-        std::fs::write(&p, "#!/bin/sh\ncase \"$6\" in dolt-beads.service) echo /app/dolt;; spira-sentinel.service) echo /app/sentinel;; *) exit 1;; esac\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, "#!/bin/sh\ncase \"$6\" in dolt-beads.service) echo /app/dolt;; spira-sentinel.service) echo /app/sentinel;; *) exit 1;; esac\n");
         p.to_string_lossy().into_owned()
     }
 
