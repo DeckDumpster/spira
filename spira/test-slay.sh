@@ -297,7 +297,17 @@ is   "the lifecycle row is released — WORKING to READY" READY "$(lc_state_of s
 is   "worktree is kept"           yes  "$([ -d "$SPIRA_RUN/worktree/sp-s3" ] && echo yes || echo no)"
 is   "branch is kept"             0    "$(git -C "$REPO" show-ref --verify -q refs/heads/spira/sp-s3 2>/dev/null; echo $?)"
 want "reports work kept"           "kept" "$out"
+if has_label sp-s3 "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then ok "a kept branch carrying the bead's commit reopens as submitted"
+else bad "a kept branch carrying the bead's commit reopens as submitted" "labels: $(bdq label list sp-s3 2>&1)"; fi
 teardown sp-s3
+
+# POSITIVE CONTROL for the above: a kept branch with no commit of its own stays a bare reopen.
+seed sp-s3b
+git -C "$REPO" branch -q spira/sp-s3b main 2>/dev/null || true
+slay --bead sp-s3b --keep-work >/dev/null 2>&1
+if has_label sp-s3b "${SPIRA_SUBMITTED_LABEL:-spira-submitted}"; then bad "no own commit: no submitted label" "label present"
+else ok "no own commit: no submitted label"; fi
+teardown sp-s3b
 
 # ======================================================================================
 # SALVAGE — uncommitted changes are saved before the worktree goes.
