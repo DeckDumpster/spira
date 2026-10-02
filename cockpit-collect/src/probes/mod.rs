@@ -159,13 +159,15 @@ pub fn now_keys() -> Kv {
             push(&mut out, &format!("SP_AEON{i}_NAME"), name);
             push(&mut out, &format!("SP_AEON{i}_FAYTH"), if fay.is_empty() { "?".into() } else { fay.to_string() });
 
-            let fayth_model = std::fs::read_to_string(home.join("chamber").join(format!("{fay}.fayth")))
+            let seed = std::fs::read_to_string(home.join("chamber").join(format!("{fay}.fayth")))
                 .ok()
-                .and_then(|c| {
-                    c.lines()
-                        .find_map(|l| l.strip_prefix("FAYTH_MODEL=").map(|s| s.to_string()))
-                })
+                .and_then(|c| c.lines().find_map(|l| l.strip_prefix("FAYTH_MODEL=").map(|s| s.trim_matches(|c| c == '"' || c == '\'').to_string())));
+            let fayth_model = io::lib_call(&home, "persona_model", &[fay])
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
                 .unwrap_or_else(|| "?".to_string());
+            let overridden = seed.as_deref().is_some_and(|s| !s.is_empty() && s != fayth_model) && fayth_model != "?";
+            push(&mut out, &format!("SP_AEON{i}_MODEL_OVERRIDE"), if overridden { "1" } else { "0" }.to_string());
             push(&mut out, &format!("SP_AEON{i}_FAYTH_MODEL"), fayth_model);
             push(&mut out, &format!("SP_AEON{i}_BEAD"), bead);
             push(&mut out, &format!("SP_AEON{i}_MIN"), (secs / 60).to_string());

@@ -308,6 +308,9 @@ fn now_aeon_rows(snap: &Snapshot, cols: i64, i: usize, is_first: bool, trace_lin
     if md != "?" && md != "-" && fm != "?" && fm != "-" && md != fm {
         model_disp = format!("{model_disp} \u{26a0}{}", model_short(&fm));
     }
+    if snap.get(&format!("SP_AEON{i}_MODEL_OVERRIDE")).unwrap_or("0") == "1" {
+        model_disp.push_str(" (toml)");
+    }
 
     let mut out = Vec::new();
     let label = if is_first { "NOW" } else { "   " };
