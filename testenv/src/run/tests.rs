@@ -323,7 +323,8 @@ fn a_mixed_batch_reports_every_suite_and_a_red_verdict() {
     assert!(fs::read_to_string(res.join("timing.tsv"))
         .unwrap()
         .contains("test-b.sh\t"));
-    assert!(res.join("runner.meta").exists());
+    let runner_meta = fs::read_to_string(res.join("runner.meta")).unwrap();
+    assert!(runner_meta.contains("build_wall_s=0\n"), "{runner_meta}");
 
     // the verdict is cached red, keyed by this run's key
     let key = res.file_name().unwrap().to_string_lossy().to_string();

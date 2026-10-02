@@ -1052,6 +1052,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             artifacts_dir(&wt.path, &args.profile),
         ),
     };
+    let mut build_wall_secs = 0u64;
     if let Some(p) = &prebuilt {
         if let Err(e) = prebuilt::stage(p, &artifacts) {
             stderr(&format!(
@@ -1073,7 +1074,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             deps.log(&format!("queue-wait={}s pool=compile", lease.waited));
             ph.mark("admit-compile");
         }
+        let build_started = Instant::now();
         let built = build(args, deps, &wt.path, br, &artifacts, setup_cutoff.get());
+        build_wall_secs = build_started.elapsed().as_secs();
         drop(lease);
         if let Some(fin) = built {
             if fin.reason == Some(deadline_reason("build")) {
@@ -1634,6 +1637,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             ),
             ("cpu_busy_pct", cpu_pct),
             ("suites_wall_s", suites_wall.to_string()),
+            ("build_wall_s", build_wall_secs.to_string()),
         ],
     );
     let bd_ms: HashMap<String, u64> = selected

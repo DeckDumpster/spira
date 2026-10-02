@@ -112,8 +112,15 @@ pub fn shell_quote(s: &str) -> String {
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7"
+export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
+if ! command -v cargo >/dev/null 2>&1; then
+    echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
+    exit 127
+fi
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
+mkdir -p ~/cargo-target
+ln -sfn ~/cargo-target ~/round-work/target
 cd ~/round-work
 # sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
 # conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
@@ -858,6 +865,42 @@ mod tests {
         });
         assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn remote_script_checks_cargo_before_paying_for_the_clone() {
+        let check = REMOTE_SCRIPT.find("command -v cargo").expect("checks for cargo");
+        let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
+        assert!(check < clone, "cargo must be checked before the clone, not after it fails");
+        let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
+        assert!(path_export < check, "PATH must be widened before the check that reads it");
+    }
+
+    #[test]
+    fn remote_script_recreates_the_target_symlink_after_every_clone() {
+        let rm = REMOTE_SCRIPT.find("rm -rf ~/round-work").expect("wipes round-work every round");
+        let symlink = REMOTE_SCRIPT.find("ln -sfn ~/cargo-target ~/round-work/target").expect("re-points target outside round-work");
+        let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
+        assert!(rm < clone && clone < symlink, "the symlink must be recreated after the clone recreates round-work, every round");
+    }
+
+    /// Runs only REMOTE_SCRIPT's guard, with no `cargo` reachable — never reaching the git
+    /// clone or the disk state a real round would leave behind.
+    #[test]
+    fn remote_script_fails_fast_and_named_with_no_cargo_on_path() {
+        use std::process::Command;
+        let out = Command::new("bash")
+            .arg("-c")
+            .arg(REMOTE_SCRIPT)
+            .arg("round-vm-test")
+            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", ""])
+            .env("PATH", "/usr/bin:/bin")
+            .env("HOME", "/nonexistent-home")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(127));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("cargo not found"), "{stderr}");
     }
 
     #[test]
