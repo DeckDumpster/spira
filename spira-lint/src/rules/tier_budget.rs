@@ -61,6 +61,19 @@ impl Ledger {
     }
 }
 
+/// Keys a ledger admits above its base: a newly added `# exposure: <key> <bead-id>` comment line, for a
+/// suite that already existed at T3 and was only counted once tagged — exposure, not growth.
+fn exposures(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .filter_map(|l| l.trim().strip_prefix("# exposure:"))
+        .filter_map(|r| {
+            let mut w = r.split_whitespace();
+            let (key, bead) = (w.next()?, w.next()?);
+            bead.starts_with("sp-").then(|| key.to_string())
+        })
+        .collect()
+}
+
 impl Rule for Ledger {
     fn name(&self) -> &'static str {
         self.name
@@ -78,9 +91,13 @@ impl Rule for Ledger {
         let prior = tree.show(&base, self.path).ok_or_else(|| {
             LintError::Refused(format!("no {} at the base {base} — cannot judge shrink-only", self.path))
         })?;
+        let exposed: BTreeSet<String> = exposures(&now).difference(&exposures(&prior)).cloned().collect();
         let (now, prior) = (ledger(&now), ledger(&prior));
         let mut out = Vec::new();
         for (k, v) in &now {
+            if exposed.contains(k) {
+                continue;
+            }
             let message = match prior.get(k) {
                 None => format!("new entry {k} — the allowlist may only shrink"),
                 Some(was) if raised(v, was) => format!("{k} raised {was} -> {v} — the allowlist may only shrink"),
@@ -230,6 +247,17 @@ mod tests {
         t.write(AREA_LEDGER, "alpha\t3\n");
         let out = run(&t, &Ledger::areas(), Some("base")).0.unwrap();
         assert_eq!(out[0].message, "alpha raised 2 -> 3 — the allowlist may only shrink");
+    }
+
+    #[test]
+    fn a_newly_cited_exposure_admits_one_raise_and_only_that_key() {
+        let t = repo();
+        t.write(AREA_LEDGER, "# exposure: alpha sp-1 pre-existing\nalpha\t3\nbeta\t1\n");
+        let out = run(&t, &Ledger::areas(), Some("base")).0.unwrap();
+        let msgs: Vec<&str> = out.iter().map(|f| f.message.as_str()).collect();
+        assert_eq!(msgs, ["new entry beta — the allowlist may only shrink"]);
+        t.write(AREA_LEDGER, "# exposure: alpha nobead\nalpha\t3\n");
+        assert_eq!(run(&t, &Ledger::areas(), Some("base")).0.unwrap().len(), 1, "a bead id is required");
     }
 
     #[test]
