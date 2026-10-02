@@ -777,14 +777,19 @@ pub fn locate(results_dir: &Path, suite: &str, ext: &str) -> Option<PathBuf> {
 
 /// A suite's final status from its `<suite>.result` (testenv DESIGN.md §3.1): `Some(true)`
 /// for a status that does not block (ok, skip, disabled, skip-req, quarantined-red),
-/// `Some(false)` for red, timeout, unreached or deferred, and `None` while there is no
-/// readable result yet — the file is written after `.out`, so its presence means final.
+/// `Some(false)` for red, timeout, unreached, deferred or fault, and `None` while there is
+/// no readable result yet — the file is written after `.out`, so its presence means final.
+/// `fault` (sp-3azqi: podman's own exec lost the exit status) is listed with the blocking
+/// statuses, not folded into the `_` catch-all meant for "not written yet" — a fault's
+/// `.result` line is just as final and complete as a red's, and every caller here already
+/// cross-checks its own job's exit code (testenv's contract makes a faulted job's rc 2,
+/// never 0 or 1) before trusting `Some(false)` as an ordinary red.
 pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
     let path = locate(results_dir, suite, "result")?;
     let text = fs::read_to_string(path).ok()?;
     match text.split_whitespace().next()? {
         "ok" | "skip" | "disabled" | "skip-req" | "quarantined-red" => Some(true),
-        "red" | "timeout" | "unreached" | "deferred" => Some(false),
+        "red" | "timeout" | "unreached" | "deferred" | "fault" => Some(false),
         _ => None,
     }
 }
@@ -1184,6 +1189,25 @@ mod result_path_tests {
         )
         .unwrap();
         assert_eq!(result_status(&d, "test-g.sh"), Some(true));
+    }
+
+    /// sp-3azqi: podman's own exec losing the exit status is a complete, final `.result`
+    /// line — never "not final yet" (the `None` a half-written or absent file gets), and
+    /// never a pass. This reader must say so on its own, not rely only on the caller's
+    /// cross-check against the job's testenv exit code (vm.rs's own belt-and-suspenders).
+    #[test]
+    fn a_fault_result_is_final_and_never_green() {
+        let d = tmpdir("fault");
+        fs::write(
+            d.join("test-strand-reclaim-n.sh.result"),
+            "fault 1790897469 246 fault:podman-exec-lost parallel explicit 255",
+        )
+        .unwrap();
+        assert_eq!(
+            result_status(&d, "test-strand-reclaim-n.sh"),
+            Some(false),
+            "a fault must read as final and blocking, never as pending or green"
+        );
     }
 }
 

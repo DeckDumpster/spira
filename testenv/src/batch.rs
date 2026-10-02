@@ -82,6 +82,15 @@ impl BatchOutcome {
             .map(|(s, _)| s.clone())
             .collect()
     }
+    /// Suites whose exit status podman's own exec lost (sp-3azqi): never red, never
+    /// green, their own verdict unknown — named so the batch can report FAULT, not RED.
+    pub fn faulted(&self) -> Vec<String> {
+        self.records
+            .iter()
+            .filter(|(_, r)| r.status.is_fault())
+            .map(|(s, _)| s.clone())
+            .collect()
+    }
     /// Suites cut by the deadline (killed or never started), in name order.
     pub fn deferred(&self) -> Vec<String> {
         self.records
@@ -610,6 +619,44 @@ mod tests {
             .iter()
             .any(|a| a.first().is_some_and(|c| c.ends_with("/bd-meter"))
                 && a.get(1).map(String::as_str) == Some("--install")));
+    }
+
+    /// sp-3azqi: a suite whose podman exec lost its exit status (rc 255, the exact
+    /// conmon exit-file-wait message, full passing TAP output ahead of it — exactly the
+    /// shape the VM certification run hit for test-strand-reclaim-n.sh) records as Fault,
+    /// never Red, and never blocks or quarantines like an ordinary suite defect would.
+    #[test]
+    fn podman_exec_wait_timeout_records_fault_not_red() {
+        let rt = FakeRuntime::new();
+        rt.suite(
+            "test-strand-reclaim-n.sh",
+            255,
+            "TAP version 14\n1..4\nok 1 - a\nok 2 - b\nok 3 - c\nok 4 - d\n\n4 passed, 0 failed, 0 skipped\nError: timed out waiting for file /var/lib/containers/storage/overlay-containers/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6/userdata/341cfdc06753bbf5d930ce5f9764fe6b5925ed6791e5bccfcb18cc41dc1d50ed/exit/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6\n",
+        );
+        rt.suite("test-a.sh", 0, "ok\n");
+        let dir = tmpdir("exec-lost");
+        let s = session(&rt);
+        let c = cfg(Mode::Parallel, &dir, 2);
+        let out = with_hooks(|h, _| {
+            run(
+                &s,
+                &c,
+                h,
+                &Fixtures::PerSuite,
+                &jobs(&["test-strand-reclaim-n.sh", "test-a.sh"]),
+            )
+        });
+        assert!(!out.harness_fault(), "a single lost exec is not a batch-wide harness fault");
+        assert_eq!(
+            out.records["test-strand-reclaim-n.sh"].status,
+            Status::Fault
+        );
+        assert_eq!(out.faulted(), vec!["test-strand-reclaim-n.sh"]);
+        assert!(out.blocking_reds().is_empty(), "a fault must never read as a red");
+        assert!(out.quarantined_reds().is_empty());
+        let res = fs::read_to_string(dir.join("test-strand-reclaim-n.sh.result")).unwrap();
+        assert!(res.starts_with("fault "));
+        assert!(res.trim_end().ends_with(" parallel explicit 255"));
     }
 
     #[test]

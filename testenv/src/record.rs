@@ -25,6 +25,10 @@ pub enum Status {
     /// Cut by `--deadline` (DESIGN.md D7): killed while running, or never started.
     /// Neither executed nor blocking.
     Deferred,
+    /// podman's own exec lost the suite's exit status (conmon's exit-file wait gave up
+    /// under load, sp-3azqi) — the suite ran, but whether it passed is unknown. Never a
+    /// red: a batch with a fault reports VERDICT FAULT, not RED, and names it.
+    Fault,
 }
 
 impl Status {
@@ -39,6 +43,7 @@ impl Status {
             Status::SkipReq => "skip-req",
             Status::Unreached => "unreached",
             Status::Deferred => "deferred",
+            Status::Fault => "fault",
         }
     }
 
@@ -53,21 +58,35 @@ impl Status {
             "skip-req" => Status::SkipReq,
             "unreached" => Status::Unreached,
             "deferred" => Status::Deferred,
+            "fault" => Status::Fault,
             _ => return None,
         })
     }
 
-    /// The suite's script actually ran inside the container (whatever its outcome).
+    /// The suite's script actually ran inside the container (whatever its outcome) — a
+    /// fault counts: podman lost the exit status, not the fact that the process ran.
     pub fn executed(self) -> bool {
         matches!(
             self,
-            Status::Ok | Status::Skip | Status::Red | Status::Timeout | Status::QuarantinedRed
+            Status::Ok
+                | Status::Skip
+                | Status::Red
+                | Status::Timeout
+                | Status::QuarantinedRed
+                | Status::Fault
         )
     }
 
-    /// Counts against the verdict: a non-quarantined red or timeout.
+    /// Counts against the verdict: a non-quarantined red or timeout. A fault is never
+    /// blocking in this sense — it has its own VERDICT FAULT path (DESIGN.md §4.3,
+    /// sp-3azqi), never folded into a suite-defect RED.
     pub fn blocking(self) -> bool {
         matches!(self, Status::Red | Status::Timeout)
+    }
+
+    /// podman's own exec failed to collect the exit status, not the suite failing.
+    pub fn is_fault(self) -> bool {
+        matches!(self, Status::Fault)
     }
 }
 
@@ -176,6 +195,9 @@ impl ResultRecord {
 
     /// The record for a suite that ran and exited `rc` after `secs`, given its output and
     /// whether it is quarantined. 0 = ok, 77 = skip (automake), 124 = the per-suite timeout.
+    /// rc 255 with podman's own exec-wait-timeout signature (sp-3azqi) is a fault —
+    /// checked ahead of quarantine, because quarantine excuses a suite's own flakiness,
+    /// never a harness problem the suite had nothing to do with.
     #[allow(clippy::too_many_arguments)]
     pub fn from_exit(
         rc: i32,
@@ -187,25 +209,29 @@ impl ResultRecord {
         producer: Producer,
         epoch: u64,
     ) -> Self {
-        let (status, fingerprint) = match rc {
-            0 => (Status::Ok, "-".to_string()),
-            77 => (Status::Skip, skip_fingerprint(output)),
-            124 => (
-                if quarantined {
-                    Status::QuarantinedRed
-                } else {
-                    Status::Timeout
-                },
-                format!("timeout:{suite}"),
-            ),
-            _ => (
-                if quarantined {
-                    Status::QuarantinedRed
-                } else {
-                    Status::Red
-                },
-                fingerprint(rc, output),
-            ),
+        let (status, fingerprint) = if is_podman_exec_lost(rc, output) {
+            (Status::Fault, "fault:podman-exec-lost".to_string())
+        } else {
+            match rc {
+                0 => (Status::Ok, "-".to_string()),
+                77 => (Status::Skip, skip_fingerprint(output)),
+                124 => (
+                    if quarantined {
+                        Status::QuarantinedRed
+                    } else {
+                        Status::Timeout
+                    },
+                    format!("timeout:{suite}"),
+                ),
+                _ => (
+                    if quarantined {
+                        Status::QuarantinedRed
+                    } else {
+                        Status::Red
+                    },
+                    fingerprint(rc, output),
+                ),
+            }
         };
         ResultRecord {
             status,
@@ -284,8 +310,25 @@ pub fn suite_line(suite: &str, rec: &ResultRecord) -> String {
             format!("DEFERRED deadline after {}s", rec.secs)
         }
         Status::Deferred => "DEFERRED deadline".to_string(),
+        Status::Fault => format!(
+            "FAULT   podman lost the exit status after {}s (rc={rc}) — not a suite defect",
+            rec.secs
+        ),
     };
     format!("  {suite:<32} {tail}")
+}
+
+/// podman's own exec gave up waiting for conmon's exit file under load (sp-3azqi): the
+/// container is fine and the suite may well have finished (its output, if any, is kept
+/// verbatim), but podman's CLI never read back an exit status, so `rc` is its own 255, not
+/// the suite's. Matched on the exact message `oci_conmon_exec_linux.go`'s `waitForFile`
+/// prints, not merely `rc == 255` (a suite could in principle exit 255 on its own) —
+/// `runtime.rs`'s `Podman::exec` already tries to recover the real status by reading that
+/// same exit file itself before giving up and leaving this signature in `output` at all.
+pub fn is_podman_exec_lost(rc: i32, output: &str) -> bool {
+    rc == 255
+        && output.contains("Error: timed out waiting for file")
+        && output.contains("/exit/")
 }
 
 /// bash `$(cat file)` then `printf '%s\n'`: trailing newlines stripped, exactly one added.
@@ -478,6 +521,64 @@ mod tests {
         assert_eq!(m(1, false).status, Status::Red);
         assert!(!m(1, true).status.blocking());
         assert!(m(124, false).status.blocking());
+    }
+
+    /// sp-3azqi positive control: seen red first (before this fix, rc=255 fell into the
+    /// catch-all `_` arm and read as an ordinary Red, exactly what the VM certification
+    /// run misreported for test-strand-reclaim-n.sh and test-skew-refresh.sh). A fake
+    /// podman returning rc 255 with its own exec-wait-timeout message — even with the
+    /// suite's own fully-passing TAP output ahead of it, the real shape podman left behind
+    /// — now yields Fault, never Red, and is never blocking or quarantinable.
+    #[test]
+    fn podman_exec_wait_timeout_is_a_fault_never_a_red() {
+        let evidence = "TAP version 14\n1..4\nok 1 - a\nok 2 - b\nok 3 - c\nok 4 - d\n\n4 passed, 0 failed, 0 skipped\nError: timed out waiting for file /var/lib/containers/storage/overlay-containers/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6/userdata/341cfdc06753bbf5d930ce5f9764fe6b5925ed6791e5bccfcb18cc41dc1d50ed/exit/d609b04df0f16dfeda8af8adf28901c5d60de417ee573f9a66bfadf26b14e4f6\n";
+        assert!(is_podman_exec_lost(255, evidence));
+        let rec = ResultRecord::from_exit(
+            255,
+            246,
+            evidence,
+            "test-strand-reclaim-n.sh",
+            false,
+            Mode::Parallel,
+            Producer::Explicit,
+            1_790_897_469,
+        );
+        assert_eq!(rec.status, Status::Fault);
+        assert!(!rec.status.blocking());
+        assert!(rec.status.executed());
+        assert_eq!(rec.fingerprint, "fault:podman-exec-lost");
+        // quarantine never excuses (or claims) a harness fault as the suite's own flake
+        let quarantined = ResultRecord::from_exit(
+            255, 246, evidence, "test-strand-reclaim-n.sh", true, Mode::Parallel,
+            Producer::Explicit, 1_790_897_469,
+        );
+        assert_eq!(quarantined.status, Status::Fault);
+        let line = rec.to_string();
+        assert!(line.starts_with("fault 1790897469 246 fault:podman-exec-lost"));
+        assert!(line.ends_with(" parallel explicit 255"));
+        assert_eq!(ResultRecord::parse(&line), Some(rec.clone()));
+        assert_eq!(
+            suite_line("test-strand-reclaim-n.sh", &rec),
+            format!(
+                "  {:<32} FAULT   podman lost the exit status after 246s (rc=255) — not a suite defect",
+                "test-strand-reclaim-n.sh"
+            )
+        );
+    }
+
+    #[test]
+    fn is_podman_exec_lost_needs_both_the_rc_and_the_exact_podman_signature() {
+        // rc 255 alone (a suite legitimately exiting 255) is not enough
+        assert!(!is_podman_exec_lost(255, "not ok 1 - boom\n"));
+        // the message alone, at a different rc, is not enough either
+        assert!(!is_podman_exec_lost(
+            1,
+            "Error: timed out waiting for file /var/.../exit/abc\n"
+        ));
+        assert!(!is_podman_exec_lost(
+            255,
+            "Error: timed out waiting for file /no/such/marker/here\n"
+        ));
     }
 
     #[test]

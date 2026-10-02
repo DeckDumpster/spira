@@ -62,16 +62,21 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
     }
 
     // Collect reds/timeouts, deduplicated on first occurrence — the same order the bash's
-    // `case " ${reds} " in *" ${suite} "*` guard preserved.
+    // `case " ${reds} " in *" ${suite} "*` guard preserved. Faults (sp-3azqi: podman's own
+    // exec lost the exit status) are collected separately — never a red, but also never
+    // silently folded into "all suites passed or skipped" just because this list is empty.
     let mut reds: Vec<String> = Vec::new();
+    let mut faulted: Vec<String> = Vec::new();
     for rf in &results {
         let (status, _, _) = world.read_result(&rf.result_path);
         if engine::is_red(&status) && !reds.contains(&rf.suite) {
             reds.push(rf.suite.clone());
+        } else if engine::is_fault(&status) && !faulted.contains(&rf.suite) {
+            faulted.push(rf.suite.clone());
         }
     }
 
-    if reds.is_empty() {
+    if reds.is_empty() && faulted.is_empty() {
         world.print("gate-diag: all suites passed or skipped\n");
         return 0;
     }
@@ -82,6 +87,7 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
 
     let mut red_list: Vec<String> = Vec::new();
     let mut flaky_list: Vec<String> = Vec::new();
+    let mut fault_list: Vec<String> = Vec::new();
     let mut summary_rows: Vec<String> = Vec::new();
 
     for suite in &reds {
@@ -116,7 +122,35 @@ fn run(world: &dyn World, home: &std::path::Path, root: &std::path::Path) -> i32
         summary_rows.push(engine::summary_row(suite, &secs, &rc, verdict, &first));
     }
 
-    world.write(&root.join("red-suites.json"), &engine::red_suites_json(&red_list, &flaky_list));
+    // Faults get their own block, labeled distinctly from red: no retry classification (a
+    // podman infra race is not a flake to serially re-run) and no annotation title that
+    // would read as a suite defect.
+    for suite in &faulted {
+        let rf = results.iter().find(|r| &r.suite == suite);
+        let (secs, rc) = match rf {
+            Some(rf) => {
+                let (_, secs, rc) = world.read_result(&rf.result_path);
+                (secs.map(|s| s.to_string()).unwrap_or_else(|| "?".into()), rc.map(|r| r.to_string()).unwrap_or_else(|| "-".into()))
+            }
+            None => ("?".into(), "-".into()),
+        };
+        let raw_out = rf.and_then(|rf| world.read(&rf.out_path)).unwrap_or_default();
+        let lines = engine::fail_lines(&raw_out);
+        let first = format!("(podman lost the exit status at {secs}s — not a suite defect, see spira/gate-retry.sh)");
+        fault_list.push(suite.clone());
+
+        let tail = engine::tail_n(&raw_out, tail_n);
+        if in_gha {
+            let annotation = engine::annotation_text(&first);
+            world.print(&engine::render_gha_block(suite, "fault", &rc, &secs, &raw_out, &lines, &tail, tail_n, &annotation));
+        } else {
+            world.print(&engine::render_plain_block(suite, "fault", &rc, &secs, &raw_out, &lines, &tail, tail_n));
+        }
+
+        summary_rows.push(engine::summary_row(suite, &secs, &rc, "fault", &first));
+    }
+
+    world.write(&root.join("red-suites.json"), &engine::red_suites_json(&red_list, &flaky_list, &fault_list));
     world.append(&jsonl_path, &engine::verdict_rows(&red_list, &flaky_list));
 
     let mut table = String::new();

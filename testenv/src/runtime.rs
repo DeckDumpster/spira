@@ -196,6 +196,47 @@ fn read_lossy(p: &Path) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
+/// How much longer than podman's own CLI we wait for conmon's exit file before giving up
+/// and calling the status genuinely lost (sp-3azqi): conmon has already written it by the
+/// time podman's `exec` gives up under load, just not fast enough for podman's own,
+/// shorter-fused wait — see [`recover_lost_exit`].
+const EXEC_WAIT_RECOVERY_GRACE: Duration = Duration::from_secs(20);
+
+/// podman's own `exec` gave up waiting for conmon to write the process's exit-status file
+/// and exited 255 reporting so — a race under load, not a dead container: the file is
+/// still being written and reads fine moments later (DESIGN.md: the fix removes the
+/// cause, not just the symptom, by not trusting podman's own collection as the only
+/// source). The error names the exact file podman was waiting on; this pulls it out of the
+/// captured output so [`recover_lost_exit`] can keep watching it after podman's CLI quit.
+fn exec_wait_timeout_file(output: &str) -> Option<PathBuf> {
+    let marker = "Error: timed out waiting for file ";
+    let line = output.lines().rev().find(|l| l.starts_with(marker))?;
+    let path = line[marker.len()..].trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
+/// Poll `path` — conmon's own exit-status file, a plain decimal exit code with no
+/// newline, the same file `exec_wait_timeout_file` named — for up to `grace`, returning the
+/// real exit code the moment it appears and parses. `None` means it never showed up (or
+/// never parsed) inside the grace period: the status really is lost, not merely slow.
+fn recover_lost_exit(path: &Path, grace: Duration) -> Option<i32> {
+    if grace.is_zero() {
+        return None;
+    }
+    let deadline = Instant::now() + grace;
+    loop {
+        if let Ok(text) = fs::read_to_string(path) {
+            if let Ok(code) = text.trim().parse::<i32>() {
+                return Some(code);
+            }
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 /// The real runtime: podman on PATH; the container driver is this executable's own
 /// `container` subcommand, run as a child against `harness` (DESIGN.md §12, D17).
 pub struct Podman {
@@ -250,8 +291,24 @@ impl ContainerRuntime for Podman {
             Some(p) => (p.clone(), false),
             None => (temp_output(), true),
         };
-        let rc = run_bounded(cmd, &path, req.timeout, req.deadline);
+        let mut rc = run_bounded(cmd, &path, req.timeout, req.deadline);
         let output = read_lossy(&path);
+        // sp-3azqi: podman's own exec lost the exit status — conmon's exit-file wait gave
+        // up under load, rc 255, the file named in its own error. Give it a little more
+        // patience than podman's CLI did (bounded by whatever's left of the batch's
+        // deadline, never past it) before calling the status genuinely lost: this removes
+        // the common case rather than merely relabeling it a fault downstream.
+        if rc == 255 {
+            if let Some(exit_file) = exec_wait_timeout_file(&output) {
+                let grace = match req.deadline {
+                    Some(d) => d.saturating_duration_since(Instant::now()).min(EXEC_WAIT_RECOVERY_GRACE),
+                    None => EXEC_WAIT_RECOVERY_GRACE,
+                };
+                if let Some(real_rc) = recover_lost_exit(&exit_file, grace) {
+                    rc = real_rc;
+                }
+            }
+        }
         if temp {
             let _ = fs::remove_file(&path);
         }
@@ -448,5 +505,72 @@ mod tests {
         let past = Some(Instant::now());
         assert_eq!(run_bounded(c, &out, Some(Duration::ZERO), past), RC_TIMEOUT);
         let _ = fs::remove_file(out);
+    }
+
+    // ---- sp-3azqi: recovering a podman exec-wait-timeout's lost exit status ----------
+
+    #[test]
+    fn exec_wait_timeout_file_names_the_exact_path_podman_gave_up_on() {
+        let out = "TAP version 14\nok 1 - a\nError: timed out waiting for file /var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef\n";
+        assert_eq!(
+            exec_wait_timeout_file(out),
+            Some(PathBuf::from(
+                "/var/lib/containers/storage/overlay-containers/deadbeef/userdata/abc/exit/deadbeef"
+            ))
+        );
+        assert_eq!(exec_wait_timeout_file("ok 1 - a\nFAIL something\n"), None);
+    }
+
+    #[test]
+    fn recover_lost_exit_reads_the_file_once_it_appears_within_grace() {
+        let dir = testkit::TempDir::new("testenv-runtime-recover");
+        let exit_file = dir.join("exit-code");
+        let f2 = exit_file.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            fs::write(&f2, "0").unwrap();
+        });
+        let t0 = Instant::now();
+        assert_eq!(
+            recover_lost_exit(&exit_file, Duration::from_secs(5)),
+            Some(0)
+        );
+        assert!(t0.elapsed() < Duration::from_secs(2), "recovers as soon as the file lands");
+        writer.join().unwrap();
+    }
+
+    #[test]
+    fn recover_lost_exit_gives_up_when_the_file_never_appears() {
+        let dir = testkit::TempDir::new("testenv-runtime-recover-none");
+        let never = dir.join("never-written");
+        let t0 = Instant::now();
+        assert_eq!(recover_lost_exit(&never, Duration::from_millis(200)), None);
+        assert!(t0.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn recover_lost_exit_is_a_no_op_at_zero_grace() {
+        let dir = testkit::TempDir::new("testenv-runtime-recover-zero");
+        let exit_file = dir.join("exit-code");
+        fs::write(&exit_file, "0").unwrap();
+        // already written, but a zero grace (deadline already passed) never even looks
+        assert_eq!(recover_lost_exit(&exit_file, Duration::ZERO), None);
+    }
+
+    #[test]
+    fn recover_lost_exit_ignores_unparseable_content_until_it_becomes_a_number() {
+        let dir = testkit::TempDir::new("testenv-runtime-recover-partial");
+        let exit_file = dir.join("exit-code");
+        fs::write(&exit_file, "").unwrap(); // conmon creates it before writing the code
+        let f2 = exit_file.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            fs::write(&f2, "3\n").unwrap();
+        });
+        assert_eq!(
+            recover_lost_exit(&exit_file, Duration::from_secs(5)),
+            Some(3)
+        );
+        writer.join().unwrap();
     }
 }
