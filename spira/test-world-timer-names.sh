@@ -60,13 +60,27 @@ printf '#!/usr/bin/env bash
 exit 0
 ' > "$SH/slay"; chmod +x "$SH/slay"
 
-# write_sc ENABLED_TIMER ACTIVE_TIMER LEGACY_WATCH INSTANCE_WATCH
-#   ENABLED_TIMER  — unit name that is-enabled should confirm (empty = none)
-#   ACTIVE_TIMER   — unit name that is-active should confirm as "active"
-#   LEGACY_WATCH   — unit to emit for list-units 'spira-watch@*' (empty = none)
-#   INSTANCE_WATCH — unit to emit for list-units 'spira-watch-*' (empty = none)
+# The six TIMER_PRIORITY bases this suite is NOT about — always resolvable by their
+# plain (unqualified) name, so a scenario that only configures sentinel's state never
+# makes world.sh refuse over an UNRELATED base it never meant to put in play
+# (sp-ivfu3-2: resolution is now by EXISTENCE — list-unit-files/cat — not by
+# enabled/active state, and a base nothing claims to exist is a REFUSAL, not a quiet
+# plain-name default).
+OTHER_BASES_PLAIN="spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer"
+
+# write_sc ENABLED_TIMER ACTIVE_TIMER LEGACY_WATCH INSTANCE_WATCH [SENTINEL_EXISTING]
+#   ENABLED_TIMER     — unit name that is-enabled should confirm (empty = none)
+#   ACTIVE_TIMER      — unit name that is-active should confirm as "active"
+#   LEGACY_WATCH      — unit to emit for list-units 'spira-watch@*' (empty = none)
+#   INSTANCE_WATCH    — unit to emit for list-units 'spira-watch-*' (empty = none)
+#   SENTINEL_EXISTING — space-separated sentinel unit name(s) list-unit-files/cat must
+#                       agree exist (sp-ivfu3-2); default: ENABLED_TIMER and
+#                       ACTIVE_TIMER, which is right for every scenario before that bead
+#                       (a timer this suite marks enabled or active obviously exists).
 write_sc() {
     local enabled="${1:-}" active="${2:-}" legacy_watch="${3:-}" inst_watch="${4:-}"
+    local sentinel_existing="${5:-$enabled $active}"
+    local existing="$sentinel_existing $OTHER_BASES_PLAIN"
     cat > "$TMP/systemctl" <<SC
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "\$CALLS"
@@ -78,6 +92,14 @@ case "\$cmd" in
 is-enabled)  [ "\$unit" = "$enabled" ] && exit 0 || exit 1 ;;
 is-active)
     [ "\$unit" = "$active" ] && { echo active; exit 0; } || { echo inactive; exit 3; } ;;
+list-unit-files)
+    case "\$unit" in
+        *'*'*) exit 0 ;;  # the 'every other spira-*.timer' discovery glob — none here
+        *) for u in $existing; do [ "\$unit" = "\$u" ] && { printf '%s enabled\n' "\$u"; exit 0; }; done; exit 0 ;;
+    esac ;;
+cat)
+    for u in $existing; do [ "\$unit" = "\$u" ] && exit 0; done
+    exit 1 ;;
 list-units)
     case "\$unit" in
         *'@'*) [ -n "$legacy_watch" ] && printf '%s active running\n' "$legacy_watch"; exit 0 ;;
@@ -97,6 +119,14 @@ world_stop() {
     PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
     SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
         "$SH/world.sh" stop "$@" 2>&1
+}
+
+world_start() {
+    local inst="$1"; shift
+    : > "$CALLS"
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no-such-conf" \
+    SPIRA_SYSTEMCTL="$TMP/systemctl" SPIRA_INSTANCE="$inst" \
+        "$SH/world.sh" start "$@" 2>&1
 }
 
 world_status() {
@@ -188,6 +218,63 @@ world_stop "prod" --hard >/dev/null
 calls="$(cat "$CALLS")"
 want   "D: calls stop on legacy @ watcher" \
        "stop spira-watch@answers.service"  "$calls"
+
+# --------------------------------------------------------------------------------------
+# SCENARIO E (sp-ivfu3-2, seen red first against the old is-enabled/is-active
+# resolution): THE WORLD IS STOPPED — spira-sentinel-prod.timer is the only unit that
+# EXISTS (list-unit-files/cat agree), but it is disabled AND inactive, same as every
+# essential timer right after a halt. The old resolution asked is-enabled/is-active,
+# which both say no for a disabled+inactive unit — indistinguishable from "does not
+# exist" — and picked the plain spira-sentinel.timer, which systemd has never heard of.
+# status/start/stop must all choose the EXISTING qualified name regardless.
+# --------------------------------------------------------------------------------------
+echo
+echo "E: world stopped (spira-sentinel-prod.timer exists, disabled+inactive) — chooses it, not the nonexistent plain name:"
+
+write_sc "" "" "" "" "spira-sentinel-prod.timer"
+world_stop "prod" >/dev/null
+calls="$(cat "$CALLS")"
+want   "E-stop: calls stop on the existing instance-qualified sentinel" \
+       "stop spira-sentinel-prod.timer"  "$calls"
+nowant "E-stop: never stops the nonexistent plain name" \
+       "stop spira-sentinel.timer"  "$calls"
+
+write_sc "" "" "" "" "spira-sentinel-prod.timer"
+out="$(world_status "prod")"
+want   "E-status: shows the existing instance-qualified sentinel" "spira-sentinel-prod.timer" "$out"
+nowant "E-status: never lists the nonexistent plain name as a timer row" \
+       "spira-sentinel.timer " "$out"
+
+write_sc "" "" "" "" "spira-sentinel-prod.timer"
+world_start "prod" >/dev/null
+calls="$(cat "$CALLS")"
+want   "E-start: queries/targets the existing instance-qualified sentinel" \
+       "spira-sentinel-prod.timer"  "$calls"
+nowant "E-start: never touches the nonexistent plain name" \
+       "is-enabled spira-sentinel.timer"  "$calls"
+
+# --------------------------------------------------------------------------------------
+# SCENARIO F (sp-ivfu3-2): NEITHER FORM EXISTS AT ALL — a named refusal, never a guess
+# at either name, and never a systemctl stop/start call on anything.
+# --------------------------------------------------------------------------------------
+echo
+echo "F: neither spira-sentinel-prod.timer nor spira-sentinel.timer exists — refuses, named:"
+
+write_sc "" "" "" "" ""
+out="$(world_stop "prod")"; rc=$?
+wantrc "F-stop: refuses (nonzero)" 1 "$rc"
+want   "F-stop: names the missing qualified unit" "spira-sentinel-prod.timer" "$out"
+want   "F-stop: names the missing plain unit"     "spira-sentinel.timer"      "$out"
+calls="$(cat "$CALLS")"
+nowant "F-stop: never calls stop on anything at all" "stop " "$calls"
+
+write_sc "" "" "" "" ""
+out="$(world_start "prod")"; rc=$?
+wantrc "F-start: refuses (nonzero)" 1 "$rc"
+want   "F-start: names the missing qualified unit" "spira-sentinel-prod.timer" "$out"
+want   "F-start: names the missing plain unit"     "spira-sentinel.timer"      "$out"
+calls="$(cat "$CALLS")"
+nowant "F-start: never calls start on anything at all" "start " "$calls"
 
 echo
 tl_summary

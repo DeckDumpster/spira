@@ -98,9 +98,32 @@ list-units)
     esac
     exit 0 ;;
 list-unit-files)
-    IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
-    for _at in "${_ats[@]}"; do printf '%s enabled\n' "$_at"; done
+    # sp-ivfu3-2: world.sh also asks this, by EXACT unit name, to decide whether a
+    # TIMER_PRIORITY base's unit exists at all (never by enabled/active state alone).
+    # This suite is not about that resolution, so every plain TIMER_PRIORITY name
+    # "exists" by default — the same name the old enabled/active-state fallback always
+    # landed on here, since nothing in this suite's own fixtures sets up an
+    # instance-qualified unit as enabled or active. A glob query (the 'every other
+    # spira-*.timer' discovery loop) still lists whatever ACTIVE_TIMERS names, unchanged.
+    case "$svc" in
+    *'*'*)
+        IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+        for _at in "${_ats[@]}"; do printf '%s enabled\n' "$_at"; done ;;
+    *)
+        for _b in spira-sentinel.timer spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
+            [ "$svc" = "$_b" ] && printf '%s enabled\n' "$_b"
+        done
+        IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+        for _at in "${_ats[@]}"; do [ "$svc" = "$_at" ] && printf '%s enabled\n' "$_at"; done ;;
+    esac
     exit 0 ;;
+cat)
+    for _b in spira-sentinel.timer spira-summon.timer spira-ops.timer spira-watchtower.timer spira-archivist.timer spira-archive.timer spira-skew.timer; do
+        [ "$svc" = "$_b" ] && exit 0
+    done
+    IFS=, read -ra _ats <<< "${ACTIVE_TIMERS:-}"
+    for _at in "${_ats[@]}"; do [ "$svc" = "$_at" ] && exit 0; done
+    exit 1 ;;
 stop)
     if [ "$svc" = "$STOP_FAILS" ]; then exit 1
     else exit 0
