@@ -27,6 +27,8 @@ pub const FIELD: char = '\u{1d}';
 pub enum Op {
     Context,
     Bead,
+    /// Every bead, one `bdjson list --all --limit 0`: the sweep's batched read.
+    Beads,
     /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
     /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
     Status,
@@ -36,7 +38,7 @@ pub enum Op {
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -71,6 +73,11 @@ const BEAD: &str = r#"printf '\036%s' "$(bdjson show "$1" 2>/dev/null)"
 exit 0
 "#;
 
+/// `bdjson list --all --limit 0` verbatim.
+const BEADS: &str = r#"printf '\036%s' "$(bdjson list --all --limit 0 2>/dev/null)"
+exit 0
+"#;
+
 /// `<0|1>` (db reachable) FIELD `<status>` — the two bd-backed questions
 /// `reap::holder_witnesses` asks through `BdProbe`, calling the still-bash
 /// `spira_db_reachable`/`spira_bead_status` so the status seam (a suite's
@@ -85,6 +92,7 @@ fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
         Op::Bead => BEAD,
+        Op::Beads => BEADS,
         Op::Status => STATUS,
         Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",

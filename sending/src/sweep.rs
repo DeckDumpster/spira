@@ -219,6 +219,10 @@ impl<'a> Sweep<'a> {
         let label = self.submitted_label.clone();
         let c = Ctx { w: self.w, repo: root, name: &r.name, base: &base, submitted_label: &label };
 
+        if !brs.is_empty() {
+            self.w.prefetch();
+        }
+
         // PASS 1 — every spira/* branch, exactly one disposition.
         for br in &brs {
             let id = br.strip_prefix("spira/").unwrap_or(br);

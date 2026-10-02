@@ -69,6 +69,9 @@ impl Fake {
 }
 
 impl World for Fake {
+    fn prefetch(&self) {
+        self.call("prefetch".into());
+    }
     fn base(&self, _root: &Path) -> Option<Base> {
         self.base.clone()
     }
@@ -466,4 +469,14 @@ fn harness_home_is_env_first_then_the_release_layout() {
     assert_eq!(crate::locate_home(Some("/h"), &exe), Some(PathBuf::from("/h")));
     assert_eq!(crate::locate_home(None, &exe), Some(rel.join("spira").canonicalize().unwrap()));
     assert_eq!(crate::locate_home(None, &t.path().join("x/y")), None);
+}
+
+#[test]
+fn the_store_is_read_in_one_batch_however_many_branches_there_are() {
+    let (fx, f) = fixture();
+    sweep(&f, opts(), &[repo(&fx)]);
+    let n = Git(&fx.repo).spira_branches().len();
+    let prefetches = f.calls.borrow().iter().filter(|c| c.as_str() == "prefetch").count();
+    assert_eq!(prefetches, 1, "one store read per repository, not per branch");
+    assert!(n > 1);
 }
