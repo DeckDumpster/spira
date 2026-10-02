@@ -39,6 +39,7 @@ impl Batch {
 pub struct Publish {
     pub pr: String,
     pub head: String,
+    pub branch: String,
 }
 
 /// What became of a publish PR that is no longer the open one.

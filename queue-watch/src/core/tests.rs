@@ -231,7 +231,7 @@ fn blind_poll_does_not_close_the_open_batch() {
 }
 
 fn pub_(pr: &str, head: &str) -> Publish {
-    Publish { pr: pr.into(), head: head.into() }
+    Publish { pr: pr.into(), head: head.into(), branch: String::new() }
 }
 
 // POSITIVE CONTROL: queue.local's publish PR is a wholly separate pipeline from the batch

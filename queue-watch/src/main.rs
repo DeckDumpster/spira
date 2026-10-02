@@ -397,7 +397,10 @@ mod tests {
         };
         let q = repos.iter().find(|r| r.name == "q").unwrap();
         assert_eq!(q.forge, PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
-        assert_eq!(crate::io::read_ci_on(q, "459", Some(&child_path)), Ok(crate::core::Ci::Green));
+        assert_eq!(
+            crate::io::read_ci_on(q, "459", "spira/queue/x", Some(&child_path)),
+            Ok(crate::core::Ci::Green)
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

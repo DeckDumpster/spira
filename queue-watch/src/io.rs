@@ -64,8 +64,8 @@ pub fn read_batch(dir: &Path) -> Result<Option<Batch>, String> {
     Ok(Some(Batch {
         pr,
         head: kv.get("head").cloned().unwrap_or_default(),
-        members: members(kv.get("members").map(String::as_str).unwrap_or("")),
         branch: kv.get("branch").cloned().unwrap_or_default(),
+        members: members(kv.get("members").map(String::as_str).unwrap_or("")),
     }))
 }
 
@@ -78,7 +78,11 @@ pub fn read_publish(dir: &Path) -> Result<Option<Publish>, String> {
     if pr.is_empty() {
         return Ok(None);
     }
-    Ok(Some(Publish { pr, head: kv.get("head").cloned().unwrap_or_default() }))
+    Ok(Some(Publish {
+        pr,
+        head: kv.get("head").cloned().unwrap_or_default(),
+        branch: kv.get("branch").cloned().unwrap_or_default(),
+    }))
 }
 
 pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
@@ -187,7 +191,13 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String,
     Ok((beads, repos))
 }
 
-fn forge(repo: &Repo, sub: &str, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
+fn forge(
+    repo: &Repo,
+    sub: &str,
+    pr: &str,
+    branch: Option<&str>,
+    path: Option<&std::ffi::OsStr>,
+) -> Result<String, String> {
     // A bare name (the release's `forge` binary, default since sp-yv4b3) is exec'd by name
     // on PATH; a configured path via bash.
     let mut c = if repo.forge.components().count() == 1 {
@@ -200,20 +210,24 @@ fn forge(repo: &Repo, sub: &str, pr: &str, path: Option<&std::ffi::OsStr>) -> Re
     if let Some(p) = path {
         c.env("PATH", p);
     }
+    c.arg(sub).arg(&repo.path).arg(pr);
+    if let Some(b) = branch {
+        c.arg(b);
+    }
     let out = run(
-        c.arg(sub).arg(&repo.path).arg(pr),
+        &mut c,
         &format!("forge {sub} {pr}"),
     )?;
     Ok(out.lines().next().unwrap_or("").trim().to_string())
 }
 
-pub fn read_ci(repo: &Repo, pr: &str) -> Result<Ci, String> {
-    read_ci_on(repo, pr, None)
+pub fn read_ci(repo: &Repo, pr: &str, branch: &str) -> Result<Ci, String> {
+    read_ci_on(repo, pr, branch, None)
 }
 
 /// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
-pub fn read_ci_on(repo: &Repo, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<Ci, String> {
-    match forge(repo, "check-status", pr, path)?.as_str() {
+pub fn read_ci_on(repo: &Repo, pr: &str, branch: &str, path: Option<&std::ffi::OsStr>) -> Result<Ci, String> {
+    match forge(repo, "check-status", pr, Some(branch), path)?.as_str() {
         "pending" => Ok(Ci::Pending),
         "green" => Ok(Ci::Green),
         "red" => Ok(Ci::Red),
@@ -239,7 +253,7 @@ pub fn read_queued_since(repo: &Repo, branch: &str) -> Option<u64> {
 }
 
 pub fn read_pr_state(repo: &Repo, pr: &str) -> PrState {
-    match forge(repo, "pr-state", pr, None).as_deref() {
+    match forge(repo, "pr-state", pr, None, None).as_deref() {
         Ok("open") => PrState::Open,
         Ok("merged") => PrState::Merged,
         Ok("closed") => PrState::Closed,
@@ -355,7 +369,7 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
     }
 
     if let Some(b) = &s.batch {
-        match read_ci(repo, &b.pr) {
+        match read_ci(repo, &b.pr, &b.branch) {
             Ok(c) => {
                 if c == Ci::Pending {
                     s.queued_since = read_queued_since(repo, &b.branch);
@@ -376,7 +390,7 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
     }
 
     if let Some(p) = &s.publish {
-        match read_ci(repo, &p.pr) {
+        match read_ci(repo, &p.pr, &p.branch) {
             Ok(c) => s.publish_ci = Some(c),
             Err(e) => s.errors.push(e),
         }
@@ -400,6 +414,34 @@ mod tests {
     fn scratch_path(tag: &str) -> testkit::TempDir {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         testkit::TempDir::new(&format!("queue-watch-run_bd-test-{tag}-{n}"))
+    }
+
+    // The forge refuses to look a run up without a branch and answers pending; the stub is
+    // red only for the real branch, so a call that drops it reads Pending, not Red.
+    #[test]
+    fn read_ci_passes_the_batch_branch_to_check_status() {
+        let dir = scratch_path("ci-branch");
+        let forge = dir.join("forge.sh");
+        testkit::write_exe(
+            &forge,
+            "#!/bin/sh\nif [ \"$4\" = spira/queue/real ]; then echo red; else echo pending; fi\n",
+        );
+        let repo = Repo {
+            name: "r".into(),
+            path: PathBuf::from("/tmp/r"),
+            base: "origin/main".into(),
+            forge,
+            local: false,
+        };
+        assert_eq!(read_ci(&repo, "7", "spira/queue/real"), Ok(Ci::Red));
+        assert_eq!(read_ci(&repo, "7", ""), Ok(Ci::Pending));
+
+        let q = dir.join("q");
+        fs::create_dir_all(&q).unwrap();
+        fs::write(q.join("open"), "pr=7\nhead=h\nbranch=spira/queue/real\n").unwrap();
+        fs::write(q.join("publish"), "pr=8\nhead=h\nbranch=spira/publish/real\n").unwrap();
+        assert_eq!(read_batch(&q).unwrap().unwrap().branch, "spira/queue/real");
+        assert_eq!(read_publish(&q).unwrap().unwrap().branch, "spira/publish/real");
     }
 
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
