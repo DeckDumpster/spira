@@ -110,6 +110,16 @@ noverdict sp-c1 spira/c1 fixture-repo lock-timeout NO_VERDICT "gate: lock held"
 is "one branch hitting lock-timeout three times still escalates" 1 "$(sent_count)"
 want "and names only that branch" "spira/c1 cannot be judged" "$(last_subject)"
 
+# A SHARED-CAUSE REASON OTHER THAN harness-fault (the gate setup budget) ALSO ESCALATES ONCE
+# FOR FOUR BRANCHES, naming all of them.
+: > "$MAIL_LOG"
+for b in d1 d2 d3 d4; do
+    noverdict "sp-$b" "spira/$b" fixture-repo deadline-up NO_VERDICT "gate: setup budget exhausted"
+done
+is "four branches with the same deadline-up reason produce one ask" 1 "$(sent_count)"
+want "  naming the first branch"  "spira/d1" "$(last_subject)"
+want "  and the third"            "spira/d3" "$(last_subject)"
+
 # --------------------------------------------------------------------------------------
 # A STALE CLASS WINDOW ESCALATES AGAIN. An .asked marker older than
 # SPIRA_NOVERDICT_CLASS_WINDOW is a fault that already got its ask and went away — a

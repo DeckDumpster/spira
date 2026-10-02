@@ -198,6 +198,12 @@ pub fn machinery_mail(id: &str, branch: &str, repo_name: &str, outcome: &str, re
     (subj, dflt, body)
 }
 
+/// Reasons whose cause is the host, not the branch: every branch fails the same way, so the
+/// streak is counted and asked once per (repo, reason).
+pub fn is_host_wide_reason(reason: &str) -> bool {
+    matches!(reason, "harness-fault" | "budget" | "admission-timeout" | "scratch-short") || reason.starts_with("deadline-")
+}
+
 /// lib.sh `spira_ask_machinery_class`'s dedupe subject.
 pub fn machinery_class_subject(repo_name: &str, outcome: &str, reason: &str) -> String {
     format!("{repo_name} cannot be judged: {outcome} ({reason})")
@@ -355,6 +361,8 @@ mod tests {
 
     #[test]
     fn machinery_mails_match_lib_sh() {
+        assert!(is_host_wide_reason("deadline-up") && is_host_wide_reason("budget") && is_host_wide_reason("harness-fault"));
+        assert!(!is_host_wide_reason("conflict") && !is_host_wide_reason("lock-timeout"));
         assert_eq!(machinery_subject("spira/sp-a"), "spira/sp-a cannot be judged");
         let (subj, dflt, body) = machinery_mail("sp-a", "spira/sp-a", "spira", "NO_VERDICT", "lock", 3, "tail");
         assert_eq!(subj, "spira/sp-a cannot be judged: NO_VERDICT x3 in a row (lock)");
