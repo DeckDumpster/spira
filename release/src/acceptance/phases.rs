@@ -467,6 +467,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         scope: r.conf_value("SPIRA_SCOPE_LABEL", &[]).unwrap_or_else(|| home_repo.clone()),
     };
 
+    let repo_map = fs::read_to_string(r.o.xdg_config.join("spira/repo-map")).unwrap_or_default();
+    let missing = land_modes_missing(&repo_map);
+    r.check("phase A: scratch setup carries a repository in each land mode (queue, pr, push)", missing.is_empty(), || format!("no repo-map row with land mode: {}", missing.join(", ")));
+
     let (ready_path, ready) = r.ready_sh();
     r.check("phase A: ready.sh exits 0 after install", ready.rc == 0, || format!("{} exit {}", ready_path.display(), ready.rc));
     if ready.rc != 0 {
@@ -496,6 +500,14 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         r.check(&name, ready_has(&ready.out, &id), || format!("bead {id} not found in 'bd ready --label {sel}' — builder predicate does not match bead labels"));
         let landed = format!("phase A stage 5: bead {id} landed on {}:{land_ref}", scratch.display());
         r.follow("phase A", &id, &land_ref, &base, &landed);
+        let mode = repo_map_mode(&repo_map, &home_repo).unwrap_or_else(|| "push".into());
+        let hist = h.run(&r.tool("spira-lc").args(["history", &id]));
+        let got = lifecycle_states(&hist.out);
+        let want = expected_lifecycle(&mode);
+        let name = format!("phase A: {id} lifecycle event sequence {} ({mode})", want.join(" -> "));
+        r.check(&name, hist.rc == 0 && missing_in_order(&want, &got).is_none(), || {
+            format!("spira-lc history {id} rc={} — saw [{}], missing {}", hist.rc, got.join(", "), missing_in_order(&want, &got).unwrap_or("history"))
+        });
     }
 
     println!("\nphase A — uninstall and clean state");

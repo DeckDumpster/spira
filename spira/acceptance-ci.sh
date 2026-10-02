@@ -76,6 +76,17 @@ git -C "$HOME/scratch-repo" push origin main
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/spira"
 printf 'scratch-repo | %s | push | origin/main | |\n' "$HOME/scratch-repo" \
     > "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
+# One repository per remaining land mode, so every release proves queue, pr and push.
+for _m in queue.local:scratch-queue pr:scratch-pr; do
+    git init --bare --initial-branch=main "$HOME/${_m#*:}.git"
+    git clone "$HOME/${_m#*:}.git" "$HOME/${_m#*:}"
+    git -C "$HOME/${_m#*:}" config user.email "acceptance@spira.local"
+    git -C "$HOME/${_m#*:}" config user.name "Spira Acceptance"
+    git -C "$HOME/${_m#*:}" commit --allow-empty -m "init"
+    git -C "$HOME/${_m#*:}" push origin main
+    printf '%s | %s | %s | origin/main | |\n' "${_m#*:}" "$HOME/${_m#*:}" "${_m%%:*}" \
+        >> "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
+done
 
 export SPIRA_ACCEPTANCE_FORENSICS="${SPIRA_ACCEPTANCE_FORENSICS:-$HOME/acceptance-forensics}"
 mkdir -p "$SPIRA_ACCEPTANCE_FORENSICS"
