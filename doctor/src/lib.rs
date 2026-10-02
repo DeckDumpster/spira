@@ -78,6 +78,7 @@ pub fn run(w: &dyn World) -> i32 {
             lines: {
                 let mut v = check_failed_units(w);
                 v.extend(check_orphan_units(w));
+                v.extend(check_prod_checkout(w));
                 v
             },
         },
@@ -586,6 +587,33 @@ pub fn check_orphan_units(w: &dyn World) -> Vec<Line> {
     }
     if out.is_empty() {
         out.push(ok("no orphan spira-watch units"));
+    }
+    out
+}
+
+// ============================================================================ prod checkout
+
+/// Every installed (non-transient, non-aeon) unit's ExecStart must resolve under
+/// `$SPIRA_RELEASES`; anywhere else, a merge to the checkout deploys with no gate.
+pub fn check_prod_checkout(w: &dyn World) -> Vec<Line> {
+    let rows = match w.systemd_installed_unit_execs() {
+        Ok(r) => r,
+        Err(e) => return vec![fail(format!("cannot query installed unit files: {e}"), "Check the systemd user manager: systemctl --user status")],
+    };
+    let releases = w.env("SPIRA_RELEASES").unwrap_or_default();
+    let root = format!("{}/", releases.trim_end_matches('/'));
+    let mut out = Vec::new();
+    for (unit, state, path) in &rows {
+        if state == "transient" || unit.starts_with("spira-aeon-") || path.is_empty() || path.starts_with(&root) {
+            continue;
+        }
+        out.push(fail(
+            format!("{unit}'s ExecStart resolves outside $SPIRA_RELEASES"),
+            format!("path: {path}\nCut over: build-tarball.sh, then activate.sh <tarball> (or deploy.sh <tag>) so SPIRA_PROD points under {releases}, then re-run install.sh to re-render units."),
+        ));
+    }
+    if out.is_empty() {
+        out.push(ok(format!("every installed spira-*/beads-push unit runs from {releases}")));
     }
     out
 }

@@ -334,6 +334,28 @@ impl World for Real {
             Err(e) => Err(e.to_string()),
         }
     }
+    fn systemd_installed_unit_execs(&self) -> Result<Vec<(String, String, String)>, String> {
+        let sc = self.env("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string());
+        let out = Command::new(&sc)
+            .args(["--user", "list-unit-files", "--no-legend", "--plain", "spira-*.service", "beads-push.service"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !out.status.success() {
+            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            return Err(text.lines().next().unwrap_or("").to_string());
+        }
+        let mut rows = Vec::new();
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut f = line.split_whitespace();
+            let (Some(unit), Some(state)) = (f.next(), f.next()) else { continue };
+            let show = Command::new(&sc).args(["--user", "show", unit, "-p", "ExecStart", "--value"]).stdin(Stdio::null()).output();
+            let text = show.map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+            let path = text.split("path=").nth(1).and_then(|r| r.split([' ', ';']).next()).unwrap_or("").to_string();
+            rows.push((unit.to_string(), state.to_string(), path));
+        }
+        Ok(rows)
+    }
     fn spira_unit(&self, kind: &str, subkind: &str) -> String {
         self.seam("spira_unit \"$1\" \"$2\"", &[kind, subkind])
     }
