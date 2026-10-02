@@ -67,10 +67,7 @@ impl Env {
             repeat_window_s: var_u64("SPIRA_MAIL_REPEAT_WINDOW", 14400),
             tidy_fresh_s: var_u64("SPIRA_MAIL_TIDY_FRESH", 86400),
             id_prefix: var("SPIRA_ID_PREFIX").unwrap_or_default(),
-            ask_label: spira_config::resolve::resolve_ask_label(&env_map, &home).unwrap_or_else(|e| {
-                eprintln!("mail: FATAL: {e}");
-                std::process::exit(1);
-            }),
+            ask_label: spira_config::resolve::resolve_ask_label(&env_map, &home).unwrap_or_default(),
             db: var("SPIRA_DB").unwrap_or_default(),
             bd_bin: var("SPIRA_BD").unwrap_or_else(|| "bd".to_string()),
             operator_actor: var("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|| "operator".to_string()),
