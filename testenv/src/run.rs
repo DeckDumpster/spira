@@ -306,6 +306,17 @@ fn verified(repo: &Path, r: &str) -> bool {
 /// spira_landref's rungs: declared base, origin/HEAD, ask the remote once, the local HEAD
 /// branch of a remote-less repository.
 fn landref(repo: &RepoRef, deps: &Deps) -> Option<String> {
+    landref_configured(repo, deps).or_else(|| {
+        let has_cfg = deps
+            .config
+            .and_then(|c| c.repo.get(&repo.name))
+            .and_then(|r| r.base.as_ref())
+            .is_some_and(|b| !b.is_empty());
+        (!has_cfg && verified(&repo.path, "local/main")).then(|| "local/main".to_string())
+    })
+}
+
+fn landref_configured(repo: &RepoRef, deps: &Deps) -> Option<String> {
     if let Some(base) = deps
         .config
         .and_then(|c| c.repo.get(&repo.name))
