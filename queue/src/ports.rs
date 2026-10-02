@@ -147,8 +147,8 @@ pub trait Lib {
     fn comment(&self, id: &str, text: &str);
     fn notify(&self, repo: &str, subject: &str, body: &str);
     fn event(&self, kind: &str, title: &str, detail: &str);
-    /// R11: true when forge is an ancestor of local (alarms once per foreign tip if not).
-    fn divergence(&self, repo: &str, path: &Path, forge: &str, local: &str) -> bool;
+    /// R11: is forge an ancestor of local (alarms once per foreign tip if not).
+    fn divergence(&self, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence;
     /// R12: `spira_git_push <path> -q <remote> <refspec>`.
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool;
     /// R13: Ok, or Err(REBASE_FAILURE).
@@ -299,4 +299,11 @@ impl World<'_> {
     pub fn var(&self, k: &str) -> Option<String> {
         self.env.var(k).filter(|v| !v.is_empty())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Divergence {
+    Ancestor,
+    Diverged(String),
+    CannotCheck(String),
 }

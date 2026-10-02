@@ -145,6 +145,7 @@ struct FLib {
     toml: Option<PathBuf>,
     readback: RefCell<(String, String)>,
     diverged: Cell<bool>,
+    cannot_check: Cell<bool>,
     push_ok: Cell<bool>,
     /// What `create_bug` answers (None: bd created nothing).
     bug_id: RefCell<Option<String>>,
@@ -209,9 +210,15 @@ impl Lib for FLib {
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.log(format!("event {kind} {title} {detail}"));
     }
-    fn divergence(&self, _: &str, _: &Path, forge: &str, local: &str) -> bool {
+    fn divergence(&self, _: &Path, _: &str, _: &Path, forge: &str, local: &str) -> Divergence {
         self.log(format!("divergence {forge} {local}"));
-        !self.diverged.get()
+        if self.cannot_check.get() {
+            Divergence::CannotCheck("no queue dir".into())
+        } else if self.diverged.get() {
+            Divergence::Diverged(format!("{local}..{forge}"))
+        } else {
+            Divergence::Ancestor
+        }
     }
     fn push(&self, _: &Path, remote: &str, refspec: &str) -> bool {
         self.log(format!("push {remote} {refspec}"));
@@ -564,6 +571,7 @@ impl T {
             toml: None,
             readback: RefCell::default(),
             diverged: Cell::new(false),
+            cannot_check: Cell::new(false),
             push_ok: Cell::new(true),
             bug_id: RefCell::new(Some("sp-fix1".into())),
             pf_rc: Cell::new(0),
@@ -1764,6 +1772,14 @@ fn publish_refuses_a_divergence_an_open_publish_and_a_range_without_land_commits
     t.lib.diverged.set(true);
     assert_eq!(t.run(&["publish"]), 1);
     assert!(t.err().contains("is not an ancestor of local/main — refusing to publish"));
+
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    t.lib.cannot_check.set(true);
+    assert_eq!(t.run(&["publish"]), 1);
+    assert!(t.err().contains("cannot check whether origin/main is an ancestor of local/main"), "{}", t.err());
+    assert!(t.err().contains("no queue dir"));
+    assert!(!t.err().contains("something else moved the forge"));
 
     let t = T::new(LandMode::QueueLocal);
     publishable(&t);

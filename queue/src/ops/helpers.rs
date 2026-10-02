@@ -16,7 +16,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::ports::Git;
+use crate::ports::{Divergence, Git};
 use crate::real::RealGit;
 use crate::records;
 
@@ -221,48 +221,40 @@ pub fn notify(name: &str, subject: &str, body: &str) {
     }
 }
 
-/// `queue_local_check_divergence <name> <repo> <forge-sha> <local-sha>` -> true when
-/// `forge_sha` is an ancestor of `local_sha` — row 4 of the local/main design. Under
-/// queue.local the forge's main moves only by our own publishes; a forge-sha that is not
-/// an ancestor of local-sha means something pushed to it outside the publish queue. Mails
-/// the concierge naming the foreign commits the first time this exact forge-sha is seen,
-/// tracked in `queue/<name>/divergence-alarmed` — a repeated call against the SAME foreign
-/// tip is silent, so ONE alarm covers one divergence. The marker clears the moment the
-/// check is healthy again. NEVER REBASES: this only detects and alarms; callers decide
-/// what "stop publishing" means for them (`cmd_publish` refuses outright; `cmd_land_local`
-/// only alarms and lets the round build proceed).
-///
-/// An unset `$SPIRA_QUEUE_DIR` is refused (false, logged) rather than guessed at — the
-/// bash original's `${SPIRA_QUEUE_DIR:?}` aborted outright, and a divergence check that
-/// cannot place its state file must never report "healthy" by default.
-pub fn check_divergence(name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> bool {
-    let queue_dir = std::env::var("SPIRA_QUEUE_DIR").unwrap_or_default();
-    if queue_dir.is_empty() {
-        eprintln!("spira: queue_local_check_divergence: SPIRA_QUEUE_DIR: parameter null or not set");
-        return false;
+/// Row 4 of the local/main design: is `forge_sha` an ancestor of `local_sha`? Under
+/// queue.local the forge's main moves only by our own publishes, so a non-ancestor means
+/// something pushed outside the publish queue; the first sighting of each foreign tip mails
+/// the concierge (marker `queue/<name>/divergence-alarmed`, cleared once healthy). Never
+/// rebases. A check that cannot run is `CannotCheck`, never `Diverged`.
+pub fn check_divergence(queue_dir: &Path, name: &str, repo: &Path, forge_sha: &str, local_sha: &str) -> Divergence {
+    if queue_dir.as_os_str().is_empty() {
+        return Divergence::CannotCheck("the queue directory is not configured, so the divergence marker cannot be placed".into());
     }
-    let statefile = Path::new(&queue_dir).join(name).join("divergence-alarmed");
-    let is_ancestor = Command::new("git")
+    let statefile = queue_dir.join(name).join("divergence-alarmed");
+    let status = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["merge-base", "--is-ancestor", forge_sha, local_sha])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-    if is_ancestor {
-        let _ = std::fs::remove_file(&statefile);
-        return true;
+        .status();
+    match status {
+        Ok(s) if s.success() => {
+            let _ = std::fs::remove_file(&statefile);
+            return Divergence::Ancestor;
+        }
+        Ok(s) if s.code() == Some(1) => {}
+        Ok(s) => return Divergence::CannotCheck(format!("git merge-base --is-ancestor {forge_sha} {local_sha} failed ({s}) in {}", repo.display())),
+        Err(e) => return Divergence::CannotCheck(format!("could not run git in {}: {e}", repo.display())),
     }
+    let foreign_range = format!("{local_sha}..{forge_sha}");
     let already = std::fs::read_to_string(&statefile).ok().map(|s| s.trim().to_string()).unwrap_or_default();
     if already != forge_sha {
-        let range = format!("{local_sha}..{forge_sha}");
         let foreign = Command::new("git")
             .arg("-C")
             .arg(repo)
-            .args(["log", "--format=%h %s", &range])
+            .args(["log", "--format=%h %s", &foreign_range])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()
@@ -280,7 +272,7 @@ pub fn check_divergence(name: &str, repo: &Path, forge_sha: &str, local_sha: &st
         );
         notify(name, "divergence: forge is not an ancestor of local/main", &body);
     }
-    false
+    Divergence::Diverged(foreign_range)
 }
 
 /// `spira_git_push <repo> [push-args...]`: push with the GitHub App identity when
