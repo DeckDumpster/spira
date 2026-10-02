@@ -756,7 +756,7 @@ impl<'a> Run<'a> {
         self.check_stop()?;
 
         // ---- the brief ----
-        self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty);
+        self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty)?;
 
         // ---- the groom log, before ----
         self.s.session_epoch = self.now();
@@ -819,7 +819,7 @@ impl<'a> Run<'a> {
         ms
     }
 
-    fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) {
+    fn write_prompt(&mut self, work: &Path, fixture_ms: u64, resume: &str, slain: &str, rebase: &str, dirty: &[String]) -> Result<(), Abort> {
         let bead = self.s.bead.clone();
         let wdisp = work.display().to_string();
         let overlay = self.conf.overlay();
@@ -918,7 +918,7 @@ impl<'a> Run<'a> {
             finish: blocks[3].clone(),
         };
         let prompt = brief::render_prompt(&chamber, &tokens, banner.as_deref());
-        let statutes = self.statutes();
+        let statutes = self.statutes().map_err(Abort::Die)?;
         let (sys, mut task) = brief::split(&statutes, &prompt);
         task.push_str(&brief::dirty_brief(dirty));
         task.push_str(resume);
@@ -928,10 +928,12 @@ impl<'a> Run<'a> {
         task.push_str(rebase);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.task.md")), task);
+        Ok(())
     }
 
     /// `render_memories "${FAYTH_MEMORY_PREFIXES:-law-}" "" "${FAYTH_STATUTE_CORE:-}"`.
-    pub fn statutes(&self) -> String {
+    /// Err when a declared core slug names no memory: the brief would be silently thinned.
+    pub fn statutes(&self) -> Result<String, String> {
         let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
         let age = self.conf.n("SPIRA_MEMORIES_CACHE_AGE", 300);
         let mut json = String::new();
@@ -957,7 +959,11 @@ impl<'a> Run<'a> {
         }
         let core = if self.fayth.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.fayth.statute_core.clone() };
         let harness = self.conf.or("SPIRA_REPO", "<harness>");
-        brief::render_memories(&json, &self.fayth.memory_prefixes, 120_000, &core, &harness)
+        let missing = brief::missing_core(&json, &self.fayth.memory_prefixes, &core);
+        if !missing.is_empty() {
+            return Err(format!("{}: core statute(s) declared but not found: {} — refusing to start with a thinned brief", self.f(), missing.join(", ")));
+        }
+        Ok(brief::render_memories(&json, &self.fayth.memory_prefixes, 120_000, &core, &harness))
     }
 
     /// `aeon_claude_argv <flag> <file>`.
