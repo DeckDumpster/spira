@@ -493,9 +493,9 @@ REASON`
 
 **Symptom** — Incident filed claiming host_cores() function is missing from lib.sh or gate.sh
 
-**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-governor-host-cores.sh
+**Check** — grep -q "^host_cores() {" /path/to/lib.sh && /path/to/test-gate-unit.sh
 
-**Fix** — No fix needed — the function was already implemented in sp-79ww9 (commit 818c218, 2026-09-17). Verify it exists and the test passes. This is a duplicate incident.
+**Fix** — No fix needed — the function was already implemented in sp-79ww9 (commit 818c218, 2026-09-17). Verify it exists and the test passes (host_cores() coverage lives in test-gate-unit.sh, UC-gate-verdict-11 — the standalone admission-throttle test suite that originally covered it was deleted along with that mechanism, sp-8mzsh). This is a duplicate incident.
 
 **Escalate** — None — this is incident triage, not a defect in the code.
 
