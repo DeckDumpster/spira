@@ -502,7 +502,7 @@ fn non_checkout_release_spira(release: &Path) -> PathBuf {
 /// (`sentinel/src/dispatch.rs`'s `setenv` list omits it) into the landing worker, which
 /// shares that SAME `SPIRA_HOME`. Before the fix, `repo_override` read the missing
 /// `SPIRA_REPO_DERIVED` as THIS process's own deliberate override and handed back the
-/// release root for the home repo outright — never consulting the repo-map's real 'spira'
+/// release root for the home repo outright — never consulting the real per-repository
 /// row — and `landing-pass`'s own CHECK6 then saw the release directory, not a checkout,
 /// and skipped it, exactly as the 07:36:57Z–07:37:16Z pass this bead is named for did.
 #[test]
@@ -511,8 +511,9 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
     let release = t.join("spira-releases/deadbeef");
     let release_spira = non_checkout_release_spira(&release);
 
-    // The REAL configured checkout for the home repo 'spira' — a repo-map naming it, and
-    // a real git repo carrying the fixture branch landing-pass's own CHECK6 must see.
+    // The REAL configured checkout for the home repo 'spira' — a per-repository catalog
+    // naming it, and a real git repo carrying the fixture branch landing-pass's own CHECK6
+    // must see.
     let checkout = t.join("checkouts/spira");
     std::fs::create_dir_all(&checkout).unwrap();
     let git = |args: &[&str]| {
@@ -525,9 +526,9 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
     git(&["commit", "-q", "--allow-empty", "-m", "fixture work", "--author=Fixture <fixture@example.com>"]);
 
     let home = t.join("userhome");
-    let repo_map = home.join(".config/spira/repo-map");
-    std::fs::create_dir_all(repo_map.parent().unwrap()).unwrap();
-    std::fs::write(&repo_map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
+    let catalog = home.join(".config/spira/catalog");
+    std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+    std::fs::write(&catalog, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
 
     let spira_config_bin = build_bin("spira-config", "spira-config");
 
@@ -540,7 +541,7 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
         .arg(format!("PATH={}", release.join("bin").display()))
         .arg(format!("SPIRA_HOME={}", release_spira.display()))
         .arg(format!("SPIRA_REPO={}", release.display()))
-        .arg(format!("SPIRA_REPO_MAP={}", repo_map.display()))
+        .arg(format!("SPIRA_REPO_MAP={}", catalog.display()))
         .arg("SPIRA_HOME_REPO=spira")
         .arg(&spira_config_bin)
         .arg("repo")

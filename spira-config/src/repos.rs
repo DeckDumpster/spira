@@ -707,7 +707,7 @@ mod tests {
         let t = testkit::TempDir::new("repos-registry-sp-8bhnr");
 
         // The REAL configured checkout for the home repo "spira" (production: spira.toml
-        // + repo-map both name /home/ryan/spira/harness; here, a fixture equivalent).
+        // and repo-map both name the real harness checkout; here, a fixture equivalent).
         let checkout = t.path().join("checkouts/spira");
         std::fs::create_dir_all(&checkout).unwrap();
         let map = t.path().join("repo-map");
