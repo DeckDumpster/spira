@@ -122,7 +122,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         db: take("SPIRA_DB"),
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
-        instance: std::env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string()),
+        instance: spira_config::resolve::resolve_instance(&std::env::vars().collect(), home)?,
         now: read_now(),
     })
 }

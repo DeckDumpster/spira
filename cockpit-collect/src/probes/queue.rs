@@ -219,7 +219,7 @@ pub fn queue_keys() -> Kv {
         let reg = io::repo_registry();
         for rname in reg.all() {
             let Some(rp) = reg.root(&rname) else { continue };
-            let suite_state_file = std::env::var("SPIRA_SUITE_STATE_FILE").unwrap_or_else(|_| "spira/suite-state".to_string());
+            let suite_state_file = spira_config::resolve::suite_state_file().unwrap_or_default();
             let sf = std::path::Path::new(&rp).join(&suite_state_file);
             if let Ok(content) = std::fs::read_to_string(&sf) {
                 quarantine_n += content.lines().filter(|l| l.contains(" | quarantined |")).count();

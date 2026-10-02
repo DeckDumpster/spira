@@ -68,7 +68,7 @@ impl Env {
             tidy_fresh_s: var_u64("SPIRA_MAIL_TIDY_FRESH", 86400),
             id_prefix: var("SPIRA_ID_PREFIX").unwrap_or_default(),
             ask_label: spira_config::resolve::resolve_ask_label(&env_map, &home).unwrap_or_default(),
-            db: var("SPIRA_DB").unwrap_or_default(),
+            db: spira_config::resolve::resolve_key(&env_map, &home, "SPIRA_DB").unwrap_or_default(),
             bd_bin: var("SPIRA_BD").unwrap_or_else(|| "bd".to_string()),
             operator_actor: var("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|| "operator".to_string()),
             run_dir,

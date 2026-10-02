@@ -19,6 +19,7 @@ pub struct Config {
 }
 
 pub const UNTRUSTED_LABEL: &str = "gh-untrusted";
+pub const GITHUB_API: &str = "https://api.github.com";
 
 /// `SPIRA_GH_INTAKE_PRIORITY` — 0-4 or refused, exactly as the bash `case` did.
 pub fn valid_priority(p: &str) -> bool {

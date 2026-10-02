@@ -109,13 +109,17 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
     }
     if let Some((what, detail)) = ans.cert_log {
         // lifecycle-cert.sh's log, same path and line shape: `<epoch> <verb> bead=<id> <detail>`.
-        let dir = std::env::var("SPIRA_RUN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into());
         let id = args.first().map(String::as_str).unwrap_or("");
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(std::path::Path::new(&dir).join("lifecycle-cert.log"))
-            .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
+        match spira_config::resolve::run_dir_for_process() {
+            Ok(dir) => {
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(dir.join("lifecycle-cert.log"))
+                    .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
+            }
+            Err(e) => eprintln!("spira-lc: {e} — lifecycle-cert.log not written"),
+        }
     }
     ans.code
 }

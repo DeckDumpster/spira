@@ -20,7 +20,10 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 fn spira_repo() -> String {
-    env::var("SPIRA_REPO").unwrap_or_else(|_| ".".to_string())
+    spira_config::resolve::key_for_process("SPIRA_REPO").unwrap_or_else(|e| {
+        eprintln!("reconciler-alert: {e}");
+        std::process::exit(1)
+    })
 }
 
 /// mail by name on the launcher's PATH (sp-gypjk).

@@ -16,7 +16,7 @@ pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
     if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl")) {
         return None;
     }
-    let socket_path = std::env::var("SPIRA_LC_SOCKET").unwrap_or_else(|_| "/run/spira-lc/sock".to_string());
+    let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET").ok()?;
     let stream = UnixStream::connect(&socket_path).ok()?;
     stream.set_read_timeout(Some(TIMEOUT)).ok()?;
     stream.set_write_timeout(Some(TIMEOUT)).ok()?;

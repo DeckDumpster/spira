@@ -54,7 +54,13 @@ impl Real {
                 }
             }
         }
-        std::env::var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
+        match std::env::var("SPIRA_HOME") {
+            Ok(h) if !h.is_empty() => PathBuf::from(h),
+            _ => {
+                eprintln!("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable");
+                std::process::exit(3)
+            }
+        }
     }
 
     fn capture_env(home: &Path) -> BTreeMap<String, String> {

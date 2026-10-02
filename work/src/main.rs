@@ -80,7 +80,7 @@ fn read_tip() -> Option<String> {
 /// line in (the argv array), one JSON line out (`{exit_code, stdout}`). No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
 fn send(argv: &[String]) -> Result<(i32, String), String> {
-    let socket_path = std::env::var("SPIRA_LC_SOCKET").unwrap_or_else(|_| "/run/spira-lc/sock".to_string());
+    let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET")?;
     let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
     stream.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;

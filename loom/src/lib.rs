@@ -86,8 +86,15 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+fn refuse(why: &str) -> ! {
+    eprintln!("loom: {why}");
+    std::process::exit(1)
+}
+
 impl Config {
     pub fn from_env() -> Config {
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| refuse(&e));
         Config {
             db: std::env::var("SPIRA_DB").unwrap_or_default(),
             extra_path: std::env::var("SPIRA_PATH")
@@ -107,10 +114,7 @@ impl Config {
                 .filter(|b| !b.is_empty())
                 .unwrap_or_else(|| "bd".to_string()),
             run: std::env::var("SPIRA_RUN").unwrap_or_default(),
-            instance: std::env::var("SPIRA_INSTANCE")
-                .ok()
-                .filter(|i| !i.is_empty())
-                .unwrap_or_else(|| "prod".to_string()),
+            instance: spira_config::resolve::resolve_instance(&env, &home).unwrap_or_else(|e| refuse(&e)),
             systemctl: std::env::var("SPIRA_SYSTEMCTL")
                 .ok()
                 .filter(|s| !s.is_empty())

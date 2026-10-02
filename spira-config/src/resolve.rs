@@ -325,6 +325,70 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     Ok(instance.to_string())
 }
 
+/// Any one registry key, resolved like [`resolve_run_dir`]: a non-empty env value wins, else
+/// full resolution; a named refusal when neither yields a value.
+pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Result<String, String> {
+    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
+    let repo = derive_home_repo(home, env);
+    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
+    match resolved.get(key) {
+        "" => Err(format!("{key} is not set and spira.toml does not resolve it")),
+        v => Ok(v.to_string()),
+    }
+}
+
+/// `SPIRA_HOME` from the environment, else the first directory beside the executable's
+/// release or cargo layout that holds `lib.sh`; a named refusal when neither exists.
+pub fn locate_home(env: &BTreeMap<String, String>, exe: &Path) -> Result<PathBuf, String> {
+    if let Some(h) = env.get("SPIRA_HOME").filter(|h| !h.is_empty()) {
+        return Ok(PathBuf::from(h));
+    }
+    let dir = exe.parent().ok_or_else(|| "SPIRA_HOME is not set and the executable has no parent directory".to_string())?;
+    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
+        .into_iter()
+        .find(|c| c.join("lib.sh").is_file())
+        .map(|c| c.canonicalize().unwrap_or(c))
+        .ok_or_else(|| "SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string())
+}
+
+/// [`locate_home`] for this process.
+pub fn locate_home_for_process() -> Result<PathBuf, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    locate_home(&env, &std::env::current_exe().unwrap_or_default())
+}
+
+/// [`resolve_run_dir`] for this process: locates home, then resolves.
+pub fn run_dir_for_process() -> Result<PathBuf, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
+    resolve_run_dir(&env, &home)
+}
+
+/// [`resolve_key`] for this process: locates home, then resolves.
+pub fn key_for_process(key: &str) -> Result<String, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
+    resolve_key(&env, &home, key)
+}
+
+/// The repo-relative path of the suite-state file: `$SPIRA_SUITE_STATE_FILE`, else
+/// `spira.suite_state_file` in the document in force, else the registered default
+/// (`spira/conf.d/SPIRA_SUITE_STATE_FILE`).
+pub fn suite_state_file() -> Result<String, String> {
+    if let Some(v) = std::env::var("SPIRA_SUITE_STATE_FILE").ok().filter(|v| !v.is_empty()) {
+        return Ok(v);
+    }
+    let configured = match crate::discover(None) {
+        Some(p) => crate::load(&p)?.spira.and_then(|s| s.suite_state_file),
+        None => None,
+    };
+    Ok(configured.filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
+}
+
+pub const DEFAULT_SUITE_STATE_FILE: &str = "spira/suite-state";
+
 /// Every resolved key, plus any warning `resolve` itself produced (today, only the
 /// `SPIRA_CLAUDE` deprecation notice) — a caller prints these to stderr; `resolve` itself
 /// never writes anywhere.

@@ -55,7 +55,7 @@ fn die(msg: &str) -> ! {
 
 fn conf_env() -> (String, String) {
     let bd = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into());
-    let db = std::env::var("SPIRA_DB").unwrap_or_else(|_| ".".into());
+    let db = spira_config::resolve::key_for_process("SPIRA_DB").unwrap_or_else(|e| die(&e));
     (bd, db)
 }
 

@@ -87,17 +87,14 @@ impl Real {
     /// `$SPIRA_RUN`, read straight from the environment — not through the context seam's
     /// own `run=` echo of the same variable, so this works whether or not that seam ran.
     pub fn run(&self) -> PathBuf {
-        PathBuf::from(std::env::var("SPIRA_RUN").unwrap_or_default())
+        run_dir()
     }
 
     /// `${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}` — the chokepoint's own log, as a real path
     /// (distinct from the `World::reaplog` trait method, which is display text for a "see
     /// …" message and keeps its existing placeholder default unchanged).
     pub fn reaplog_path(&self) -> PathBuf {
-        match std::env::var("SPIRA_REAPLOG") {
-            Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
-            _ => self.run().join("reap.log"),
-        }
+        reaplog_path()
     }
 
     /// `bdq label remove <id> <label>` — label_add's own mirror, needed by
@@ -342,3 +339,23 @@ mod tests {
         assert_eq!(r.base(dir.path()), None);
     }
 }
+
+/// `spira.run` resolved in-process (env override, then `spira.toml`); the process refuses,
+/// named, when it cannot — an empty run directory would put the reap log at the filesystem
+/// root.
+pub fn run_dir() -> PathBuf {
+    spira_config::resolve::run_dir_for_process().unwrap_or_else(|e| {
+        eprintln!("sending: {e}");
+        std::process::exit(1)
+    })
+}
+
+/// `$SPIRA_REAPLOG`, else `reap.log` under [`run_dir`].
+pub fn reaplog_path() -> PathBuf {
+    match std::env::var("SPIRA_REAPLOG") {
+        Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
+        _ => run_dir().join(REAPLOG_NAME),
+    }
+}
+
+const REAPLOG_NAME: &str = "reap.log";

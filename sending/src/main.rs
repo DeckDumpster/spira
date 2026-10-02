@@ -38,7 +38,7 @@
 use std::path::{Path, PathBuf};
 
 use sending::ports::World;
-use sending::real::Real;
+use sending::real::{self, Real};
 use sending::sweep::Sweep;
 use sending::{locate_home, parse, reap};
 
@@ -123,9 +123,7 @@ fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("prune <repo>");
     }
-    let reaplog_path = PathBuf::from(std::env::var("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| {
-        format!("{}/reap.log", std::env::var("SPIRA_RUN").unwrap_or_default())
-    }));
+    let reaplog_path = real::reaplog_path();
     i32::from(!reap::prune_worktrees(&reaplog_path, Path::new(&args[0])))
 }
 
@@ -133,8 +131,8 @@ fn cmd_salvage(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 {
         return die("salvage <id> <worktree-path>");
     }
-    let run = PathBuf::from(std::env::var("SPIRA_RUN").unwrap_or_default());
-    let reaplog_path = PathBuf::from(std::env::var("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| run.join("reap.log").to_string_lossy().into_owned()));
+    let run = real::run_dir();
+    let reaplog_path = real::reaplog_path();
     i32::from(reap::salvage(&run, &reaplog_path, &args[0], Path::new(&args[1])).is_err())
 }
 
@@ -149,7 +147,7 @@ fn cmd_holder_alive(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 1 {
         return die("holder-alive <id>");
     }
-    let run = PathBuf::from(std::env::var("SPIRA_RUN").unwrap_or_default());
+    let run = real::run_dir();
     i32::from(!reap::holder_alive(&run, &args[0]))
 }
 
@@ -176,8 +174,7 @@ fn cmd_reaplog(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 && args.len() != 3 {
         return die("reaplog <verb> <id> [<detail>]");
     }
-    let run = std::env::var("SPIRA_RUN").unwrap_or_default();
-    let reaplog_path = PathBuf::from(std::env::var("SPIRA_REAPLOG").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| format!("{run}/reap.log")));
+    let reaplog_path = real::reaplog_path();
     reap::reaplog(&reaplog_path, &args[0], &args[1], args.get(2).map(String::as_str).unwrap_or(""));
     0
 }
