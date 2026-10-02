@@ -96,6 +96,8 @@ struct Fake {
     wrapper_asked: RefCell<Vec<(String, String)>>,
     /// What target_on_tmpfs answers; the trees it was asked for.
     target_err: RefCell<Option<String>>,
+    /// The real move deletes a pre-tmpfs `target/gate-tools` from the disk; set to model it.
+    target_clears_tools: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
@@ -213,6 +215,7 @@ impl Fake {
             wrapper: RefCell::new(Ok(spira_config::build::Wrapper::Sccache(PathBuf::from("/box/.cargo/bin/sccache")))),
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
+            target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
@@ -430,6 +433,10 @@ impl World for Fake {
     }
     fn target_on_tmpfs(&self, tree: &Path, _: &str, _: &str, _: &crate::target::Limits) -> Result<String, String> {
         self.targets.borrow_mut().push(tree.to_path_buf());
+        if self.target_clears_tools.get() {
+            let tools = tree.join("target/gate-tools");
+            self.files.borrow_mut().retain(|p, _| !p.starts_with(&tools));
+        }
         match self.target_err.borrow().clone() {
             Some(e) => Err(e),
             None => Ok(format!("gate: build on tmpfs at /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
@@ -2866,6 +2873,21 @@ fn tools_stamped_for_the_same_tree_are_reused() {
     f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/TREE")), format!("tree-of-{MERGE_SHA}\n"));
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert!(f.cmds.borrow()[0].starts_with("cargo build"), "{:?}", f.cmds.borrow());
+}
+
+/// A gate tree from before the tmpfs build holds stamped tools on the disk; moving the build
+/// to tmpfs empties them, and the first gate must rebuild and judge, not NO_VERDICT.
+#[test]
+fn a_pre_tmpfs_tree_with_stamped_tools_on_disk_gets_a_verdict_on_its_first_gate() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    f.target_clears_tools.set(true);
+    for id in [MERGE_SHA, BASE] {
+        let dir = format!("{GATE_TREE}/target/gate-tools/tree-of-{id}");
+        f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/TREE")), format!("tree-of-{id}\n"));
+        f.files.borrow_mut().insert(PathBuf::from(format!("{dir}/spira-lint")), "#!built".into());
+    }
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert!(!f.verdict_line().contains("tools-unattributed"), "{}", f.verdict_line());
 }
 
 // ----------------------------------------------------------------- build IO (sp-z61hj)
