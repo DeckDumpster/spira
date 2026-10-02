@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SECONDS A rounds/<n>.running MARKER IS BELIEVED by round-duty.sh; older is stale, reported and removed.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS A rounds/<n>.running MARKER IS BELIEVED by round-duty.sh; older is stale, reported and removed.
+    : "${SPIRA_ROUND_MARKER_MAX_AGE:=10800}"
+SPIRA_CONF_DEFAULT_EOF

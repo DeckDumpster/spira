@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SECONDS THE CERTIFIED POOL MAY SIT UNCHANGED before any non-empty pool makes a round due.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS THE CERTIFIED POOL MAY SIT UNCHANGED before any non-empty pool makes a round due.
+    : "${SPIRA_ROUND_IDLE_CUT:=1200}"
+SPIRA_CONF_DEFAULT_EOF
