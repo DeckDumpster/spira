@@ -3,6 +3,7 @@
 //! moved to Rust yet (context/bead — families U/A/B) through the lib.sh seam; `gh` for the
 //! one forge question; `spira-lc` by bare name on the launcher PATH.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -20,6 +21,7 @@ pub struct Real {
     settings: BTreeMap<String, String>,
     pub submitted_label: String,
     enforce: bool,
+    beads: RefCell<Option<BTreeMap<String, Value>>>,
 }
 
 /// A seam call's exit status and answer; lib.sh's own output has already been passed through.
@@ -64,7 +66,7 @@ impl Real {
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
     /// the Base/Status/Bead seams (each self-contained) and never the repository registry.
     pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
-        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None) }
+        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None), beads: RefCell::new(None) }
     }
 
     fn setting(&self, k: &str, default: &str) -> String {
@@ -171,10 +173,28 @@ impl World for Real {
         let remote = spira_config::repos::ref_remote(&landref, Some(&root_s));
         Some(Base { landref, landrefs, remote })
     }
+    fn prefetch(&self) {
+        if !self.status.is_empty() {
+            return;
+        }
+        let a = self.seam(Op::Beads, &[]);
+        let Ok(Value::Array(rows)) = serde_json::from_str::<Value>(a.text.trim()) else { return };
+        let map: BTreeMap<String, Value> = rows.into_iter().filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r))).collect();
+        if !map.is_empty() {
+            *self.beads.borrow_mut() = Some(map);
+        }
+    }
     fn witness(&self, id: &str) -> Option<String> {
+        if let Some(m) = self.beads.borrow().as_ref() {
+            let status = m.get(id).and_then(|b| b.get("status")).and_then(Value::as_str).unwrap_or_default().to_string();
+            return reap::holder_witnesses(&self.run(), id, &Cached(status));
+        }
         reap::holder_witnesses(&self.run(), id, self)
     }
     fn bead(&self, id: &str) -> Option<Value> {
+        if let Some(m) = self.beads.borrow().as_ref() {
+            return m.get(id).cloned();
+        }
         let a = self.seam(Op::Bead, &[id]);
         let v: Value = serde_json::from_str(a.text.trim()).ok()?;
         match v {
@@ -250,6 +270,15 @@ impl World for Real {
     }
     fn worktrees(&self) -> PathBuf {
         self.run().join("worktree")
+    }
+}
+
+/// A status read from the prefetched listing; non-empty rows prove the database answered.
+struct Cached(String);
+
+impl reap::BdProbe for Cached {
+    fn probe(&self, _id: &str) -> (bool, String) {
+        (true, self.0.clone())
     }
 }
 

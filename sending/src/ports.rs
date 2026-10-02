@@ -41,6 +41,9 @@ pub enum Sent {
 pub trait World {
     /// spira_landref and friends for one checkout; None when the land ref does not resolve.
     fn base(&self, root: &Path) -> Option<Base>;
+    /// Read every bead's record once, so `bead` and `witness` answer from it for the rest of
+    /// the pass. Mutations still recheck live (`send`).
+    fn prefetch(&self) {}
     /// spira_holder_witnesses: Some(why) when somebody may be home.
     fn witness(&self, id: &str) -> Option<String>;
     /// The bead's bd record (`bdjson show`'s first row); None when bd has none (or failed).
