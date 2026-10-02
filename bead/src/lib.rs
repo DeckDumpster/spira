@@ -7,6 +7,7 @@
 //! binary's own pure logic — see `src/bin/bdq.rs` and `bdq.rs`'s own module doc.
 
 pub mod bdq;
+pub mod claimdesc;
 pub mod event;
 
 use std::collections::BTreeMap;

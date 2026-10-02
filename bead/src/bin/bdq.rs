@@ -14,6 +14,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use bead::claimdesc;
 use bead::bdq::{
     check_destructive, check_repo_label, check_schema_delete, czar_fence_class, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms,
@@ -261,6 +262,25 @@ fn cmd_bdq(args: &[String]) -> i32 {
 
     let bd_bin = env_or("SPIRA_BD", "bd");
     let timeout_s = env_or("BD_TIMEOUT", "180");
+    let mut call_args: Vec<String> = args.to_vec();
+    let mut forced: Option<(String, claimdesc::LiveClaim, String)> = None;
+    if args.first().map(String::as_str) == Some("update") {
+        let u = claimdesc::parse_update_args(&args[1..]);
+        call_args = std::iter::once("update".to_string()).chain(u.passthrough.iter().cloned()).collect();
+        if let (true, Some(id)) = (u.touches_description, u.id.as_ref()) {
+            let shown = bd_capture(&timeout_s, &bd_bin, &db, &["show", id, "--json"]);
+            if let Some(claim) = claimdesc::live_claim(&util_json_only(&shown), now_epoch()) {
+                match u.force {
+                    None => {
+                        eprint!("{}", claimdesc::refusal(id, &claim));
+                        return 1;
+                    }
+                    Some(reason) => forced = Some((id.clone(), claim, reason)),
+                }
+            }
+        }
+    }
+    let args = &call_args[..];
     let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES").and_then(|s| s.parse().ok()).unwrap_or(3);
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
@@ -285,6 +305,10 @@ fn cmd_bdq(args: &[String]) -> i32 {
         }
     }
 
+    if let (0, Some((id, claim, reason))) = (rc, forced) {
+        acknowledge_forced_edit(&timeout_s, &bd_bin, &db, &id, &claim, &reason);
+    }
+
     if let (Some(tf), Some(t0)) = (trace_file, t0) {
         let t1 = date_now_utc_nanos();
         let line = format!(
@@ -302,4 +326,49 @@ fn cmd_bdq(args: &[String]) -> i32 {
     }
 
     rc
+}
+
+fn now_epoch() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+fn util_json_only(raw: &str) -> String {
+    json_only(raw).to_string()
+}
+
+/// stdout of one bd call, stderr dropped; empty on any failure.
+fn bd_capture(timeout_s: &str, bd_bin: &str, db: &str, args: &[&str]) -> String {
+    Command::new("timeout")
+        .arg(timeout_s)
+        .arg(bd_bin)
+        .arg("-C")
+        .arg(db)
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// An overridden edit is its own acknowledgment: re-stamp the baseline so the close-time check
+/// does not reopen a close nobody did anything wrong on, file the note, and tell the holder.
+/// These are direct bd calls, not nested bdq calls — a metadata write is not a description edit.
+fn acknowledge_forced_edit(timeout_s: &str, bd_bin: &str, db: &str, id: &str, claim: &claimdesc::LiveClaim, reason: &str) {
+    let actor = env_nonempty("BEADS_ACTOR")
+        .or_else(|| {
+            Command::new("git")
+                .args(["config", "user.name"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .or_else(|| env_nonempty("USER"))
+        .unwrap_or_else(|| "unknown".to_string());
+    if let Some(hash) = claimdesc::desc_hash(&util_json_only(&bd_capture(timeout_s, bd_bin, db, &["show", id, "--json"]))) {
+        bd_capture(timeout_s, bd_bin, db, &["update", id, "--set-metadata", &format!("{}={hash}", claimdesc::HASH_KEY)]);
+    }
+    bd_capture(timeout_s, bd_bin, db, &["note", id, &claimdesc::override_note(&actor, claim, reason)]);
+    claimdesc::notify_live_aeon(id, &claimdesc::holder_message(&actor, reason));
 }

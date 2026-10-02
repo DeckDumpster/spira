@@ -16,6 +16,7 @@ use crate::util;
 
 pub const EVICTION_RACE: &str = "eviction-race";
 pub const PROD_DIRTY: &str = "prod-dirty";
+pub const DESC_CHANGED_SINCE_CLAIM: &str = "desc-changed-since-claim";
 pub const UNFINISHED_REASON: &str = "unfinished-reason";
 pub const GROOM_SILENT: &str = "groom-silent";
 pub const REBASE_CONFLICT: &str = "rebase-conflict";
@@ -339,6 +340,21 @@ impl Run<'_> {
                 let first5 = names.iter().take(5).map(|s| format!("{s} ")).collect::<String>();
                 self.log(&format!("{f}: {id} REOPENED — own worktree dirty: {first5}"));
                 self.requeue(PROD_DIRTY, format!("Bead closed while the aeon's own worktree ({w}) carried uncommitted tracked modifications. Commit or restore the staged/modified files, then resume this bead."));
+            }
+        }
+
+        // ---- description changed since claim, unacknowledged ----
+        if st == "closed" && !superseded {
+            let shown = bd::json(self.d.bd, &["show", &id]);
+            let claimed = bead::claimdesc::metadata_value(&shown, bead::claimdesc::HASH_KEY);
+            if !claimed.is_empty() {
+                let now = bead::claimdesc::desc_hash(&shown);
+                if now.is_some_and(|n| n != claimed) {
+                    self.bead_reopen(DESC_CHANGED_SINCE_CLAIM, "Reopened by aeon: this bead's description changed after it was claimed and before it closed, and the change was never acknowledged (no --force-claimed re-stamp). The session worked from whatever it read at claim time, not from what the bead says now. Re-verify the close against the current description before re-closing.");
+                    self.log(&format!("{f}: {id} REOPENED — description changed since claim, unacknowledged"));
+                    st = "open".into();
+                    self.requeue(DESC_CHANGED_SINCE_CLAIM, "This bead's description changed after this session claimed it and before it closed, unacknowledged. The session's work reflects the description as claimed, not as it now reads — re-verify against the current text before re-closing.".into());
+                }
             }
         }
 
