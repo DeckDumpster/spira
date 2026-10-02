@@ -39,6 +39,10 @@ pub enum Refusal {
     /// `submit` while the row's `stack` still names a tip `base_withdrawn` disowned, or a
     /// `claim` whose proposed `stack` names a prerequisite tip that is no longer current.
     StackStale { prereqs: Vec<String> },
+    /// The row holds an `ask`: an escalation gate closes only through a `reply` carrying the
+    /// reply's message id (`law-a-gate-closes-on-the-reply`), never on marker text alone.
+    /// `exit` names the event that does lift it.
+    AwaitingReply { event: String, exit: String },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

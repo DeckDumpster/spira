@@ -177,6 +177,9 @@ pub enum BeadEventKind {
     /// A prerequisite named in `stack` reached LANDED: it drops out of `stack` (design §1:
     /// "a LANDED prerequisite drops out of every dependent's stack").
     PrereqLanded { prereq: String },
+    /// The operator's answer to an `ask`, carrying the reply's message id. The only event
+    /// that lifts the ask hold, and so the only way an escalation gate reaches a close.
+    Reply { message_id: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -192,6 +195,20 @@ fn illegal(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         row.clone(),
         Refusal::IllegalTransition { state: row.state.as_str().to_string(), event: format!("{kind:?}") },
     )
+}
+
+fn awaiting_reply(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
+    Outcome::refuse(
+        row.clone(),
+        Refusal::AwaitingReply {
+            event: format!("{kind:?}"),
+            exit: "record the operator's answer with a reply event carrying its message id (mail reply), then close".to_string(),
+        },
+    )
+}
+
+fn holds_ask(row: &BeadRow) -> bool {
+    row.holds.contains(&HoldKind::Ask)
 }
 
 fn terminal(row: &BeadRow) -> Outcome<BeadRow> {
@@ -243,6 +260,9 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             if row.state.is_terminal() {
                 return terminal(row);
             }
+            if holds_ask(row) {
+                return awaiting_reply(row, &ev.kind);
+            }
             let mut new = row.clone();
             new.state = BeadState::Landed;
             new.reason = Some(proof.clone());
@@ -253,6 +273,9 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             if row.state.is_terminal() {
                 return terminal(row);
             }
+            if holds_ask(row) {
+                return awaiting_reply(row, &ev.kind);
+            }
             let mut new = row.clone();
             new.state = BeadState::Superseded;
             new.reason = Some(by.clone());
@@ -262,6 +285,9 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         BeadEventKind::Drop { reason } => {
             if row.state.is_terminal() {
                 return terminal(row);
+            }
+            if holds_ask(row) {
+                return awaiting_reply(row, &ev.kind);
             }
             let mut new = row.clone();
             new.state = BeadState::Dropped;
@@ -283,8 +309,25 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             if row.state.is_terminal() {
                 return terminal(row);
             }
+            if *kind == HoldKind::Ask {
+                return awaiting_reply(row, &ev.kind);
+            }
             let mut new = row.clone();
             new.holds.remove(kind);
+            new.version += 1;
+            Outcome::applied(new)
+        }
+
+        BeadEventKind::Reply { message_id } => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if !holds_ask(row) || message_id.is_empty() {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.holds.remove(&HoldKind::Ask);
+            new.reason = Some(format!("reply: {message_id}"));
             new.version += 1;
             Outcome::applied(new)
         }
@@ -348,7 +391,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
         },
 
         BeadState::Working => match kind {
@@ -372,6 +415,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
+            Done { .. } if holds_ask(row) => awaiting_reply(row, kind),
             Done { delivers } => {
                 let mut new = row.clone();
                 new.state = BeadState::Done;
@@ -400,7 +444,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -453,7 +497,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -496,7 +540,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => {
                 illegal(row, kind)
             }
         },
@@ -544,7 +588,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -578,7 +622,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -591,7 +635,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => terminal(row),
         },
     }
 }
@@ -864,10 +908,56 @@ mod tests {
         assert_eq!(out.row.state, BeadState::Submitted);
         assert!(out.row.holds.contains(&HoldKind::Ask));
 
-        let out2 = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::Unhold { kind: HoldKind::Ask }));
+        let out2 = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::Unhold { kind: HoldKind::Wait }));
         assert!(out2.applied);
         assert_eq!(out2.row.state, BeadState::Submitted);
-        assert!(!out2.row.holds.contains(&HoldKind::Ask));
+        assert!(out2.row.holds.contains(&HoldKind::Ask));
+    }
+
+    fn gate_row() -> BeadRow {
+        let mut r = row(BeadState::Working);
+        r.holds.insert(HoldKind::Ask);
+        r
+    }
+
+    #[test]
+    fn a_gate_bead_is_refused_every_close_on_marker_text_alone() {
+        let r = gate_row();
+        for kind in [
+            BeadEventKind::Done { delivers: "d".into() },
+            BeadEventKind::Drop { reason: DropReason::Unwanted },
+            BeadEventKind::Supersede { by: "sp-2".into() },
+            BeadEventKind::ContentOnBase { proof: "p".into() },
+            BeadEventKind::Unhold { kind: HoldKind::Ask },
+        ] {
+            let out = apply(&r, &ev(BeadState::Working, 0, kind.clone()));
+            assert!(!out.applied, "{kind:?}");
+            assert_eq!(out.row, r);
+            match out.refusal {
+                Some(Refusal::AwaitingReply { exit, .. }) => assert!(exit.contains("reply"), "{exit}"),
+                other => panic!("{kind:?}: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn a_gate_bead_closes_after_a_reply_event_carrying_a_message_id() {
+        let r = gate_row();
+        let replied = apply(&r, &ev(BeadState::Working, 0, BeadEventKind::Reply { message_id: "m-1".into() }));
+        assert!(replied.applied);
+        assert!(!replied.row.holds.contains(&HoldKind::Ask));
+        assert_eq!(replied.row.reason.as_deref(), Some("reply: m-1"));
+        let closed = apply(&replied.row, &ev(BeadState::Working, replied.row.version, BeadEventKind::Done { delivers: "d".into() }));
+        assert!(closed.applied);
+        assert_eq!(closed.row.state, BeadState::Done);
+    }
+
+    #[test]
+    fn a_reply_needs_an_ask_and_a_message_id() {
+        let none = apply(&row(BeadState::Working), &ev(BeadState::Working, 0, BeadEventKind::Reply { message_id: "m-1".into() }));
+        assert!(!none.applied);
+        let blank = apply(&gate_row(), &ev(BeadState::Working, 0, BeadEventKind::Reply { message_id: String::new() }));
+        assert!(!blank.applied);
     }
 
     #[test]

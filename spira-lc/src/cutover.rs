@@ -1039,5 +1039,6 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::DepthExceeded { .. } => "DepthExceeded".to_string(),
         lifecycle::Refusal::NotInStack { .. } => "NotInStack".to_string(),
         lifecycle::Refusal::StackStale { .. } => "StackStale".to_string(),
+        lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
     }
 }
