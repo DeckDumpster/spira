@@ -23,7 +23,7 @@
 /// rows 4–6, not yet landed).
 pub trait Bd {
     /// `bdq remember --key <key> <text>`.
-    fn remember(&self, key: &str, text: &str) -> bool;
+    fn remember(&self, key: &str, text: &str) -> Result<(), String>;
     /// `bdq recall <key>`. `None` when recall fails (no such key, or bd unreachable) —
     /// the two are not distinguished here because `show`'s caller does not need to.
     fn recall(&self, key: &str) -> Option<String>;
