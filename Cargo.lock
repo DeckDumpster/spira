@@ -290,6 +290,7 @@ name = "doctor"
 version = "1.0.0"
 dependencies = [
  "spira-config",
+ "testkit",
 ]
 
 [[package]]

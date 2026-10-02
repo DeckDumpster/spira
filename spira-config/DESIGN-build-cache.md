@@ -204,6 +204,19 @@ box; the fixture image waives it, `spira/testenv/doctor-waivers`): the cache liv
   worktree, which `queue land-local --worktree` reads) is the one release-profile build a
   landing needs — nothing else built that profile of that tree. It now compiles through the
   cache: its dependencies are cache reads.
+* **`build.rs`'s own backend-sync tests flipped (sp-xtdqi-3, law-a-test-that-flips-is-deleted):**
+  `fake_sccache`/`bin_dir` wrote an executable script with plain `fs::write` + `chmod` and
+  then exec'd it — the exact ETXTBSY race `testkit::write_exe` exists to close (its own doc:
+  "`fs::write` followed by an exec fails with ETXTBSY whenever another test thread forks
+  while the write descriptor is open"). At round 206, `cargo test -p spira-config --lib`
+  failed 2 of 6 runs, each time a different backend test, panicking on a file the fake
+  sccache script never got to write because its OWN exec had already failed and been
+  swallowed by `.ok()` a few lines up. Per the statute, these tests do not leave the tree
+  without the fix: both helpers now call `testkit::write_exe`, never a raw `fs::write` +
+  `set_permissions`, and the full suite was run 30/30 green to confirm (sp-xtdqi-3's own
+  report carries the tally). `std::env::var` reads elsewhere in this file (`Store::from_env`,
+  `wrapper_from_env`) were considered as a second cause and ruled out — none of the
+  flipping tests call either function.
 * **Not in scope:** the round VM (its own disk, its own cargo cache kept in the template,
   sp-dvfea), the fixture container's in-container `cargo` (its `CARGO_HOME`/target are
   container volumes, and the fixture sets `SPIRA_BUILD_CACHE=off`, so a suite driving a Spira

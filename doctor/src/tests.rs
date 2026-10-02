@@ -46,6 +46,7 @@ pub struct Fake {
     pub stdout: RefCell<Vec<String>>,
     pub sccache_help: RefCell<Option<String>>,
     pub sccache_show_stats: RefCell<Option<String>>,
+    pub sccache_dav_addr: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -85,6 +86,7 @@ impl Default for Fake {
             stdout: RefCell::new(Vec::new()),
             sccache_help: RefCell::new(None),
             sccache_show_stats: RefCell::new(None),
+            sccache_dav_addr: RefCell::new(None),
         }
     }
 }
@@ -194,6 +196,9 @@ impl World for Fake {
     }
     fn sccache_show_stats(&self) -> Option<String> {
         self.sccache_show_stats.borrow().clone()
+    }
+    fn sccache_dav_addr(&self) -> Option<String> {
+        self.sccache_dav_addr.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -617,7 +622,7 @@ fn backend_check_is_a_no_op_when_no_store_is_configured() {
 #[test]
 fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
     let f = Fake::default();
-    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".into());
     *f.sccache_show_stats.borrow_mut() = Some("Compile requests                      0\nCache location                  Local disk: \"/var/cache/sccache\"\nVersion (client)                0.18.0\n".into());
     let lines = check_sccache_backend(&f);
     assert_eq!(levels(&lines), vec![Level::Fail]);
@@ -628,7 +633,7 @@ fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
 #[test]
 fn backend_check_only_warns_off_an_operated_box() {
     let f = Fake::default();
-    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".into());
     f.set("SPIRA_OPERATED", "0");
     *f.sccache_show_stats.borrow_mut() = Some("Cache location                  Local disk: \"/x\"\n".into());
     assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Warn]);
@@ -637,7 +642,7 @@ fn backend_check_only_warns_off_an_operated_box() {
 #[test]
 fn backend_check_passes_when_the_live_server_is_on_the_store() {
     let f = Fake::default();
-    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".into());
     *f.sccache_show_stats.borrow_mut() = Some("Cache location                  webdav, name: , prefix: /\nVersion (client)                0.18.0\n".into());
     assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Ok]);
 }
@@ -645,7 +650,7 @@ fn backend_check_passes_when_the_live_server_is_on_the_store() {
 #[test]
 fn backend_check_fails_when_show_stats_does_not_answer() {
     let f = Fake::default();
-    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".into());
     // sccache_show_stats left at its default None.
     let lines = check_sccache_backend(&f);
     assert_eq!(levels(&lines), vec![Level::Fail]);
@@ -655,11 +660,41 @@ fn backend_check_fails_when_show_stats_does_not_answer() {
 #[test]
 fn backend_check_fails_when_show_stats_answers_with_no_cache_location_line() {
     let f = Fake::default();
-    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_dav_addr.borrow_mut() = Some("192.168.1.56:9431".into());
     *f.sccache_show_stats.borrow_mut() = Some("some unexpected garbage\n".into());
     let lines = check_sccache_backend(&f);
     assert_eq!(levels(&lines), vec![Level::Fail]);
     assert!(lines[0].msg.contains("did not report a Cache location"), "{:?}", lines[0].msg);
+}
+
+/// THE FULL PIPELINE (sp-xtdqi-3): an address resolved from a fixture config document
+/// (the host config document's own `[spira]` table) — never the environment, which is deliberately
+/// empty here — feeds `check_sccache_backend`, which FAILS on a fake "Local disk" location.
+/// This is the exact production scenario (configured, unexported, server on the wrong
+/// backend) that used to report "no shared store configured" blind, because `World::env`
+/// (`conf.sh`'s own bash capture) never carries a NO-DEFAULT key like this one even when
+/// the host config document genuinely configures it.
+#[test]
+fn backend_check_fails_on_an_address_resolved_from_a_fixture_config_with_nothing_exported() {
+    let d = testkit::TempDir::new("doctor-backend-fixture-config");
+    let home = d.path().join("home");
+    std::fs::create_dir_all(home.join("conf.d")).unwrap();
+    std::fs::write(
+        home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"),
+        "TYPE=string\nGROUP=sccache\nDOC=test fixture\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n",
+    )
+    .unwrap();
+    let toml = spira_config::validate("[spira]\nid_prefix = \"sp\"\nsccache_dav_addr = \"192.168.1.56:9431\"\n").unwrap();
+    let env: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new(); // deliberately unexported
+    let addr = crate::real::resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
+    assert_eq!(addr.as_deref(), Some("192.168.1.56:9431"), "sanity: must resolve before feeding the check");
+
+    let f = Fake::default();
+    *f.sccache_dav_addr.borrow_mut() = addr;
+    *f.sccache_show_stats.borrow_mut() = Some("Cache location                  Local disk: \"/var/cache/sccache\"\n".into());
+    let lines = check_sccache_backend(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail], "{lines:?}");
+    assert!(lines[0].msg.contains("NOT on the shared store"), "{:?}", lines[0].msg);
 }
 
 // ============================================================================ events probe
