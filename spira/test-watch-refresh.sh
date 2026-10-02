@@ -362,6 +362,7 @@ reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/db.sh"; runpass
 has "and every restart names the file behind it" "$(cat "$TMP/out")" "$COCKPIT/db.sh"
 # One more than the steady pass's baseline of 3 (systemctl show, stat, `watchd manifest`):
 # `watchd restart <name>` is the fourth.
+echo "# execlog: $(tr "\n" "|" < "$EXECLOG")"
 is "a restarting pass costs one exec more, and no more than that" "4" "$(execs)"
 # The restart is not bookkeeping: a counter that moved without systemctl being called would
 # be a meter measuring itself.
