@@ -21,7 +21,8 @@ export SPIRA_MAIL="$TMP/mail"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_HOME="$HERE"
 export SPIRA_MAIL_KINDS="$HERE/mail/kinds"
-export SPIRA_CONF=""
+export HOME="$TMP/home"; mkdir -p "$HOME"
+export SPIRA_CONF="$TMP/no-such-spira.conf"
 export SPIRA_ID_PREFIX="sp"
 export SPIRA_MAIL_UNREAD_AGE=60
 
