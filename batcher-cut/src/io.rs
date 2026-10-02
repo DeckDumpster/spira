@@ -770,9 +770,9 @@ pub const WORKSPACE_BUILD: &str = "workspace-build";
 /// Same convention as WORKSPACE_BUILD, for a fence red (run_fences).
 pub const GATE_FENCES: &str = "gate-fences";
 
-/// Runs the repo-map's own gate command against `branch`, fences only (`SPIRA_GATE_SUITES=off`
+/// Runs the repo's own gate command against `branch`, fences only (`SPIRA_GATE_SUITES=off`
 /// — the same switch landing.sh's queue-mode certification already uses). Reuses gate.sh
-/// itself rather than naming individual fence scripts here, so a fence added to the repo-map
+/// itself rather than naming individual fence scripts here, so a fence added to the gate
 /// is covered with nothing to keep in sync. On a non-zero exit, writes the combined output to
 /// a file under `env.run` and returns its path as the error, for the incident this files.
 pub fn run_fences(env: &Env, repo: &Repo, branch: &str) -> Result<(), String> {
