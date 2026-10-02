@@ -12,10 +12,11 @@ use std::path::Path;
 /// line with the leading bullet and trailing columns stripped. `None` means the probe
 /// itself failed — rendered `?`, never an empty (all-clear) list.
 pub fn gather(systemctl: &str) -> Option<Vec<String>> {
-    let out = std::process::Command::new(systemctl)
-        .args(["--user", "list-units", "--state=failed", "--no-legend", "spira-*"])
-        .output()
-        .ok()?;
+    let out = crate::deadline::output(
+        "failed units",
+        std::process::Command::new(systemctl).args(["--user", "list-units", "--state=failed", "--no-legend", "spira-*"]),
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }

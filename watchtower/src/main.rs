@@ -5,6 +5,7 @@
 
 mod cpu_throttle;
 mod czar_outcome;
+mod deadline;
 mod disk_mem;
 mod disabled_timer;
 mod env;
@@ -119,6 +120,11 @@ fn world_halted(run: &std::path::Path) -> bool {
 }
 
 fn build_sweep_cfg() -> sweep::Cfg {
+    let start_s = getenv_i64("SPIRA_WATCHTOWER_START_TIMEOUT_S", 360).max(0) as u64;
+    deadline::init(
+        Duration::from_secs(getenv_i64("SPIRA_WATCHTOWER_PROBE_TIMEOUT_S", 30).max(1) as u64),
+        Duration::from_secs(start_s.saturating_sub(30).max(30)),
+    );
     sweep::Cfg {
         spira_run: spira_run(),
         lib_sh_dir: lib_sh_dir(),

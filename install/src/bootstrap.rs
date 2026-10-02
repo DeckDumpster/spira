@@ -70,6 +70,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         instance: instance.to_string(),
         testdb_port: nonempty_env("SPIRA_TESTDB_PORT").unwrap_or_else(|| "3308".to_string()),
         snap_stale_s: nonempty_env("SPIRA_SNAP_STALE_S").unwrap_or_else(|| "60".to_string()),
+        watchtower_start_timeout_s: nonempty_env("SPIRA_WATCHTOWER_START_TIMEOUT_S").unwrap_or_else(|| "360".to_string()),
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
         // sp-xtdqi-2: the key name lives once, in `release::units` — `release`'s own
         // activate/render gate reads the same constant, never a second hand-written literal.

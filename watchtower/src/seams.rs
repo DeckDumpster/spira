@@ -98,17 +98,19 @@ fi
 /// `None` means the seam itself failed (lib.sh could not be sourced) — the caller reports
 /// aeons-alive and idle-while-ready as `?`, never as zero.
 pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<PipelineProbe> {
-    let out = Command::new("bash")
-        .arg("-c")
-        .arg(PIPELINE_PROBE_SCRIPT)
-        .arg("_")
-        .arg(spira_home)
-        .arg(ledger_path.unwrap_or(""))
-        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
-        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
-        .envs(spira_config::release_env::child_path_env_for_process())
-        .output()
-        .ok()?;
+    let out = crate::deadline::output(
+        "aeons alive / ready (bd)",
+        Command::new("bash")
+            .arg("-c")
+            .arg(PIPELINE_PROBE_SCRIPT)
+            .arg("_")
+            .arg(spira_home)
+            .arg(ledger_path.unwrap_or(""))
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process()),
+    )
+    .ok()?;
     if !out.status.success() {
         return None;
     }

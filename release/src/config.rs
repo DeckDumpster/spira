@@ -150,6 +150,7 @@ impl Config {
         m.insert("SPIRA_TESTDB_DATA".into(), pick("SPIRA_TESTDB_DATA", None, ws.map(|w| format!("{w}/beads-test"))));
         m.insert("SPIRA_TESTDB_PORT".into(), pick("SPIRA_TESTDB_PORT", None, Some("3308".into())));
         m.insert("SPIRA_SNAP_STALE_S".into(), pick("SPIRA_SNAP_STALE_S", s.snap_stale_s.as_ref(), Some("60".into())));
+        m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), pick("SPIRA_WATCHTOWER_START_TIMEOUT_S", None, Some("360".into())));
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
         // sp-xtdqi-2: env-then-config like every other key here — an operator without this
         // release's schema yet (so the config document cannot carry `sccache_dav_addr`) can still

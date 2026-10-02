@@ -38,6 +38,10 @@ pub fn run_sweep(now: i64, cfg: &Cfg) {
         return;
     }
 
+    if !data.slow_probes.is_empty() {
+        log(&format!("watchtower: slow probe(s) rendered ? — {}", data.slow_probes.join("; ")));
+    }
+
     let prompt_file = cfg.prompt_file();
     let lapsed_marker = cfg.lapsed_marker();
 

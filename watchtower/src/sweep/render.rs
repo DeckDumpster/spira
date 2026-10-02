@@ -28,6 +28,13 @@ fn halt_section(d: &SweepData) -> String {
     }
 }
 
+fn slow_section(d: &SweepData) -> String {
+    if d.slow_probes.is_empty() {
+        return String::new();
+    }
+    format!("!! SLOW PROBES (rendered `?`, deadline hit): {}\n", d.slow_probes.join("; "))
+}
+
 fn drain_section(d: &SweepData) -> String {
     match &d.drain {
         Drain::NotDraining => String::new(),
@@ -62,6 +69,7 @@ pub fn is_nominal(d: &SweepData, snap_stale_s: i64) -> bool {
         && !d.disk.disk_breach
         && !d.disk.mem_breach
         && !d.cpu_throttle_breach
+        && d.slow_probes.is_empty()
         && d.failed_units.as_ref().map(|v| v.is_empty()).unwrap_or(false)
 }
 
@@ -77,7 +85,7 @@ pub fn render(d: &SweepData) -> String {
 
     format!(
         r#"## Spira pipeline, {now}
-{halt}{drain}{throttle}
+{halt}{drain}{throttle}{slow}
 N workers pull from a DAG into a merge queue. These are that queue's vital signs. A field
 reading `?` is one this pass COULD NOT READ — never treat it as a zero.
 
@@ -196,6 +204,7 @@ Run the scans named in the menu above if you have wall time remaining.
         sp_mid = '\u{b7}',
         now = now_iso(),
         halt = halt_section(d),
+        slow = slow_section(d),
         drain = drain_section(d),
         throttle = throttle_section(d),
         since_land = d.since_land_disp,
@@ -395,5 +404,14 @@ mod tests {
         d.env.set("SP_UNLANDED_N", "");
         let out = render(&d);
         assert!(out.contains("branches finished but not landed    ?"));
+    }
+
+    #[test]
+    fn a_slow_probe_is_named_and_breaks_nominal() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        assert!(is_nominal(&d, 60) && !render(&d).contains("SLOW PROBES"));
+        d.slow_probes = vec!["aeons alive / ready (bd) (>30s)".to_string()];
+        assert!(!is_nominal(&d, 60));
+        assert!(render(&d).contains("SLOW PROBES (rendered `?`, deadline hit): aeons alive / ready (bd) (>30s)"));
     }
 }
