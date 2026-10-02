@@ -21,6 +21,8 @@ use crate::verdict::{self, CacheDecision, KeyInputs, Verdict, VerdictFile};
 use crate::warm;
 use crate::worktree;
 use spira_config::SpiraToml;
+
+pub(crate) type RunConfig = SpiraToml;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::Write;

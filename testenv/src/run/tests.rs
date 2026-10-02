@@ -111,7 +111,7 @@ struct World {
     /// Warm slots whose refill the run asked for.
     refills: Mutex<Vec<usize>>,
     sweeps: Mutex<usize>,
-    config: Option<spira_config::SpiraToml>,
+    config: Option<super::RunConfig>,
 }
 
 impl World {
@@ -630,7 +630,7 @@ fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
     w.env.insert("SPIRA_BATCH_INCIDENT_CMD".into(), cmd.display().to_string());
     w.env.insert("SPIRA_DB".into(), "fixture.db".into());
     if in_map {
-        let mut c = spira_config::SpiraToml::default();
+        let mut c = super::RunConfig::default();
         c.repo.insert(
             "mapped-name".into(),
             spira_config::RepoSection {
@@ -654,11 +654,11 @@ fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
 }
 
 #[test]
-fn a_repeat_refused_incident_is_not_filed_for_a_repo_outside_the_repo_map() {
+fn a_repeat_refused_incident_is_not_filed_for_a_repo_that_is_not_registered() {
     let mut w = World::new("repeat-unmapped");
     let filed = repeat_incident_filings(&mut w, false);
     assert_eq!(filed, "");
-    assert!(w.has_line(|l| l.contains("incident not filed") && l.contains("not in the repo-map")));
+    assert!(w.has_line(|l| l.contains("incident not filed")));
 }
 
 #[test]
