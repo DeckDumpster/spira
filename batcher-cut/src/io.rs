@@ -1510,8 +1510,7 @@ mod wait_lock_tests {
 
     #[test]
     fn waits_out_a_short_hold_and_gives_up_on_a_long_one() {
-        let d = std::env::temp_dir().join(format!("wl-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
+        let d = testkit::TempDir::new("batcher-cut-wl");
         let e = super::lifecycle_tests_env(&d);
         let held = try_lock(&e, "r").unwrap().unwrap();
         assert!(wait_lock(&e, "r", 0).unwrap().is_none(), "a held lock with no wait must report busy");
@@ -1521,7 +1520,6 @@ mod wait_lock_tests {
         });
         assert!(wait_lock(&e, "r", 10).unwrap().is_some(), "must acquire once the holder releases");
         t.join().unwrap();
-        let _ = fs::remove_dir_all(&d);
     }
 }
 
