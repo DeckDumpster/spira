@@ -19,6 +19,8 @@ use crate::ports::{RepoCtx, Settings, World};
 pub const OK: i32 = 0;
 pub const FAIL: i32 = 1;
 pub const USAGE: i32 = 2;
+/// land-local's exit when the landing is recorded but its release was not activated.
+pub const DEPLOY_FAULT: i32 = 3;
 
 /// Resolved settings plus the named (or home) repository.
 pub struct Ctx {

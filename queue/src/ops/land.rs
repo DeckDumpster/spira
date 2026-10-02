@@ -263,7 +263,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     );
     w.out(format!("queue.sh land-local: {base} fast-forwarded to {head} (round {n}, archived at {archive})"));
     if matches!(outcome, Some(super::deploy::Outcome::Fault(_))) {
-        return FAIL;
+        return super::DEPLOY_FAULT;
     }
     OK
 }
