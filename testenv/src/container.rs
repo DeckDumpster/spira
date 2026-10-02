@@ -15,6 +15,9 @@ pub const CONTAINER_CHECKOUT: &str = "/workspace";
 pub const CONTAINER_CARGO: &str = "/var/spira/cargo";
 /// Cargo's build output lives on the named volume, never in the host-owned bind mount.
 pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
+/// pasta's default forwards a container's loopback to the host's; `-T none` and `--no-map-gw`
+/// close both, so a container never reaches a host service bound to loopback.
+pub const ISOLATED_NETWORK: &str = "pasta:-T,none,--no-map-gw";
 pub const DEFAULT_NAME: &str = "spira-testenv";
 /// Every container `up` starts carries it, so admission counts every caller's containers.
 pub const TESTENV_LABEL: &str = "spira.testenv=1";
@@ -771,6 +774,8 @@ impl Driver<'_> {
             s("--systemd=true"),
             s("--pids-limit"),
             s("8192"),
+            s("--network"),
+            s(ISOLATED_NETWORK),
             s("--label"),
             s(TESTENV_LABEL),
             s("--volume"),

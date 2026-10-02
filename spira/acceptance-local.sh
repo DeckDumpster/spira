@@ -220,6 +220,13 @@ testenv container up --name "$CNAME" --checkout "$_al_mount" >&2 || {
     exit 2
 }
 
+_al_hostdb_port="${SPIRA_ACCEPTANCE_LOCAL_HOSTDB_PORT:-3307}"
+if ! testenv container exec --name "$CNAME" bash -c 'timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$1" 2>/dev/null; [ "$?" -ne 0 ]' _ "$_al_hostdb_port" >/dev/null 2>&1; then
+    printf 'acceptance-local: the container can connect to 127.0.0.1:%s — the host database is reachable; refusing to run\n' \
+        "$_al_hostdb_port" >&2
+    exit 2
+fi
+
 _al_ctar="/tmp/$(basename "$_al_tarball")"
 podman cp "$_al_tarball" "$CNAME:$_al_ctar" || {
     printf 'acceptance-local: could not copy the tarball into the container\n' >&2
