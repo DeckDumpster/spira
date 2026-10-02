@@ -349,6 +349,24 @@ out="$(fence_bd "bd -C $BDCREATE_DB create \"Add lane detection\" -l \"plan,repo
 want "UC-safety-fences-03/unmapped-repo-real-title-blocked" '"decision":"block"' "$out"
 want "UC-safety-fences-03/unmapped-repo-names-override" "SPIRA_BD_CREATE_OVERRIDE" "$out"
 
+# Claimability judge (bead judge-create): scope without a partition label is refused, the
+# partition list is in the message; a partition label or no-loop passes. Needs a built bead.
+BEAD_BIN_DIR="$HERE/../target/debug"
+if [ -x "$BEAD_BIN_DIR/bead" ]; then
+    fence_bd_j() { fence_bd "$1" PATH="$BEAD_BIN_DIR:$PATH" SPIRA_SCOPE_LABEL=spira SPIRA_NO_LOOP_LABEL=no-loop; }
+    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -t task -l \"spira,checkpoint,repo:spira\"")"
+    want "unclaimable-create-blocked" '"decision":"block"' "$out"
+    want "unclaimable-create-lists-partitions" "add one of:" "$out"
+    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -l \"spira,plan,repo:spira\"")"
+    nowant "partitioned-create-allowed" '"decision":"block"' "$out"
+    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -l \"spira,checkpoint,no-loop,repo:spira\"")"
+    nowant "no-loop-create-allowed" '"decision":"block"' "$out"
+    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Note\" -t event -l \"spira,checkpoint,repo:spira\"")"
+    nowant "non-claimable-type-allowed" '"decision":"block"' "$out"
+else
+    echo "  SKIP claimability judge: no bead binary built"
+fi
+
 # The fallback arm: title fails the direct test/debug/tmp/temp regex, so aeon-fence.sh asks
 # bd itself via --dry-run; the stub answers "appears to be test data" for the marker word.
 # Single-word title: the guard's own title parser is whitespace-based and captures only the

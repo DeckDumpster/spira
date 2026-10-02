@@ -330,6 +330,7 @@ if [ -z "$reason" ] && [ -n "${SPIRA_DB:-}" ]; then
             SPIRA_DB="$SPIRA_DB" \
             SPIRA_REPO_MAP="${SPIRA_REPO_MAP:-}" \
             SPIRA_BD="${SPIRA_BD:-bd}" \
+            SPIRA_BEAD_JUDGE="$(dirname "${BASH_SOURCE[0]}")/../bead.sh" \
             python3 -c '
 import sys, os, re, subprocess
 
@@ -408,11 +409,15 @@ for seg in re.split(r"&&|\|\||;|\n", cmd):
     rest = toks[create_i+1:]
     title = None
     labels = ""
+    btype = "task"
     j = 0
     while j < len(rest):
         t = rest[j]
-        if t in ("-l", "--label") and j + 1 < len(rest):
-            labels = rest[j+1].strip("\"'"'"'")
+        if t in ("-l", "--label", "--labels") and j + 1 < len(rest):
+            labels = (labels + "," if labels else "") + rest[j+1].strip("\"'"'"'")
+            j += 2
+        elif t in ("-t", "--type") and j + 1 < len(rest):
+            btype = rest[j+1].strip("\"'"'"'")
             j += 2
         elif t.startswith("-"):
             if t in ("-a","--assignee","-d","--description","--context",
@@ -438,6 +443,13 @@ for seg in re.split(r"&&|\|\||;|\n", cmd):
                     print("unmapped-repo:" + rname)
                     sys.exit(0)
 
+    if labels and os.environ.get("SPIRA_BEAD_JUDGE"):
+        r = subprocess.run([os.environ["SPIRA_BEAD_JUDGE"], "judge-create", labels, btype],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode == 1:
+            print("unclaimable:" + r.stderr.strip().replace("\n", " "))
+            sys.exit(0)
+
     if title is not None:
         # Direct pattern check: titles that look like test fixtures.
         # Matches the same prefixes bd flags and that the groomer identifies.
@@ -460,6 +472,10 @@ for seg in re.split(r"&&|\|\||;|\n", cmd):
             test-data)
                 case "$cmd" in *"SPIRA_BD_CREATE_OVERRIDE=1"*) ;;
                     *) reason="aeons may not create test-data beads in the production store (bd flagged this title; use testdb_up or bd --db <tmp> for throwaway creates; set SPIRA_BD_CREATE_OVERRIDE=1 to override for a deliberate production bead)" ;;
+                esac ;;
+            unclaimable:*)
+                case "$cmd" in *"SPIRA_BD_CREATE_OVERRIDE=1"*) ;;
+                    *) reason="aeons may not create a bead no persona can claim in the production store (${_bd_check#unclaimable:}; or use bead.sh file --for <persona>)" ;;
                 esac ;;
             unmapped-repo:*)
                 case "$cmd" in *"SPIRA_BD_CREATE_OVERRIDE=1"*) ;;

@@ -36,6 +36,7 @@ fn main() {
         "amend" => cmd_amend(&home, &rest),
         "contract" => cmd_contract(&home),
         "lint" => cmd_lint(&home, &rest),
+        "judge-create" => cmd_judge_create(&home, &rest),
         "event" => cmd_event(&rest),
         "dep" => match rest.first().map(String::as_str) {
             Some("add") => cmd_dep_add(&home, &rest[1..]),
@@ -684,6 +685,38 @@ fn cmd_event(args: &[String]) -> i32 {
 // =========================================================================================
 // lint
 // =========================================================================================
+
+/// `bead judge-create <labels-csv> [type]` — the lint judge applied to a bead about to be
+/// created open. Exit 1 with the partition list on stderr when the bead would be unclaimable;
+/// the aeon fence calls this so a raw `bd create` is refused by the same rule `file` obeys.
+fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
+    let labels_csv = args.first().cloned().unwrap_or_default();
+    let ty = args.get(1).map(String::as_str).unwrap_or("task");
+    let labels = labels_csv.replace(',', " ");
+    let scope = env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
+    if !scope.is_empty() && !labels.split_whitespace().any(|l| l == scope) {
+        return 0;
+    }
+    let personas: Vec<(String, String)> = fayth_names(home)
+        .into_iter()
+        .map(|f| {
+            let l = fayth_label(home, &f);
+            (f, l)
+        })
+        .collect();
+    let partitions = chamber_partitions(&personas, &scope);
+    let no_loop = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
+    let (_, out) = lint_judge(&labels, "open", ty, &partitions.join(" "), &no_loop);
+    if out.iter().any(|l| l.starts_with("no partition label")) {
+        eprintln!(
+            "{}; add one of: {}",
+            out.iter().find(|l| l.starts_with("no partition label")).unwrap(),
+            partitions.join(", ")
+        );
+        return 1;
+    }
+    0
+}
 
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
