@@ -322,6 +322,7 @@ struct LiveOps<'a> {
     round: String,
     changed: BTreeMap<String, Vec<String>>,
     first_red: Option<u64>,
+    key: String,
 }
 
 impl drive::RoundOps for LiveOps<'_> {
@@ -338,14 +339,36 @@ impl drive::RoundOps for LiveOps<'_> {
         merge_round(self.env, self.repo, self.wt, &self.start_sha, survivors.to_vec())
     }
 
+    fn fix_integration(&mut self, members: &[Member], suites: &[String]) -> bool {
+        match io::integration_fix(self.env, self.wt, &self.start_sha, members) {
+            Ok(fixes) if !fixes.is_empty() => {
+                println!("batcher {}: integration red ({}) — round commit: {}", self.repo.name, suites.join(","), fixes.join(", "));
+                true
+            }
+            Ok(_) => false,
+            Err(e) => {
+                println!("batcher {}: integration fix failed: {e}", self.repo.name);
+                false
+            }
+        }
+    }
+
     fn incident(&mut self, kind: &str, suites: &[String]) {
         let what = match kind {
             "base" => "base itself red",
             "unattributed" => "local red could not be attributed to anyone",
+            "integration" => "red only in the merged tree, not fixed in the round",
             _ => "workspace failed to build",
         };
         match io::file_local_red_incident(self.env, self.repo, suites, &self.round_branch, &self.evidence, kind) {
-            Ok(id) => println!("batcher {}: {what} ({}) — filed {id} for Ops", self.repo.name, suites.join(",")),
+            Ok(id) => {
+                println!("batcher {}: {what} ({}) — filed {id} for Ops", self.repo.name, suites.join(","));
+                if kind == "unattributed" || kind == "integration" {
+                    if let Err(e) = io::write_hold(self.env, &self.repo.name, &self.key, &id) {
+                        println!("batcher {}: could not record the hold on {id}: {e}", self.repo.name);
+                    }
+                }
+            }
             Err(e) => println!("batcher {}: {what} ({}) — could not file for Ops: {e}", self.repo.name, suites.join(",")),
         }
     }
@@ -456,6 +479,7 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         round,
         changed,
         first_red: None,
+        key: batcher::core::round_key(&members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>()),
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
     let round_members = members.clone();
@@ -645,6 +669,11 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     }
     if combined.merged.is_empty() {
         println!("{}", skipped_event("no members merged cleanly").text);
+        return Ok(());
+    }
+    let key = batcher::core::round_key(&combined.merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect::<Vec<_>>());
+    if let Some(bead) = io::hold_blocking(env_, &repo.name, &key) {
+        println!("batcher {}: round held — same members at the same tips as the integration red {bead} still open; not re-cut", repo.name);
         return Ok(());
     }
     println!("{}", cut_event(reason, &combined).text);

@@ -55,7 +55,10 @@ pub trait RoundOps {
     /// Reset the round tree to the base and merge `survivors`; the members that actually
     /// merged (a fresh conflict drops one).
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String>;
-    /// `kind`: `base`, `unattributed` or `workspace-build`.
+    /// Mechanically repair what the merged tree alone broke (a commit on the round tree naming
+    /// every member); false when there was nothing to repair.
+    fn fix_integration(&mut self, members: &[Member], suites: &[String]) -> bool;
+    /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
     /// The members whose diff touches `suite`.
     fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id>;
@@ -240,7 +243,8 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut suites = corpus.to_vec();
     let mut kind = MainKind::Corpus;
     let mut worst: Option<u64> = None;
-    let bound = members.len() as u32 + 1;
+    let mut fixed = false;
+    let bound = members.len() as u32 + 2;
     let t0 = runner.now();
     for iteration in 0..bound {
         let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
@@ -274,6 +278,17 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
         }
         if !d.base.is_empty() {
             ops.incident("base", &d.base);
+        }
+        let integration = d.integration_suites();
+        if !integration.is_empty() && !fixed && ops.fix_integration(&members, &integration) {
+            fixed = true;
+            suites = integration;
+            kind = MainKind::Verify;
+            continue;
+        }
+        if fixed && !integration.is_empty() {
+            ops.incident("integration", &integration);
+            return Ok(RoundEnd::Blocked(format!("integration red survived the in-round fix: {}", integration.join(","))));
         }
         if !d.unattributed.is_empty() {
             ops.incident("unattributed", &d.unattributed);
@@ -411,6 +426,8 @@ pub(crate) mod tests {
         fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String> {
             self.main_kind.push((kind, suites.to_vec()));
             self.main.clear();
+            self.done_jobs.clear();
+            self.jobs.clear();
             self.reported.clear();
             self.main_ended = None;
             let tree: BTreeSet<String> = self.members.iter().cloned().collect();
@@ -470,6 +487,9 @@ pub(crate) mod tests {
         pub ejected: Vec<(String, Vec<String>)>,
         pub rebuilt: Vec<Vec<String>>,
         pub incidents: Vec<(String, Vec<String>)>,
+        pub can_fix: bool,
+        pub fix_calls: u32,
+        pub fixed: Option<std::rc::Rc<std::cell::Cell<bool>>>,
         pub recorded: Vec<(u32, Decision)>,
         pub deleted: Vec<Vec<String>>,
         pub escaped: Vec<(String, String, Option<JobResult>)>,
@@ -488,6 +508,15 @@ pub(crate) mod tests {
         fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
             self.rebuilt.push(survivors.iter().map(|m| m.id.clone()).collect());
             Ok(survivors.to_vec())
+        }
+        fn fix_integration(&mut self, _: &[Member], _: &[String]) -> bool {
+            self.fix_calls += 1;
+            if self.can_fix {
+                if let Some(f) = &self.fixed {
+                    f.set(true);
+                }
+            }
+            self.can_fix
         }
         fn incident(&mut self, kind: &str, suites: &[String]) {
             self.incidents.push((kind.into(), suites.to_vec()));
@@ -656,6 +685,32 @@ pub(crate) mod tests {
         assert!(ops.rebuilt.is_empty());
         assert_eq!(f.main_kind.len(), 1, "no verification run");
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+    }
+
+    // Two members each fine alone, red together until the round-level fix lands (stale
+    // coverage.json shape): both would be named owners today and the round emptied.
+    #[test]
+    fn an_integration_red_is_fixed_in_the_round_and_every_member_lands() {
+        let fixed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let flag = fixed.clone();
+        let mut f = Fake::new(move |s, tree| s == "test-01.sh" && !flag.get() && tree.contains("m1") && tree.contains("m2"));
+        let mut ops = Ops { can_fix: true, fixed: Some(fixed), ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        assert_eq!(ops.fix_calls, 1);
+        assert!(ops.ejected.is_empty());
+        assert!(ops.incidents.is_empty());
+    }
+
+    #[test]
+    fn an_integration_red_the_fix_does_not_clear_is_held_not_ejected() {
+        let mut f = Fake::new(|s, tree| s == "test-01.sh" && tree.contains("m1") && tree.contains("m2"));
+        let mut ops = Ops { can_fix: true, ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert_eq!(ops.fix_calls, 1, "the fix is tried once");
+        assert_eq!(ops.incidents, vec![("integration".to_string(), vec!["test-01.sh".to_string()])]);
+        assert!(ops.ejected.is_empty());
     }
 
     #[test]
