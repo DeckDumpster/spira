@@ -305,6 +305,7 @@ pub struct ClosedRow {
     pub delivers: bool,
     pub content_landed: bool,
     pub subsumed: bool,
+    pub nocommit: bool,
     pub branch: String,
 }
 
@@ -325,11 +326,19 @@ impl ClosedRow {
                 || reason.contains("DUPLICATE")
                 || reason.contains("TRACKED IN EPIC")
                 || reason.starts_with("MOOT"),
+            nocommit: [
+                "DELIVERED WITH NO CODE",
+                "NO COMMIT OF ITS OWN",
+                "NOTHING TO COMMIT",
+                "WORK IN ANOTHER REPO",
+            ]
+            .iter()
+            .any(|p| reason.contains(p)),
             branch: b.label_value("branch:").unwrap_or("").to_string(),
         }
     }
     pub fn exempt(&self) -> bool {
-        self.superseded || self.dropped || self.delivers || self.content_landed || self.subsumed
+        self.superseded || self.dropped || self.delivers || self.content_landed || self.subsumed || self.nocommit
     }
 }
 
@@ -476,6 +485,20 @@ mod tests {
             ..Default::default()
         };
         assert!(ClosedRow::of(&moot, "spira").subsumed);
+    }
+
+    #[test]
+    fn nocommit_close_reason_exempts_but_ordinary_does_not() {
+        let row = |reason: &str| {
+            let b: Bead = serde_json::from_value(serde_json::json!({
+                "id":"x","status":"closed","labels":["spira"],"issue_type":"task","close_reason":reason
+            }))
+            .unwrap();
+            ClosedRow::of(&b, "spira")
+        };
+        let conv = "OUTCOME: delivered\ndelivered with no code (a report): it carries no commit of its own, so it can never land";
+        assert!(row(conv).nocommit && row(conv).exempt());
+        assert!(!row("OUTCOME: submitted\nfixed the thing").exempt());
     }
 
     #[test]
