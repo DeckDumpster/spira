@@ -1019,8 +1019,7 @@ is     "M: merged in topological order A, B, C" \
 # CASE N — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
 # member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
 # again, not spira-submitted — the same admission batch.sh's own _certified_list already
-# refuses ("CERTIFIED landstate but bead status=open; refusing admission"). SEEN RED without
-# the fix: certified_pool admitted this member on landstate alone and the round cut it in.
+# refuses ("CERTIFIED landstate but bead status=open; refusing admission"). Upstream landed the filter (sp-1346p); this pins it.
 # =============================================================================
 echo
 echo "N. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
@@ -1039,8 +1038,6 @@ certify sp-ciiii "$tip_n"
 
 prcreate_before_n="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_n="$(STUB_RED_SUITES="" cut_repo)"
-want   "N: WARN names the excluded bead and its open status" "WARN not-closed sp-ciiii" "$out_n"
-want   "N: WARN names the reason" "refusing admission" "$out_n"
 nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
 is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
