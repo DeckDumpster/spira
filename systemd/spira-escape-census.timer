@@ -1,0 +1,15 @@
+[Unit]
+Description=Print the escape census once a week
+
+[Timer]
+# Weekly, matching the census's default 168h window.
+OnCalendar=Mon *-*-* 06:15:00
+Persistent=true
+AccuracySec=5min
+Unit=spira-escape-census.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

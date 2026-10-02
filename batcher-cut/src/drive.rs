@@ -63,6 +63,26 @@ pub trait RoundOps {
     /// the deletion can break; an error blocks the round.
     fn delete_flips(&mut self, suites: &[String]) -> Result<(), String>;
     fn record(&mut self, iteration: u32, decision: &Decision);
+    /// `member` owns red `suite`; `rerun` is that suite rerun on the full round tree (`None`
+    /// when the rerun faulted): green there means it flipped.
+    fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>);
+}
+
+/// Ids of the settled-owner reruns start here, clear of the attributor's own.
+const RERUN_ID_BASE: u64 = 1 << 40;
+
+/// `suite` once more on the round tree with every member present, to the end.
+fn rerun_with_members<R: RoundRunner>(runner: &mut R, suite: &str, n: u64) -> Option<JobResult> {
+    let job = Job { id: RERUN_ID_BASE + n, suite: suite.to_string(), removal: vec![], purpose: Purpose::Plain };
+    if runner.launch(&job).is_err() {
+        return None;
+    }
+    loop {
+        if let Some((_, r)) = runner.poll_jobs().into_iter().find(|(id, _)| *id == job.id) {
+            return (r != JobResult::Fault).then_some(r);
+        }
+        runner.wait();
+    }
 }
 
 pub struct Settled {
@@ -281,6 +301,14 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
                 break;
             }
         }
+        let mut n = 0;
+        for m in &members {
+            for suite in d.owners.get(&m.id).into_iter().flatten() {
+                n += 1;
+                let rerun = rerun_with_members(runner, suite, n);
+                ops.escape(m, suite, rerun);
+            }
+        }
         for m in &members {
             if let Some(s) = out.get(&m.id) {
                 ops.eject(m, s);
@@ -444,6 +472,7 @@ pub(crate) mod tests {
         pub incidents: Vec<(String, Vec<String>)>,
         pub recorded: Vec<(u32, Decision)>,
         pub deleted: Vec<Vec<String>>,
+        pub escaped: Vec<(String, String, Option<JobResult>)>,
     }
 
     impl RoundOps for Ops {
@@ -473,6 +502,9 @@ pub(crate) mod tests {
         }
         fn record(&mut self, iteration: u32, decision: &Decision) {
             self.recorded.push((iteration, decision.clone()));
+        }
+        fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
+            self.escaped.push((member.id.clone(), suite.to_string(), rerun));
         }
     }
 
@@ -504,6 +536,15 @@ pub(crate) mod tests {
         assert!(rec.settled_before_main_end, "{rec:?} vs corpus end {main_end}");
         assert_eq!(ops.ejected, vec![("m2".to_string(), vec!["test-00.sh".to_string()])]);
         assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.iter().map(|m| m.id.as_str()).collect::<Vec<_>>() == ["m1", "m3"]));
+    }
+
+    #[test]
+    fn a_settled_owner_s_suite_is_rerun_on_the_full_tree_before_it_is_ejected() {
+        let mut f = Fake::new(breaks("m2", "test-00.sh"));
+        f.maxpar = 4;
+        let mut ops = Ops::default();
+        attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 4 }).unwrap();
+        assert_eq!(ops.escaped, vec![("m2".to_string(), "test-00.sh".to_string(), Some(JobResult::Red))]);
     }
 
     #[test]

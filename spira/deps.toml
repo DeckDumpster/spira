@@ -701,3 +701,10 @@ alias = "slay.sh"
 [[compat]]
 name = "mail"
 alias = "mail.sh"
+
+[[dep]]
+name = "systemd-analyze"
+tier = "optional"
+purpose = "the escape-census timer suite parses the OnCalendar expression with it; absent, that one check is skipped"
+version_min = ""
+version_probe = "systemd-analyze --version"
