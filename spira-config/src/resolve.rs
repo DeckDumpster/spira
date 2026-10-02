@@ -737,6 +737,11 @@ pub fn resolve(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> {
     }
     set!("SPIRA_RELEASE_REPO", release_repo);
 
+    set!(
+        "SPIRA_SCCACHE_DAV_ADDR",
+        resolve_colon("SPIRA_SCCACHE_DAV_ADDR", env, &toml_map, ok_str!("")).map_err(ResolveError::Registry)?
+    );
+
     // 17-19. Rebase / certify literals.
     set!(
         "SPIRA_CERTIFY_SUITES",

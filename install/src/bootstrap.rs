@@ -56,6 +56,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         format!("{parent}/cockpit")
     });
+    let dav_addr = sccache_dav_addr(Path::new(&home));
     let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
     Ok(HostValues {
         home,
@@ -73,8 +74,14 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
         // sp-xtdqi-2: the key name lives once, in `release::units` — `release`'s own
         // activate/render gate reads the same constant, never a second hand-written literal.
-        sccache_dav_addr: env_var(release::units::SCCACHE_DAV_ADDR_KEY),
+        sccache_dav_addr: dav_addr,
     })
+}
+
+/// The store address as spira-config resolves it — never the bare environment alone
+/// (law-a-binary-resolves-the-config-it-reads).
+pub fn sccache_dav_addr(home: &Path) -> String {
+    nonempty_env(release::units::SCCACHE_DAV_ADDR_KEY).or_else(|| spira_config::build::addr_for_home(home)).unwrap_or_default()
 }
 
 /// `SPIRA_HOME`, else `SPIRA_REPO/spira`, else the nearest `spira/` holding `conf.sh` above
@@ -231,7 +238,9 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         testdb_data_set: nonempty_env("SPIRA_TESTDB_DATA").is_some(),
         broker_enable: env_var("SPIRA_BROKER_ENABLE") == "1",
         inotify_present,
-        sccache_dav_addr_set: nonempty_env(release::units::SCCACHE_DAV_ADDR_KEY).is_some(),
+        sccache_dav_addr_set: resolve_home(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), argv0_path().as_deref())
+            .map(|h| !sccache_dav_addr(Path::new(&h)).is_empty())
+            .unwrap_or(false),
         watch_names: watch_names(),
     })?;
     for note in &m.notes {
