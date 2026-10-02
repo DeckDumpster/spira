@@ -22,6 +22,9 @@ After=default.target
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=SPIRA_DB=@SPIRA_DB@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/gh-intake
 TimeoutStartSec=120
