@@ -21,6 +21,10 @@
 # runs unconditionally and asks the registry whether the tag is already there,
 # which cannot drift because it is the same function the gate will call.
 #
+# IT ALSO RUNS ON PULL REQUESTS. A change to the closure reaches main only through
+# a gate that needs the image, so publishing on push alone leaves the gate to
+# cold-build every time the closure moves.
+#
 # THE OWNER IS LOWERCASED. A registry path must be lowercase; the organisation
 # name reaches this workflow spelled as it was typed. Pushing an uppercase path
 # fails with an error about authorisation rather than about case, which sends the
@@ -31,6 +35,7 @@ name: Test image
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 # One publish at a time. Two runs racing on the same tag would push identical

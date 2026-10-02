@@ -54,9 +54,9 @@ pub trait Host {
     fn write(&self, p: &Path, s: &str);
     fn remove(&self, p: &Path);
     /// Copies `from` to `to`, executable bit included (a binary, never text); `to`'s parent
-    /// is created if missing. `false` on any failure — the caller decides whether that is
-    /// fatal (sp-xjnzl: staging `spira-config` into the build context).
-    fn copy_file(&self, from: &Path, to: &Path) -> bool;
+    /// is created if missing, a symlink `from` is followed, and whatever already sits at
+    /// `to` is replaced. `Err` carries the reason; the caller decides whether it is fatal.
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), String>;
     /// This process's own binary's path (`std::env::current_exe`), so a sibling binary from
     /// the same build can be found by name. `None` when the OS cannot answer.
     fn current_exe(&self) -> Option<PathBuf>;
@@ -398,15 +398,12 @@ impl Driver<'_> {
             }
         };
         let dest = dir.join(DOCTOR_CHECK_SPIRA_CONFIG);
-        if self.host.copy_file(&source, &dest) {
-            Some(dest)
-        } else {
-            self.err(&format!(
-                "testenv: could not stage spira-config into the build context ({} -> {})",
-                source.display(),
-                dest.display()
-            ));
-            None
+        match self.host.copy_file(&source, &dest) {
+            Ok(()) => Some(dest),
+            Err(why) => {
+                self.err(&format!("testenv: could not stage spira-config into the build context: {why}"));
+                None
+            }
         }
     }
 
@@ -1145,21 +1142,19 @@ impl Host for RealHost {
     fn remove(&self, p: &Path) {
         let _ = std::fs::remove_file(p);
     }
-    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), String> {
         if let Some(parent) = to.parent() {
-            if std::fs::create_dir_all(parent).is_err() {
-                return false;
-            }
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
-        if std::fs::copy(from, to).is_err() {
-            return false;
-        }
+        let real = std::fs::canonicalize(from).map_err(|e| format!("resolve {}: {e}", from.display()))?;
+        let _ = std::fs::remove_file(to);
+        std::fs::copy(&real, to).map_err(|e| format!("copy {} -> {}: {e}", real.display(), to.display()))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(to, std::fs::Permissions::from_mode(0o755));
         }
-        true
+        Ok(())
     }
     fn current_exe(&self) -> Option<PathBuf> {
         std::env::current_exe().ok()

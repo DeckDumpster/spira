@@ -156,13 +156,13 @@ impl Host for Fake {
     fn remove(&self, p: &Path) {
         self.files.borrow_mut().remove(p);
     }
-    fn copy_file(&self, from: &Path, to: &Path) -> bool {
+    fn copy_file(&self, from: &Path, to: &Path) -> Result<(), String> {
         let Some(data) = self.files.borrow().get(from).cloned() else {
-            return false;
+            return Err("absent".into());
         };
         self.files.borrow_mut().insert(to.to_path_buf(), data);
         self.copies.borrow_mut().push((from.to_path_buf(), to.to_path_buf()));
-        true
+        Ok(())
     }
     fn current_exe(&self) -> Option<PathBuf> {
         self.current_exe.borrow().clone()
@@ -1221,4 +1221,23 @@ fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
         RealHost.symlinked_targets(Path::new("/nonexistent/target")),
         Vec::<PathBuf>::new()
     );
+}
+
+#[test]
+fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
+    let tmp = testkit::TempDir::new("testenv-copy");
+    let root = tmp.join("root");
+    std::fs::create_dir_all(root.join("store")).unwrap();
+    std::fs::create_dir_all(root.join("bin")).unwrap();
+    std::fs::write(root.join("store/spira-config"), b"binary").unwrap();
+    std::os::unix::fs::symlink("../store/spira-config", root.join("bin/spira-config")).unwrap();
+    let dest = root.join("ctx/testenv/.stage");
+    assert_eq!(RealHost.copy_file(&root.join("bin/spira-config"), &dest), Ok(()));
+    assert_eq!(std::fs::read(&dest).unwrap(), b"binary");
+    assert!(!dest.symlink_metadata().unwrap().file_type().is_symlink());
+    // a stale read-only file at the destination is replaced, not a reason to refuse
+    std::fs::set_permissions(&dest, std::os::unix::fs::PermissionsExt::from_mode(0o444)).unwrap();
+    assert_eq!(RealHost.copy_file(&root.join("bin/spira-config"), &dest), Ok(()));
+    std::os::unix::fs::symlink("../store/absent", root.join("bin/dangling")).unwrap();
+    assert!(RealHost.copy_file(&root.join("bin/dangling"), &dest).is_err());
 }
