@@ -2639,6 +2639,7 @@ fn overlap_world(r: &FakeRunner, w: &World) {
         if s.args.iter().any(|a| a == "in_progress") {
             return ok(r#"[{"id":"sp-busy","status":"in_progress","issue_type":"task","labels":["spira","repo:spira"]}]"#);
         }
+        // literal-ok: test fixture
         ok(r#"[
           {"id":"sp-early","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
           {"id":"sp-late","status":"open","issue_type":"task","labels":["spira","repo:spira"]},
@@ -2732,6 +2733,7 @@ fn audit_defers_the_later_bead_and_resumes_one_that_no_longer_overlaps() {
     assert!(add("sp-late"));
     assert!(!add("sp-early"), "the holder is never deferred");
     assert!(r.find(|s| is_bd(s, "label") && s.args[2..] == ["label", "remove", "sp-stale", OVERLAP_LABEL]).is_some());
+    // literal-ok: test fixture
     assert!(r.find(|s| is_bd(s, "label") && s.args.iter().any(|a| a == "needs-operator") && s.args.iter().any(|a| a == "sp-late")).is_none());
 }
 
