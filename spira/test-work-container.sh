@@ -33,7 +33,13 @@ testdb_require "test-work-container.sh"
 
 REPO="$(cd "$HERE/.." && pwd)"
 TMP="$(mktemp -d)"
-PORT=$((SPIRA_LC_TESTDB_PORT + 700 + (RANDOM % 500)))
+# Other suites draw from overlapping ranges concurrently; take the first port nothing answers on.
+PORT=""
+for _ in $(seq 1 50); do
+    cand=$((SPIRA_LC_TESTDB_PORT + 700 + (RANDOM % 500)))
+    if ! (exec 3<>"/dev/tcp/127.0.0.1/$cand") 2>/dev/null; then PORT="$cand"; break; fi
+done
+[ -n "$PORT" ] || bail "no free port found near $SPIRA_LC_TESTDB_PORT"
 SERVER_PID=""
 SERVE_PID=""
 
