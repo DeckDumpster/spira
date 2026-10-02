@@ -28,6 +28,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 skip=0
 skipped() { skip=$((skip+1)); printf '  skip  %s\n' "$1"; }
 
+SPIRA_CONFIG_BIN="$(dirname "$(command -v spira-config)")" || bail "spira-config is not on PATH"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 BIN="$TMP/bin"; mkdir -p "$BIN"
 FAKE_HOME="$TMP/fakehome"
@@ -181,14 +182,14 @@ run_ready() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        PATH="$BIN:$FAKE_SPIRA_HOME:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BIN:$FAKE_SPIRA_HOME:$SPIRA_CONFIG_BIN:/usr/local/bin:/usr/bin:/bin" \
         HOME="$FAKE_HOME" \
         SPIRA_PATH="$BIN" \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$FAKE_SPIRA_HOME" \
         SPIRA_REPO="$TMP" \
         SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_CONFIG_BIN="${SPIRA_CONFIG_BIN:-}" \
+        SPIRA_CONFIG_BIN="$SPIRA_CONFIG_BIN" \
         SPIRA_RUN="$RUN" \
         SPIRA_DB="$DB" \
         SPIRA_SYSTEMCTL="$BIN/systemctl" \
