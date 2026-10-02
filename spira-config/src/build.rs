@@ -285,14 +285,16 @@ pub fn one_shot_words(profile: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn bin_dir(with: bool) -> (testkit::TempDir, String) {
         let d = testkit::TempDir::new("spira-config-build");
         if with {
             let p = d.path().join("sccache");
-            std::fs::write(&p, "#!/bin/sh\n").unwrap();
-            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            // `testkit::write_exe`, never a raw `fs::write` + `chmod` (sp-xtdqi-3): this
+            // process never holds a write descriptor on the file, so another test
+            // thread's own fork (any `Command::spawn` elsewhere in this binary) cannot
+            // inherit one and leave a concurrent exec of THIS file seeing ETXTBSY.
+            testkit::write_exe(&p, "#!/bin/sh\n");
         }
         let path = format!("/nonexistent-sp-z61hj:{}", d.path().display());
         (d, path)
@@ -401,8 +403,10 @@ mod tests {
             log = log.display(),
             loc = cache_location,
         );
-        std::fs::write(&p, script).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // `testkit::write_exe`, not a raw `fs::write` + `chmod` (sp-xtdqi-3, THE ROOT CAUSE
+        // of this suite's own flip): see `bin_dir`'s comment — this is the one actually
+        // exec'd by `ensure_store_backend`, so it is the one that was actually racing.
+        testkit::write_exe(&p, &script);
         p
     }
 

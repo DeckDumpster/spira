@@ -526,7 +526,6 @@ fn extract_semver(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     /// Guards the two tests below that must prove resolution goes through `self.env("PATH")`
     /// rather than this PROCESS's own ambient one — which, under an ordinary `cargo test`
@@ -555,8 +554,11 @@ mod tests {
     fn fake_sccache(dir: &Path, help: &str) -> PathBuf {
         let p = dir.join("sccache");
         let script = format!("#!/bin/sh\nif [ \"$1\" = '--help' ]; then\n  cat <<'SCCACHE_HELP_EOF'\n{help}SCCACHE_HELP_EOF\nfi\n");
-        std::fs::write(&p, script).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // `testkit::write_exe`, never a raw `fs::write` + `chmod` (sp-xtdqi-3): this
+        // process never holds a write descriptor on the file it is about to exec, so a
+        // concurrent test thread's own `Command::spawn` elsewhere in this binary cannot
+        // fork over an open one and see this exec fail with ETXTBSY.
+        testkit::write_exe(&p, &script);
         p
     }
 
@@ -604,8 +606,7 @@ mod tests {
             log = log.display(),
         );
         let p = d.path().join("sccache");
-        std::fs::write(&p, script).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&p, &script);
 
         let mut env = BTreeMap::new();
         env.insert("PATH".to_string(), d.path().display().to_string());
