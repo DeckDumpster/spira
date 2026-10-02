@@ -145,6 +145,17 @@ mk_round() {
     git -C "$REPO" branch -D "$br" >/dev/null 2>&1
     printf '%s' "$head"
 }
+# mk_empty_round <branch> -> an ACKNOWLEDGEMENT commit atop local/main's tip with no file
+# changes at all (sp-pg3c6: a no-code ops close, e.g. sp-nc58r) — print the head sha.
+mk_empty_round() {
+    local br="$1"
+    git -C "$REPO" checkout -qb "$br" local/main
+    git -C "$REPO" -c core.hooksPath=/dev/null commit -q --allow-empty -m "ack: no code change ($br)"
+    local head; head="$(git -C "$REPO" rev-parse "$br")"
+    git -C "$REPO" checkout -q trunk
+    git -C "$REPO" branch -D "$br" >/dev/null 2>&1
+    printf '%s' "$head"
+}
 # The round worktree queue land-local reads (--worktree, queue/DESIGN.md §8 D2): one
 # detached worktree per tree, at <head>; its target/release is the round's own build.
 bins_wt() {   # bins_wt <head> -> the round worktree for <head>'s tree (created on first use)
@@ -362,5 +373,32 @@ is   "9: current is still the previous release" "$HEAD1" "$(current_name)"
     || bad "9: nothing is named by the failed sha" "$RELEASES/$HEAD9 exists"
 is   "9: local/main is at the landed head (never reverted)" "$HEAD9" "$(localmain)"
 is   "9: the landing stays recorded — the bead is closed" closed "$(field sp-lrel9 status)"
+
+# ============================================================================
+echo
+echo "10 — sp-pg3c6: an empty commit (no code change) lands and activates cleanly"
+# ============================================================================
+# Found on spira/sp-nc58r: an ops close commits an EMPTY acknowledgement naming the bead,
+# no file changes at all. queue.sh land-local's own path (fast-forward, certify, deploy) is
+# keyed on trees and commits throughout, never on diff size — this is the end-to-end proof.
+seed sp-lrel10
+HEAD10="$(mk_empty_round round-10)"
+PARENT10="$(git -C "$REPO" rev-parse "${HEAD10}^")"
+is "10: the fixture commit is genuinely empty (tree == parent's tree)" \
+   "$(git -C "$REPO" rev-parse "${PARENT10}^{tree}")" "$(git -C "$REPO" rev-parse "${HEAD10}^{tree}")"
+mk_bins "$HEAD10" v10-binary
+
+out="$(run_q land-local fixq --head "$HEAD10" --members "sp-lrel10:$HEAD10" --worktree "$(bins_wt "$HEAD10")")"; rc=$?
+[ "$rc" -eq 0 ] && ok "10: exit 0 — an empty-commit round lands" \
+    || bad "10: exit 0 — an empty-commit round lands" "got rc=$rc out=$out"
+want "10: fast-forwards and reports the archive" "fast-forwarded to $HEAD10" "$out"
+is   "10: local/main advances to the empty-commit head" "$HEAD10" "$(localmain)"
+want "10: reports the activated release" "activated release $HEAD10" "$out"
+is   "10: current re-activates to this round's own release, named by the new commit" \
+     "$HEAD10" "$(current_name)"
+is   "10: bin/fakebin is this round's own corpus, byte for byte" \
+     "v10-binary" "$(cat "$RELEASES/$HEAD10/bin/fakebin" 2>/dev/null)"
+is   "10: the bead is closed"           closed "$(field sp-lrel10 status)"
+want "10: close reason declares landed" "OUTCOME: landed" "$(field sp-lrel10 close_reason)"
 
 tl_summary

@@ -155,4 +155,51 @@ else
 fi
 is "build-fence.sh is executable" "0" "$([ -x "$HERE/build-fence.sh" ]; echo $?)"
 
+# =========================================================================================
+# 7 — sp-pg3c6: A DIFF VERIFIED EMPTY (branch tree == merge-base tree, by tree-id equality)
+# PASSES, with a line saying so; a diff that could NOT be computed still refuses, fail
+# closed. Found on spira/sp-nc58r: an ops close's empty acknowledgement commit (no file
+# changes) made build-fence refuse on the branch AND on the base's own self-diff re-run
+# (base...base is just as empty), so the gate charged local/main with BASE_FAIL — no no-code
+# close could ever land. A REAL git repo, since tree-id equality needs real git objects.
+# =========================================================================================
+echo "7. sp-pg3c6 — a verified-empty diff passes; an unresolvable one still refuses:"
+GITFIX="$TMP/gitfix"; mkdir -p "$GITFIX/spira"
+cp "$HERE/build-fence.sh" "$GITFIX/spira/build-fence.sh"
+git -C "$GITFIX" init -q -b main
+git -C "$GITFIX" -c user.email=t@t -c user.name=t commit -q --allow-empty -m base
+BASE_SHA="$(git -C "$GITFIX" rev-parse HEAD)"
+git -C "$GITFIX" checkout -qb spira/ack "$BASE_SHA" >/dev/null 2>&1
+# THE LIVE CASE: an empty acknowledgement commit — no file touched, tree unchanged.
+git -C "$GITFIX" -c user.email=t@t -c user.name=t commit -q --allow-empty -m "sp-nc58r: ack (no code change)"
+
+echo "7a. the production shape: SPIRA_GATE_FILES says 0 files, SPIRA_GATE_BASE is also set:"
+EMPTYFILES="$TMP/f11"; : > "$EMPTYFILES"
+out="$(cd "$GITFIX" && SPIRA_GATE_FILES="$EMPTYFILES" SPIRA_GATE_BASE="$BASE_SHA" bash spira/build-fence.sh 2>&1)"; rc=$?
+is   "SEEN RED FIRST against the unfixed script, then GREEN: exits 0, not a refusal" "0" "$rc"
+want "and says the tree-id check verified it, not just an empty count" "verified" "$out"
+nowant "and never says it is refusing" "refusing" "$out"
+want "and still prints the fence's positive control (n>0, never fence-silent)" "fence: build-fence checked" "$out"
+
+echo "7b. the base's OWN self-diff re-run (base...base) is just as empty — also passes now:"
+git -C "$GITFIX" checkout -q "$BASE_SHA"
+out="$(cd "$GITFIX" && SPIRA_GATE_BASE="$BASE_SHA" bash spira/build-fence.sh 2>&1)"; rc=$?
+is   "a base checked out at itself: build-fence passes, never BASE_FAIL material" "0" "$rc"
+git -C "$GITFIX" checkout -q spira/ack >/dev/null 2>&1
+
+echo "7c. NEGATIVE CONTROL: a diff that cannot be computed still refuses, fail closed:"
+out="$(cd "$GITFIX" && SPIRA_GATE_BASE="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" bash spira/build-fence.sh 2>&1)"; rc=$?
+is   "an unresolvable base: exits 2, never 0 — never mistaken for verified-empty" "2" "$rc"
+want "and names the refusal, not a pass" "refusing" "$out"
+nowant "and never claims it was verified empty" "verified" "$out"
+
+echo "7d. a REAL, non-empty diff is unaffected by the verification path:"
+echo one > "$GITFIX/one.txt"
+git -C "$GITFIX" add one.txt
+git -C "$GITFIX" -c user.email=t@t -c user.name=t commit -q -m "sp-x: real change"
+out="$(cd "$GITFIX" && SPIRA_GATE_BASE="$BASE_SHA" bash spira/build-fence.sh 2>&1)"; rc=$?
+is   "a real file change: build-fence still runs its ordinary path (skip, no build surface)" "0" "$rc"
+want "and reports the ordinary changed-file count, not the verified-empty line" "fence: build-fence checked 1 changed-files" "$out"
+nowant "and never claims verified-empty for a real diff" "verified by tree-id" "$out"
+
 tl_summary
