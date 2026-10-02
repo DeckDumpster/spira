@@ -200,6 +200,8 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
         lc_enforce: spira_config::lifecycle_enforce(None),
         verdicts: gate::cert::verdicts_dir(env::var("SPIRA_VERDICTS").ok().as_deref(), &run),
+        land_lock_attempts: env::var("SPIRA_BATCHER_LAND_LOCK_ATTEMPTS").ok().and_then(|v| v.parse().ok()).unwrap_or(10),
+        land_lock_wait: std::time::Duration::from_secs(env::var("SPIRA_BATCHER_LAND_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(30)),
     }
 }
 
@@ -576,7 +578,22 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
     }
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let landed = io::land_local(env_, repo, wt, &head, &member_pairs)?;
+    let run = io::land_local(env_, repo, wt, &head, &member_pairs)?;
+    let mut landed = run.outcome;
+    let alarm = match landed {
+        io::LandOutcome::Refused => Some(format!("refused: {}", run.refusal)),
+        _ if !io::head_on_base(repo, &head) => {
+            landed = io::LandOutcome::Refused;
+            Some(format!("land-local exited as landed but {head} is not an ancestor of {}", repo.base))
+        }
+        _ => None,
+    };
+    if let Some(detail) = alarm {
+        match io::file_land_unverified_incident(env_, repo, &head, &detail) {
+            Ok(id) => println!("batcher {}: round head {head} did not land ({detail}) — filed {id}", repo.name),
+            Err(e) => println!("batcher {}: round head {head} did not land ({detail}) — could not file the alarm: {e}", repo.name),
+        }
+    }
     if landed == io::LandOutcome::DeployFault {
         match io::file_deploy_fault_incident(env_, repo, &head) {
             Ok(id) => println!("batcher {}: landed {head} but its release was not activated — filed {id} for Ops", repo.name),

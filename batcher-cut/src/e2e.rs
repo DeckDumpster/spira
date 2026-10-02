@@ -191,6 +191,8 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         lc_timeout: 5,
         lc_enforce: false,
         verdicts: run.join("verdicts"),
+        land_lock_attempts: 3,
+        land_lock_wait: std::time::Duration::from_millis(1),
     };
     let repo = Repo { name: "fx".into(), path: repo_dir.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Local };
     let wt = run.join("worktree/.batcher-fx");
