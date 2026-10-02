@@ -630,8 +630,20 @@ fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
     w.env.insert("SPIRA_BATCH_INCIDENT_CMD".into(), cmd.display().to_string());
     w.env.insert("SPIRA_DB".into(), "fixture.db".into());
     if in_map {
-        let toml = format!("[repo.mapped-name]\npath = \"{}\"\nmode = \"queue\"\n", w.repo.display());
-        w.config = Some(toml::from_str(&toml).unwrap());
+        let mut c = spira_config::SpiraToml::default();
+        c.repo.insert(
+            "mapped-name".into(),
+            spira_config::RepoSection {
+                path: w.repo.display().to_string(),
+                mode: spira_config::LandMode::Queue,
+                base: None,
+                format: None,
+                lanes: vec![],
+                forge: None,
+                gate_mode: None,
+            },
+        );
+        w.config = Some(c);
     }
     let rt = runtime();
     let b = FakeBuilder::new(None);
