@@ -165,6 +165,7 @@ pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
                     Lane::Plan => "plan",
                     Lane::Incident => "incident",
                     Lane::Groom => "groom",
+                    // literal-ok: the repo-map lane token, emitted verbatim
                     Lane::MaechenSweep => "maechen-sweep",
                     Lane::Spike => "spike",
                     Lane::CzarTrigger => "czar-trigger",
