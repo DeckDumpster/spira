@@ -37,6 +37,7 @@ use batcher::core::{
     adaptive_n, combine, cut_event, ejected_event, opened_event, pr_record, should_cut, skipped_event, stack_sequencing,
     stacked_into, stale_retry_due, topo_order, CombineInput, Ejection, Member, MergeResult, TriggerInputs, TriggerReason,
 };
+use batcher::attrib::JobResult;
 use io::{Env, Land, Repo};
 
 struct Opts {
@@ -372,6 +373,14 @@ impl drive::RoundOps for LiveOps<'_> {
             let fields = r.tsd_fields(&self.repo.name, &self.round, iteration);
             io::tsd_append(self.env, "round-attribution", &fields);
         }
+    }
+
+    fn escape(&mut self, member: &Member, suite: &str, rerun: Option<JobResult>) {
+        let paths = self.changed.get(&member.id).cloned().unwrap_or_default().join(",");
+        let evidence = format!("round {} evidence: {}", self.round, self.evidence);
+        let rerun_rc = rerun.map(|r| if r == JobResult::Green { 0 } else { 1 });
+        let report = io::record_escape(self.env, self.repo, self.wt, &self.start_sha, member, suite, &self.round, &paths, &evidence, rerun_rc);
+        println!("batcher {}: {report}", self.repo.name);
     }
 }
 

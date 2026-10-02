@@ -123,6 +123,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-verdict.timer", true));
     m.units.push(t("spira-straggler-sweep.service", false));
     m.units.push(t("spira-straggler-sweep.timer", true));
+    m.units.push(t("spira-escape-census.service", false));
+    m.units.push(t("spira-escape-census.timer", true));
 
     // promote.sh / spira-promote.*: retired by deploy.sh's split-checkout replacement.
     m.optional.push("spira-promote.service".into());

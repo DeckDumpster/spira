@@ -132,6 +132,7 @@ impl RoundOps for ProofOps {
     fn record(&mut self, iteration: u32, d: &Decision) {
         self.decisions.push((iteration, d.clone()));
     }
+    fn escape(&mut self, _member: &Member, _suite: &str, _rerun: Option<batcher::attrib::JobResult>) {}
 }
 
 #[test]

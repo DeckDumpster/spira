@@ -863,6 +863,59 @@ pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[S
     }
 }
 
+/// escape-classify.sh over one settled-owner red: `rerun-verdict` when the suite was rerun on
+/// the full tree (a green rerun records a flake and says FLIP for the flip policy), otherwise
+/// — or on a real red — `classify` then `record`. Returns one line for the batcher's log;
+/// every step is best-effort and never blocks the round.
+#[allow(clippy::too_many_arguments)]
+pub fn record_escape(
+    env: &Env,
+    repo: &Repo,
+    wt: &Path,
+    base: &str,
+    member: &Member,
+    suite: &str,
+    batch_id: &str,
+    paths: &str,
+    evidence: &str,
+    rerun_rc: Option<i32>,
+) -> String {
+    let common = |c: &mut Command| {
+        c.env("SPIRA_RUN", &env.run).envs(spira_config::release_env::child_path_env_for_process());
+    };
+    let record_args = |c: &mut Command| {
+        c.args(["--member", &member.id, "--suite", suite, "--batch-id", batch_id, "--repo", &repo.name, "--paths", paths, "--evidence", evidence]);
+    };
+    if let Some(rc) = rerun_rc {
+        let mut c = Command::new("escape-classify.sh");
+        c.arg("rerun-verdict").args(["--rerun-rc", &rc.to_string()]);
+        record_args(&mut c);
+        common(&mut c);
+        match run(&mut c, "escape-classify.sh rerun-verdict") {
+            Ok(out) if out.contains("FLIP") => return format!("{suite} flipped on rerun with {} present — FLIP: flake recorded", member.id),
+            Ok(_) => {}
+            Err(e) => return format!("escape not recorded: {e}"),
+        }
+    }
+    let mut c = Command::new("escape-classify.sh");
+    c.arg("classify").args(["--repo".as_ref(), repo.path.as_os_str()]).args(["--base", base, "--tip", &member.tip]);
+    c.arg("--suite-file").arg(wt.join("spira").join(suite));
+    c.arg("--gate-log").arg(env.run.join("gate.log")).args(["--branch", &format!("spira/{}", member.id)]);
+    common(&mut c);
+    let class = match run(&mut c, "escape-classify.sh classify") {
+        Ok(out) => out.trim().to_string(),
+        Err(e) => return format!("escape not recorded: {e}"),
+    };
+    let mut c = Command::new("escape-classify.sh");
+    c.arg("record").args(["--class", &class]);
+    record_args(&mut c);
+    common(&mut c);
+    match run(&mut c, "escape-classify.sh record") {
+        Ok(_) => format!("{} escaped {suite}: {class}", member.id),
+        Err(e) => format!("escape not recorded: {e}"),
+    }
+}
+
 /// File an Ops incident for a local red the round could not resolve mechanically: a suite red
 /// against the base itself, or (defensively) a red attribute.sh could not attribute to
 /// anyone. Filed through incident.sh's own dedupe/spool contract, never `bd create` directly,

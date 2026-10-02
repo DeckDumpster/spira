@@ -1,0 +1,19 @@
+[Unit]
+Description=Spira escape census — escapes by class over the trailing week
+Documentation=file://@SPIRA_HOME@/escape-classify.sh
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD@/escape-classify.sh census
+TimeoutStartSec=120
+StandardOutput=append:@SPIRA_RUN@/escape-census.log
+StandardError=append:@SPIRA_RUN@/escape-census.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=observability
