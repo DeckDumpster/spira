@@ -4,6 +4,7 @@
 # not a live memory, and passes when every one resolves.
 #
 # covers: spira/chamber-core-check.sh spira/chamber/*.fayth
+# tier: T1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
