@@ -444,7 +444,45 @@ mod tests {
         assert_eq!(read_publish(&q).unwrap().unwrap().branch, "spira/publish/real");
     }
 
+    // The stub is run as `bash <script>`, never exec'd: exec'ing a just-written file races a
+    // parallel fork that still holds the write fd (ETXTBSY).
+    fn run_stub(body: &str) -> (Result<String, String>, usize) {
+        let dir = scratch_path("stub");
+        fs::create_dir_all(&dir).unwrap();
+        let calls = dir.join("calls");
+        let script = dir.join("bd.sh");
+        fs::write(&calls, "0").unwrap();
+        fs::write(&script, format!("n=$(($(cat \"{c}\") + 1)); echo \"$n\" > \"{c}\"\n{body}\n", c = calls.display())).unwrap();
+        let out = run_bd(Command::new("bash").arg(&script), "bd show");
+        let n = fs::read_to_string(&calls).unwrap().trim().parse().unwrap();
+        (out, n)
+    }
+
+    #[test]
+    fn run_bd_retries_once_on_invalid_connection() {
+        let (out, n) = run_stub(
+            r#"if [ "$n" -eq 1 ]; then echo "Error: failed to open database: invalid connection" >&2; exit 1; fi
+echo ok"#,
+        );
+        assert_eq!(out.as_deref(), Ok("ok\n"));
+        assert_eq!(n, 2);
+    }
+
+    // POSITIVE CONTROL: an error that is not "invalid connection" is not retried — one call.
+    #[test]
+    fn run_bd_does_not_retry_other_errors() {
+        let (out, n) = run_stub(r#"echo "Error: something else went wrong" >&2; exit 1"#);
+        assert!(out.is_err());
+        assert_eq!(n, 1);
+    }
+
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.
+    #[test]
+    fn run_bd_bounds_the_retry() {
+        let (out, n) = run_stub(r#"echo "Error: failed to open database: invalid connection" >&2; exit 1"#);
+        assert!(out.is_err());
+        assert_eq!(n, 2);
+    }
 
     fn git(dir: &Path, args: &[&str]) {
         let st = Command::new("git").arg("-C").arg(dir).args(args).status().expect("git");
