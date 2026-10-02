@@ -318,6 +318,9 @@ fn landref(repo: &RepoRef, deps: &Deps) -> Option<String> {
         git(&repo.path, &["remote", "set-head", &remote, "--auto"]).ok()?;
         return sym(&format!("refs/remotes/{remote}/HEAD"));
     }
+    if verified(&repo.path, "local/main") {
+        return Some("local/main".to_string());
+    }
     sym("HEAD")
 }
 
