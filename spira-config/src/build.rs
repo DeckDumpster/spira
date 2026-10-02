@@ -501,22 +501,9 @@ mod from_env_tests {
     use super::*;
 
     fn with_env<R>(pairs: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
-        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let saved: Vec<_> = pairs.iter().map(|(k, _)| (*k, std::env::var(k).ok())).collect();
-        for (k, v) in pairs {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-        let r = f();
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-        r
+        let _l = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = testkit::env(pairs);
+        f()
     }
 
     #[test]
