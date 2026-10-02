@@ -29,18 +29,91 @@
 #
 # defect: sp-884p sp-ctag9
 # tier: T2
-# covers: cockpit-collect/src/* UC-cockpit-observability-12
+# covers: cockpit-collect/src/* UC-cockpit-observability-12 spira-lc/*
 # scar: SP_BRANCH_DONE was overwritten per-repo so only the first repository's zero survived; SP_UNSENT counted every ref under refs/heads/spira/* regardless of whether the suffix resolved to a bead.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
+
+# Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
+# can overwrite PATH with the harness's own tool directories. Needed only for the
+# BATCHED-stranded/-too-long section below, which now reads spira-lc instead of landstate.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
+
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT INT TERM
 
 # Git identity for fixture commits — required in the container (no ~/.gitconfig).
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
+
+# spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
+# and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
+LC_PORT=$((3309 + (RANDOM % 500)))
+LC_SERVER_PID=""
+mkdir -p "$TMP/lc-data"
+cat > "$TMP/lc-server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LC_PORT
+  max_connections: 50
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+data_dir: "$TMP/lc-data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+LC_SERVER_PID=$!
+_lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
+trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
+
+lc_up=0
+for _ in $(seq 1 50); do
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+        lc_up=1
+        break
+    fi
+    sleep 0.2
+done
+[ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
+
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
+    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
+    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
+LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
+
+SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
+SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
+SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
+    "$LC_BIN" admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+wantrc "spira_lifecycle schema applies cleanly" 0 $?
+
+lc_seed_bead() {   # lc_seed_bead <id> <state> <updated_at-epoch>
+    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+        --use-db spira_lifecycle sql -q \
+        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,$3)
+         ON DUPLICATE KEY UPDATE state='$2', updated_at=$3" >/dev/null 2>&1
+}
+lc_drop_bead() {   # lc_drop_bead <id> -> no row at all (the "not BATCHED" case)
+    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+        --use-db spira_lifecycle sql -q \
+        "DELETE FROM bead WHERE bead_id = '$1'" >/dev/null 2>&1
+}
+
+LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
+        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
+        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
 
 # Two git repos. `alpha` is the home repo (listed first by spira_repos), `beta` is the second.
 ALPHA="$TMP/alpha"; BETA="$TMP/beta"
@@ -115,6 +188,7 @@ unsent() {    # unsent <fixture-file>
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_QUEUE_DIR="$RUN/queue" \
         SPIRA_BDJSON_FIXTURE="$1" \
+        "${LC_ENV[@]}" \
         cockpit-collect probe unsent 2>/dev/null
 }
 
@@ -179,16 +253,15 @@ want "output contains SP_UNSENT" "SP_UNSENT=" "$out"
 echo
 echo "BATCHED-stranded detection:"
 # ======================================================================================
-# BATCHED branch absent from any open batch → SP_BATCHED_STRANDED=1.
-# This is the sp-kogm shape: sp-bbb in beta has in_progress status; we mark its landstate
-# BATCHED and provide no open batch file naming it. The probe must count it as stranded.
+# BATCHED (spira-lc: IN_DELIVERY) branch absent from any open batch → SP_BATCHED_STRANDED=1.
+# This is the sp-kogm shape: sp-bbb in beta has in_progress status; we give it a spira-lc
+# row in IN_DELIVERY and provide no open batch file naming it. The probe must count it as
+# stranded.
 #
-# POSITIVE CONTROL FIRST: a run with BATCHED state and no open batch must report 1.
+# POSITIVE CONTROL FIRST: a run with IN_DELIVERY state and no open batch must report 1.
 # Only after that do we verify the BATCHED-in-batch case reports 0 — an all-zero result
 # could pass both tests if the probe is not running at all.
-mkdir -p "$RUN/landstate"
-printf 'BATCHED %s %s' "$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)" "$(date +%s)" \
-    > "$RUN/landstate/sp-bbb"
+lc_seed_bead sp-bbb IN_DELIVERY "$(date +%s)"
 out2="$(unsent "$TMP/beads.json")"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED with no open batch → SP_BATCHED_STRANDED=1" "1" "$(val2 SP_BATCHED_STRANDED)"
@@ -203,28 +276,27 @@ printf 'pr=1\nopened=%s\nmembers=sp-bbb:%s\nbranch=spira/queue/test\n' \
 out3="$(unsent "$TMP/beads.json")"
 val3() { printf '%s' "$out3" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED present in open batch → SP_BATCHED_STRANDED=0" "0" "$(val3 SP_BATCHED_STRANDED)"
-rm -f "$RUN/queue/beta/open" "$RUN/landstate/sp-bbb"
+rm -f "$RUN/queue/beta/open"
+lc_drop_bead sp-bbb
 
 # BATCHED-too-long detection: epoch old enough → SP_BATCHED_TOO_LONG=1.
 # POSITIVE CONTROL: an old epoch (default wait=1800s; plant 1801s in the past) fires the
 # counter. Only after that do we verify a fresh timestamp returns 0.
 echo
 echo "BATCHED-too-long detection (sp-7kcj2):"
-mkdir -p "$RUN/landstate"
 _old_epoch=$(( $(date +%s) - 1801 ))
-_bbb_tip="$(git -C "$BETA" rev-parse spira/sp-bbb 2>/dev/null)"
-printf 'BATCHED %s %s' "$_bbb_tip" "$_old_epoch" > "$RUN/landstate/sp-bbb"
+lc_seed_bead sp-bbb IN_DELIVERY "$_old_epoch"
 out_btl="$(unsent "$TMP/beads.json")"
 val_btl() { printf '%s' "$out_btl" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "BATCHED older than wait → SP_BATCHED_TOO_LONG=1" "1" "$(val_btl SP_BATCHED_TOO_LONG)"
 want "SP_BATCHED_TOO_LONG_NAMES names the branch" "sp-bbb" "$(val_btl SP_BATCHED_TOO_LONG_NAMES)"
 
 # Fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0 (positive control that the 0 is real).
-printf 'BATCHED %s %s' "$_bbb_tip" "$(date +%s)" > "$RUN/landstate/sp-bbb"
+lc_seed_bead sp-bbb IN_DELIVERY "$(date +%s)"
 out_btl2="$(unsent "$TMP/beads.json")"
 val_btl2() { printf '%s' "$out_btl2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 is "fresh BATCHED epoch → SP_BATCHED_TOO_LONG=0" "0" "$(val_btl2 SP_BATCHED_TOO_LONG)"
-rm -f "$RUN/landstate/sp-bbb"
+lc_drop_bead sp-bbb
 
 # ======================================================================================
 echo

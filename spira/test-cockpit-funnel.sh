@@ -3,14 +3,15 @@
 # test-cockpit-funnel.sh — DONE→LANDED pipeline funnel in the QUEUE section.
 #
 # Three scenarios:
-#   (a) fixture with the exact landstate shapes from the bead description:
-#       done=3 (no landstate), certify=2 (GATED), red=5 (timeout/rebase/gate/conflict),
-#       certified=1 (CERTIFIED). Verifies counts, breakdown, oldest ages, pane rendering.
-#   (b) unreadable landstate directory — all funnel keys must be ?, pane shows ?.
+#   (a) fixture with the exact shapes from the bead description, now spira-lc rows instead
+#       of landstate files: done=3 (no row), certify=2 (SUBMITTED, legacy GATED), red=5
+#       (timeout/rebase/gate/conflict — REWORK with a GateRedReason breakdown), certified=1
+#       (CERTIFIED). Verifies counts, breakdown, oldest ages, pane rendering.
+#   (b) spira-lc unreachable — all funnel keys must be ?, pane shows ?.
 #   (c) positive control — funnel keys absent from env renders ? in the pane (not 0).
 #
 # tier: T2
-# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs spira-lc/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -18,9 +19,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 testdb_require cockpit-funnel
 testdb_up cockpit-funnel || exit 1
 
+# Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
+# can overwrite PATH with the harness's own tool directories.
+CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
+if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
 
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
@@ -28,6 +37,67 @@ BD_PATH="${SPIRA_PATH:-}"
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd)"
 [ -n "$REAL_BD" ] || { echo "SKIP cockpit-funnel: no bd binary" >&2; exit 77; }
 TESTDB_BD_PATH="$(command -v bd)"
+export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
+
+# spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
+# and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
+LC_PORT=$((3309 + (RANDOM % 500)))
+LC_SERVER_PID=""
+mkdir -p "$TMP/lc-data"
+cat > "$TMP/lc-server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LC_PORT
+  max_connections: 50
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+data_dir: "$TMP/lc-data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+LC_SERVER_PID=$!
+_lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
+trap '_lc_stop; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+
+lc_up=0
+for _ in $(seq 1 50); do
+    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
+        lc_up=1
+        break
+    fi
+    sleep 0.2
+done
+[ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
+
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
+    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
+    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
+LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
+
+SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
+SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
+SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
+    "$LC_BIN" admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
+wantrc "spira_lifecycle schema applies cleanly" 0 $?
+
+# lc_seed_bead <id> <state> <updated_at-epoch> [reason] -> a direct row insert, the same
+# shape test-lifecycle-container.sh/test-census.sh's own seed_bead use.
+lc_seed_bead() {
+    local _reason_sql="NULL"
+    [ -n "${4:-}" ] && _reason_sql="'$4'"
+    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
+        --use-db spira_lifecycle sql -q \
+        "INSERT INTO bead (bead_id, state, holds, reason, version, updated_at) VALUES ('$1','$2','[]',$_reason_sql,0,$3)
+         ON DUPLICATE KEY UPDATE state='$2', reason=$_reason_sql, updated_at=$3" >/dev/null 2>&1
+}
+
+LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
+        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
+        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
 
 REPO="$TMP/repo"
 git init -q -b main "$REPO"
@@ -71,28 +141,23 @@ JSONL
 NOW_EPOCH="$(date +%s)"
 OLD_EPOCH=$(( NOW_EPOCH - 7200 ))  # 2h ago
 
-mkdir -p "$RUN/landstate"
+# sp-g1..2: SUBMITTED (legacy GATED).
+lc_seed_bead sp-g1 SUBMITTED "$OLD_EPOCH"
+lc_seed_bead sp-g2 SUBMITTED "$NOW_EPOCH"
 
-TIP_G1="$(git -C "$REPO" rev-parse spira/sp-g1)"
-TIP_G2="$(git -C "$REPO" rev-parse spira/sp-g2)"
-printf 'GATED %s %s pass:running\n' "$TIP_G1" "$OLD_EPOCH" > "$RUN/landstate/sp-g1"
-printf 'GATED %s %s pass:running\n' "$TIP_G2" "$NOW_EPOCH" > "$RUN/landstate/sp-g2"
+# sp-r1..5: REWORK (legacy RED), split by GateRedReason (lifecycle/src/reason.rs) —
+# cockpit.sh's own bucket mapping is timeout->TIMEOUT, no-rebase->REBASE,
+# {suites-failed,syntax,policy-violation}->GATE, confine->CONFLICT.
+lc_seed_bead sp-r1 REWORK "$OLD_EPOCH" timeout
+lc_seed_bead sp-r2 REWORK "$NOW_EPOCH" no-rebase
+lc_seed_bead sp-r3 REWORK "$NOW_EPOCH" suites-failed
+lc_seed_bead sp-r4 REWORK "$NOW_EPOCH" confine
+lc_seed_bead sp-r5 REWORK "$NOW_EPOCH" policy-violation
 
-TIP_R1="$(git -C "$REPO" rev-parse spira/sp-r1)"
-TIP_R2="$(git -C "$REPO" rev-parse spira/sp-r2)"
-TIP_R3="$(git -C "$REPO" rev-parse spira/sp-r3)"
-TIP_R4="$(git -C "$REPO" rev-parse spira/sp-r4)"
-TIP_R5="$(git -C "$REPO" rev-parse spira/sp-r5)"
-printf 'RED %s %s timeout\n'               "$TIP_R1" "$OLD_EPOCH" > "$RUN/landstate/sp-r1"
-printf 'RED %s %s no-rebase@deadbeef\n'    "$TIP_R2" "$NOW_EPOCH" > "$RUN/landstate/sp-r2"
-printf 'RED %s %s gate\n'                  "$TIP_R3" "$NOW_EPOCH" > "$RUN/landstate/sp-r3"
-printf 'RED %s %s conflicts-with-base\n'   "$TIP_R4" "$NOW_EPOCH" > "$RUN/landstate/sp-r4"
-printf 'RED %s %s gate\n'                  "$TIP_R5" "$NOW_EPOCH" > "$RUN/landstate/sp-r5"
+# sp-c1: CERTIFIED.
+lc_seed_bead sp-c1 CERTIFIED "$OLD_EPOCH"
 
-TIP_C1="$(git -C "$REPO" rev-parse spira/sp-c1)"
-printf 'CERTIFIED %s %s\n' "$TIP_C1" "$OLD_EPOCH" > "$RUN/landstate/sp-c1"
-
-# sp-d1..3 have no landstate (done stage).
+# sp-d1..3 have no spira-lc row (done stage).
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
@@ -100,6 +165,7 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
     SPIRA_PATH="$BD_PATH" \
+        "${LC_ENV[@]}" \
     cockpit-collect once 2>/dev/null)"
 
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
@@ -124,12 +190,12 @@ is "SP_FUNNEL_RED_CONFLICT is 1"  "1" "$(val SP_FUNNEL_RED_CONFLICT)"
 echo "--- (a) oldest ages: non-empty strings ---"
 _certify_age="$(val SP_FUNNEL_CERTIFY_AGE)"
 [ -n "$_certify_age" ] && [ "$_certify_age" != "?" ] \
-    && ok "SP_FUNNEL_CERTIFY_AGE is non-empty (oldest GATED is 2h ago)" \
+    && ok "SP_FUNNEL_CERTIFY_AGE is non-empty (oldest SUBMITTED is 2h ago)" \
     || bad "SP_FUNNEL_CERTIFY_AGE is non-empty" "got [$_certify_age]"
 
 _red_age="$(val SP_FUNNEL_RED_AGE)"
 [ -n "$_red_age" ] && [ "$_red_age" != "?" ] \
-    && ok "SP_FUNNEL_RED_AGE is non-empty (oldest RED is 2h ago)" \
+    && ok "SP_FUNNEL_RED_AGE is non-empty (oldest REWORK is 2h ago)" \
     || bad "SP_FUNNEL_RED_AGE is non-empty" "got [$_red_age]"
 
 _cert_age="$(val SP_FUNNEL_CERT_AGE)"
@@ -175,16 +241,14 @@ want "pane shows gate in red"      "gate"    "$pane"
 want "pane shows conflict in red"  "conflict" "$pane"
 nowant "pane does not say anomaly" "anomaly" "$pane"
 
-echo "--- (b) unreadable landstate directory ---"
-# Remove the landstate dir entirely — all funnel keys must be ?.
-rm -rf "$RUN/landstate"
-
+echo "--- (b) spira-lc unreachable ---"
+# SPIRA_LC_BIN names a program that does not exist: CANNOT TELL renders "?" everywhere.
 out_b="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" \
     SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
     SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
-    SPIRA_PATH="$BD_PATH" \
+    SPIRA_PATH="$BD_PATH" SPIRA_LC_BIN="$TMP/no-such-spira-lc" \
     cockpit-collect once 2>/dev/null)"
 
 valb() { printf '%s' "$out_b" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
@@ -194,7 +258,7 @@ is "unreadable: SP_FUNNEL_CERTIFY_N=?"  "?" "$(valb SP_FUNNEL_CERTIFY_N)"
 is "unreadable: SP_FUNNEL_RED_N=?"      "?" "$(valb SP_FUNNEL_RED_N)"
 is "unreadable: SP_FUNNEL_CERT_AGE=?"   "?" "$(valb SP_FUNNEL_CERT_AGE)"
 
-# Pane renders ? for funnel rows when landstate is unreadable.
+# Pane renders ? for funnel rows when spira-lc is unreachable.
 {
     printf '%s\n' "$out_b" | python3 -c '
 import sys

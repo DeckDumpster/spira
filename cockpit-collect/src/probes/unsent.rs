@@ -56,6 +56,8 @@ fn branch_backlog_section(out: &mut Kv) {
 
     let reg = io::repo_registry();
     let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
+    let in_delivery: std::collections::HashMap<String, super::lc::LcRow> =
+        super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
     let batch_wait: i64 = std::env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
 
     for rname in reg.all() {
@@ -128,34 +130,28 @@ fn branch_backlog_section(out: &mut Kv) {
                         }
                     }
                     if !matches!(status, BeadStatus::Closed { .. }) {
-                        let ls_file = run.join("landstate").join(id);
-                        if let Ok(content) = std::fs::read_to_string(&ls_file) {
-                            let mut fields = content.lines().next().unwrap_or("").split_whitespace();
-                            let ls_state = fields.next().unwrap_or("");
-                            if ls_state == "BATCHED" {
-                                let mut in_batch = false;
-                                if let Ok(entries) = std::fs::read_dir(&qdir) {
-                                    for e in entries.flatten() {
-                                        let open_f = e.path().join("open");
-                                        let Ok(oc) = std::fs::read_to_string(&open_f) else { continue };
-                                        if let Some(mems) = oc.lines().find_map(|l| l.strip_prefix("members=")) {
-                                            if mems.split_whitespace().any(|m| m.split(':').next() == Some(id)) {
-                                                in_batch = true;
-                                                break;
-                                            }
+                        if let Some(row) = in_delivery.get(id) {
+                            let mut in_batch = false;
+                            if let Ok(entries) = std::fs::read_dir(&qdir) {
+                                for e in entries.flatten() {
+                                    let open_f = e.path().join("open");
+                                    let Ok(oc) = std::fs::read_to_string(&open_f) else { continue };
+                                    if let Some(mems) = oc.lines().find_map(|l| l.strip_prefix("members=")) {
+                                        if mems.split_whitespace().any(|m| m.split(':').next() == Some(id)) {
+                                            in_batch = true;
+                                            break;
                                         }
                                     }
                                 }
-                                if !in_batch {
-                                    batched_stranded += 1;
-                                    batched_stranded_names.push(id.to_string());
-                                }
-                                let ls_epoch: Option<i64> = content.lines().next().unwrap_or("").split_whitespace().nth(2).and_then(|s| s.parse().ok());
-                                if let Some(ep) = ls_epoch {
-                                    if ep > 0 && (now - ep) > batch_wait {
-                                        batched_too_long += 1;
-                                        batched_too_long_names.push(id.to_string());
-                                    }
+                            }
+                            if !in_batch {
+                                batched_stranded += 1;
+                                batched_stranded_names.push(id.to_string());
+                            }
+                            if let Some(ep) = row.updated_at {
+                                if ep > 0 && (now - ep) > batch_wait {
+                                    batched_too_long += 1;
+                                    batched_too_long_names.push(id.to_string());
                                 }
                             }
                         }
@@ -428,7 +424,13 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
     let cert_win: i64 = std::env::var("SPIRA_CERT_WINDOW_MINS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
-    let landstate_dir = run.join("landstate");
+    let Some(lc_rows) = super::lc::list(None) else {
+        for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
+            push(out, k, "?");
+        }
+        return;
+    };
+    let lc_ids: HashSet<&str> = lc_rows.iter().map(|r| r.id.as_str()).collect();
 
     let mut landed_set: HashSet<&str> = HashSet::new();
     for r in &closed_pairs {
@@ -453,7 +455,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if !has_br {
             continue;
         }
-        if landstate_dir.join(&r.id).exists() {
+        if lc_ids.contains(r.id.as_str()) {
             continue;
         }
         anomaly += 1;

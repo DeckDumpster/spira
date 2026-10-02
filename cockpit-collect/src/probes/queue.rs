@@ -1,4 +1,4 @@
-//! `queue_keys` — landstate funnel depth/age, the active batch, the next-up CERTIFIED rows
+//! `queue_keys` — lifecycle funnel depth/age, the active batch, the next-up CERTIFIED rows
 //! and the quarantine count. Ported from `spira/cockpit.sh` (DESIGN.md "Design"); the
 //! per-repository sort order (`queue_sort_rows`) and the certified listing
 //! (`queue_certified_list`) stay `lib.sh`'s own — this bead does not own or re-derive them
@@ -15,31 +15,17 @@ use std::collections::HashSet;
 // `spira-claim` (wave 4.25, sp-obhv6) — this probe used to keep its own byte-identical
 // copy of the same five tokens, only for the express-lane count below.
 
-struct Landstate {
-    status: String,
-    epoch: Option<i64>,
-    reason: String,
-}
-
-fn read_landstate(path: &std::path::Path) -> Option<Landstate> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let first_line = content.lines().next()?;
-    let mut parts = first_line.split_whitespace();
-    let status = parts.next()?.to_string();
-    let _tip = parts.next();
-    let epoch = parts.next().and_then(|s| s.parse().ok());
-    let reason = parts.next().unwrap_or("").to_string();
-    Some(Landstate { status, epoch, reason })
-}
-
 pub fn queue_keys() -> Kv {
     let mut out = Kv::new();
     let run = io::run_dir();
     let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
     let now = io::now();
 
-    let landstate_dir = run.join("landstate");
-    if !landstate_dir.is_dir() {
+    let funnel = match (super::lc::list(Some("CERTIFIED")), super::lc::list(Some("SUBMITTED")), super::lc::list(Some("REWORK"))) {
+        (Some(c), Some(s), Some(r)) => Some((c, s, r)),
+        _ => None,
+    };
+    if funnel.is_none() {
         for k in [
             "SP_QUEUE_DEPTH", "SP_QUEUE_EJECTED", "SP_QUEUE_RED", "SP_FUNNEL_CERTIFY_N",
             "SP_FUNNEL_CERTIFY_AGE", "SP_FUNNEL_RED_N", "SP_FUNNEL_RED_AGE",
@@ -60,44 +46,35 @@ pub fn queue_keys() -> Kv {
         let mut red_cf = 0;
         let mut red_ep: Option<i64> = None;
         let mut cert_ep: Option<i64> = None;
-        if let Ok(entries) = std::fs::read_dir(&landstate_dir) {
-            for e in entries.flatten() {
-                let Some(ls) = read_landstate(&e.path()) else { continue };
-                match ls.status.as_str() {
-                    "CERTIFIED" => {
-                        depth += 1;
-                        if let Some(ep) = ls.epoch {
-                            if cert_ep.map(|c| ep < c).unwrap_or(true) {
-                                cert_ep = Some(ep);
-                            }
-                        }
-                    }
-                    "EJECTED" => ejected += 1,
-                    "GATED" => {
-                        certify_n += 1;
-                        if let Some(ep) = ls.epoch {
-                            if certify_ep.map(|c| ep < c).unwrap_or(true) {
-                                certify_ep = Some(ep);
-                            }
-                        }
-                    }
-                    "RED" => {
-                        red += 1;
-                        if let Some(ep) = ls.epoch {
-                            if red_ep.map(|c| ep < c).unwrap_or(true) {
-                                red_ep = Some(ep);
-                            }
-                        }
-                        match ls.reason.as_str() {
-                            "timeout" => red_to += 1,
-                            r if r.starts_with("no-rebase") => red_rb += 1,
-                            "gate" => red_gt += 1,
-                            r if r == "confine" || r.starts_with("conflicts-with-base") => red_cf += 1,
-                            _ => {}
-                        }
-                    }
-                    _ => {}
+        let (certified, submitted, rework) = funnel.unwrap_or_default();
+        let older = |cur: &mut Option<i64>, ep: Option<i64>| {
+            if let Some(ep) = ep {
+                if cur.map(|c| ep < c).unwrap_or(true) {
+                    *cur = Some(ep);
                 }
+            }
+        };
+        for r in &certified {
+            depth += 1;
+            older(&mut cert_ep, r.updated_at);
+        }
+        for r in &submitted {
+            certify_n += 1;
+            older(&mut certify_ep, r.updated_at);
+        }
+        for r in &rework {
+            if r.reason == "batch-ejected" {
+                ejected += 1;
+                continue;
+            }
+            red += 1;
+            older(&mut red_ep, r.updated_at);
+            match r.reason.as_str() {
+                "timeout" => red_to += 1,
+                r if r.starts_with("no-rebase") => red_rb += 1,
+                "gate" => red_gt += 1,
+                r if r == "confine" || r.starts_with("conflicts-with-base") => red_cf += 1,
+                _ => {}
             }
         }
         push(&mut out, "SP_QUEUE_DEPTH", depth.to_string());
@@ -270,22 +247,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn read_landstate_parses_status_tip_epoch_reason() {
-        let dir = testkit::TempDir::new("cc-landstate");
-        let f = dir.path().join("sp-1");
-        std::fs::write(&f, "RED deadbeef 1700000000 timeout\n").unwrap();
-        let ls = read_landstate(&f).unwrap();
-        assert_eq!(ls.status, "RED");
-        assert_eq!(ls.epoch, Some(1700000000));
-        assert_eq!(ls.reason, "timeout");
-    }
-
-    #[test]
-    fn missing_landstate_dir_renders_question_marks() {
+    fn unreachable_lifecycle_store_renders_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-queue-missing");
         std::env::set_var("SPIRA_RUN", run.path());
         std::env::set_var("SPIRA_QUEUE_DIR", run.path().join("queue"));
+        std::env::set_var("SPIRA_LC_BIN", run.path().join("no-such-spira-lc"));
         let kv = queue_keys();
         let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_QUEUE_DEPTH"), Some("?".to_string()));

@@ -7,6 +7,7 @@
 
 mod admission;
 mod core_detail;
+mod lc;
 mod queue;
 mod ratelim;
 mod reachable;
