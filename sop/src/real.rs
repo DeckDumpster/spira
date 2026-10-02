@@ -59,13 +59,17 @@ impl Bd for RealBd {
     }
 
     fn memories_json(&self) -> Option<String> {
-        let (_ok, out) = self.seam("bdjson memories 2>/dev/null", &[], None);
-        let s = String::from_utf8_lossy(&out).into_owned();
-        if s.trim().is_empty() {
-            None
-        } else {
-            Some(s)
+        // Retry with backoff: under host load bd times out transiently. A failed or empty
+        // read is None, never an empty shelf (law-a-control-that-cannot-check-must-refuse).
+        for attempt in 0..4u64 {
+            let (ok, out) = self.seam("bdjson memories 2>/dev/null", &[], None);
+            let s = String::from_utf8_lossy(&out).into_owned();
+            if ok && !s.trim().is_empty() {
+                return Some(s);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
         }
+        None
     }
 
     fn note(&self, bead: &str, text: &str) -> bool {

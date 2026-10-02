@@ -95,7 +95,9 @@ pub fn show(bd: &dyn Bd, key: &str) -> Report {
 
 pub fn list(bd: &dyn Bd) -> Report {
     let mut r = Report::ok();
-    let raw = bd.memories_json().unwrap_or_default();
+    let Some(raw) = bd.memories_json() else {
+        return r.fail(1, "cannot read the shelf (bd unreachable or timed out); refusing to report 0 SOPs".to_string());
+    };
     let map = shelf::parse_or_empty(&raw);
     for (k, v) in &map {
         let words = v.split_whitespace().count();
