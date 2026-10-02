@@ -43,6 +43,8 @@ struct World {
     /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
     /// every other test's "every exec succeeds" assumption unchanged.
     fail_landing_pass_mark: bool,
+    /// What `landing-pass cited-commit` prints; empty means the notes cite nothing on base.
+    cited_commit: String,
 }
 
 type W = Arc<Mutex<World>>;
@@ -179,7 +181,8 @@ impl Exec for FakeExec {
             };
         }
         if prog == "landing-pass" && args.first().map(String::as_str) == Some("cited-commit") {
-            return Out::ok("deadbeef");
+            let c = self.0.lock().unwrap().cited_commit.clone();
+            return if c.is_empty() { Out::fail(1, "") } else { Out::ok(&c) };
         }
         if prog == "env"
             && args.iter().any(|a| a == "landing-pass")
@@ -1107,7 +1110,9 @@ fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
         std::fs::write(repo.join("f"), "theirs\n").unwrap();
         git(&repo, &["commit", "-qam", "someone else"]);
-        w.lock().unwrap().status.insert("sp-m".into(), "closed".into());
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-m".into(), "closed".into());
+        w.cited_commit = "deadbeef".into();
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
@@ -1141,6 +1146,7 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
         git(&repo, &["commit", "-qam", "someone else"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
+        w.cited_commit = "deadbeef".into();
         w.fail_landing_pass_mark = true;
         0
     });
