@@ -118,5 +118,13 @@ pub trait World {
     /// same question as a server that is actually on it).
     fn sccache_show_stats(&self) -> Option<String>;
 
+    /// `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process the same way `spira_config::build`
+    /// resolves it for a real build (law-a-binary-resolves-the-config-it-reads): env first,
+    /// then the host config document. sp-xtdqi-3: this is NOT the same as [`World::env`] —
+    /// that is `conf.sh`'s own bash capture, and `conf.sh` carries no statement at all for a
+    /// NO-DEFAULT key like this one, so a box that genuinely configured it (in the host config,
+    /// never exported) was invisible to the bash capture and this check passed blind.
+    fn sccache_dav_addr(&self) -> Option<String>;
+
     fn out(&self, s: &str);
 }

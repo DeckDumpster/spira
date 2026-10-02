@@ -469,7 +469,7 @@ pub fn check_sccache(w: &dyn World) -> Vec<Line> {
 /// it only reports (`A failed probe renders ?, never 0` is this check's whole job; the
 /// self-heal lives where a build is actually about to happen).
 pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
-    let Some(addr) = w.env("SPIRA_SCCACHE_DAV_ADDR").filter(|v| !v.trim().is_empty()) else {
+    let Some(addr) = w.sccache_dav_addr() else {
         return vec![ok("no shared store configured (SPIRA_SCCACHE_DAV_ADDR unset) — nothing to check")];
     };
     let operated = w.env("SPIRA_OPERATED").map(|v| v != "0").unwrap_or(true);

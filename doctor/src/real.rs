@@ -366,7 +366,15 @@ impl World for Real {
     }
 
     fn sccache_help(&self) -> Option<String> {
-        Command::new("sccache")
+        // THE ABSOLUTE PATH, NEVER A BARE NAME (sp-xtdqi-3): `Command::new("sccache")` is
+        // resolved by the OS against THIS PROCESS's own ambient PATH, not `self.env("PATH")`
+        // (conf.sh's derived one) — the two differ exactly when a launcher execs doctor
+        // under a trimmed `env -i ... PATH=...` that omits `~/.cargo/bin` (where sccache
+        // actually lives; it is not part of a release's own `bin/`). `which` already
+        // resolved the right path for the caller's own FAIL message; this call used to
+        // throw that resolution away and search PATH a second time, blind, and lose.
+        let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
+        Command::new(bin)
             .arg("--help")
             .stdin(Stdio::null())
             .stderr(Stdio::null())
@@ -379,13 +387,11 @@ impl World for Real {
         // Carries the configured store's own vars (if any) so a server THIS CALL happens to
         // spawn (none was running) starts on the right backend — harmless when one is
         // already running, since sccache's client only ever queries an existing daemon's
-        // socket and never re-applies a later invocation's environment to it. Built by hand
-        // rather than linking `spira_config::build::Store` (this crate is deliberately
-        // dependency-free, `opt-level = "z"`) — the two lines it would take are not worth
-        // the weight.
-        let mut cmd = Command::new("sccache");
+        // socket and never re-applies a later invocation's environment to it.
+        let bin = self.which("sccache").unwrap_or_else(|| PathBuf::from("sccache"));
+        let mut cmd = Command::new(bin);
         cmd.arg("--show-stats").stdin(Stdio::null()).stderr(Stdio::null());
-        if let Some(addr) = self.env("SPIRA_SCCACHE_DAV_ADDR").filter(|v| !v.trim().is_empty()) {
+        if let Some(addr) = self.sccache_dav_addr() {
             let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
             cmd.env("SCCACHE_WEBDAV_ENDPOINT", endpoint);
             cmd.env("SCCACHE_WEBDAV_KEY_PREFIX", "/");
@@ -393,9 +399,29 @@ impl World for Real {
         cmd.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
+    fn sccache_dav_addr(&self) -> Option<String> {
+        let env_map: BTreeMap<String, String> = std::env::vars().collect();
+        let repo = spira_config::resolve::derive_home_repo(&self.home, &env_map);
+        let toml = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
+        resolve_sccache_dav_addr(&self.home, &repo, &env_map, toml.as_ref())
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }
+}
+
+/// [`World::sccache_dav_addr`]'s pure core (sp-xtdqi-3): env first, then `toml`'s `[spira]`
+/// table — `spira_config::resolve::resolve`'s own precedence, the same one
+/// `spira_config::build::Store` uses for a real build. Split out from
+/// `Real::sccache_dav_addr` so a test can drive it with a fixture `home`/`conf.d` and an
+/// explicit, already-parsed document — never real process env or real file discovery,
+/// which would need the crate-wide env lock every other env-mutating test here takes.
+pub(crate) fn resolve_sccache_dav_addr(home: &Path, repo: &Path, env: &BTreeMap<String, String>, toml: Option<&spira_config::SpiraToml>) -> Option<String> {
+    let conf_d = spira_config::resolve::default_conf_d(home);
+    let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput { env, home, repo, toml, conf_d: &conf_d }).ok()?;
+    let v = resolved.get(spira_config::build::STORE_ADDR_ENV);
+    (!v.is_empty()).then(|| v.to_string())
 }
 
 fn is_exec(p: &Path) -> bool {
@@ -495,4 +521,153 @@ fn extract_semver(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// Guards the two tests below that must prove resolution goes through `self.env("PATH")`
+    /// rather than this PROCESS's own ambient one — which, under an ordinary `cargo test`
+    /// shell, already contains `~/.cargo/bin` and would make the bug invisible (the real
+    /// `sccache` answers instead of the fake one, "passing" for the wrong reason). Scoped
+    /// to just these two tests; nothing else here touches process env, and both take this
+    /// lock for their entire body before restoring the real PATH.
+    static PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct PathGuard(Option<std::ffi::OsString>);
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(p) => std::env::set_var("PATH", p),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    /// sccache 0.18.0's real `--help` output (captured live, built with `--features
+    /// webdav`) — the exact text [`World::sccache_help`]'s caller (`check_sccache`) parses
+    /// for the "Enabled features:" block. A fake script printing anything else would not
+    /// prove the plumbing to the REAL binary is correct.
+    const REAL_SCCACHE_018_HELP: &str = "Usage: sccache [OPTIONS] <--dist-auth|--debug-preprocessor-cache|--dist-status|--show-stats|--show-adv-stats|--start-server|--stop-server|--zero-stats|--package-toolchain <EXE> <OUT>|CMD>\n\nArguments:\n  [CMD]...  \n\nOptions:\n  -s, --show-stats                     show cache statistics\n      --show-adv-stats                 show advanced cache statistics\n      --start-server                   start background server\n      --debug-preprocessor-cache       show all preprocessor cache entries\n      --stop-server                    stop background server\n  -z, --zero-stats                     zero statistics counters\n      --dist-auth                      authenticate for distributed compilation\n      --dist-status                    show status of the distributed client\n      --package-toolchain <EXE> <OUT>  package toolchain for distributed compilation\n      --stats-format <FMT>             set output format of statistics [default: text] [possible\n                                       values: text, json]\n  -h, --help                           Print help\n  -V, --version                        Print version\n\nEnabled features:\n    S3:        false\n    Redis:     false\n    Memcached: false\n    GCS:       false\n    GHA:       false\n    Azure:     false\n    WebDAV:    true\n    OSS:       false\n    COS:       false\n";
+
+    fn fake_sccache(dir: &Path, help: &str) -> PathBuf {
+        let p = dir.join("sccache");
+        let script = format!("#!/bin/sh\nif [ \"$1\" = '--help' ]; then\n  cat <<'SCCACHE_HELP_EOF'\n{help}SCCACHE_HELP_EOF\nfi\n");
+        std::fs::write(&p, script).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    /// THE POSITIVE CONTROL for the PATH bug (sp-xtdqi-3): `self.env` carries the fake
+    /// script's directory; the REAL ambient process PATH (whatever `cargo test` itself
+    /// runs under) is never touched and need not contain it — proving `sccache_help`
+    /// resolves through `self.which`/`self.env("PATH")`, not a bare `Command::new("sccache")`
+    /// left to the OS's own ambient-PATH search, which is what silently returned `None` in
+    /// production under a launcher's trimmed `env -i ... PATH=...`.
+    #[test]
+    fn sccache_help_resolves_through_self_env_path_not_the_bare_ambient_one() {
+        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = PathGuard(std::env::var_os("PATH"));
+        // The exact shape of the production repro (`env -i ... PATH=$R/bin:/usr/bin:/bin
+        // doctor`): no `~/.cargo/bin`, so a bare `Command::new("sccache")` finds nothing —
+        // this process's OWN ambient PATH, inherited by `cargo test`'s shell, would
+        // otherwise still contain the real cargo-installed sccache and hide the bug.
+        std::env::set_var("PATH", "/usr/bin:/bin");
+        let d = testkit::TempDir::new("doctor-real-sccache-help");
+        let bin = fake_sccache(d.path(), REAL_SCCACHE_018_HELP);
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), d.path().display().to_string());
+        let real = Real { home: PathBuf::from("/nonexistent-sp-xtdqi-3"), env };
+        let help = real.sccache_help().expect("the fake script is reachable through self.env(\"PATH\")");
+        assert!(help.contains("WebDAV:    true"), "{help}");
+        // check_sccache (lib.rs) is the actual caller this bug broke: FAIL became OK only
+        // once sccache_help could reach the binary this way.
+        let lines = crate::check_sccache(&real);
+        let levels: Vec<crate::Level> = lines.iter().map(|l| l.level).collect();
+        assert_eq!(levels, vec![crate::Level::Ok], "{lines:?}");
+        let _ = bin;
+    }
+
+    /// `--show-stats` resolves through the same path, and carries the store's env vars
+    /// when one is configured.
+    #[test]
+    fn sccache_show_stats_resolves_through_self_env_path_and_carries_the_store_vars() {
+        let _lock = PATH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _restore = PathGuard(std::env::var_os("PATH"));
+        std::env::set_var("PATH", "/usr/bin:/bin");
+        let d = testkit::TempDir::new("doctor-real-show-stats");
+        let log = d.path().join("calls.log");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s %s\\n' \"$1\" \"$SCCACHE_WEBDAV_ENDPOINT\" >> '{log}'\nif [ \"$1\" = '--show-stats' ]; then\n  printf 'Cache location                  webdav, name: , prefix: /\\n'\nfi\n",
+            log = log.display(),
+        );
+        let p = d.path().join("sccache");
+        std::fs::write(&p, script).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut env = BTreeMap::new();
+        env.insert("PATH".to_string(), d.path().display().to_string());
+        let home = d.path().join("home");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
+        let real = Real { home, env };
+        // No SPIRA_TOML for this real process to discover; the point here is PATH
+        // resolution and env-var plumbing, covered for the config side by
+        // `resolve_sccache_dav_addr`'s own tests below.
+        let stats = real.sccache_show_stats().expect("reachable through self.env(\"PATH\")");
+        assert!(stats.contains("webdav"), "{stats}");
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.starts_with("--show-stats"), "{calls:?}");
+    }
+
+    fn conf_d_stub() -> String {
+        "TYPE=string\nGROUP=sccache\nDOC=test fixture\nDEFAULT<<'SPIRA_CONF_DEFAULT_EOF'\n    # NO DEFAULT.\nSPIRA_CONF_DEFAULT_EOF\n".to_string()
+    }
+
+    fn fixture_toml(addr: &str) -> spira_config::SpiraToml {
+        spira_config::validate(&format!("[spira]\nid_prefix = \"sp\"\nsccache_dav_addr = \"{addr}\"\n")).unwrap()
+    }
+
+    /// THE POSITIVE CONTROL for the config-resolution bug (sp-xtdqi-3): the address lives
+    /// ONLY in the host config document — `env` here is deliberately empty, simulating the
+    /// normal case where an operator sets `sccache_dav_addr` in the host config document and exports
+    /// nothing. `conf.sh`'s own bash capture (`World::env`) never carries a NO-DEFAULT key
+    /// like this one even when it IS configured; `resolve_sccache_dav_addr` must still find
+    /// it by resolving in-process, never by reading `World::env`.
+    #[test]
+    fn resolve_sccache_dav_addr_finds_a_key_that_lives_only_in_the_config_document() {
+        let d = testkit::TempDir::new("doctor-resolve-addr");
+        let home = d.path().join("home");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
+        let toml = fixture_toml("192.168.1.56:9431");
+        let env: BTreeMap<String, String> = BTreeMap::new(); // deliberately unexported
+        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
+        assert_eq!(addr, Some("192.168.1.56:9431".to_string()));
+    }
+
+    #[test]
+    fn resolve_sccache_dav_addr_prefers_the_environment_over_the_config_document() {
+        let d = testkit::TempDir::new("doctor-resolve-addr-env-wins");
+        let home = d.path().join("home");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
+        let toml = fixture_toml("192.168.1.56:9431");
+        let mut env = BTreeMap::new();
+        env.insert("SPIRA_SCCACHE_DAV_ADDR".to_string(), "10.0.0.9:9431".to_string());
+        let addr = resolve_sccache_dav_addr(&home, &home, &env, Some(&toml));
+        assert_eq!(addr, Some("10.0.0.9:9431".to_string()));
+    }
+
+    #[test]
+    fn resolve_sccache_dav_addr_is_none_when_neither_names_a_store() {
+        let d = testkit::TempDir::new("doctor-resolve-addr-none");
+        let home = d.path().join("home");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        std::fs::write(home.join("conf.d/SPIRA_SCCACHE_DAV_ADDR"), conf_d_stub()).unwrap();
+        let env: BTreeMap<String, String> = BTreeMap::new();
+        assert_eq!(resolve_sccache_dav_addr(&home, &home, &env, None), None);
+    }
 }
