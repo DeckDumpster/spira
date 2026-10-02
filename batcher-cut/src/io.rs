@@ -157,10 +157,6 @@ pub fn bead_reopen(env: &Env, id: &str, cause: &str, note: &str) {
     let _ = lib_call(env, "bead_reopen", [id, cause, note]);
 }
 
-pub fn bump_requeue(env: &Env, id: &str, reason: &str) {
-    let _ = lib_call(env, "bump_requeue", [id, reason]);
-}
-
 /// Tries the mechanical rebase before a member conflicting with the base is handed to an
 /// aeon (sp-oxwvc). Returns the rebase-stale binary's own exit code: 0 (rebased — mechanically or
 /// cleanly — and re-certified at the new tip) and 1/2 (a real content conflict or a red
@@ -644,23 +640,24 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
 }
 
 /// The paths `tip` conflicts on with `base_sha` alone (a real rebase need), or None when it
-/// merges cleanly or conflicts only with the batch this round is accumulating. A throwaway
-/// detached worktree, never the batch worktree itself, so a base-only conflict leaves the
-/// round's own merge state untouched.
-pub fn base_conflict(repo: &Repo, run_dir: &Path, base_sha: &str, tip: &str) -> Option<Vec<String>> {
-    let wt = run_dir.join("worktree").join(format!(".batcher-bc-{}", std::process::id()));
-    if !run_status(Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "add", "-q", "--detach"]).arg(&wt).arg(base_sha)) {
+/// merges cleanly or conflicts only with the batch this round is accumulating.
+/// `merge-tree --write-tree` touches no worktree. A conflict is exit 1 with a result tree id
+/// on the first line; an unresolvable rev also exits 1 but prints none, and no other failure
+/// is evidence of a conflict, so those answer None.
+pub fn base_conflict(repo: &Repo, base_sha: &str, tip: &str) -> Option<Vec<String>> {
+    let o = Command::new("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", base_sha, tip])
+        .output()
+        .ok()?;
+    let out = String::from_utf8_lossy(&o.stdout).to_string();
+    let mut lines = out.lines();
+    let first = lines.next().unwrap_or("");
+    if o.status.code() != Some(1) || first.len() < 40 || !first.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let conflicts = !run_status(Command::new("git").arg("-C").arg(&wt).args(["merge", "--no-commit", "--no-ff"]).arg(tip));
-    let files = if conflicts {
-        run(Command::new("git").arg("-C").arg(&wt).args(["diff", "--name-only", "--diff-filter=U"]), "git diff unmerged").unwrap_or_default()
-    } else {
-        String::new()
-    };
-    let _ = Command::new("git").arg("-C").arg(&wt).args(["merge", "--abort"]).status();
-    let _ = Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
-    conflicts.then(|| files.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+    Some(lines.take_while(|l| !l.is_empty()).map(str::to_string).collect())
 }
 
 fn conflict_streak_file(env: &Env, id: &str) -> PathBuf {
@@ -2174,9 +2171,87 @@ mod integration_tests {
     }
 }
 
+#[cfg(test)]
+pub(crate) mod base_conflict_tests {
+    use super::*;
+
+    pub fn git(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    /// base has f=0; `a` edits only fa, `b` edits only fb... `c` and `d` both rewrite f.
+    /// Returns (repo, base, a, b, c, d) with a/b disjoint from base and each other except
+    /// that a and b both rewrite `shared` differently (round-only conflict); c rewrites f
+    /// against a base that moved f.
+    pub fn fixture(d: &Path) -> [String; 5] {
+        git(d, &["init", "-q", "-b", "main"]);
+        for f in ["f", "shared"] {
+            fs::write(d.join(f), "0\n").unwrap();
+            git(d, &["add", f]);
+        }
+        git(d, &["commit", "-q", "-m", "root"]);
+        let root = git(d, &["rev-parse", "HEAD"]);
+        let branch = |name: &str, file: &str, body: &str| {
+            git(d, &["checkout", "-q", "-b", name, &root]);
+            fs::write(d.join(file), body).unwrap();
+            git(d, &["commit", "-qam", name]);
+            git(d, &["rev-parse", "HEAD"])
+        };
+        let a = branch("a", "shared", "A\n");
+        let b = branch("b", "shared", "B\n");
+        let c = branch("c", "f", "C\n");
+        git(d, &["checkout", "-q", "-b", "base", &root]);
+        fs::write(d.join("f"), "base\n").unwrap();
+        git(d, &["commit", "-qam", "base moves f"]);
+        let base = git(d, &["rev-parse", "HEAD"]);
+        [base, a, b, c, root]
+    }
+
+    fn repo(d: &Path) -> Repo {
+        Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local }
+    }
+
+    #[test]
+    fn a_member_clashing_only_with_another_member_is_not_a_base_conflict() {
+        let d = testkit::TempDir::new("batcher-cut-bc-round");
+        let [base, a, b, _c, _root] = fixture(&d);
+        let r = repo(&d);
+        // The round merges a, then b clashes with a — yet neither clashes with the base.
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        git(&d, &["merge", "-q", "--no-edit", &a]);
+        assert!(!run_status(Command::new("git").arg("-C").arg(&*d).args(["merge", "--no-edit", &b])), "b must clash with a");
+        git(&d, &["merge", "--abort"]);
+        assert!(base_conflict(&r, &base, &a).is_none());
+        assert!(base_conflict(&r, &base, &b).is_none());
+    }
+
+    #[test]
+    fn a_member_clashing_with_the_base_is_a_base_conflict() {
+        let d = testkit::TempDir::new("batcher-cut-bc-base");
+        let [base, _a, _b, c, _root] = fixture(&d);
+        assert_eq!(base_conflict(&repo(&d), &base, &c), Some(vec!["f".to_string()]));
+    }
+
+    #[test]
+    fn an_unresolvable_tip_is_not_a_conflict() {
+        let d = testkit::TempDir::new("batcher-cut-bc-bad");
+        let [base, ..] = fixture(&d);
+        assert!(base_conflict(&repo(&d), &base, "0000000000000000000000000000000000000000").is_none());
+    }
+}
+
 /// A scratch Env for the unit tests: nothing points anywhere real.
 #[cfg(test)]
-fn lifecycle_tests_env(dir: &Path) -> Env {
+pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
     Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
