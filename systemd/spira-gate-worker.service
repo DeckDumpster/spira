@@ -19,3 +19,6 @@ StandardError=append:@SPIRA_RUN@/gate-worker.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work
