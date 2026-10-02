@@ -301,6 +301,8 @@ impl Remote for SshRemote {
 pub struct GitHost {
     pub state_dir: PathBuf,
     pub mirror_port: u16,
+    /// The LAN address the VMs reach; the daemon binds only there.
+    pub listen: String,
 }
 
 fn git(args: &[&str]) -> Result<String, String> {
@@ -317,6 +319,30 @@ fn pid_alive(pid: i32) -> bool {
     pid > 0 && unsafe { libc::kill(pid, 0) } == 0
 }
 
+/// Stops the mirror daemon `prepare_mirror` left running for `state_dir`, and waits for it
+/// to be gone. Nothing running is success.
+pub fn stop_mirror(state_dir: &Path) -> Result<(), String> {
+    let pidfile = state_dir.join("git-daemon.pid");
+    let Some(pid) = fs::read_to_string(&pidfile).ok().and_then(|s| s.trim().parse::<i32>().ok()) else {
+        return Ok(());
+    };
+    if pid_alive(pid) {
+        // SAFETY: plain SIGTERM to the pid the daemon wrote for this state dir.
+        unsafe { libc::kill(pid, libc::SIGTERM) };
+        for _ in 0..50 {
+            if !pid_alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if pid_alive(pid) {
+            return Err(format!("git daemon {pid} did not exit after SIGTERM"));
+        }
+    }
+    let _ = fs::remove_file(&pidfile);
+    Ok(())
+}
+
 impl Host for GitHost {
     fn is_checkout(&self, tree: &Path) -> bool {
         git(&["-C", &tree.to_string_lossy(), "rev-parse", "--git-dir"]).is_ok()
@@ -328,6 +354,9 @@ impl Host for GitHost {
     }
 
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String> {
+        if self.listen.is_empty() {
+            return Err("no listen address for the mirror daemon (SPIRA_ROUND_VM_HOST_ADDR)".into());
+        }
         fs::create_dir_all(&self.state_dir).map_err(|e| e.to_string())?;
         let mirror = self.state_dir.join("mirror.git");
         let m = mirror.to_string_lossy().to_string();
@@ -346,7 +375,7 @@ impl Host for GitHost {
         let st = command("git")
             .arg("daemon")
             .arg("--reuseaddr")
-            .arg("--listen=0.0.0.0")
+            .arg(format!("--listen={}", self.listen))
             .arg(format!("--port={}", self.mirror_port))
             .arg(format!("--base-path={}", self.state_dir.display()))
             .arg("--export-all")
@@ -977,6 +1006,39 @@ mod tests {
 
     // ── run end to end against fakes ────────────────────────────────────────────────
 
+    #[test]
+    fn teardown_leaves_no_listener_and_nothing_running_is_success() {
+        let d = TempDir::new();
+        assert!(stop_mirror(d.path()).is_ok(), "no pidfile");
+        let pidfile = d.path().join("git-daemon.pid");
+        let st = std::process::Command::new("sh").arg("-c").arg(format!("sleep 300 </dev/null >/dev/null 2>&1 & echo $! > {}", pidfile.display())).status().unwrap();
+        assert!(st.success());
+        let pid: i32 = fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        assert!(pid_alive(pid));
+        stop_mirror(d.path()).unwrap();
+        assert!(!pid_alive(pid), "the daemon survived teardown");
+        assert!(!pidfile.exists());
+    }
+
+    #[test]
+    fn a_real_mirror_daemon_listens_where_told_and_teardown_closes_it() {
+        let d = TempDir::new();
+        let tree = d.path().join("tree");
+        fs::create_dir_all(&tree).unwrap();
+        for a in [vec!["init", "--quiet"], vec!["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty", "-m", "x"]] {
+            assert!(std::process::Command::new("git").arg("-C").arg(&tree).args(&a).status().unwrap().success());
+        }
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let state = d.path().join("state");
+        let no_addr = GitHost { state_dir: state.clone(), mirror_port: port, listen: String::new() };
+        assert!(no_addr.prepare_mirror(&tree).is_err(), "no address means no daemon, never every interface");
+        let host = GitHost { state_dir: state.clone(), mirror_port: port, listen: "127.0.0.1".into() };
+        host.prepare_mirror(&tree).unwrap();
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_ok(), "daemon not listening");
+        stop_mirror(&state).unwrap();
+        assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err(), "listener survived teardown");
+    }
+
     struct FakeHost;
     impl Host for FakeHost {
         fn is_checkout(&self, tree: &Path) -> bool {
@@ -1104,7 +1166,7 @@ mod tests {
     }
 
     fn go(fx: &Fixture, remote: &FakeRemote, a: &RunArgs) -> i32 {
-        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO };
+        let pool = Pool { state_dir: fx.cfg.state_dir.clone(), retry_interval: Duration::ZERO, max_retries: 1, wait_poll: Duration::ZERO, acquire_deadline: Duration::ZERO };
         let fp = fx.fp.clone();
         let f = move || {
             Ok(Attempt {

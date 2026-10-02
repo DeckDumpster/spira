@@ -16,7 +16,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|template <tree-dir> [--vmid <n>]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|teardown|template <tree-dir> [--vmid <n>]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -79,6 +79,7 @@ fn pool_for(cfg: &Config) -> Pool {
         retry_interval: cfg.retry_interval,
         max_retries: cfg.max_retries,
         wait_poll: cfg.wait_poll,
+        acquire_deadline: cfg.acquire_deadline,
     }
 }
 
@@ -106,7 +107,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     };
     let rest = rest.to_vec();
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" => {}
+        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
@@ -184,6 +185,13 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
+        "teardown" => match crate::run::stop_mirror(&cfg.state_dir) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{e}");
+                1
+            }
+        },
         "_provision-bg" => match pool.provision_background(&factory) {
             Ok(()) => 0,
             Err(e) => {
@@ -203,7 +211,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 sig_pool.release_owned_by(me, &real_attempt);
                 std::process::exit(128 + sig);
             });
-            let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port };
+            let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
             let remote = SshRemote { user: cfg.ssh_user.clone(), port: cfg.ssh_port, key: cfg.host_key.clone() };
             let Some(a) = run_args.as_ref() else { return 2 };
             let env = RunEnv { cfg: &cfg, pool: &pool, deps: &deps, host: &host, remote: &remote };
@@ -221,7 +229,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
 /// `round-vm template` (DESIGN.md §2.2b): preflight, then build; prints `<vmid> <image>`.
 fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
     use crate::run::Host;
-    let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port };
+    let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
     if !host.is_checkout(&a.tree_dir) {
         eprintln!("round-vm template: not a git checkout: {}", a.tree_dir.display());
         return 2;
