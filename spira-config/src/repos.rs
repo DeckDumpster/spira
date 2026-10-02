@@ -598,7 +598,32 @@ pub fn same_repo(a: &str, b: &str) -> bool {
 /// ref: every land-local refused (sp-z3eyk). Resolve them in-process exactly as conf.sh
 /// would; a key the environment already sets wins, and a failed resolve leaves the
 /// environment as it was, so the lookup still refuses rather than guessing.
+///
+/// `SPIRA_REPO_DERIVED` is the one exception to "the environment already sets wins"
+/// (sp-8bhnr, LOOP-STOPPING): it is a pure filesystem fact about THIS process's own
+/// `home` (`derive_repo_filesystem`'s `git rev-parse --show-toplevel` of `home`, or its
+/// parent) — never a caller's to set, and never safe to inherit across a process
+/// boundary. CHECK6's own dispatch (`sentinel/src/dispatch.rs`) forwards ITS OWN resolved
+/// `SPIRA_REPO`/`SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` into the landing-pass worker it starts,
+/// correct for SENTINEL's own `home` (a release's bundled, non-checkout `spira/`, so
+/// `SPIRA_REPO` derives to the release ROOT) — but it does not also forward
+/// `SPIRA_REPO_DERIVED`. Before this fix, [`repo_override`] read that asymmetry (a
+/// forwarded `SPIRA_REPO` with no `SPIRA_REPO_DERIVED` alongside it) as THIS process's own
+/// deliberate override and returned the release root for the home repo outright,
+/// bypassing the repo-map's real row entirely — the home repo 'spira' resolved to the
+/// release directory instead of its configured checkout, and every closed bead's
+/// landstate pruned next, reading "no branch" from a registry that could not look.
+/// Recomputing it fresh, always, from THIS process's own `home` is the same
+/// law-a-binary-resolves-the-config-it-reads fix sp-hh599 made for spira-claim's own
+/// `fayth_home`: a derived fact is resolved in-process, never trusted from the
+/// environment. When `home` genuinely matches what forwarded it (the ordinary case: a
+/// unit's own worker, not a dispatcher's borrowed context), the freshly-derived value
+/// equals the forwarded one and nothing changes.
 pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &std::path::Path) -> std::collections::BTreeMap<String, String> {
+    env.insert(
+        "SPIRA_REPO_DERIVED".to_string(),
+        crate::resolve::derive_repo_filesystem(home, &env).to_string_lossy().into_owned(),
+    );
     const KEYS: [&str; 4] = ["SPIRA_REPO_MAP", "SPIRA_HOME_REPO", "SPIRA_REPO", "SPIRA_REPO_DERIVED"];
     if KEYS.iter().all(|k| env.get(*k).is_some_and(|v| !v.is_empty())) {
         return env;
@@ -647,14 +672,76 @@ mod tests {
         assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(xdg.join("spira/repo-map").to_str().unwrap()), "{out:?}");
     }
 
+    /// `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO` still win when the environment
+    /// already sets them — but `SPIRA_REPO_DERIVED` (sp-8bhnr) is never one of those three:
+    /// it is always recomputed fresh from `home`, overwriting whatever the ambient value
+    /// was ("0" here is not a real filesystem fact and must not survive).
     #[test]
-    fn registry_env_keeps_what_the_environment_already_sets() {
+    fn registry_env_keeps_what_the_environment_already_sets_except_the_derived_fact() {
         let mut env = std::collections::BTreeMap::new();
         for (k, v) in [("SPIRA_REPO_MAP", "/a"), ("SPIRA_HOME_REPO", "h"), ("SPIRA_REPO", "/r"), ("SPIRA_REPO_DERIVED", "0")] {
             env.insert(k.to_string(), v.to_string());
         }
-        let out = registry_env(env.clone(), std::path::Path::new("/nonexistent/spira"));
-        assert_eq!(out, env);
+        let home = std::path::Path::new("/nonexistent/spira");
+        let out = registry_env(env.clone(), home);
+        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some("/a"));
+        assert_eq!(out.get("SPIRA_HOME_REPO").map(String::as_str), Some("h"));
+        assert_eq!(out.get("SPIRA_REPO").map(String::as_str), Some("/r"));
+        // A nonexistent `home` canonicalizes to nothing, so `derive_repo_filesystem` falls
+        // back to `home` itself (its own doc) — never the stale "0".
+        assert_eq!(out.get("SPIRA_REPO_DERIVED").map(String::as_str), Some("/nonexistent/spira"));
+    }
+
+    /// sp-8bhnr (P0, LOOP-STOPPING): CHECK6's own dispatch forwards its OWN resolved
+    /// `SPIRA_REPO`/`SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` into the landing-pass worker it
+    /// starts, but never `SPIRA_REPO_DERIVED` (`sentinel/src/dispatch.rs`'s `setenv` list
+    /// omits it). Sentinel's own `home` under its unit is a release's bundled, non-checkout
+    /// `spira/`, so its own `SPIRA_REPO` derives to the release ROOT — and when that gets
+    /// forwarded into landing-pass, which shares the SAME `SPIRA_HOME`,
+    /// [`repo_override`] used to read the missing `SPIRA_REPO_DERIVED` as a deliberate
+    /// override and hand back the release root for the home repo outright, instead of its
+    /// real configured checkout. Seen red against the pre-fix code (which never backfills
+    /// `SPIRA_REPO_DERIVED` at all — `resolve()` never puts it in `Resolved::values`).
+    #[test]
+    fn registry_resolves_the_configured_checkout_despite_a_forwarded_repo_without_its_derived_pair() {
+        let t = testkit::TempDir::new("repos-registry-sp-8bhnr");
+
+        // The REAL configured checkout for the home repo "spira" (production: spira.toml
+        // + repo-map both name /home/ryan/spira/harness; here, a fixture equivalent).
+        let checkout = t.path().join("checkouts/spira");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let map = t.path().join("repo-map");
+        std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
+
+        // The release's own bundled `spira/` — NOT a git checkout (a release layout, not a
+        // clone), exactly sp-8bhnr's own repro. Only `conf.d` needs to be real (resolve()
+        // reads it unconditionally); borrow this checkout's own, real one.
+        let release = t.path().join("spira-releases/deadbeef");
+        let release_spira = release.join("spira");
+        std::fs::create_dir_all(&release_spira).unwrap();
+        std::os::unix::fs::symlink(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/conf.d"),
+            release_spira.join("conf.d"),
+        )
+        .unwrap();
+
+        // CHECK6's own forwarded env: SPIRA_REPO = sentinel's own derived value for THIS
+        // SAME home (the release root — `derive_repo_filesystem` falls back to `home`'s
+        // parent when `git -C home rev-parse --show-toplevel` fails), SPIRA_REPO_MAP and
+        // SPIRA_HOME_REPO forwarded too, SPIRA_REPO_DERIVED deliberately absent.
+        let home_dir = t.path().join("userhome");
+        let mut env = std::collections::BTreeMap::new();
+        env.insert("HOME".to_string(), home_dir.display().to_string());
+        env.insert("SPIRA_REPO".to_string(), release.canonicalize().unwrap_or_else(|_| release.clone()).display().to_string());
+        env.insert("SPIRA_REPO_MAP".to_string(), map.display().to_string());
+        env.insert("SPIRA_HOME_REPO".to_string(), "spira".to_string());
+
+        let reg = Registry::from_env(env, &release_spira);
+        assert_eq!(
+            reg.root("spira"),
+            Some(checkout.display().to_string()),
+            "the home repo 'spira' must resolve to its configured checkout, not the forwarded SPIRA_REPO (the release root)"
+        );
     }
 
 

@@ -984,6 +984,51 @@ fn an_unreadable_store_prunes_nothing() {
     assert!(h.s.run.join("landstate/sp-red").exists());
 }
 
+/// sp-8bhnr (P0, LOOP-STOPPING), law-absence-needs-a-positive-control: a registry that
+/// resolved the configured repository to something other than a real git checkout (this
+/// bead's own repro — the home repo 'spira' resolved to a release directory instead) must
+/// not be read as "no repository has the branch". Both conditions make the inner loop's
+/// `checkouts.iter().any(...)` false identically, and before this fix the prune could not
+/// tell "I looked and there is truly no branch" from "I could not look at all" — so it
+/// pruned the landstate of every closed bead in the store, sight unseen, which is exactly
+/// what happened to ~30 beads in the 07:36:57Z–07:37:16Z pass this bead is named for.
+#[test]
+fn prune_with_zero_resolvable_checkouts_prunes_nothing_and_says_so() {
+    let h = H::new(LandMode::QueueLocal);
+    // Break the one configured repository's checkout — exactly the production failure
+    // mode (the registry named a path that is not a real git checkout).
+    fs::remove_dir_all(h.repos[0].path.join(".git")).unwrap();
+    h.bead("sp-truly-branchless", "closed", &[]);
+    h.landstate("sp-truly-branchless", "CERTIFIED deadbeef 5 spira");
+    crate::prune::prune_landstate(&h.pass());
+    assert!(
+        h.s.run.join("landstate/sp-truly-branchless").exists(),
+        "a bead must not be pruned when this pass could not resolve a single real checkout to look in"
+    );
+    assert!(
+        h.logged("landing: prune refused"),
+        "the refusal must be loud, not a silent no-op: {:?}",
+        h.out.lines()
+    );
+}
+
+/// The positive control [`prune_with_zero_resolvable_checkouts_prunes_nothing_and_says_so`]
+/// needs: with a REAL checkout resolved, a genuinely branchless closed bead is still
+/// pruned — proving the refusal above is conditioned on "could this pass actually look",
+/// not a blanket new no-op that happens to also explain away the zero-checkout case.
+#[test]
+fn prune_with_a_real_checkout_still_prunes_a_truly_branchless_closed_bead() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-truly-branchless", "closed", &[]);
+    h.landstate("sp-truly-branchless", "CERTIFIED deadbeef 5 spira");
+    crate::prune::prune_landstate(&h.pass());
+    assert!(
+        !h.s.run.join("landstate/sp-truly-branchless").exists(),
+        "a closed bead with a real, resolvable checkout and genuinely no branch must still be pruned"
+    );
+    assert!(h.logged("landing: pruning landstate/sp-truly-branchless"));
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // push and hold (§4.3, §4.5)
 // ──────────────────────────────────────────────────────────────────────────────
