@@ -351,3 +351,9 @@ queue_round_stall_secs
 compile_stall_mins
 stranded_runner_min_age
 lc_password_file
+failed_unit_runs
+psi_full_avg60
+psi_sustain_secs
+release_currency_units
+release_stale_secs
+release_store_slack

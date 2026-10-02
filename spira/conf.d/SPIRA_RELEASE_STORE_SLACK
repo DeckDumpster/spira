@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Release trees allowed beyond SPIRA_RELEASES_KEEP before watchtower files a store-growth incident.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RELEASE_STORE_SLACK:=20}"
+SPIRA_CONF_DEFAULT_EOF

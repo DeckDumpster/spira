@@ -128,6 +128,19 @@ duplication is exactly what let a timer added after a hand list was written esca
 - Env seams: `SPIRA_SYSTEMCTL` (systemctl), `SPIRA_INSTANCE`, `SPIRA_INCIDENT_SH`, `SPIRA_DB`,
   `SPIRA_HOME`.
 
+### `--conditions-check`
+- Four probes (`probes.rs`) each report what stands now; `conditions.rs` turns that into one
+  incident bead per condition, closes it when the condition clears, and does nothing for a probe
+  that could not read. Standing across passes files no second bead (an open bead for the ref
+  holds it); a `sustain` window counts from the latest crossing.
+- Probes: a `SPIRA_RELEASE_CURRENCY_UNITS` unit rendering a release other than `current` for
+  `SPIRA_RELEASE_STALE_SECS`; a spira unit failed `SPIRA_FAILED_UNIT_RUNS` consecutive
+  invocations (shares `incident:failed-unit-<unit>` with the sweep, so the two never double-file);
+  `/tmp` free under `SPIRA_TMPFS_SHED_FREE_MIB`, root free under `SPIRA_DISK_FLOOR_PCT`, io/memory
+  PSI `full avg60` at `SPIRA_PSI_FULL_AVG60` for `SPIRA_PSI_SUSTAIN_SECS`; release trees over
+  `SPIRA_RELEASES_KEEP` + `SPIRA_RELEASE_STORE_SLACK`.
+- Writes: `$SPIRA_RUN/conditions/{filed,pending}/<probe>/<key>`, `failed-runs.tally`.
+
 ### Sweep (default / `--show`)
 Unchanged field list and heredoc layout from the bash (see `render::render` doc comment for
 the full field-by-field source map). Writes `$SPIRA_WATCH_PROMPT_FILE` (default
