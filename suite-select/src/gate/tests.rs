@@ -55,6 +55,9 @@ fn genv(d: &Path, extra: &[(&str, &str)]) -> GateEnv {
     let sd = d.display().to_string();
     let mut pairs: Vec<(&str, &str)> = vec![("SPIRA_BATCH_SUITE_DIR", &sd)];
     pairs.extend_from_slice(extra);
+    if !extra.iter().any(|(k, _)| *k == "SPIRA_BATCH_MAXPAR") {
+        pairs.push(("SPIRA_BATCH_MAXPAR", "1"));
+    }
     GateEnv::from_env(&env_from_pairs(&pairs)).unwrap()
 }
 
@@ -274,12 +277,13 @@ fn an_unclaimed_source_file_fails_the_gate_instead_of_emptying_it() {
 
 #[test]
 fn width_and_defaults_read_like_the_bash() {
-    let e = GateEnv::from_env(&env_from_pairs(&[("SPIRA_GATE_HOST_CORES", "8")])).unwrap();
+    let e = GateEnv::from_env(&env_from_pairs(&[("SPIRA_BATCH_MAXPAR", "8")])).unwrap();
     assert_eq!(e.width, 8);
-    let e = GateEnv::from_env(&env_from_pairs(&[("SPIRA_BATCH_MAXPAR", "x"), ("SPIRA_GATE_HOST_CORES", "8")])).unwrap();
+    let e = GateEnv::from_env(&env_from_pairs(&[("SPIRA_BATCH_MAXPAR", "x")])).unwrap();
     assert_eq!(e.width, 1, "a set but unreadable MAXPAR is 1, as ${{MAXPAR:-…}} then the case");
     let e = GateEnv::from_env(&env_from_pairs(&[])).unwrap();
-    assert_eq!((e.width, e.budget_secs, e.tiers.clone()), (1, 300.0, Some(vec!["T0".into(), "T1".into()])));
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get() as u64);
+    assert_eq!((e.width, e.budget_secs, e.tiers.clone()), (cores, 300.0, Some(vec!["T0".into(), "T1".into()])));
     assert_eq!(e.suite_dir, PathBuf::from("spira"));
     assert_eq!(e.always_covers, ["spira/lib.sh"]);
 }

@@ -141,7 +141,7 @@ ci_secs are from main-push run 35947142904. "Level now" is the mapper's classifi
    **Keep:** one shared fixture builder, `spira/testlib/gate-fixture.sh` (built by sp-ajxg3, adopted so far only by `test-gate-preflight.sh`) plus the controls in `test-gate-verdict.sh`. The remaining ~11 files still building their own remote-plus-clone are follow-up work.
 
 3. **"Host cores are not cgroup nproc"**. `test-governor-host-cores.sh::A1/B2` and `test-gate-host-cores.sh::SPIRA_GATE_HOST_CORES equals real host count` both stub `nproc`→1 and compare against `getconf`, with identical controls.
-   **Keep:** a T1 `host_cores` row. The gate side becomes one variable in the UC-10 env-contract assertion.
+   **Keep:** a T1 `host_cores` row. The gate side no longer exports `SPIRA_GATE_HOST_CORES` (sp-jmjsc): the gate runs in its own cgroup (`SPIRA_GATE_CPU_QUOTA`) and the width reads the cgroup-aware core count.
 
 4. **"Lock timeout gives NO_VERDICT and preserves the holder"**. Within one file, `test-gate-tree.sh` case 3 and case 5 each run `rungate spira/sp-t1 SPIRA_GATE_LOCK_WAIT=1` against a held lock (lines 139 and 187). Outside the area, `test-landing-gate-wait.sh` and `test-auron.sh` re-derive the same gate outcome.
    **Keep:** one run in test-gate-tree asserting rc 75, `lock-timeout`, `not a fault` and holder-tree survival.

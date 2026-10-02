@@ -100,7 +100,7 @@ first and the box's own tools after the system directories. Either `SPIRA_RELEAS
 a tail entry inside a release or a checkout is `NO_VERDICT reason=release-unset` before
 anything runs, and `SPIRA_RELEASE` is passed through. `HOME`, `TERM=dumb`, `SPIRA_GATE_REPO`, `SPIRA_GATE_REPO_NAME`,
 `SPIRA_GATE_BRANCH`, `SPIRA_GATE_BASE`, `SPIRA_GATE_SELECT_HEAD=<branch>`, `SPIRA_GATE_FILES`,
-`SPIRA_GATE_HOST_CORES`, `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
+`SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_ALL` (default 0),
 `SPIRA_GATE_SUITES` (default on), `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`,
 `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_RUN`,
 `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), and each `bin <VAR>` of
@@ -1079,3 +1079,10 @@ so nothing short of a new process ever saw the raised number.
   admission.md`): three pools, compile/test/gate, gate's own staying the flock slots under
   `gate-admission/` it always used.
 
+## CPU confinement
+
+With `SPIRA_GATE_CPU_QUOTA` set (percent, `400` = four cores), the binary re-execs itself under
+`systemd-run --user --scope` with `CPUQuota=` before any lock, trap or verdict machinery runs
+(`SPIRA_GATE_IN_UNIT` marks the child). A set but unusable quota is `NO_VERDICT
+reason=cgroup-unavailable`, never an unconfined run. The suite width defaults to the
+cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.

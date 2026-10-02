@@ -128,7 +128,7 @@ Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (defau
 `SPIRA_GATE_FILES`, `SPIRA_GATE_TIERS` (default `T0,T1`), `SPIRA_GATE_ALL`,
 `SPIRA_GATE_SUITES`, `SPIRA_CERTIFY_ALWAYS_COVERS` (default `spira/lib.sh`),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_TESTENV_SETUP_SHARE` (default 50), `SPIRA_BATCH_MAXPAR`, else
-`SPIRA_GATE_HOST_CORES`, else 1 (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUITE_DIR`
+the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUITE_DIR`
 (default `spira`, relative to the working directory — the gate tree, or the CI checkout).
 
 1. `SPIRA_GATE_SUITES=off`: only the suites whose `# covers:` glob (file part) matches a

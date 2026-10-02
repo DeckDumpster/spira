@@ -15,6 +15,22 @@ fn default_home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("spira"))
 }
 
+const IN_UNIT_ENV: &str = "SPIRA_GATE_IN_UNIT";
+
+fn confine(self_exe: &std::path::Path, args: &[String]) -> Option<Result<std::convert::Infallible, String>> {
+    use std::os::unix::process::CommandExt;
+    let quota = std::env::var(gate::cgroup::QUOTA_ENV).ok().filter(|v| !v.is_empty())?;
+    if std::env::var_os(IN_UNIT_ENV).is_some() {
+        return None;
+    }
+    let argv = match gate::cgroup::scope_argv(&quota, self_exe, args) {
+        Ok(a) => a,
+        Err(e) => return Some(Err(e)),
+    };
+    let err = std::process::Command::new(&argv[0]).args(&argv[1..]).env(IN_UNIT_ENV, "1").exec();
+    Some(Err(format!("cannot exec {}: {err}", argv[0])))
+}
+
 fn main() {
     let mut argv: Vec<String> = std::env::args().skip(1).collect();
     // `gate wait <out>` (sp-tcarr): block on a backgrounded run's own pid, not its
@@ -60,6 +76,16 @@ fn main() {
     };
     let repo = argv.get(1).filter(|r| !r.is_empty()).cloned();
     let home = home.unwrap_or_else(default_home);
+    if let Some(Err(why)) = std::env::current_exe()
+        .map_err(|e| e.to_string())
+        .map(|exe| confine(&exe, &std::env::args().skip(1).collect::<Vec<_>>()))
+        .unwrap_or_else(|e| Some(Err(e)))
+    {
+        let rp = repo.clone().unwrap_or_else(|| "?".to_string());
+        eprintln!("gate: VERDICT=NO_VERDICT reason=cgroup-unavailable branch={branch} repo={rp} suite=-");
+        eprintln!("gate: {} is set but the gate cannot run in its own unit: {why}", gate::cgroup::QUOTA_ENV);
+        std::process::exit(1);
+    }
     install_signal_handlers();
     // A panic unwinding out of `Trial::run` (a bug, not a signal) would otherwise exit via
     // Rust's default panic runtime with no `gate: VERDICT=` line at all — the same hang for

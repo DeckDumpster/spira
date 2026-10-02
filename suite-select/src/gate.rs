@@ -44,6 +44,10 @@ fn digits(v: &str) -> Option<u64> {
         .flatten()
 }
 
+fn default_width() -> String {
+    std::thread::available_parallelism().map_or(1, |n| n.get()).to_string()
+}
+
 impl GateEnv {
     pub fn from_env(get: &dyn Fn(&str) -> Option<String>) -> Result<GateEnv, Refusal> {
         let or = |k: &str, d: &str| get(k).filter(|v| !v.is_empty()).unwrap_or_else(|| d.to_string());
@@ -56,7 +60,7 @@ impl GateEnv {
             return refuse(format!("SPIRA_TESTENV_SETUP_SHARE={share_raw:?} is not a whole percent"));
         };
         let setup_share = setup_share.clamp(10, 90);
-        let width_raw = or("SPIRA_BATCH_MAXPAR", &or("SPIRA_GATE_HOST_CORES", "1"));
+        let width_raw = or("SPIRA_BATCH_MAXPAR", &default_width());
         let width = digits(&width_raw).filter(|w| *w > 0).unwrap_or(1);
         Ok(GateEnv {
             repo: PathBuf::from(or("SPIRA_GATE_REPO", ".")),
