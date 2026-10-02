@@ -15,6 +15,7 @@ pub mod install;
 pub mod intake;
 pub mod manifest;
 pub mod prune;
+pub mod repo;
 pub mod session_hook;
 pub mod stage;
 pub mod systemctl;
