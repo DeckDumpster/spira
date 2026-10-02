@@ -45,6 +45,7 @@ fn toml_value(s: &SpiraSection, key: &str) -> Option<String> {
         "SPIRA_ROUND_VM_RETRY_INTERVAL" => &s.round_vm_retry_interval,
         "SPIRA_ROUND_VM_MIRROR_PORT" => &s.round_vm_mirror_port,
         "SPIRA_ROUND_VM_CACHE_HOME" => &s.round_vm_cache_home,
+        "SPIRA_TESTENV_REGISTRY" => &s.testenv_registry,
         _ => return None,
     };
     v.clone()
@@ -89,6 +90,9 @@ pub struct Config {
     /// `None` here is refused by every caller that needs it (run's and template's own
     /// preflight), never silently defaulted.
     pub cache_home: Option<String>,
+    /// SPIRA_TESTENV_REGISTRY, forwarded to the VM so a changed image tag costs one pull
+    /// there instead of a full rebuild.
+    pub testenv_registry: Option<String>,
     pub vcpus: u32,
     pub maxpar: u32,
     pub retry_interval: Duration,
@@ -139,6 +143,7 @@ impl Config {
             ssh_port: num(src, "SPIRA_ROUND_VM_SSH_PORT", 22)?,
             host_addr: src.get("SPIRA_ROUND_VM_HOST_ADDR"),
             cache_home: src.get("SPIRA_ROUND_VM_CACHE_HOME"),
+            testenv_registry: src.get("SPIRA_TESTENV_REGISTRY"),
             vcpus: num(src, "SPIRA_ROUND_VM_VCPUS", 16)?,
             maxpar: num(src, "SPIRA_ROUND_VM_MAXPAR", 16)?,
             retry_interval: Duration::from_secs(num(src, "SPIRA_ROUND_VM_RETRY_INTERVAL", 60)?),
@@ -270,7 +275,14 @@ mod tests {
         assert_eq!(c.retry_interval, Duration::from_secs(60));
         assert_eq!(c.mailbox, "operator");
         assert!(c.host_addr.is_none());
+        assert!(c.testenv_registry.is_none());
         assert!(c.cache_home.is_none(), "no hardcoded literal and no ambient CARGO_HOME read — unset is unset, refused by run's and template's own preflight");
+    }
+
+    #[test]
+    fn testenv_registry_is_read_from_the_environment() {
+        let c = Config::load(&map(&[("SPIRA_RUN", "/r"), ("SPIRA_TESTENV_REGISTRY", "registry.example/spira")])).unwrap();
+        assert_eq!(c.testenv_registry.as_deref(), Some("registry.example/spira"));
     }
 
     #[test]

@@ -66,7 +66,7 @@ wait for a VM, whether it provisioned one itself or waited on the provision in f
    it. Without this every conf.sh load on the VM printed `spira-config: command not found`
    (conf.sh fails closed without it, sp-c7b85). Then `testenv --mode parallel --profile
    release [--suites CSV] round` by name from the release, with `SPIRA_BATCH_MAXPAR` and, if
-   given, `RUSTUP_TOOLCHAIN`; then stage `target/release`'s executables into `~/round-bins/`.
+   given, `RUSTUP_TOOLCHAIN`, and if configured `SPIRA_TESTENV_REGISTRY` (so a changed test-image tag costs the VM one pull rather than a full rebuild); then stage `target/release`'s executables into `~/round-bins/`.
 5. rsync back `batch-results/` (flattened out of any one-level `BATCH_KEY` nesting into the
    results dir, default `$SPIRA_RUN/batch-results`), `tsd/*.jsonl` (merged into
    `$SPIRA_RUN/tsd`, tagged `ran_on`, `vcpus`, `maxpar`) and `round-bins/`.
