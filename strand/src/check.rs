@@ -144,6 +144,56 @@ pub fn render_text(active: &str, age: i64, rows: &[AgedRow], watching: &[String]
     out
 }
 
+/// One branch's `landing.deferred` record (key=value lines, written by landing-pass).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Deferred {
+    pub branch: String,
+    pub repo: String,
+    pub count: u32,
+    pub since: i64,
+}
+
+pub fn parse_deferred(text: &str) -> Option<Deferred> {
+    let mut d = Deferred { branch: String::new(), repo: String::new(), count: 0, since: 0 };
+    for l in text.lines() {
+        match l.split_once('=')? {
+            ("branch", v) => d.branch = v.into(),
+            ("repo", v) => d.repo = v.into(),
+            ("count", v) => d.count = v.parse().ok()?,
+            ("since", v) => d.since = v.parse().ok()?,
+            _ => {}
+        }
+    }
+    (d.count > 0 && !d.branch.is_empty()).then_some(d)
+}
+
+/// Branches the landing pass is deferring, oldest first. A stranded BRANCH has no bead row.
+pub fn deferred_branches(cfg: &Config) -> Vec<Deferred> {
+    let Some(dir) = cfg.run.as_ref().map(|r| r.join("landing.deferred")) else { return Vec::new() };
+    let Ok(rd) = fs::read_dir(dir) else { return Vec::new() };
+    let mut v: Vec<Deferred> =
+        rd.flatten().filter_map(|e| parse_deferred(&fs::read_to_string(e.path()).ok()?)).collect();
+    v.sort_by(|a, b| (a.since, &a.branch).cmp(&(b.since, &b.branch)));
+    v
+}
+
+pub fn render_deferred(rows: &[Deferred], now: i64) -> String {
+    if rows.is_empty() {
+        return String::new();
+    }
+    let mut out = format!("\n{} deferred branch(es) — landing has not reached them:\n", rows.len());
+    for d in rows {
+        out.push_str(&format!(
+            "  {:<28} {:<10} {:>3} consecutive passes, {}m since first deferral\n",
+            d.branch,
+            d.repo,
+            d.count,
+            (now - d.since).max(0) / 60
+        ));
+    }
+    out
+}
+
 pub fn render_json(active: &str, age: i64, rows: &[AgedRow]) -> String {
     let doc = ReportJson {
         sentinel_timer: active.to_string(),
@@ -174,6 +224,7 @@ pub fn report(cfg: &Config, c: &Classified, json: bool) {
         print!("{}", render_json(&active, age, &aged));
     } else {
         print!("{}", render_text(&active, age, &aged, &c.watching));
+        print!("{}", render_deferred(&deferred_branches(cfg), timefmt::now()));
     }
 }
 
@@ -596,6 +647,17 @@ fn steps(rows: &[AgedRow], dry: bool, grace: i64) -> Vec<Step> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_planted_deferral_is_found_before_an_empty_result_is_trusted() {
+        let rec = "branch=spira/sp-a\nrepo=spira\ncount=7\nsince=1000\nlast=2000\n";
+        let d = super::parse_deferred(rec).expect("a real deferral record parses");
+        assert_eq!(d, super::Deferred { branch: "spira/sp-a".into(), repo: "spira".into(), count: 7, since: 1000 });
+        let out = super::render_deferred(&[d], 1000 + 30 * 3600);
+        assert!(out.contains("spira/sp-a") && out.contains("7 consecutive") && out.contains("1800m"), "{out}");
+        assert_eq!(super::render_deferred(&[], 5), "");
+        assert!(super::parse_deferred("not a record").is_none());
+    }
+
     use super::*;
     use crate::model::Row;
 

@@ -308,7 +308,7 @@ impl<'a> Pass<'a> {
                 self.files.set_cursor(name);
                 for (i, br) in order.iter().enumerate() {
                     if i >= k {
-                        let n = self.files.bump_deferred(br);
+                        let n = self.files.bump_deferred(br, name, self.clock.now());
                         if n >= self.s.deferral_escalate_at {
                             self.lib.ask_budget_deferred(br, name, n);
                         }
@@ -655,7 +655,7 @@ impl<'a> Pass<'a> {
                     self.files.clear_deferred(br);
                 }
                 for br in &deferred {
-                    let n = self.files.bump_deferred(br);
+                    let n = self.files.bump_deferred(br, &name, self.clock.now());
                     if n >= self.s.deferral_escalate_at {
                         self.lib.ask_budget_deferred(br, &name, n);
                     }

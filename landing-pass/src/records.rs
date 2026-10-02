@@ -7,6 +7,45 @@ use crate::util::{atomic_write, branch_key};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredRecord {
+    pub branch: String,
+    pub repo: String,
+    pub count: u32,
+    pub since: u64,
+    pub last: u64,
+}
+
+impl DeferredRecord {
+    pub fn render(&self) -> String {
+        format!(
+            "branch={}\nrepo={}\ncount={}\nsince={}\nlast={}\n",
+            self.branch, self.repo, self.count, self.since, self.last
+        )
+    }
+
+    /// A bare-number file (the pre-record counter) reads as a count with no branch.
+    pub fn parse(t: &str) -> Option<DeferredRecord> {
+        let mut r = DeferredRecord { branch: String::new(), repo: String::new(), count: 0, since: 0, last: 0 };
+        if let Ok(n) = t.trim().parse::<u32>() {
+            r.count = n;
+            return Some(r);
+        }
+        for l in t.lines() {
+            let (k, v) = l.split_once('=')?;
+            match k {
+                "branch" => r.branch = v.to_string(),
+                "repo" => r.repo = v.to_string(),
+                "count" => r.count = v.parse().ok()?,
+                "since" => r.since = v.parse().ok()?,
+                "last" => r.last = v.parse().ok()?,
+                _ => {}
+            }
+        }
+        (r.count > 0).then_some(r)
+    }
+}
+
 pub struct Files {
     pub run: PathBuf,
 }
@@ -108,12 +147,24 @@ impl Files {
         self.deferred_dir().join(branch.replace('/', "_"))
     }
 
-    /// Bump a branch's budget-deferral counter; returns the new count.
-    pub fn bump_deferred(&self, branch: &str) -> u32 {
+    /// Bump a branch's deferral record — branch, repo, consecutive count, first and last
+    /// epoch, `key=value` per line so a watcher reads it without this crate. Returns the count.
+    pub fn bump_deferred(&self, branch: &str, repo: &str, now: u64) -> u32 {
         let f = self.deferred_file(branch);
-        let n = fs::read_to_string(&f).ok().and_then(|s| s.trim().parse::<u32>().ok()).unwrap_or(0) + 1;
-        let _ = atomic_write(&f, &format!("{n}\n"));
+        let prev = fs::read_to_string(&f).ok().and_then(|t| DeferredRecord::parse(&t));
+        let (n, since) = prev.map(|r| (r.count + 1, r.since)).unwrap_or((1, now));
+        let rec = DeferredRecord { branch: branch.to_string(), repo: repo.to_string(), count: n, since, last: now };
+        let _ = atomic_write(&f, &rec.render());
         n
+    }
+
+    /// Every branch currently carrying a deferral record, oldest first.
+    pub fn deferred_records(&self) -> Vec<DeferredRecord> {
+        let Ok(rd) = fs::read_dir(self.deferred_dir()) else { return Vec::new() };
+        let mut v: Vec<DeferredRecord> =
+            rd.flatten().filter_map(|e| DeferredRecord::parse(&fs::read_to_string(e.path()).ok()?)).collect();
+        v.sort_by_key(|r| (r.since, r.branch.clone()));
+        v
     }
 
     pub fn clear_deferred(&self, branch: &str) {
@@ -138,5 +189,44 @@ impl Files {
                 let _ = fs::remove_file(e.path());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod deferred_tests {
+    use super::*;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("lp-deferred-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_deferral_is_a_record_a_watcher_can_read() {
+        let d = tmp("rec");
+        let f = Files::new(&d);
+        assert!(f.deferred_records().is_empty());
+        assert_eq!(f.bump_deferred("spira/sp-a", "spira", 100), 1);
+        assert_eq!(f.bump_deferred("spira/sp-a", "spira", 160), 2);
+        let recs = f.deferred_records();
+        assert_eq!(
+            recs,
+            vec![DeferredRecord { branch: "spira/sp-a".into(), repo: "spira".into(), count: 2, since: 100, last: 160 }]
+        );
+        f.clear_deferred("spira/sp-a");
+        assert!(f.deferred_records().is_empty());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_legacy_bare_counter_still_counts() {
+        let d = tmp("legacy");
+        let f = Files::new(&d);
+        fs::create_dir_all(f.deferred_dir()).unwrap();
+        fs::write(f.deferred_dir().join("spira_sp-a"), "4\n").unwrap();
+        assert_eq!(f.bump_deferred("spira/sp-a", "spira", 9), 5);
+        let _ = fs::remove_dir_all(&d);
     }
 }
