@@ -234,27 +234,6 @@ pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &st
     }
 }
 
-/// `spira-lc stack` new members onto an already-OPEN batch — batcher-cut's own
-/// pipelining (law-queue-back-pressure-is-an-open-pr). On success the batch's version
-/// advances by exactly the new member count, so `prior_version + members.len()` is
-/// recorded without a second round trip to read it back.
-pub fn lc_stack_batch(env: &Env, repo: &str, batch_id: &str, prior_version: u64, members: &[(String, String)]) -> Option<String> {
-    if !env.lc_enforce {
-        return None;
-    }
-    for (id, _) in members {
-        let _ = lcq(env, &["create-bead", id]);
-    }
-    let members_s = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(",");
-    match lcq(env, &["stack", batch_id, "--members", &members_s, "--actor", "batcher"]) {
-        Ok(_) => Some((prior_version + members.len() as u64).to_string()),
-        Err(e) => {
-            eprintln!("batcher {repo}: LIFECYCLE: spira-lc stack refused for {batch_id} (lifecycle_enforce is on; the record loses batch_id/version): {e}");
-            None
-        }
-    }
-}
-
 /// `id`'s stack (design stacked-dependents-2026-09-28 §1: `{prereq_bead_id: certified_tip}`)
 /// off the lifecycle machine's own bead row — `spira-lc show`. Off: unstacked, without
 /// running anything (stacking is a lifecycle-machine concept; there is no legacy record of
@@ -532,6 +511,76 @@ pub fn write_open_batch(env: &Env, repo: &str, ob: &OpenBatch) -> Result<(), Str
 }
 
 // ---------------------------------------------------------------------------------------
+// The prepared round: built and proven on an open batch's head while that PR is in CI,
+// opened only once it has landed. Never a push; the open record is not touched.
+// ---------------------------------------------------------------------------------------
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Prepared {
+    pub head: String,
+    /// The open batch's head the round was built on: a different parent means the round
+    /// was proven against a tree that is no longer the one in CI.
+    pub parent: String,
+    pub members: Vec<(String, String)>,
+    /// Every pool member the build considered, set aside or not: a pool that differs from
+    /// this is a different round to build.
+    pub inputs: Vec<(String, String)>,
+    pub green: bool,
+    pub seconds: u64,
+}
+
+pub const PREPARED_BRANCH: &str = "spira/queue-prepared";
+
+fn prepared_file(env: &Env, repo: &str) -> PathBuf {
+    env.queue_dir.join(repo).join("prepared")
+}
+
+pub fn read_prepared(env: &Env, repo: &str) -> Option<Prepared> {
+    let kv = parse_kv(&fs::read_to_string(prepared_file(env, repo)).ok()?);
+    let head = kv.get("head").cloned().filter(|h| !h.is_empty())?;
+    Some(Prepared {
+        head,
+        parent: kv.get("parent").cloned().unwrap_or_default(),
+        members: parse_members(kv.get("members").map(String::as_str).unwrap_or("")),
+        inputs: parse_members(kv.get("inputs").map(String::as_str).unwrap_or("")),
+        green: kv.get("state").map(String::as_str) == Some("green"),
+        seconds: kv.get("seconds").and_then(|v| v.parse().ok()).unwrap_or(0),
+    })
+}
+
+pub fn write_prepared(env: &Env, repo: &str, p: &Prepared) -> Result<(), String> {
+    let f = prepared_file(env, repo);
+    if let Some(dir) = f.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let members = p.members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
+    let inputs = p.inputs.iter().map(|(id, tip)| format!("{id}:{tip}")).collect::<Vec<_>>().join(" ");
+    let body = format!(
+        "head={}\nparent={}\nmembers={}\ninputs={}\nstate={}\nseconds={}\n",
+        p.head, p.parent, members, inputs, if p.green { "green" } else { "red" }, p.seconds
+    );
+    let tmp = f.with_extension("tmp");
+    fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, &f).map_err(|e| format!("{}: {e}", f.display()))
+}
+
+pub fn clear_prepared(env: &Env, repo: &str) {
+    let _ = fs::remove_file(prepared_file(env, repo));
+}
+
+/// True when `ancestor` is reachable from `descendant` — the prepared round descends from
+/// the base the landed PR left.
+pub fn is_ancestor(repo: &Repo, ancestor: &str, descendant: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["merge-base", "--is-ancestor", ancestor, descendant])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+// ---------------------------------------------------------------------------------------
 // Section F: when the base ref last moved, tracked across invocations. A batch merge
 // commit's own timestamp can predate a member certified moments before it, so "moved" is an
 // observation this seam records the moment a fetch shows a new base sha — never read off
@@ -662,16 +711,6 @@ pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
     run(
         Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", remote]).arg(format!("{sha}:refs/heads/{branch}")),
         "git push",
-    )
-    .map(|_| ())
-}
-
-pub fn force_push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
-    assert_eq!(repo.land, Land::Forge, "force_push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
-    let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
-    run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["push", "-q", "-f", remote]).arg(format!("{sha}:refs/heads/{branch}")),
-        "git push -f",
     )
     .map(|_| ())
 }
@@ -1111,12 +1150,6 @@ mod land_tests {
         let _ = push_branch(&r, "deadbeef", "spira/queue/1");
     }
 
-    #[test]
-    #[should_panic(expected = "unreachable under queue.local")]
-    fn force_push_branch_under_local_land_is_unreachable() {
-        let r = repo(Land::Local);
-        let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
-    }
 }
 // Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
 #[cfg(test)]
@@ -1246,7 +1279,6 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)), false);
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), None);
-        assert_eq!(lc_stack_batch(&e, "r", "spira/queue/1", 2, &members()), None);
         assert!(read_stack(&e, "sp-a").is_empty());
         assert!(lcq(&e, &["list"]).is_err(), "lcq itself refuses when off");
         assert!(!d.join("lc.log").exists(), "spira-lc must never run with lifecycle_enforce off");
@@ -1265,11 +1297,9 @@ mod lifecycle_tests {
         let e = env(&d, Some(fake_lc(&d, r#"[]"#)), true);
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), Some("2".into()));
-        assert_eq!(lc_stack_batch(&e, "r", "spira/queue/1", 2, &members()), Some("4".into()));
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
         assert!(log.contains("list --state IN_DELIVERY"), "{log}");
         assert!(log.contains("cut spira/queue/1 --repo r --head h --base b --members sp-a:aaaa,sp-b:bbbb"), "{log}");
-        assert!(log.contains("stack spira/queue/1 --members sp-a:aaaa,sp-b:bbbb"), "{log}");
     }
 
     #[test]

@@ -102,21 +102,21 @@ fn main_red_cuts_at_once_and_outranks_express() {
     assert_eq!(should_cut(&t), Some(TriggerReason::MainRed));
 }
 
-/// The only back pressure is an open batch PR: while one is open, an ordinary pool/idle
-/// trigger must not fire (law-queue-back-pressure-is-an-open-pr) — the pool that fills
-/// during this round is the next round, cut once the open PR closes.
+/// While a batch PR is open any non-empty pool prepares the next round on its head, so a
+/// round is ready the moment the PR lands (law-queue-back-pressure-is-an-open-pr).
 #[test]
-fn open_batch_pr_suppresses_ordinary_triggers() {
+fn open_batch_pr_prepares_rather_than_cuts() {
     let pool = vec![m("sp-a", 2, false, 0), m("sp-b", 2, false, 10), m("sp-c", 2, false, 20), m("sp-d", 2, false, 30)];
     let t = TriggerInputs { pool: &pool, now: 10_000, last_arrival: Some(30), n: 4, q_minutes: 1, main_red: false, batch_open: true };
+    assert_eq!(should_cut(&t), Some(TriggerReason::Prepare(4)));
+    let t = TriggerInputs { pool: &[], ..t };
     assert_eq!(should_cut(&t), None);
 }
 
-/// An express or main-red fix pipelines on top of the open PR's head even while it is
-/// still open (A: "while a batch PR is in CI, the next round builds and validates on top
-/// of that PR's head").
+/// An express member while a batch is open still triggers, as a round of its own to build,
+/// never as a push into the open PR.
 #[test]
-fn express_still_cuts_while_a_batch_pr_is_open() {
+fn express_triggers_while_a_batch_pr_is_open() {
     let pool = vec![m("sp-x", 1, true, 0)];
     let t = TriggerInputs { pool: &pool, now: 1, last_arrival: Some(0), n: 4, q_minutes: 30, main_red: false, batch_open: true };
     assert_eq!(should_cut(&t), Some(TriggerReason::Express("sp-x".into())));
