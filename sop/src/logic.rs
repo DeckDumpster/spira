@@ -65,8 +65,8 @@ pub fn write(bd: &dyn Bd, proc: &dyn Proc, env: &Env, key: &str, text: &str) -> 
         Err(e) => return r.fail(1, e),
         Ok(_) => {}
     }
-    if !bd.remember(&key, text) {
-        return r.fail(1, format!("failed to write {key}"));
+    if let Err(cause) = bd.remember(&key, text) {
+        return r.fail(1, format!("failed to write {key}: {cause}"));
     }
     let words = text.split_whitespace().count();
     r.say(format!("wrote {key} ({words} words)"));
@@ -95,7 +95,9 @@ pub fn show(bd: &dyn Bd, key: &str) -> Report {
 
 pub fn list(bd: &dyn Bd) -> Report {
     let mut r = Report::ok();
-    let raw = bd.memories_json().unwrap_or_default();
+    let Some(raw) = bd.memories_json() else {
+        return r.fail(1, "cannot read the shelf (bd unreachable or timed out); refusing to report 0 SOPs".to_string());
+    };
     let map = shelf::parse_or_empty(&raw);
     for (k, v) in &map {
         let words = v.split_whitespace().count();
@@ -390,8 +392,8 @@ pub fn synth(bd: &dyn Bd, clock: &dyn Clock, out_path: Option<&str>) -> Report {
     let map = shelf::parse_or_empty(&raw);
     let today = clock.today();
     let page = crate::synth::render(&map, &today);
-    if std::fs::write(out_path, page).is_err() {
-        return r.fail(1, format!("failed to write {out_path}"));
+    if let Err(e) = std::fs::write(out_path, page) {
+        return r.fail(1, format!("failed to write {out_path}: {e}"));
     }
     r.say(format!("sop-synth: wrote {out_path} — {} SOP(s)", map.len()));
     r

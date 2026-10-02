@@ -48,9 +48,10 @@ fn ask(ops: &dyn Ops, run: &str, stamp_name: &str, key: &str, subject: &str, def
     if std::fs::read_to_string(&stamp).ok().as_deref() == Some(fp.as_str()) {
         return Ok(false);
     }
-    ops.mail_ask(subject, default, why, evidence).map_err(|_| {
-        "watchd: the escalation path refused the ask — the findings above reach nobody".to_string()
-    })?;
+    if ops.mail_ask(subject, default, why, evidence).is_err() {
+        eprintln!("watchd: the escalation path refused the ask ({subject}); not stamped, the next pass asks again");
+        return Ok(false);
+    }
     let _ = std::fs::create_dir_all(paths::watchd_dir(run));
     let _ = std::fs::write(&stamp, &fp);
     Ok(true)
@@ -344,6 +345,21 @@ mod tests {
         let out2 = cmd_notify(&rows, &ops, &c).unwrap();
         assert_eq!(out2.code, 1, "notify still reports the standing condition");
         assert_eq!(ops.asks.borrow().len(), 1, "but does not mail a second time");
+    }
+
+    #[test]
+    fn a_refused_ask_still_reports_the_finding_and_is_not_stamped() {
+        let d = TempDir::new("watchd-notify");
+        let mut c = ctx(d.path().to_str().unwrap());
+        c.notify_age = "60".into();
+        c.now = iso8601::parse_utc("2026-09-30T01:00:00Z").unwrap();
+        let rows = vec![row("pool", Kind::Daemon, "pool.sh", "")];
+        let lf = paths::logfile(&c.run, "pool", Kind::Daemon, "pool.sh").unwrap();
+        std::fs::create_dir_all(lf.parent().unwrap()).unwrap();
+        std::fs::write(&lf, "[2026-09-30T00:00:00Z] pool: FAIL suite x\n").unwrap();
+        let out = cmd_notify(&rows, &{ let mut f = Fake::default(); f.refuse_asks = true; f }, &c).unwrap();
+        assert_eq!(out.code, 1, "{}", out.report);
+        assert!(!paths::watchd_dir(&c.run).join("notify.escalated").exists());
     }
 
     #[test]

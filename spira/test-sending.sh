@@ -15,15 +15,9 @@
 # `bdq label add/remove`, so a stub answering those two shapes is the seam contract, not a
 # model that can drift — the same argument test-held.sh already made for held.sh).
 #
-# A CONFIRMED DEAD PATH. content_landed returns true for ANY branch with zero commits
-# ahead of the base, because "zero ahead" and "is an ancestor of the base" are the same
-# fact (sp-bf31a) — so the FAST-FORWARD/non-code-delivers/open-zero-ahead arms deeper in
-# send_disposition, all gated on `ahead == 0`, can never run: content_landed already
-# returned true and sent the branch out through the content-landed arm first. This is not
-# new here — test-sending-closed-reap.sh already documents the same shape for the
-# non-code-delivers and superseded-empty cases ("SENT, not REAPED, since the [...] arm is
-# never reached") — so this suite tests what ahead=0 branches actually do (SEND
-# content-landed, no event) rather than asserting a verdict the code cannot produce.
+# ZERO AHEAD. content_landed returns true for ANY branch with zero commits ahead of the
+# base ("zero ahead" and "ancestor" are the same fact, sp-bf31a), so such a branch is SENT
+# through the content-landed arm, with no event; there is no separate fast-forward arm.
 #
 # THE BINARY (sp-arpjt). sending.sh is the `sending` binary now (sending/DESIGN.md), run
 # here by name from the tree's own build, end to end against the real lib.sh chokepoints.

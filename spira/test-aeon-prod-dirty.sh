@@ -235,6 +235,7 @@ b3="$(bd -C "$SPIRA_DB" create --title "test: clean" --type task \
 unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "clean" "$b3"
+poison_bead "$b3"
 
 # ============================================================
 echo

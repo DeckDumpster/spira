@@ -235,4 +235,10 @@ else
     ok "gh-intake.sh is deleted"
 fi
 
+if grep -q '^Environment=SPIRA_DB=@SPIRA_DB@$' "$SERVICE"; then
+    ok "spira-gh-intake.service sets SPIRA_DB (binary exits without it)"
+else
+    bad "spira-gh-intake.service sets SPIRA_DB (binary exits without it)" "Environment=SPIRA_DB=@SPIRA_DB@ missing from $SERVICE"
+fi
+
 tl_summary

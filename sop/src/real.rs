@@ -15,11 +15,11 @@ impl RealBd {
     /// entries, never interpolated into the script text, so a SOP's own text can never be
     /// read as shell syntax.
     fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
+        let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
         let mut cmd = Command::new("bash");
         cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(_) => return (false, Vec::new()),
@@ -37,8 +37,18 @@ impl RealBd {
 }
 
 impl Bd for RealBd {
-    fn remember(&self, key: &str, text: &str) -> bool {
-        self.seam("bdq remember --key \"$1\" \"$2\" >/dev/null", &[key, text], None).0
+    fn remember(&self, key: &str, text: &str) -> Result<(), String> {
+        // stderr folded into stdout so the failure cause survives; exit status appended.
+        let (ok, out) = self.seam(
+            "o=$(bdq remember --key \"$1\" \"$2\" 2>&1 >/dev/null); rc=$?; printf '%s\nexit=%s' \"$o\" \"$rc\"; exit $rc",
+            &[key, text],
+            None,
+        );
+        if ok {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out).trim().to_string())
+        }
     }
 
     fn recall(&self, key: &str) -> Option<String> {
@@ -59,13 +69,17 @@ impl Bd for RealBd {
     }
 
     fn memories_json(&self) -> Option<String> {
-        let (_ok, out) = self.seam("bdjson memories 2>/dev/null", &[], None);
-        let s = String::from_utf8_lossy(&out).into_owned();
-        if s.trim().is_empty() {
-            None
-        } else {
-            Some(s)
+        // Retry with backoff: under host load bd times out transiently. A failed or empty
+        // read is None, never an empty shelf (law-a-control-that-cannot-check-must-refuse).
+        for attempt in 0..4u64 {
+            let (ok, out) = self.seam("bdjson memories 2>/dev/null", &[], None);
+            let s = String::from_utf8_lossy(&out).into_owned();
+            if ok && !s.trim().is_empty() {
+                return Some(s);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
         }
+        None
     }
 
     fn note(&self, bead: &str, text: &str) -> bool {

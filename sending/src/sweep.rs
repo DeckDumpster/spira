@@ -32,12 +32,9 @@ pub struct Opts {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Disp {
     SendContentLanded,
-    SendFf,
     SendOtherPr,
     ReapSupersededSafe,
     ReapSquashMerged,
-    ReapNonCodeDelivers,
-    ReapOpenZeroAhead,
     KeepSupersededUnsafe,
     KeepUnlanded,
     KeepCherryUnapplied,
@@ -50,12 +47,9 @@ impl Disp {
     pub fn code(self) -> &'static str {
         match self {
             Disp::SendContentLanded => "SEND content-landed",
-            Disp::SendFf => "SEND ff",
             Disp::SendOtherPr => "SEND other-pr",
             Disp::ReapSupersededSafe => "REAP superseded-safe",
             Disp::ReapSquashMerged => "REAP squash-merged",
-            Disp::ReapNonCodeDelivers => "REAP non-code-delivers",
-            Disp::ReapOpenZeroAhead => "REAP open-zero-ahead",
             Disp::KeepSupersededUnsafe => "KEEP superseded-unsafe",
             Disp::KeepUnlanded => "KEEP unlanded",
             Disp::KeepCherryUnapplied => "KEEP cherry-unapplied",
@@ -118,20 +112,6 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
             if !pr.is_empty() && tip.as_deref() == Some(pr.as_str()) {
                 return Disp::ReapSquashMerged;
             }
-        }
-    }
-
-    // FAST-FORWARD MERGED: zero ahead and an ancestor. (content_landed already answered yes
-    // for every such branch — this arm is kept for a base that moves between the two reads.)
-    if g.ahead(lr, br) == Some(0) && g.is_ancestor(br, lr) {
-        if g.landed(id, &c.base.landrefs) {
-            return Disp::SendFf;
-        }
-        if b.is_some_and(|b| labels(b).iter().any(|l| l.starts_with("delivers:"))) {
-            return Disp::ReapNonCodeDelivers;
-        }
-        if !b.is_some_and(|b| status(b) == Some("closed")) {
-            return Disp::ReapOpenZeroAhead;
         }
     }
 
@@ -335,13 +315,6 @@ impl<'a> Sweep<'a> {
                 }
                 self.landed(c, id, br, "SENT");
             }
-            Disp::SendFf => {
-                if dry {
-                    self.say(&format!("WOULD  {id}  send branch {br} (zero ahead, commit on {lr} names it)"));
-                    return;
-                }
-                self.landed(c, id, br, "SENT");
-            }
             Disp::SendOtherPr => {
                 if dry {
                     self.say(&format!("WOULD  {id}  send branch {br} (commit on {lr} names it)"));
@@ -362,20 +335,6 @@ impl<'a> Sweep<'a> {
                     return;
                 }
                 self.landed(c, id, br, "REAPED");
-            }
-            Disp::ReapNonCodeDelivers => {
-                if dry {
-                    self.say(&format!("WOULD  {id}  reap non-code-delivers branch {br} (closed, 0 ahead, no commit expected)"));
-                    return;
-                }
-                let _ = self.branch(c, id, br, "REAPED", "sending");
-            }
-            Disp::ReapOpenZeroAhead => {
-                if dry {
-                    self.say(&format!("WOULD  {id}  reap branch {br} (open, 0 ahead, already on {lr})"));
-                    return;
-                }
-                let _ = self.branch(c, id, br, "REAPED", "sending");
             }
         }
     }

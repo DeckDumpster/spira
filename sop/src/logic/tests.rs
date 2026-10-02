@@ -9,6 +9,7 @@ struct FakeBd {
     forgotten: RefCell<Vec<String>>,
     notes: RefCell<Vec<(String, String)>>,
     unreadable: RefCell<bool>,
+    remember_err: RefCell<Option<String>>,
 }
 
 impl FakeBd {
@@ -18,9 +19,12 @@ impl FakeBd {
 }
 
 impl Bd for FakeBd {
-    fn remember(&self, key: &str, text: &str) -> bool {
+    fn remember(&self, key: &str, text: &str) -> Result<(), String> {
+        if let Some(e) = self.remember_err.borrow().clone() {
+            return Err(e);
+        }
         self.shelf.borrow_mut().insert(key.to_string(), text.to_string());
-        true
+        Ok(())
     }
     fn recall(&self, key: &str) -> Option<String> {
         self.shelf.borrow().get(key).cloned()
@@ -84,6 +88,17 @@ fn write_refuses_empty_text() {
     let r = write(&bd, &proc, &env(), "x", "   ");
     assert_eq!(r.code, 1);
     assert!(r.err.iter().any(|l| l.contains("empty SOP")));
+}
+
+#[test]
+fn write_failure_surfaces_the_cause() {
+    let bd = FakeBd::default();
+    *bd.remember_err.borrow_mut() = Some("fence: blocked\nexit=3".to_string());
+    let proc = FakeProc::default();
+    let text = "SYMPTOM: s\nCHECK: c\nFIX: f\nESCALATE: e\nMATCH: m\nREF: r\n";
+    let r = write(&bd, &proc, &env(), "x", text);
+    assert_eq!(r.code, 1);
+    assert!(r.err.iter().any(|l| l.contains("fence: blocked") && l.contains("exit=3")), "{:?}", r.err);
 }
 
 #[test]

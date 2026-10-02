@@ -73,7 +73,7 @@ Timers, each doing one thing, none waiting on another.
 |---|---|---|
 | `spira-sentinel.timer` | 2 min | reconcile the graph — the checks below |
 | `spira-auron.timer` | 2 min | watch the sentinel; escalate if the loop has stalled |
-| `spira-gate-check.timer` | 2 min | sweep work parked on CI |
+| `spira-gate-check.timer` | 2 min | file flaky and red-twice suite beads, ingest TSD, resolve any hand-made gh:run gate |
 | `spira-ops.timer` | 5 min | summon ops for any waiting incident |
 | `spira-archivist.timer` | 5 min | rescue a session's unfinished business before it is cleared |
 | `spira-maechen.timer` | 15 min | read the failure distribution; cut work to end recurring classes |

@@ -420,4 +420,11 @@ hasnt "actionable filter: the unmapped repo's RED is dropped"            "$out9"
 hasnt "actionable filter: OPENED is not actionable"                      "$out9" "OPENED"
 hasnt "actionable filter: GREEN is not actionable (it lands itself)"     "$out9" "GREEN"
 
+echo "10. the mailed log is marked delivered, so watchd notify has no unread stream to escalate"
+mkdir -p "$RUN/watchd"
+printf 'a\nb\n' > "$RUN/watchd/pr-notify.log"
+rm -f "$RUN/watchd/pr-notify.cursor"
+run watch --interval 0 --ticks 1
+is "cursor advanced over the lines mailed on earlier ticks" "2" "$(tr -d '[:space:]' < "$RUN/watchd/pr-notify.cursor" 2>/dev/null)"
+
 tl_summary
