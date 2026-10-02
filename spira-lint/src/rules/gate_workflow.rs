@@ -69,6 +69,13 @@ fn between(text: &str, start: impl Fn(&str) -> bool, end: impl Fn(&str) -> bool)
     join(&ls[i + 1..].iter().take_while(|l| !end(l)).copied().collect::<Vec<_>>())
 }
 
+/// The top-level `on:` block, through the next top-level key.
+fn on_block(text: &str) -> String {
+    let ls: Vec<&str> = text.lines().collect();
+    let Some(i) = ls.iter().position(|l| l.starts_with("on:")) else { return String::new() };
+    join(&ls[i + 1..].iter().take_while(|l| !l.starts_with(|c: char| c.is_ascii_lowercase())).copied().collect::<Vec<_>>())
+}
+
 /// The top-level `concurrency:` block, through the next top-level key.
 pub fn concurrency(text: &str) -> String {
     let ls: Vec<&str> = text.lines().collect();
@@ -465,6 +472,12 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             ] {
                 j.want(ACCEPTANCE, d, n, a);
             }
+            // 28. acceptance is the release gate: it fires on release tags and by hand, never on a branch push
+            let on = on_block(a);
+            j.located(ACCEPTANCE, "the on: block", &on);
+            j.want(ACCEPTANCE, "acceptance fires on release tags", "'spira-release-*'", &on);
+            j.nowant(ACCEPTANCE, "acceptance does not fire on a branch push", "branches", &on);
+            j.nowant(ACCEPTANCE, "acceptance does not fire on pull requests", "pull_request", &on);
             // 26. never retract an already-published release
             let rs = step(a, "Retract release and tag on FAIL", true);
             j.located(ACCEPTANCE, "the retract step", &rs);
@@ -636,6 +649,15 @@ mod tests {
         assert!(got.iter().any(|m| m.contains("binaries download outside the checkout")), "{got:?}");
         let got = planted(gate, "          spira-lint --only inventory", "          bin/spira-lint --only inventory");
         assert!(got.iter().any(|m| m.contains("do not run a spira-lint inside the checkout")), "{got:?}");
+    }
+
+    #[test]
+    fn acceptance_firing_on_a_branch_push_is_caught() {
+        let got = planted(acc, "    tags:\n      - 'spira-release-*'", "    branches: [main]");
+        assert!(got.iter().any(|m| m.contains("does not fire on a branch push")), "{got:?}");
+        assert!(got.iter().any(|m| m.contains("fires on release tags")), "{got:?}");
+        assert!(on_block("on:\n  push:\n    tags: [x]\njobs:\n  a:\n").contains("tags"));
+        assert!(!on_block("on:\n  push:\n    tags: [x]\njobs:\n  a:\n").contains("jobs"));
     }
 
     #[test]
