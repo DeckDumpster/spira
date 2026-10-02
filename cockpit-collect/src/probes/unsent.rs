@@ -449,6 +449,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
     let repos: HashSet<&str> = closed_pairs.iter().map(|r| r.repo.as_str()).collect();
     let mut subjects: Vec<String> = Vec::new();
     let mut branches: Vec<String> = Vec::new();
+    let mut cherry_refs: std::collections::HashMap<String, (std::path::PathBuf, String)> = std::collections::HashMap::new();
     let reg = io::repo_registry();
     for r in repos {
         let Some(rp) = reg.root(r) else { continue };
@@ -459,6 +460,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
         // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
         // spira_landrefs/ref_remote lib.sh seam.
         let Some((base, local)) = spira_config::repos::landrefs(&reg, &rp) else { continue };
+        cherry_refs.insert(r.to_string(), (rp_path.to_path_buf(), local.clone().unwrap_or_else(|| base.clone())));
         let refs = match local {
             Some(l) => format!("{base} {l}"),
             None => base.clone(),
@@ -506,13 +508,21 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
         if landed_set.contains(r.id.as_str()) {
             continue;
         }
-        let has_br = branch_lines.iter().any(|b| b.trim_end().ends_with(&format!("/{}", r.id)));
-        if !has_br {
+        let Some(br) = branch_lines.iter().find(|b| b.trim_end().ends_with(&format!("/{}", r.id))) else {
             continue;
-        }
+        };
         if !awaits_certification(lc_index.get(r.id.as_str())) {
             continue;
         }
+        if let Some((rp, land_ref)) = cherry_refs.get(&r.repo) {
+            if branch_has_no_own_commit(rp, land_ref, br.trim()) {
+                continue;
+            }
+        }
+        if bead_superseded(&r.id) {
+            continue;
+        }
+        let queued = gate_queued(run, &r.id);
         anomaly += 1;
         let ts = parse_iso8601(&r.closed_at);
         if let Some(ts) = ts {
@@ -521,7 +531,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
             }
         }
         let age_mins = ts.map(|t| (now - t) / 60).unwrap_or(9_999_999);
-        if age_mins > cert_win {
+        if !queued && age_mins > cert_win {
             stranded += 1;
         } else {
             awaiting += 1;
@@ -533,6 +543,39 @@ fn landing_funnel_section(out: &mut Kv, run: &Path, cfg: &Cfg) {
     push(out, "SP_STRANDED_N", stranded.to_string());
     push(out, "SP_CERT_N", awaiting.to_string());
     push(out, "SP_FUNNEL_DONE_AGE", done_oldest.map(|d| rel_age(now - d)).unwrap_or_default());
+}
+
+/// `git cherry` prints `+` for each commit not on the land ref; none means the branch never
+/// made a commit of its own. A failed cherry is not evidence of anything.
+fn branch_has_no_own_commit(repo: &Path, land_ref: &str, branch: &str) -> bool {
+    io::git(repo, &["cherry", land_ref, branch]).map(|o| !o.lines().any(|l| l.starts_with('+'))).unwrap_or(false)
+}
+
+fn bead_superseded(id: &str) -> bool {
+    let rows = io::bd_rows(io::bdjson(&["show", id]));
+    rows.and_then(|r| r.into_iter().next())
+        .and_then(|r| r.get("dependencies").and_then(Value::as_array).cloned())
+        .map(|deps| deps.iter().any(|d| d.get("dependency_type").or_else(|| d.get("type")).and_then(Value::as_str) == Some("supersedes")))
+        .unwrap_or(false)
+}
+
+/// Whether the gate-worker holds a job for this bead's branch, in the inbox or claimed by any slot.
+fn gate_queued(run: &Path, id: &str) -> bool {
+    let root = run.join("gate-worker");
+    let want = format!("spira/{id}");
+    let mut dirs = vec![root.join("inbox"), root.join("claimed")];
+    if let Ok(rd) = std::fs::read_dir(root.join("claimed")) {
+        dirs.extend(rd.flatten().filter(|e| e.path().is_dir()).map(|e| e.path()));
+    }
+    dirs.iter().any(|d| {
+        std::fs::read_dir(d).into_iter().flatten().flatten().any(|e| {
+            std::fs::read_to_string(e.path())
+                .ok()
+                .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+                .map(|j| j.get("branch").and_then(Value::as_str) == Some(want.as_str()) || j.get("bead").and_then(Value::as_str) == Some(id))
+                .unwrap_or(false)
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -736,5 +779,45 @@ mod tests {
         branch_backlog_section(&mut out, &Cfg::default());
         let get = |k: &str| out.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_UNSENT"), Some("0".to_string()));
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.email=t@t", "-c", "user.name=t"])
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn own_commit_branch_is_not_exempt_and_empty_branch_is_() {
+        let d = testkit::TempDir::new("cc-unsent-cherry");
+        let p = d.path();
+        git(p, &["init", "-q", "-b", "main"]);
+        git(p, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(p, &["branch", "spira/sp-empty"]);
+        git(p, &["checkout", "-q", "-b", "spira/sp-own"]);
+        git(p, &["commit", "-q", "--allow-empty", "-m", "sp-own: work"]);
+        assert!(branch_has_no_own_commit(p, "main", "spira/sp-empty"));
+        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-own"));
+        assert!(!branch_has_no_own_commit(p, "main", "spira/sp-missing"));
+    }
+
+    #[test]
+    fn gate_queue_matches_inbox_and_claimed_slots_by_branch() {
+        let d = testkit::TempDir::new("cc-unsent-queue");
+        let gw = d.path().join("gate-worker");
+        std::fs::create_dir_all(gw.join("inbox")).unwrap();
+        std::fs::create_dir_all(gw.join("claimed/2")).unwrap();
+        std::fs::write(gw.join("inbox/a.json"), r#"{"branch":"spira/sp-in","bead":"sp-in"}"#).unwrap();
+        std::fs::write(gw.join("claimed/2/b.json"), r#"{"branch":"spira/sp-cl","bead":"sp-cl"}"#).unwrap();
+        assert!(gate_queued(d.path(), "sp-in"));
+        assert!(gate_queued(d.path(), "sp-cl"));
+        assert!(!gate_queued(d.path(), "sp-old"));
     }
 }
