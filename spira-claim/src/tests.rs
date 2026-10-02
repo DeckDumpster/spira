@@ -831,8 +831,8 @@ fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     assert!(!o.err.contains("no fayth"), "{}", o.err);
 }
 
-/// sp-xsnid: under a bare environment (no `spira.toml`, no `conf.d` registry — exactly
-/// `fayth_label_overlay`'s own "resolution failure" fallback, which is what a bare
+/// sp-xsnid: under a bare environment (no host config document, no `conf.d` registry —
+/// exactly `fayth_label_overlay`'s own "resolution failure" fallback, which is what a bare
 /// `spira-sentinel.service` leaves `fayth_predicate` holding), a `FAYTH_LABELS` that
 /// references a config variable BARE (no `${VAR:+...}` guard) must refuse rather than
 /// hand back the empty string `bd --label "" ...` would read as "match everything" — the
@@ -849,7 +849,7 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
     std::env::remove_var("SPIRA_DB");
     std::env::remove_var("SPIRA_READY_CACHE");
     std::env::remove_var("SPIRA_FAYTHS");
-    std::env::set_var("SPIRA_TOML", "/no/such/spira.toml"); // pinned absent: no document resolves
+    std::env::set_var("SPIRA_TOML", "/no/such/host-config-document"); // pinned absent: no document resolves
     std::env::remove_var("XDG_CONFIG_HOME");
     let o = run(&["fayth-ready", "ops"], "");
     restore_env(saved);
