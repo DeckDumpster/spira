@@ -107,6 +107,12 @@ impl Run<'_> {
                 let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "--short", "HEAD"]);
                 if o.success() { o.text() } else { "?".into() }
             };
+            // Full hash, matching session_start_tip's own format (sp-1zxru-2) — short_tip's
+            // truncated form is for notes/thrash-tip identity, not this equality check.
+            let full_tip = |this: &Self| {
+                let o = this.d.git.git(work.as_deref().unwrap_or(Path::new("/dev/null")), &["rev-parse", "HEAD"]);
+                if o.success() { o.text().trim().to_string() } else { "?".into() }
+            };
             let requeue_cause = self.s.requeue_cause.clone();
             // capacity_reset_at, in-process now (wave 4.26). `Some(0)` ("hit, but no
             // resetsAt") still counts as a capacity return — see capacity.rs's own doc.
@@ -169,6 +175,9 @@ impl Run<'_> {
             // SESSION_RC, committed and REQUEUE_CAUSE are passed whatever was gathered, as
             // aeon.sh passed them; the precedence lives in decide::disposition.
             i.committed = self.s.committed;
+            // sp-1zxru-2: THIS session's own tip movement — session_start_tip was read
+            // right before the model's turn (run.rs::work); read again now, after it.
+            i.tip_moved = decide::tip_moved(&self.s.session_start_tip, &full_tip(self));
             i.requeue_cause = requeue_cause;
             let d = decide::disposition(&i);
             let cause = d.requeue_cause.clone().unwrap_or_default();

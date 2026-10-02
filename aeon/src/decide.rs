@@ -88,6 +88,13 @@ pub struct DispositionIn {
     pub session_started: bool,
     pub outcome: Option<String>,
     pub submitted: bool,
+    /// Did THIS session's own turn move the branch tip (sp-1zxru-2)? Distinct from
+    /// `committed` (a commit naming this bead ANYWHERE in the window — the right question
+    /// for the close/SOP/groom/eviction checks, the wrong one here): a branch an earlier
+    /// session already moved reads `committed` forever, so the Unlanded/NoProgress split
+    /// needs its own, narrower answer or a bead resumed enough times after a single real
+    /// commit never again sees a no-progress exit (sp-iku03, sp-al5ng).
+    pub tip_moved: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -113,6 +120,17 @@ pub fn outcome_charges(outcome: &str) -> bool {
 /// never-judged disposition's cause already does, so this return is never counted toward
 /// the poison threshold and CHECK 4 never files its "N attempts" ask over it.
 pub const NO_PROGRESS_CAUSE: &str = "unjudged-no-progress";
+
+/// Did THIS session's own turn move the branch tip (sp-1zxru-2)? Both reads are full
+/// hashes; `""` (never read) and `"?"` (the git read failed) are both "cannot tell", which
+/// this treats as NOT moved — fail closed toward the hold, not toward silently resuming
+/// through a signal that never answered the question. A branch an earlier session already
+/// advanced, with nothing added since, answers `false` here even though a commit naming
+/// the bead sits on it somewhere — that is exactly the case `committed` (`verdict_committed`)
+/// cannot distinguish from real progress this session made (sp-iku03, sp-al5ng).
+pub fn tip_moved(start: &str, now: &str) -> bool {
+    !start.is_empty() && start != "?" && !now.is_empty() && now != "?" && start != now
+}
 
 pub fn disposition(i: &DispositionIn) -> Disposition {
     use NoteKey::*;
@@ -159,7 +177,10 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
     let outcome = i.outcome.clone().filter(|o| o != "-").unwrap_or_default();
     if outcome_charges(&outcome) {
-        if i.committed {
+        // sp-1zxru-2: THIS session's own tip movement, not `committed` (which answers
+        // "is there a commit for this bead anywhere in the window" — true forever once any
+        // session ever commits, even if every session since has moved nothing).
+        if i.tip_moved {
             d(status, true, None, Unlanded)
         } else {
             // sp-1zxru: the session ran to its own end and left the bead in_progress, but
@@ -485,9 +506,12 @@ mod tests {
     fn disposition_table() {
         let mut i = base();
         assert_eq!(disposition(&i), d("open", false, Some(NO_PROGRESS_CAUSE), NoteKey::NoProgress), "unlanded with no commit is a no-progress exit, not charged (sp-1zxru)");
-        i.committed = true;
-        assert_eq!(disposition(&i), d("open", true, None, NoteKey::Unlanded), "a real failed attempt — committed work, still open — still counts");
+        i.committed = true; // ambient: a commit exists somewhere in the window, but not from THIS session
+        assert_eq!(disposition(&i), d("open", false, Some(NO_PROGRESS_CAUSE), NoteKey::NoProgress), "sp-1zxru-2: committed alone (an earlier session's work) is still no-progress — tip_moved is the question, not committed");
+        i.tip_moved = true;
+        assert_eq!(disposition(&i), d("open", true, None, NoteKey::Unlanded), "a real failed attempt — THIS session moved the tip, still open — still counts");
         i.committed = false;
+        i.tip_moved = false;
         i.outcome = Some("killed".into());
         assert_eq!(disposition(&i), d("open", false, Some("unjudged-killed"), NoteKey::NotJudged));
         i.session_started = false;
@@ -524,7 +548,7 @@ mod tests {
     fn disposition_unreadable_status_renders_question_mark() {
         let i = DispositionIn { status: String::new(), ..base() };
         assert_eq!(disposition(&i).ledger_status, "?");
-        let r = DispositionIn { requeue_cause: Some("-".into()), committed: true, ..base() };
+        let r = DispositionIn { requeue_cause: Some("-".into()), tip_moved: true, ..base() };
         assert_eq!(disposition(&r).note, NoteKey::Unlanded, "`-` is no cause");
     }
 
@@ -688,5 +712,21 @@ mod tests {
         assert_eq!(no_progress_backoff_minutes(0), 30, "a streak of 0 (or less) still floors at 30m");
         assert_eq!(no_progress_backoff_minutes(-5), 30);
         assert_eq!(no_progress_backoff_minutes(100), 30 * (1 << 6), "the shift is capped so a huge streak is still a plain number");
+    }
+
+    // sp-1zxru-2: THIS session's own tip movement — a branch an earlier session already
+    // advanced, with nothing added since, must answer false (sp-iku03, sp-al5ng), not
+    // "cannot tell" folded into true the way a bare string-equality check would if either
+    // side were simply unset.
+    #[test]
+    fn tip_moved_table() {
+        assert!(tip_moved("abc123", "def456"), "a real move");
+        assert!(!tip_moved("abc123", "abc123"), "same tip start to end — nothing landed this session");
+        assert!(!tip_moved("", "def456"), "start never read — cannot tell, not moved");
+        assert!(!tip_moved("abc123", ""), "now never read — cannot tell, not moved");
+        assert!(!tip_moved("?", "def456"), "start read failed — cannot tell, not moved");
+        assert!(!tip_moved("abc123", "?"), "now read failed — cannot tell, not moved");
+        assert!(!tip_moved("", ""), "neither read — cannot tell, not moved");
+        assert!(!tip_moved("?", "?"), "both reads failed — cannot tell, not moved");
     }
 }

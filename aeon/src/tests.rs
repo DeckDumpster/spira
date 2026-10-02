@@ -260,6 +260,16 @@ struct Outcome {
 }
 
 fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
+    go_as("builder", f, labels, extra, enforce, mode, seam_answers, act)
+}
+
+/// `go`, with the fayth NAME parameterized (sp-1zxru-2: the no-progress fix is a property
+/// of decide::disposition/teardown.rs, not of any one persona, so a non-"builder" fayth
+/// needs covering too — `an_ops_lane_aeons_no_progress_exit_is_held_too` is the one caller;
+/// it must have already written `chamber/<fayth_name>.md`/`.fayth` into `f.home`, same as
+/// `fx()` does for "builder").
+#[allow(clippy::too_many_arguments)]
+fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, seam_answers: BTreeMap<&'static str, Out>, act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync>) -> Outcome {
     let mut vars: BTreeMap<String, String> = [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
@@ -299,7 +309,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     };
     let env = Env::new(base.clone(), base);
     let conf = Conf::new(&snap, &f.home);
-    let fayth = Fayth::from_vars("builder", &vars);
+    let fayth = Fayth::from_vars(fayth_name, &vars);
     let bd = FakeBd(Arc::clone(&f.w));
     let seam = FakeSeam { w: Arc::clone(&f.w), answers: seam_answers };
     let git = RealGit { env: &env };
@@ -330,7 +340,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
             stop: Arc::new(Stop::default()),
             hb_shutdown: Arc::new(AtomicBool::new(false)),
             hb_done: Arc::new(AtomicBool::new(false)),
-            fayth_file: f.home.join("chamber/builder.fayth"),
+            fayth_file: f.home.join(format!("chamber/{fayth_name}.fayth")),
             s: State::default(),
         };
         run.main()
@@ -774,6 +784,82 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
     assert!(w.notes.iter().any(|(_, n)| n.contains("routed to the Concierge")), "{:?}", w.notes);
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-q", "unjudged-no-progress"]), "still exempt past the cap: {:?}", w.seam_calls);
     assert_eq!(w.status["sp-q"], "open", "released, not left claimed, not re-held");
+}
+
+// sp-1zxru-2: round 221 (~09:20Z) still thrashed sp-iku03 and sp-al5ng — branches already
+// ahead from an EARLIER session, with THIS session adding nothing, kept reading `committed`
+// (verdict_committed: a commit naming the bead ANYWHERE in the window) as true forever, so
+// disposition never reached NoteKey::NoProgress no matter how many more sessions landed
+// nothing. The fix: the Unlanded/NoProgress split reads `tip_moved` (THIS session's own
+// branch-tip movement, decide::tip_moved), not `committed`.
+
+#[test]
+fn a_branch_already_ahead_with_no_new_commit_this_session_is_still_held_not_charged() {
+    let f = fx("already-ahead");
+    // An EARLIER session already committed and left the bead open — sp-iku03's own shape
+    // (aeon-ledger.log: branch +1 ahead, a commit naming the bead from ~2 minutes earlier).
+    git(&f.repo, &["checkout", "-qb", "spira/sp-aa"]);
+    std::fs::write(f.repo.join("f"), "an earlier session's work\n").unwrap();
+    git(&f.repo, &["add", "f"]);
+    git(&f.repo, &["commit", "-qm", "sp-aa — the work"]);
+    git(&f.repo, &["checkout", "-q", "main"]);
+    seed(&f, "sp-aa");
+    // THIS session commits nothing — a believable trace (acted, no API error) so
+    // session_outcome classifies it as unlanded, same shape sp-iku03's later summons used.
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        1
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(o.code, 1, "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.notes.iter().any(|(_, n)| n.starts_with("No progress (unlanded):")),
+        "a branch already ahead from an earlier session is not `committed` enough on its own — nothing moved THIS session: {:?}",
+        w.notes
+    );
+    assert!(!w.notes.iter().any(|(_, n)| n.starts_with("Unlanded (unlanded):")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-aa", "unjudged-no-progress"]), "{:?}", w.seam_calls);
+    assert!(
+        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        "held, not resumed: {:?}",
+        w.bd_calls
+    );
+    assert_eq!(w.status["sp-aa"], "open");
+}
+
+// sp-al5ng's own shape: fayth "ops", not "builder" — the no-progress fix is a property of
+// decide::disposition/teardown.rs, not of any one persona's code path, so an ops-lane aeon's
+// no-progress exit must be held exactly the same way.
+#[test]
+fn an_ops_lane_aeons_no_progress_exit_is_held_too() {
+    let f = fx("ops-no-progress");
+    // go_as looks up chamber/<fayth_name>.md/.fayth by name (run.rs::write_prompt,
+    // main.rs::fayth_file) — fx() only wrote "builder"'s; "ops" needs its own (content is
+    // irrelevant to this test, same shape as fx()'s own builder.md/.fayth).
+    std::fs::write(
+        f.home.join("chamber/ops.md"),
+        "You are ops. DB {{DB}}.\n<!-- task -->\n## The bead\n{{BEAD}}\nwork {{BEAD_ID}} in {{REPO}} on {{BRANCH}} ({{LANDING}})\n{{PARK}}\n{{FIXTURE}}\n## Finishing\n{{FINISH}}\n",
+    )
+    .unwrap();
+    std::fs::write(f.home.join("chamber/ops.fayth"), "").unwrap();
+    seed(&f, "sp-ao");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        1
+    });
+    let o = go_as("ops", &f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(o.code, 1, "{}", o.log);
+    let l = ledger_lines(&o);
+    assert!(l[2].starts_with("done ops sp-ao rc=1 status=in_progress"), "{l:?}");
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.starts_with("No progress (unlanded):")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ao", "unjudged-no-progress"]), "{:?}", w.seam_calls);
+    assert!(
+        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        "{:?}",
+        w.bd_calls
+    );
 }
 
 #[test]

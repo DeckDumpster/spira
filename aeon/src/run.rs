@@ -76,6 +76,17 @@ pub struct State {
     pub session_rc: i32,
     /// The verdict's `committed`; false until the verdict block ran.
     pub committed: bool,
+    /// The branch's tip (full hash), read right before the session starts (sp-1zxru-2).
+    /// Empty (never read) or `?` (the read failed) both compare unequal to nothing but
+    /// themselves — [`decide::tip_moved`] treats either as "cannot tell", not as moved.
+    /// Distinct from `committed` (`verdict_committed`'s own job: a commit naming this bead
+    /// ANYWHERE in the window, branch or landing refs, for the close/SOP/groom/eviction
+    /// checks that must see a prior session's work too): this field answers only "did THIS
+    /// session's own turn move the branch" — the Unlanded/NoProgress split needs that
+    /// narrower question, or a branch already ahead from an earlier session reads
+    /// `committed` forever and never lands in NoProgress no matter how many more sessions
+    /// add nothing (sp-iku03, sp-al5ng).
+    pub session_start_tip: String,
     pub lc_model_restricted: bool,
     pub requeue_cause: Option<String>,
     pub requeue_why: String,
@@ -767,6 +778,10 @@ impl<'a> Run<'a> {
             self.s.groom_lines_before = std::fs::read_to_string(self.run_dir().join("groom.log")).map(|t| t.lines().count()).unwrap_or(0);
         }
         self.check_stop()?;
+
+        // ---- this session's own starting tip, read right before the model's turn (sp-1zxru-2) ----
+        let start_tip = self.d.git.git(&work, &["rev-parse", "HEAD"]);
+        self.s.session_start_tip = if start_tip.success() { start_tip.text().trim().to_string() } else { "?".into() };
 
         // ---- work ----
         self.session(&work)?;
