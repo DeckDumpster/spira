@@ -6,8 +6,9 @@
 # Three ways a bead reaches the renderer, and what happens when the store can't
 # resolve it:
 #   1. --bead <id>            — resolved and rendered, above the producer's prose.
-#   2. id anywhere in the body — resolved the same way; no --bead required.
-#   3. an id the store cannot resolve — renders "unresolved: <id>"; send still succeeds.
+#   2. --bead <id the store cannot resolve> — renders "unresolved: <id>"; send still succeeds.
+#   3. an id named only in subject/body, no --bead — renders nothing; a mention is not a
+#      citation, and the first id in free text may be a stranger's.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): sp-titl01 is seeded with
 # known title/status/priority; only those seeded values can make case 1's assertions
@@ -87,23 +88,24 @@ echo
 echo "unresolvable bead id: renders 'unresolved: <id>', send still succeeds"
 
 out="$(printf 'Blocked on %s until infra is fixed.\n' "$UNKNOWN_ID" \
-    | run send operator --from "Builder <builder@spira>" --subject "Infra blocker" 2>&1)"; rc=$?
+    | run send operator --from "Builder <builder@spira>" --subject "Infra blocker" \
+        --bead "$UNKNOWN_ID" 2>&1)"; rc=$?
 wantrc "unresolvable id: send still succeeds (exit 0)" 0 "$rc"
 body2="$(body_of operator)"
 want "body renders unresolved marker for the unknown id" "unresolved: $UNKNOWN_ID" "$body2"
 nowant "unresolved case carries no title (nothing to render)" "$KNOWN_TITLE" "$body2"
 
 # ==========================================================================
-# 3. bead id anywhere in body (no --bead) — resolved and rendered the same way.
+# 3. bead id anywhere in body (no --bead) — nothing is rendered.
 # ==========================================================================
 echo
-echo "bead id named only in the body (no --bead): resolved and rendered"
+echo "bead id named only in the body (no --bead): not rendered"
 
 out="$(printf 'The work in %s is blocked on infra.\n' "$KNOWN_ID" \
     | run send operator --from "Builder <builder@spira>" --subject "Infra blocker 2" 2>&1)"; rc=$?
 wantrc "body-only id: send succeeds" 0 "$rc"
 body3="$(body_of operator)"
-want "body-only id: rendered block present with real title" "$KNOWN_ID: $KNOWN_TITLE" "$body3"
+nowant "body-only id: no block rendered" "$KNOWN_TITLE" "$body3"
 
 # ==========================================================================
 # 4. Regression: the gh-closeout subject shape (lib.sh) — names a bead and nothing
@@ -128,5 +130,25 @@ wantrc "regression: send succeeds" 0 "$rc"
 body4="$(body_of operator)"
 want "regression: rendered block carries the bead's real title" "$REG_TITLE"    "$body4"
 want "regression: rendered block carries its status"            "Status: closed" "$body4"
+
+# ==========================================================================
+# 5. A prepended title that names a second, closed bead must not borrow that
+#    bead's block: --bead names the real subject.
+# ==========================================================================
+echo
+echo "subject whose title names another bead: the --bead block renders, not the stranger's"
+
+OTHER_ID="sp-strng01"; OTHER_TITLE="a closed stranger bead named only inside another title"
+printf '{"id":"%s","title":"%s","status":"closed","issue_type":"task","priority":1,"labels":["spira"],"updated_at":"2026-01-01T00:00:00Z","closed_at":"2026-01-01T00:00:00Z"}\n' \
+    "$OTHER_ID" "$OTHER_TITLE" \
+    | testdb_seed || { echo "test-mail-bead-render: stranger seed failed"; exit 1; }
+_subj="Fix found on $OTHER_ID: $KNOWN_ID rebase loop x3"
+out="$(printf '## Question\n%s\n\n## Default\nsplit it\n' "$_subj" \
+    | run send operator --from "Landing gate <gate@spira>" --subject "$_subj" \
+        --kind question --default "split it" --bead "$KNOWN_ID" 2>&1)"; rc=$?
+wantrc "stranger-title: send succeeds" 0 "$rc"
+body5="$(body_of operator)"
+want   "stranger-title: subject bead's block renders" "$KNOWN_ID: $KNOWN_TITLE" "$body5"
+nowant "stranger-title: stranger's title never renders" "$OTHER_TITLE" "$body5"
 
 tl_summary
