@@ -1976,7 +1976,28 @@ pub fn warm_sweep(deps: &Deps) -> i32 {
         &worktree::free_mib,
         &|m| deps.log(m),
     );
+    sweep_scratch(deps);
     0
+}
+
+/// Fixture scratch no live process holds, older than a day (SPIRA_SCRATCH_SWEEP_PREFIXES /
+/// SPIRA_SCRATCH_SWEEP_MIN_AGE_HOURS): a crashed suite's leftovers must not fill the
+/// shared tmpfs for the next gate.
+fn sweep_scratch(deps: &Deps) {
+    const DEFAULT: &str = "testenv-testdb-priv spira-toml loom-shim loom-fake spira-claim-unpoison spira-claim-test batcher-cut- sop-test queue-test- install-units-test strand-lc work-switch";
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let prefixes = var("SPIRA_SCRATCH_SWEEP_PREFIXES").unwrap_or_else(|| DEFAULT.into());
+    let hours = var("SPIRA_SCRATCH_SWEEP_MIN_AGE_HOURS").and_then(|v| v.parse::<u64>().ok()).unwrap_or(24);
+    let prefixes: Vec<&str> = prefixes.split_whitespace().collect();
+    let gone = spira_config::scratch::sweep(
+        Path::new("/tmp"),
+        &prefixes,
+        std::time::Duration::from_secs(hours * 3600),
+        &spira_config::scratch::held_by_process,
+    );
+    if !gone.is_empty() {
+        deps.log(&format!("swept {} stale scratch entries from /tmp", gone.len()));
+    }
 }
 
 /// `cargo build` in place; `Some` is the fault that ends the run.

@@ -145,6 +145,10 @@ pub trait World {
     /// Drop the tmpfs build output of a finished trial (target::release_tree); `keep_release`
     /// spares `release` for a caller that still has to stage it.
     fn release_target(&self, tree: &Path, keep_release: bool);
+    /// Reserve the trial's estimated build peak in the scratch ledger shared with every other
+    /// gate and testenv on the filesystem; the guard releases it when dropped. Err is the
+    /// refusal — a reservation that cannot be made means the room is not there.
+    fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<Box<dyn std::any::Any>, String>;
 
     /// `timeout <secs> bash -c <cmd>` in `tree` under exactly `env` → (status, combined output
     /// with trailing newlines stripped).
