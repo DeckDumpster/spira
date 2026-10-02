@@ -336,7 +336,7 @@ cmd="${1:-}"; shift
 case "$cmd" in
     is-enabled) exit 0 ;;
     start)
-        flock -n "$CR_LOCK" bash -c "exec sleep 60" &
+        flock -w 5 "$CR_LOCK" bash -c "exec sleep 60" &
         printf '%s\n' "$!" > "$UNIT_PID_FILE"
         exit 0 ;;
     stop)
@@ -361,9 +361,13 @@ fi
 want "unit name passed to systemctl" "spira-watch-view-test.service" \
     "$(cat "$CALLS_LOG" 2>/dev/null)"
 
-# "unit enabled → watcher running (lock held)" was deleted in round 116: it flipped (red in
-# round 115's 24-wide corpus, green on rerun at the same head) — a lock-acquired-by-now race
-# with no bound. law-a-test-that-flips-is-deleted; deterministic re-add is sp-jacrs.
+# The mock unit takes the lock with a bounded blocking wait (a non-blocking attempt races the
+# probe flock in lock_free), and the assertion polls for it rather than reading one instant.
+if wait_locked "$CR_LOCK"; then
+    ok "unit enabled → watcher running (lock held)"
+else
+    bad "unit enabled → watcher running (lock held)" "lock never became held"
+fi
 
 lock_holder="$(lock_pid "$CR_LOCK" 2>/dev/null || true)"
 main_pid="$(cat "$UNIT_PID_FILE" 2>/dev/null || true)"
