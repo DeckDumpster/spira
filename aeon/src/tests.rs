@@ -178,6 +178,9 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
+        if prog == "landing-pass" && args.first().map(String::as_str) == Some("cited-commit") {
+            return Out::ok("deadbeef");
+        }
         if prog == "env"
             && args.iter().any(|a| a == "landing-pass")
             && args.iter().any(|a| a == "mark")
@@ -1098,7 +1101,6 @@ fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
     let repo = f.repo.clone();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
@@ -1131,7 +1133,6 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
     let repo = f.repo.clone();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();

@@ -50,7 +50,7 @@ case "$__aeon_fn" in
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
     bump_lapsed|write_lapse_record|thrash_streak_bump|requeues_of|\
-    bead_is_work_type|bead_cited_commit_on_base|\
+    bead_is_work_type|\
     other_beads_on_conflicts|spira_destroy_branch) ;;
     *) printf 'aeon seam: %s is not on the allowlist\n' "$__aeon_fn" >&2; exit 97 ;;
 esac

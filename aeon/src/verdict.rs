@@ -438,7 +438,7 @@ impl Run<'_> {
                     let cited = if restricted {
                         String::new()
                     } else {
-                        let o = self.sv("bead_cited_commit_on_base", &s(&[&id, &repo, &fq]));
+                        let o = self.d.exec.exec("landing-pass", &s(&["cited-commit", &id, &repo, &fq]), None, None);
                         if o.success() { o.text() } else { String::new() }
                     };
                     if !cited.is_empty() {
