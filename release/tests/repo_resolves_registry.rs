@@ -17,7 +17,7 @@ fn fixture(tag: &str) -> (testkit::TempDir, std::path::PathBuf, String, Env) {
     g(&["init", "-q"]);
     g(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"]);
     let sha = g(&["rev-parse", "HEAD"]);
-    let map = t.path().join("repo-map");
+    let map = t.path().join("registry-rows");
     std::fs::write(&map, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
     let release = t.path().join("spira-releases/deadbeef");
     let rs = release.join("spira");
