@@ -118,7 +118,8 @@ pub fn watch_names() -> Result<Vec<String>, String> {
     }
     let out = cmd.output().map_err(|e| format!("cannot run watchd: {e}"))?;
     if !out.status.success() {
-        return Err("the watcher manifest is malformed".into());
+        let why = String::from_utf8_lossy(&out.stderr);
+        return Err(format!("the watcher manifest is malformed: {}", why.trim()));
     }
     let text = String::from_utf8_lossy(&out.stdout);
     Ok(text.split_whitespace().map(|u| u.strip_prefix("spira-watch@").unwrap_or(u).strip_suffix(".service").unwrap_or(u).to_string()).collect())

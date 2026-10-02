@@ -33,7 +33,7 @@ const VARS: &[&str] = &[
 
 const SCRIPT: &str = r#"set -uo pipefail
 HERE="$1"; shift
-. "$HERE/conf.sh" >/dev/null 2>&1 || exit 97
+. "$HERE/conf.sh" >/dev/null || exit 97
 for v in "$@"; do printf '%s=%s\0' "$v" "${!v-}"; done
 exit 0
 "#;
@@ -64,7 +64,7 @@ pub struct Context {
     pub now: i64,
 }
 
-/// `bash -c '. "$HERE/conf.sh" >/dev/null 2>&1 || exit 97; …' <home> <vars…>`. `home` is the
+/// `bash -c '. "$HERE/conf.sh" >/dev/null || exit 97; …' <home> <vars…>`. `home` is the
 /// directory holding `conf.sh` — `SPIRA_HOME` if already known, else this binary's own
 /// directory (mirrors how the bash resolved `BASH_SOURCE[0]`'s directory before sourcing
 /// itself).
