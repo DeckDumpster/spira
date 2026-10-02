@@ -807,6 +807,43 @@ fn summon_cmd_refuses_without_aeon_and_summons_when_everything_lines_up() {
     assert!(sink.has("CHECK7 builder: 2 ready, 1 free — summoning, restricted to 'express'"), "{}", sink.text());
 }
 
+/// sp-hh599, law-a-control-that-cannot-check-must-refuse: `fayth_ready`'s own rc contract
+/// (sp-3ntca) already maps every nonzero OTHER than 2 to `ReadyAnswer::Failed` — this
+/// proves the CONSUMING side holds up its half: a claim-error must be LOUD (stderr, not
+/// the routine stdout log a healthy pass fills) and must never read like the routine "no
+/// fayth in the chamber" skip, which is what let this bead's own defect (a home-resolution
+/// refusal sharing rc 2 with "no such file") hide silently for every pass since wave 4.25.
+#[test]
+fn summon_cmd_a_claim_error_is_loud_and_never_reads_as_a_routine_skip() {
+    let (w, r, sink, clock) = setup("summon-claim-error");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("fayth-ready") {
+            Some(Out {
+                rc: 1,
+                stdout: "0".into(),
+                stderr: "spira-claim: fayth_ready: cannot resolve SPIRA_HOME: no release found above this executable's own location (set SPIRA_HOME to override)".into(),
+            })
+        } else {
+            None
+        }
+    });
+    let rc = run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Summon { fayth: "builder".into(), pool: None, require_label: String::new() },
+        &[],
+        None,
+    );
+    assert_eq!(rc, 1);
+    assert!(sink.has("[stderr]"), "a claim-error must go out LOUDLY, on stderr: {}", sink.text());
+    assert!(sink.has("CLAIM-ERROR"), "{}", sink.text());
+    assert!(sink.has("cannot resolve SPIRA_HOME"), "{}", sink.text());
+    assert!(!sink.has("no fayth in the chamber"), "a could-not-evaluate claim error read as a routine absence: {}", sink.text());
+    assert!(!sink.has("skipped"), "a claim-error must not read like a routine skip: {}", sink.text());
+}
+
 #[test]
 fn named_unit_stop_cmd_stops_every_match_and_says_so_when_there_is_none() {
     let (w, r, sink, clock) = setup("nus");

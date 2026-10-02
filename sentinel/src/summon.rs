@@ -553,8 +553,13 @@ impl<'a> Sentinel<'a> {
                     return Attempt { summoned: false, ready: None };
                 }
                 ReadyAnswer::Failed(msg) => {
+                    // law-a-control-that-cannot-check-must-refuse (sp-hh599): an rc that
+                    // means "could not evaluate" must never read like the routine NoFayth
+                    // skip above — LOUD (stderr, not the ordinary pass log), named a
+                    // claim-error, and never "skipped" (this fayth was never actually
+                    // consulted, so there is nothing to call routine).
                     let m = if msg.is_empty() { "bd gave no reason".to_string() } else { msg };
-                    self.log(&format!("CHECK7 {f}: ready query failed: {m} — skipped, not counted as zero ready"));
+                    self.h.log_err(&format!("CHECK7 {f}: CLAIM-ERROR: {m} — not counted as zero ready, not summoning this pass"));
                     return Attempt { summoned: false, ready: None };
                 }
                 ReadyAnswer::Count(n) => n,

@@ -831,6 +831,54 @@ fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     assert!(!o.err.contains("no fayth"), "{}", o.err);
 }
 
+/// sp-hh599: under `spira-sentinel.service`'s own environment (`SPIRA_RELEASE`/`PATH`,
+/// never `SPIRA_HOME` — wave 4.25, sp-obhv6, stopped `conf.sh` exporting it), this used to
+/// refuse outright with rc 2 — the SAME rc `fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero`
+/// above uses for "no such fayth file", so `sentinel::summon::fayth_ready`'s `2 =>
+/// ReadyAnswer::NoFayth` mapping could not tell "SPIRA_HOME is not set" apart from "this
+/// chamber genuinely has no builder.fayth", and skipped every fayth every pass forever,
+/// silently (this bead's own repro). A `cargo test` binary has no release root above it
+/// either (no top-level `bin/` anywhere this checkout's own ancestors hold a `spira/`), so
+/// `fayth_home` still cannot resolve here — but the FAILURE MODE must change: a home that
+/// could not be resolved is "could not evaluate" (rc 1, the same bucket
+/// `fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect` already occupies),
+/// never "no fayth in the chamber" (rc 2). law-a-control-that-cannot-check-must-refuse.
+#[test]
+fn fayth_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = save_env(&["SPIRA_HOME"]);
+    std::env::remove_var("SPIRA_HOME");
+    let o = run(&["fayth-ready", "builder"], "");
+    restore_env(saved);
+    assert_eq!((o.code, o.out.as_str()), (1, "0"), "stderr: {}", o.err);
+    assert!(!o.err.contains("no fayth in the chamber"), "stderr: {}", o.err);
+    assert!(!o.err.contains("is not set"), "stderr: {} — SPIRA_HOME must self-resolve, not refuse on an unset env var", o.err);
+}
+
+/// The same self-resolution, proven positively rather than by its failure mode: with
+/// `SPIRA_HOME` unset but THIS PROCESS physically sitting inside a release layout
+/// (`<release>/bin/<exe>` beside `<release>/spira/conf.sh`, exactly `own_release_root`'s own
+/// contract — sp-kgzql, reused here rather than invented a fourth way), `fayth_home` must
+/// still answer `<release>/spira`, matching this bead's own manual repro
+/// (`SPIRA_HOME=<rel>/spira` recovers `fayth_ready`). Exercises the pure function directly
+/// (`super::fayth_home`) since faking this process's own `current_exe()` end-to-end would
+/// need a real exec; `own_release_root`'s own unit tests (spira-config) already cover the
+/// ascending search itself.
+#[test]
+fn fayth_home_pure_function_prefers_the_env_override_and_falls_back_to_the_release_root() {
+    // The override still wins outright — a fixture, or a lib.sh shim that already
+    // resolved it, must be able to pin a different tree on purpose.
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let saved = save_env(&["SPIRA_HOME"]);
+    std::env::set_var("SPIRA_HOME", "/some/pinned/tree");
+    assert_eq!(super::fayth_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
+    std::env::remove_var("SPIRA_HOME");
+    let err = super::fayth_home().unwrap_err();
+    assert!(err.contains("cannot resolve SPIRA_HOME"), "{err}");
+    assert!(!err.contains("is not set"), "{err}");
+    restore_env(saved);
+}
+
 #[test]
 fn fayth_ready_cli_real_count_including_zero() {
     let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

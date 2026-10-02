@@ -55,7 +55,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim shared-exclude                                            (ready_shared_exclude)
        spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
-       spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; needs $SPIRA_HOME, $SPIRA_FAYTHS)
+       spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
        spira-claim fayth-ready <fayth>                                      (fayth_ready; ditto, plus $SPIRA_READY_CACHE)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; plus $SPIRA_READY_SNAPSHOT)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
@@ -622,15 +622,34 @@ fn cmd_stack(a: &Args, env: &mut Env) -> Outcome {
 // rest of this file.
 // =========================================================================================
 
-/// `$SPIRA_HOME`, or the refusal every fayth-reading verb prints and fails on — the
-/// chamber lives at `<home>/chamber`, and every lib.sh caller already has `SPIRA_HOME` set
-/// by the time it calls one of these shims (conf.sh resolves it before lib.sh is sourced);
-/// an unset value here means the shim did not thread it through the exec boundary, not
-/// "use a guess" (same contract as `spira-config fayth`'s own `fayth_home`).
+/// `$SPIRA_HOME`, resolved IN-PROCESS — law-a-binary-resolves-the-config-it-reads
+/// (sp-hh599): `spira-sentinel.service`/`spira-summon.service` carry `SPIRA_RELEASE`/
+/// `PATH` and nothing else (wave 4.25, sp-obhv6, stopped `conf.sh` from exporting
+/// `SPIRA_HOME` at all). Every `fayth-ready`/`fayth-exclude`/`bulk-ready-by-fayth` call the
+/// sentinel makes is ITS OWN in-process child (never through `lib.sh`), so under that
+/// unit's real environment this used to refuse outright — and `summon.rs`'s `fayth_ready`
+/// read that refusal's rc 2 as "no fayth", skipping every fayth every pass, forever,
+/// silently (this bead's own repro). The environment is an OVERRIDE a caller may still set
+/// on purpose (a fixture pinning a different tree; a lib.sh shim that already resolved it
+/// and threads it through for free) — never the ONLY source. Absent, this falls back to
+/// this process's own release root (`spira_config::release_env::own_release_root_for_process`,
+/// sp-kgzql's identical ascending search `sentinel::locate_home`/`spira_world::locate_home`
+/// already run for the home THEIR OWN binary needs — reused rather than invented a fourth
+/// way) plus `/spira`, the directory `conf.sh` itself lives beside and where the chamber
+/// lives too (exactly `SPIRA_HOME=<release>/spira`, matching this bead's own manual repro).
+/// `Err` only when NEITHER source answers — no ancestor of this executable holds a release
+/// at all (a bare `cargo test` binary, or a truly detached shell) — a genuine "cannot
+/// evaluate", and every caller below is careful never to let that read as "no fayth" (see
+/// `cmd_fayth_ready`'s own exit-code doc, just below).
 fn fayth_home() -> Result<std::path::PathBuf, String> {
-    match std::env::var("SPIRA_HOME") {
-        Ok(h) if !h.is_empty() => Ok(std::path::PathBuf::from(h)),
-        _ => Err("SPIRA_HOME is not set".to_string()),
+    if let Ok(h) = std::env::var("SPIRA_HOME") {
+        if !h.is_empty() {
+            return Ok(std::path::PathBuf::from(h));
+        }
+    }
+    match spira_config::release_env::own_release_root_for_process() {
+        Some(release) => Ok(release.join("spira")),
+        None => Err("cannot resolve SPIRA_HOME: no release found above this executable's own location (set SPIRA_HOME to override)".to_string()),
     }
 }
 
@@ -787,7 +806,8 @@ fn cmd_claim_retry(bd_args: &[String], cfg: &Config) -> Outcome {
 
 /// `spira_fayths`'s roster, as a `Vec<String>` — `fayth-exclude`/`fayth-ready`/
 /// `bulk-ready-by-fayth` all need it, and `SPIRA_FAYTHS` (host policy, unexported by
-/// design) must be threaded through the environment, same as `SPIRA_HOME`.
+/// design) must still be threaded through the environment when a caller wants to narrow
+/// it — unlike `SPIRA_HOME` (see [`fayth_home`]), nothing self-locates a roster override.
 fn roster(home: &std::path::Path) -> Vec<String> {
     spira_config::chamber::spira_fayths(home, std::env::var("SPIRA_FAYTHS").ok().as_deref())
         .split_whitespace()
@@ -842,10 +862,17 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of two things
-/// failed (sp-3ntca): 2 = no such fayth file; 1 = the file exists but the query failed; 0 =
-/// a real count, zero included. Stdout is '0' in every case but a real count — callers
-/// read only stdout, never the exit code, for the number itself.
+/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of three things
+/// happened (sp-3ntca; widened by sp-hh599): 2 = no such fayth file — the ONE outcome a
+/// resolved chamber was actually consulted and came back empty, the only rc
+/// `sentinel::summon::fayth_ready` may map to `ReadyAnswer::NoFayth`; 1 = "could not
+/// evaluate" — the chamber was never reached at all (SPIRA_HOME itself would not resolve)
+/// OR the file exists but the query failed; 0 = a real count, zero included.
+/// law-a-control-that-cannot-check-must-refuse: an rc that means "could not evaluate" must
+/// never collapse into "no fayth" — sp-hh599's own bug was exactly that collapse (a home
+/// resolution failure used to share rc 2 with "no such file", and the sentinel could not
+/// tell them apart). Stdout is '0' in every case but a real count — callers read only
+/// stdout, never the exit code, for the number itself.
 ///
 /// DROPPED DELIBERATELY: nothing. `SPIRA_READY_CACHE` (sentinel's `export_ready_cache`,
 /// still live — it sets this for the bash child it shells into for unported dispatch
@@ -860,8 +887,10 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         _ => return Outcome::usage("fayth-ready needs <fayth>"),
     };
     let home = match fayth_home() {
+        // rc 1, NEVER 2: the chamber was never reached, so this is "could not evaluate",
+        // not "no fayth in the chamber" — see this function's own doc above.
         Ok(h) => h,
-        Err(e) => return Outcome { code: 2, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
+        Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
     };
     let file = spira_config::chamber::chamber_dir(&home).join(format!("{me}.fayth"));
     if !file.is_file() {
