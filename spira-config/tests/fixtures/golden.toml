@@ -5,7 +5,6 @@ ask_label = "fixture-ask-label"
 batch_maxpar = 8
 certify_par = 4
 certify_suites = "off"
-cert_idle_skip = false
 ci_label = "fixture-ci-label"
 czar_stage_deadlock = "shadow"
 db = "/opt/fixture-home/.local/share/spira/db"

@@ -213,6 +213,13 @@ mod retired_keys {
     use spira_config::validate_with_warnings;
 
     #[test]
+    fn a_toml_still_setting_cert_idle_skip_loads_with_a_warning() {
+        let (_, w) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\ncert_idle_skip = false\n")
+            .expect("a retired key must validate, not error");
+        assert!(w.iter().any(|m| m.contains("cert_idle_skip") && m.contains("sp-6d9th")), "{w:?}");
+    }
+
+    #[test]
     fn retired_key_warns_naming_the_key_and_bead() {
         let (doc, warnings) = validate_with_warnings("[spira]\nid_prefix = \"sp\"\nqueue_local_gate = 1\n")
             .expect("a retired key must validate, not error");
