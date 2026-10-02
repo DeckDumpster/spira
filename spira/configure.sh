@@ -31,7 +31,7 @@
 #                [--dolt-data PATH|""] [--no-repo-map]
 #
 # NON-INTERACTIVE — every prompt has an env-var path:
-#   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf)
+#   CONFIGURE_OUT             output file (default: ${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml)
 #   CONFIGURE_PROD            SPIRA_PROD
 #   CONFIGURE_MAX_AEONS       SPIRA_MAX_AEONS
 #   CONFIGURE_MAX_LIVE_AEONS  SPIRA_MAX_LIVE_AEONS (empty string = no fleet ceiling)
@@ -42,8 +42,9 @@
 # through to the derived default with a notice if not.
 #
 # WHAT IS WRITTEN
-#   Trap keys — active KEY = value lines, one per trap.
-#   Derivable keys — commented-out # KEY = derived_value lines for every other
+#   Trap keys — active `key = value` lines in the [spira] table, one per trap
+#   (an empty SPIRA_MAX_LIVE_AEONS is omitted: absent means no ceiling).
+#   Derivable keys — commented-out `# spira.key = value` lines for every other
 #   settable key, so the operator can see what is available.
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -83,7 +84,7 @@ done
 
 # Default output path.
 if [ -z "$_out" ]; then
-    _out="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.conf"
+    _out="${XDG_CONFIG_HOME:-$HOME/.config}/spira/spira.toml"
 fi
 
 # ---------------------------------------------------------------------------
@@ -182,115 +183,55 @@ if [ -z "$_dolt_given" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Write the config file.
+# Write the config file. Trap keys go through `spira-config set` (typed, atomic,
+# the same writer every other config writer uses); derivable keys follow as
+# commented-out TOML lines.
 # ---------------------------------------------------------------------------
 mkdir -p "$(dirname "$_out")"
 
+_toml_key() { printf 'spira.%s' "$(printf '%s' "${1#SPIRA_}" | tr '[:upper:]' '[:lower:]')"; }
+_toml_val() { case "$1" in ''|*[!0-9]*) printf '"%s"' "$1" ;; *) printf '%s' "$1" ;; esac; }
+
+_set() { spira-config set "$(_toml_key "$1")" "$2" "$_out" >/dev/null || { rm -f "$_out"; printf 'configure: ERROR: could not write %s\n' "$1" >&2; exit 1; }; }
+
+_set SPIRA_ID_PREFIX sp
+_set SPIRA_PROD "$_prod"
+_set SPIRA_MAX_AEONS "${_maxaeons:-4}"
+[ -n "$_maxlive" ] && _set SPIRA_MAX_LIVE_AEONS "$_maxlive"
+_set SPIRA_LOOM_ADDR "${_loom:-127.0.0.1:8788}"
+_set SPIRA_DOLT_DATA "$_dolt"
+
+_trap_keys=" SPIRA_ID_PREFIX SPIRA_PROD SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LOOM_ADDR SPIRA_DOLT_DATA "
 {
-    cat <<HEADER
-# spira.conf — written by configure.sh
+    cat <<'DERIVABLE'
+
+# ============================================================
+# spira.toml — written by configure.sh. The [spira] table above holds the
+# keys whose derived default is plausibly wrong for a fresh clone:
+#   id_prefix       REQUIRED; the prefix of this installation's bead ids.
+#   prod            the activated release directory systemd executes from.
+#   max_aeons       task-pool ceiling; a guess about your cores.
+#   max_live_aeons  whole-fleet ceiling; omitted = no ceiling.
+#   loom_addr       loopback by design; Loom has no authentication.
+#   dolt_data       Dolt server data dir; empty = you run the server yourself.
 #
-# The first file found among these paths wins:
-#   <harness checkout>/spira.conf        (beside conf.sh; do NOT push)
-#   \${XDG_CONFIG_HOME:-\$HOME/.config}/spira/spira.conf  (here)
-#   /etc/spira/spira.conf
-#
-# Remove this file and re-run configure.sh to regenerate it.
-# Point \$SPIRA_CONF at a different path to use another file.
-#
-# FORMAT: KEY = value, one per line, # comments, blank lines ignored.
-# Values are NOT shell — ~ and \$HOME expand and nothing else does.
-# An unrecognised key is printed to stderr and ignored; a typo is not a
-# setting the operator believes is in force.
-
+# Below, every other key as conf.sh would derive it here. Move a line into
+# [spira] and edit it to override; `spira-config validate` checks the result.
+# Change keys with `spira-config set`, not by re-running configure.sh.
 # ============================================================
-# TRAP KEYS — explicitly set because the derived default is
-# plausibly wrong for a fresh clone.
-# ============================================================
-
-HEADER
-
-    # SPIRA_ID_PREFIX
-    cat <<PREFIX_COMMENT
-# SPIRA_ID_PREFIX: REQUIRED — the prefix of this installation's own bead ids,
-# without the hyphen. Nothing derives it; spira-config refuses a config that
-# omits it (doctor, pre-activate). install.sh initialises the bead database
-# with prefix sp.
-PREFIX_COMMENT
-    printf 'SPIRA_ID_PREFIX = sp\n\n'
-
-    # SPIRA_PROD
-    cat <<PROD_COMMENT
-# SPIRA_PROD: the activated release directory. systemd executes every unit's
-# ExecStart from this path. The default is SPIRA_RELEASES/current; install.sh
-# refuses until a release is activated with release install-tarball.
-PROD_COMMENT
-    printf 'SPIRA_PROD = %s\n\n' "$_prod"
-
-    # SPIRA_MAX_AEONS
-    cat <<AEONS_COMMENT
-# SPIRA_MAX_AEONS: maximum aeons that may run at once (the task-pool ceiling,
-# not counting lane fayths). Default 4 is a guess about the operator's cores.
-AEONS_COMMENT
-    printf 'SPIRA_MAX_AEONS = %s\n\n' "${_maxaeons:-4}"
-
-    # SPIRA_MAX_LIVE_AEONS
-    cat <<LIVE_COMMENT
-# SPIRA_MAX_LIVE_AEONS: whole-fleet ceiling (pool + lane fayths). Empty means
-# no ceiling — correct for a core-constrained box, wrong for a constrained API
-# account. Set it when the account limit matters more than the core count.
-LIVE_COMMENT
-    printf 'SPIRA_MAX_LIVE_AEONS = %s\n\n' "$_maxlive"
-
-    # SPIRA_LOOM_ADDR
-    cat <<LOOM_COMMENT
-# SPIRA_LOOM_ADDR: where Loom (the live-graph server) listens. Loopback by
-# design — Loom has no authentication, so changing this to 0.0.0.0 exposes
-# your beads database to every host on the LAN.
-LOOM_COMMENT
-    printf 'SPIRA_LOOM_ADDR = %s\n\n' "${_loom:-127.0.0.1:8788}"
-
-    # SPIRA_DOLT_DATA
-    cat <<DOLT_COMMENT
-# SPIRA_DOLT_DATA: the Dolt server's own data directory. install.sh creates
-# this directory, writes dolt-server.yaml, and starts dolt-beads.service.
-# Leave empty only if you run the Dolt server yourself.
-DOLT_COMMENT
-    printf 'SPIRA_DOLT_DATA = %s\n' "$_dolt"
-
-    cat <<DERIVABLE
-
-# ============================================================
-# DERIVABLE KEYS — commented out; values shown are what
-# conf.sh would compute from where the harness is installed.
-# Uncomment and edit any of these to override the default.
-# ============================================================
-
 DERIVABLE
-
-    # Trap keys are already written above; skip them in the comment section.
-    _trap_keys=" SPIRA_ID_PREFIX SPIRA_PROD SPIRA_MAX_AEONS SPIRA_MAX_LIVE_AEONS SPIRA_LOOM_ADDR SPIRA_DOLT_DATA "
     while IFS= read -r _kv; do
         [ -z "$_kv" ] && continue
         _k="${_kv%%=*}"
-        _v="${_kv#*=}"
-        # Skip trap keys and blank-name entries.
         [ -z "$_k" ] && continue
         case " $_trap_keys " in *" $_k "*) continue ;; esac
-        printf '# %s = %s\n' "$_k" "$_v"
+        printf '# %s = %s\n' "$(_toml_key "$_k")" "$(_toml_val "${_kv#*=}")"
     done <<< "$_defaults"
-} > "$_out"
+} >> "$_out"
 
-# ---------------------------------------------------------------------------
-# Round-trip validation: source conf.sh with the generated file and check
-# that no "unknown key" warnings appear.  An unknown-key warning would mean
-# this script wrote a key conf.sh does not recognise, which is a bug here.
-# ---------------------------------------------------------------------------
-_rt_warn="$(SPIRA_CONF="$_out" SPIRA_DB="/tmp/configure-nodb-$$" \
-    bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
-if printf '%s\n' "$_rt_warn" | grep -q 'unknown key'; then
-    printf 'configure: ERROR: generated config contains a key conf.sh does not recognise:\n' >&2
-    printf '%s\n' "$_rt_warn" | grep 'unknown key' >&2
+# Round-trip: the generated file must pass spira-config's own validation.
+if ! _rt_warn="$(spira-config validate "$_out" 2>&1)"; then
+    printf 'configure: ERROR: generated config is invalid:\n%s\n' "$_rt_warn" >&2
     rm -f "$_out"
     exit 1
 fi
