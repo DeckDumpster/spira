@@ -34,7 +34,7 @@
 #      make the job always red.
 #
 # tier: T1
-# covers: beads-push.sh
+# covers: beads-push.sh beads-store/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -102,6 +102,14 @@ run_push() {
         bash "$REPO/beads-push.sh" 2>&1
 }
 
+run_push_nodata() {
+    env -i PATH="$BIN:$TOOLS:/usr/local/bin:/usr/bin:/bin" HOME="$TMP/home" \
+        SPIRA_CONF=/nonexistent SPIRA_PATH="$BIN" \
+        SPIRA_DB="$DB" SPIRA_RUN="$TMP/run" \
+        SPIRA_REPO_MAP=/nonexistent SPIRA_INSTANCE=prod \
+        bash "$REPO/beads-push.sh" 2>&1
+}
+
 # ===========================================================================
 echo
 echo "D. happy path — a clean store whose remote matches is a success:"
@@ -150,6 +158,16 @@ out="$(run_push)"; rc=$?
 wantrc "remote behind local is a failure"   1 "$rc"
 nowant "and never claims success"           "OK" "$out"
 want   "and names the disagreement"         "remote" "$out"
+
+# ===========================================================================
+echo
+echo "E. a store whose engine cannot be resolved refuses loudly:"
+# ===========================================================================
+st local_head aaaa; st remote_head aaaa
+out="$(run_push_nodata)"; rc=$?
+wantrc "unresolvable store exits non-zero" 1 "$rc"
+nowant "and never claims success"          "OK" "$out"
+want   "and says why"                      "cannot determine" "$out"
 
 echo
 tl_summary
