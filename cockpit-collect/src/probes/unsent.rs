@@ -52,6 +52,7 @@ fn branch_backlog_section(out: &mut Kv) {
     let mut batched_too_long_names: Vec<String> = Vec::new();
     let mut closed_stranded = 0usize;
     let mut closed_stranded_oldest: Option<i64> = None;
+    let mut awaiting_round = 0usize;
 
     let reg = io::repo_registry();
     let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
@@ -66,6 +67,7 @@ fn branch_backlog_section(out: &mut Kv) {
         // spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
         // spira_landref/spira_landrefs/ref_remote lib.sh seam.
         let base = spira_config::repos::landref(&reg, &rname);
+        let land = reg.land(&rname);
 
         match io::git(rp_path, &["for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/spira/*"]) {
             Some(brs) => {
@@ -102,9 +104,11 @@ fn branch_backlog_section(out: &mut Kv) {
                             }
                             continue;
                         }
-                        BeadStatus::Closed => {
+                        BeadStatus::Closed { submitted } => {
                             done += 1;
-                            if !b.starts_with("spira/queue/") {
+                            if awaits_round(&land, submitted) {
+                                awaiting_round += 1;
+                            } else if !b.starts_with("spira/queue/") {
                                 closed_stranded += 1;
                                 if let Some(ts) = ts {
                                     if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
@@ -116,14 +120,14 @@ fn branch_backlog_section(out: &mut Kv) {
                         BeadStatus::Open => {}
                     }
                     n += 1;
-                    if !b.starts_with("spira/queue/") && !matches!(status, BeadStatus::Closed) {
+                    if !b.starts_with("spira/queue/") && !matches!(status, BeadStatus::Closed { .. }) {
                         if let Some(ts) = ts {
                             if oldest.map(|o| ts < o).unwrap_or(true) {
                                 oldest = Some(ts);
                             }
                         }
                     }
-                    if !matches!(status, BeadStatus::Closed) {
+                    if !matches!(status, BeadStatus::Closed { .. }) {
                         let ls_file = run.join("landstate").join(id);
                         if let Ok(content) = std::fs::read_to_string(&ls_file) {
                             let mut fields = content.lines().next().unwrap_or("").split_whitespace();
@@ -198,6 +202,7 @@ fn branch_backlog_section(out: &mut Kv) {
     super::push(out, "SP_BATCHED_STRANDED_NAMES", batched_stranded_names.join(" "));
     push(out, "SP_BATCHED_TOO_LONG", batched_too_long.to_string());
     super::push(out, "SP_BATCHED_TOO_LONG_NAMES", batched_too_long_names.join(" "));
+    push(out, "SP_AWAITING_ROUND", awaiting_round.to_string());
     push(out, "SP_CLOSED_STRANDED", closed_stranded.to_string());
     if closed_stranded > 0 {
         if let Some(o) = closed_stranded_oldest {
@@ -223,10 +228,20 @@ fn branch_backlog_section(out: &mut Kv) {
     }
 }
 
+fn closed_as_submitted(row: &Value) -> bool {
+    row.get("close_reason").and_then(Value::as_str).is_some_and(|r| r.trim_start().starts_with("OUTCOME: submitted"))
+}
+
+/// A submitted bead's branch under queue.local waits for a round by design; only elsewhere
+/// is a closed bead's surviving branch a stranding.
+fn awaits_round(land: &str, submitted: bool) -> bool {
+    submitted && land == "queue.local"
+}
+
 enum BeadStatus {
     ProbeFailed,
     NoBead,
-    Closed,
+    Closed { submitted: bool },
     Open,
 }
 
@@ -253,7 +268,9 @@ fn bead_status_at(id: &str, timeout: &str) -> BeadStatus {
     match io::bd_rows(raw) {
         None => BeadStatus::ProbeFailed,
         Some(rows) => match rows.first().and_then(|r| r.get("status")).and_then(Value::as_str) {
-            Some("closed") => BeadStatus::Closed,
+            Some("closed") => {
+                BeadStatus::Closed { submitted: closed_as_submitted(&rows[0]) }
+            }
             Some(_) => BeadStatus::Open,
             None => BeadStatus::NoBead,
         },
@@ -584,6 +601,22 @@ mod tests {
         assert!(landed("sp-abc"));
         assert!(landed("sp-xyz"));
         assert!(!landed("sp-none"));
+    }
+
+    #[test]
+    fn a_submitted_bead_awaits_a_round_only_under_queue_local() {
+        assert!(awaits_round("queue.local", true));
+        assert!(!awaits_round("queue", true));
+        assert!(!awaits_round("push", true));
+        assert!(!awaits_round("queue.local", false));
+    }
+
+    #[test]
+    fn closed_as_submitted_reads_the_outcome_line() {
+        let row = |r: &str| serde_json::json!({"status": "closed", "close_reason": r});
+        assert!(closed_as_submitted(&row("OUTCOME: submitted\nwork committed")));
+        assert!(!closed_as_submitted(&row("OUTCOME: landed\n")));
+        assert!(!closed_as_submitted(&serde_json::json!({"status": "closed"})));
     }
 
     #[test]
