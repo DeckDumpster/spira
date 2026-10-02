@@ -14,6 +14,7 @@
 #     failing unconditionally.
 #
 # defect: sp-sa8pn
+# tier: T2
 # covers: gate.steps spira/conf.sh lifecycle-guard/**
 # timeout: 180
 set -uo pipefail

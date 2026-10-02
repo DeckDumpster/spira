@@ -26,6 +26,7 @@
 # testdb.sh server-mode suite already uses without a container call.
 #
 # defect: sp-sa8pn
+# tier: T2
 # covers: spira/cutover-deploy.sh lifecycle/grants.sql lifecycle/schema.sql
 # timeout: 300
 set -uo pipefail
