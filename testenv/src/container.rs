@@ -70,6 +70,11 @@ pub trait Host {
     /// this process's own binary exists.
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf>;
     fn temp_log(&self) -> PathBuf;
+    /// Copies the tree at `src` into a fresh, writable temp directory and returns it. The
+    /// copy is writable whatever `src`'s modes are: a release tree is read-only.
+    fn make_context(&self, src: &Path) -> Result<PathBuf, String>;
+    /// Removes a directory made by `make_context`.
+    fn remove_tree(&self, p: &Path);
     fn sleep(&self, d: Duration);
     fn now(&self) -> u64;
     fn pid(&self) -> u32;
@@ -380,8 +385,8 @@ impl Driver<'_> {
         }
     }
 
-    /// Stages a copy of THIS process's own sibling `spira-config` binary into the build
-    /// context at [`DOCTOR_CHECK_SPIRA_CONFIG`], so `testenv/Containerfile`'s doctor-check
+    /// Stages a copy of THIS process's own sibling `spira-config` binary into `context` (a
+    /// temp copy of the harness tree — the harness itself may be a read-only release) at [`DOCTOR_CHECK_SPIRA_CONFIG`], so `testenv/Containerfile`'s doctor-check
     /// step can `COPY` it onto the image's PATH. sp-xjnzl: conf.sh now resolves
     /// configuration through a `spira-config` subprocess call even for a plain `deps.toml`
     /// read (`spira_deps_list`) — a cold image build never staged one, so every doctor-check
@@ -392,7 +397,7 @@ impl Driver<'_> {
     /// process's own `cargo build --workspace` is copied in instead. `None` (and a loud
     /// `self.err`) when no sibling exists: the Containerfile's `COPY` then fails the build
     /// loudly rather than running doctor-check against a silently-absent manifest reader.
-    fn stage_spira_config(&self, dir: &Path) -> Option<PathBuf> {
+    fn stage_spira_config(&self, dir: &Path, context: &Path) -> Option<PathBuf> {
         let sibling = self
             .host
             .current_exe()
@@ -424,7 +429,7 @@ impl Driver<'_> {
                 }
             }
         };
-        let dest = dir.join(DOCTOR_CHECK_SPIRA_CONFIG);
+        let dest = context.join(DOCTOR_CHECK_SPIRA_CONFIG);
         match self.host.copy_file(&source, &dest) {
             Ok(()) => Some(dest),
             Err(why) => {
@@ -448,7 +453,15 @@ impl Driver<'_> {
             "testenv: close to twenty minutes; a heartbeat line follows at least every {hb}s —"
         ));
         self.err("testenv: silence past that means stuck, not slow.");
-        let Some(staged_spira_config) = self.stage_spira_config(&dir) else {
+        let context = match self.host.make_context(&dir) {
+            Ok(c) => c,
+            Err(why) => {
+                self.err(&format!("testenv: could not stage the build context: {why}"));
+                return false;
+            }
+        };
+        let Some(_staged) = self.stage_spira_config(&dir, &context) else {
+            self.host.remove_tree(&context);
             // Both the sibling check and the on-demand build (stage_spira_config's own
             // fallback) failed: refuse now, with the reason already on stderr, rather than
             // run a podman build the Containerfile's own COPY step would only fail deep
@@ -463,8 +476,8 @@ impl Driver<'_> {
             s("-t"),
             s(img),
             s("-f"),
-            dir.join("testenv/Containerfile").display().to_string(),
-            dir.display().to_string(),
+            context.join("testenv/Containerfile").display().to_string(),
+            context.display().to_string(),
         ];
         let mut b = self.host.build(&args, &log);
         let read_log =
@@ -477,9 +490,7 @@ impl Driver<'_> {
         };
         let text = read_log();
         self.host.remove(&log);
-        // Staged only to cross into the build context (sp-xjnzl's doctor-check fix below);
-        // never left behind in the checkout either way the build went.
-        self.host.remove(&staged_spira_config);
+        self.host.remove_tree(&context);
         if rc == 0 {
             return true;
         }
@@ -1221,6 +1232,28 @@ impl Host for RealHost {
         }
         let bin = repo_root.join("target/release/spira-config");
         bin.is_file().then_some(bin)
+    }
+    fn make_context(&self, src: &Path) -> Result<PathBuf, String> {
+        let dest = std::env::temp_dir().join(format!(
+            "testenv-context-{}-{}",
+            std::process::id(),
+            self.now()
+        ));
+        std::fs::create_dir_all(&dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
+        let copied = std::process::Command::new("cp")
+            .arg("-R")
+            .arg("--no-preserve=mode,ownership")
+            .arg(src.join("."))
+            .arg(&dest)
+            .status();
+        if !matches!(copied, Ok(st) if st.success()) {
+            self.remove_tree(&dest);
+            return Err(format!("copy {} -> {}", src.display(), dest.display()));
+        }
+        Ok(dest)
+    }
+    fn remove_tree(&self, p: &Path) {
+        let _ = std::fs::remove_dir_all(p);
     }
     fn temp_log(&self) -> PathBuf {
         std::env::temp_dir().join(format!(

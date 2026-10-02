@@ -40,6 +40,8 @@ struct Fake {
     /// Every `copy_file(from, to)` call, in order — so a test can see staging happened
     /// without inferring it from file presence alone (which `remove` would later erase).
     copies: RefCell<Vec<(PathBuf, PathBuf)>>,
+    contexts: RefCell<Vec<PathBuf>>,
+    removed_trees: RefCell<Vec<PathBuf>>,
 }
 
 struct FakeBuild<'a>(&'a Fake);
@@ -170,6 +172,14 @@ impl Host for Fake {
     fn build_spira_config(&self, repo_root: &Path) -> Option<PathBuf> {
         self.build_spira_config_calls.borrow_mut().push(repo_root.to_path_buf());
         self.build_spira_config_result.borrow().clone()
+    }
+    fn make_context(&self, src: &Path) -> Result<PathBuf, String> {
+        self.contexts.borrow_mut().push(src.to_path_buf());
+        Ok(PathBuf::from("/t/ctx"))
+    }
+    fn remove_tree(&self, p: &Path) {
+        self.removed_trees.borrow_mut().push(p.to_path_buf());
+        self.files.borrow_mut().retain(|k, _| !k.starts_with(p));
     }
     fn temp_log(&self) -> PathBuf {
         PathBuf::from("/t/build.log")
@@ -472,8 +482,8 @@ fn no_registry_means_nothing_is_pulled() {
             "-t",
             &f.out.borrow()[0],
             "-f",
-            "/h/spira/testenv/Containerfile",
-            "/h/spira"
+            "/t/ctx/testenv/Containerfile",
+            "/t/ctx"
         ])[..]
     );
 }
@@ -636,7 +646,7 @@ fn a_failed_build_names_disk_exhaustion_or_shows_its_tail() {
 
 #[test]
 fn a_cold_build_stages_its_sibling_spira_config_and_removes_it_either_way() {
-    let dest = PathBuf::from("/h/spira/testenv/.doctor-check-spira-config");
+    let dest = PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config");
 
     // Present: staged for the build, then cleaned up on a GREEN build.
     let f = Fake::new();
@@ -678,7 +688,7 @@ fn a_cold_build_with_no_sibling_builds_spira_config_on_demand() {
     assert_eq!(Driver { host: &f, conf: &c }.cmd_image(), 0);
     assert_eq!(*f.build_spira_config_calls.borrow(), vec![PathBuf::from("/h")]);
     assert_eq!(f.copies.borrow().len(), 1, "the on-demand build still gets staged into the build context");
-    assert!(!f.is_file(&PathBuf::from("/h/spira/testenv/.doctor-check-spira-config")), "cleaned up after the build");
+    assert!(!f.is_file(&PathBuf::from("/t/ctx/testenv/.doctor-check-spira-config")), "cleaned up after the build");
 }
 
 #[test]
@@ -1334,4 +1344,50 @@ fn up_no_build_with_the_image_present_boots() {
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "/wt", "--no-build"])),
         0
     );
+}
+
+// ---- the build context is a temp copy, never the (possibly read-only) release tree -----
+
+#[test]
+fn a_cold_build_runs_in_a_temp_copy_of_the_harness_and_removes_it_either_way() {
+    for rc in [0, 1] {
+        let f = Fake::new();
+        harness(&f, "/h");
+        f.when(&["image", "exists"], 1, "");
+        f.with_spira_config_sibling("/build/target/release/testenv");
+        f.build_rc.set(rc);
+        let c = conf("/h");
+        Driver { host: &f, conf: &c }.cmd_image();
+        assert_eq!(*f.contexts.borrow(), vec![PathBuf::from("/h/spira")]);
+        assert_eq!(*f.removed_trees.borrow(), vec![PathBuf::from("/t/ctx")], "rc {rc}");
+        assert!(f.copies.borrow().iter().all(|(_, to)| to.starts_with("/t/ctx")), "nothing is written into the harness");
+    }
+}
+
+#[test]
+fn make_context_of_a_read_only_tree_is_writable() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = testkit::TempDir::new("testenv-readonly-release");
+    let src = d.join("release");
+    std::fs::create_dir_all(src.join("testenv")).unwrap();
+    std::fs::write(src.join("testenv/Containerfile"), "FROM scratch\n").unwrap();
+    let ro = |p: &Path, m| std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    ro(&src.join("testenv/Containerfile"), 0o444);
+    ro(&src.join("testenv"), 0o555);
+    ro(&src, 0o555);
+    let staging = src.join("testenv/.doctor-check-spira-config");
+    assert!(std::fs::write(&staging, "x").is_err() || nix_root(), "positive control: the source cannot be written");
+    let ctx = RealHost.make_context(&src).unwrap();
+    let r = std::fs::write(ctx.join(DOCTOR_CHECK_SPIRA_CONFIG), "x");
+    let content = std::fs::read(ctx.join("testenv/Containerfile")).unwrap();
+    RealHost.remove_tree(&ctx);
+    ro(&src, 0o755);
+    ro(&src.join("testenv"), 0o755);
+    assert!(r.is_ok(), "staging into the context failed: {r:?}");
+    assert_eq!(content, b"FROM scratch\n");
+    assert!(!ctx.exists());
+}
+
+fn nix_root() -> bool {
+    std::fs::read_to_string("/proc/self/status").map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t"))).unwrap_or(false)
 }
