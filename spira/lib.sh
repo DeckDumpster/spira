@@ -1382,41 +1382,11 @@ SPIRA_TRACE_MARK='=== spira attempt'
 # land_subject <id> -> "spira: land <id>", or "spira: land <id> — <title>" when the bead
 # has a title. Every writer of a landing merge (verdict.sh, landing.sh, queue.sh,
 # batcher-cut's Rust seam) calls this, so every reader that widens its own match to a
-# trailing title (landed()/landed_sha() below, CHECK5 in sentinel.sh, cockpit.sh,
+# trailing title (CHECK5 in sentinel.sh, cockpit.sh,
 # overrides.sh) stays in sync with what is actually written. Ported to Rust (sp-81t4d,
 # "wave 4.17" — family R, landed verification); see `land_verify::land_subject`.
 land_subject() {
     landing-pass land-subject "$1"
-}
-
-# landed <id> <repo> -> 0 landed, 1 not landed, 2 CANNOT TELL.
-#
-# THREE OUTCOMES, NOT TWO. A caller that reads "cannot tell" as "not landed" reopens finished
-# work, and the state where the answer is unavailable — a repository whose land ref does not
-# resolve — is exactly the state this whole change is about. 2 is distinct so it cannot be
-# mistaken for a verdict.
-#
-# THE BASE IS NOT ALWAYS `main`. Some repositories are `master`, and this hardcoded
-# main — so sp-pd-ci-green's work merged to master, its PR closed, all four polecat PRs
-# closed, and this still reported "no commit on main names it" and reopened the bead four
-# times. It reached attempt 4 against a poison threshold of 3: the harness was one pass from
-# escalating a finished, merged deliverable as a failure.
-# Ported to Rust (sp-81t4d, "wave 4.17" — family R, landed verification); see
-# `land_verify::landed`. Both shims resolve the same optional `<repo>` default (`repo_root`)
-# bash always did and hand the binary an explicit path — the one piece of its own work this
-# shim still does, since `repo_root` lives in bash (family U) either way.
-landed() {
-    local id="$1" repo="${2:-$(repo_root)}"
-    landing-pass landed "$id" "$repo" >/dev/null
-}
-
-# landed_sha <id> <repo> -> the sha of the commit landed() would say yes about, so a
-# caller that needs to CITE the landing (a GitHub comment) gets the same commit the
-# ancestry check trusted, never a second guess at which one that was. Ported to Rust
-# (sp-81t4d, "wave 4.17"); same binary as landed(), stdout kept this time.
-landed_sha() {
-    local id="$1" repo="${2:-$(repo_root)}"
-    landing-pass landed "$id" "$repo"
 }
 
 # content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
@@ -1442,7 +1412,7 @@ landed_sha() {
 # It answers NO when the merge conflicts (non-zero exit) and NO when the merged tree differs,
 # both of which mean the branch really does carry something the base lacks. That is what makes
 # it safe for a caller that DELETES on the answer: it cannot say "landed" about a branch with
-# work outstanding. `landed()` above is a different question — whether a commit on the base
+# work outstanding. `landing-pass landed` is a different question — whether a commit on the base
 # names the BEAD — and is not a substitute here, because a branch may carry commits beyond the
 # one that landed.
 #
@@ -1463,18 +1433,6 @@ content_landed() {
     [ -n "$merged" ] || return 1
     basetree="$(git -C "$repo" rev-parse "$base^{tree}" 2>/dev/null)" || return 1
     [ "$merged" = "$basetree" ]
-}
-
-# bead_cited_commit_on_base <id> <repo> <base> → prints "<sha> <rule>" where rule is
-# cited-declared or cited-named.  Returns 0 if found, 1 if not.
-#
-# Accepts a sha only when the note uses an explicit hand-landed phrase
-# ("landed as <sha>" or "hand-landed <sha>") → cited-declared, or when the commit
-# message at that sha names the bead id → cited-named.  A bare sha in prose is never
-# sufficient (law-closed-is-not-landed). Ported to Rust (sp-81t4d, "wave 4.17" — family R);
-# see `land_verify::bead_cited_commit_on_base`.
-bead_cited_commit_on_base() {
-    landing-pass cited-commit "$1" "$2" "$3"
 }
 
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
@@ -1686,7 +1644,7 @@ detect_landed_but_open() {
 # detect_closed_unlanded_states -> one STATE line per closed work bead, across every
 # partition this host watches (fayth_partitions — every persona's, not the caller's own),
 # that carries none of CHECK 5's recognised landing signals (supersedes, spira-dropped,
-# delivers:, content-landed) and that `landed()` cannot prove via the base's own commit
+# delivers:, content-landed) and that `landing-pass landed` cannot prove via the base's own commit
 # graph. Two shapes:
 #
 #   STATE <id> closed-no-branch          — no branch: label (or the label names a ref that
@@ -2428,20 +2386,6 @@ _tsd_slots_sample() {
 _tsd_escape() {
     tsd-write escape "$@" >/dev/null 2>&1 || true
 }
-
-# land_mark/land_state are PORTED (sp-cnnt6, "wave 4.16" — family S, the landstate ledger):
-# landing-pass/src/landstate.rs is the one writer now; these are one-line shims so every
-# bash sourcer here keeps working unchanged. Both read only $SPIRA_RUN — no lib.sh seam, no
-# containment check — so a caller that already has it exported pays one process, not a
-# bash-plus-source.
-land_mark() {    # land_mark <id> <state> <tip> [reason] [extra]
-    landing-pass mark "$@"
-}
-
-land_state() {   # land_state <id> -> "<state> <tip> <at> [reason]" or empty
-    landing-pass state "$@"
-}
-
 
 # Ported to Rust, queue's own crate (sp-hwjsq, "wave 4.32" — queue decomposition row AA):
 # queue/src/ops/helpers.rs `certified_list`, same selection any cutter (the batcher,

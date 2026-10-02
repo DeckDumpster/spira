@@ -109,7 +109,7 @@ failing output.
 
 **Case 4 — Attribution ejected all members** (PR 87: all six innocent): recertify each
 member whose own change does not touch any file the failing suite names. The
-`queue eject` already wrote landstate=RED (it also records the cause: pass `--red` when the member broke a test); call `land_mark <id> CERTIFIED <tip>` for
+`queue eject` already wrote landstate=RED (it also records the cause: pass `--red` when the member broke a test); call `landing-pass mark <id> CERTIFIED <tip>` for
 each innocent member and re-add them to a new batch.
 
 **Case 5 — Duplicate in the batch** (a member identical to one already batched): do not
