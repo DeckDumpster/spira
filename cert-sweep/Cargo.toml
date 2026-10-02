@@ -1,0 +1,26 @@
+[package]
+name = "cert-sweep"
+version = "0.1.0"
+edition = "2021"
+description = "cert-sweep — continuous certification of the landing ref's tip: every suite hourly on the round VM, a random subset between, every verdict kept in a history table so a red's culprit window is already bounded."
+
+[lib]
+name = "cert_sweep"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cert-sweep"
+path = "src/main.rs"
+
+[dependencies]
+tsd = { path = "../tsd" }
+serde_json = "1"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

@@ -80,6 +80,10 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-watchtower.timer", true));
     m.units.push(t("spira-skew.service", false));
     m.units.push(t("spira-skew.timer", true));
+    m.units.push(t("spira-cert-sweep-full.service", false));
+    m.units.push(t("spira-cert-sweep-full.timer", true));
+    m.units.push(t("spira-cert-sweep-sample.service", false));
+    m.units.push(t("spira-cert-sweep-sample.timer", true));
     m.units.push(t("spira-archivist.service", false));
     m.units.push(t("spira-archivist.timer", true));
     m.units.push(t("spira-czar-pass.service", false));
