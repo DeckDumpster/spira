@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=czar
+DOC=Minutes a bead may sit unclaimed before the czar acts.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # PROCEDURAL — resolved by spira_config::resolve(), which owns this key's default;
+    # this file registers the key in the allowlist only, no generated default statement.
+SPIRA_CONF_DEFAULT_EOF
