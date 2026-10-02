@@ -44,10 +44,13 @@ pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
 /// suite-state edit is a tiebreaker within one priority, never a rank of its own
 /// (sp-ihxa0).
 pub fn is_suite_transition(repo: &Path, tip: &str, base: &str) -> bool {
-    let file = spira_config::resolve::suite_state_file().unwrap_or_else(|e| {
-        eprintln!("queue: {e}");
-        std::process::exit(1)
-    });
+    let file = match spira_config::resolve::suite_state_file() {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("queue: {e}");
+            return false;
+        }
+    };
     let out = Command::new("git").arg("-C").arg(repo).args(["diff", "--name-only", base, tip]).stdin(Stdio::null()).stderr(Stdio::null()).output();
     match out {
         // grep -F: a fixed-string SUBSTRING match against any changed-path line, not an
@@ -166,10 +169,13 @@ pub fn cancel_branch_runs(forge: &Path, repo: &Path, branch: &str, tag: &str) ->
     if branch.is_empty() {
         return true;
     }
-    let run_dir = spira_config::resolve::run_dir_for_process().unwrap_or_else(|e| {
-        eprintln!("queue: {e}");
-        std::process::exit(1)
-    });
+    let run_dir = match spira_config::resolve::run_dir_for_process() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("queue: {e}");
+            return false;
+        }
+    };
     let listing = Command::new(forge)
         .arg("runs-for-branch")
         .arg(repo)

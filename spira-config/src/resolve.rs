@@ -362,6 +362,9 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
 /// [`resolve_run_dir`] for this process: locates home, then resolves.
 pub fn run_dir_for_process() -> Result<PathBuf, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
+    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(v));
+    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_run_dir(&env, &home)
 }
@@ -369,6 +372,9 @@ pub fn run_dir_for_process() -> Result<PathBuf, String> {
 /// [`resolve_key`] for this process: locates home, then resolves.
 pub fn key_for_process(key: &str) -> Result<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
+    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_key(&env, &home, key)
 }

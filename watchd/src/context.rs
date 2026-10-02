@@ -271,7 +271,9 @@ mod tests {
             "SPIRA_RUN=/fixture/run\nSPIRA_DB=/fixture/db\nSPIRA_WATCHERS=/fixture/watchers\n",
         )
         .unwrap();
+        std::env::set_var("SPIRA_INSTANCE", "fixture");
         let ctx = load(&d).expect("the seam to source this trivial conf.sh");
+        assert_eq!(ctx.instance, "fixture");
         assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");
         assert_eq!(ctx.db, "/fixture/db", "SPIRA_DB is also a WATCHD_KEYS placeholder");
         assert_eq!(ctx.watchers, "/fixture/watchers");
