@@ -3025,6 +3025,20 @@ fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
     assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
 }
 
+/// A release build that wrote into a full disk or an exhausted quota is a failure even when
+/// cargo exited 0: the target is emptied and the message names EDQUOT/ENOSPC.
+#[test]
+fn release_bins_write_failure_is_loud_and_empties_the_target() {
+    let f = Fake::new();
+    for at in [MERGE_SHA, BR, BASE] {
+        f.unit_runs.borrow_mut().insert((at.to_string(), "build"), (0, "error: failed to write: Disk quota exceeded".into()));
+    }
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("EDQUOT/ENOSPC"), "{}", f.stderr());
+    assert!(!f.stderr().contains("are in "), "{}", f.stderr());
+    assert!(f.cmds.borrow().last().unwrap().contains("find target/release -mindepth 1 -delete"), "{:?}", f.cmds.borrow());
+}
+
 /// sp-f4ig1-fix: a gate never loses its verdict to a compile-slot wait. Every command that can
 /// compile — the trial's own and the after-PASS release-bins, which runs outside the trial's
 /// environment — carries the gate's admission token, so spira-admit (env or cargo config) and
