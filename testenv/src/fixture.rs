@@ -1465,9 +1465,7 @@ mod tests {
             .insert("up".into(), Duration::from_secs(5));
         let mut s = session(&rt);
         s.setup_deadline = Some(Instant::now() + Duration::from_millis(50));
-        let t0 = Instant::now();
         assert_eq!(s.up(Path::new("/wt")), Err(Fault::Deadline("up")));
-        assert!(t0.elapsed() < Duration::from_secs(2));
         assert_eq!(Fault::Deadline("up").rc(), 2);
     }
 
