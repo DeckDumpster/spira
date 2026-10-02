@@ -696,6 +696,27 @@ fn a_conflict_rebase_stale_could_not_attempt_is_an_ordinary_no_verdict() {
 }
 
 #[test]
+fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.land_maxsec = 3600;
+    h.s.gate_reserve = 2700;
+    h.clock.t.set(1000 + 3000); // past the reserve: ordinary branches are cut
+    h.closed("sp-a", "t1");
+    let mut fix = h.bead("sp-fix", "closed", &[]);
+    fix.external_ref = Some("basefail:spira:-".into());
+    fix.priority = 4;
+    h.beads.rows.borrow_mut().insert("sp-fix".into(), fix);
+    h.git.add("spira/sp-fix", "tf");
+    let out = "--- base\ninventory.sh FAILED\n--- this branch\ntest-x.sh ok\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=-\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-fix".into(), (76, out.into()));
+    h.run();
+    assert!(h.logged("CHECK6 sp-fix: base-fix branch — gating despite budget exhaustion"));
+    assert!(h.lib.has("land_mark sp-fix CERTIFIED tf"));
+    assert!(h.mailbox().contains("certified spira/sp-fix in spira — base-fix (suite -)"));
+    assert!(!h.lib.has("incident"));
+}
+
+#[test]
 fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
