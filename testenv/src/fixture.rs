@@ -122,12 +122,14 @@ pub enum Fault {
     Deadline(&'static str),
     /// rc 2: no container slot came free inside the queue bound; the trial judged nothing.
     Queue,
+    /// rc 2: the container image is not built; a bounded trial never builds it.
+    ImageNotReady,
 }
 
 impl Fault {
     pub fn rc(&self) -> i32 {
         match self {
-            Fault::Up(_) | Fault::Deadline(_) | Fault::Queue => 2,
+            Fault::Up(_) | Fault::Deadline(_) | Fault::Queue | Fault::ImageNotReady => 2,
             Fault::Install(_) => 3,
         }
     }
@@ -136,6 +138,7 @@ impl Fault {
             Fault::Up(m) | Fault::Install(m) => m,
             Fault::Deadline(p) => p,
             Fault::Queue => "queue",
+            Fault::ImageNotReady => "container image not built",
         }
     }
 }
@@ -377,12 +380,18 @@ impl<'a> Session<'a> {
         if let Some(b) = self.queue_bound {
             args.extend(["--queue-timeout".into(), b.to_string()]);
         }
+        if self.setup_deadline.is_some() {
+            args.push("--no-build".into());
+        }
         let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {
             return Err(Fault::Deadline("up"));
         }
         if up.rc == RC_QUEUE {
             return Err(Fault::Queue);
+        }
+        if up.rc == crate::container::RC_IMAGE_NOT_READY {
+            return Err(Fault::ImageNotReady);
         }
         if !up.ok() {
             return Err(Fault::Up(format!(
@@ -1467,6 +1476,17 @@ mod tests {
         s.setup_deadline = Some(Instant::now() + Duration::from_millis(50));
         assert_eq!(s.up(Path::new("/wt")), Err(Fault::Deadline("up")));
         assert_eq!(Fault::Deadline("up").rc(), 2);
+    }
+
+    #[test]
+    fn a_bounded_up_never_builds_and_an_unbuilt_image_is_its_own_fault() {
+        let rt = FakeRuntime::new();
+        let mut s = session(&rt);
+        s.setup_deadline = Some(Instant::now() + Duration::from_secs(60));
+        let _ = s.up(Path::new("/wt"));
+        let calls = rt.testenv_calls.lock().unwrap().clone();
+        assert!(calls[0].contains(&"--no-build".to_string()), "{calls:?}");
+        assert_eq!(Fault::ImageNotReady.rc(), 2);
     }
 
     #[test]

@@ -1207,7 +1207,12 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             return Finish::fault(2, "queue", 0);
         }
         deps.log(f.message());
-        return Finish::fault(f.rc(), "container-up", 0);
+        let reason = if f == crate::fixture::Fault::ImageNotReady {
+            "image-not-ready"
+        } else {
+            "container-up"
+        };
+        return Finish::fault(f.rc(), reason, 0);
     }
     // ---- setup: stage, install, requirements, testdb template — ONE exec (§11.4) ------
     // The tree under test is staged as a release whether or not the install runs: every
