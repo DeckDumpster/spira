@@ -256,6 +256,9 @@ pub fn detect_closed_unlanded_states(cfg: &Config) -> String {
             if b.dependencies.iter().any(|d| d.dep_type.as_deref() == Some("supersedes")) {
                 continue;
             }
+            if b.assignee.as_deref().is_some_and(|a| !a.is_empty()) {
+                continue;
+            }
             if !seen.insert(b.id.clone()) {
                 continue;
             }
