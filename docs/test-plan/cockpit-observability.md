@@ -271,6 +271,7 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | UC-cockpit-observability-46 | `rebuild.sh`:<br>• from a dead server, creates brain, hunk, chat and cockpit, with the dashboards in `brain:0` and the cockpit windows **linked**;<br>• verifies itself and fails naming the session pane when the brief is missing;<br>• is idempotent against a healthy server (same pid);<br>• reports an over-long socket as unusable. | REC, IDM | T3 mCI (the one end-to-end tmux case) |
 | UC-cockpit-observability-47 | `tmux-env.sh` scrubs the Claude session identity from the server's global env. Panes opened afterwards do not inherit it, and a second run is idempotent. | CON, IDM | T2 bCI |
 | UC-cockpit-observability-48 | `cockpit-remote`:<br>• the dialer refuses an empty `COCKPIT_HOST`;<br>• a watcher that loses the lock exits non-zero promptly, naming the holder;<br>• `start` delegates to systemd when the unit is enabled (lock holder = MainPID) and forks with setsid otherwise;<br>• the orphan-lock probe names the holder's pid and path. | CON, REC, FC | T2 bCI (real flock, stub systemd) |
+| UC-cockpit-observability-49 | The collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures. | REC | T1 cert (unit test, bounded wait) |
 
 ## 3. Coverage map
 

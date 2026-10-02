@@ -781,6 +781,41 @@ printf '_PROBE_AT=%s\n_PROBE_STATUS=ok\n_PROBE_KILLED=0\nSP_AT=%s\n' "$(date +%s
         assert!(logged.lock().unwrap()[0].contains("exited 1"));
     }
 
+    /// UC-cockpit-observability-49. The failure is made by pointing `frag_dir` at a regular
+    /// file, which fails the merge for root and non-root alike (a read-only directory does not),
+    /// and the wait is bounded so a loop that never exits fails the test instead of hanging it.
+    #[test]
+    fn run_loop_exits_one_after_consecutive_merge_failures() {
+        let run = TempDir::new("cc-merge-fail-exit");
+        let mut cfg = cfg(&run);
+        cfg.tick = Duration::from_millis(1);
+        cfg.merge_fail_max = 3;
+        let self_exe = run.path().join("fake-self-ok");
+        testkit::write_exe(&self_exe, "#!/usr/bin/env bash\nexit 0\n");
+        cfg.self_exe = self_exe;
+
+        std::fs::create_dir_all(&cfg.frag_dir).unwrap();
+        assert!(merge_fragments(&cfg), "positive control: the same config merges when frag_dir is a directory");
+        std::fs::remove_dir_all(&cfg.frag_dir).unwrap();
+        std::fs::write(&cfg.frag_dir, "not a directory").unwrap();
+        assert!(!merge_fragments(&cfg), "the fixture must fail the merge every time");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let lines = std::sync::Mutex::new(Vec::<String>::new());
+            let rc = run_loop(&cfg, |l| lines.lock().unwrap().push(l.to_string()));
+            let _ = tx.send((rc, lines.into_inner().unwrap()));
+        });
+        let (rc, lines) = rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("run_loop must exit on consecutive merge failures, not run on");
+        assert_eq!(rc, 1);
+        assert!(
+            lines.iter().any(|l| l.contains("3 consecutive merge failures")),
+            "exit must name the failure count: {lines:?}"
+        );
+    }
+
     #[test]
     fn never_frag_seeds_absence_and_does_not_clobber() {
         let run = TempDir::new("cc-never");

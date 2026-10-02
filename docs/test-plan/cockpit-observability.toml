@@ -250,3 +250,8 @@ statement = "`tmux-env.sh` scrubs the Claude session identity from the server's 
 id = "UC-cockpit-observability-48"
 tier = "T2"
 statement = "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a watcher that loses the lock exits non-zero promptly naming the holder; `start` delegates to systemd when the unit is enabled and forks with setsid otherwise; the orphan-lock probe names the holder's pid and path"
+
+[[use_case]]
+id = "UC-cockpit-observability-49"
+tier = "T1"
+statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures"
