@@ -308,6 +308,15 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_age_is_judged_against_the_given_threshold() {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.snap_age = Some(20);
+        assert!(!is_nominal(&d, 7));
+        d.snap_age = Some(0);
+        assert!(is_nominal(&d, 7));
+    }
+
+    #[test]
     fn an_unreadable_snapshot_age_makes_it_not_nominal() {
         let mut d = SweepData::fixture_nominal(1_700_000_000);
         d.snap_age = None;
