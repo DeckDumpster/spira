@@ -300,8 +300,3 @@ statement = "`plan()` (an explicit count) is honoured against the trailing summa
 id = "UC-testlib-07"
 tier = "T1"
 statement = "`tl_summary`'s optional JSONL sink (`SPIRA_TESTLIB_JSONL`) stays silent with no sink configured, and writes one row per case — with the same case name as the TAP view — when one is set."
-
-[[use_case]]
-id = "UC-gate-diag-01"
-tier = "T1"
-statement = "literal-lint.sh's offending file:line is the first line of its output; the gate's reopen note must carry it rather than dropping it under a trailing-window truncation (a 21-line report truncated to a `tail -20` would drop exactly this line)."
