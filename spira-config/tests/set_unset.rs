@@ -8,17 +8,8 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-fn scratch_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "spira-config-test-set-{tag}-{}-{:?}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    fs::create_dir_all(&dir).expect("scratch dir");
-    dir
+fn scratch_dir(tag: &str) -> testkit::TempDir {
+    testkit::TempDir::new(&format!("spira-config-test-set-{tag}"))
 }
 
 fn spira_config(args: &[&str]) -> std::process::Output {
@@ -66,7 +57,6 @@ fn set_gate_string_with_quotes_dollar_and_newlines_round_trips() {
     let got_val = String::from_utf8_lossy(&got.stdout);
     assert_eq!(got_val.trim_end_matches('\n'), gate);
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 // T2: an invalid value is refused and the file is unchanged.
@@ -84,7 +74,6 @@ fn set_refuses_an_invalid_value_and_leaves_the_file_unchanged() {
     assert_eq!(after, before, "the file must be byte-for-byte unchanged on refusal");
     assert!(backups_in(&dir).is_empty(), "a refused write must not leave a backup either");
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 // T2 positive control: the same field, a value that DOES coerce, must succeed — otherwise
@@ -99,7 +88,6 @@ fn set_accepts_a_valid_value_for_the_same_field() {
     let got = spira_config(&["get", "spira.max_aeons", toml.to_str().unwrap()]);
     assert_eq!(String::from_utf8_lossy(&got.stdout).trim(), "5");
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 // T3 (via a subprocess, not just the library's own two-phase unit test): unset an unknown
@@ -114,7 +102,6 @@ fn unset_of_an_unknown_field_is_refused_and_leaves_the_file_unchanged() {
     assert!(!result.status.success());
     assert_eq!(fs::read_to_string(&toml).unwrap(), before);
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -131,7 +118,6 @@ fn set_over_an_existing_file_leaves_a_timestamped_backup_of_the_old_contents() {
     let backup_contents = fs::read_to_string(dir.join(&backups[0])).unwrap();
     assert_eq!(backup_contents, before, "the backup must hold the PRE-write contents");
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 // First write to a file that does not exist yet has nothing to back up.
@@ -144,7 +130,6 @@ fn set_on_a_fresh_file_leaves_no_backup() {
     assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
     assert!(backups_in(&dir).is_empty());
 
-    fs::remove_dir_all(&dir).ok();
 }
 
 // The `repo.<name>.land` alias `spira-config set`'s callers use for the schema's `mode`
@@ -166,5 +151,4 @@ fn set_repo_land_alias_round_trips_through_the_binary() {
     assert_eq!(String::from_utf8_lossy(&via_land.stdout).trim(), "queue.local");
     assert_eq!(String::from_utf8_lossy(&via_mode.stdout).trim(), "queue.local");
 
-    fs::remove_dir_all(&dir).ok();
 }

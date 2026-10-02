@@ -130,6 +130,9 @@ pub fn round_trip(keys: &[String]) -> Vec<String> {
     let mut out: Vec<String> = warnings.0.iter().map(|w| format!("convert warned (the key would be dropped): {w}")).collect();
     let exported = exported_map(&export_sh(&doc), keys);
     for (key, want) in &expected {
+        if spira_config::is_secret_shaped(key) {
+            continue;
+        }
         match exported.get(key) {
             None => out.push(format!("{key}: accepted by conf.sh, dropped by spira-config convert/export")),
             Some(got) if got != want => out.push(format!("{key}: exported as {got:?}, want {want:?}")),
@@ -191,6 +194,11 @@ mod tests {
         let got = round_trip(&keys(&["SPIRA_MAX_AEONS", "SPIRA_TOTALLY_MADE_UP_TEST_KEY"]));
         assert!(!got.is_empty());
         assert!(got.iter().any(|m| m.contains("SPIRA_TOTALLY_MADE_UP_TEST_KEY")), "{got:?}");
+    }
+
+    #[test]
+    fn a_secret_shaped_key_is_deliberately_not_exported() {
+        assert!(round_trip(&keys(&["SPIRA_BROKER_GH_TOKEN"])).is_empty());
     }
 
     #[test]

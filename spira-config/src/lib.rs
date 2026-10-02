@@ -1955,8 +1955,8 @@ mod tests {
 
     #[test]
     fn atomic_write_start_leaves_the_destination_untouched_until_commit() {
-        let dir = std::env::temp_dir().join(format!("spira-config-test-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = testkit::TempDir::new("spira-config-test");
+        let dir = tmp.path().to_path_buf();
         let dest = dir.join("spira.toml");
         std::fs::write(&dest, "original").unwrap();
 
@@ -1970,8 +1970,8 @@ mod tests {
 
     #[test]
     fn atomic_write_dropped_without_commit_leaves_no_temp_file_and_the_original_intact() {
-        let dir = std::env::temp_dir().join(format!("spira-config-test-drop-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = testkit::TempDir::new("spira-config-test-drop");
+        let dir = tmp.path().to_path_buf();
         let dest = dir.join("spira.toml");
         std::fs::write(&dest, "original").unwrap();
 
@@ -1991,8 +1991,8 @@ mod tests {
 
     #[test]
     fn backup_existing_copies_the_old_file_and_is_a_noop_when_absent() {
-        let dir = std::env::temp_dir().join(format!("spira-config-test-backup-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = testkit::TempDir::new("spira-config-test-backup");
+        let dir = tmp.path().to_path_buf();
         let dest = dir.join("spira.toml");
 
         assert_eq!(backup_existing(&dest).unwrap(), None);
