@@ -391,7 +391,7 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     );
     assert!(!sink.has("STARVED"));
     // G8: the snapshot files are gone once the process cleans up
-    crate::temps::cleanup();
+    crate::temps::cleanup_under(&w.run);
     let left: Vec<_> = std::fs::read_dir(&w.run)
         .unwrap()
         .flatten()
