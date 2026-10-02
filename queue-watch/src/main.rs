@@ -211,7 +211,7 @@ fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &s
 
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
-    let _home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
         landstate: run.join("landstate"),
