@@ -164,11 +164,11 @@ fn list_counts_and_shows_symptom() {
 }
 
 #[test]
-fn match_scores_and_falls_back_cleanly_on_an_unreadable_shelf() {
+fn match_refuses_on_an_unreadable_shelf() {
     let bd = FakeBd::default();
     *bd.unreadable.borrow_mut() = true;
     let r = match_cmd(&bd, "anything");
-    assert_eq!(r.code, 0, "an unreadable shelf reads as empty for match, not an error");
+    assert_eq!(r.code, 1, "an unreadable shelf is an error for match, never an empty shelf");
     assert!(r.out.is_empty());
 }
 
