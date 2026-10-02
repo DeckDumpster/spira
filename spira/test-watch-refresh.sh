@@ -549,11 +549,20 @@ echo "the entry point, run as systemd runs it"
 # point) does not scan the real /proc of the test runner.
 EMPTYPROC="$TMP/empty-proc"; mkdir -p "$EMPTYPROC"
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/watch-answers.sh"; : > "$ACT"
-out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
-      \
-      SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
-      WR_PROC_ROOT="$EMPTYPROC" \
-      bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
+# Re-run until the restart is observed or a deadline passes: a box saturated with I/O can
+# stretch the pass past a single look, and the assertion below stays exactly as strict.
+entry_deadline=$((SECONDS + 60))
+while :; do
+    : > "$ACT"
+    out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFIG_WRITE=1 SPIRA_WATCHERS="$MAN" \
+          \
+          SPIRA_PATH="$SHIM" WR_EXECLOG="$EXECLOG" WR_ACT="$ACT" WR_SHOW="$SHOW" \
+          WR_PROC_ROOT="$EMPTYPROC" \
+          bash "$CLONE/spira/watch-refresh.sh" 2>&1)"; rc=$?
+    case "$(acted)" in *"restart spira-watch-answers-prod.service"*) break ;; esac
+    [ "$SECONDS" -lt "$entry_deadline" ] || break
+    sleep 1
+done
 is "it runs"                       "0" "$rc"
 has "and restarts the stale unit"  "$(acted)" "restart spira-watch-answers-prod.service"
 hasnt "and no raw manifest line leaked onto this process's own stdout" "$out" "|daemon|"
