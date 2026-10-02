@@ -1,8 +1,17 @@
 //! sp-ivfu3: `world status`, run from a genuinely bare shell — `env -i HOME=<home>
-//! PATH=<bin>:/usr/bin:/bin`, nothing else, no `SPIRA_RUN`/`SPIRA_TOML`/`SPIRA_HOME` at
-//! all — must still find the resolved config document under `$HOME/.config/spira/` (the
-//! ambient tier `spira_config::locate` searches with no pin set) and report HALTED when
-//! that config's own `run` directory holds `world.halted`.
+//! PATH=<bin>:/usr/bin:/bin`, nothing else, no `SPIRA_RUN`/`SPIRA_TOML` at all — must
+//! still find the resolved config document under `$HOME/.config/spira/` (the ambient
+//! tier `spira_config::locate` searches with no pin set) and report HALTED when that
+//! config's own `run` directory holds `world.halted`.
+//!
+//! `SPIRA_HOME` IS set, to a fixture harness directory holding nothing but an empty
+//! `conf.d/` — `resolve_for_process` needs a real, readable `conf.d` to resolve ANY key
+//! at all (an existing-but-empty directory is fine; a missing one is a named refusal —
+//! `spira_config::registry::load`'s own doc). On a real release this is `locate_home`'s
+//! own ancestor search finding the release's shipped `spira/conf.d` beside the binary;
+//! pinning it here keeps the test's answer independent of exactly where cargo happens to
+//! place `CARGO_BIN_EXE_world` for a given build (the gate's own tmpfs target directory is
+//! not nested under this checkout's `spira/` at a depth that ancestor search would find).
 //!
 //! BEFORE THIS BEAD: `spira_world::spira_run()` defaulted to the literal `/tmp/spira`
 //! whenever `$SPIRA_RUN` itself was unset — it never consulted that document at all — so
@@ -17,11 +26,14 @@ use std::process::Command;
 
 /// `$HOME/.config/spira/`'s own config document, pointing `run` at a fixture directory
 /// that already holds `world.halted`, plus `instance = "prod"` so the per-timer loop names
-/// the real, instance-qualified unit forms rather than the unqualified ones.
-fn build_fixture(tmp: &Path) -> (PathBuf, PathBuf) {
+/// the real, instance-qualified unit forms rather than the unqualified ones. Returns
+/// `(home, harness_home, run)`.
+fn build_fixture(tmp: &Path) -> (PathBuf, PathBuf, PathBuf) {
     let home = tmp.join("home");
+    let harness_home = tmp.join("harness-home");
     let run = tmp.join("run");
     std::fs::create_dir_all(home.join(".config/spira")).unwrap();
+    std::fs::create_dir_all(harness_home.join("conf.d")).unwrap();
     std::fs::create_dir_all(&run).unwrap();
     std::fs::write(
         run.join("world.halted"),
@@ -33,23 +45,31 @@ fn build_fixture(tmp: &Path) -> (PathBuf, PathBuf) {
         format!("[spira]\nrun = {:?}\ninstance = \"prod\"\n", run.display().to_string()),
     )
     .unwrap();
-    (home, run)
+    (home, harness_home, run)
+}
+
+/// `env -i HOME=<home> PATH=<bin_dir>:/usr/bin:/bin SPIRA_HOME=<harness_home> world status`
+/// — see the module doc for why `SPIRA_HOME` is pinned rather than left for `locate_home`'s
+/// own ancestor search to find.
+fn run_world_status(home: &Path, harness_home: &Path) -> std::process::Output {
+    let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
+    Command::new("env")
+        .arg("-i")
+        .arg(format!("HOME={}", home.display()))
+        .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
+        .arg(format!("SPIRA_HOME={}", harness_home.display()))
+        .arg("world")
+        .arg("status")
+        .output()
+        .expect("cannot spawn env -i world status")
 }
 
 #[test]
 fn world_status_under_a_bare_shell_reports_halted_from_the_fixture_config() {
     let tmp = testkit::TempDir::new("ivfu3-world-status-bare-shell");
-    let (home, _run) = build_fixture(&tmp);
-    let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
+    let (home, harness_home, _run) = build_fixture(&tmp);
 
-    let out = Command::new("env")
-        .arg("-i")
-        .arg(format!("HOME={}", home.display()))
-        .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
-        .arg("world")
-        .arg("status")
-        .output()
-        .expect("cannot spawn env -i world status");
+    let out = run_world_status(&home, &harness_home);
 
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();
@@ -66,18 +86,12 @@ fn world_status_under_a_bare_shell_reports_halted_from_the_fixture_config() {
 fn world_status_refuses_named_when_the_only_config_is_malformed() {
     let tmp = testkit::TempDir::new("ivfu3-world-status-bad-toml");
     let home = tmp.join("home");
+    let harness_home = tmp.join("harness-home");
     std::fs::create_dir_all(home.join(".config/spira")).unwrap();
+    std::fs::create_dir_all(harness_home.join("conf.d")).unwrap();
     std::fs::write(home.join(".config/spira").join(spira_config::FILE_NAME), "this is not [valid toml").unwrap();
-    let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
 
-    let out = Command::new("env")
-        .arg("-i")
-        .arg(format!("HOME={}", home.display()))
-        .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
-        .arg("world")
-        .arg("status")
-        .output()
-        .expect("cannot spawn env -i world status");
+    let out = run_world_status(&home, &harness_home);
 
     assert!(!out.status.success(), "a malformed config document must not exit 0");
     let stderr = String::from_utf8_lossy(&out.stderr).into_owned();

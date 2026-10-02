@@ -128,6 +128,19 @@ mod tests {
     /// this crate needs its own).
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+    /// `resolve_for_process` needs a real, readable `conf.d` under `SPIRA_HOME` to resolve
+    /// ANY key at all (an existing-but-empty directory is fine; a missing one is a named
+    /// refusal — see `spira_config::registry::load`'s own doc). Pointing `SPIRA_HOME` at
+    /// this fixture, rather than leaving it unset and trusting `resolve_home`'s own
+    /// ancestor search to stumble onto this checkout's real `spira/conf.d`, is what keeps
+    /// these two tests hermetic: the gate builds from a tmpfs copy with no `spira/`
+    /// sibling at the same relative depth, where that ancestor search finds nothing.
+    fn fixture_harness_home(tag: &str) -> testkit::TempDir {
+        let home = testkit::TempDir::new(tag);
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        home
+    }
+
     /// sp-ivfu3: the old contract was "defaults to the literal /tmp/spira when SPIRA_RUN is
     /// unset" — exactly the bug (a bare shell silently read/wrote the wrong run directory).
     /// The new contract: resolved in-process via spira_config, which still produces a real
@@ -140,9 +153,11 @@ mod tests {
         for n in names {
             env::remove_var(n);
         }
-        let home = testkit::TempDir::new("spira-world-run-default");
-        env::set_var("HOME", home.to_str().unwrap());
-        env::set_var("XDG_CONFIG_HOME", home.join("no-such-xdg").to_str().unwrap());
+        let xdg_home = testkit::TempDir::new("spira-world-run-default");
+        let harness_home = fixture_harness_home("spira-world-run-default-harness");
+        env::set_var("HOME", xdg_home.to_str().unwrap());
+        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
+        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
 
         let got = spira_run();
 
@@ -154,7 +169,7 @@ mod tests {
         }
         let got = got.unwrap();
         assert_ne!(got, PathBuf::from("/tmp/spira"));
-        assert_eq!(got, home.join(".local/share/spira/run"));
+        assert_eq!(got, xdg_home.join(".local/share/spira/run"));
     }
 
     #[test]
@@ -165,9 +180,11 @@ mod tests {
         for n in names {
             env::remove_var(n);
         }
-        let home = testkit::TempDir::new("spira-world-instance-default");
-        env::set_var("HOME", home.to_str().unwrap());
-        env::set_var("XDG_CONFIG_HOME", home.join("no-such-xdg").to_str().unwrap());
+        let xdg_home = testkit::TempDir::new("spira-world-instance-default");
+        let harness_home = fixture_harness_home("spira-world-instance-default-harness");
+        env::set_var("HOME", xdg_home.to_str().unwrap());
+        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
+        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
 
         let got = instance_suffix();
 
