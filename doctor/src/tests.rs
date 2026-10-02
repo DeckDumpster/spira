@@ -49,6 +49,7 @@ pub struct Fake {
     pub sccache_help: RefCell<Option<String>>,
     pub sccache_show_stats: RefCell<Option<String>>,
     pub sccache_dav_addr: RefCell<Option<String>>,
+    pub daemon_bases: RefCell<Vec<String>>,
 }
 
 impl Default for Fake {
@@ -91,6 +92,7 @@ impl Default for Fake {
             sccache_help: RefCell::new(None),
             sccache_show_stats: RefCell::new(None),
             sccache_dav_addr: RefCell::new(None),
+            daemon_bases: RefCell::new(Vec::new()),
         }
     }
 }
@@ -206,6 +208,9 @@ impl World for Fake {
     }
     fn sccache_show_stats(&self) -> Option<String> {
         self.sccache_show_stats.borrow().clone()
+    }
+    fn git_daemon_base_paths(&self, _port: u16) -> Vec<String> {
+        self.daemon_bases.borrow().clone()
     }
     fn sccache_dav_addr(&self) -> Option<String> {
         self.sccache_dav_addr.borrow().clone()
@@ -1099,4 +1104,42 @@ fn prod_checkout_probe_failure_fails() {
     f.set("SPIRA_RELEASES", "/fixture/releases");
     *f.unit_execs.borrow_mut() = Err("Failed to connect to bus".into());
     assert_eq!(levels(&check_prod_checkout(&f)), vec![Level::Fail]);
+}
+
+#[test]
+fn mirror_check_warns_on_a_daemon_serving_another_state_dir() {
+    let f = Fake::default();
+    f.set("SPIRA_ROUND_VM_STATE_DIR", "/srv/round-vm");
+    *f.daemon_bases.borrow_mut() = vec!["/old/place".into()];
+    let lines = check_round_vm_mirror(&f);
+    assert_eq!(levels(&lines), vec![Level::Warn]);
+    assert!(lines[0].msg.contains("/old/place") && lines[0].msg.contains("/srv/round-vm"), "{:?}", lines[0].msg);
+}
+
+#[test]
+fn mirror_check_passes_on_the_configured_dir_and_when_no_daemon_runs() {
+    let f = Fake::default();
+    f.set("SPIRA_ROUND_VM_STATE_DIR", "/srv/round-vm");
+    assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
+    *f.daemon_bases.borrow_mut() = vec!["/srv/round-vm/".into()];
+    assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn mirror_check_defaults_the_state_dir_to_run_round_vm() {
+    let f = Fake::default();
+    f.set("SPIRA_RUN", "/r");
+    *f.daemon_bases.borrow_mut() = vec!["/r/round-vm".into()];
+    assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Ok]);
+    *f.daemon_bases.borrow_mut() = vec!["/elsewhere".into()];
+    assert_eq!(levels(&check_round_vm_mirror(&f)), vec![Level::Warn]);
+}
+
+#[test]
+fn daemon_base_path_reads_only_a_git_daemon_on_the_port() {
+    let v = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    let argv = v(&["git", "daemon", "--port=9430", "--base-path=/x", "--export-all"]);
+    assert_eq!(crate::real::daemon_base_path(&argv, 9430), Some("/x".into()));
+    assert_eq!(crate::real::daemon_base_path(&argv, 9431), None);
+    assert_eq!(crate::real::daemon_base_path(&v(&["vim", "daemon", "--port=9430", "--base-path=/x"]), 9430), None);
 }
