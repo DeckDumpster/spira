@@ -453,6 +453,14 @@ impl World for Real {
         resolve_sccache_dav_addr(&self.home, &repo, &env_map, toml.as_ref())
     }
 
+    fn git_daemon_base_paths(&self, port: u16) -> Vec<String> {
+        let Ok(rd) = std::fs::read_dir("/proc") else { return Vec::new() };
+        rd.flatten()
+            .filter_map(|e| std::fs::read(e.path().join("cmdline")).ok())
+            .filter_map(|raw| daemon_base_path(&String::from_utf8_lossy(&raw).split('\0').map(String::from).collect::<Vec<_>>(), port))
+            .collect()
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }
@@ -469,6 +477,19 @@ pub(crate) fn resolve_sccache_dav_addr(home: &Path, repo: &Path, env: &BTreeMap<
     let resolved = spira_config::resolve::resolve(spira_config::resolve::ResolveInput { env, home, repo, toml, conf_d: &conf_d }).ok()?;
     let v = resolved.get(spira_config::build::STORE_ADDR_ENV);
     (!v.is_empty()).then(|| v.to_string())
+}
+
+/// `--base-path` of a `git daemon` argv serving `port`; None for any other process.
+pub(crate) fn daemon_base_path(argv: &[String], port: u16) -> Option<String> {
+    let is_git = argv.first().is_some_and(|a| a == "git" || a.ends_with("/git"));
+    if !is_git || !argv.iter().any(|a| a == "daemon") {
+        return None;
+    }
+    let want = format!("--port={port}");
+    if !argv.iter().any(|a| *a == want) {
+        return None;
+    }
+    argv.iter().find_map(|a| a.strip_prefix("--base-path=")).map(String::from)
 }
 
 fn is_exec(p: &Path) -> bool {

@@ -133,5 +133,9 @@ pub trait World {
     /// never exported) was invisible to the bash capture and this check passed blind.
     fn sccache_dav_addr(&self) -> Option<String>;
 
+    /// The `--base-path` of every `git daemon` process serving `port`, read from the process
+    /// table. Empty when none is.
+    fn git_daemon_base_paths(&self, port: u16) -> Vec<String>;
+
     fn out(&self, s: &str);
 }

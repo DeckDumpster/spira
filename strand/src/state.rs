@@ -170,7 +170,18 @@ mod tests {
         assert!(held.is_some());
         assert!(try_lock(&lock).unwrap().is_none(), "second locker declines");
         drop(held);
-        assert!(try_lock(&lock).unwrap().is_some());
+        // A sibling test's fork can hold a copy of the released descriptor until its exec.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let reacquired = loop {
+            if let Some(f) = try_lock(&lock).unwrap() {
+                break Some(f);
+            }
+            if std::time::Instant::now() > deadline {
+                break None;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert!(reacquired.is_some(), "lock is released on drop");
         fs::remove_dir_all(&dir).unwrap();
     }
 }

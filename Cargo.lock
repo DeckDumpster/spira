@@ -1537,7 +1537,6 @@ dependencies = [
  "spira-config",
  "suite-select",
  "testkit",
- "toml",
  "tsd",
 ]
 

@@ -8,20 +8,7 @@
 //! real deploy actually takes — never read it, so a release built that way shipped with
 //! none of the compat names in `bin/` or `spira/`.
 
-use serde::Deserialize;
 use std::path::Path;
-
-#[derive(Deserialize)]
-struct CompatEntry {
-    name: String,
-    alias: String,
-}
-
-#[derive(Deserialize, Default)]
-struct DepsFile {
-    #[serde(default)]
-    compat: Vec<CompatEntry>,
-}
 
 /// Reads `<stage>/spira/deps.toml`'s `[[compat]]` table. Empty (never an error) when the
 /// file is absent or does not parse — a release missing compat aliases is a degraded
@@ -29,10 +16,7 @@ struct DepsFile {
 /// covers the real failure modes.
 pub fn read(stage: &Path) -> Vec<(String, String)> {
     let path = stage.join("spira").join("deps.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let doc: DepsFile = toml::from_str(&text).unwrap_or_default();
+    let doc = spira_config::deps::load_manifest(&path);
     doc.compat.into_iter().map(|c| (c.name, c.alias)).collect()
 }
 
