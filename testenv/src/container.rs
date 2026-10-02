@@ -18,6 +18,8 @@ pub const CONTAINER_CARGO_TARGET: &str = "/var/spira/cargo/target";
 /// pasta's default forwards a container's loopback to the host's; `-T none` and `--no-map-gw`
 /// close both, so a container never reaches a host service bound to loopback.
 pub const ISOLATED_NETWORK: &str = "pasta:-T,none,--no-map-gw";
+/// pasta is rootless-only; rootful podman's default bridge does not forward host loopback.
+pub const ISOLATED_NETWORK_ROOTFUL: &str = "bridge";
 pub const DEFAULT_NAME: &str = "spira-testenv";
 /// Every container `up` starts carries it, so admission counts every caller's containers.
 pub const TESTENV_LABEL: &str = "spira.testenv=1";
@@ -306,6 +308,20 @@ impl Driver<'_> {
     }
 
     /// Local, else pulled from the registry and retagged, else built. The local ref.
+    /// The network mode that keeps a container off the host's loopback, chosen by what
+    /// podman itself reports; None when it cannot say (fail closed).
+    fn isolated_network(&self) -> Option<&'static str> {
+        let (rc, out) = self.host.podman(
+            &sv(&["info", "--format", "{{.Host.Security.Rootless}}"]),
+            Io::Quiet,
+        );
+        match (rc, out.trim()) {
+            (0, "true") => Some(ISOLATED_NETWORK),
+            (0, "false") => Some(ISOLATED_NETWORK_ROOTFUL),
+            _ => None,
+        }
+    }
+
     pub fn ensure_image(&self) -> Option<String> {
         let tag = self.image_tag()?;
         let img = self.image_ref(&tag);
@@ -765,6 +781,10 @@ impl Driver<'_> {
             .into_iter()
             .flat_map(|p| [s("--volume"), format!("{}:{}:z", p.display(), p.display())])
             .collect();
+        let Some(network) = self.isolated_network() else {
+            self.err("testenv: cannot tell whether podman is rootless; refusing to start without network isolation");
+            return 1;
+        };
         // pids-limit 8192: 52 parallel suites exhausted podman's rootless default of 2048.
         let run: Vec<String> = [
             s("run"),
@@ -775,7 +795,7 @@ impl Driver<'_> {
             s("--pids-limit"),
             s("8192"),
             s("--network"),
-            s(ISOLATED_NETWORK),
+            s(network),
             s("--label"),
             s(TESTENV_LABEL),
             s("--volume"),

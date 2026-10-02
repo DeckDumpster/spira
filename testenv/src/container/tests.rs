@@ -700,6 +700,7 @@ fn a_cold_build_refuses_rather_than_run_podman_when_spira_config_cannot_be_had_a
 
 fn booting(f: &Fake) {
     harness(f, "/h");
+    f.when(&["info", "--format"], 0, "true\n");
     f.when(&["container", "exists"], 1, "");
 }
 
@@ -750,6 +751,38 @@ fn up_boots_with_the_label_limit_and_volumes_and_records_its_caller() {
         "/workspace"
     ]));
     assert!(f.errs().contains("user@1001.service active"));
+}
+
+fn network_of_run(f: &Fake) -> String {
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        0
+    );
+    let run = &f.calls_with("run")[0];
+    let i = run.iter().position(|a| a == "--network").unwrap();
+    run[i + 1].clone()
+}
+
+#[test]
+fn up_uses_the_bridge_when_podman_is_rootful() {
+    let f = Fake::new();
+    booting(&f);
+    f.when(&["info", "--format"], 0, "false\n");
+    assert_eq!(network_of_run(&f), "bridge");
+}
+
+#[test]
+fn up_refuses_to_start_when_the_podman_mode_is_unknown() {
+    let f = Fake::new();
+    booting(&f);
+    f.when(&["info", "--format"], 1, "");
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1", "--checkout", "/wt"])),
+        1
+    );
+    assert!(f.calls_with("run").is_empty());
 }
 
 /// THE PRODUCTION BUG (sp-e5v53-3, 2026-10-01): a gate tree's `target/{aeon,release,debug,
