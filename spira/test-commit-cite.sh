@@ -73,7 +73,7 @@ want "and says PASS"                     "VERDICT=PASS" "$out"
 commit_citing spira/sp-cc1 sp-totallyfake999
 out="$(rungate_real spira/sp-cc1)"; rc=$?
 is     "a phantom citation: exits FAIL"       1 "$rc"
-want   "names the reason"                     "reason=phantom-bead-cite" "$out"
+want   "names the reason"                     "reason=phantom-bead-id" "$out"
 want   "names the phantom id"                 "sp-totallyfake999" "$out"
 nowant "never a silent PASS"                  "VERDICT=PASS" "$out"
 
@@ -112,7 +112,7 @@ is   "a citation naming a real CLOSED bead: passes too"  0 "$rc"
 # --------------------------------------------------------------------------------------
 out="$(gate_fixture_run spira/sp-cc1 repo)"; rc=$?
 is     "store unreadable: exits NO_VERDICT, never FAIL or PASS" 75 "$rc"
-want   "names the reason"                                       "reason=cite-check-fault" "$out"
+want   "names the reason"                                       "reason=commit-cite-fault" "$out"
 nowant "never read as every id existing"                        "VERDICT=PASS" "$out"
 nowant "and never charged as a branch FAIL"                     "VERDICT=FAIL" "$out"
 
