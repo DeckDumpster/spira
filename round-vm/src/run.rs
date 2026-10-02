@@ -112,7 +112,7 @@ pub fn shell_quote(s: &str) -> String {
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
 host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7"
-export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
     exit 127
@@ -872,7 +872,7 @@ mod tests {
         let check = REMOTE_SCRIPT.find("command -v cargo").expect("checks for cargo");
         let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
         assert!(check < clone, "cargo must be checked before the clone, not after it fails");
-        let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:$PATH""#).expect("puts cargo's install dirs on PATH");
+        let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
         assert!(path_export < check, "PATH must be widened before the check that reads it");
     }
 
@@ -893,7 +893,7 @@ mod tests {
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
-            .args(["host", "9430", "", "16", ""])
+            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home"])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
