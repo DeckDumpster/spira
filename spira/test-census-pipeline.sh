@@ -157,6 +157,7 @@ case "${1:-}" in
         esac
         ;;
     list)
+        [ -n "${CENSUS_LIST_ARGS_FILE:-}" ] && echo "$*" >> "$CENSUS_LIST_ARGS_FILE"
         case " $* " in
             *" --status closed "*) cat "${CENSUS_CLOSED_JSON:-/dev/null}" ;;
             *)                     cat "${CENSUS_OPEN_JSON:-/dev/null}" ;;
@@ -216,6 +217,7 @@ run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
         CENSUS_SKEW_FILE="$CENSUS_SKEW_FILE" \
         CENSUS_SKEW_RC="${CENSUS_SKEW_RC:-0}" \
         SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S="${SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S:-120}" \
+        CENSUS_LIST_ARGS_FILE="${CENSUS_LIST_ARGS_FILE:-}" \
         CENSUS_OPEN_JSON="${CENSUS_OPEN_JSON:-}" \
         CENSUS_CLOSED_JSON="${CENSUS_CLOSED_JSON:-}" \
         "$CENSUS" "$@"
@@ -393,6 +395,16 @@ open_out="$(run_census_fake "$RUN_OPEN")"
 lack "open remedy: class suppressed by default" "sp-recur-fallback-test" "$open_out"
 want "open remedy: --with-suppressed annotates it" "[suppressed]" \
     "$(run_census_fake "$RUN_OPEN" --with-suppressed)"
+
+# covers: alone is the key: a remedy filed by any persona suppresses, and the bd query
+# selects on covers:*, never on the maechen-remedy provenance label.
+printf '[{"labels":["delivers:action","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
+CENSUS_LIST_ARGS_FILE="$T/list-args"; : > "$CENSUS_LIST_ARGS_FILE"
+lack "open bead with covers: and no maechen-remedy suppresses the class" "sp-recur-fallback-test" \
+    "$(run_census_fake "$RUN_OPEN")"
+want "open and closed queries both select on covers:*" "2" "$(grep -c -- '--label-pattern covers:\*' "$CENSUS_LIST_ARGS_FILE")"
+lack "no bd list query filters on --label" "--label maechen" "$(cat "$CENSUS_LIST_ARGS_FILE")"
+unset CENSUS_LIST_ARGS_FILE
 
 # Unrelated covers: label does not suppress.
 printf '[{"labels":["maechen-remedy","covers:sp-recur-unrelated"]}]' > "$CENSUS_OPEN_JSON"
