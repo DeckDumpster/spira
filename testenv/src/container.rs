@@ -103,6 +103,7 @@ pub struct Conf {
     pub bd_pin: Option<PathBuf>,
     pub registry: String,
     pub max_concurrent: i64,
+    pub cpus: Option<String>,
     pub queue_timeout: u64,
     pub queue_poll: u64,
     pub heartbeat: u64,
@@ -134,6 +135,10 @@ impl Conf {
                 Some("spira.testenv_max_concurrent"),
                 8,
             ),
+            cpus: src
+                .get("SPIRA_TESTENV_CPUS", Some("spira.testenv_cpus"))
+                .map(|v| v.trim().to_string())
+                .filter(|v| v.parse::<f64>().is_ok_and(|n| n > 0.0)),
             queue_timeout: num(
                 "SPIRA_TESTENV_QUEUE_TIMEOUT",
                 Some("spira.testenv_queue_timeout"),
@@ -835,6 +840,7 @@ impl Driver<'_> {
             format!("{checkout}:{CONTAINER_CHECKOUT}:z"),
         ]
         .into_iter()
+        .chain(self.conf.cpus.iter().flat_map(|c| [s("--cpus"), c.clone()]))
         .chain(extra_mounts)
         .chain([
             s("--volume"),

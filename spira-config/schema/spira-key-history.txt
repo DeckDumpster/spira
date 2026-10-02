@@ -262,6 +262,7 @@ testdb_bd
 testdb_data
 testdb_lib
 testdb_port
+testenv_cpus
 testenv_max_concurrent
 testenv_queue_poll
 testenv_queue_timeout
