@@ -72,6 +72,15 @@ d = d if isinstance(d, list) else [d]
 print(d[0].get("close_reason") or "")' 2>/dev/null
 }
 
+bead_notes() {
+    "$SPIRA_BD" -C "$SPIRA_DB" show "$1" --json 2>/dev/null | sed -n '/^[[{]/,$p' \
+        | python3 -c '
+import sys, json
+d = json.load(sys.stdin)
+d = d if isinstance(d, list) else [d]
+print(d[0].get("notes") or "")' 2>/dev/null
+}
+
 msgid_of() {   # msgid_of <mailbox> -> bare Message-ID of the newest message in new/
     local mailbox="$1" newest
     newest="$(ls -t "$SPIRA_MAIL/$mailbox/new/" 2>/dev/null | head -1)"
@@ -133,6 +142,14 @@ is "SEEN RED: index has exactly 1 line after one question" "1" "$(index_lines)"
 want "index line names the bead" "$BEAD_A" "$(cat "$SPIRA_MAIL_INDEX")"
 want "index line names the msgid" "$MSGID_A" "$(cat "$SPIRA_MAIL_INDEX")"
 is "decision bead open before sweep" "open" "$(bead_status "$BEAD_A")"
+
+# ==========================================================================
+# The default is readable from the bead itself, not only the index or the mail
+# ==========================================================================
+echo
+echo "default is written onto the tracking bead at send time"
+
+want "tracking bead carries the default in its notes" "proceed with the default" "$(bead_notes "$BEAD_A")"
 
 # ==========================================================================
 # POSITIVE CONTROL — sweep finds nothing to dismiss while the mail is present

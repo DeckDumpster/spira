@@ -138,6 +138,11 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
                     bead::dep_add(bd, args.bead, &dec_bead, "relates-to");
                 }
             }
+            if !args.default.is_empty() {
+                if let Err(e) = bead::note(bd, &dec_bead, &format!("Default: {}", args.default)) {
+                    eprintln!("mail: could not record the default on {dec_bead}: {e}");
+                }
+            }
             x_bead = dec_bead;
         }
     }
