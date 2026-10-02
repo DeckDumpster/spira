@@ -340,7 +340,7 @@ mod tests {
     }
 }
 
-/// `spira.run` resolved in-process (env override, then `spira.toml`); the process refuses,
+/// `spira.run` resolved in-process (env override, then the config); the process refuses,
 /// named, when it cannot — an empty run directory would put the reap log at the filesystem
 /// root.
 pub fn run_dir() -> PathBuf {
