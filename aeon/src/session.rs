@@ -335,9 +335,9 @@ mod tests {
         assert!(t0.elapsed() < Duration::from_secs(10), "a stop already recorded kills the session at once");
         assert_eq!(rc, 143);
         // Without a stop the same launch reads the task on stdin into the trace.
-        let spec2 = SessionSpec { args: vec!["-c".into(), "cat".into()], ..spec };
+        let spec2 = SessionSpec { args: vec!["-c".into(), "cat".into()], log: d.join("log2"), ..spec };
         assert_eq!(RealLauncher.run(&spec2, &Stop::default()), 0);
-        assert_eq!(std::fs::read_to_string(d.join("log")).unwrap(), "hi");
+        assert_eq!(std::fs::read_to_string(d.join("log2")).unwrap(), "hi");
     }
 
     #[test]

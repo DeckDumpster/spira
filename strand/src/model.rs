@@ -131,6 +131,8 @@ pub struct Bead {
     #[serde(default, deserialize_with = "null_default")]
     pub lease_expires_at: Option<String>,
     #[serde(default, deserialize_with = "null_default")]
+    pub defer_until: Option<String>,
+    #[serde(default, deserialize_with = "null_default")]
     pub dependencies: Vec<Dependency>,
     // Escalation body only (bd show).
     #[serde(default, deserialize_with = "null_default")]

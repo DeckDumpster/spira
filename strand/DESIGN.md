@@ -249,6 +249,7 @@ Rules:
   are another partition's to watch and are not analysed here, but do count as children.
 - **R9 — deferred-unescalated** is exempt when any `blocks` target anywhere in S is non-closed
   (the old check saw only P, so a foreign live blocker read as none).
+  A deferred bead whose `defer_until` is in the future is a timed hold: an `info` row `held` (`held-until <ts>`), never stranded. No `defer_until`, or one already past, stays stranded.
 
 Unchanged: ghost (in_progress, holder not alive, lease expired past grace, not ask-labelled,
 not wait-held); starved and its five info variants (capacity, pool, truncation, throttle,

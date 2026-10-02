@@ -240,6 +240,19 @@ impl<'a> Partition<'a> {
             if live_blocker {
                 continue;
             }
+            // A future defer_until auto-wakes the bead: a timed hold, not a forgotten one.
+            if let Some(until) = b.defer_until.as_deref().filter(|u| {
+                crate::timefmt::parse_rfc3339(u).is_some_and(|t| t > self.facts.now)
+            }) {
+                rows.push(Row::new(
+                    "held",
+                    &b.id,
+                    Disposition::Info,
+                    format!("held-until {until}: {}", b.title.as_deref().unwrap_or("")),
+                    "none — bd wakes it to open when defer_until passes".into(),
+                ));
+                continue;
+            }
             rows.push(Row::new(
                 "deferred-unescalated",
                 &b.id,
@@ -897,6 +910,26 @@ mod tests {
         let rows = run(&s, &[]);
         assert_eq!(kinds(&rows), vec![("deferred-unescalated".into(), "d".into())]);
         assert_eq!(rows[0].detail, "deferred but not labelled operator-ask: title of d");
+    }
+
+    #[test]
+    fn timed_hold_is_held_not_stranded() {
+        let now = crate::timefmt::parse_rfc3339("2026-10-02T09:00:00Z").unwrap();
+        let f = Facts { live: 1, now, ..Facts::default() };
+        let held = |until: Option<&str>| {
+            let mut v = bead("d", "deferred", PLAN, None, &[]);
+            if let Some(u) = until {
+                v["defer_until"] = json!(u);
+            }
+            run_with(&store(vec![v]), &[], &f)
+        };
+        let rows = held(Some("2026-10-02T09:48:33Z"));
+        assert_eq!(kinds(&rows), vec![("held".into(), "d".into())]);
+        assert_eq!(rows[0].disp, Disposition::Info);
+        assert!(rows[0].detail.starts_with("held-until 2026-10-02T09:48:33Z"), "{}", rows[0].detail);
+        for stranded in [held(None), held(Some("2026-10-02T08:00:00Z")), held(Some("garbage"))] {
+            assert_eq!(kinds(&stranded), vec![("deferred-unescalated".into(), "d".into())]);
+        }
     }
 
     #[test]
