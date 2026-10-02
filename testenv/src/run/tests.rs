@@ -1915,6 +1915,7 @@ fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
 }
 
 #[test]
+<<<<<<< HEAD
 fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     let w = World::new("linked-wt");
     let linked = w.root.join("deadbeef");
@@ -1938,10 +1939,36 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     let stdin = || String::new();
     let out = |_: &str| {};
     let deps = |config| Deps {
+=======
+fn landref_falls_back_to_local_main_for_an_unmapped_checkout() {
+    let w = World::new("landref-fallback");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let dir = w.root.join("ab12cd34ef56");
+    fs::create_dir_all(&dir).unwrap();
+    let sh = |args: &[&str]| {
+        let st = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "core.hooksPath=/dev/null"])
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(st.success(), "{args:?}");
+    };
+    sh(&["init", "-q"]);
+    sh(&["commit", "-q", "--allow-empty", "-m", "x"]);
+    sh(&["checkout", "-q", "--detach"]);
+    let env = |_: &str| None;
+    let read_stdin = || String::new();
+    let out = |_: &str| {};
+    let deps = Deps {
+>>>>>>> 36c15a595 (sp-4nclr: test landref local/main fallback for an unmapped checkout)
         rt: &rt,
         builder: &b,
         harness: Harness { root: w.harness.clone() },
         env: &env,
+<<<<<<< HEAD
         config,
         settings: unused_settings(),
         stdin: &stdin,
@@ -1949,10 +1976,19 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
         owner_dir: w.owner.clone(),
         cwd: w.root.to_path_buf(),
         runner_identity: vec![],
+=======
+        config: None,
+        stdin: &read_stdin,
+        out: &out,
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: b"runner-v1".to_vec(),
+>>>>>>> 36c15a595 (sp-4nclr: test landref local/main fallback for an unmapped checkout)
         warm_refill: &|_, _| {},
         spawn_sweep: &|_| {},
         runner_exe: w.runner_exe(),
     };
+<<<<<<< HEAD
     let arg = linked.display().to_string();
     let unmapped = resolve_repo(Some(&arg), &deps(None)).unwrap();
     assert_eq!(unmapped.name, "deadbeef", "positive control: with no map the dir name is the fallback");
@@ -1960,6 +1996,12 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     let found = resolve_repo(Some(&arg), &d).unwrap();
     assert_eq!(found.name, "mapped");
     assert_eq!(landref(&found, &d).as_deref(), Some("main"));
+=======
+    let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
+    assert_eq!(landref(&r, &deps), None);
+    sh(&["update-ref", "refs/heads/local/main", "HEAD"]);
+    assert_eq!(landref(&r, &deps).as_deref(), Some("local/main"));
+>>>>>>> 36c15a595 (sp-4nclr: test landref local/main fallback for an unmapped checkout)
 }
 
 #[test]
