@@ -608,9 +608,8 @@ mod tests {
 
     #[test]
     fn newest_naming_commit_finds_the_latest_exact_id_and_orders_against_a_reopen() {
-        let dir = std::env::temp_dir().join(format!("strand-nnc-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        let tmp = testkit::TempDir::new("strand-nnc");
+        let dir = tmp.path().to_path_buf();
         git(&dir, "2026-10-02T10:00:00Z", &["init", "-q", "-b", "main"]);
         git(&dir, "2026-10-02T10:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abc: first"]);
         git(&dir, "2026-10-02T12:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abcd: other bead"]);
@@ -621,7 +620,6 @@ mod tests {
         let later = newest_naming_commit(&dir, "main", "sp-abc", "").unwrap();
         assert_eq!(later, "2026-10-02T13:00:00Z");
         assert!("2026-10-02T11:00:00Z".to_string() < later, "commit newer than the reopen: landed");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
