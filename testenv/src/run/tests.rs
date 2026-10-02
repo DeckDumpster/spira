@@ -1661,3 +1661,36 @@ fn a_gate_trial_with_every_pool_full_still_gets_its_verdict() {
     freer.join().unwrap();
     assert!(w.has_line(|l| l.contains("waiting for a compile slot: 4 of 1 held by agent-build")), "{:?}", w.lines.lock().unwrap());
 }
+
+#[test]
+fn resolve_repo_names_a_hash_named_dir_outside_the_map_by_its_basename() {
+    let w = World::new("resolve-hash");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let dir = w.root.join("ab12cd34ef56");
+    fs::create_dir_all(&dir).unwrap();
+    let env = |_: &str| None;
+    let input = String::new();
+    let read_stdin = move || input.clone();
+    let out = |_: &str| {};
+    let deps = Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness {
+            root: w.harness.clone(),
+        },
+        env: &env,
+        config: None,
+        stdin: &read_stdin,
+        out: &out,
+        owner_dir: w.owner.clone(),
+        cwd: w.root.to_path_buf(),
+        runner_identity: b"runner-v1".to_vec(),
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: w.runner_exe(),
+    };
+    let r = resolve_repo(Some(dir.to_str().unwrap()), &deps).unwrap();
+    assert_eq!(r.name, "ab12cd34ef56");
+    assert!(resolve_repo(Some("nosuch"), &deps).is_err());
+}
