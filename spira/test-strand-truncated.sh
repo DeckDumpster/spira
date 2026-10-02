@@ -45,7 +45,7 @@ mkdir -p "$TMP/run"
 # THE STRAND AND SENTINEL ARE BINARIES (strand.sh, sentinel.sh are gone), resolved as conf.sh's
 # the tree's build on PATH provides them. Both source lib.sh from SPIRA_HOME, so each stub
 # home carries the real lib.sh and what it sources.
-_libs() { local _s; for _s in lib.sh conf.sh suite-covers.sh; do ln -sf "$HERE/$_s" "$1/$_s"; done; }
+_libs() { local _s; for _s in lib.sh conf.sh suite-covers.sh conf.d; do ln -sfn "$HERE/$_s" "$1/$_s"; done; }
 
 echo "test-strand-truncated.sh"
 
