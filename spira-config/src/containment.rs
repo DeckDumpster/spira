@@ -126,6 +126,21 @@ pub fn check(instance: &str, workspaces: &str, repo_map_text: Option<&str>) -> R
     }
 }
 
+/// A single explicit path (an env-pinned `SPIRA_RUN`) judged against the same confinement
+/// as a repo-map row: refused, named, when a confined instance's `path` is outside
+/// `workspaces`. `prod` or an unset instance is unconstrained.
+pub fn check_path(instance: &str, workspaces: &str, key: &str, path: &str) -> Result<(), String> {
+    if instance.is_empty() || instance == "prod" || workspaces.is_empty() {
+        return Ok(());
+    }
+    if is_under(&canonical_or_literal(path), workspaces) {
+        return Ok(());
+    }
+    Err(format!(
+        "spira: containment: instance {instance} is confined to {workspaces} — {key} ({path}) is outside it"
+    ))
+}
+
 /// Stable order for test assertions and for a human reading the refusal — bash's own loop
 /// order (map-file order) is preserved by NOT sorting; this only drops exact duplicates,
 /// which cannot occur from distinct rows but keeps the function honest if the map ever
