@@ -18,3 +18,6 @@ StandardError=append:@SPIRA_RUN@/mail-tidy.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

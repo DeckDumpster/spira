@@ -10,3 +10,6 @@ Unit=spira-summon.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=work

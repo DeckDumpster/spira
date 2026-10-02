@@ -21,3 +21,6 @@ StandardError=append:@SPIRA_RUN@/czar.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

@@ -49,3 +49,6 @@ StandardError=append:@SPIRA_RUN@/skew.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability

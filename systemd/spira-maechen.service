@@ -40,3 +40,6 @@ StandardError=append:@SPIRA_RUN@/maechen.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

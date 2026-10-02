@@ -1,15 +1,23 @@
 //! world.sh — stop and start Spira as a whole. Replaces spira/world.sh (bash).
 //!
-//!   world.sh stop [--why "..."] [--hard] [--round-drain] [--round-drain-timeout SECS]
-//!   world.sh start
+//!   world.sh stop [--why "..."] [--work] [--observability] [--maintenance] [--all]
+//!                 [--hard] [--round-drain] [--round-drain-timeout SECS]
+//!   world.sh start [--work] [--observability] [--maintenance] [--all]
 //!   world.sh drain [--timeout SECS | --for SECS | --deadline SECS]
 //!   world.sh resume
 //!   world.sh status
 //!
+//! PLANES. Every unit declares `Plane=work|observability|maintenance` in its own
+//! `[X-Spira]` section; world reads that, never a list of its own. A plane flag selects
+//! exactly those planes. With none, `stop` halts `work` and `start` starts `work` and
+//! `observability` — detectors stay on through a halt, and read the `world.halted` stamp
+//! (the work plane's) as idle. `maintenance` has its own switch. `--hard` is `work` +
+//! `observability`. A unit with no declaration is `work`.
+//!
 //! WHAT IT DOES NOT TOUCH, deliberately: dolt-beads*.service (the databases — a halt must
 //! never risk the data, and a stopped server makes every diagnostic fail) and cockpit*/
-//! concierge (halting the loop must not blind the operator reading it). `stop --hard` adds
-//! the watcher services; nothing here ever stops Dolt.
+//! concierge (halting the loop must not blind the operator reading it). Nothing here ever
+//! stops Dolt.
 //!
 //! A ROUND ON THE ROUND VM IS NAMED, NEVER SILENTLY INTERRUPTED (sp-2bkpn). `status` and
 //! `stop` both read `round-vm status`; `stop` prints what it finds before doing anything
@@ -32,7 +40,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use spira_world::sysctl::{self, StartAction};
+use spira_world::sysctl::{self, Plane, StartAction, PLANES};
 use spira_world::spira_prod_or_home;
 
 /// sp-ivfu3: `spira.run`/`spira.instance` are resolved in-process through `spira_config`
@@ -77,6 +85,52 @@ fn now_iso() -> String {
 
 fn epoch_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// The planes a `stop`/`start` acts on: exactly the ones named by flag, or `default` when
+/// none is. `--hard` names work and observability.
+fn selected_planes(args: &[String], default: &[Plane]) -> BTreeSet<Plane> {
+    let mut named = BTreeSet::new();
+    for a in args {
+        match a.as_str() {
+            "--work" => {
+                named.insert(Plane::Work);
+            }
+            "--observability" => {
+                named.insert(Plane::Observability);
+            }
+            "--maintenance" => {
+                named.insert(Plane::Maintenance);
+            }
+            "--hard" => {
+                named.insert(Plane::Work);
+                named.insert(Plane::Observability);
+            }
+            "--all" => named.extend(PLANES),
+            _ => {}
+        }
+    }
+    if named.is_empty() {
+        default.iter().copied().collect()
+    } else {
+        named
+    }
+}
+
+/// `world.halted` is the work plane's stamp; the others carry `world.halted.<plane>`, a
+/// different file, so a detector checking `world.halted` reads only a work halt.
+fn plane_stamp(plane: Plane) -> PathBuf {
+    let base = halt_stamp_or_die();
+    if plane == Plane::Work {
+        return base;
+    }
+    let mut name = base.into_os_string();
+    name.push(format!(".{}", plane.name()));
+    PathBuf::from(name)
+}
+
+fn plane_names(planes: &BTreeSet<Plane>) -> String {
+    planes.iter().map(|p| p.name()).collect::<Vec<_>>().join("+")
 }
 
 /// One `TIMER_PRIORITY` slot, resolved or not: `enumerate_timers`'s own per-base answer.
@@ -133,12 +187,13 @@ fn missing_timers(timers: &[TimerSlot]) -> Vec<String> {
         .collect()
 }
 
-fn work_services() -> Vec<String> {
+fn work_services(planes: &BTreeSet<Plane>) -> Vec<String> {
     let sfx = sfx_or_die();
     sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"])
         .into_iter()
         .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
         .filter(|u| !spira_world::proc::is_excluded_work_service(u, &sfx))
+        .filter(|u| planes.contains(&sysctl::plane_of(u)))
         .collect()
 }
 
@@ -173,7 +228,8 @@ fn bead_of_pidfile(path: &std::path::Path) -> String {
 
 fn cmd_stop(args: &[String]) -> i32 {
     let mut why = String::new();
-    let mut hard = false;
+    let planes = selected_planes(args, &[Plane::Work]);
+    let halts_work = planes.contains(&Plane::Work);
     let mut round_drain = false;
     let mut round_drain_timeout = std::time::Duration::from_secs(1800);
     let mut i = 0;
@@ -182,10 +238,6 @@ fn cmd_stop(args: &[String]) -> i32 {
             "--why" => {
                 why = args.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
-            }
-            "--hard" => {
-                hard = true;
-                i += 1;
             }
             "--round-drain" => {
                 round_drain = true;
@@ -205,7 +257,7 @@ fn cmd_stop(args: &[String]) -> i32 {
     // (batcher-cut, round-vm run) without ever knowing one existed. Name it before doing
     // anything else, and — with --round-drain — wait for it to clear first, the same shape
     // `drain` already gives live aeons.
-    if let Some(desc) = spira_world::round::read().and_then(|s| spira_world::round::in_flight_description(&s)) {
+    if let Some(desc) = spira_world::round::read().filter(|_| halts_work).and_then(|s| spira_world::round::in_flight_description(&s)) {
         eprintln!("spira: {desc}");
         if round_drain {
             eprintln!("spira: --round-drain given — waiting up to {}s for it to clear before halting", round_drain_timeout.as_secs());
@@ -226,7 +278,7 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
     }
 
-    println!("spira: halting the loop");
+    println!("spira: halting {}", plane_names(&planes));
     let timers = enumerate_timers();
     let missing = missing_timers(&timers);
     if !missing.is_empty() {
@@ -238,14 +290,14 @@ fn cmd_stop(args: &[String]) -> i32 {
     }
     for t in &timers {
         let TimerSlot::Resolved(t) = t else { continue };
-        if !hard && sysctl::is_ci_watcher(t) {
+        if !planes.contains(&sysctl::plane_of(t)) {
             continue;
         }
         if sysctl::run_ok(&["stop", t]) {
             println!("  stopped {t}");
         }
     }
-    if hard {
+    if planes.contains(&Plane::Observability) {
         let mut units = BTreeSet::new();
         for l in sysctl::run_lines(&["list-units", "spira-watch@*", "--no-legend"]) {
             if let Some(u) = sysctl::first_field(&l) {
@@ -266,7 +318,7 @@ fn cmd_stop(args: &[String]) -> i32 {
     }
 
     let mut svc_failed = false;
-    for svc in work_services() {
+    for svc in work_services(&planes) {
         if sysctl::run_ok(&["stop", &svc]) {
             println!("  stopped {svc}");
         } else {
@@ -275,84 +327,90 @@ fn cmd_stop(args: &[String]) -> i32 {
         }
     }
 
-    let mut n = 0u32;
-    for pf in aeon_pidfiles() {
-        let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-        if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
-            let _ = std::fs::remove_file(&pf);
-            continue;
-        }
-        let bead = bead_of_pidfile(&pf);
-        if bead.is_empty() {
-            continue;
-        }
-        println!("  slaying {bead} (pid {pid})");
-        let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
-        let ok = Command::new("slay")
-            .args(["--bead", &bead, "--keep-work", "--why", &why_text])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-        if !ok {
-            println!("    slay.sh could not stop {bead} — left running, say so rather than pretend");
-        }
-        n += 1;
-    }
-
-    let mut stray = 0u32;
-    let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
-    let prod = spira_prod_or_home(&home);
-    let aeon_paths: Vec<String> = vec![
-        home.join("aeon.sh").to_string_lossy().into_owned(),
-        prod.join("aeon.sh").to_string_lossy().into_owned(),
-    ];
-    let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
-    let live = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |pid| {
-        let out = sysctl::run(&["status", pid]);
-        out.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string()
-    });
-    for a in live {
-        let mut bead_for_pid = String::new();
+    if halts_work {
+        let mut n = 0u32;
         for pf in aeon_pidfiles() {
-            let pp = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
-            if pp == a.pid {
-                bead_for_pid = bead_of_pidfile(&pf);
-                break;
+            let pid = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
+            if pid.is_empty() || !std::path::Path::new(&format!("/proc/{pid}")).is_dir() {
+                let _ = std::fs::remove_file(&pf);
+                continue;
             }
+            let bead = bead_of_pidfile(&pf);
+            if bead.is_empty() {
+                continue;
+            }
+            println!("  slaying {bead} (pid {pid})");
+            let why_text = if why.is_empty() { "the world was stopped".to_string() } else { why.clone() };
+            let ok = Command::new("slay")
+                .args(["--bead", &bead, "--keep-work", "--why", &why_text])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !ok {
+                println!("    slay.sh could not stop {bead} — left running, say so rather than pretend");
+            }
+            n += 1;
         }
-        if !bead_for_pid.is_empty() {
-            println!(
-                "  WARNING: {bead_for_pid} (pid {}) — named by a pidfile but slay did not stop it; run: slay.sh --bead {bead_for_pid}",
-                a.pid
-            );
-        } else {
-            println!(
-                "  WARNING: pid {} ({}) — no pidfile names it; could not resolve to a bead — inspect /proc/{}/cmdline before killing",
-                a.pid,
-                if a.unit.is_empty() { "-" } else { &a.unit },
-                a.pid
-            );
+
+        let mut stray = 0u32;
+        let home = spira_world::locate_home(&env::current_exe().unwrap_or_default()).unwrap_or_default();
+        let prod = spira_prod_or_home(&home);
+        let aeon_paths: Vec<String> = vec![
+            home.join("aeon.sh").to_string_lossy().into_owned(),
+            prod.join("aeon.sh").to_string_lossy().into_owned(),
+        ];
+        let aeon_path_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
+        let live = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |pid| {
+            let out = sysctl::run(&["status", pid]);
+            out.lines().next().and_then(|l| l.split_whitespace().nth(1)).unwrap_or("").to_string()
+        });
+        for a in live {
+            let mut bead_for_pid = String::new();
+            for pf in aeon_pidfiles() {
+                let pp = std::fs::read_to_string(&pf).unwrap_or_default().trim().to_string();
+                if pp == a.pid {
+                    bead_for_pid = bead_of_pidfile(&pf);
+                    break;
+                }
+            }
+            if !bead_for_pid.is_empty() {
+                println!(
+                    "  WARNING: {bead_for_pid} (pid {}) — named by a pidfile but slay did not stop it; run: slay.sh --bead {bead_for_pid}",
+                    a.pid
+                );
+            } else {
+                println!(
+                    "  WARNING: pid {} ({}) — no pidfile names it; could not resolve to a bead — inspect /proc/{}/cmdline before killing",
+                    a.pid,
+                    if a.unit.is_empty() { "-" } else { &a.unit },
+                    a.pid
+                );
+            }
+            stray += 1;
         }
-        stray += 1;
-    }
-    if n == 0 && stray == 0 {
-        println!("  no live aeons");
+        if n == 0 && stray == 0 {
+            println!("  no live aeons");
+        }
     }
 
     let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
-    let _ = std::fs::write(halt_stamp_or_die(), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    for plane in &planes {
+        let _ = std::fs::write(plane_stamp(*plane), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    }
 
     if svc_failed {
         eprintln!("spira: stop INCOMPLETE — work service(s) could not be stopped (see warnings above)");
         return 1;
     }
-    println!("spira: STOPPED. Dolt and the cockpit are untouched. Restart with: world.sh start");
+    let left: Vec<&str> = PLANES.iter().filter(|p| !planes.contains(p)).map(|p| p.name()).collect();
+    println!("spira: STOPPED ({}). Dolt and the cockpit are untouched.{} Restart with: world.sh start", plane_names(&planes), if left.is_empty() { String::new() } else { format!(" Still running: {}.", left.join(", ")) });
     0
 }
 
-fn cmd_start() -> i32 {
-    println!("spira: starting the loop");
+fn cmd_start(args: &[String]) -> i32 {
+    let planes = selected_planes(args, &[Plane::Work, Plane::Observability]);
+    println!("spira: starting {}", plane_names(&planes));
     let ctrl_path = env::var_os("SPIRA_CTRL")
         .map(PathBuf::from)
         .unwrap_or_else(|| run_or_die().join("control"));
@@ -372,6 +430,9 @@ fn cmd_start() -> i32 {
     let mut degraded = Vec::new();
     for t in &timers {
         let TimerSlot::Resolved(t) = t else { continue };
+        if !planes.contains(&sysctl::plane_of(t)) {
+            continue;
+        }
         let is_enabled_disabled = sysctl::run(&["is-enabled", t]) == "disabled";
         let subj = sysctl::subject_of(t, &instance);
         let action = sysctl::start_action(is_enabled_disabled, suspended.get(&subj).map(String::as_str));
@@ -399,14 +460,16 @@ fn cmd_start() -> i32 {
 
     let sfx = sfx_or_die();
     let mut watchers = BTreeSet::new();
-    for l in sysctl::run_lines(&["list-unit-files", "spira-watch@*", "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            watchers.insert(u.to_string());
+    if planes.contains(&Plane::Observability) {
+        for l in sysctl::run_lines(&["list-unit-files", "spira-watch@*", "--no-legend"]) {
+            if let Some(u) = sysctl::first_field(&l) {
+                watchers.insert(u.to_string());
+            }
         }
-    }
-    for l in sysctl::run_lines(&["list-unit-files", &format!("spira-watch-*{sfx}.service"), "--no-legend"]) {
-        if let Some(u) = sysctl::first_field(&l) {
-            watchers.insert(u.to_string());
+        for l in sysctl::run_lines(&["list-unit-files", &format!("spira-watch-*{sfx}.service"), "--no-legend"]) {
+            if let Some(u) = sysctl::first_field(&l) {
+                watchers.insert(u.to_string());
+            }
         }
     }
     for u in watchers {
@@ -433,6 +496,9 @@ fn cmd_start() -> i32 {
         }
     }
     for u in mail_units {
+        if !planes.contains(&sysctl::plane_of(&u)) {
+            continue;
+        }
         let base = u.strip_suffix(".service").unwrap_or(&u);
         let subj = sysctl::subject_of(&format!("{base}.timer"), &instance);
         if let Some(reason) = suspended.get(&subj) {
@@ -454,7 +520,9 @@ fn cmd_start() -> i32 {
         }
     }
 
-    let _ = std::fs::remove_file(halt_stamp_or_die());
+    for plane in &planes {
+        let _ = std::fs::remove_file(plane_stamp(*plane));
+    }
     if !degraded.is_empty() {
         eprintln!(
             "spira: RUNNING (DEGRADED: {} essential timer(s) disabled with no recorded suspension: {})",
@@ -588,21 +656,6 @@ fn cmd_status() -> i32 {
         if let Some(l2) = lines.next() {
             println!("{l2}");
         }
-        let sfx = sfx_or_die();
-        let mut ci_watching = Vec::new();
-        for b in sysctl::CI_WATCHER_BASES {
-            for t in [format!("{b}{sfx}.timer"), format!("{b}.timer")] {
-                if sysctl::run(&["is-active", &t]) == "active" {
-                    ci_watching.push(t);
-                    break;
-                }
-            }
-        }
-        if !ci_watching.is_empty() {
-            println!("spira: CI watchers: {}", ci_watching.join(" "));
-        } else {
-            println!("spira: nobody is watching CI");
-        }
     } else {
         println!("spira: not halted by world.sh");
         let ctrl_path = env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| run_or_die().join("control"));
@@ -631,17 +684,28 @@ fn cmd_status() -> i32 {
         }
     }
 
-    for slot in enumerate_timers() {
-        match slot {
-            TimerSlot::Resolved(t) => {
-                let state = sysctl::run(&["is-active", &t]);
-                let svc = format!("{}.service", t.strip_suffix(".timer").unwrap_or(&t));
-                let svc_result = sysctl::run(&["show", &svc, "-p", "Result", "--value"]);
-                print!("{}", sysctl::status_timer_row(&t, &state, &svc_result));
-            }
-            TimerSlot::Missing { base, reason } => {
-                println!("  {:<26} MISSING ({reason})", format!("{base}.timer"));
-            }
+    let slots = enumerate_timers();
+    for slot in &slots {
+        if let TimerSlot::Missing { base, reason } = slot {
+            println!("  {:<26} MISSING ({reason})", format!("{base}.timer"));
+        }
+    }
+    let by_plane: Vec<(Plane, String)> = slots
+        .iter()
+        .filter_map(|s| match s {
+            TimerSlot::Resolved(t) => Some((sysctl::plane_of(t), t.clone())),
+            TimerSlot::Missing { .. } => None,
+        })
+        .collect();
+    for plane in PLANES {
+        let stamp = plane_stamp(plane);
+        let state = if stamp.is_file() { "STOPPED" } else { "RUNNING" };
+        println!("spira: plane {}: {state}", plane.name());
+        for (_, t) in by_plane.iter().filter(|(p, _)| *p == plane) {
+            let unit_state = sysctl::run(&["is-active", t]);
+            let svc = format!("{}.service", t.strip_suffix(".timer").unwrap_or(t));
+            let svc_result = sysctl::run(&["show", &svc, "-p", "Result", "--value"]);
+            print!("{}", sysctl::status_timer_row(t, &unit_state, &svc_result));
         }
     }
     println!("  {:<26} {}", "dolt-beads.service", sysctl::run(&["is-active", "dolt-beads.service"]));
@@ -689,7 +753,7 @@ fn main() {
     let rest = if args.is_empty() { &[][..] } else { &args[1..] };
     let rc = match cmd.as_str() {
         "stop" => cmd_stop(rest),
-        "start" => cmd_start(),
+        "start" => cmd_start(rest),
         "drain" => cmd_drain(rest),
         "resume" => cmd_resume(),
         "status" => cmd_status(),
@@ -703,7 +767,7 @@ fn main() {
             0
         }
         _ => {
-            eprintln!("usage: world.sh {{stop [--why \"...\"] [--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start | status}}");
+            eprintln!("usage: world.sh {{stop [--why \"...\"] [--work|--observability|--maintenance|--all|--hard] [--round-drain] [--round-drain-timeout SECS] | drain [--timeout SECS | --deadline SECS] | resume | start [--work|--observability|--maintenance|--all] | status}}");
             64
         }
     };

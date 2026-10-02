@@ -13,3 +13,6 @@ Unit=spira-sentinel.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=work

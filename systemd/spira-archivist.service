@@ -31,3 +31,6 @@ StandardError=append:@SPIRA_RUN@/archivist.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

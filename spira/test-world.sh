@@ -26,8 +26,8 @@
 #   3. live_workers (/proc) is non-zero when a process matching gate.sh or landing.sh is
 #      running, and zero when it is not.
 #
-#   4. the status line's own CI-watcher-listing loop (over CI_WATCHER_BASES, not through
-#      _is_ci_watcher) names the watchers that are active and says so when none are.
+#   4. status groups timers under a line per plane, and reports a work halt without
+#      reporting the observability plane stopped.
 #
 # systemctl IS STUBBED, not reached. A suite that asks the real systemd is green for as long
 # as the box happens to be in the state its author had (law-gates-run-in-a-clean-environment).
@@ -171,7 +171,7 @@ want  "when inactive, spira-landing.service still appears" "spira-landing.servic
 want  "and is shown as inactive"                           "inactive"              "$out"
 
 # Which services `stop` acts on (work_services' filter) and which timers a plain halt
-# spares (_is_ci_watcher) are T1 decision tables now: spira/test-world-decide.sh.
+# spares are decided by each unit's declared plane: spira-world/tests/world_planes.rs.
 
 # --------------------------------------------------------------------------------------
 # 2. STOP EXITS NON-ZERO WHEN A SERVICE CANNOT BE STOPPED
@@ -292,25 +292,19 @@ if [ -d "$HARNESS/systemd" ]; then
 fi
 
 # --------------------------------------------------------------------------------------
-# 4. STATUS NAMES THE ACTIVE CI WATCHERS
-# _is_ci_watcher itself (whether a timer counts, and that a plain halt spares it while
-# --hard does not) is the T1 table in test-world-decide.sh now. What is not extracted, and
-# stays here, is the status line's OWN loop over CI_WATCHER_BASES that formats the message.
+# 4. STATUS GROUPS TIMERS BY PLANE
 # --------------------------------------------------------------------------------------
 echo
-echo "status names the active CI watchers:"
+echo "status lists each plane's timers under its own plane line:"
 
 ACTIVE_TIMERS="spira-gate-check.timer"
 ACTIVE_SVC=""; write_sc
-world stop >/dev/null   # HALTED state is what gates the status line below
+world stop >/dev/null
 
 out="$(world status)"
-want "status names gate-check as CI watcher" "spira-gate-check" "$out"
-
-# Status with watchers inactive: nobody is watching CI.
-ACTIVE_TIMERS=""; write_sc
-out="$(world status)"
-want "status says nobody is watching CI when watchers are inactive" "nobody" "$out"
+want "status names gate-check" "spira-gate-check" "$out"
+want "a work halt is reported on the work plane" "plane work: STOPPED" "$out"
+want "observability is reported separately and still running" "plane observability: RUNNING" "$out"
 ACTIVE_TIMERS=""
 
 tl_summary

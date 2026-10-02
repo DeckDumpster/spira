@@ -16,3 +16,6 @@ Unit=spira-archive.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

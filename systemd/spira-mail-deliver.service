@@ -27,3 +27,6 @@ StandardError=append:@SPIRA_RUN@/watchd/mail-deliver.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

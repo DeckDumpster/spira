@@ -39,3 +39,6 @@ StandardError=append:@SPIRA_RUN@/groom.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

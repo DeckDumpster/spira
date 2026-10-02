@@ -23,3 +23,6 @@ Unit=spira-watchtower.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

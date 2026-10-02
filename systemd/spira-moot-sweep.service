@@ -24,3 +24,6 @@ StandardError=append:@SPIRA_RUN@/moot-sweep.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=maintenance

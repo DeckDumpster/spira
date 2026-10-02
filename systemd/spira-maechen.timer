@@ -20,3 +20,6 @@ Unit=spira-maechen.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=work

@@ -23,3 +23,6 @@ StandardError=append:@SPIRA_RUN@/reconciler-flow.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

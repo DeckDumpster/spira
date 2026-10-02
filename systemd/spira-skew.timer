@@ -20,3 +20,6 @@ Unit=spira-skew.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
