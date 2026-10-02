@@ -577,6 +577,27 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
         }
     };
 
+    let moved = io::moved_members(repo, &base_sha, &stable.members);
+    if !moved.is_empty() {
+        let msg = format!(
+            "batcher {}: refused to open — {} changed since the round was built (new patches); rebuild and retest",
+            repo.name,
+            moved.join(", ")
+        );
+        println!("{msg}");
+        io::write_local_verdict(env_, &repo.name, "red", &msg);
+        io::tsd_append_round(
+            env_,
+            &[
+                ("repo", repo.name.clone()),
+                ("verdict", "refused".to_string()),
+                ("duration_ms", ((now() - round_start) * 1000).to_string()),
+                ("base", base_sha),
+            ],
+        );
+        return Ok(());
+    }
+
     // queue.local's terminal step is not a batch PR (sp-828tp, epic sp-hq9x8): no push, no
     // open-batch record, and stack_round is never reached for a Local repo — read_open_batch
     // always finds nothing since this branch never writes that file, so `cut()`'s own
