@@ -56,9 +56,27 @@ fn adaptive_n_tracks_certify_rate_times_round_duration() {
 }
 
 #[test]
-fn adaptive_n_clamps_to_four_and_thirty() {
-    assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 0.01, round_duration_mins: 1.0 }), 4);
+fn adaptive_n_clamps_to_one_and_thirty() {
+    assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 0.01, round_duration_mins: 1.0 }), 1);
     assert_eq!(adaptive_n(PoolHistory { certify_rate_per_min: 10.0, round_duration_mins: 20.0 }), 30);
+}
+
+// SEEN RED on today's code: no history floored N at 4, so the timer waited for a pool of 4
+// (law-batcher-earns-the-round-by-parity wants a cut on the first certified member).
+#[test]
+fn adaptive_n_with_no_history_is_one_not_four() {
+    assert_eq!(adaptive_n(PoolHistory::default()), 1);
+}
+
+// ACCEPTANCE (sp-ffezo): pool of 1, no batch open, cuts even with a year-long
+// queue_batch_wait. SEEN RED on today's code: n was 4, 1 < 4, and the huge wait keeps the
+// idle path from firing either, so should_cut returned None.
+#[test]
+fn pool_of_one_with_no_history_cuts_regardless_of_a_year_long_wait() {
+    let pool = vec![m("sp-a", 2, false, 0)];
+    let n = adaptive_n(PoolHistory::default());
+    let t = TriggerInputs { pool: &pool, now: 10, last_arrival: Some(0), n, q_minutes: 31_536_000 / 60, main_red: false, batch_open: false };
+    assert_eq!(should_cut(&t), Some(TriggerReason::PoolFull(1)));
 }
 
 #[test]
