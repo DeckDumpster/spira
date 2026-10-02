@@ -335,6 +335,11 @@ aged install without losing state. The verdict is one line, and a git note on th
 it. A PASS has to mean the thing works. So every check reports what it looked at, and a check
 that cannot look reports FAIL, never a pass.
 
+**Acceptance is the release gate, not a per-landing check.** `acceptance.yml` fires on
+`spira-release-*` tag pushes and on `workflow_dispatch`, never on a push to a branch: a
+per-landing run costs 25-40 minutes and a runner VM each, and re-reports one unfixed defect
+on every landing. The `gate-workflow` spira-lint rule fails a trigger on a branch or pull request.
+
 It lives in `release` because it drives `install-tarball` and nothing else in the workspace
 knows the release lineage. It also gets onto a clean machine for free. The acceptance workflow
 takes the candidate tarball's own `bin/release` and runs `release acceptance`, so the
