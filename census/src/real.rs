@@ -156,17 +156,10 @@ impl World for Real {
         }
     }
     fn landed(&self, id: &str) -> i32 {
-        let script = format!(
-            ". \"{}/conf.sh\" >/dev/null 2>&1; . \"{}/lib.sh\" >/dev/null 2>&1; landed \"$1\"",
-            self.home.display(),
-            self.home.display()
-        );
+        let Some(repo) = self.repo_root() else { return 2 };
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        Command::new("bash")
-            .arg("-c")
-            .arg(script)
-            .arg("--")
-            .arg(id)
+        Command::new("landing-pass")
+            .args(["landed", id, &repo])
             .envs(envs)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
