@@ -255,7 +255,7 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | UC-cockpit-observability-35 | `ready.sh` reports FAIL, `?`, WARN, pass or skip for each check: sentinel timer, halt stamp, DB and dolt starting-port, statutes, ready work, loom latency, agent, snapshot freshness and panes. It exits 1 on any FAIL or `?`. | FC, OBS, CTR | T1 cert (already stub-seamed) |
 | UC-cockpit-observability-36 | `ctx-meter.sh` session pointer: the operator's status-line tick owns the pointer. An idle second session cannot steal it until the holder is stale. A stale, deleted or corrupt pointer means "no session". | CON, REC | T1 cert |
 | UC-cockpit-observability-37 | `ctx-meter.sh` limits:<br>• burn rate is measured over the span, not pairwise;<br>• a projection appears only if the window fills before it resets;<br>• flat, single-sample, short or 1-point histories project nothing;<br>• a reset is a boundary;<br>• an absent or malformed window renders nothing (never 0%);<br>• the sample file is pruned to 6 h and deduplicated;<br>• env mode prints `-` or `?`;<br>• the line is ≤110 columns. | COR, FC | T1 cert |
-| UC-cockpit-observability-38 | `statusline-check.py` classifies settings as ours, other, absent, unreadable, stale (another copy of the meter, including through a /tmp wrapper) or fragile. | COR | T1 cert |
+| UC-cockpit-observability-38 | (retired: `statusline-check.py` had no caller once doctor.sh dropped the status-line section.) | - | - |
 | UC-cockpit-observability-39 | Attribution and reports:<br>• `tokens.sh` attributes turns to aeon, archivist or session, deduplicated by message id;<br>• `model-switch-report.sh` gives $/bead as `$?` (never `$0`) with no cost data;<br>• `released-defects.sh` counts only introductions that reached base before the fix, and gives `?` for an unresolvable repo. | COR, FC | T1 cert (tokens, report); T2 bCI (released-defects, real git) |
 | UC-cockpit-observability-40 | `cockpit/resolve.sh` exits non-zero and relays bd's complaint (from stdout or stderr) on a failed close, and prints `resolved` on success. | FC, OBS | T1 cert |
 
@@ -317,7 +317,7 @@ Current cost is the ci_secs from main-push run 35947142904. The Rust sources car
 | 35 | test-ready.sh (35) | T2 stubbed, 6 | KEEP (a good model). Fix: when nc is absent the port-open case prints two fake "ok" lines; make that a skip. Pin ephemeral ports. |
 | 36 | test-ctx-pointer.sh (13) | T1, 5 | KEEP |
 | 37 | test-limits.sh (28) | T1, 13 | KEEP (exemplary). An optional speed-up is to generate the blobs once per file. |
-| 38 | test-statusline.sh (13) | T1, 1 | KEEP |
+| 38 | (test-statusline.sh retired with its subject) | - | DELETED |
 | 39 | test-tokens.sh (8); test-model-switch-report.sh (6); test-released-defects.sh (5) | T1/T1/T3: 16 + 1 + 8 | KEEP tokens and report. Investigate the 16 s for 4 runs of tokens.sh (header says under 1 s; possibly scanning a real transcript dir, a hermeticity leak). released-defects: **DEMOTE-TO-T2**, with a bd graph JSON fixture and real git. |
 | 40 | test-resolve-output.sh (7) | T1, 1 | KEEP. Fix: a missing subject exits 0 ("SKIP"); make it 77 or a failure. |
 | 41 | test-cockpit-layout-identity.sh (5); test-cockpit-rebuild.sh::health tag/one session pane | T2 tmux, 3 | KEEP one tmux case in the shared-server suite. **DEMOTE the predicate to T1** over argv strings. |

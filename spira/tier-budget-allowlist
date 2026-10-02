@@ -332,7 +332,6 @@ test-slay.sh	T1	61.0
 test-sop.sh	T1	41.0
 test-spike.sh	T1	32.0
 test-spira-config.sh	T1	20.0
-test-statusline.sh	T1	5.5
 test-statute-projection.sh	T1	9.0
 test-strand-capacity.sh	T1	4.0
 test-strand-deferred.sh	T1	2.0
