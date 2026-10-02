@@ -364,8 +364,8 @@ HEAD9="$(mk_round round-9 nine.txt v9)"
 mk_bins "$HEAD9" not-the-declared-binary otherbin   # the round built something, not fakebin
 
 out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9" --worktree "$(bins_wt "$HEAD9")")"; rc=$?
-[ "$rc" -ne 0 ] && ok "9: exit non-zero on a deploy fault" \
-    || bad "9: exit non-zero on a deploy fault" "got rc=$rc out=$out"
+[ "$rc" -eq 3 ] && ok "9: exit 3 on a deploy fault, distinct from a refusal" \
+    || bad "9: exit 3 on a deploy fault, distinct from a refusal" "got rc=$rc out=$out"
 want "9: reports a deploy fault naming the commit" "LAND DEPLOY FAILED for $HEAD9: release build exited" "$out"
 want "9: says current is untouched"         "current is untouched (still $HEAD1)" "$out"
 is   "9: current is still the previous release" "$HEAD1" "$(current_name)"

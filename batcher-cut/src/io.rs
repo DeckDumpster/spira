@@ -861,6 +861,35 @@ pub fn file_local_red_incident(
     Ok(id)
 }
 
+/// File an Ops incident for a landing whose release was not activated. The members landed, so
+/// nothing is filed against them.
+pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<String, String> {
+    let title = format!("{}: landed {head} but its release was not activated", repo.name);
+    let body = format!(
+        "queue land-local exited {LAND_DEPLOY_FAULT_EXIT} for {head}: the landing is recorded and every member is LANDED, but the release build, verify or activate failed and `current` was not moved. See the queue land-local stderr in the batcher log. Fix the release path; do not reopen the members."
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("deploy-fault-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("incident.sh")
+            .arg("file")
+            .arg(&title)
+            .arg(&tmp)
+            .env("SPIRA_INCIDENT_TYPE", "bug")
+            .env("SPIRA_INCIDENT_PRIORITY", "1")
+            .env("SPIRA_INCIDENT_ACTOR", "batcher")
+            .env("SPIRA_INCIDENT_REPO", &repo.name)
+            .env("SPIRA_INCIDENT_REF", format!("land-deploy-fault:{}:{head}", repo.name))
+            .env("SPIRA_INCIDENT_CAUSE", "land-deploy-fault"),
+        "incident.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let out = out?;
+    out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).ok_or_else(|| format!("incident.sh file: no id returned: {out}"))
+}
+
 /// The last local corpus verdict for this repo's round — read by queue's own open-batch so
 /// a hand-invoked cut never sends a round CI would only reject (law-a-round-takes-certified-
 /// tips). Best-effort like every other queue-dir write here: a failure to record it leaves
@@ -951,10 +980,29 @@ pub fn certify_round(env: &Env, repo: &Repo, head: &str, round_branch: &str) -> 
 /// Land `head` locally via `queue land-local`, under the round lock this crate's own
 /// `try_lock` already holds — SPIRA_QUEUE_LOCK_HELD=1 tells land-local to skip its own flock
 /// rather than block forever on a lock this same process already owns.
-/// A non-zero exit is land-local's own refusal (non-fast-forward, no --with-bins corpus, a
-/// concurrent mover) — reported, not an error, since "refused, nothing changed" is exactly the
-/// same benign outcome `try_lock`'s own None already models for this crate's other refusals.
-pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<bool, String> {
+/// Exit 1 is land-local's own refusal (non-fast-forward, no --with-bins corpus, a concurrent
+/// mover) — reported, not an error, since "refused, nothing changed" is exactly the same benign
+/// outcome `try_lock`'s own None already models for this crate's other refusals. Exit 3 is a
+/// deploy fault: the members landed, only the release was not activated.
+#[derive(Debug, PartialEq, Eq)]
+pub enum LandOutcome {
+    Landed,
+    Refused,
+    DeployFault,
+}
+
+/// Must equal queue::ops::DEPLOY_FAULT.
+pub const LAND_DEPLOY_FAULT_EXIT: i32 = 3;
+
+pub fn classify_land_exit(code: Option<i32>) -> LandOutcome {
+    match code {
+        Some(0) => LandOutcome::Landed,
+        Some(LAND_DEPLOY_FAULT_EXIT) => LandOutcome::DeployFault,
+        _ => LandOutcome::Refused,
+    }
+}
+
+pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandOutcome, String> {
     use std::io::Write;
     let members_text = members.iter().fold(String::new(), |mut acc, (id, tip)| {
         use std::fmt::Write as _;
@@ -981,7 +1029,7 @@ pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(Str
     if !err.is_empty() {
         eprint!("{err}");
     }
-    Ok(o.status.success())
+    Ok(classify_land_exit(o.status.code()))
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1361,6 +1409,20 @@ mod eject_tests {
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
         assert_eq!(lines[1], ["land_mark", "mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod land_exit_tests {
+    use super::*;
+
+    #[test]
+    fn a_deploy_fault_is_not_a_refusal() {
+        assert_eq!(classify_land_exit(Some(0)), LandOutcome::Landed);
+        assert_eq!(classify_land_exit(Some(1)), LandOutcome::Refused);
+        assert_eq!(classify_land_exit(Some(2)), LandOutcome::Refused);
+        assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
+        assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
     }
 }
 

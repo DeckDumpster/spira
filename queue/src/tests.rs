@@ -1617,7 +1617,7 @@ fn land_local_build_failure_leaves_current_alone_keeps_the_landing_and_reports_a
     let wts = harness_world(&mut t);
     release_in_force(&t);
     t.scripts.release_rc.borrow_mut().insert("build".into(), (1, "release: the workspace declares queue but the build did not produce it\n".into()));
-    assert_eq!(land_harness(&t, &wts), 1);
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     let e = t.err();
     assert!(e.contains("LAND DEPLOY FAILED for h1: release build exited 1: release: the workspace declares queue"), "{e}");
     assert!(e.contains("current is untouched (still ") && e.contains("/r1)"), "names what current still is: {e}");
@@ -1635,7 +1635,7 @@ fn land_local_verify_or_activate_failure_is_a_deploy_fault_too() {
         let wts = harness_world(&mut t);
         release_in_force(&t);
         t.scripts.release_rc.borrow_mut().insert(sub.into(), (1, format!("release: {sub} said no\n")));
-        assert_eq!(land_harness(&t, &wts), 1, "{sub}");
+        assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT, "{sub}");
         assert!(t.err().contains(&format!("LAND DEPLOY FAILED for h1: release {sub} exited 1: release: {sub} said no")), "{}", t.err());
         assert_eq!(release_argv(&t).len(), calls, "{sub}");
         assert_eq!(t.landed_ref().as_deref(), Some("h1"));
@@ -1653,7 +1653,7 @@ fn land_local_over_a_standing_hotfix_is_refused_by_release_activate_and_reported
         "activate".into(),
         (1, "release: a hotfix is running (abc: fix) and it is not in both h1 and local/main — land it or roll it back first\n".into()),
     );
-    assert_eq!(land_harness(&t, &wts), 1);
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     assert!(release_argv(&t)[2].contains("--landed-ref local/main"));
     assert!(t.err().contains("LAND DEPLOY FAILED for h1: release activate exited 1: release: a hotfix is running"), "{}", t.err());
 }
@@ -1664,7 +1664,7 @@ fn land_local_answer_for_another_commit_is_a_fault() {
     let wts = harness_world(&mut t);
     release_in_force(&t);
     *t.scripts.build_answers.borrow_mut() = Some("h0".into());
-    assert_eq!(land_harness(&t, &wts), 1);
+    assert_eq!(land_harness(&t, &wts), crate::ops::DEPLOY_FAULT);
     assert!(t.err().contains("release build answered \"h0\" for h1 — not the landed commit"), "{}", t.err());
     assert_eq!(release_argv(&t).len(), 1);
 }

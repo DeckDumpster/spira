@@ -494,7 +494,13 @@ fn finish_local_round(env_: &Env, repo: &Repo, wt: &Path, base_sha: &str, round_
 
     let member_pairs: Vec<(String, String)> = stable.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let landed = io::land_local(env_, repo, wt, &head, &member_pairs)?;
-    if !landed {
+    if landed == io::LandOutcome::DeployFault {
+        match io::file_deploy_fault_incident(env_, repo, &head) {
+            Ok(id) => println!("batcher {}: landed {head} but its release was not activated — filed {id} for Ops", repo.name),
+            Err(e) => println!("batcher {}: landed {head} but its release was not activated — could not file for Ops: {e}", repo.name),
+        }
+    }
+    if landed == io::LandOutcome::Refused {
         io::write_local_verdict(env_, &repo.name, "red", "queue land-local refused — see its own stderr above");
         io::tsd_append_round(
             env_,
