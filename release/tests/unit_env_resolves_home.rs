@@ -566,6 +566,7 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
     let refs = Command::new("git").arg("-C").arg(&resolved).args(["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/"]).output().expect("git for-each-ref");
     let seen = String::from_utf8_lossy(&refs.stdout);
     assert!(seen.lines().any(|l| l == "spira/sp-x"), "the fixture branch must be visible in the resolved checkout: {seen:?}");
+}
 
 /// Config refusals a unit's own binary printed in production when it read a registry key
 /// from the bare environment (law-a-binary-resolves-the-config-it-reads): none may appear
