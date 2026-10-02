@@ -1,5 +1,11 @@
 # Test plan — Per-branch gate verdict (`gate-verdict`)
 
+> **2026-09-27: `test-gate-base-selection.sh` deleted** (sp-5ayw5, test-corpus audit). Its
+> branch-selection row is already asserted by `test-gate-base-evidence.sh` ("SELECT_HEAD
+> names the branch on the base trial too"), and its base-red attribution row by
+> `test-gate-unit.sh`; no defect or scar cited it, and its tier-budget-allowlist row is
+> removed with it.
+
 > **2026-09-25: `test-gate-tree.sh` and `test-gate-locks.sh` rebuilt** (sp-fm2wn), closing
 > gap #16. `test-gate-tree.sh` (deleted as sp-78xpb) now proves concurrency with start/end
 > marker overlap detection instead of an elapsed-time threshold — a busy host slows every

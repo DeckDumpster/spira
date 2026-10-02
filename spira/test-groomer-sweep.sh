@@ -15,7 +15,7 @@
 # the detector now returns only the two beads sweep cannot fix.
 #
 # tier: T1
-# covers: groomer/src/* spira/lib.sh spira/conf.sh
+# covers: groomer/src/* spira/lib.sh spira/conf.sh UC-ops-detection-remediation-31
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testdb.sh"

@@ -28,6 +28,7 @@
 # sibling in reverse) is paired with the accepting case, so a check that never fires is caught
 # rather than trusted on silence.
 #
+# tier: T2
 # covers: tsd/src/lib.rs tsd/src/main.rs spira/tsd-query.sh spira/deps.toml spira/conf.sh
 #         spira/lib.sh testenv/src/* spira/testenv/Containerfile
 set -uo pipefail

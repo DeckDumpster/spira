@@ -62,6 +62,7 @@
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): 3 and 10 assert nothing fires
 # on a healthy fixture before 4-9 and 11-17 add the trigger and assert it does.
 #
+# tier: T2
 # covers: reconciler/src/main.rs reconciler-engine/src/**.rs desired-state/src/store.rs
 #         desired-state/src/resource.rs spira/reconciler.sh
 #         spira/units-manifest.sh spira/fleet-status.sh spira/queue-certified-list.sh

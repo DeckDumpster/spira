@@ -10,6 +10,7 @@
 # exit status must also be checked so a write failure does not silently produce
 # a "certified" result (gap G6).
 #
+# tier: T3
 # covers: queue/src/* testenv/src/suites/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

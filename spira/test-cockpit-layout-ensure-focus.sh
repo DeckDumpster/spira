@@ -17,7 +17,8 @@
 # active pane really is gone, focus MUST move to the session pane.
 #
 # defect: sp-gyl8n
-# covers: cockpit/ops/src/layout.rs
+# tier: T2
+# covers: cockpit/ops/src/layout.rs UC-cockpit-observability-43
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -13,7 +13,8 @@
 #   - gate-run.sh --status emits nothing on stderr under a changing process table
 #
 # defect: sp-idml
-# covers: cockpit-collect/src/* spira/gate-run.sh cockpit/ops/src/health.rs
+# tier: T1
+# covers: cockpit-collect/src/* spira/gate-run.sh cockpit/ops/src/health.rs UC-cockpit-observability-15
 # scar: the gate/landing section was absent from the cockpit snapshot, so the DONE-to-LANDED stretch and live gate status were invisible on the health pane.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

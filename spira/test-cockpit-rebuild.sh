@@ -27,7 +27,7 @@
 #
 # defect: sp-9zs0y
 # tier: T1
-# covers: cockpit/ops/src/rebuild.rs cockpit/ops/src/layout.rs
+# covers: cockpit/ops/src/rebuild.rs cockpit/ops/src/layout.rs UC-cockpit-observability-46
 # hermetic-ok: its own TMUX_TMPDIR server and temp dirs; reads no operator state it can change
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

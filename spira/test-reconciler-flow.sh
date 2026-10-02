@@ -38,6 +38,7 @@
 # hand-written run/tsd/ fixtures — not a model of either (law-prefer-the-real-dependency).
 #
 # defect: sp-rh0x3
+# tier: T3
 # covers: reconciler-flow/src/**.rs spira/conf.sh spira/build-tarball.sh
 #         systemd/spira-reconciler-flow.service systemd/spira-reconciler-flow.timer
 #         install/src/manifest.rs install/src/bin/units_install.rs

@@ -424,3 +424,17 @@ line is dead weight): its `spira/config-fence-allow` line and its `spira/tier-bu
 allowlist` line (T1, 16.0 s). No caller outside the suite corpus referenced it (no systemd
 unit, `.github/workflows`, `spira.toml` gate string, or chamber brief named it; gate.steps
 selects suites dynamically by `suite-select`/`covers:`, not by a fixed list).
+
+**sp-5ayw5 (2026-09-27, test-corpus audit):** two true deletion candidates from this area,
+both true duplicates rather than the merges section 3 originally called for:
+
+- `test-landing-mode-map.sh` deleted. Section 3's UC-26 verdict ("move to T0 lint stage")
+  never landed as a rescoped check — the file stayed a pure source-grep/string-presence lint
+  with no defect or scar cited, which the corpus audit now judges not worth keeping in that
+  shape. UC-26's other content (the one-implementation fence on `land_mark`/`land_state`/
+  `land_mark_at`, the no-rebase and `--no-write-fetch-head` checks) is untouched, still
+  proved statically elsewhere.
+- `test-landing-build.sh` deleted as a plain duplicate of `test-land-build-ensure.sh` (same
+  trigger, one binary, no defect cited).
+
+Both files' tier-budget-allowlist rows are removed with them.

@@ -17,6 +17,7 @@
 #   C  BINARY MISSING: SPIRA_BROKER_ENABLE=1 but binary not executable → broker
 #      timer absent from ENABLE even though the opt-in is set.
 #
+# tier: T1
 # covers: install/src/manifest.rs spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

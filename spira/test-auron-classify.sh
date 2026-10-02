@@ -28,7 +28,7 @@
 # here reaches a database or a file outside $TMP. The reconciler (raising, clearing and
 # reopening real beads against it) is test-auron.sh.
 # tier: T1
-# covers: spira/auron-classify.py spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log
+# covers: spira/auron-classify.py spira/testdata/sentinel-healthy.log spira/testdata/sentinel-pre-check7.log UC-ops-detection-remediation-18
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

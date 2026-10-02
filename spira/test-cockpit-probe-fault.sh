@@ -21,7 +21,8 @@
 # single process instead of one `health.sh once` per case (1,844 lines + conf.sh, each).
 #
 # defect: sp-cof
-# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
+# tier: T1
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs UC-cockpit-observability-21
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

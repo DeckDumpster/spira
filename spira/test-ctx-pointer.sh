@@ -16,7 +16,7 @@
 #
 # defect: sp-881
 # tier: T1
-# covers: spira/ctx-meter.sh
+# covers: spira/ctx-meter.sh UC-cockpit-observability-36
 # scar: ctx-meter env mode picked the newest-mtime transcript across every project; with aeons running it reported an aeon's worktree transcript rather than the operator's session.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

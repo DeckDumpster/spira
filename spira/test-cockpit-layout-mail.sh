@@ -6,7 +6,7 @@
 # pane back; a client that is unset or not installed gets no pane rather than one that dies.
 #
 # tier: T1
-# covers: cockpit/ops/src/layout.rs spira/conf.sh
+# covers: cockpit/ops/src/layout.rs spira/conf.sh UC-cockpit-observability-42
 set -uo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

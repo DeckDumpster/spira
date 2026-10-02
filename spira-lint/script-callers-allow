@@ -3,3 +3,4 @@
 # this defect when the rule landed; remove the line in the same change that fixes it (every
 # finding the path produces is suppressed while it is listed, not just the one named below).
 #
+# Suites still naming scripts retired into Rust binaries; repoint each to its binary and drop the line.

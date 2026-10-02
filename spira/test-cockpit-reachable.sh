@@ -20,7 +20,7 @@
 #   And: health.sh renders "N ready · M reachable" and "K stranded" when K > 0.
 #
 # tier: T1
-# covers: cockpit-collect/src/* cockpit/ops/src/health.rs
+# covers: cockpit-collect/src/* cockpit/ops/src/health.rs UC-cockpit-observability-09
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

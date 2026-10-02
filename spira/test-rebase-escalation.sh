@@ -30,6 +30,7 @@
 # through `landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others>`
 # against the real compiled binary, same real-sender contract as before.
 #
+# tier: T2
 # covers: landing-pass/src/* mail/src/*
 # hermetic-ok: uses a fixture database and a fixture SPIRA_MAIL dir, no systemd or gh
 set -uo pipefail

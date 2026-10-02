@@ -18,6 +18,7 @@
 #
 #
 # defect: sp-umcjk
+# tier: T2
 # covers: landing-pass/* spira/conf.sh spira/lib.sh
 # timeout: 300
 set -uo pipefail

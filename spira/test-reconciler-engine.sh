@@ -17,6 +17,7 @@
 # own persistence round-trip tests.
 #
 # defect: sp-pu7v6
+# tier: T1
 # covers: reconciler-engine/*
 # timeout: 60
 set -uo pipefail

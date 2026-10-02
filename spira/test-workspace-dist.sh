@@ -20,6 +20,7 @@
 #      --workspace never discovered bin/landing-pass. Asserted directly against
 #      this repo's own Cargo.toml, not the synthetic fixture above.
 #
+# tier: T2
 # covers: spira/build-tarball.sh Cargo.toml Makefile
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

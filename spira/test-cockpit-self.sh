@@ -37,7 +37,8 @@
 # are strings and the suite is hermetic by construction.
 #
 # defect: sp-jo8i
-# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs
+# tier: T1
+# covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs UC-cockpit-observability-16
 
 # covers: spira/cockpit-metrics.py cockpit/ops/src/health.rs
 # scar: the SELF metrics (repeating aeons, stillborn starts, starved passes) were absent; current session anomalies were invisible on the health pane.

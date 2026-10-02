@@ -9,6 +9,7 @@
 # would have failed (or succeeded) regardless (law-a-pattern-match-is-not-an-identity-check;
 # a check that finds nothing must first prove it could have found something).
 #
+# tier: T2
 # covers: queue/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

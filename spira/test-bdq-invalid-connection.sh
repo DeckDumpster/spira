@@ -25,6 +25,7 @@
 #      once, not forever, and the final failure's stderr reaches the caller.
 #
 # defect: sp-ydog2
+# tier: T1
 # covers: spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

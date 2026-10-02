@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-gate-retry.sh — a red suite is re-run once serially; red twice fails, red then green passes.
 # tier: T1
-# covers: spira/gate-retry.sh .github/workflows/gate.yml
+# covers: spira/gate-retry.sh .github/workflows/gate.yml UC-test-infrastructure-35
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

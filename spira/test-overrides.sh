@@ -4,6 +4,7 @@
 # them the instant it resets a checkout, and a declared override retires once HEAD carries a
 # `spira: land <bead>` commit.
 #
+# tier: T3
 # covers: spira/overrides.sh skew/src/* doctor/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

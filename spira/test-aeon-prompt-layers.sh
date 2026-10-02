@@ -12,7 +12,8 @@
 # through the real `aeon` binary and real chamber fayths.
 #
 # defect: sp-d0rnp
-# covers: aeon/src/* spira/chamber/*.fayth spira/lib.sh
+# tier: T2
+# covers: aeon/src/* spira/chamber/*.fayth spira/lib.sh UC-aeon-execution-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

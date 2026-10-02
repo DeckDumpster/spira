@@ -28,6 +28,7 @@
 # what is under test here is what landing does AFTER a verdict, not how one is reached.
 #
 # defect: sp-dupland
+# tier: T2
 # covers: landing-pass/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

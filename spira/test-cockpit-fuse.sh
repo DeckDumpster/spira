@@ -24,7 +24,8 @@
 # `health` pane and do not care whether FUSE/trace_tail live in bash or Rust.
 #
 # defect: sp-yhue
-# covers: cockpit-collect/src/* aeon/src/trace.rs cockpit/ops/src/health.rs
+# tier: T2
+# covers: cockpit-collect/src/* aeon/src/trace.rs cockpit/ops/src/health.rs UC-cockpit-observability-15
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

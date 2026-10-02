@@ -25,6 +25,7 @@
 #      landed() was only consulted at n=0. Now: closed + landed() = SENT before KEEP.
 #      Positive control: a closed bead whose id does NOT appear on the base is KEPT.
 #
+# tier: T2
 # covers: sending/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

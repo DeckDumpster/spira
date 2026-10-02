@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-gate-retry-structural.sh — structural-failure heuristic skips the serial re-run
 # tier: T1
-# covers: spira/gate-retry.sh
+# covers: spira/gate-retry.sh UC-test-infrastructure-35
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

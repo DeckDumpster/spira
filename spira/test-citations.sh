@@ -23,7 +23,7 @@
 #
 # defect: sp-gsmx.7
 # tier: T2
-# covers: spira/citations.sh spira/test-*.sh
+# covers: spira/citations.sh spira/test-*.sh UC-test-infrastructure-40
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

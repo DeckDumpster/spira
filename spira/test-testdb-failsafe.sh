@@ -22,7 +22,8 @@
 # The assertion "bead count unchanged" failed. That failure was observed before applying
 # the fix, confirming this test detects the leak rather than passing for an unrelated reason.
 #
-# covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh
+# tier: T3
+# covers: spira/testdb.sh spira/test-cockpit-bd-contract.sh UC-test-infrastructure-22
 #         spira/test-landing.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -30,7 +30,7 @@
 #
 # defect: sp-0uu
 # tier: T1
-# covers: spira/ctx-meter.sh
+# covers: spira/ctx-meter.sh UC-cockpit-observability-37
 # scar: the rate-limit window projected from evenly-spaced samples, a cadence the hook never produces; the real uneven cadence produced a wrong fill projection.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

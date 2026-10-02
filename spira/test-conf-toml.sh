@@ -19,6 +19,7 @@
 #    spira.toml directly, so a surviving spira.conf is stale by construction.
 #
 # defect: sp-zs04v.2, sp-usxfl
+# tier: T1
 # covers: spira/conf.sh spira-config/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

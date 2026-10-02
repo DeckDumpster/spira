@@ -12,6 +12,7 @@
 # 8. (retired, sp-uwhx0) — every script this once grepped is either Rust now or deleted;
 #    see the section itself for why.
 #
+# tier: T1
 # covers: spira/git-credential-app.sh spira/lib.sh landing-pass/src/* sending/src/* queue/src/* spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

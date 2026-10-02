@@ -20,6 +20,7 @@
 # the "certified spira/<id>" line is land_repo's own marker that the branch loop reached
 # this branch. The queue step is stubbed to control what the forge reports.
 #
+# tier: T2
 # covers: landing-pass/*
 # timeout: 120
 set -uo pipefail

@@ -24,7 +24,8 @@
 # is instead invoked directly with controlled flags, bypassing conf.sh entirely.
 # This runs the actual renderer, not a copy.
 #
-# covers: install/src/values.rs install/src/bin/units_install.rs
+# tier: T1
+# covers: install/src/values.rs install/src/bin/units_install.rs UC-instance-lifecycle-26
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

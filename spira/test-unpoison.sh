@@ -8,7 +8,7 @@
 # come out the other way, judged by `spira-claim decide` — the function CHECK 4 itself calls.
 #
 # tier: T2
-# covers: spira-claim/* spira-lc/* lifecycle/*
+# covers: spira-claim/* spira-lc/* lifecycle/* UC-aeon-execution-21
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

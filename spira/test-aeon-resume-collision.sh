@@ -22,6 +22,7 @@
 # instead of only on lucky ones.
 #
 # defect: sp-3ntca
+# tier: T2
 # covers: aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

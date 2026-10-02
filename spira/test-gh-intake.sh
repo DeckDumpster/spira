@@ -21,7 +21,7 @@
 #      (law-beads-is-never-public) — a real behavioural check, not a source grep.
 #
 # tier: T1
-# covers: gh-intake/src/*.rs systemd/spira-gh-intake.service systemd/spira-gh-intake.timer
+# covers: gh-intake/src/*.rs systemd/spira-gh-intake.service systemd/spira-gh-intake.timer UC-dispatch-06
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

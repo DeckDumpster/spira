@@ -14,6 +14,7 @@
 #   - health.sh's rendered row keeps NEVER, FAIL and ? visually distinct
 #
 # defect: sp-hhggy
+# tier: T2
 # covers: cockpit-collect/src/* cockpit/ops/src/health.rs
 # scar: acceptance had been discarding its verdict for days while the cockpit
 #   showed nothing, because a verdict-only row cannot distinguish stale calm

@@ -36,7 +36,7 @@
 # suites that use testdb.sh.
 #
 # tier: T1
-# covers: spira/groom-trigger.sh spira/conf.sh
+# covers: spira/groom-trigger.sh spira/conf.sh UC-ops-detection-remediation-33
 # scar: groom-trigger.sh was absent, so the groomer never ran; without a trigger bead the groomer's partition was always empty.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

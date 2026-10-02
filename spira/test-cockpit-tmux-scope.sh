@@ -18,6 +18,7 @@
 # tool — simulating a human running the tool from inside that other session.
 #
 # defect: sp-1biss
+# tier: T2
 # covers: cockpit/ops/src/layout.rs cockpit/ops/src/rebuild.rs
 # hermetic-ok: two servers of its own under one TMUX_TMPDIR; touches no operator state
 set -uo pipefail

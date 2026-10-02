@@ -30,7 +30,7 @@
 # isolation was the fix (sp-dah).
 #
 # tier: T1
-# covers: spira/cadence.sh
+# covers: spira/cadence.sh UC-instance-lifecycle-32
 # priority: 2
 # timeout: 180
 set -uo pipefail

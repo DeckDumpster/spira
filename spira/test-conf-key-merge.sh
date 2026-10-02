@@ -11,6 +11,7 @@
 # require git to see a CONFLICT there. Only then does the one-per-line fixture's clean merge
 # mean anything.
 #
+# tier: T1
 # covers: spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

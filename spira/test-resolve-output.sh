@@ -17,7 +17,7 @@
 # Driven through BD_BIN and COCKPIT_DB overrides — no database build, under a second.
 #
 # tier: T1
-# covers: cockpit/ops/src/resolve.rs
+# covers: cockpit/ops/src/resolve.rs UC-cockpit-observability-40
 # defect: sp-ve5s
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

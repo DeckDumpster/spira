@@ -26,7 +26,7 @@
 #
 # defect: sp-37q (test-skew.sh deleted in 7357fb3 when the full gate was removed; this
 #   recovers the foreign-subcommand coverage that gate.sh still relies on)
-# covers: skew/src/* spira/gate.sh spira/exclude.sh
+# covers: skew/src/* spira/gate.sh spira/exclude.sh UC-instance-lifecycle-36
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

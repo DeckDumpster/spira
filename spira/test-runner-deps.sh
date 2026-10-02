@@ -22,7 +22,7 @@
 # and usermod, which a suite must not do to the machine it is running on.
 #
 # tier: T1
-# covers: spira/runner-deps.sh
+# covers: spira/runner-deps.sh UC-test-infrastructure-39
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

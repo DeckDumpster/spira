@@ -11,6 +11,7 @@
 # POSITIVE CONTROL: each structural check is first proved against an offender before
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
+# tier: T2
 # covers: landing-pass/*
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

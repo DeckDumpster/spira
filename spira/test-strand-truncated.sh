@@ -33,7 +33,7 @@
 #
 # defect: sp-ow8n
 # tier: T1
-# covers: strand/src/* sentinel/src/* spira/lib.sh
+# covers: strand/src/* sentinel/src/* spira/lib.sh UC-ops-detection-remediation-22
 # hermetic-ok: cases 2-3 use no database; case 4 uses no database (SPIRA_SKIP_RECLAIM=1)
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

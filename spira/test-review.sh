@@ -34,7 +34,7 @@
 #
 # defect: sp-gsmx.4
 # tier: T2
-# covers: spira/review.sh spira/conf.sh spira/lib.sh spira/release.sh
+# covers: spira/review.sh spira/conf.sh spira/lib.sh spira/release.sh UC-instance-lifecycle-07
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

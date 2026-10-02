@@ -19,7 +19,7 @@
 # test-builder-qa-proposed.sh and test-sentinel-store-reads.sh use.
 #
 # tier: T1
-# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/*
+# covers: spira/chamber/czar.fayth spira/lib.sh spira/conf.sh spira-claim/* UC-dispatch-09
 # hermetic-ok: no real database, no systemd; SPIRA_BD and SPIRA_SUMMON are stubs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

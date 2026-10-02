@@ -11,6 +11,7 @@
 #
 # Extracted from test-landing.sh to reduce the critical-path suite time.
 #
+# tier: T2
 # covers: landing-pass/* spira/lib.sh skew/src/*
 # timeout: 240
 set -uo pipefail

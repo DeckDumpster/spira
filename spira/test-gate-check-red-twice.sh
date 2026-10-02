@@ -21,7 +21,7 @@
 # A REAL bd AGAINST A THROWAWAY DATABASE (law-prefer-the-real-dependency).
 #
 # tier: T1
-# covers: spira/gate-check.sh spira/gate-retry.sh
+# covers: spira/gate-check.sh spira/gate-retry.sh UC-test-infrastructure-37
 # priority: 1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -17,7 +17,8 @@
 #
 # No database, no network.
 #
-# covers: cockpit/ops/src/health.rs
+# tier: T1
+# covers: cockpit/ops/src/health.rs UC-cockpit-observability-25
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

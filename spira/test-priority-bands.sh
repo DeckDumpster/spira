@@ -15,7 +15,7 @@
 # harness's own findings drawing an aeon ahead of a user's.
 #
 # tier: T1
-# covers: spira/conf.sh testenv/src/suites/ports.rs gh-intake/src/main.rs incident/src/main.rs
+# covers: spira/conf.sh testenv/src/suites/ports.rs gh-intake/src/main.rs incident/src/main.rs UC-ops-detection-remediation-36
 # tier: T0
 # covers: spira/conf.sh spira/suites.sh gh-intake/src/main.rs incident/src/main.rs
 set -uo pipefail

@@ -27,6 +27,7 @@
 # SEAMS
 #   SPIRA_INSTALL_DOLT_READY_WAIT — max seconds to wait for a real query to answer
 #
+# tier: T1
 # covers: install/src/bin/install.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"

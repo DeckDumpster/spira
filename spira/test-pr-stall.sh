@@ -29,7 +29,7 @@
 # then CONFLICTING, then the arm path.
 #
 # tier: T1
-# covers: watchtower/src/* sentinel/src/* doctor/src/* spira/conf.sh landing-pass/src/*
+# covers: watchtower/src/* sentinel/src/* doctor/src/* spira/conf.sh landing-pass/src/* UC-ops-detection-remediation-28
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

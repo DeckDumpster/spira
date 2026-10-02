@@ -37,7 +37,7 @@
 # with the database built once.
 #
 # tier: T2
-# covers: spira/lib.sh cockpit-collect/src/* spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth
+# covers: spira/lib.sh cockpit-collect/src/* spira/close-reason-flags.py spira/chamber/builder.fayth spira/chamber/ops.fayth UC-ops-detection-remediation-29
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

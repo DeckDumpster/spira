@@ -13,6 +13,7 @@
 # refuses identically whichever kind names a repo.
 #
 # defect: sp-pnhtt
+# tier: T1
 # covers: spira/bead.sh spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -24,7 +24,7 @@
 # four of the other checks; the "positive control" grep is the one that fails.
 #
 # tier: T0
-# covers: spira/chamber/maechen.fayth spira/chamber/maechen.md spira/conf.sh
+# covers: spira/chamber/maechen.fayth spira/chamber/maechen.md spira/conf.sh UC-ops-detection-remediation-17
 # hermetic-ok: no database, no systemd; reads files only
 # scar: unrecorded
 set -uo pipefail

@@ -27,7 +27,7 @@
 # the right arguments; bd's own correctness is tested in suites that use testdb.sh.
 #
 # tier: T1
-# covers: groomer/src/* spira/conf.sh
+# covers: groomer/src/* spira/conf.sh UC-ops-detection-remediation-32
 # defect: sp-gsmx.8
 # scar: groomer lacked a hard refusal of unwanted-close; the only barrier against closing a bead as unwanted was a sentence in a brief.
 set -uo pipefail

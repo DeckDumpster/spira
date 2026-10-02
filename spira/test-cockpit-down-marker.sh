@@ -15,6 +15,7 @@
 # the operator is looking at.
 #
 # defect: sp-tc9ha
+# tier: T2
 # covers: cockpit/ops/src/layout.rs cockpit/ops/src/rebuild.rs
 # hermetic-ok: its own TMUX_TMPDIR servers and temp dirs; reads no operator state it can change
 set -uo pipefail

@@ -18,7 +18,7 @@
 #
 # defect: sp-9ydp
 # tier: T1
-# covers: spira/statusline-check.py
+# covers: spira/statusline-check.py UC-cockpit-observability-38
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

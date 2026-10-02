@@ -27,6 +27,7 @@
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): case 3 first proves case 2's
 # alert landed, then proves a second call for the same streak adds no second message.
 #
+# tier: T3
 # covers: reconciler-alert/src/**.rs reconciler-engine/src/alert.rs spira/mail/kinds/alert.md
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

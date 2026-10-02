@@ -11,7 +11,7 @@
 #
 # defect: sp-rcr sp-d0jp
 # tier: T1
-# covers: spira/tokens.sh
+# covers: spira/tokens.sh UC-cockpit-observability-39
 # scar: worktree transcripts were attributed to the interactive session; archivist spend landed in session because it runs under $SPIRA_RUN but not under the worktree prefix.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

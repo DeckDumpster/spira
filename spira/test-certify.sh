@@ -22,6 +22,7 @@
 # confine.sh is a stub; the real db is testdb.sh with an embedded engine.
 # The bare remote is real git so ancestry checks are real.
 #
+# tier: T2
 # covers: landing-pass/* spira/conf.sh
 # timeout: 180
 set -uo pipefail

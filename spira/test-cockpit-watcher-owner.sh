@@ -35,7 +35,7 @@
 # list to keep the race reproducible.
 #
 # tier: T1
-# covers: cockpit/remote/cockpit-remote watchd/*
+# covers: cockpit/remote/cockpit-remote watchd/* UC-cockpit-observability-48
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"

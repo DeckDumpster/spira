@@ -31,7 +31,8 @@
 # SKIP CONDITION: no podman on PATH, or user systemd not available in the container.
 #
 # runtime: ~3m
-# covers: install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile
+# tier: T3
+# covers: install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
