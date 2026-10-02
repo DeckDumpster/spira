@@ -81,7 +81,7 @@ Timers, each doing one thing, none waiting on another.
 | `spira-skew.timer` | 1 h | is the harness in force the harness that landed? |
 | `spira-groom.timer` | 6 h | graph hygiene: split, merge, close beads whose premises are gone |
 
-`spira-archive`, `spira-watch-refresh`, `spira-watch-notify`, `spira-moot-sweep`,
+`spira-archive`, `spira-refresh`, `spira-notify`, `spira-moot-sweep`,
 `spira-verify-asks`, `spira-promote`, `cockpit-ensure` and `beads-push` keep the surrounding
 machinery honest — transcripts archived, watchers running current code, unread events
 escalated, panes repaired, databases pushed to their remotes.

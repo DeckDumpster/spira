@@ -352,6 +352,9 @@ fn db_server_wait(ctx: &Ctx) {
     eprintln!("install: warning — the beads database did not answer within {max}s; arming timers anyway");
 }
 
+/// Manifest units once named `spira-watch-<x>-<instance>`, a name the watcher glob also matched.
+const RENAMED_OUT_OF_WATCHER_NAMESPACE: [&str; 2] = ["refresh", "notify"];
+
 /// Disable and delete any surviving un-suffixed `spira-*` unit — the naming scheme that
 /// predates per-instance suffixes. Enumerated from the manifest's own templates, so a
 /// template added here is automatically covered without a second edit.
@@ -370,6 +373,15 @@ fn migrate_legacy(ctx: &Ctx, r: &mut Report) {
         if ctx.systemctl.disable_now(name).is_ok() {
             let _ = fs::remove_file(ctx.unit_dir.join(name));
             r.migrated_legacy.push(name.to_string());
+        }
+    }
+    for base in RENAMED_OUT_OF_WATCHER_NAMESPACE {
+        for ext in ["service", "timer"] {
+            let old = format!("spira-watch-{base}-{}.{ext}", ctx.host.instance);
+            if ctx.systemctl.disable_now(&old).is_ok() {
+                let _ = fs::remove_file(ctx.unit_dir.join(&old));
+                r.migrated_legacy.push(old);
+            }
         }
     }
     if ctx.skip_migrate_watchers {
@@ -516,6 +528,30 @@ mod tests {
         assert_eq!(r2.unchanged, 2);
         // Already active and unchanged: Skip, no second enable/restart call recorded.
         assert!(matches!(r2.enabled_actions.iter().find(|(u, _)| u == "spira-sentinel-prod.timer").unwrap().1, Action::Skip));
+    }
+
+    #[test]
+    fn install_migrates_the_old_watcher_namespaced_units_away() {
+        let td = tempdir();
+        let unit_dir = td.join("units");
+        let tmpl_dir = td.join("templates");
+        fs::create_dir_all(&unit_dir).unwrap();
+        fs::create_dir_all(&tmpl_dir).unwrap();
+        write_templates(&tmpl_dir);
+        for old in ["spira-watch-refresh-prod.service", "spira-watch-refresh-prod.timer", "spira-watch-notify-prod.service", "spira-watch-notify-prod.timer"] {
+            fs::write(unit_dir.join(old), "[Service]\n").unwrap();
+        }
+        let manifest = tiny_manifest();
+        let h = host();
+        let sc = FakeSystemctl::default();
+        let no_suspend = |_: &str| false;
+        let ctx = Ctx { unit_dir: &unit_dir, templates_dir: &tmpl_dir, host: &h, manifest: &manifest, systemctl: &sc, suspended: &no_suspend, world_halted: false, skip_migrate_watchers: false };
+        let r = run(&ctx);
+        assert!(r.errors.is_empty(), "{:?}", r.errors);
+        for old in ["spira-watch-refresh-prod.service", "spira-watch-refresh-prod.timer", "spira-watch-notify-prod.service", "spira-watch-notify-prod.timer"] {
+            assert!(!unit_dir.join(old).exists(), "{old} survived");
+            assert!(sc.disabled_now.borrow().contains(&old.to_string()), "{old} not disabled");
+        }
     }
 
     #[test]
