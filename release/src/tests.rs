@@ -132,10 +132,19 @@ impl World {
         World::with_git(FakeGit::default())
     }
     fn with_git(git: FakeGit) -> World {
+        World::with_git_and_env(git, &[])
+    }
+    /// [`World::with_git`] plus extra environment entries (sp-xtdqi-2) — for a case that
+    /// needs a host key `with_git` never sets (e.g. `SPIRA_SCCACHE_DAV_ADDR`'s env-bootstrap
+    /// path) without touching every other test's fixed env.
+    fn with_git_and_env(git: FakeGit, extra: &[(&str, &str)]) -> World {
         let sb = Sandbox::new();
         let mut env = Env::new();
         env.insert("SPIRA_UNIT_DIR".into(), sb.p().join("units").display().to_string());
         env.insert("SPIRA_INSTANCE".into(), "prod".into());
+        for (k, v) in extra {
+            env.insert(k.to_string(), v.to_string());
+        }
         let flags = Flags { releases: Some(sb.p().join("rel")), run: Some(sb.p().join("run")), keep: Some(2) };
         let cfg = Config::resolve_with(&flags, &env, None).unwrap();
         fs::create_dir_all(sb.p().join("units")).unwrap();
@@ -191,6 +200,10 @@ struct FakeSystemctl {
     transient: BTreeSet<String>,
     /// When set, `restart` fails for this unit name instead of updating its state.
     restart_fails: BTreeSet<String>,
+    /// `disable_now` calls, in order — sp-xtdqi-2's retire path.
+    disabled: RefCell<Vec<String>>,
+    /// When set, `disable_now` fails for this unit name.
+    disable_fails: BTreeSet<String>,
 }
 
 impl FakeSystemctl {
@@ -209,6 +222,8 @@ impl FakeSystemctl {
             poison: None,
             transient: BTreeSet::new(),
             restart_fails: BTreeSet::new(),
+            disabled: RefCell::new(vec![]),
+            disable_fails: BTreeSet::new(),
         }
     }
 }
@@ -223,6 +238,17 @@ impl Systemctl for FakeSystemctl {
     }
     fn cat(&self, _unit: &str) -> Result<String, String> {
         Err("cat: not modelled by this fake — activate/rollback never call it".into())
+    }
+    fn disable_now(&self, unit: &str) -> Result<(), String> {
+        self.disabled.borrow_mut().push(unit.into());
+        if self.disable_fails.contains(unit) {
+            return Err(format!("{unit}: simulated disable failure"));
+        }
+        let mut s = self.states.borrow_mut();
+        let e = s.entry(unit.into()).or_default();
+        e.active = "inactive".into();
+        e.result = "success".into();
+        Ok(())
     }
     fn restart(&self, unit: &str) -> Result<(), String> {
         self.restarts.borrow_mut().push(unit.into());
@@ -619,6 +645,19 @@ fn render_names_the_release_and_refuses_what_it_cannot_fill() {
     assert!(e.contains("uses SPIRA_DB but no value"), "{e}");
 }
 
+#[test]
+fn gate_open_is_true_without_a_gate_and_checks_the_host_key_when_there_is_one() {
+    let mut host = BTreeMap::new();
+    assert!(units::gate_open("spira-tool.service", &host), "no gate at all");
+    assert!(!units::gate_open("sccache-dav.service", &host), "gated, key absent");
+    host.insert("SPIRA_SCCACHE_DAV_ADDR".to_string(), "  ".to_string());
+    assert!(!units::gate_open("sccache-dav.service", &host), "gated, key blank");
+    host.insert("SPIRA_SCCACHE_DAV_ADDR".to_string(), "192.168.1.56:9431".to_string());
+    assert!(units::gate_open("sccache-dav.service", &host));
+    assert_eq!(units::gate_key("sccache-dav.service"), Some(units::SCCACHE_DAV_ADDR_KEY));
+    assert_eq!(units::gate_key("spira-tool.service"), None);
+}
+
 /// Every service template this tree ships, rendered against a release, carries that release's
 /// launcher PATH, set outright (sp-31gtu), with the box's own tool-directory tail appended
 /// after the system directories (sp-c7b85): the acceptance "rendered units carry the release
@@ -630,7 +669,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "DOLT", "SPIRA_INSTANCE"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());
@@ -774,6 +813,64 @@ fn activate_refuses_a_tampered_release_or_an_unrenderable_unit_and_changes_nothi
     assert!(e.contains("uses SPIRA_DB but no value") && e.contains("nothing changed"), "{e}");
     assert_eq!(w.current(), None);
     assert_eq!(w.unit("spira-db-prod.service"), "old\n");
+}
+
+fn sccache_dav_template() -> String {
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/sccache-dav.service")).unwrap()
+}
+
+/// THE POSITIVE CONTROL (sp-xtdqi-2): sp-xtdqi correctly declined to INSTALL
+/// `sccache-dav.service` on a box that never set `SPIRA_SCCACHE_DAV_ADDR` — but the
+/// production box this landed on already had a hand-rendered copy from before the gate
+/// existed, and `activate`'s own render loop re-renders whatever is ALREADY on disk, not
+/// what the manifest would choose today. That refused the WHOLE activation over one
+/// unfillable placeholder. Uses the real shipped template (never a synthetic rewrite), so a
+/// future edit to it is covered here too.
+#[test]
+fn activate_retires_an_already_installed_unit_whose_gate_key_is_unset_rather_than_refusing() {
+    let w = World::with_git(FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() });
+    w.build(A).unwrap();
+    // A hand-rendered copy already on disk — its exact content does not matter; what
+    // matters is that activate neither refuses nor tries to fill its placeholder.
+    fs::write(w.units().join("sccache-dav.service"), "[Service]\nEnvironment=SCCACHE_DAV_ADDR=192.168.1.56:9431\n").unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let s = activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(A), "the key being unset must not block activation");
+    assert_eq!(s.retired, vec!["sccache-dav.service".to_string()]);
+    assert!(s.rewritten.is_empty(), "retired, not rewritten — never rendered at all");
+    assert!(!w.units().join("sccache-dav.service").exists(), "removed, not left stale");
+    assert_eq!(sc.disabled.borrow().as_slice(), ["sccache-dav.service".to_string()]);
+}
+
+/// A box with no sccache-dav.service installed at all (the common case — nothing ever
+/// rendered it) activates exactly as before: nothing to retire, nothing refused.
+#[test]
+fn activate_is_unaffected_by_a_gated_template_that_was_never_installed() {
+    let w = World::with_git(FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() });
+    w.build(A).unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let s = activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert!(s.retired.is_empty());
+    assert!(!w.units().join("sccache-dav.service").exists());
+}
+
+/// THE SECOND HALF of sp-xtdqi-2: an operator without this release's schema yet (so
+/// the config document cannot carry `sccache_dav_addr`) can still bootstrap an activation by
+/// exporting the variable — `host_values` reads env-then-config like every other key here,
+/// never config alone.
+#[test]
+fn activate_renders_the_address_once_the_gate_key_is_set_via_env() {
+    let w = World::with_git_and_env(FakeGit { extra: vec![("systemd/sccache-dav.service".into(), sccache_dav_template(), false)], ..Default::default() }, &[("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")]);
+    w.build(A).unwrap();
+    fs::write(w.units().join("sccache-dav.service"), "stale\n").unwrap();
+    let sc = FakeSystemctl::new(w.units());
+    let s = activate::activate(&ctx(&w, &sc), A, None).unwrap();
+    assert_eq!(w.current().as_deref(), Some(A));
+    assert!(s.retired.is_empty(), "the gate is open — nothing to retire");
+    assert!(s.rewritten.contains(&"sccache-dav.service".to_string()));
+    assert!(w.unit("sccache-dav.service").contains("Environment=SCCACHE_DAV_ADDR=192.168.1.56:9431"), "{}", w.unit("sccache-dav.service"));
+    assert!(sc.disabled.borrow().is_empty());
 }
 
 // ---------------------------------------------------------------- rollback

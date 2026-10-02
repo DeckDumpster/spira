@@ -625,6 +625,12 @@ pub struct SpiraSection {
     pub round_vm_max_retries: Option<String>,
     pub round_vm_retry_interval: Option<String>,
     pub round_vm_mirror_port: Option<String>,
+    /// This box's own LAN address for the shared compilation cache (sccache-dav, sp-xjnzl /
+    /// sp-xtdqi), `ip:port` — the one fact `systemd/sccache-dav.service` used to hardcode as
+    /// operator inventory in the public harness (law-harness-ships-mechanism-not-inventory).
+    /// No default: absent means the unit is not installed and no build sets
+    /// `SCCACHE_WEBDAV_ENDPOINT` — never a guessed or wildcard address.
+    pub sccache_dav_addr: Option<String>,
     /// sp-xjnzl-2: the VM-side `CARGO_HOME` every round-vm round and template build points
     /// `sccache` at — read once here (never the caller's ambient `CARGO_HOME`,
     /// `law-a-binary-resolves-the-config-it-reads`) so an operator sets it once in

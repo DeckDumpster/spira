@@ -146,6 +146,38 @@ fn substitute(text: &str, value: impl Fn(&str) -> Option<String>) -> String {
     out
 }
 
+/// Host key naming the shared compilation cache's own address (sp-xtdqi/sp-xtdqi-2) — the
+/// ONE place this key's name lives. `install`'s manifest and `release`'s own activate/render
+/// both read a template's gate through [`gate_key`]/[`gate_open`], never a second,
+/// independently hand-written literal.
+pub const SCCACHE_DAV_ADDR_KEY: &str = "SPIRA_SCCACHE_DAV_ADDR";
+
+/// A template whose UNIT IS INSTALLED AT ALL only when a host key is non-empty — distinct
+/// from a key the template merely *uses* (several templates read `SPIRA_DOLT_DATA`, but only
+/// `dolt-beads.service` is gated on it existing at all). sp-xtdqi's `sccache-dav.service` is
+/// the first entry: `install`'s manifest correctly declined it when `SPIRA_SCCACHE_DAV_ADDR`
+/// was unset, but `activate::switch`'s own render loop — which re-renders whatever is
+/// ALREADY on disk, not what the manifest would choose today — kept trying to fill its
+/// placeholder anyway and refused the WHOLE activation on any box that had the unit installed
+/// before the gate existed (sp-xtdqi-2).
+pub const OPTIONAL_UNIT_GATES: &[(&str, &str)] = &[("sccache-dav.service", SCCACHE_DAV_ADDR_KEY)];
+
+/// The host key gating `template_name`'s installation, if it has one.
+pub fn gate_key(template_name: &str) -> Option<&'static str> {
+    OPTIONAL_UNIT_GATES.iter().find(|(t, _)| *t == template_name).map(|(_, k)| *k)
+}
+
+/// Whether `template_name` may be installed or re-rendered: true when it carries no gate at
+/// all, or its gate key is set (non-empty) in `host` — the environment or the host config,
+/// exactly as [`Config::host_values`](crate::config::Config::host_values) itself resolves
+/// every other key.
+pub fn gate_open(template_name: &str, host: &BTreeMap<String, String>) -> bool {
+    match gate_key(template_name) {
+        None => true,
+        Some(k) => host.get(k).is_some_and(|v| !v.trim().is_empty()),
+    }
+}
+
 /// Placeholders an empty value fills rather than refuses — just `SPIRA_PATH_TAIL`
 /// (sp-c7b85): "nothing configured" is its ordinary, common case, unlike every other host key
 /// here, where an empty value means the caller forgot to set something the unit needs.

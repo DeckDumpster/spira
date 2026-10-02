@@ -111,5 +111,12 @@ pub trait World {
     /// says so.
     fn sccache_help(&self) -> Option<String>;
 
+    /// `sccache --show-stats`'s `Cache location` line, verbatim (trimmed), or `None` if the
+    /// binary could not be run at all. sp-xtdqi: querying a server that is already running
+    /// only reads its socket — the daemon's own backend was fixed at ITS spawn time, which is
+    /// exactly the fact this check exists to surface (a config that names a store is not the
+    /// same question as a server that is actually on it).
+    fn sccache_show_stats(&self) -> Option<String>;
+
     fn out(&self, s: &str);
 }

@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Set by SIGINT/SIGTERM: stop launching, kill what is running, tear down, exit.
+/// Set by SIGINT/SIGTERM/SIGHUP: stop launching, kill what is running, tear down, exit.
 pub static CANCEL: AtomicBool = AtomicBool::new(false);
 
 pub fn cancelled() -> bool {
@@ -20,11 +20,13 @@ extern "C" fn on_signal(_: libc::c_int) {
     CANCEL.store(true, Ordering::SeqCst);
 }
 
+/// TERM/INT/HUP (SIGKILL cannot be caught — `testenv wait` exists for that case, sp-tcarr).
 pub fn install_signal_handlers() {
     // SAFETY: the handler only stores to an atomic, which is async-signal-safe.
     unsafe {
-        libc::signal(libc::SIGINT, on_signal as usize);
-        libc::signal(libc::SIGTERM, on_signal as usize);
+        for s in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
+            libc::signal(s, on_signal as usize);
+        }
     }
 }
 
@@ -405,6 +407,19 @@ pub fn capture_bounded(mut cmd: Command, deadline: Option<Instant>) -> ExecOutco
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `install_signal_handlers` must cover HUP, not just INT/TERM (sp-tcarr: testenv was
+    /// missing it — gate's own real.rs already caught all three). `raise()` delivers to the
+    /// calling thread synchronously, so the flag is visible the instant it returns.
+    #[test]
+    fn install_signal_handlers_catches_hup() {
+        CANCEL.store(false, Ordering::SeqCst);
+        install_signal_handlers();
+        unsafe { libc::raise(libc::SIGHUP) };
+        let caught = cancelled();
+        CANCEL.store(false, Ordering::SeqCst); // never leak into another test
+        assert!(caught, "SIGHUP should set the cancellation flag");
+    }
 
     #[test]
     fn tail_keeps_only_the_last_lines_of_the_output() {

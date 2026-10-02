@@ -2001,6 +2001,10 @@ fn build(
             stderr("batch: cargo was still building at the trial's setup cutoff — killed; this is not the candidate's build failure");
             return Some(Finish::fault(2, "deadline-build", 0));
         }
+        Err(BuildError::Cancelled) => {
+            stderr("batch: interrupted — cargo was still building");
+            return Some(Finish::fault(2, "interrupted", 0));
+        }
         Err(BuildError::Failed(rc)) => {
             stderr(&format!(
                 "batch: workspace failed to build (cargo rc={rc}) — candidate fault"

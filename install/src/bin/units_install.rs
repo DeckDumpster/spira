@@ -97,8 +97,10 @@ fn main() -> ExitCode {
         for dolt in [false, true] {
             for testdb in [false, true] {
                 for inotify in [false, true] {
-                    if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, watch_names: Ok(Vec::new()) }) {
-                        union.extend(m.optional);
+                    for sccache in [false, true] {
+                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
+                            union.extend(m.optional);
+                        }
                     }
                 }
             }
@@ -117,14 +119,16 @@ fn main() -> ExitCode {
             for testdb in [false, true] {
                 for inotify in [false, true] {
                     for broker in [false, true] {
-                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, watch_names: Ok(Vec::new()) }) {
-                            for u in &m.units {
-                                units.insert(u.name.clone());
-                                if u.enable {
-                                    enable.insert(u.name.clone());
+                        for sccache in [false, true] {
+                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
+                                for u in &m.units {
+                                    units.insert(u.name.clone());
+                                    if u.enable {
+                                        enable.insert(u.name.clone());
+                                    }
                                 }
+                                optional.extend(m.optional);
                             }
-                            optional.extend(m.optional);
                         }
                     }
                 }

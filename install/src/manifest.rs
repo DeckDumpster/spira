@@ -29,6 +29,9 @@ pub struct Inputs {
     pub broker_enable: bool,
     /// `inotifywait` is on `PATH`.
     pub inotify_present: bool,
+    /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
+    /// for the shared compilation cache.
+    pub sccache_dav_addr_set: bool,
     /// Plain watcher names from the manifest (`watchd.sh units`, `spira-watch@<name>.service`
     /// with the wrapper stripped) — `Err` when the manifest itself is malformed, matching
     /// units.sh's `return 1` when `watchd.sh units` fails.
@@ -37,7 +40,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -151,11 +154,19 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-loom.service", true));
 
     // sccache-dav.service: a template whose Environment= lines bind one box's own LAN
-    // address (systemd/sccache-dav.service) — it cannot become active inside a test
-    // fixture's isolated network namespace, nor on a fresh box before an operator has
-    // picked that box's address. Declined here like spira-lc.service, installed by hand
-    // when an operator is ready to deploy it for real (sp-xjnzl).
-    m.optional.push("sccache-dav.service".into());
+    // address — operator inventory, never a literal in the public harness
+    // (law-harness-ships-mechanism-not-inventory). `SPIRA_SCCACHE_DAV_ADDR` carries that
+    // address as a conf.d key (sp-xtdqi, reversing sp-xjnzl's original "installed by hand"
+    // call): set, this renders and installs the unit like any other; unset, it is declined
+    // here like spira-lc.service — never installed on a fresh box, and never inside a test
+    // fixture's isolated network namespace, which has no address to set.
+    if inputs.sccache_dav_addr_set {
+        m.units.push(t("sccache-dav.service", true));
+    } else {
+        m.optional.push("sccache-dav.service".into());
+        m.notes.push("SPIRA_SCCACHE_DAV_ADDR is empty — not installing sccache-dav.service.".into());
+        m.notes.push("Set it in spira.conf (this box's own LAN address, e.g. 192.168.1.56:9431) and re-run install.".into());
+    }
 
     m.units.push(t("spira-broker.service", false));
     m.units.push(t("spira-broker.timer", inputs.broker_enable));
@@ -233,7 +244,34 @@ mod tests {
     use super::*;
 
     fn inputs() -> Inputs {
-        Inputs { instance: "prod".into(), dolt_data_set: true, testdb_data_set: false, broker_enable: false, inotify_present: true, watch_names: Ok(vec!["testview".into(), "notify".into()]) }
+        Inputs {
+            instance: "prod".into(),
+            dolt_data_set: true,
+            testdb_data_set: false,
+            broker_enable: false,
+            inotify_present: true,
+            sccache_dav_addr_set: false,
+            watch_names: Ok(vec!["testview".into(), "notify".into()]),
+        }
+    }
+
+    /// THE POSITIVE CONTROL (sp-xtdqi): `sccache-dav.service` was unconditionally declined
+    /// before this bead — reversing that is the whole point of part (a), so this must fail
+    /// against the old manifest.rs and pass only once the `if inputs.sccache_dav_addr_set`
+    /// branch exists.
+    #[test]
+    fn sccache_dav_is_installed_and_enabled_only_when_its_address_is_set() {
+        let m = build(&inputs()).unwrap();
+        assert!(!m.units.iter().any(|u| u.name == "sccache-dav.service"), "no address: not installed");
+        assert!(m.optional.contains(&"sccache-dav.service".to_string()));
+        assert!(m.notes.iter().any(|n| n.contains("SPIRA_SCCACHE_DAV_ADDR")), "{:?}", m.notes);
+
+        let mut i = inputs();
+        i.sccache_dav_addr_set = true;
+        let m2 = build(&i).unwrap();
+        let u = m2.units.iter().find(|u| u.name == "sccache-dav.service").expect("installed once the address is set");
+        assert!(u.enable, "a plain long-running service, enabled like spira-loom.service");
+        assert!(!m2.optional.contains(&"sccache-dav.service".to_string()));
     }
 
     #[test]

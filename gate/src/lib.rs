@@ -13,6 +13,7 @@ pub mod ports;
 pub mod real;
 pub mod target;
 pub mod telemetry;
+pub mod wait;
 
 #[cfg(test)]
 mod tests;

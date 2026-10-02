@@ -869,6 +869,37 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     assert!(!o.log.contains("summon jitter"));
 }
 
+/// THE POSITIVE CONTROL (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
+/// `self.conf` exactly like every other config-file-only key (`merge_resolved_config`),
+/// reaches an agent's own build as the two `SCCACHE_WEBDAV_*` vars — the fix for "a server
+/// restarted by a gate silently comes back on the local-disk cache" named in the bead.
+#[test]
+fn a_configured_shared_store_reaches_an_agents_build_as_webdav_vars() {
+    let f = fx("store");
+    seed(&f, "sp-store");
+    stub(&f, "spira-admit");
+    stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    let get = |k: &str| env.get(k).map(String::as_str);
+    assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT"), Some("http://192.168.1.56:9431"));
+    assert_eq!(get("SCCACHE_WEBDAV_KEY_PREFIX"), Some("/"));
+}
+
+/// Without `SPIRA_SCCACHE_DAV_ADDR`, no webdav var reaches the build — unchanged from
+/// before sp-xtdqi.
+#[test]
+fn no_configured_store_means_no_webdav_vars_on_an_agents_build() {
+    let f = fx("nostore");
+    seed(&f, "sp-nostore");
+    stub(&f, "spira-admit");
+    stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0")], false, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    assert!(!env.contains_key("SCCACHE_WEBDAV_ENDPOINT"), "{env:?}");
+    assert!(!env.contains_key("SCCACHE_WEBDAV_KEY_PREFIX"), "{env:?}");
+}
+
 #[test]
 fn without_spira_admit_the_session_still_runs_on_the_plain_cache_and_says_so() {
     let f = fx("admit-absent");

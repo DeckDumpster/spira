@@ -375,6 +375,24 @@ impl World for Real {
             .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
     }
 
+    fn sccache_show_stats(&self) -> Option<String> {
+        // Carries the configured store's own vars (if any) so a server THIS CALL happens to
+        // spawn (none was running) starts on the right backend — harmless when one is
+        // already running, since sccache's client only ever queries an existing daemon's
+        // socket and never re-applies a later invocation's environment to it. Built by hand
+        // rather than linking `spira_config::build::Store` (this crate is deliberately
+        // dependency-free, `opt-level = "z"`) — the two lines it would take are not worth
+        // the weight.
+        let mut cmd = Command::new("sccache");
+        cmd.arg("--show-stats").stdin(Stdio::null()).stderr(Stdio::null());
+        if let Some(addr) = self.env("SPIRA_SCCACHE_DAV_ADDR").filter(|v| !v.trim().is_empty()) {
+            let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
+            cmd.env("SCCACHE_WEBDAV_ENDPOINT", endpoint);
+            cmd.env("SCCACHE_WEBDAV_KEY_PREFIX", "/");
+        }
+        cmd.output().ok().map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+    }
+
     fn out(&self, s: &str) {
         println!("{s}");
     }

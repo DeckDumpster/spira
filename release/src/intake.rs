@@ -216,6 +216,9 @@ mod tests {
         fn cat(&self, unit: &str) -> Result<String, String> {
             self.cats.get(unit).cloned().ok_or_else(|| "no such unit".into())
         }
+        fn disable_now(&self, _unit: &str) -> Result<(), String> {
+            unimplemented!()
+        }
     }
 
     fn opts(tmp: &testkit::TempDir, pattern: Option<&str>) -> (Opts, PathBuf) {

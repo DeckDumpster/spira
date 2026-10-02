@@ -151,6 +151,11 @@ impl Config {
         m.insert("SPIRA_TESTDB_PORT".into(), pick("SPIRA_TESTDB_PORT", None, Some("3308".into())));
         m.insert("SPIRA_SNAP_STALE_S".into(), pick("SPIRA_SNAP_STALE_S", s.snap_stale_s.as_ref(), Some("60".into())));
         m.insert("DOLT".into(), self.env("DOLT").or_else(|| self.which("dolt")).unwrap_or_default());
+        // sp-xtdqi-2: env-then-config like every other key here — an operator without this
+        // release's schema yet (so the config document cannot carry `sccache_dav_addr`) can still
+        // bootstrap an activation by exporting the variable, exactly as every other
+        // not-yet-in-the-schema key here has always let them.
+        m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), pick(crate::units::SCCACHE_DAV_ADDR_KEY, s.sccache_dav_addr.as_ref(), None));
         let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
         Ok(m)

@@ -27,6 +27,10 @@ pub trait Systemctl {
     /// whatever the instance's own run state — `intake::install`'s verify step reads this to
     /// confirm systemd actually shows the drop-in it just wrote (DESIGN.md "intake").
     fn cat(&self, unit: &str) -> Result<String, String>;
+    /// `systemctl --user disable --now <unit>`: stop and disable in one call — sp-xtdqi-2,
+    /// `activate::switch` retiring a unit whose template's gate has closed. Idempotent: a
+    /// unit that was never enabled, or already stopped, is not an error.
+    fn disable_now(&self, unit: &str) -> Result<(), String>;
 }
 
 pub struct RealSystemctl {
@@ -85,6 +89,9 @@ impl Systemctl for RealSystemctl {
     }
     fn cat(&self, unit: &str) -> Result<String, String> {
         self.run(&["cat", unit])
+    }
+    fn disable_now(&self, unit: &str) -> Result<(), String> {
+        self.run(&["disable", "--now", unit]).map(|_| ())
     }
     fn list_active(&self, glob: &str) -> Result<Vec<String>, String> {
         let out = self.run(&["list-units", "--state=active", "--no-legend", glob])?;

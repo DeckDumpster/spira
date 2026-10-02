@@ -1,0 +1,12 @@
+TYPE=string
+GROUP=sccache
+DOC=This box's own LAN address (ip:port) for the shared compilation cache (sccache-dav, sp-xjnzl/sp-xtdqi) — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml. Absent means the unit is not installed and no build points at a shared store.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
+    # spira_conf_defaults() today; it resolves to an empty string unless the
+    # environment or spira.toml sets it. Registered here only so the allowlist is
+    # generated from one source — conf-gen.sh contributes the name, nothing else.
+    # Absence is the operator's own choice, never a guess: units-install only renders
+    # and installs sccache-dav.service when this is set (law-harness-ships-mechanism-
+    # not-inventory — the address is operator inventory, never baked into the template).
+SPIRA_CONF_DEFAULT_EOF
