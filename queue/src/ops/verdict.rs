@@ -203,12 +203,16 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
     body.push_str("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened.");
     let title = if suites.is_empty() { format!("publish PR {pr} red for {name}") } else { format!("publish PR {pr} red for {name}: {suites}") };
     let actor = w.var("SPIRA_QUEUE_ACTOR").unwrap_or_else(|| "queue.sh".into());
-    let fid = w.lib.create_bug(&actor, &title, &c.s.verdict.incident_priority, &format!("spira,plan,repo:{name}"), &body);
+    let prior = records::read_kv(&c.queue_file("publish-red")).ok().flatten().filter(|k| !suites.is_empty() && k.get("suites") == Some(suites.as_str()));
+    let amended = prior.as_ref().and_then(|k| k.get("fix_forward")).filter(|id| id.starts_with(|ch: char| ch.is_ascii_alphanumeric()) && !id.starts_with('<')).map(str::to_string).filter(|id| {
+        w.lib.amend_bug(&actor, id, &format!("Publish PR {pr} red again for the same suites ({suites}); {}. Range {}..{}; members: {}.", if run_url.is_empty() { "run link unavailable" } else { &run_url }, short(&forge_sha), short(&head), if member_ids.is_empty() { "<none>" } else { &member_ids }))
+    });
+    let fid = amended.clone().or_else(|| w.lib.create_bug(&actor, &title, &c.s.verdict.incident_priority, &format!("spira,plan,repo:{name}"), &body));
     let fid_s = fid.clone().unwrap_or_else(|| "<create-failed>".into());
 
     let _ = std::fs::remove_file(&pfile);
     // Read by `publish`: holds off the next publish of this same head.
-    let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={fid_s}\n"));
+    let _ = write_atomic(&c.queue_file("publish-red"), &format!("head={head}\nfix_forward={fid_s}\nsuites={suites}\n"));
     let suites_s = if suites.is_empty() { "none".to_string() } else { suites.clone() };
     landing_log(&c.s.run, &format!("QUEUE PUBLISH_RED {} repo={name} pr={pr} suites={suites_s} fix_forward={fid_s}", w.clock.now()));
     w.lib.notify(
@@ -216,7 +220,7 @@ pub fn settle_publish_red(w: &World, c: &Ctx, path: &Path, out: &str) -> i32 {
         &format!("publish PR {pr} red"),
         &format!("PR {pr} red (suites: {suites_s}). Fix-forward bead: {}.", fid.clone().unwrap_or_else(|| "<create failed>".into())),
     );
-    w.out(format!("verdict {name}: publish PR {pr} red — filed fix-forward {fid_s}"));
+    w.out(format!("verdict {name}: publish PR {pr} red — {} fix-forward {fid_s}", if amended.is_some() { "amended open" } else { "filed" }));
     // A red publish with no fix-forward bead is a fault the operator must see.
     if fid.is_none() {
         FAIL

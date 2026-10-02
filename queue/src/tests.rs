@@ -149,6 +149,7 @@ struct FLib {
     push_ok: Cell<bool>,
     /// What `create_bug` answers (None: bd created nothing).
     bug_id: RefCell<Option<String>>,
+    amend_ok: Cell<bool>,
     pf_rc: Cell<i32>,
     conflict_with_base: RefCell<BTreeSet<String>>,
     /// R22's answer (step --all).
@@ -257,6 +258,10 @@ impl Lib for FLib {
     fn create_bug(&self, actor: &str, title: &str, prio: &str, labels: &str, body: &str) -> Option<String> {
         self.log(format!("create_bug {actor} {prio} {labels} {title}\n{body}"));
         self.bug_id.borrow().clone()
+    }
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
+        self.log(format!("amend_bug {actor} {id} {note}"));
+        self.amend_ok.get()
     }
 }
 
@@ -574,6 +579,7 @@ impl T {
             cannot_check: Cell::new(false),
             push_ok: Cell::new(true),
             bug_id: RefCell::new(Some("sp-fix1".into())),
+            amend_ok: Cell::new(true),
             pf_rc: Cell::new(0),
             conflict_with_base: RefCell::default(),
             repos: RefCell::new(Ok(vec!["spira".into()])),

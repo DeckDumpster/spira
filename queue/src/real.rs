@@ -515,6 +515,9 @@ impl Lib for RealLib {
         let (_, ans) = self.answer(Op::CreateBug, &[actor, title, priority, labels, body]);
         Some(ans.trim().to_string()).filter(|id| !id.is_empty())
     }
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool {
+        self.answer(Op::AmendBug, &[actor, id, note]).1.trim() == "amended"
+    }
 }
 
 // -------------------------------------------------------------------------------- scripts
