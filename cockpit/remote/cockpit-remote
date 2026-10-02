@@ -293,7 +293,7 @@ _watch_holder() {
     for fd in /proc/[0-9]*/fd/*; do
         [ "$(readlink "$fd" 2>/dev/null)" = "$LOCK" ] || continue
         pid="${fd#/proc/}"; pid="${pid%%/*}"
-        [ "$pid" != "$$" ] || continue
+        [ "$pid" != "$$" ] && [ "$pid" != "$BASHPID" ] || continue
         case "$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" in
             *"cockpit-remote watch"*) printf '%s' "$pid"; return 0 ;;
         esac
