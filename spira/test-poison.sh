@@ -49,7 +49,7 @@
 # shape test-lifecycle-container.sh and test-lifecycle-cutover.sh already use — a stub
 # lc_hold/lc_held would only prove this suite's own model of spira-lc agrees with itself.
 #
-# tier: T3
+# tier: T2
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
 # covers: sentinel/src/* spira/lib.sh groomer/src/deadlocked.rs spira-claim/* spira/chamber/* lifecycle/* spira-lc/* UC-aeon-execution-21 UC-aeon-execution-22 UC-aeon-execution-23
 # timeout: 240
