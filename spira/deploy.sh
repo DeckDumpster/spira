@@ -699,3 +699,12 @@ fi
 
 rm -f "${_pre_deploy_unit_state:-}" 2>/dev/null || true
 log "deploy: $release_stem active"
+
+# A bead's own production check runs once the release is active; a failure files a follow-up
+# and never fails or rolls back the deploy.
+if [ -n "${prev_release:-}" ] && [ -n "${SPIRA_REPO:-}" ] \
+   && git -C "$SPIRA_REPO" rev-parse -q --verify "${prev_release}^{commit}" >/dev/null 2>&1 \
+   && git -C "$SPIRA_REPO" rev-parse -q --verify "${release_stem}^{commit}" >/dev/null 2>&1; then
+    "$SPIRA_HOME/verify-landed.sh" --range "${prev_release}..${release_stem}" --repo "$SPIRA_REPO" \
+        || log "deploy: post-deploy verification reported a problem (deploy stands)"
+fi
