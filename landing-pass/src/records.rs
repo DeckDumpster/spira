@@ -196,17 +196,10 @@ impl Files {
 mod deferred_tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("lp-deferred-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
-        d
-    }
-
     #[test]
     fn a_deferral_is_a_record_a_watcher_can_read() {
-        let d = tmp("rec");
-        let f = Files::new(&d);
+        let d = testkit::TempDir::new("lp-deferred-rec");
+        let f = Files::new(d.path());
         assert!(f.deferred_records().is_empty());
         assert_eq!(f.bump_deferred("spira/sp-a", "spira", 100), 1);
         assert_eq!(f.bump_deferred("spira/sp-a", "spira", 160), 2);
@@ -217,16 +210,14 @@ mod deferred_tests {
         );
         f.clear_deferred("spira/sp-a");
         assert!(f.deferred_records().is_empty());
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
     fn a_legacy_bare_counter_still_counts() {
-        let d = tmp("legacy");
-        let f = Files::new(&d);
+        let d = testkit::TempDir::new("lp-deferred-legacy");
+        let f = Files::new(d.path());
         fs::create_dir_all(f.deferred_dir()).unwrap();
         fs::write(f.deferred_dir().join("spira_sp-a"), "4\n").unwrap();
         assert_eq!(f.bump_deferred("spira/sp-a", "spira", 9), 5);
-        let _ = fs::remove_dir_all(&d);
     }
 }
