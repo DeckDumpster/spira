@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 
 fn usage() -> ! {
-    eprintln!("usage: beads-store commit --db <path> --message <text>");
+    eprintln!(
+        "usage: beads-store commit --db <path> --message <text> | push --db <path> --remote <name>"
+    );
     std::process::exit(1);
 }
 
@@ -54,10 +56,49 @@ fn cmd_commit(args: &[String]) {
     }
 }
 
+fn cmd_push(args: &[String]) {
+    let (mut db, mut remote) = (None, None);
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--db" => {
+                i += 1;
+                db = args.get(i).map(PathBuf::from);
+            }
+            "--remote" => {
+                i += 1;
+                remote = args.get(i).cloned();
+            }
+            _ => usage(),
+        }
+        i += 1;
+    }
+    let (Some(db), Some(remote)) = (db, remote) else {
+        usage()
+    };
+    let spira_dolt_data = std::env::var("SPIRA_DOLT_DATA").ok();
+    let dolt_bin = std::env::var("BEADS_STORE_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
+    let engine = match beads_store::resolve(&db, spira_dolt_data.as_deref()) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    };
+    match beads_store::run_push(&engine, &dolt_bin, &remote) {
+        Ok(head) => println!("{head}"),
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(2);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
         Some("commit") => cmd_commit(&args[2..]),
+        Some("push") => cmd_push(&args[2..]),
         _ => usage(),
     }
 }

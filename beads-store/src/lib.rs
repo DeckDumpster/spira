@@ -221,6 +221,59 @@ pub fn run_commit(engine: &Engine, dolt_bin: &str, message: &str) -> Result<u32,
     Ok(before)
 }
 
+/// The last non-header, non-empty cell of a single-column csv result.
+fn last_cell(csv: &str) -> Option<String> {
+    let rows: Vec<&str> = csv
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    rows.get(1..)?.last().map(|s| s.to_string())
+}
+
+/// Push the active branch to `remote` and prove it by the remote's own head: the push,
+/// the tracking-ref refresh and both head reads all go through `engine`, so the store that
+/// was pushed is the store that is verified. Returns the head both sides now share.
+pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String, String> {
+    let r = sql_quote(remote);
+    let branch = engine
+        .sql(dolt_bin, "select active_branch() as b;")
+        .ok()
+        .and_then(|o| last_cell(&o))
+        .ok_or_else(|| format!("cannot read the active branch (engine: {})", engine.label()))?;
+    let b = sql_quote(&branch);
+    engine
+        .sql(dolt_bin, &format!("CALL DOLT_PUSH('{r}', '{b}');"))
+        .map_err(|e| format!("push failed: {e}"))?;
+    engine
+        .sql(dolt_bin, &format!("CALL DOLT_FETCH('{r}');"))
+        .map_err(|e| format!("pushed, but could not refresh the remote tracking ref: {e}"))?;
+    let head = |rev: String| {
+        engine
+            .sql(
+                dolt_bin,
+                &format!(
+                    "select commit_hash from dolt_log('{}') limit 1;",
+                    sql_quote(&rev)
+                ),
+            )
+            .ok()
+            .and_then(|o| last_cell(&o))
+    };
+    let local = head(branch.clone());
+    let remote_head = head(format!("remotes/{remote}/{branch}"));
+    match (local, remote_head) {
+        (Some(l), Some(r)) if l == r => Ok(r),
+        (Some(l), Some(r)) => Err(format!(
+            "push reported complete but the remote did not move: local {l}, remote {r} (engine: {})",
+            engine.label()
+        )),
+        (l, r) => Err(format!(
+            "pushed, but could not read both heads to verify it (local={l:?} remote={r:?})"
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +492,47 @@ echo "not a number"
             err.contains("cannot determine whether the store has uncommitted changes"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn run_push_succeeds_only_when_heads_match() {
+        let bin = TempDir::new("bs-bin");
+        write_dolt_stub(
+            &bin,
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *active_branch*) echo b; echo main ;;
+  *remotes/*) echo commit_hash; echo "${REMOTE_HEAD:-h1}" ;;
+  *dolt_log*) echo commit_hash; echo h1 ;;
+  *) echo ok ;;
+esac
+"#,
+        );
+        let engine = stub_engine(&bin);
+        let dolt = bin.join("dolt");
+        assert_eq!(
+            run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap(),
+            "h1"
+        );
+    }
+
+    #[test]
+    fn run_push_fails_when_the_remote_head_differs() {
+        let bin = TempDir::new("bs-bin");
+        write_dolt_stub(
+            &bin,
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *active_branch*) echo b; echo main ;;
+  *remotes/*) echo commit_hash; echo stale ;;
+  *dolt_log*) echo commit_hash; echo h1 ;;
+  *) echo ok ;;
+esac
+"#,
+        );
+        let engine = stub_engine(&bin);
+        let dolt = bin.join("dolt");
+        let err = run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap_err();
+        assert!(err.contains("did not move"), "{err}");
     }
 }
