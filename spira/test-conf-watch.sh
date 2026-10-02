@@ -20,7 +20,8 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 BASE_PATH="$PATH"
 
 # A fake Loom binary that arms, then loops until killed; loom.sh starts it after its baseline.
-FAKE_BIN="$TMP/fake-bin"
+FAKE_DIR="$TMP/fake-bin"; mkdir -p "$FAKE_DIR"
+FAKE_BIN="$FAKE_DIR/loom"
 printf '#!/bin/sh\ntouch "$ARMED_MARKER" 2>/dev/null\nsleep 30\n' > "$FAKE_BIN"
 chmod +x "$FAKE_BIN"
 
@@ -44,10 +45,10 @@ wait_for_marker() {
 }
 
 run_loom() {      # run_loom <conf> <window> <marker>
-    timeout "$2" env -i PATH="$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
+    timeout "$2" env -i PATH="$FAKE_DIR:$BASE_PATH" HOME="$RUN" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$1" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" SPIRA_REPO_MAP="$TMP/no-map" \
-        SPIRA_GOAL=sp-test SPIRA_FAYTHS=t SPIRA_LOOM_BIN="$FAKE_BIN" \
+        SPIRA_GOAL=sp-test SPIRA_FAYTHS=t \
         ARMED_MARKER="${3:-}" \
         SPIRA_LOOM_TICK="$TICK" \
         bash "$HERE/loom.sh"
