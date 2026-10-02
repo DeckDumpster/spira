@@ -224,6 +224,57 @@ _ev_cause="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
     2>/dev/null | sed -n '3p' | tr -d ' ')"
 is "bead_reopen writes event_type=reopen with cause in new_value" "rebase-conflict" "$_ev_cause"
 
+# ======================================================================================
+echo
+echo "sp-2w29g: bead_reopen appends \$SPIRA_RUN/reopen.log — the choke point traces itself"
+# ======================================================================================
+# An attended session (the Concierge) sources lib.sh and calls bead_reopen directly, by
+# hand, never through landing.sh — so landing.sh's own log() line never runs for that
+# reopen and the event row is the only trace anywhere. bead_reopen must write its own
+# line so no caller, logged or not, can produce a silent reopen.
+#
+# NON-DEFAULT, EXPLICIT ENVIRONMENT: pin SPIRA_RUN to a scratch dir for this section so
+# the assertion does not depend on whatever SPIRA_RUN the ambient conf.sh derived.
+# Restored below — conf.sh already set SPIRA_RUN to a real directory before this file
+# reached here, and every bead_reopen call after this section relies on it.
+_rt_orig_run="$SPIRA_RUN"
+_rt_run="$(mktemp -d)"
+export SPIRA_RUN="$_rt_run"
+_rt_log="$_rt_run/reopen.log"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"trace control","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-27T00:00:00Z"}
+JSONL
+# POSITIVE CONTROL: before any bead_reopen call, no line names sp-h1.
+is "positive control: no reopen.log line for sp-h1 before bead_reopen runs" \
+    "" "$(grep -F 'sp-h1' "$_rt_log" 2>/dev/null || true)"
+
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-h1","title":"trace test","status":"closed","issue_type":"task","labels":["spira"],"updated_at":"2026-09-27T00:00:00Z"}
+JSONL
+BEADS_ACTOR=overseer bead_reopen "sp-h1" batch-eject "probe" >/dev/null 2>&1
+
+_rt_line="$(grep -F 'reopen sp-h1 ' "$_rt_log" 2>/dev/null || true)"
+want "reopen.log names the bead" "reopen sp-h1 " "$_rt_line"
+want "reopen.log names the cause" "cause=batch-eject" "$_rt_line"
+want "reopen.log names the non-harness actor (sp-2w29g: not just BEADS_ACTOR unset)" "actor=overseer" "$_rt_line"
+# caller is read live from /proc/$PPID/cmdline and legitimately falls back to "unknown"
+# when this process has no readable parent (PID 1 inside a suite container is exactly
+# that case) — the field's presence is what's asserted, not a specific value.
+want "reopen.log names a caller field" "caller=" "$_rt_line"
+
+# COUNTS MUST MATCH EXACTLY (the bead's own acceptance criterion): one events-table row
+# with event_type='reopen', and exactly one matching reopen.log line — not two, not zero.
+_rt_evcount="$("${SPIRA_BD:-bd}" -C "$TESTDB_DIR" sql \
+    "SELECT COUNT(*) FROM events WHERE issue_id='sp-h1' AND event_type='reopen' AND new_value='batch-eject'" \
+    2>/dev/null | sed -n '3p' | tr -d ' ')"
+_rt_logcount="$(grep -Fc 'reopen sp-h1 cause=batch-eject' "$_rt_log" 2>/dev/null || true)"
+is "reopen.log line count matches the events-table row count exactly" "$_rt_evcount" "${_rt_logcount:-0}"
+
+rm -rf "$_rt_run"
+export SPIRA_RUN="$_rt_orig_run"
 
 # _write_reopen writes a reopened event with a NULL new_value directly (no bump_*
 # call produces a genuinely NULL cause). Used below by the sp-aor1l case; the NULL-cause

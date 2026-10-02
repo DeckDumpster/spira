@@ -1354,6 +1354,26 @@ fn reopen_submitted_label(env: &Env) -> String {
     resolved_label(None, env.config.submitted_label.as_deref(), "SPIRA_SUBMITTED_LABEL", "spira-submitted")
 }
 
+/// One line per reopen in `$SPIRA_RUN/reopen.log`, written here so no caller can skip it. The
+/// caller is the parent's argv[0] read from /proc, never matched from a command-line pattern.
+fn trace_reopen(run_dir: &std::path::Path, id: &str, cause: &str, actor: &str) {
+    use std::io::Write;
+    if run_dir.as_os_str().is_empty() {
+        return;
+    }
+    let caller = std::fs::read(format!("/proc/{}/cmdline", std::os::unix::process::parent_id()))
+        .ok()
+        .and_then(|b| b.split(|&c| c == 0).next().map(|a| String::from_utf8_lossy(a).into_owned()))
+        .and_then(|a| a.rsplit('/').next().map(str::to_string))
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+    let ts = std::process::Command::new("date").args(["-u", "+%Y-%m-%dT%H:%M:%SZ"]).output().ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(run_dir.join("reopen.log")) {
+        let _ = writeln!(f, "{ts} reopen {id} cause={cause} actor={actor} caller={caller}");
+    }
+}
+
 fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
     if let Err(e) = a.check_known(&[]) {
         return Outcome::usage(e);
@@ -1378,12 +1398,15 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
+    let actor = env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into());
+    let run_dir = resolved_run_dir(env).unwrap_or_default();
+    trace_reopen(&run_dir, &id, &cause, &actor);
     let mut live = unpoison::Live {
         store: st,
-        run_dir: resolved_run_dir(env).unwrap_or_default(),
+        run_dir,
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
-        beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
+        beads_actor: actor,
         landing_pass: landing_pass_bin(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
