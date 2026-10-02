@@ -42,7 +42,7 @@ printf 'fixture | %s\n' "$REPO" > "$SH/repo-map"
 export SPIRA_HOME="$SH" SPIRA_REPO_MAP="$SH/repo-map" SPIRA_HOME_REPO=fixture SPIRA_REPO="$REPO"
 . "$SH/lib.sh"
 
-landed sp-nocommit "$REPO" 2>/dev/null
+landing-pass landed sp-nocommit "$REPO" 2>/dev/null
 is "landed(): no commit -> not landed" "1" "$?"
 
 # ============================================================================
@@ -52,10 +52,10 @@ echo "THE WRITER FORM — a real 'spira: land <id>' commit, exactly what the bat
 git -C "$REPO" commit -q --allow-empty -m "spira: land sp-fix"
 FIX_SHA="$(git -C "$REPO" rev-parse HEAD)"
 
-landed sp-fix "$REPO" 2>/dev/null
+landing-pass landed sp-fix "$REPO" 2>/dev/null
 is "landed(): the writer form is recognised" "0" "$?"
 
-LIB_SHA="$(landed_sha sp-fix "$REPO" 2>/dev/null)"
+LIB_SHA="$(landing-pass landed sp-fix "$REPO" 2>/dev/null)"
 is "landed_sha(): returns the writer commit's own sha" "$FIX_SHA" "$LIB_SHA"
 
 # ============================================================================
@@ -72,10 +72,10 @@ is "land_subject(): appends the bead's own title" "spira: land sp-titled — a f
 git -C "$REPO" commit -q --allow-empty -m "$SUBJ"
 TITLED_SHA="$(git -C "$REPO" rev-parse HEAD)"
 
-landed sp-titled "$REPO" 2>/dev/null
+landing-pass landed sp-titled "$REPO" 2>/dev/null
 is "landed(): the titled writer form is recognised" "0" "$?"
 
-TITLED_LIB_SHA="$(landed_sha sp-titled "$REPO" 2>/dev/null)"
+TITLED_LIB_SHA="$(landing-pass landed sp-titled "$REPO" 2>/dev/null)"
 is "landed_sha(): returns the titled writer commit's own sha" "$TITLED_SHA" "$TITLED_LIB_SHA"
 
 # A longer id that merely starts with this one's id, even in the titled form, must not
@@ -84,7 +84,7 @@ is "landed_sha(): returns the titled writer commit's own sha" "$TITLED_SHA" "$TI
 # report sp-titled's tip as this newer commit; the anchored one must not.
 git -C "$REPO" commit -q --allow-empty -m "spira: land sp-titledx — a different, unrelated bead"
 is "landed_sha(): a longer id's titled commit does not shadow this id's own" \
-    "$TITLED_SHA" "$(landed_sha sp-titled "$REPO" 2>/dev/null)"
+    "$TITLED_SHA" "$(landing-pass landed sp-titled "$REPO" 2>/dev/null)"
 
 # ============================================================================
 echo

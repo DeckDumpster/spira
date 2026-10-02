@@ -419,12 +419,12 @@ if content_landed "$REPO" spira/sp-sq origin/main; then
 else
     ok "sp-sq: content_landed correctly false"
 fi
-if landed sp-otherpr "$REPO" 2>/dev/null; then
+if landing-pass landed sp-otherpr "$REPO" 2>/dev/null; then
     ok "sp-otherpr: landed() finds the naming commit"
 else
     bad "sp-otherpr: landed() finds the naming commit" "returned non-zero"
 fi
-if landed sp-cherry "$REPO" 2>/dev/null; then
+if landing-pass landed sp-cherry "$REPO" 2>/dev/null; then
     ok "sp-cherry: landed() finds the (stale) naming commit"
 else
     bad "sp-cherry: landed() finds the (stale) naming commit" "returned non-zero"

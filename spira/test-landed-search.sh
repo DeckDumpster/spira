@@ -83,15 +83,15 @@ else
 fi
 
 _rc=1
-landed "$DEEP_ID" "$REPO" && _rc=0
+landing-pass landed "$DEEP_ID" "$REPO" && _rc=0
 is "landed() finds a commit 500 deep with no window" 0 "$_rc"
 
 _rc=1
-SPIRA_VERDICT_WINDOW=1 landed "$DEEP_ID" "$REPO" && _rc=0
+SPIRA_VERDICT_WINDOW=1 landing-pass landed "$DEEP_ID" "$REPO" && _rc=0
 is "landed() ignores SPIRA_VERDICT_WINDOW entirely" 0 "$_rc"
 
 _rc=0
-landed sp-not-landed-anywhere "$REPO" || _rc=$?
+landing-pass landed sp-not-landed-anywhere "$REPO" || _rc=$?
 is "landed() returns 1 (not 0) for an id no commit names" 1 "$_rc"
 
 # ======================================================================================
@@ -108,7 +108,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
 _rc=1
-landed "$BODY_ID" "$REPO" && _rc=0
+landing-pass landed "$BODY_ID" "$REPO" && _rc=0
 is "landed() does not find a body-only reference" 1 "$_rc"
 
 # ======================================================================================
@@ -125,7 +125,7 @@ git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
 _rc=1
-landed sp-prefix-collision-test "$REPO" && _rc=0
+landing-pass landed sp-prefix-collision-test "$REPO" && _rc=0
 is "a longer id's commit no longer satisfies its own prefix" 1 "$_rc"
 
 # ======================================================================================
@@ -138,7 +138,7 @@ NOGIT="$TMP/not-a-repo"
 mkdir -p "$NOGIT"
 
 _rc=0
-landed sp-anything "$NOGIT" || _rc=$?
+landing-pass landed sp-anything "$NOGIT" || _rc=$?
 is "landed() returns 2 when the repo has no .git at all" 2 "$_rc"
 
 tl_summary

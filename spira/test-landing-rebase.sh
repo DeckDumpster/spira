@@ -350,7 +350,7 @@ _dupl_base1="$(git -C "$REPO" rev-parse origin/main)"
 SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
 SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
     bash -c '. "$1/lib.sh" >/dev/null 2>&1
-             land_mark "$2" RED "$3" "no-rebase@$4"
+             landing-pass mark "$2" RED "$3" "no-rebase@$4"
              bump_requeue "$2" merge-conflict >/dev/null 2>&1' \
     _ "$SH" "sp-dupl" "$_dupl_tip" "$_dupl_base1"
 # Advance the base without changing the branch tip.
