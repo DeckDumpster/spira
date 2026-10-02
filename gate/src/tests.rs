@@ -2708,6 +2708,25 @@ fn the_definition_is_part_of_the_verdict_key() {
 // ------------------------------------------- the trial's budget (testenv DESIGN.md §11, sp-govet)
 
 #[test]
+fn a_trial_that_gave_up_on_a_full_queue_is_a_queue_no_verdict_with_its_wait_metered() {
+    let out = "testenv: gave up waiting for a slot after 90s (still 2/2 running)\ntestenv: queue-wait=95s pool=container\nVERDICT FAULT rc=2 ran=0 reason=queue";
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (75, out.into()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=queue"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("waited 95s for a testenv slot"), "{}", f.stderr());
+    assert_eq!(f.ran.borrow().len(), 1, "no base trial for a queue give-up");
+    assert!(meter_row(&f).contains(" queue=95"), "{}", meter_row(&f));
+    assert!(f.tsd.borrow().iter().any(|r| r.contains("\"queue_secs\":95")), "{:?}", f.tsd.borrow());
+}
+
+#[test]
+fn queue_wait_words_are_summed_across_pools() {
+    assert_eq!(crate::parse::queue_secs("a queue-wait=5s pool=compile\nqueue-wait=7s pool=test\nqueue-wait=x"), 12);
+    assert_eq!(crate::parse::queue_secs("nothing waited"), 0);
+}
+
+#[test]
 fn a_suites_trial_cut_at_its_setup_share_is_a_budget_no_verdict_naming_the_phase() {
     for (out, phase) in [
         ("x\nVERDICT FAULT rc=2 ran=0 reason=deadline-up", "up"),

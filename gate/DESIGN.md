@@ -287,6 +287,16 @@ DESIGN.md §11, D9). Two consequences here:
   most of every such base trial's wall: in the rewrite waves a 12 s fence red was followed by
   a 164–501 s base trial. Attribution is unchanged: base fences pass → `branch-red`, suite `-`.
 
+### Queue wait is metered and bounded
+
+testenv says every slot wait as `queue-wait=<n>s pool=<container|compile|test>`; the gate sums
+those words into `queue_secs` (the `gate-run` row) and a trailing `queue=<n>` on gate.log's
+line. They are inside `ran`, so a gate phase that outran its runner's wall shows how much of
+it was waiting. Under a budget the container-slot wait is bounded to half of what is left of
+the setup share (`testenv container up --queue-timeout`); past it the runner ends
+`VERDICT FAULT reason=queue` and the gate answers `NO_VERDICT reason=queue` — no base trial,
+never the branch's red. intent-report prints the median/p90 wait.
+
 ## Composition (sp-2ghui)
 
 Design `gate-unit-round-integration-2026-09-29`, item 4: **what a branch touches decides what

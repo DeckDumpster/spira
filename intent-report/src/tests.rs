@@ -294,3 +294,18 @@ fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
         "{out}"
     );
 }
+
+#[test]
+fn the_report_shows_the_queue_wait_inside_ran_from_rows_and_the_log() {
+    let row = format!(
+        "{{\"ts\":\"{}\",\"family\":\"gate-run\",\"status\":\"PASS\",\"reason\":\"pass\",\"waited_secs\":0,\"ran_secs\":300,\"queue_secs\":120,\"branch_type\":\"rust-only\",\"gate_mode\":\"unit\"}}\n",
+        ts(1)
+    );
+    let t = gate_log_line("2026-09-29T00:00:10Z spira b waited=0s ran=1s rc=75 queue compose=suites(mode) phases=gate:1 queue=40").unwrap();
+    assert_eq!((t.reason.as_str(), t.queue), ("queue", 40.0));
+    let out = render(
+        &Inputs { gate_run: &row, gate_log: None, round_attribution: "", suite_timing: "", landing_event: "" },
+        all(),
+    );
+    assert!(out.contains("testenv queue wait inside ran: 1 of 1 trials waited; median 120 s"), "{out}");
+}
