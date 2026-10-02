@@ -319,7 +319,7 @@ run_install() {
         "SPIRA_INSTALL_DB_WAIT=5" \
         "$@" \
         spira-install prod >"$output_file" 2>&1
-    return $?
+    local _r=$?; [ $_r -ne 0 ] && { echo "DBG rc=$_r"; tail -25 "$output_file"; }; return $_r
 }
 
 reset_state() {
