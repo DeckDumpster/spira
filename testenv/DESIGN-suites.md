@@ -2,7 +2,7 @@
 
 The Rust replacement for `spira/suites.sh` (496 lines at 4764d03ec): the suite population,
 the gate/timed partition, the per-suite state the harness keeps about suites (last result,
-flake observations, clean-run counters, max-age flags), the flake report, quarantine
+flake observations, max-age flags), the flake report, quarantine
 hygiene and the suite-state lifecycle transitions. It is a **subcommand family of the
 `testenv` binary** (`testenv suites <cmd>`), not a crate of its own; §0 says why. This
 document is the contract; it was written before the code, from the script's intent and
@@ -18,7 +18,7 @@ The data is one domain, and testenv already owns half of it:
 | `spira/suite-state` (`active/quarantined/disabled`) | reads it at the tree under test (`suite::SuiteStates`) | reads it, and writes it through a branch |
 | suite headers (`# requires:`, `# tier:`, …) | parses them (`suite::SuiteHeaders`) | parses `# covers:` and `# priority:` |
 | a suite's result record (`<status> <epoch> <secs> <fp> …`) | writes it (`record::ResultRecord`) | reads the same leading four fields |
-| flake observations, clean runs, max-age flags | — | owns them |
+| flake observations, max-age flags | — | owns them |
 
 A separate crate would carry a second parser for `spira/suite-state` and a second reader of
 the result-record format — the drift `suite-covers.sh` was written to end ("ONE PARSER, ONE
@@ -164,7 +164,6 @@ empty rather than a fault).
 | `STATE/<suite>.result` | list, status | nothing any more (§7 F1) |
 | `STATE/<suite>.flakeobs` | observe-flake | observe-flake (append) |
 | `STATE/<suite>.maxage-mailed` | hygiene | hygiene (created after a sent mail) |
-| `$LANDSTATE/<bead>` (default `$SPIRA_RUN/landstate`) | hygiene | — (lib.sh `land_mark`) |
 | home repo: `refs/heads/spira-suite-state/<suite-sans-.sh>-<YYYYmmddTHHMMSSZ>` | — | transitions (created, never moved) |
 | home repo objects: one blob, one tree, one commit | — | transitions |
 
@@ -194,7 +193,6 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_QUARANTINE_MAX_AGE` | `spira.quarantine_max_age` | 604800 |
 | `SPIRA_INCIDENT` | — | `incident.sh` on PATH (sp-gypjk) |
 | `SPIRA_MAIL_CMD` (new) | — | `mail` on PATH (sp-gypjk) |
-| `LANDSTATE` | — | `$SPIRA_RUN/landstate` |
 | `SPIRA_AEON` | — | non-empty refuses transitions |
 | `SPIRA_GIT_NAME`, `SPIRA_GIT_EMAIL` | — | `spira`, `spira@spira.invalid` |
 | `SPIRA_TESTENV_HARNESS` | — | the harness root (testenv's `Harness::locate`) |
@@ -243,9 +241,6 @@ struct FlakeObs { at: u64, run_id: String }
 struct SuiteStateRow { suite, state: SuiteState, since, bead, reason }
 
 enum Transition { Quarantine { bead, reason }, Disable { reason }, Activate }
-
-/// $LANDSTATE/<id> — "<STATE> <tip|none> <epoch> [reason…]" (lib.sh land_mark).
-struct LandState { state: String, tip: String, at: u64 }
 
 /// What the lib.sh seam answers (§4).
 struct Conf { home_repo: String, scope_label: Option<String>, db: String,
@@ -316,7 +311,7 @@ in argv or the environment. Called only by the paths that need it — a flake **
 a **transition** — never by `list`, `names`, `corpus` or `status`.
 
 **Not seams:** `log` (reimplemented: `<ISO> spira: <msg>`), the suite-state parser (shared
-with the runner), the landstate read (a documented line format), git (subprocess),
+with the runner), git (subprocess),
 incident.sh, mail, host-check.sh and the queue (whole programs, §5).
 
 ## 5. Collaborators (subprocesses; all behind traits and faked in the tests)
@@ -381,14 +376,11 @@ is outside this bead's remit (suite-state.sh never had it).
 `SPIRA_LIFECYCLE_ENFORCE` `1`/`true`, else `spira.lifecycle_enforce`, else OFF).
 **`testenv suites` never touches spira-lc in either mode**: no subcommand runs it, reads
 `SPIRA_LC_BIN`, sources lc.sh, or reads the switch, so OFF and ON behave identically here.
-The one lifecycle fact it reads — whether a quarantine's bead LANDED (hygiene, D4) — comes
-from `$LANDSTATE/<id>`, which lib.sh `land_mark` writes whichever way the switch is set
-(queue land-local calls it in both modes). A transition's `queue submit` is the queue
+A transition's `queue submit` is the queue
 binary's own business, and the queue crate applies the switch there. Pinned by the unit
 test `suites::tests::suites_never_touches_spira_lc_in_either_lifecycle_mode` (the module
 sources name none of spira-lc / SPIRA_LC_BIN / lc.sh / the switch; settings resolve
-identically with the switch at 0 and 1; hygiene's LANDED decision is the landstate
-file's).
+identically with the switch at 0 and 1).
 
 ## 7. Findings (not fixed here)
 
