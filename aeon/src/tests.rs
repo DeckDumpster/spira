@@ -263,7 +263,7 @@ fn go(f: &Fx, labels: &str, extra: &[(&str, &str)], enforce: bool, mode: Mode, s
     let mut vars: BTreeMap<String, String> = [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
-        ("SPIRA_ASK_LABEL", "needs-ryan".to_string()),
+        ("SPIRA_ASK_LABEL", "needs-ryan".to_string()), // literal-ok: fixture/fallback
         ("SPIRA_WORLD_STOP_LABEL", "world-stop".to_string()), // literal-ok: test fixture
         ("SPIRA_TESTDB_LIB", "spira/testdb.sh".to_string()),
         ("SPIRA_TRACE_MARK", "=== spira attempt".to_string()),
@@ -1049,7 +1049,7 @@ fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr"));
+    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
     assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("overseer")), "{:?}", w.labels.get("sp-rr"));
     assert!(w.notes.iter().any(|(id, n)| id == "sp-rr" && n.contains("RAPID-RECUR")), "{:?}", w.notes);
     assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "{}", o.log);
@@ -1072,5 +1072,5 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2"));
+    assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback
 }

@@ -585,9 +585,9 @@ mod tests {
 
     #[test]
     fn importable_passes_through_every_other_resolved_key() {
-        let r = resolved_with(&[("SPIRA_ASK_LABEL", "needs-ryan"), ("SPIRA_CI_PARK_MAX", "5")]);
+        let r = resolved_with(&[("SPIRA_ASK_LABEL", "needs-ryan"), ("SPIRA_CI_PARK_MAX", "5")]); // literal-ok: fixture/fallback
         let got = importable(&r, &BTreeMap::new());
-        assert_eq!(got.get("SPIRA_ASK_LABEL"), Some(&"needs-ryan".to_string()));
+        assert_eq!(got.get("SPIRA_ASK_LABEL"), Some(&"needs-ryan".to_string())); // literal-ok: fixture/fallback
         assert_eq!(got.get("SPIRA_CI_PARK_MAX"), Some(&"5".to_string()));
     }
 

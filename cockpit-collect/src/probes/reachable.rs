@@ -113,7 +113,7 @@ pub fn reachable_keys() -> Kv {
     };
 
     let home = io::home_dir();
-    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string());
+    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
 
     let mut live: Vec<LabelSet> = Vec::new();
     if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {
@@ -198,7 +198,7 @@ mod tests {
     #[test]
     fn ready_open_bead_with_no_blockers_is_reachable() {
         let beads = vec![bead("sp-1", "open", &["plan"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (1, 1));
     }
 
@@ -208,7 +208,7 @@ mod tests {
             bead("sp-1", "open", &["plan"], &[]),
             bead("sp-2", "open", &["plan"], &["sp-1"]),
         ];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         // sp-1 is a seed and reachable; sp-2's only blocker (sp-1) is reachable, so sp-2
         // becomes reachable too via the BFS propagation.
         assert_eq!((reach, total), (2, 2));
@@ -216,15 +216,15 @@ mod tests {
 
     #[test]
     fn ask_labelled_bead_is_excluded_from_the_universe_entirely() {
-        let beads = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let beads = vec![bead("sp-1", "open", &["plan", "needs-ryan"], &[])]; // literal-ok: fixture/fallback
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 0));
     }
 
     #[test]
     fn poisoned_bead_counts_as_stuck_work_not_reachable() {
         let beads = vec![bead("sp-1", "open", &["plan", "spira-poison"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
     }
 
@@ -232,24 +232,24 @@ mod tests {
     fn bead_matching_no_live_partition_is_stranded() {
         let live = vec![["fayth:builder".to_string()].into_iter().collect::<LabelSet>()];
         let beads = vec![bead("sp-1", "open", &["plan"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &live);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &live); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
     }
 
     #[test]
     fn scope_label_is_required_to_enter_the_universe() {
         let beads = vec![bead("sp-1", "open", &["other-scope"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 0));
     }
 
     #[test]
     fn in_progress_bead_is_always_a_seed_even_with_open_blockers() {
         let beads = vec![
-            bead("sp-1", "open", &["plan", "needs-ryan"], &[]), // ask blocker, excluded from universe
+            bead("sp-1", "open", &["plan", "needs-ryan"], &[]), // ask blocker, excluded from universe // literal-ok: fixture/fallback
             bead("sp-2", "in_progress", &["plan"], &["sp-1"]),
         ];
-        let (reach, _total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]);
+        let (reach, _total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert!(reach >= 1);
     }
 
@@ -257,7 +257,7 @@ mod tests {
     fn suspended_partition_stops_a_bead_even_when_seeded() {
         let suspended = vec![["fayth:ops".to_string()].into_iter().collect::<LabelSet>()];
         let beads = vec![bead("sp-1", "open", &["plan", "fayth:ops"], &[])];
-        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &suspended, &[]);
+        let (reach, total) = reachable_bfs(&beads, "needs-ryan", "plan", &suspended, &[]); // literal-ok: fixture/fallback
         assert_eq!((reach, total), (0, 1));
     }
 }
