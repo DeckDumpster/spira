@@ -241,6 +241,10 @@ pub fn jsonl_rows(suite: &str, suite_source: &str, out_text: Option<&str>, fallb
     )
 }
 
+pub fn case_of(line: &str, word: &str) -> Option<String> {
+    strip_case_prefix(line, word)
+}
+
 /// `^(not )?ok [0-9]+ - ` — the leading digits and the `" - "` separator, literally (no
 /// regex crate needed for this one shape). `word` is `"ok"` or `"not ok"`.
 fn strip_case_prefix(line: &str, word: &str) -> Option<String> {

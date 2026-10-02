@@ -122,8 +122,20 @@ ok "a"
 ok "b"
 tl_summary
 EOF
-want "plan(): an omitted plan trails the last case instead" "ok 2 - b
-1..2" "$_RUN_OUT"
+want "plan(): an omitted plan trails the last case instead" "1..2" "$_RUN_OUT"
+nowant "plan(): the trailing plan follows the last case, not the first" "1..2
+ok 1" "$_RUN_OUT"
+
+_run <<'EOF2'
+sleep 0.3
+ok "slow"
+bad "failed" "why"
+tl_summary
+EOF2
+case "$_RUN_OUT" in
+    *"ok 1 - slow"$'\n'"#ms="[3-9][0-9][0-9]$'\n'*"not ok 2 - failed"$'\n'"# why"$'\n'"#ms="[0-9]*) ok "ms: each case is followed by its elapsed milliseconds, after any failure detail" ;;
+    *) bad "ms: each case is followed by its elapsed milliseconds, after any failure detail" "$_RUN_OUT" ;;
+esac
 
 # --- skip(): a skip is never a pass -------------------------------------------------
 _run <<'EOF'

@@ -11,6 +11,7 @@ use std::path::Path;
 
 pub const SUITE_TIMING: &str = "suite-timing";
 pub const ROUND: &str = "round";
+pub const CASE_TIMING: &str = "case-timing";
 pub const BATCH_ROW: &str = "__batch__";
 
 /// One `suite-timing` row's producer fields (the envelope — ts, host, family — is tsd's).
@@ -63,6 +64,55 @@ impl SuiteTimingRow {
             warm: None,
         }
     }
+}
+
+/// One `case-timing` row: a testlib case's wall milliseconds, keyed to the suite, the case
+/// name and the use cases the suite covers.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaseTimingRow {
+    pub run_id: String,
+    pub branch: String,
+    pub suite: String,
+    pub case: String,
+    pub status: String,
+    pub ms: u64,
+    pub tier: String,
+    pub uc: Vec<String>,
+}
+
+/// The cases of a suite's captured TAP output that carry a testlib `#ms=<n>` line, in order.
+/// A suite not on testlib.sh emits none, and so yields no rows.
+pub fn case_rows(
+    run_id: &str,
+    branch: &str,
+    suite: &str,
+    tier: &str,
+    uc: &[String],
+    out: &str,
+) -> Vec<CaseTimingRow> {
+    let mut rows = Vec::new();
+    let mut open: Option<(String, &str)> = None;
+    for line in out.lines() {
+        if let Some(case) = crate::tap::case_of(line, "not ok") {
+            open = Some((case, "fail"));
+        } else if let Some(case) = crate::tap::case_of(line, "ok") {
+            open = Some((case, "pass"));
+        } else if let Some(ms) = line.strip_prefix("#ms=").and_then(|n| n.trim().parse().ok()) {
+            if let Some((case, status)) = open.take() {
+                rows.push(CaseTimingRow {
+                    run_id: run_id.into(),
+                    branch: branch.into(),
+                    suite: suite.into(),
+                    case,
+                    status: status.into(),
+                    ms,
+                    tier: tier.into(),
+                    uc: uc.to_vec(),
+                });
+            }
+        }
+    }
+    rows
 }
 
 /// One `round` row: the corpus build phase of a round (only with SPIRA_ROUND_BATCH_ID).
@@ -236,6 +286,23 @@ mod tests {
             phases: None,
             warm: None,
         }
+    }
+
+    #[test]
+    fn case_rows_pair_each_case_with_the_ms_line_after_it() {
+        let out = "TAP version 14\nok 1 - fast\n#ms=3\nnot ok 2 - slow\n# wanted x\n#ms=4100\nok 3 - untimed\n";
+        let uc = vec!["UC-gate-01".to_string()];
+        let rows = case_rows("r", "b", "test-x.sh", "T1", &uc, out);
+        assert_eq!(rows.len(), 2);
+        assert_eq!((rows[0].case.as_str(), rows[0].status.as_str(), rows[0].ms), ("fast", "pass", 3));
+        assert_eq!((rows[1].case.as_str(), rows[1].status.as_str(), rows[1].ms), ("slow", "fail", 4100));
+        assert_eq!(rows[1].uc, uc);
+        assert!(case_rows("r", "b", "test-old.sh", "", &[], "ok 1 - a\n").is_empty());
+        let line = render(CASE_TIMING, "2026-10-02T00:00:00Z", "h", &rows[1]).unwrap();
+        let v: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["family"], "case-timing");
+        assert_eq!(v["ms"], 4100);
+        assert_eq!(v["uc"][0], "UC-gate-01");
     }
 
     #[test]
