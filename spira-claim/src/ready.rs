@@ -71,8 +71,8 @@ pub fn ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
 
 /// `ready_shared_exclude`'s labels (lib.sh:652) — never the submitted label: lifecycle state decides SUBMITTED, a stale bd label must not, folded into [`fayth_exclude`] — its
 /// only caller — rather than kept as a separately shimmed function (zero other callers).
-pub fn shared_exclude(queue_wait: &str, open_children: &str) -> String {
-    [queue_wait, open_children].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
+pub fn shared_exclude(queue_wait: &str, open_children: &str, overlap_defer: &str) -> String {
+    [queue_wait, open_children, overlap_defer].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(",")
 }
 
 /// `fayth_exclude <fayth> [own]` (lib.sh:666): the persona's own exclusions, the shared
@@ -269,8 +269,8 @@ mod tests {
 
     #[test]
     fn shared_exclude_drops_empty_labels() {
-        assert_eq!(shared_exclude("spira-queue-waiting", "spira-open-children"), "spira-queue-waiting,spira-open-children");
-        assert_eq!(shared_exclude("", ""), "");
+        assert_eq!(shared_exclude("spira-queue-waiting", "spira-open-children", "hold-back"), "spira-queue-waiting,spira-open-children,hold-back");
+        assert_eq!(shared_exclude("", "", ""), "");
     }
 
     fn row(id: &str, labels: &[&str]) -> ReadyRow {
@@ -300,7 +300,7 @@ mod tests {
         let parts = vec![part("builder", &["spira", "plan"], &[])];
         assert_eq!(bucket(&rows, &parts, "q"), vec![("builder".to_string(), 1)]);
         assert_eq!(partition(&rows, &parts[0], "q").len(), 1);
-        assert_eq!(shared_exclude("q", "oc"), "q,oc");
+        assert_eq!(shared_exclude("q", "oc", ""), "q,oc");
     }
 
     #[test]

@@ -1,0 +1,11 @@
+TYPE=string
+GROUP=overlap
+DOC=LABEL THAT MEANS "A DIFFERENT OPEN BEAD'S BRANCH ALREADY TOUCHES ONE OF THESE FILES". CHECK 7e applies and clears it; every claim predicate excludes it.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # LABEL THAT MEANS "A DIFFERENT OPEN BEAD'S BRANCH ALREADY TOUCHES ONE OF THESE FILES".
+    # Applied by the sentinel's CHECK 7e so dispatch skips a bead rather than claiming it into
+    # a rebase race it cannot win. Deliberately not SPIRA_ASK_LABEL: which of two siblings goes
+    # first is a serialisation fact recomputed and reversed every pass, never a question for
+    # the operator (law-escalate-decisions-not-problems).
+    : "${SPIRA_OVERLAP_DEFER_LABEL:=file-overlap-defer}"
+SPIRA_CONF_DEFAULT_EOF

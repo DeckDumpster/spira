@@ -182,6 +182,30 @@ impl<'a> Sentinel<'a> {
         }
     }
 
+    /// CHECK 7e — a bead whose branch touches a file another open bead's branch already
+    /// touches: deferred before dispatch spends a claim on a rebase race it cannot win.
+    pub fn check7e(&self) {
+        let overlaps = self.detect_file_overlaps();
+        if !overlaps.is_empty() {
+            let text: Vec<String> = overlaps.iter().map(crate::detect::Overlap::line).collect();
+            self.h.print(&text.join("\n"));
+        }
+        let outcomes = self.defer_file_overlaps(&overlaps);
+        if outcomes.is_empty() {
+            return;
+        }
+        let text: Vec<String> = outcomes.iter().map(crate::detect::DeferOutcome::line).collect();
+        self.h.print(&text.join("\n"));
+        let deferred = outcomes.iter().filter(|o| matches!(o, crate::detect::DeferOutcome::Deferred { .. })).count();
+        if deferred > 0 {
+            self.log(&format!(
+                "CHECK7e: {deferred} bead(s) deferred with {} — branch touches a file another open bead's branch already holds",
+                self.cfg.overlap_defer
+            ));
+            self.act(&format!("deferred {deferred} file-overlap bead(s)"));
+        }
+    }
+
     /// CHECK 8 — judgement, rate limited; only when the plan is starved and nothing moved.
     pub fn check8(
         &self,

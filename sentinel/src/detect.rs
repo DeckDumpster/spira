@@ -476,6 +476,185 @@ impl<'a> Sentinel<'a> {
     }
 }
 
+// ---------------------------------------------------------------------------------------
+// CHECK 7e — file overlaps.
+
+/// An open bead whose branch touches `path`, which `holder_id`'s branch already touches and
+/// reached first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlap {
+    pub id: String,
+    pub repo: String,
+    pub path: String,
+    pub holder_id: String,
+}
+
+impl Overlap {
+    pub fn line(&self) -> String {
+        format!("OVERLAP {} {} {} {}", self.id, self.repo, self.path, self.holder_id)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeferOutcome {
+    Deferred { id: String, repo: String, holder_id: String },
+    Resumed { id: String },
+}
+
+impl DeferOutcome {
+    pub fn line(&self) -> String {
+        match self {
+            DeferOutcome::Deferred { id, repo, holder_id } => format!("DEFERRED {id} {repo} {holder_id}"),
+            DeferOutcome::Resumed { id } => format!("RESUMED {id}"),
+        }
+    }
+}
+
+/// One bead's branch touching one file.
+#[derive(Debug, Clone)]
+pub struct FileHit {
+    pub id: String,
+    pub repo: String,
+    pub path: String,
+    pub claimed: bool,
+    pub first_commit: i64,
+}
+
+/// One file can have one holder: a branch already being worked outranks one not yet claimed,
+/// then the older first commit, then bead id — so repeat passes agree and a pair is never
+/// reported both ways. Only an unclaimed bead is ever reported: a claimed one has spent its
+/// claim and cannot be un-dispatched.
+pub fn overlaps_from_hits(hits: &[FileHit]) -> Vec<Overlap> {
+    let mut groups: std::collections::BTreeMap<(&str, &str), Vec<&FileHit>> = std::collections::BTreeMap::new();
+    for h in hits {
+        groups.entry((h.repo.as_str(), h.path.as_str())).or_default().push(h);
+    }
+    let mut out = Vec::new();
+    for ((repo, path), mut entries) in groups {
+        if entries.len() < 2 {
+            continue;
+        }
+        entries.sort_by(|a, b| (!a.claimed, a.first_commit, &a.id).cmp(&(!b.claimed, b.first_commit, &b.id)));
+        let holder = entries[0].id.clone();
+        for e in &entries[1..] {
+            if !e.claimed {
+                out.push(Overlap { id: e.id.clone(), repo: repo.to_string(), path: path.to_string(), holder_id: holder.clone() });
+            }
+        }
+    }
+    out
+}
+
+impl<'a> Sentinel<'a> {
+    /// The file-IDENTITY analogue of `detect_branch_collisions`: branch names are distinct
+    /// across siblings of one epic, their file sets are not.
+    pub fn detect_file_overlaps(&self) -> Vec<Overlap> {
+        if self.cfg.overlap_defer.is_empty() {
+            return Vec::new();
+        }
+        let mut beads = Vec::new();
+        for status in ["open", "in_progress"] {
+            let args = vec![
+                "list".into(),
+                "--status".into(),
+                status.into(),
+                "--limit".into(),
+                "0".into(),
+                "--exclude-type".into(),
+                "epic,event".into(),
+            ];
+            if let Ok(raw) = self.bd().json(self.h, &args) {
+                if let Ok(v) = parse_beads(&raw) {
+                    beads.extend(v.into_iter().map(|b| (status == "in_progress", b)));
+                }
+            }
+        }
+        let ask = &self.cfg.ask;
+        let mut roots: HashMap<String, Option<String>> = HashMap::new();
+        let mut hits = Vec::new();
+        for (claimed, b) in &beads {
+            if !ask.is_empty() && b.has(ask) {
+                continue;
+            }
+            let repo = b.label_value("repo:").map(str::to_string).unwrap_or_else(|| self.cfg.home_repo.clone());
+            let root = roots
+                .entry(repo.clone())
+                .or_insert_with(|| self.repo_root_cmd(&repo).filter(|r| is_git_dir(r)))
+                .clone();
+            let Some(root) = root else { continue };
+            let Some(land) = self.ctx.repos.iter().find(|r| r.name == repo).and_then(|r| r.base()) else {
+                continue;
+            };
+            let br = b.label_value("branch:").map(str::to_string).unwrap_or_else(|| format!("spira/{}", b.id));
+            if !self.git(&root, &["show-ref", "--verify", "--quiet", &format!("refs/heads/{br}")]).ok() {
+                continue;
+            }
+            let diff = self.git(&root, &["diff", "--name-only", &format!("{land}...{br}"), "--"]);
+            let files: Vec<&str> = diff.stdout.lines().filter(|l| !l.is_empty()).collect();
+            if files.is_empty() {
+                continue;
+            }
+            let first_commit = self
+                .git(&root, &["log", "--reverse", "--format=%ct", &format!("{land}..{br}")])
+                .stdout
+                .lines()
+                .next()
+                .and_then(|l| l.trim().parse().ok())
+                .unwrap_or(0);
+            for f in files {
+                hits.push(FileHit { id: b.id.clone(), repo: repo.clone(), path: f.to_string(), claimed: *claimed, first_commit });
+            }
+        }
+        overlaps_from_hits(&hits)
+    }
+
+    /// Labels each reported bead so dispatch skips it, and clears the label from any bead
+    /// the fresh report no longer names. Never `SPIRA_ASK_LABEL`: which sibling goes first
+    /// is a serialisation fact this recomputes every pass (law-escalate-decisions-not-problems).
+    pub fn defer_file_overlaps(&self, overlaps: &[Overlap]) -> Vec<DeferOutcome> {
+        let label = &self.cfg.overlap_defer;
+        let mut out = Vec::new();
+        if label.is_empty() {
+            return out;
+        }
+        let mut current: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for o in overlaps {
+            if !current.insert(o.id.as_str()) {
+                continue;
+            }
+            if !self.label_list(&o.id).contains(label.as_str()) {
+                self.bd().quiet(self.h, &["label", "add", &o.id, label], None);
+                let note = format!(
+                    "Deferred by detect_file_overlaps: this bead's branch touches {}, which {}'s branch already touches and reached first. Labeled {} so dispatch does not spend a claim on a rebase race it cannot win. The label is removed automatically once {} lands, is abandoned, or the overlap otherwise clears — no operator action needed.",
+                    o.path, o.holder_id, label, o.holder_id
+                );
+                self.bd().quiet(self.h, &["note", &o.id, "--stdin"], Some(&note));
+            }
+            out.push(DeferOutcome::Deferred { id: o.id.clone(), repo: o.repo.clone(), holder_id: o.holder_id.clone() });
+        }
+        let args: Vec<String> =
+            ["list", "--status", "open", "--limit", "0", "--label", label.as_str()].iter().map(|s| s.to_string()).collect();
+        let Ok(raw) = self.bd().json(self.h, &args) else {
+            return out;
+        };
+        let Ok(labelled) = parse_beads(&raw) else {
+            return out;
+        };
+        for b in labelled {
+            if current.contains(b.id.as_str()) {
+                continue;
+            }
+            self.bd().quiet(self.h, &["label", "remove", &b.id, label], None);
+            let note = format!(
+                "Resumed by detect_file_overlaps: no other bead's branch overlaps this one's files anymore. Removed {label}."
+            );
+            self.bd().quiet(self.h, &["note", &b.id, "--stdin"], Some(&note));
+            out.push(DeferOutcome::Resumed { id: b.id });
+        }
+        out
+    }
+}
+
 fn is_git_dir(root: &str) -> bool {
     let p = std::path::Path::new(root).join(".git");
     p.is_dir() || p.is_file()
@@ -504,6 +683,37 @@ mod tests {
         let list = parse_worktree_porcelain(PORCELAIN);
         assert_eq!(find_holder(&list, "spira/sp-root"), Some("/r/wt/sp-hold".to_string()));
         assert_eq!(find_holder(&list, "spira/sp-nobody"), None);
+    }
+
+    fn hit(id: &str, path: &str, claimed: bool, first: i64) -> FileHit {
+        FileHit { id: id.into(), repo: "r".into(), path: path.into(), claimed, first_commit: first }
+    }
+
+    #[test]
+    fn overlap_reports_the_later_bead_naming_the_earlier_as_holder() {
+        let got = overlaps_from_hits(&[hit("sp-b", "f", false, 20), hit("sp-a", "f", false, 10), hit("sp-c", "g", false, 5)]);
+        assert_eq!(got, vec![Overlap { id: "sp-b".into(), repo: "r".into(), path: "f".into(), holder_id: "sp-a".into() }]);
+        assert_eq!(got[0].line(), "OVERLAP sp-b r f sp-a");
+    }
+
+    #[test]
+    fn overlap_ties_break_on_bead_id_and_never_report_both_ways() {
+        let got = overlaps_from_hits(&[hit("sp-b", "f", false, 0), hit("sp-a", "f", false, 0)]);
+        assert_eq!(got.iter().map(|o| (o.id.as_str(), o.holder_id.as_str())).collect::<Vec<_>>(), vec![("sp-b", "sp-a")]);
+    }
+
+    #[test]
+    fn a_claimed_bead_outranks_an_older_unclaimed_one_and_is_never_reported() {
+        let got = overlaps_from_hits(&[hit("sp-old", "f", false, 1), hit("sp-busy", "f", true, 99)]);
+        assert_eq!(got.iter().map(|o| (o.id.as_str(), o.holder_id.as_str())).collect::<Vec<_>>(), vec![("sp-old", "sp-busy")]);
+        assert!(overlaps_from_hits(&[hit("sp-x", "f", true, 1), hit("sp-y", "f", true, 2)]).is_empty());
+    }
+
+    #[test]
+    fn same_path_in_different_repos_is_not_an_overlap() {
+        let mut other = hit("sp-b", "f", false, 2);
+        other.repo = "s".into();
+        assert!(overlaps_from_hits(&[hit("sp-a", "f", false, 1), other]).is_empty());
     }
 
     #[test]
