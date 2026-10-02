@@ -272,6 +272,7 @@ The cockpit gives the operator a view of Spira that is **read-only and honest**.
 | UC-cockpit-observability-47 | `tmux-env.sh` scrubs the Claude session identity from the server's global env. Panes opened afterwards do not inherit it, and a second run is idempotent. | CON, IDM | T2 bCI |
 | UC-cockpit-observability-48 | `cockpit-remote`:<br>• the dialer refuses an empty `COCKPIT_HOST`;<br>• a watcher that loses the lock exits non-zero promptly, naming the holder;<br>• `start` delegates to systemd when the unit is enabled (lock holder = MainPID) and forks with setsid otherwise;<br>• the orphan-lock probe names the holder's pid and path. | CON, REC, FC | T2 bCI (real flock, stub systemd) |
 | UC-cockpit-observability-49 | The collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures. | REC | T1 cert (unit test, bounded wait) |
+| UC-cockpit-observability-50 | `ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL). A loom that never answers is FAIL, bounded by `SPIRA_LOOM_READY_GRACE` rather than the default. | OBS, CTR | T1 cert (real probe loop, localhost port) |
 
 ## 3. Coverage map
 

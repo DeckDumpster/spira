@@ -255,3 +255,8 @@ statement = "`cockpit-remote`: the dialer refuses an empty `COCKPIT_HOST`; a wat
 id = "UC-cockpit-observability-49"
 tier = "T1"
 statement = "the collector loop exits 1 and logs the count after `SPIRA_COCKPIT_MERGE_FAIL_MAX` consecutive merge failures"
+
+[[use_case]]
+id = "UC-cockpit-observability-50"
+tier = "T1"
+statement = "`ready.sh` loom grace pass: a loom that refuses the first probe and opens its port later is retried until it answers (pass, not FAIL); a loom that never answers is FAIL bounded by `SPIRA_LOOM_READY_GRACE`, not the default"
