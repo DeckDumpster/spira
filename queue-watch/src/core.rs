@@ -18,7 +18,6 @@ pub struct Member {
 pub struct Batch {
     pub pr: String,
     pub head: String,
-    pub branch: String,
     pub members: Vec<Member>,
     /// The queue's own head branch (`spira/queue/...`), scoping a run to this batch alone —
     /// two batches can share a head commit, but never a branch. Empty for a fixture or an
