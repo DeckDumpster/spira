@@ -1225,8 +1225,8 @@ fn symlinked_targets_is_empty_for_a_target_dir_that_does_not_exist() {
 
 #[test]
 fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
-    let root = std::env::temp_dir().join(format!("testenv-copy-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
+    let tmp = testkit::TempDir::new("testenv-copy");
+    let root = tmp.join("root");
     std::fs::create_dir_all(root.join("store")).unwrap();
     std::fs::create_dir_all(root.join("bin")).unwrap();
     std::fs::write(root.join("store/spira-config"), b"binary").unwrap();
@@ -1240,5 +1240,4 @@ fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
     assert_eq!(RealHost.copy_file(&root.join("bin/spira-config"), &dest), Ok(()));
     std::os::unix::fs::symlink("../store/absent", root.join("bin/dangling")).unwrap();
     assert!(RealHost.copy_file(&root.join("bin/dangling"), &dest).is_err());
-    let _ = std::fs::remove_dir_all(&root);
 }
