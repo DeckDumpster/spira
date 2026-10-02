@@ -138,6 +138,9 @@ fn main() {
     if !fayth_file.is_file() {
         fatal(&format!("no such fayth: {}", fayth_file.display()));
     }
+    if let Err(e) = aeon::fayth_keys::check(&fayth_file, &home) {
+        fatal(&e);
+    }
     let own_unit = original.get("AEON_OWN_UNIT").cloned().unwrap_or_else(own_unit_from_cgroup);
 
     // conf.sh's resolution, once, through the seam.
