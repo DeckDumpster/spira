@@ -37,6 +37,12 @@
 #      STATUS=satisfied — the old code could not distinguish that from no CI activity.
 #  33. reconciler engine wiring: a deterministic remedy that does not close its gap by
 #      the next pass escalates instead of being retried blind.
+#  34. pool-idle (sp-forah): the certified-pool trigger's harness-owned replacement for a
+#      chat-session while-true loop / re-armed Monitor (sp-ji62y). Positive controls first
+#      (pool below SPIRA_QUEUE_ROUND_MIN_N stays quiet; a batch already open stays quiet
+#      however full the pool — deliberate back-pressure), then SEEN RED: a full pool with no
+#      batch open, past SPIRA_QUEUE_ROUND_STALL_SECS, fires and files an incident naming the
+#      repo and depth — nothing alarms on this today without czar.sh's pool-idle detector.
 #
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): for detector 4, the test
 # first verifies NO detection with an empty/fresh fixture, then adds the trigger and
@@ -840,5 +846,73 @@ want "remedy pass 2: still stalled, still DETECTED=yes" "CLASS=ci-stalled DETECT
 want "remedy pass 2: escalates instead of retrying" "REMEDY=inference" "$_log"
 want "remedy pass 2: incident filed with cause=ci-stalled" "cause=ci-stalled" "$_inc_log"
 lack "remedy pass 2: does not rerun the workflow a second time" "workflow-rerun" "$_forge_calls_2"
+
+# ==========================================================================================
+printf '\n%s\n' "34. pool-idle: the certified-pool trigger's harness-owned replacement (sp-forah)"
+# ==========================================================================================
+# A real repo, unlike the log/forge-only detectors above: pool-idle shells to
+# `git for-each-ref`, so the branches it counts have to actually exist.
+POOL_REPO="$T/poolrepo"
+mkdir -p "$POOL_REPO"
+(
+    cd "$POOL_REPO" \
+        && git init -q -b main \
+        && GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
+           git commit -q --allow-empty -m base
+)
+printf 'poolrepo | %s | queue | origin/main | |\n' "$POOL_REPO" >> "$SPIRA_REPO_MAP"
+
+# Pinned to non-default values (both default elsewhere: floor 4, window 900s) so this
+# proves the config keys are wired, not just their Rust-side fallbacks.
+export SPIRA_QUEUE_ROUND_MIN_N=3
+export SPIRA_QUEUE_ROUND_STALL_SECS=120
+
+mkdir -p "$SPIRA_RUN/landstate"
+certify_pool_member() {
+    git -C "$POOL_REPO" branch "spira/$1"
+    printf 'CERTIFIED deadbeef %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/$1"
+}
+
+# POSITIVE CONTROL: two certified members is below the floor of 3 — must stay quiet.
+certify_pool_member sp-poola1
+certify_pool_member sp-poola2
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$SPIRA_RUN/reconciler-state.json"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "pool-idle: DETECTED=no below the floor (2 < 3)" "CLASS=pool-idle DETECTED=no" "$_log"
+
+# POSITIVE CONTROL: a third member reaches the floor, but an open batch is deliberate
+# back-pressure — must stay quiet however full the pool.
+certify_pool_member sp-poola3
+mkdir -p "$SPIRA_RUN/queue/poolrepo"
+printf 'branch=spira/queue/x\n' > "$SPIRA_RUN/queue/poolrepo/open"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$SPIRA_RUN/reconciler-state.json"
+bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+want "pool-idle: DETECTED=no with a batch already open, at the floor" "CLASS=pool-idle DETECTED=no" "$_log"
+rm -f "$SPIRA_RUN/queue/poolrepo/open"
+
+# SEEN RED: at the floor, no batch open, streak seeded past the window — must fire and
+# file an incident naming the repo and its depth. Before this detector, nothing here
+# alarmed on this shape at all (sp-ji62y: a chat-session watcher died on compaction and
+# 23 certified beads sat idle for ~30 minutes with no alarm).
+_now_e34="$(date +%s)"
+_old_since34=$(( _now_e34 - 121 ))   # 121s > SPIRA_QUEUE_ROUND_STALL_SECS=120
+python3 -c "
+import json
+st = {'pool-idle:poolrepo': {'since': $_old_since34, 'remedy_attempted_at': None, 'remedy_desc': None}}
+print(json.dumps(st))
+" > "$SPIRA_RUN/reconciler-state.json"
+rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
+SPIRA_CZAR_STAGE_POOL_IDLE=act bash "$CZAR" --pass >/dev/null 2>&1
+_log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
+_inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
+want "pool-idle: DETECTED=yes once the streak outlasts the window" "CLASS=pool-idle DETECTED=yes" "$_log"
+want "pool-idle: incident filed with cause=pool-idle" "cause=pool-idle" "$_inc_log"
+want "pool-idle: subject names the repo" "poolrepo" "$_inc_log"
+want "pool-idle: subject names the depth" "(3)" "$_inc_log"
+
+unset SPIRA_QUEUE_ROUND_MIN_N SPIRA_QUEUE_ROUND_STALL_SECS
+rm -f "$SPIRA_RUN/reconciler-state.json"
 
 tl_summary
