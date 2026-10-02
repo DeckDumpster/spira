@@ -38,6 +38,13 @@ fn every_real_registry_key_resolves_without_error() {
         assert!(resolved.values.contains_key(key), "{key} has no resolved value");
     }
 
+    // Fixed, never settable: a configurable NO_VERDICT could turn every withheld verdict into a pass.
+    const FIXED: &[&str] = &["SPIRA_GATE_NOVERDICT", "SPIRA_GATE_BASEFAIL"];
+    // The converse: a key resolve() computes with no conf.d file is absent from the generated
+    // allowlist, so an operator setting it in spira.toml is refused.
+    let unregistered: Vec<&String> = resolved.values.keys().filter(|k| !FIXED.contains(&k.as_str()) && !registry.contains_key(*k)).collect();
+    assert!(unregistered.is_empty(), "resolve() computes keys with no spira/conf.d file: {unregistered:?}");
+
     // The per-copy keys the bead names are resolved in-process (for SPIRA_REPO_MAP, SPIRA_
     // FAYTHS, SPIRA_MAX_AEONS) or not resolved at all (SPIRA_HOME, SPIRA_REPO) — either way,
     // NONE of them appear in the typed export set `resolve --sh` would print.
