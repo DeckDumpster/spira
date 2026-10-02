@@ -42,7 +42,7 @@
 #
 # defect: sp-o7nbr
 # tier: T2
-# covers: lifecycle/* spira-lc/* spira-claim/* spira/batch.sh spira/verdict.sh queue/src/*
+# covers: lifecycle/* spira-lc/* spira-claim/* queue/src/*
 # timeout: 360
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
