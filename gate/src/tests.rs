@@ -2471,6 +2471,26 @@ fn a_fence_that_exits_0_without_its_line_is_no_verdict_fence_silent() {
     );
 }
 
+fn branch_trial_prints(f: &Fake, out: &str) {
+    f.runs.borrow_mut().insert(MERGE_SHA.to_string(), (0, out.to_string()));
+}
+
+#[test]
+fn a_summary_naming_fewer_suites_than_the_runner_ran_is_no_verdict() {
+    let f = Fake::new();
+    branch_trial_prints(&f, "  test-a.sh   ok 1s\n  test-b.sh   ok 1s\nVERDICT GREEN ran=3");
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=summary-mismatch"), "{}", f.verdict_line());
+    assert!(f.stderr().contains("ran=3 but only 2"), "{}", f.stderr());
+}
+
+#[test]
+fn a_summary_naming_every_suite_the_runner_ran_still_passes() {
+    let f = Fake::new();
+    branch_trial_prints(&f, "  test-a.sh   ok 1s\n  test-b.sh   ok 1s\n  test-c.sh   SKIPPED\nVERDICT GREEN ran=2 skipped=1");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+}
+
 #[test]
 fn a_plan_matrix_that_is_skipped_is_fence_silent_even_when_spira_lint_passes() {
     let f = fenced();

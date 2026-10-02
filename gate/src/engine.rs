@@ -736,6 +736,11 @@ impl<'w, W: World> Trial<'w, W> {
                     parse::tail_bytes(&out, 4000)));
             }
             let ran = parse::ran_suites(&out);
+            if let Some(mismatch) = summary_mismatch(ran.len(), parse::verdict_ran(&out)) {
+                return v(NOVERDICT, "summary-mismatch", format!(
+                    "gate: summary-mismatch — {mismatch}\ngate: a summary that names fewer suites than the runner executed does not record what was certified.\n{}",
+                    parse::tail_bytes(&out, 4000)));
+            }
             let pass_suites = if ran.is_empty() {
                 "-".to_string()
             } else {
@@ -1385,6 +1390,15 @@ impl<'w, W: World> Trial<'w, W> {
 /// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,…`, empty
 /// until a composition was chosen. Readers split the note on spaces and take its first word
 /// as the reason (yield.sh), so trailing fields are compatible.
+fn summary_mismatch(listed: usize, runner_ran: Option<usize>) -> Option<String> {
+    match runner_ran {
+        Some(n) if listed < n => Some(format!(
+            "the runner reported ran={n} but only {listed} suites could be named from its output"
+        )),
+        _ => None,
+    }
+}
+
 pub fn meter_suffix(compose: &str, phases: &[(String, u64)]) -> String {
     if compose.is_empty() {
         return String::new();

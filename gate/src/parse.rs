@@ -42,9 +42,22 @@ pub fn ran_suites(out: &str) -> Vec<String> {
             "DISABLED",
             "UNREACHED",
             "FAILED",
+            "FAULT",
         ],
         true,
     )
+}
+
+/// The `ran=<n>` of the runner's last `VERDICT` line, if it printed one.
+pub fn verdict_ran(out: &str) -> Option<usize> {
+    out.lines()
+        .rev()
+        .filter(|l| l.starts_with("VERDICT "))
+        .find_map(|l| {
+            l.split_whitespace()
+                .find_map(|w| w.strip_prefix("ran="))
+                .and_then(|n| n.parse().ok())
+        })
 }
 
 /// `timed_out_suites`: only what the watchdog killed — never a genuine FAIL.
@@ -213,6 +226,18 @@ mod tests {
             ran_suites(out),
             ["test-a.sh", "test-b.sh", "test-c.sh", "test-d.sh"]
         );
+    }
+
+    #[test]
+    fn verdict_ran_reads_the_runners_count() {
+        assert_eq!(verdict_ran("  a.sh ok\nVERDICT GREEN ran=66 skipped=2"), Some(66));
+        assert_eq!(verdict_ran("VERDICT RED ran=3 red=1"), Some(3));
+        assert_eq!(verdict_ran("a.sh ok\nran=5 but no verdict"), None);
+    }
+
+    #[test]
+    fn a_fault_line_counts_as_ran() {
+        assert_eq!(ran_suites("  test-f.sh   FAULT   podman lost the exit status"), ["test-f.sh"]);
     }
 
     #[test]
