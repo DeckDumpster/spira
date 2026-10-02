@@ -146,6 +146,22 @@ mod tests {
     }
 
     #[test]
+    fn the_header_faults_above_a_non_default_threshold_and_not_at_it() {
+        let mut stale = base_inputs();
+        stale.snap_stale_s = 7;
+        stale.age_secs = Some(20);
+        assert!(frame(0, 80, &stale)[0].contains("FAULT (20s)"));
+        let mut edge = base_inputs();
+        edge.snap_stale_s = 7;
+        edge.age_secs = Some(7);
+        assert!(!frame(0, 80, &edge)[0].contains("FAULT"));
+        let mut fresh = base_inputs();
+        fresh.snap_stale_s = 7;
+        fresh.age_secs = Some(0);
+        assert!(!frame(0, 80, &fresh)[0].contains("FAULT"));
+    }
+
+    #[test]
     fn frame_with_no_snapshot_still_produces_a_header_and_standing_lines() {
         let out = frame(0, 80, &base_inputs());
         assert!(!out.is_empty());
