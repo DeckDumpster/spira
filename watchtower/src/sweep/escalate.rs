@@ -408,9 +408,7 @@ mod tests {
 
     fn fake_bd(d: &std::path::Path, stdout: &str, rc: i32) -> String {
         let bd = d.join("bd.sh");
-        std::fs::write(&bd, format!("#!/usr/bin/env bash\necho '{stdout}'\nexit {rc}\n")).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&bd, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&bd, &format!("#!/usr/bin/env bash\necho '{stdout}'\nexit {rc}\n"));
         bd.to_str().unwrap().to_string()
     }
 
