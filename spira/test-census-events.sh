@@ -530,5 +530,52 @@ out="$(census_out)"
 want   "sp-recur-oldest-unsent still ranked under its true cause" "1 sp-recur-oldest-unsent" "$out"
 nowant "sp-reopen-recurrence absent: it's a timing verdict, not a cause" "sp-reopen-recurrence" "$out"
 
+# ======================================================================================
+echo
+echo "sp-wkgyc: requeued/unjudged-<cause> — aeon_disposition's own free verdict is never ranked"
+# ======================================================================================
+# disposition() (aeon/src/decide.rs) marks EVERY unjudged-<cause> free but the one
+# CHARGING_OUTCOME; census reads that constant.
+# POSITIVE CONTROL (law-a-regression-test-must-be-seen-to-fail): on the unfixed tree
+# census ranks sp-requeue-unjudged-operator-wait — a correct escalation, not a failure
+# class — exactly the defect this bead reports.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-u1","title":"operator-wait bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-27T00:00:00Z"}
+JSONL
+bump_requeue "sp-u1" "unjudged-operator-wait" >/dev/null 2>&1
+
+out="$(census_out)"
+nowant "sp-requeue-unjudged-operator-wait is never ranked" "sp-requeue-unjudged-operator-wait" "$out"
+_att="$(attempts_of "sp-u1")"
+is "no attempt charged for an unjudged-operator-wait requeue" "0" "$_att"
+_rqn="$(requeues_of "sp-u1")"
+is "requeues_of still counts the event" "1" "$_rqn"
+
+# Not a finite hardcoded list: groomer.sh unpoison writes free-text unjudged-<cause> values
+# (e.g. "precondition-satisfied") that never appear as a literal anywhere in aeon_disposition
+# or in this suite until now — the exclusion must still catch it.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-u2","title":"unpoison-credited bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-27T00:00:00Z"}
+JSONL
+bump_requeue "sp-u2" "unjudged-precondition-satisfied" >/dev/null 2>&1
+
+out="$(census_out)"
+nowant "an arbitrary unjudged-<cause> (not a hardcoded literal) is also never ranked" \
+    "sp-requeue-unjudged-precondition-satisfied" "$out"
+
+# NEGATIVE CONTROL: unlanded is the one outcome aeon_disposition charges. A requeued event
+# naming it must still rank — proving the exclusion reads CHARGING_OUTCOME rather than
+# blindly trusting the unjudged- prefix (law-a-pattern-match-is-not-an-identity-check).
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-u3","title":"charging bead","status":"open","issue_type":"task","labels":["spira"],"updated_at":"2026-09-27T00:00:00Z"}
+JSONL
+bump_requeue "sp-u3" "unjudged-unlanded" >/dev/null 2>&1
+
+out="$(census_out)"
+want "unjudged-unlanded is not exempted: it still ranks" "sp-requeue-unjudged-unlanded" "$out"
+
 echo
 tl_summary
