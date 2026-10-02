@@ -78,8 +78,8 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     })
 }
 
-/// The store address as the config resolves it (environment, else `spira.toml`) — never the
-/// bare environment alone (law-a-binary-resolves-the-config-it-reads).
+/// The store address as spira-config resolves it — never the bare environment alone
+/// (law-a-binary-resolves-the-config-it-reads).
 pub fn sccache_dav_addr(home: &Path) -> String {
     nonempty_env(release::units::SCCACHE_DAV_ADDR_KEY).or_else(|| spira_config::build::addr_for_home(home)).unwrap_or_default()
 }
