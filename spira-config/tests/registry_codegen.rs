@@ -68,9 +68,9 @@ fn every_conf_d_key_converts_and_no_toml_only_key_is_in_conf_d() {
     }
 }
 
-fn fixture_registry(extra_key: &str, extra_type: &str) -> (PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!("spira-config-codegen-{}-{extra_key}", std::process::id()));
-    let _ = fs::remove_dir_all(&root);
+fn fixture_registry(extra_key: &str, extra_type: &str) -> (testkit::TempDir, PathBuf) {
+    let tmp = testkit::TempDir::new(&format!("spira-config-codegen-{extra_key}"));
+    let root = tmp.path().to_path_buf();
     let conf_d = root.join("conf.d");
     fs::create_dir_all(&conf_d).unwrap();
     for name in registry_files(&spira_dir().join("conf.d")) {
@@ -83,14 +83,15 @@ fn fixture_registry(extra_key: &str, extra_type: &str) -> (PathBuf, PathBuf) {
         ),
     )
     .unwrap();
-    (root, conf_d)
+    (tmp, conf_d)
 }
 
 #[test]
 fn a_key_added_to_the_registry_only_reaches_conf_sh_and_spira_config() {
     let key = "SPIRA_FIXTURE_ONLY_KEY";
-    let (root, conf_d) = fixture_registry(key, "u32");
+    let (tmp, conf_d) = fixture_registry(key, "u32");
 
+    let root = tmp.path();
     let keys = codegen::load(&conf_d, &root.join("absent")).unwrap();
     let section = codegen::section_rs(&keys);
     assert!(section.contains("pub fixture_only_key: Option<u32>,"), "{section}");
@@ -110,15 +111,13 @@ fn a_key_added_to_the_registry_only_reaches_conf_sh_and_spira_config() {
     assert!(allow.lines().any(|l| l == key), "{allow}");
     let defaults = fs::read_to_string(spira.join("conf.d.defaults.generated.sh")).unwrap();
     assert!(defaults.contains(&format!("${{{key}:=fixture-default}}")), "{defaults}");
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
 fn an_unknown_type_in_the_registry_refuses_the_build() {
-    let (root, conf_d) = fixture_registry("SPIRA_FIXTURE_BAD_TYPE", "float");
-    let err = codegen::load(&conf_d, &root.join("absent")).err().expect("refused");
+    let (tmp, conf_d) = fixture_registry("SPIRA_FIXTURE_BAD_TYPE", "float");
+    let err = codegen::load(&conf_d, &tmp.path().join("absent")).err().expect("refused");
     assert!(err.contains("SPIRA_FIXTURE_BAD_TYPE"), "{err}");
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]

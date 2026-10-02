@@ -20,8 +20,8 @@
 # directory listing, so it cannot omit a key that has a file.
 #
 # SPIRA-CONFIG READS THE SAME FILES. Its build script generates SpiraSection, the KEY=>field
-# mapping and the key history from conf.d (plus spira/conf.toml.d, keys only spira.toml
-# carries, which this script never lists). TYPE, MAX and SCHEMA below are read by it, not here.
+# mapping and the key history from conf.d (plus spira/conf.toml.d, keys only the typed
+# config carries, which this script never lists). TYPE, MAX and SCHEMA below are read by it, not here.
 #
 # WHAT A conf.d/<KEY> FILE LOOKS LIKE — these fields, in this order:
 #   TYPE=string|u32|u64|bool|list|onoff|czar_stage   the type of the spira-config field
