@@ -172,6 +172,17 @@ else
     want "and it says which copy is in the way" "already running" "$out"
 
     kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null
+
+    # A live holder that is itself a `cockpit-remote watch` satisfies the unit: exit 0, named.
+    rm -f "$LOCKD/held"
+    printf '%s\n' 'exec 9>"$2/cockpit-watch.lock"; flock 9; touch "$2/held"; sleep 10' >"$LOCKD/cockpit-remote"
+    bash "$LOCKD/cockpit-remote" watch "$LOCKD" &
+    _holder=$!
+    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
+    out="$(TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    is "a live cockpit-remote watch holder satisfies the unit (exit 0)" "0" "$rc"
+    want "and the holder is named" "pid $_holder" "$out"
+    kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null
     rm -rf "$LOCKD"
 fi
 
