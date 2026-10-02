@@ -33,9 +33,20 @@ pub trait Seam {
     fn bump_requeue(&self, id: &str, reason: &str);
     fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn note(&self, id: &str, text: &str);
-    /// `queue submit <branch> <repo>` — (green?, combined output).
-    fn submit(&self, branch: &str, repo_name: &str) -> (bool, String);
+    /// `queue submit <branch> <repo>` — the gate's verdict and its combined output.
+    fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String);
 }
+
+/// What the gate said. `NoVerdict` (queue's exit 75) judged nothing — a budget cut, a
+/// timeout — and is never a red.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gate {
+    Green,
+    Red,
+    NoVerdict,
+}
+
+const GATE_NO_VERDICT: i32 = 75;
 
 pub struct LibSeam {
     pub home: PathBuf,
@@ -217,7 +228,7 @@ impl Seam for LibSeam {
         let _ = self.lib("bdq", &["note", id], Some(text));
     }
 
-    fn submit(&self, branch: &str, repo_name: &str) -> (bool, String) {
+    fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String) {
         // stdout and stderr combined into one capture, as queue.sh's `2>&1` did.
         let o = Command::new("bash")
             .arg("-c")
@@ -228,11 +239,15 @@ impl Seam for LibSeam {
             .stdin(Stdio::null())
             .output();
         match o {
-            Ok(o) => (
-                o.status.success(),
-                String::from_utf8_lossy(&o.stdout).into_owned(),
-            ),
-            Err(e) => (false, format!("queue submit could not run: {e}")),
+            Ok(o) => {
+                let gate = match o.status.code() {
+                    Some(0) => Gate::Green,
+                    Some(GATE_NO_VERDICT) => Gate::NoVerdict,
+                    _ => Gate::Red,
+                };
+                (gate, String::from_utf8_lossy(&o.stdout).into_owned())
+            }
+            Err(e) => (Gate::Red, format!("queue submit could not run: {e}")),
         }
     }
 }
