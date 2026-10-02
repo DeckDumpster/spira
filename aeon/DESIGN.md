@@ -278,7 +278,7 @@ struct Fayth { name, labels, exclude_labels: String, max_concurrent: u32, elasti
     lease_minutes: Option<u32> /* 10 */, heartbeat_seconds: u64 /* 30 */,
     timeout_seconds: Option<u64>, memory_prefixes /* "law-" */, statute_core,
     tools /* "Bash,Read,Edit,Write,Glob,Grep" */, project_instructions: String,
-    system_prompt: SystemPrompt /* Append | Replace */, sop_required: bool,
+    system_prompt: SystemPrompt /* Append | Replace */,
     groom_escalation_check: bool, graph_only: bool }
 struct Conf { v: BTreeMap<String, String>, home: PathBuf, run: PathBuf }
 

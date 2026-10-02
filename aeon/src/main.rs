@@ -156,6 +156,9 @@ fn main() {
     let env = Env::new(original.clone(), snap.env.clone());
     let conf = Conf::new(&snap, &home);
     let fayth = Fayth::from_vars(&cli.fayth, &snap.vars);
+    if snap.vars.get("FAYTH_SOP_REQUIRED").is_some_and(|v| !v.is_empty()) {
+        eprintln!("{}: FAYTH_SOP_REQUIRED is retired (sp-loycl) and ignored — remove it from the fayth", cli.fayth);
+    }
     let toml = conf.s("SPIRA_TOML_FILE");
     let enforce = conf::lifecycle_enforce(&original, (!toml.is_empty()).then(|| Path::new(&toml)));
     let claim_bin = "spira-claim".to_string();

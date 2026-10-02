@@ -27,7 +27,6 @@ pub struct Fayth {
     pub tools: String,
     pub project_instructions: String,
     pub system_prompt: SystemPrompt,
-    pub sop_required: bool,
     pub groom_escalation_check: bool,
     pub graph_only: bool,
 }
@@ -56,7 +55,6 @@ impl Fayth {
             tools: get(v, "FAYTH_TOOLS").unwrap_or("Bash,Read,Edit,Write,Glob,Grep").to_string(),
             project_instructions: get(v, "FAYTH_PROJECT_INSTRUCTIONS").unwrap_or("").to_string(),
             system_prompt: if get(v, "FAYTH_SYSTEM_PROMPT") == Some("replace") { SystemPrompt::Replace } else { SystemPrompt::Append },
-            sop_required: get(v, "FAYTH_SOP_REQUIRED") == Some("1"),
             groom_escalation_check: get(v, "FAYTH_GROOM_ESCALATION_CHECK") == Some("1"),
             graph_only: get(v, "FAYTH_GRAPH_ONLY") == Some("1"),
         }

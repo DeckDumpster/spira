@@ -76,5 +76,5 @@ FAYTH_SYSTEM_PROMPT=replace
 
 # THE ESCALATION CHECK. A groom log line claiming ESCALATED or inquiry for bead X must be
 # backed by an ask bead created in the same session — aeon.sh verifies this after the
-# session closes, the same way FAYTH_SOP_REQUIRED backs the Ops closing rule.
+# session closes.
 FAYTH_GROOM_ESCALATION_CHECK=1

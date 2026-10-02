@@ -225,37 +225,6 @@ pub fn eviction_reopen(ls: &str, cur_tip: &str, recent: i64, eviction_reasons: &
     Eviction::Reopen
 }
 
-/// `sop_rule_verdict`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SopVerdict {
-    Satisfied,
-    Decline,
-    Poison,
-}
-
-/// Returns (wrote: yes|no|unreadable, verdict). `applied` is `sop log`'s exit code:
-/// 0 recorded, 1 read and absent, anything else unreadable.
-pub fn sop_rule_verdict(before_ok: bool, before: &str, after_ok: bool, after: &str, applied: i32) -> (&'static str, SopVerdict) {
-    let wrote = if before_ok && after_ok {
-        let b: Vec<&str> = before.lines().collect();
-        if after.lines().filter(|l| !l.is_empty()).any(|l| !b.contains(&l)) {
-            "yes"
-        } else {
-            "no"
-        }
-    } else {
-        "unreadable"
-    };
-    let v = if wrote == "yes" || applied == 0 {
-        SopVerdict::Satisfied
-    } else if wrote == "unreadable" || applied != 1 {
-        SopVerdict::Decline
-    } else {
-        SopVerdict::Poison
-    };
-    (wrote, v)
-}
-
 /// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
 /// ask-labelled `blocks` dependency? (the teardown's decision_blocked input). Unparseable or
 /// empty JSON fails closed — not blocked, proceeds (sp-eq8a4.2.1).
@@ -563,15 +532,6 @@ mod tests {
         assert_eq!(eviction_reopen("EJECTED none 1", "def", 0, r, 3), Eviction::Reopen);
         assert_eq!(eviction_reopen("EJECTED abc 1", "", 0, r, 3), Eviction::Reopen, "unknown current tip is not stale");
         assert_eq!(eviction_reopen("EJECTED abc 1", "abc", 3, r, 3), Eviction::Cap);
-    }
-
-    #[test]
-    fn sop_table() {
-        assert_eq!(sop_rule_verdict(true, "a\nb", true, "a\nb\nc", 1), ("yes", SopVerdict::Satisfied));
-        assert_eq!(sop_rule_verdict(true, "a\nb", true, "a", 1), ("no", SopVerdict::Poison), "a retirement is not a write");
-        assert_eq!(sop_rule_verdict(true, "a", true, "a", 0), ("no", SopVerdict::Satisfied));
-        assert_eq!(sop_rule_verdict(false, "", true, "a", 1), ("unreadable", SopVerdict::Decline));
-        assert_eq!(sop_rule_verdict(true, "a", true, "a", 2), ("no", SopVerdict::Decline));
     }
 
     // test-aeon-disposition.sh's open_ask_blocker table.

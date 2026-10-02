@@ -31,50 +31,8 @@ FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 # growing shelf of runbooks out of the context of every agent that will never execute one.
 FAYTH_MEMORY_PREFIXES="law-,sop-"
 
-# THE CLOSING RULE, AS A MECHANISM RATHER THAN A SENTENCE IN THE BRIEF. An incident closed
-# without a runbook coming out of it has its close UNDONE by aeon.sh: reopened, labelled
-# spira-poison, and the reason written on the bead. The brief has called this rule "not
-# optional" since it was written and it was disobeyed six times in one day, which is the
-# difference between an instruction and a fence.
-#
-# Three ways to satisfy it, and one of them costs a single command:
-#
-#   nothing on the shelf fit; I diagnosed something new   ->  sop write
-#   an SOP fit but was incomplete                         ->  sop write   (the upsert)
-#   an SOP fit and its CHECK confirmed                    ->  sop applied --check pass
-#
-# The third row is what keeps this from firing on a good session. "It matched, it held, it
-# taught us nothing new" is a complete outcome and must not be punished — SILENCE is what is
-# outlawed, not brevity. So recording the truth is always the cheapest way out, whatever the
-# truth was: `--held no` and `--held unknown` satisfy this exactly as `--held yes` does, and
-# deliberately, because demanding an amendment on top of an honest "it did not hold" would
-# make `--held yes` the cheapest exit and corrupt the one field the whole shelf is measured
-# by. The one record that does NOT satisfy it is `--check fail` alone: that is the session's
-# own statement that nothing on the shelf applied, which is row one, whose exit is a write.
-#
-# DECLARED HERE, NOT KEYED ON A PERSONA'S NAME IN aeon.sh. Ops is the only role that
-# executes a runbook; a builder that closes a bead without touching an SOP is doing exactly
-# its job, and a check that recognised "ops" by string would bind the wrong persona the day
-# this one is renamed or a second healer is added beside it.
-# RETIRED 2026-09-18, per the operator: "FAYTH_SOP_REQUIRED is fucking stupid."
-#
-# Everything above is why it looked like a good idea, and it was wrong in a way that
-# cost 24 beads. The rule made SILENCE the one outcome a session could not choose:
-# close an incident without producing a runbook and the close is UNDONE, the bead
-# reopened and labelled spira-poison. Put that on the smallest model, under an eight
-# minute wall, holding an unrestricted shell, and "I looked and there is nothing to
-# fix" becomes the single most expensive thing it can conclude. So it does not
-# conclude it. On 2026-09-18 at 02:05 an Ops aeon under exactly that pressure wrote a
-# cleanup script that classified every branch in the repository as garbage and deleted
-# all of them — then wrote up its success.
-#
-# A mechanism that punishes doing nothing will get something done to you. The honest
-# outcome the old rule was built to protect — "it matched, it held, it taught us
-# nothing new" — is available for free the moment nothing is demanded.
-#
-# Ops may still write an SOP whenever it learns something, and should. It is no longer
-# marked for punishment when it does not.
-FAYTH_SOP_REQUIRED=0
+# Ops may write an SOP whenever it learns something, and should; no close is undone for
+# lack of one. Nothing in the aeon binary requires a runbook any more.
 
 # NO FAYTH_REPO. The repository comes from the BEAD — a `repo:<name>` label resolved
 # through .claude/spira/repo-map — because a repository pinned per persona is a
@@ -90,9 +48,9 @@ FAYTH_SOP_REQUIRED=0
 #
 # THE TRADE IS REAL AND ACCEPTED. The subtlest Ops session so far — the one that worked out
 # that a sweep's recurrence count measures ten-minute intervals rather than failed fixes —
-# was diagnosis, not procedure. That is why the closing rule below is a mechanism rather
-# than an instruction: an Ops session that learns something must leave an SOP behind, so
-# what one session works out is on the shelf for every session after it.
+# was diagnosis, not procedure. That is why an Ops session that learns
+# something should leave an SOP behind, so what one session works out is on the shelf for
+# every session after it.
 #
 # VERIFIED, NOT ASSUMED: `claude --model claude-sonnet-5-5 -p ...` answers on this box. An id
 # the CLI rejects does not fail loudly: every summon dies and the role looks merely quiet,
