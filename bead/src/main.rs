@@ -46,7 +46,7 @@ fn main() {
         },
         _ => {
             eprintln!(
-                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
+                "usage: bead.sh file \"<title>\" --for <persona> --repo <name> [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh file \"<title>\" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--express] [--submitted] [--json]\n       bead.sh amend <id> [--note \"<text>\"] [--body-file F] [--express]\n       bead.sh dep add <id> <depends-on-id> [--type <type>]\n       bead.sh lint [--all|<id>...]\n       bead.sh contract\n       bead event <kind> <target|-> <title> [detail]"
             );
             2
         }
@@ -324,6 +324,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     let mut body_file: Option<String> = None;
     let mut kind: Option<String> = None;
     let mut express = false;
+    let mut submitted = false;
     let mut json = false;
     let mut parent: Option<String> = None;
 
@@ -355,6 +356,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
                 parent = args.get(i).cloned();
             }
             "--express" => express = true,
+            "--submitted" => submitted = true,
             "--json" => json = true,
             other => {
                 eprintln!("bead: unknown option: {other}");
@@ -398,6 +400,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
     };
     let express_label = env_default("SPIRA_EXPRESS_LABEL", "express");
 
+    if submitted && kind != "work" {
+        eprintln!("bead: --submitted applies only to work beads");
+        return 2;
+    }
+
     if kind == "work" {
         let for_fayth = match for_fayth {
             Some(f) => f,
@@ -438,7 +445,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             return 2;
         }
 
-        let labels = work_labels(&fayth_labels, &repo, &express_label, express);
+        let mut labels = work_labels(&fayth_labels, &repo, &express_label, express);
+        if submitted {
+            labels.push(',');
+            labels.push_str(&env_default("SPIRA_SUBMITTED_LABEL", "spira-submitted"));
+        }
         let mut bd_args = s(&["create"]);
         bd_args.push(title);
         bd_args.push("-l".into());
