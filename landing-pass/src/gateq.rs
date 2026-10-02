@@ -1,7 +1,16 @@
 //! The gate queue under `$SPIRA_RUN/gate-worker/`: the seam between the pass, which
-//! enqueues a branch needing a local verdict, and `gate-worker`, which gates one at a time
-//! and files the result. Same idiom as the broker: inbox → claimed → done, refused for
-//! what cannot be read.
+//! enqueues a branch needing a local verdict, and `gate-worker`, which gates them (one at a
+//! time per worker, up to N workers at once) and files each result. Same idiom as the
+//! broker: inbox → claimed → done, refused for what cannot be read.
+//!
+//! `claimed/` is partitioned by worker slot (`claimed/<slot>/`): each slot's own flock
+//! (`gate-worker`'s `worker.lock[.N]`) is the only thing that may hold a job there, so
+//! `recover` — "a dead worker's claim goes back to the inbox" — can safely scope itself to
+//! one slot's subdirectory without disturbing another slot's live, in-flight claim. `claim`
+//! itself races safely with any number of slots regardless of partitioning: it is a single
+//! `rename(2)` of the inbox file into the destination, and a rename only ever succeeds once
+//! for a given source path — a second worker's rename of the same already-moved path fails
+//! and that worker moves on to the next job.
 
 use crate::model::GateRun;
 use crate::util::{atomic_write, branch_key};
@@ -72,9 +81,36 @@ impl GateQueue {
         self.root.join("refused")
     }
 
+    /// One worker slot's own claimed jobs. Only the flock that slot's `gate-worker` holds
+    /// may ever rename a file into or out of this directory (sp-kbjv6 "wave N concurrent
+    /// drains"): that is what makes `recover(slot)` safe to call without coordinating with
+    /// any other live slot.
+    fn claimed_slot(&self, slot: usize) -> PathBuf {
+        self.dir(Where::Claimed).join(slot.to_string())
+    }
+
+    /// Any slot's claimed directory that currently exists on disk, for `find` — which
+    /// answers "is this job claimed by anyone" without knowing how many slots there are.
+    fn claimed_dirs(&self) -> Vec<PathBuf> {
+        let Ok(rd) = fs::read_dir(self.dir(Where::Claimed)) else { return Vec::new() };
+        rd.flatten().filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false)).map(|e| e.path()).collect()
+    }
+
     pub fn find(&self, repo: &str, branch: &str, tip: &str) -> Option<Where> {
         let f = Job::new(repo, branch, "", tip, false).file();
-        [Where::Done, Where::Claimed, Where::Inbox].into_iter().find(|w| self.dir(*w).join(&f).exists())
+        if self.dir(Where::Done).join(&f).exists() {
+            return Some(Where::Done);
+        }
+        // A slot's own subdirectory, or — the pre-N-worker layout, until slot 0's recover
+        // sweeps it — a flat file straight under claimed/ (sp-kbjv6 "wave N concurrent
+        // drains", the deploy migration).
+        if self.dir(Where::Claimed).join(&f).exists() || self.claimed_dirs().iter().any(|d| d.join(&f).exists()) {
+            return Some(Where::Claimed);
+        }
+        if self.dir(Where::Inbox).join(&f).exists() {
+            return Some(Where::Inbox);
+        }
+        None
     }
 
     /// Queue a job. Ok(false): this branch at this tip is already queued, claimed or done.
@@ -107,9 +143,9 @@ impl GateQueue {
         Some(d)
     }
 
-    fn read_dir_jobs(&self, w: Where) -> Vec<(PathBuf, Job)> {
+    fn read_dir_jobs(&self, dir: &Path) -> Vec<(PathBuf, Job)> {
         let mut v = Vec::new();
-        let Ok(rd) = fs::read_dir(self.dir(w)) else { return v };
+        let Ok(rd) = fs::read_dir(dir) else { return v };
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("json") {
@@ -127,41 +163,64 @@ impl GateQueue {
     }
 
     pub fn queued(&self) -> Vec<Job> {
-        let mut v: Vec<Job> = self.read_dir_jobs(Where::Inbox).into_iter().map(|(_, j)| j).collect();
+        let mut v: Vec<Job> = self.read_dir_jobs(&self.dir(Where::Inbox)).into_iter().map(|(_, j)| j).collect();
         v.sort_by_key(|j| (!j.fix, j.queued));
         v
     }
 
-    /// Return jobs a dead worker left claimed to the inbox.
-    pub fn recover(&self) {
-        for (p, j) in self.read_dir_jobs(Where::Claimed) {
+    /// Return jobs left claimed in this slot to the inbox. Safe to call unconditionally at
+    /// the start of a slot's drain: this slot's own flock (held before `recover` ever runs)
+    /// guarantees mutual exclusion on `claimed/<slot>/`, so anything sitting there now was
+    /// left by a previous holder of *this same slot* that died before finishing — never by
+    /// another slot's worker still live and gating (that worker owns its own subdirectory).
+    ///
+    /// Slot 0 additionally recovers any flat `claimed/<job>.json` — the pre-N-worker
+    /// layout's own claim directory, before `claimed/` held per-slot subdirectories. Slot
+    /// 0's lock is the pre-existing `worker.lock` name, the same one the single-worker
+    /// design used, so a flat claim is only ever live under that same flock: a deploy
+    /// cutover (or any claim an old release left behind) is recovered exactly once, by the
+    /// one slot mutually exclusive with whoever could have left it. Slots 1.. never touch
+    /// a flat claim — only slot 0 may, so two slots can never race to recover the same one.
+    pub fn recover(&self, slot: usize) {
+        for (p, j) in self.read_dir_jobs(&self.claimed_slot(slot)) {
             let _ = fs::create_dir_all(self.dir(Where::Inbox));
             let _ = fs::rename(&p, self.dir(Where::Inbox).join(j.file()));
         }
+        if slot == 0 {
+            for (p, j) in self.read_dir_jobs(&self.dir(Where::Claimed)) {
+                let _ = fs::create_dir_all(self.dir(Where::Inbox));
+                let _ = fs::rename(&p, self.dir(Where::Inbox).join(j.file()));
+            }
+        }
     }
 
-    /// Take the next job: base fixes first, then oldest.
-    pub fn claim(&self) -> Option<Job> {
-        let _ = fs::create_dir_all(self.dir(Where::Claimed));
-        let mut v = self.read_dir_jobs(Where::Inbox);
+    /// Take the next job for this slot: base fixes first, then oldest. The move into
+    /// `claimed/<slot>/` is a single `rename(2)` of the inbox file: whichever slot's rename
+    /// lands first wins the job, and every other slot's rename of that same (now-gone)
+    /// source path fails and falls through to the next candidate — no two slots can ever
+    /// come away from `claim` with the same job.
+    pub fn claim(&self, slot: usize) -> Option<Job> {
+        let dest = self.claimed_slot(slot);
+        let _ = fs::create_dir_all(&dest);
+        let mut v = self.read_dir_jobs(&self.dir(Where::Inbox));
         v.sort_by_key(|(_, j)| (!j.fix, j.queued));
         for (p, j) in v {
-            if fs::rename(&p, self.dir(Where::Claimed).join(j.file())).is_ok() {
+            if fs::rename(&p, dest.join(j.file())).is_ok() {
                 return Some(j);
             }
         }
         None
     }
 
-    /// Drop a claimed job that will not be gated.
-    pub fn discard(&self, job: &Job) {
-        let _ = fs::remove_file(self.dir(Where::Claimed).join(job.file()));
+    /// Drop a job this slot claimed that will not be gated.
+    pub fn discard(&self, slot: usize, job: &Job) {
+        let _ = fs::remove_file(self.claimed_slot(slot).join(job.file()));
     }
 
-    pub fn complete(&self, d: &Done) -> std::io::Result<()> {
+    pub fn complete(&self, slot: usize, d: &Done) -> std::io::Result<()> {
         let body = serde_json::to_string(d).map_err(std::io::Error::other)?;
         atomic_write(&self.dir(Where::Done).join(d.job.file()), &body)?;
-        let _ = fs::remove_file(self.dir(Where::Claimed).join(d.job.file()));
+        let _ = fs::remove_file(self.claimed_slot(slot).join(d.job.file()));
         Ok(())
     }
 }
@@ -197,10 +256,10 @@ mod tests {
         for j in [&first, &second, &fix] {
             q.enqueue(j).unwrap();
         }
-        let order: Vec<String> = std::iter::from_fn(|| q.claim()).map(|j| j.bead).collect();
+        let order: Vec<String> = std::iter::from_fn(|| q.claim(0)).map(|j| j.bead).collect();
         assert_eq!(order, ["sp-3", "sp-1", "sp-2"]);
         assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed));
-        q.complete(&done(&first)).unwrap();
+        q.complete(0, &done(&first)).unwrap();
         assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Done));
         assert!(q.take_done("r", "spira/sp-1", "other").is_none());
         assert!(q.take_done("r", "spira/sp-1", "t1").is_some());
@@ -212,12 +271,61 @@ mod tests {
         let d = tmpdir("gq3");
         let q = GateQueue::new(&d);
         q.enqueue(&Job::new("r", "spira/sp-1", "sp-1", "t1", false)).unwrap();
-        q.claim().unwrap();
+        q.claim(0).unwrap();
         assert!(q.queued().is_empty());
-        q.recover();
+        q.recover(0);
         assert_eq!(q.queued().len(), 1);
         fs::write(d.join("gate-worker/inbox/junk.json"), "{").unwrap();
         assert_eq!(q.queued().len(), 1);
         assert!(d.join("gate-worker/refused/junk.json").exists());
+    }
+
+    #[test]
+    fn two_slots_claim_the_same_job_only_once() {
+        let d = tmpdir("gq4");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-1", "sp-1", "t1", false)).unwrap();
+        // Both slots see the same inbox listing before either renames; only one rename of
+        // the shared source path can succeed (sp-kbjv6 "wave N concurrent drains").
+        assert!(q.claim(0).is_some());
+        assert!(q.claim(1).is_none());
+    }
+
+    #[test]
+    fn a_live_slots_claim_survives_another_slots_recover() {
+        let d = tmpdir("gq5");
+        let q = GateQueue::new(&d);
+        q.enqueue(&Job::new("r", "spira/sp-1", "sp-1", "t1", false)).unwrap();
+        let job = q.claim(1).unwrap();
+        // A fresh worker starting up on slot 0 sweeps its own (empty) claimed/0, never
+        // slot 1's still-live claim — the bug this partitioning fixes.
+        q.recover(0);
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed), "slot 1's live claim must not be swept back to inbox by slot 0's recover");
+        assert!(q.queued().is_empty());
+        q.complete(1, &done(&job)).unwrap();
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Done));
+    }
+
+    #[test]
+    fn a_flat_legacy_claim_is_recovered_by_slot_0_and_not_by_slot_1() {
+        let d = tmpdir("gq6");
+        let q = GateQueue::new(&d);
+        // The pre-N-worker layout: a job claimed straight under claimed/, no slot
+        // subdirectory — left behind by the single-worker release, or still live in an
+        // old-release worker caught mid-deploy.
+        let job = Job::new("r", "spira/sp-1", "sp-1", "t1", false);
+        fs::create_dir_all(d.join("gate-worker/claimed")).unwrap();
+        fs::write(d.join("gate-worker/claimed").join(job.file()), serde_json::to_string(&job).unwrap()).unwrap();
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed));
+
+        // Slot 1 never touches a flat claim — only slot 0 (the pre-existing worker.lock
+        // name, mutually exclusive with whoever could have left it) may recover one.
+        q.recover(1);
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed), "slot 1 must not recover a flat legacy claim");
+        assert!(q.queued().is_empty());
+
+        q.recover(0);
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Inbox), "slot 0 returns the flat legacy claim to the inbox");
+        assert_eq!(q.queued().len(), 1);
     }
 }

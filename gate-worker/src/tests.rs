@@ -34,7 +34,7 @@ fn drain_one(rc: i32, out: &str) -> GateRun {
     let q = GateQueue::new(&d);
     q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
     let g = Scripted(RefCell::new(vec![(rc, out.to_string())]));
-    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 5400, log: &|_| {} };
+    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 5400, log: &|_| {}, slot: 0 };
     assert_eq!(w.drain(), 1);
     q.take_done("r", "spira/sp-a", "t1").unwrap().run
 }
@@ -64,7 +64,7 @@ fn a_dropped_branch_or_a_moved_tip_files_no_verdict() {
         let q = GateQueue::new(&d);
         q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
         let g = Scripted(RefCell::new(vec![]));
-        let w = Worker { queue: &q, gate: &g, branches: &Tip(tip), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {} };
+        let w = Worker { queue: &q, gate: &g, branches: &Tip(tip), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
         assert_eq!(w.drain(), 0);
         assert_eq!(q.find("r", "spira/sp-a", "t1"), None);
     }
@@ -75,9 +75,9 @@ fn a_dead_workers_claim_is_gated_by_the_next() {
     let d = tmp("recover");
     let q = GateQueue::new(&d);
     q.enqueue(&Job::new("r", "spira/sp-a", "sp-a", "t1", false)).unwrap();
-    q.claim().unwrap();
+    q.claim(0).unwrap();
     let g = Scripted(RefCell::new(vec![(0, String::new())]));
-    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {} };
+    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
     assert_eq!(w.drain(), 1);
     assert_eq!(q.find("r", "spira/sp-a", "t1"), Some(Where::Done));
 }
@@ -138,7 +138,7 @@ fn two_branches_queued_for_one_tree_are_gated_one_at_a_time() {
             Some(format!("t{}", b.trim_start_matches("spira/sp-")))
         }
     }
-    let w = Worker { queue: &q, gate: &Timed(&spans, &wall), branches: &AnyTip, clock: &wall, lock_wait: 1, log: &|_| {} };
+    let w = Worker { queue: &q, gate: &Timed(&spans, &wall), branches: &AnyTip, clock: &wall, lock_wait: 1, log: &|_| {}, slot: 0 };
     assert_eq!(w.drain(), 3);
     let spans = spans.lock().unwrap();
     assert_eq!(spans.len(), 3);
@@ -146,4 +146,92 @@ fn two_branches_queued_for_one_tree_are_gated_one_at_a_time() {
     let done: Vec<Done> = ["t1", "t2", "t3"].iter().enumerate().map(|(i, t)| q.take_done("r", &format!("spira/sp-{}", i + 1), t).unwrap()).collect();
     let recorded: Vec<(u64, u64)> = done.iter().map(|d| (d.started_ms, d.finished_ms)).collect();
     assert!(!overlaps(&recorded), "recorded verdict windows overlapped: {recorded:?}");
+}
+
+#[test]
+fn worker_count_is_certify_par_floored_at_one() {
+    assert_eq!(worker_count(0), 1);
+    assert_eq!(worker_count(1), 1);
+    assert_eq!(worker_count(4), 4);
+}
+
+#[test]
+fn with_n_2_a_second_worker_gets_slot_1_and_a_third_exits() {
+    let d = tmp("slots");
+    let (slot_a, held_a) = acquire_slot(&d, 2).expect("slot 0 is free");
+    assert_eq!(slot_a, 0);
+    let (slot_b, held_b) = acquire_slot(&d, 2).expect("slot 1 is free");
+    assert_eq!(slot_b, 1);
+    assert!(acquire_slot(&d, 2).is_none(), "both of N=2's slots are held — a third must exit");
+    drop(held_a);
+    assert_eq!(acquire_slot(&d, 2).map(|(s, _)| s), Some(0), "releasing slot 0 frees it again");
+    drop(held_b);
+}
+
+#[test]
+fn n_1_is_the_old_single_slot_behavior() {
+    let d = tmp("n1");
+    let (slot, held) = acquire_slot(&d, worker_count(0)).expect("slot 0 is free");
+    assert_eq!(slot, 0);
+    assert_eq!(lock_path(&d, 0), d.join("worker.lock"), "slot 0 keeps the pre-existing lock name");
+    assert!(acquire_slot(&d, worker_count(0)).is_none(), "N=1 admits only one worker, as before");
+    drop(held);
+}
+
+/// The regression this change exists to prevent, at the `Worker` level (the queue-level
+/// proof that a `claim` can never double-rename the same source file lives in
+/// `landing_pass::gateq::tests`): two worker instances — one per slot, standing in for two
+/// concurrent `gate-worker run` processes — draining the same queue gate every job exactly
+/// once between them, and slot 0's drain never touches slot 1's own live, in-flight claim.
+#[test]
+fn two_workers_at_different_slots_each_gate_a_job_exactly_once() {
+    let d = tmp("two-workers");
+    let q = GateQueue::new(&d);
+    for n in 1..=4 {
+        let b = format!("spira/sp-{n}");
+        q.enqueue(&Job::new("r", &b, &b, &format!("t{n}"), false)).unwrap();
+    }
+    struct AnyTip;
+    impl Branches for AnyTip {
+        fn tip(&self, _: &str, b: &str) -> Option<String> {
+            Some(format!("t{}", b.trim_start_matches("spira/sp-")))
+        }
+    }
+    struct Counting<'a>(&'a RefCell<Vec<String>>);
+    impl Gate for Counting<'_> {
+        fn gate(&self, branch: &str, _: &str, _: &str, _: &str) -> (i32, String) {
+            self.0.borrow_mut().push(branch.to_string());
+            (0, String::new())
+        }
+    }
+    let calls = RefCell::new(Vec::new());
+    let gate = Counting(&calls);
+
+    // Slot 1 is already mid-gate, holding one job claimed — standing in for a second
+    // `gate-worker run` process live right now.
+    let held = q.claim(1).unwrap();
+    assert_eq!(held.branch, "spira/sp-1");
+
+    // Slot 0's drain must see, and gate, only the three jobs still in the inbox; slot 1's
+    // claim is in a different directory and never comes near it.
+    let w0 = Worker { queue: &q, gate: &gate, branches: &AnyTip, clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
+    assert_eq!(w0.drain(), 3);
+    assert!(!calls.borrow().contains(&"spira/sp-1".to_string()), "slot 0 must not gate slot 1's live claim");
+    assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed), "slot 1's claim must still be outstanding");
+
+    // Slot 1 now starts its own worker and finishes — the fourth and last verdict, via its
+    // own slot's recover (the job it had mid-gate reads as a dead holder's claim, so it is
+    // returned to the inbox and re-claimed, same as the single-slot design always did).
+    let w1 = Worker { queue: &q, gate: &gate, branches: &AnyTip, clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 1 };
+    assert_eq!(w1.drain(), 1);
+
+    let calls = calls.borrow();
+    assert_eq!(calls.len(), 4, "the gate itself must run exactly four times, once per job");
+    let mut uniq = calls.clone();
+    uniq.sort();
+    uniq.dedup();
+    assert_eq!(uniq.len(), 4, "a job was gated more than once: {calls:?}");
+    for n in 1..=4 {
+        assert_eq!(q.find("r", &format!("spira/sp-{n}"), &format!("t{n}")), Some(Where::Done));
+    }
 }
