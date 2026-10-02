@@ -114,7 +114,9 @@ pub fn list(bd: &dyn Bd) -> Report {
 
 pub fn match_cmd(bd: &dyn Bd, payload: &str) -> Report {
     let mut r = Report::ok();
-    let raw = bd.memories_json().unwrap_or_default();
+    let Some(raw) = bd.memories_json() else {
+        return r.fail(1, "sop: could not read the shelf from the store (bd unreachable or timed out) — refusing to treat it as empty".to_string());
+    };
     let map = shelf::parse_or_empty(&raw);
     for hit in crate::match_sop::score(&map, payload) {
         r.say(format!("{}\t{}\t{}\t{}", hit.key, hit.how, hit.score, hit.symptom));
@@ -388,7 +390,9 @@ pub fn synth(bd: &dyn Bd, clock: &dyn Clock, out_path: Option<&str>) -> Report {
         r.say("sop: the SOPs themselves are in the database; `sop list` reads them.".to_string());
         return r;
     };
-    let raw = bd.memories_json().unwrap_or_default();
+    let Some(raw) = bd.memories_json() else {
+        return r.fail(1, "sop: could not read the shelf from the store (bd unreachable or timed out) — refusing to treat it as empty".to_string());
+    };
     let map = shelf::parse_or_empty(&raw);
     let today = clock.today();
     let page = crate::synth::render(&map, &today);
