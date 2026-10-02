@@ -242,12 +242,6 @@ pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String,
         .and_then(|o| last_cell(&o))
         .ok_or_else(|| format!("cannot read the active branch (engine: {})", engine.label()))?;
     let b = sql_quote(&branch);
-    engine
-        .sql(dolt_bin, &format!("CALL DOLT_PUSH('{r}', '{b}');"))
-        .map_err(|e| format!("push failed: {e}"))?;
-    engine
-        .sql(dolt_bin, &format!("CALL DOLT_FETCH('{r}');"))
-        .map_err(|e| format!("pushed, but could not refresh the remote tracking ref: {e}"))?;
     let head = |rev: String| {
         engine
             .sql(
@@ -260,17 +254,47 @@ pub fn run_push(engine: &Engine, dolt_bin: &str, remote: &str) -> Result<String,
             .ok()
             .and_then(|o| last_cell(&o))
     };
-    let local = head(branch.clone());
-    let remote_head = head(format!("remotes/{remote}/{branch}"));
-    match (local, remote_head) {
-        (Some(l), Some(r)) if l == r => Ok(r),
-        (Some(l), Some(r)) => Err(format!(
-            "push reported complete but the remote did not move: local {l}, remote {r} (engine: {})",
+    // The local head moves under concurrent writers; the verdict is about the commit pushed.
+    let pushed = head(branch.clone()).ok_or_else(|| {
+        format!(
+            "cannot read the local head before pushing (engine: {})",
             engine.label()
-        )),
-        (l, r) => Err(format!(
-            "pushed, but could not read both heads to verify it (local={l:?} remote={r:?})"
-        )),
+        )
+    })?;
+    engine
+        .sql(dolt_bin, &format!("CALL DOLT_PUSH('{r}', '{b}');"))
+        .map_err(|e| format!("push failed: {e}"))?;
+    engine
+        .sql(dolt_bin, &format!("CALL DOLT_FETCH('{r}');"))
+        .map_err(|e| format!("pushed, but could not refresh the remote tracking ref: {e}"))?;
+    let tracking = format!("remotes/{remote}/{branch}");
+    let remote_head = head(tracking.clone()).ok_or_else(|| {
+        format!("pushed {pushed}, but could not read the remote head to verify it")
+    })?;
+    if remote_head == pushed {
+        return Ok(remote_head);
+    }
+    let reached = engine
+        .sql(
+            dolt_bin,
+            &format!(
+                "select count(*) as n from dolt_log('{}') where commit_hash = '{}';",
+                sql_quote(&tracking),
+                sql_quote(&pushed)
+            ),
+        )
+        .ok()
+        .and_then(|o| parse_single_number(&o))
+        .ok_or_else(|| {
+            format!("pushed {pushed} but could not tell whether the remote (at {remote_head}) contains it")
+        })?;
+    if reached > 0 {
+        Ok(remote_head)
+    } else {
+        Err(format!(
+            "push reported complete but the remote did not reach the pushed commit: pushed {pushed}, remote {remote_head} (engine: {})",
+            engine.label()
+        ))
     }
 }
 
@@ -524,6 +548,7 @@ esac
             r#"#!/usr/bin/env bash
 case "$*" in
   *active_branch*) echo b; echo main ;;
+  *"count(*)"*) echo n; echo 0 ;;
   *remotes/*) echo commit_hash; echo stale ;;
   *dolt_log*) echo commit_hash; echo h1 ;;
   *) echo ok ;;
@@ -533,6 +558,29 @@ esac
         let engine = stub_engine(&bin);
         let dolt = bin.join("dolt");
         let err = run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap_err();
-        assert!(err.contains("did not move"), "{err}");
+        assert!(err.contains("did not reach"), "{err}");
+    }
+
+    #[test]
+    fn run_push_succeeds_when_the_remote_descends_from_the_pushed_commit() {
+        let bin = TempDir::new("bs-bin");
+        write_dolt_stub(
+            &bin,
+            r#"#!/usr/bin/env bash
+case "$*" in
+  *active_branch*) echo b; echo main ;;
+  *"count(*)"*) echo n; echo 1 ;;
+  *remotes/*) echo commit_hash; echo newer ;;
+  *dolt_log*) echo commit_hash; echo h1 ;;
+  *) echo ok ;;
+esac
+"#,
+        );
+        let engine = stub_engine(&bin);
+        let dolt = bin.join("dolt");
+        assert_eq!(
+            run_push(&engine, dolt.to_str().unwrap(), "beads").unwrap(),
+            "newer"
+        );
     }
 }
