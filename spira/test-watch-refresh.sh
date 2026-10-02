@@ -360,11 +360,17 @@ is "a quiet pass leaves it alone" "2" "$(cat "$RUN/watchd/answers.restarts" 2>/d
 # A COUNTER THAT CLIMBS WITH NOTHING SAYING WHY IS A METER NOBODY CAN ACT ON.
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/db.sh"; runpass
 has "and every restart names the file behind it" "$(cat "$TMP/out")" "$COCKPIT/db.sh"
-# One more than the steady pass's baseline of 3 (systemctl show, stat, `watchd manifest`):
-# `watchd restart <name>` is the fourth.
-n_execs="$(execs)"
-is "a restarting pass costs one exec more, and no more than that" "4" "$n_execs"
-[ "$n_execs" = 4 ] || DUMP="n=$n_execs log=$(tr "\n" "|" < "$EXECLOG")"
+# A restarting pass is the steady pass's systemctl show, stat and `watchd manifest`, plus
+# `watchd restart <name>` and the one `systemctl restart` it issues through the shim. Asserted
+# as a profile by program, with the counted lines attached on failure, so a stray exec names
+# itself instead of arriving as a bare number.
+profile="systemctl=$(grep -c '^systemctl' "$EXECLOG" || true) stat=$(grep -c '^stat' "$EXECLOG" || true) watchd=$(grep -c '^watchd' "$EXECLOG" || true) mkdir=$(grep -c '^mkdir' "$EXECLOG" || true) forbidden=$(grep -c '^FORBIDDEN' "$EXECLOG" || true)"
+if [ "$profile" = "systemctl=2 stat=1 watchd=2 mkdir=0 forbidden=0" ]; then
+    ok "a restarting pass costs a show, a stat, two watchd and one restart — and no more than that"
+else
+    bad "a restarting pass costs a show, a stat, two watchd and one restart — and no more than that" \
+        "$profile :: $(grep -E '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" | cut -c1-80 | tr '\n' '|')"
+fi
 # The restart is not bookkeeping: a counter that moved without systemctl being called would
 # be a meter measuring itself.
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/db.sh"
@@ -559,5 +565,4 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFI
 is "an argument it does not know is refused" "2" "$rc"
 has "with a usage line"                      "$out" "usage: watch-refresh.sh"
 
-echo "# $DUMP"
 tl_summary
