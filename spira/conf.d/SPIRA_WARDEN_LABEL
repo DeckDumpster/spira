@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=warden
+DOC=THE WARDEN PARTITION LABEL — the label on the scheduled sweep bead that wakes the warden.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE WARDEN PARTITION LABEL — the label on the scheduled sweep bead that wakes the
+    # warden. Read by warden.fayth's predicate and by warden-trigger.sh, so the two agree on
+    # which label means "warden sweep" (law-schema-over-code). Disjoint from the plan label:
+    # a warden must never claim plan work.
+    : "${SPIRA_WARDEN_LABEL:=warden-sweep}"
+SPIRA_CONF_DEFAULT_EOF

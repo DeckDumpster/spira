@@ -1,0 +1,15 @@
+[Unit]
+Description=File a warden sweep bead every two hours
+
+[Timer]
+OnBootSec=20min
+OnActiveSec=20min
+OnUnitActiveSec=2h
+AccuracySec=5min
+Unit=spira-warden.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work
