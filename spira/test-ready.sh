@@ -204,7 +204,6 @@ run_ready() {
         bash "$HERE/ready.sh" 2>/dev/null
 }
 
-# Create a fake loom binary so the loom binary-existence check passes.
 # Create .beads directory to simulate a present database.
 mkdir -p "$DB/.beads"
 
