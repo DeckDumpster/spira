@@ -402,24 +402,11 @@ pub fn is_queue_mode(mode: &str) -> bool {
     matches!(mode, "queue" | "queue.forge" | "queue.local")
 }
 
-/// The land mode (third column) of repo `name` in a repo-map; `None` when it has no row.
-pub fn repo_map_mode(repo_map: &str, name: &str) -> Option<String> {
-    repo_map.lines().filter(|l| !l.trim_start().starts_with('#')).find_map(|l| {
-        let mut f = l.split('|').map(str::trim);
-        (f.next()? == name).then(|| f.nth(1).map(str::to_string)).flatten()
-    })
-}
-
 /// The three land modes every release proves, with queue satisfied by either spelling.
 pub const LAND_MODES: [&str; 3] = ["queue", "pr", "push"];
 
-/// The land modes of `LAND_MODES` that no row of the repo-map carries.
-pub fn land_modes_missing(repo_map: &str) -> Vec<&'static str> {
-    let modes: Vec<String> = repo_map
-        .lines()
-        .filter(|l| !l.trim_start().starts_with('#'))
-        .filter_map(|l| l.split('|').map(str::trim).nth(2).map(str::to_string))
-        .collect();
+/// The land modes of `LAND_MODES` that no repository in `modes` carries.
+pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
     LAND_MODES.iter().copied().filter(|m| !modes.iter().any(|x| if *m == "queue" { is_queue_mode(x) } else { x == m })).collect()
 }
 

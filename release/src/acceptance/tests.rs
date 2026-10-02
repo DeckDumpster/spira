@@ -125,13 +125,10 @@ fn the_expected_sequence_adds_delivery_only_for_delivery_queue_modes() {
 }
 
 #[test]
-fn repo_map_modes_are_read_by_name_and_all_three_are_required() {
-    let m = "# c\na | /a | push | origin/main | |\nb | /b | queue.forge | x | |\n";
-    assert_eq!(repo_map_mode(m, "b").as_deref(), Some("queue.forge"));
-    assert_eq!(repo_map_mode(m, "zz"), None);
-    assert_eq!(land_modes_missing(m), vec!["pr"]);
-    assert!(land_modes_missing("a | /a | push | m\nb | /b | queue | m\nc | /c | pr | m\n").is_empty());
-    assert_eq!(land_modes_missing(""), vec!["queue", "pr", "push"]);
+fn all_three_land_modes_are_required_with_either_queue_spelling() {
+    assert_eq!(land_modes_missing(&s(&["push", "queue.forge"])), vec!["pr"]);
+    assert!(land_modes_missing(&s(&["push", "queue", "pr"])).is_empty());
+    assert_eq!(land_modes_missing(&[]), vec!["queue", "pr", "push"]);
 }
 
 // ---- arguments ---------------------------------------------------------------------------
@@ -174,6 +171,7 @@ struct Fake {
     rollback: (i32, &'static str),
     never_lands: bool,
     history_gap: bool,
+    land_modes: Vec<(&'static str, &'static str)>,
 }
 
 impl Fake {
@@ -191,6 +189,7 @@ impl Fake {
             rollback: (0, ""),
             never_lands: false,
             history_gap: false,
+            land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
         }
     }
 
@@ -256,6 +255,8 @@ impl Fake {
                     Out { rc: self.rollback.0, text: self.rollback.1.into(), out: String::new() }
                 }
             }
+            ("spira-config", ["repo", "names"]) => ok(&self.land_modes.iter().map(|(n, _)| format!("{n}\n")).collect::<String>()),
+            ("spira-config", ["repo", "land", n]) => ok(&format!("{}\n", self.land_modes.iter().find(|(x, _)| x == n).map_or("", |(_, m)| m))),
             ("spira-lc", ["history", _]) => {
                 let states = if self.history_gap { &["READY", "WORKING", "SUBMITTED", "LANDED"][..] } else { &["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"][..] };
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
@@ -337,7 +338,6 @@ impl Box_ {
         fs::create_dir_all(root.join("scratch-repo/.git")).unwrap();
         fs::create_dir_all(root.join("tmp")).unwrap();
         fs::create_dir_all(root.join("config/spira")).unwrap();
-        fs::write(root.join("config/spira/repo-map"), "scratch-repo | /r | push | origin/main | |\nscratch-q | /q | queue.local | origin/main | |\nscratch-pr | /p | pr | origin/main | |\n").unwrap();
         fs::write(root.join("spira-20260930T000000Z.tar.gz"), "new").unwrap();
         fs::write(root.join("spira-20260901T000000Z.tar.gz"), "old").unwrap();
         Box_ { root }
@@ -566,10 +566,10 @@ fn a_history_missing_a_state_fails_the_lifecycle_check() {
 }
 
 #[test]
-fn a_repo_map_without_all_land_modes_fails_the_scratch_setup_check() {
+fn a_scratch_setup_without_all_land_modes_fails_the_scratch_setup_check() {
     let b = Box_::new();
-    fs::write(b.root.join("config/spira/repo-map"), "scratch-repo | /r | push | origin/main | |\n").unwrap();
-    let f = b.fake();
+    let mut f = b.fake();
+    f.land_modes = vec![("scratch-repo", "push")];
     assert_eq!(phases::run(&f, b.opts(&[])), 1);
     let fails = b.fails();
     assert!(fails.iter().any(|x| x.contains("each land mode") && x.contains("queue, pr")), "{fails:#?}");
