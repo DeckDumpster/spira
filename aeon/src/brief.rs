@@ -595,10 +595,10 @@ pub fn split(statutes: &str, prompt: &str) -> (String, String) {
 /// Declared core slugs that name no memory in the namespace: the persona would start without them.
 pub fn missing_core(mem_json: &str, prefixes: &str, core_csv: &str) -> Vec<String> {
     let Ok(serde_json::Value::Object(d)) = serde_json::from_str::<serde_json::Value>(mem_json.trim()) else { return Vec::new() };
-    if d.is_empty() {
+    let prefixes: Vec<&str> = prefixes.split(',').filter(|p| !p.is_empty()).collect();
+    if !d.keys().any(|k| prefixes.iter().any(|p| k.starts_with(p))) {
         return Vec::new();
     }
-    let prefixes: Vec<&str> = prefixes.split(',').filter(|p| !p.is_empty()).collect();
     core_csv
         .split(',')
         .map(str::trim)
@@ -922,7 +922,8 @@ mod tests {
         assert_eq!(missing_core(j, "law-", "sop-x"), vec!["sop-x"], "outside the prefixes it never renders");
         assert!(missing_core(j, "law-", "law-a").is_empty() && missing_core(j, "law-", "").is_empty());
         assert!(missing_core("garbage", "law-", "law-a").is_empty());
-        assert!(missing_core("{}", "law-", "law-a").is_empty(), "a store with no memories has nothing to have renamed");
+        assert!(missing_core("{}", "law-", "law-a").is_empty(), "a namespace with no memories has nothing to have renamed");
+        assert!(missing_core(r#"{"sop-x":"X"}"#, "law-", "law-a").is_empty());
     }
 
     #[test]
