@@ -86,7 +86,7 @@ except Exception: print("")' 2>/dev/null)"
 # Returns "1" if $1 is executed in $2 — by bare name (the release's tools are invoked by
 # name on PATH, sp-gypjk) or by a path ending /$1, directly or through bash/sh/source; ""
 # if it only appears as an argument (a git file operation, a cat). Splits compound commands
-# on shell separators. An optional $3 names the one verb that stays allowed (queue stats).
+# on shell separators and newlines; a heredoc body is inert unless a shell reads it. An optional $3 names the one verb that stays allowed (queue stats).
 # An optional $4 (comma-separated) inverts that to a deny-list: only a subcommand named in
 # it counts as a hit, so e.g. "release build"/"release status" pass while "release
 # activate" does not (used for the release crate's own mutating subcommands, sp-jsnbm).
@@ -99,8 +99,22 @@ deny = sys.argv[4].split(",") if len(sys.argv) > 4 and sys.argv[4] else None
 EXEC = {"bash", "sh", "ksh", "zsh", "dash", "source", ".", "exec", "env", "timeout"}
 def is_script(tok):
     return tok == script or tok.endswith("/" + script)
+HEREDOC = re.compile(r"<<-?\s*[\"\x27]?([A-Za-z_][A-Za-z_0-9]*)")
+def strip_heredocs(text):
+    out = []; end = None; keep = False
+    for line in text.split("\n"):
+        if end is not None:
+            if line.strip() == end: end = None
+            elif keep: out.append(line)
+            continue
+        out.append(line)
+        m = HEREDOC.search(line)
+        if m:
+            end = m.group(1)
+            keep = re.search(r"\b(bash|sh|zsh|dash|ksh)\b", line[:m.start()]) is not None
+    return "\n".join(out)
 def hit(text, depth=0):
-    for sub in re.split(r"&&|\|\||;|\|", text):
+    for sub in re.split(r"&&|\|\||;|\||\n", strip_heredocs(text)):
         toks = sub.replace("\"", " ").replace("'"'"'", " ").split()
         while toks and "=" in toks[0] and not toks[0].startswith("="):
             toks = toks[1:]
