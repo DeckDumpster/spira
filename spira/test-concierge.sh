@@ -453,6 +453,10 @@ echo "convergence — a live holder WITH a tty is LIVE ELSEWHERE, and is never k
 # kill a live session out from under them. A real controlling terminal is what tells the two
 # apart: python's pty module allocates one deterministically regardless of whether this test
 # itself is run under a tty, so the fixture does not depend on how the suite is invoked.
+if python3 -c 'import os,pty
+c,_m=pty.fork()
+if c==0: os._exit(0)
+os.waitpid(c,0)' 2>/dev/null; then
 LIVE_PROJ="$(mktemp -d)"
 LIVE_DIR="$(mktemp -d)"; mkdir -p "$LIVE_DIR/bin"
 printf '#!/bin/sh\necho STUB_CLAUDE_RAN\n' > "$LIVE_DIR/bin/claude"; chmod +x "$LIVE_DIR/bin/claude"
@@ -509,6 +513,11 @@ else
 fi
 kill "$LIVE_PID" "$LIVE_WRAP" 2>/dev/null; wait "$LIVE_WRAP" 2>/dev/null
 trap 'rm -rf "$TMP"' EXIT
+else
+    # A runner with no pseudo-terminal cannot build the fixture: a declared, counted skip.
+    _tl_init; _tl_counts_load; _TL_SKIP=$((_TL_SKIP + 1)); _tl_counts_flush
+    printf 'skip - live-elsewhere section: no pseudo-terminal available on this runner\n'
+fi
 
 echo
 echo "singleton — a bare, hand-started holder is detected by name, not by resume id (sp-rig42)"
