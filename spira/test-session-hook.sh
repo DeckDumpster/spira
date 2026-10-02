@@ -212,6 +212,22 @@ is "a malformed manifest exits clean" "0" "$rc"
 is "and says nothing at all"          "" "$out8"
 
 echo
+echo "a watchd that fails transiently is retried, then reported — never silently dropped"
+FLAKE="$TMP/flake"; mkdir -p "$FLAKE"
+cat > "$FLAKE/watchd" <<SH
+#!/usr/bin/env bash
+n=\$(cat "$FLAKE/n" 2>/dev/null || echo 0); echo \$((n+1)) > "$FLAKE/n"
+[ "\$n" -lt "\${FLAKE_FAILS:-0}" ] && { echo "watchd: timed out" >&2; exit 1; }
+printf 'NAME UNIT HEALTH UNREAD LAST-EVENT RESTARTS LOG\nanswers active OK 0 - 0 /x\n'
+SH
+chmod +x "$FLAKE/watchd"
+fhook() { hook SessionStart resume PATH="$FLAKE:$TMP/bin:$CLONE/spira:$PATH" "$@"; }
+rm -f "$FLAKE/n"; fo="$(fhook FLAKE_FAILS=1)"
+has "one failed read is retried and the table appears" "$fo" "answers OK (active)"
+rm -f "$FLAKE/n"; fo="$(fhook FLAKE_FAILS=99)"
+has "a persistent failure says status is unavailable" "$fo" "status unavailable"
+
+echo
 echo "a DEGRADED row carries its own reason, inline"
 # DRIVEN THROUGH THE REAL `watchd`, never a planted table (law-prefer-the-real-dependency).
 # A health probe that exits non-zero is all the real thing needs, so there is nothing here
