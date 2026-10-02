@@ -709,7 +709,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
 
     let no_loop_label = env::var("SPIRA_NO_LOOP_LABEL").unwrap_or_default();
     let ask_label = env::var("SPIRA_ASK_LABEL").unwrap_or_default();
-    let incident_label = env_default("SPIRA_INCIDENT_LABEL", "incident");
+    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
 
     let mut n = 0u32;
     let mut bad = 0u32;
@@ -870,7 +870,7 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     };
 
     if is_blocks_type(dep_type.as_deref()) {
-        let incident_label = env_default("SPIRA_INCIDENT_LABEL", "incident");
+        let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
         let (_, out) = bdq_capture(home, &s(&["show", &depid, "--json"]));
         let target_labels = parse_show_row(&out).map(|r| r.labels).unwrap_or_default();
         if target_labels.iter().any(|l| l == &incident_label) {
