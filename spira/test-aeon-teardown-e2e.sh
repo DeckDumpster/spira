@@ -130,7 +130,13 @@ echo "ROW: no commit, left open — no-progress exit, held for a backoff, not ch
 # point this time.
 fa_reset; fa_seed sp-np-1; shim 0 0 0 1; rc="$(fa_run_aeon)"
 is   "no attempt is charged" "0" "$(count_of sp-np-1)"
-is   "and nothing on the requeue counter either" "0" "$(requeue_of sp-np-1)"
+# requeue_of is the RAW count of 'requeued' events (lib.sh's requeues_of ->
+# spira-claim count-events, no exemption) — every other unjudged-* disposition
+# (capacity, slain, gate-unfinished, decision-blocked, timeout, NotJudged) also calls
+# bump_requeue and would show the same 1 here; it is attempts_of (the exemption-aware
+# fold, asserted above as 0) that the poison threshold and CHECK 4's ask actually read.
+is   "one raw requeued event (the exempt bump_requeue cause), same as every other unjudged-* disposition" \
+     "1" "$(requeue_of sp-np-1)"
 notes_np="$(fa_notes sp-np-1)"
 want   "the note reads No progress, not Unlanded"   "No progress" "$notes_np"
 nowant "the note does not read Unlanded"            "Unlanded"    "$notes_np"
