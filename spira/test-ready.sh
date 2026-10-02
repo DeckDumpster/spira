@@ -196,7 +196,6 @@ run_ready() {
         SPIRA_BD="$BIN/bd" \
         SPIRA_GOAL="sp-test" \
         SPIRA_INSTANCE="prod" \
-        SPIRA_LOOM_BIN="$BIN/fake-loom" \
         SPIRA_LOOM_ADDR="127.0.0.1:8788" \
         SPIRA_LOOM_BUDGET_MS="1500" \
         SPIRA_LOOM_PROBE="$BIN/loom-probe" \
@@ -206,7 +205,6 @@ run_ready() {
 }
 
 # Create a fake loom binary so the loom binary-existence check passes.
-touch "$BIN/fake-loom" && chmod +x "$BIN/fake-loom"
 # Create .beads directory to simulate a present database.
 mkdir -p "$DB/.beads"
 
@@ -397,7 +395,7 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
                  "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
                  "FAKE_SENTINEL_RC=0" "FAKE_SENTINEL_BEADS=" --)"
-want "ready-warn: WARN for no work"             "  WARN  sentinel sees no open work" "$out"
+want "ready-warn: WARN for no work"             "  WARN  sentinel sees no open plan work" "$out"
 nowant "ready-warn: no pass line"               "  pass  sentinel sees"              "$out"
 
 # PASS: open work listed.
@@ -408,7 +406,7 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "FAKE_SENTINEL_RC=0" \
                  "FAKE_SENTINEL_BEADS=  sp-abc  sp-def" --)"
 want "ready-pass: pass line present"            "  pass  sentinel sees"        "$out"
-want "ready-pass: count shown"                  "2 open bead"                  "$out"
+want "ready-pass: count shown"                  "2 open plan bead"                  "$out"
 
 # ===========================================================================
 # LOOM
@@ -443,28 +441,6 @@ out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
                  "SPIRA_LOOM_BUDGET_MS=100" \
                  "FAKE_LOOM_RESULT=200 500ms" --)"
 want "loom-over-budget: WARN line present"      "  WARN  loom answers 200 but over budget" "$out"
-
-# SKIP: loom binary absent AND loom unit not installed (installer deliberately skipped it).
-# Binary absent + no unit = cargo was absent; the loop is unaffected; exit 0.
-echo "loom binary absent, unit not installed"
-out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
-                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
-                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
-                 "SPIRA_LOOM_BIN=/nonexistent/loom" --)"
-want "loom-skip: skip line present"             "  skip  loom not installed"   "$out"
-nowant "loom-skip: no ? line"                   "  ?     loom"                 "$out"
-nowant "loom-skip: no WARN line"                "  WARN  loom not installed"   "$out"
-nowant "loom-skip: no FAIL line"                "  FAIL  loom"                 "$out"
-
-# UNKN: loom binary absent but loom unit IS installed (something wrong — binary should exist).
-echo "loom binary absent, unit installed"
-out="$(run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
-                 "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-loom-prod.service" \
-                 "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
-                 "SPIRA_LOOM_BIN=/nonexistent/loom" -- || true)"
-want "loom-unkn: ? line present"                "  ?     loom"                 "$out"
-nowant "loom-unkn: no WARN line"                "  WARN  loom not installed"   "$out"
-nowant "loom-unkn: no FAIL"                     "  FAIL  loom"                 "$out"
 
 # All cases above go through SPIRA_LOOM_PROBE, the fixture stub — they never reach the
 # real python probe's retry loop. The grace cases below unset the stub (SPIRA_LOOM_PROBE=)
@@ -675,11 +651,11 @@ echo "--- exit code ---"
 echo "exit 1 when sentinel timer is inactive"
 run_ready "FAKE_SC_ACTIVE=" -- >/dev/null 2>&1 && bad "exit-fail: should exit 1 on FAIL" "exited 0" || ok "exit-fail: exits 1 on FAIL"
 
-# Exit 1 when ? is present (binary absent but loom unit installed → UNKN).
+# Exit 1 when ? is present (sentinel --report fails → UNKN).
 echo "exit 1 when check unknown"
-run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
+run_ready "FAKE_SENTINEL_RC=1" \
           "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
-          "FAKE_SC_ENABLED=spira-sentinel-prod.timer spira-loom-prod.service" \
+          "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
           "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" -- >/dev/null 2>&1 \
     && bad "exit-unkn: should exit 1 on ?" "exited 0" \
     || ok "exit-unkn: exits 1 on ?"
@@ -694,17 +670,6 @@ run_ready "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
     && ok "exit-ckp-skip: exits 0 when cockpit not installed" \
     || bad "exit-ckp-skip: should exit 0 when cockpit not installed" "exited non-zero"
 printf 'SP_AT=0\n' > "$RUN/cockpit.env"
-
-# Exit 0 when loom not installed (binary absent + no unit → skip, not an error).
-echo "exit 0 when loom not installed"
-run_ready "SPIRA_LOOM_BIN=/nonexistent/loom" \
-          "FAKE_SC_ACTIVE=spira-sentinel-prod.timer" \
-          "FAKE_SC_ENABLED=spira-sentinel-prod.timer" \
-          "FAKE_BD_RC=0" "FAKE_BD_LIST=[]" \
-          "FAKE_TMUX_PANES=panel %1
-health %2" -- >/dev/null 2>&1 \
-    && ok "exit-loom-warn: exits 0 when loom not installed" \
-    || bad "exit-loom-warn: should exit 0 when loom not installed" "exited non-zero"
 
 # Exit 0 when all pass/warn.
 echo "exit 0 when armed"
