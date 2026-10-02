@@ -20,13 +20,9 @@
 # (`cargo test -p panel -p loom` in a single invocation) instead of two separate `cargo test`
 # processes each paying their own link time.
 #
-# THE REAL-BD FIXTURE IS GONE (sp-o8n10, law-a-test-that-flips-is-deleted, 2026-09-30). This
-# suite used to build a throwaway Dolt fixture and run loom's one #[ignore]d contract test,
-# real_bd_answers_in_the_shape_the_fake_is_built_from, with --include-ignored. That test flipped
-# red under full-corpus load and green twice in isolation on the same tree the corpus ran on —
-# the shared testdb/bd infrastructure under contention (sp-nmzok), not this endpoint's own
-# logic. The test and this suite's fixture-building are deleted together; see
-# docs/test-plan/cockpit-observability.md for the coverage gap and the bead to re-add it.
+# The real-bd contract test (loom's one #[ignore]d test) builds its own embedded bd database in a
+# private directory — no server, nothing shared with the testdb corpus fixture — and runs in a
+# second invocation with --ignored, so a filter that matches nothing is a failure, not a pass.
 #
 # tier: T2
 # covers: cockpit/panel/src/* loom/src/* loom/tests/* UC-cockpit-observability-27 UC-cockpit-observability-28 UC-cockpit-observability-29 UC-cockpit-observability-31 UC-cockpit-observability-32
@@ -57,5 +53,16 @@ CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$ROOT/Cargo.toml" \
 _rc=$?
 cat "$OUT"
 report_cargo "$OUT" "$_rc"
+
+OUT_REAL="$TMP/cargo-test-real-bd.out"
+LOOM_TEST_BD="${SPIRA_BD:-$(command -v bd 2>/dev/null || true)}" \
+CARGO_TERM_COLOR=never "$CARGO_BIN" test --manifest-path "$ROOT/Cargo.toml" \
+    -p loom --test endpoint -- --ignored real_bd_answers_in_the_shape_the_fake_is_built_from \
+    > "$OUT_REAL" 2>&1
+_rc=$?
+cat "$OUT_REAL"
+report_cargo "$OUT_REAL" "$_rc"
+grep -q 'real_bd_answers_in_the_shape_the_fake_is_built_from \.\.\. ' "$OUT_REAL" \
+    || bad "the real-bd contract test ran" "no result line for it in the --ignored run"
 
 tl_summary

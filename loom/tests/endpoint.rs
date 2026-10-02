@@ -8,16 +8,15 @@
 //! bead is absent (bd's default list excludes it), a label-less bead has NO `labels` key,
 //! and every edge rides on the row that owns it.
 //!
-//! THE REAL-BD CONTRACT TEST IS GONE (sp-o8n10, law-a-test-that-flips-is-deleted, 2026-09-30).
-//! `real_bd_answers_in_the_shape_the_fake_is_built_from` used to keep the fake honest against
-//! a real Dolt-backed `bd`, `#[ignore]`d and run only by `spira/test-cockpit-rust.sh` (which
-//! built the fixture and passed `--include-ignored`). It flipped under full-corpus load (green
-//! run alone, twice, on the same tree a corpus run had shown red) — the shared testdb/bd
-//! infrastructure under contention, not this endpoint's own logic. See
-//! docs/test-plan/cockpit-observability.md for the coverage this leaves and the bead to
-//! re-add it once sp-nmzok (the dolt-beads stall under load) is fixed.
+//! THE FAKE IS KEPT HONEST BY ONE TEST THAT USES THE REAL THING.
+//! `real_bd_answers_in_the_shape_the_fake_is_built_from` is `#[ignore]`d — building the
+//! database costs seconds — and `spira/test-cockpit-rust.sh` runs it with `--ignored`. It
+//! builds its OWN embedded bd database in a private directory (`bd init`, no server, no port,
+//! nothing shared with the testdb corpus fixture, whose contention under load is what made the
+//! earlier version flip) and pushes the real `bd`'s answer through the same payload assertions
+//! the hermetic test makes. It FAILS LOUDLY when no real `bd` is found rather than skipping.
 //!
-//! The four-bead fixture (the same one the hermetic tests below build): sp-aaa open, sp-bbb an
+//! The four-bead fixture (the same one the hermetic tests below and the real-bd test build): sp-aaa open, sp-bbb an
 //! open epic whose title needs escaping, sp-ccc in progress with no labels and sp-bbb as its
 //! parent, sp-zzz closed. sp-aaa blocks on sp-ccc; sp-bbb blocks on sp-zzz, the edge that
 //! must be dropped because its other end is not served.
@@ -270,6 +269,70 @@ async fn the_payload_is_bounded_to_live_work_and_carries_typed_edges() {
     let (_fixture_dir, db, bd) = fixture();
     let (_shim_dir, shim, _counter) = counting_bd(&bd);
     let addr = spawn(cfg(&db, &shim, 20_000, 30)).await;
+    let (code, v) = json(addr).await;
+    assert_eq!(code, 200, "{v}");
+    assert_payload(&v);
+}
+
+/// Run the real `bd` in `dir` against its own embedded database, with every ambient bd
+/// setting removed so nothing but `dir` decides which database it touches.
+fn bd_in(bd: &str, dir: &std::path::Path, args: &[&str]) {
+    let out = std::process::Command::new(bd)
+        .args(args)
+        .current_dir(dir)
+        .env_remove("BEADS_DIR")
+        .env_remove("BEADS_DB")
+        .env_remove("BD_DB")
+        .env("BD_NON_INTERACTIVE", "1")
+        .output()
+        .unwrap_or_else(|e| panic!("cannot run {bd}: {e}"));
+    assert!(
+        out.status.success(),
+        "bd {args:?} failed: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+/// THE CONTRACT TEST THAT KEEPS THE FAKE HONEST. Real `bd`, a private embedded database built
+/// here, the same assertions. Ignored under a plain `cargo test` because the build takes
+/// seconds; spira/test-cockpit-rust.sh runs it with `--ignored`.
+#[tokio::test]
+#[ignore = "builds a real embedded bd database; spira/test-cockpit-rust.sh runs it with --ignored"]
+async fn real_bd_answers_in_the_shape_the_fake_is_built_from() {
+    let bd = std::env::var("LOOM_TEST_BD")
+        .ok()
+        .filter(|b| !b.is_empty())
+        .or_else(|| {
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+                .map(|d| d.join("bd"))
+                .find(|p| p.is_file())
+                .map(|p| p.to_string_lossy().into_owned())
+        })
+        .expect("no real bd: set LOOM_TEST_BD or put bd on PATH");
+    assert!(bd.starts_with('/'), "LOOM_TEST_BD must be absolute: the counting shim would exec itself");
+    let dir = scratch("real");
+    let db = dir.join("db");
+    std::fs::create_dir_all(&db).expect("a private db directory");
+    let mut above = Some(db.as_path());
+    while let Some(d) = above {
+        assert!(!d.join(".beads").exists(), "a .beads above the fixture would be found by bd: {d:?}");
+        above = d.parent();
+    }
+    bd_in(&bd, &db, &["init", "--non-interactive", "--prefix", "sp", "--skip-agents", "--skip-hooks", "-q"]);
+    let q = |args: &[&str]| bd_in(&bd, &db, &[&["-C", db.to_str().unwrap()], args].concat());
+    q(&["create", "open bead", "-t", "task", "-p", "1", "-l", "repo:alpha", "--id", "sp-aaa"]);
+    q(&["create", "beta \"quoted\" and a \\ backslash", "-t", "epic", "-p", "1", "-l", "repo:alpha", "--id", "sp-bbb"]);
+    q(&["create", "in-progress bead", "-t", "task", "-p", "2", "--id", "sp-ccc"]);
+    q(&["create", "closed bead", "-t", "epic", "-p", "3", "-l", "repo:alpha", "--id", "sp-zzz"]);
+    q(&["update", "sp-ccc", "--status", "in_progress"]);
+    q(&["update", "sp-zzz", "--status", "closed"]);
+    q(&["update", "sp-ccc", "--parent", "sp-bbb"]);
+    q(&["dep", "add", "sp-aaa", "sp-ccc"]);
+    q(&["dep", "add", "sp-bbb", "sp-zzz"]);
+
+    let (_shim_dir, shim, _counter) = counting_bd(&bd);
+    let addr = spawn(cfg(db.to_str().unwrap(), &shim, 20_000, 30)).await;
     let (code, v) = json(addr).await;
     assert_eq!(code, 200, "{v}");
     assert_payload(&v);
