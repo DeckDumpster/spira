@@ -740,12 +740,13 @@ impl<'a> Pass<'a> {
         }
         if !w.basefail_filed.get() {
             w.basefail_filed.set(true);
-            self.base_incident(name, &g.suite, &g.reason_or("base-red"), br, &w.base, &g.out);
+            let sha = self.git.rev_parse(&w.repo.path, &w.base_fq).unwrap_or_default();
+            self.base_incident(name, &g.suite, &g.reason_or("base-red"), br, &w.base, &sha, &g.out);
         }
     }
 
     /// File the base's own red through incident.sh (deduped on repository + suite).
-    fn base_incident(&self, name: &str, suite: &str, reason: &str, br: &str, base: &str, out: &str) {
+    fn base_incident(&self, name: &str, suite: &str, reason: &str, br: &str, base: &str, sha: &str, out: &str) {
         if !crate::util::runnable(&self.s.incident) {
             self.log(&format!("CHECK6 {name}: no intake at {} — the base's own red reaches nobody", self.s.incident.display()));
             return;
@@ -772,11 +773,17 @@ impl<'a> Pass<'a> {
             tail_bytes(out, 6000),
         ]
         .join("\n");
-        match self.lib.incident(&labels, name, &format!("basefail:{name}:{suite}"), &title, &payload) {
+        let key = if suite == "-" { format!("basefail:{name}:-@{}", if sha.is_empty() { "unknown" } else { sha }) } else { format!("basefail:{name}:{suite}") };
+        match self.lib.incident(&labels, name, &key, &title, &payload) {
             Err(_) => self.log(&format!("CHECK6 {name}: the intake could not file the base's red — it stays spooled and drain will retry")),
             Ok(printed) => {
-                let id: String = printed.trim_end().rsplit('\n').next().unwrap_or("").chars().filter(|c| !c.is_whitespace()).collect();
-                if !self.s.id_prefix.is_empty() && id.starts_with(&self.s.id_prefix) {
+                let id: String = printed
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !self.s.id_prefix.is_empty() && l.starts_with(&self.s.id_prefix) && !l.contains(char::is_whitespace))
+                    .unwrap_or("")
+                    .to_string();
+                if !id.is_empty() {
                     self.log(&format!("CHECK6 {name}: the base's own red is {id} (suite {suite})"));
                 } else {
                     self.log(&format!(

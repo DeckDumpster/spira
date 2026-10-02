@@ -71,7 +71,7 @@ pub fn basefail_fix_decision(external_ref: Option<&str>, name: &str, gate_out: &
     if suite.is_empty() {
         return false;
     }
-    let fence = suite == "-";
+    let fence = suite == "-" || suite.starts_with("-@");
     let mut in_branch = false;
     for line in gate_out.split('\n') {
         if line.starts_with("--- this branch") {
