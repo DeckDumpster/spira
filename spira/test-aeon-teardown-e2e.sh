@@ -262,8 +262,15 @@ echo
 echo "mail, driven directly (no aeon run): kind=question writes the operator-wait marker"
 # mail is a compiled binary now (sp-ooh1k) — there is no `cmd_send` bash function left to
 # source; call the real `send` subcommand instead (bare name, on the suite's own PATH).
+#
+# --class permissions + a "## Class basis" section (sp-ccvdv): a BEAD_ID-scoped operator
+# question with no declared escalation class is now rerouted to the concierge instead
+# (law-escalate-decisions-not-problems — see spira/test-mail.sh's own "escalation class"
+# row), so without this the mail never reaches the operator mailbox and this row would be
+# proving the reroute, not the marker.
 BEAD_ID=sp-ow-mail SPIRA_RUN="$SPIRA_RUN" mail send operator --from "Builder <builder@spira>" \
-    --subject "fixture question" --kind question --default "proceed without waiting" <<BODY >/dev/null 2>&1
+    --subject "fixture question" --kind question --default "proceed without waiting" \
+    --class permissions <<BODY >/dev/null 2>&1
 ## Question
 
 Can the fixture answer this itself?
@@ -271,6 +278,10 @@ Can the fixture answer this itself?
 ## Default
 
 Proceed without waiting.
+
+## Class basis
+
+Needs a credential only the operator holds.
 BODY
 is "mail send kind=question wrote the marker itself" "yes" \
    "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
