@@ -1,6 +1,6 @@
 //! In-process resolution of the `SPIRA_*` values queue reads outside `Lib::context`: an
 //! environment value wins outright (the `:=` rule), otherwise `spira_config` resolves the key
-//! from `spira.toml` and the `conf.d` registry. A caller never supplies a literal default.
+//! from the config store and the `conf.d` registry. A caller never supplies a literal default.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
