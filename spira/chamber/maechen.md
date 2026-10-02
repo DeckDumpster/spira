@@ -97,22 +97,28 @@ not a ranking and must not be treated as one.
 
 `census` queries the events table and outputs one line per class:
 
-    <distinct-beads-since-wm> <class> (<events-since-wm> detections, <all-time-beads> all-time)
+    <causal-events-since-wm> <class> (<victims-since-wm> victims, <events-since-wm> detections, <all-time-causal-events> all-time)
 
-Example: `1 sp-recur-unadopted-refs (18 detections, 1 all-time)` and
-`0 sp-recur-unrecorded (11 detections, 2 all-time)`.
+Example: `2 sp-recur-unadopted-refs (5 victims, 18 detections, 3 all-time)` and
+`0 sp-recur-unrecorded (0 victims, 0 detections, 2 all-time)`.
 
-The first number is **distinct beads** — the count of unique incident beads that produced
-events of that class since the watermark. A single condition re-detected by a 30-minute
-timer writes many event rows for one bead; those count as one bead, not many. The detection
-count (total event rows) appears in parentheses and measures how long a condition went
-unresolved, not how many separate conditions failed.
+The first number is **distinct causal events** (Concierge decision, sp-h2hpl, ratified
+sp-yojbh, implemented by sp-jcd0e): same-class events less than `SPIRA_CENSUS_CLUSTER_GAP_S`
+apart (default 300s = 5 minutes, one named constant) are one causal event, not one per
+victim. A single condition re-detected by a 30-minute timer writes many event rows for one
+bead; those cluster into one causal event, not many. A detector sweep that touches five
+beads inside one gap window is likewise one occurrence, not five — counting it as five would
+let one stuck condition outrank nine genuinely distinct failures. The **victim count**
+(distinct beads) is reported alongside in parentheses as a secondary field — it never
+decides the rank. The detection count (total event rows) is also carried alongside, and
+measures how long a condition went unresolved.
 
-Lines are ranked by distinct-bead count since the watermark. The all-time figure is retained
+Lines are ranked by causal-event count since the watermark. The all-time figure is retained
 for history and for diagnosing whether a class is genuinely new or recurring.
 
 When no watermark file exists, `census` falls back to all-time counts and says so on
-stderr; the output format is then `<beads> <class> (<events> detections)` (no all-time suffix).
+stderr; the output format is then `<causal-events> <class> (<victims> victims, <events>
+detections)` (no all-time suffix).
 
 `census` groups events by cause: each event row with `event_type='recurred'` and
 `new_value='suite-red'` contributes to class `sp-recur-suite-red`. A class carrying
@@ -121,19 +127,22 @@ stderr; the output format is then `<beads> <class> (<events> detections)` (no al
 A class with an open remedy bead is **suppressed** — it is already being worked. Suppress it
 and move to the next highest-frequency class.
 
-Record the top five classes with their since-watermark counts and suppression status.
+Record the top five classes with their since-watermark causal-event counts, victim counts
+and suppression status.
 
 ### Step 2 — Select
 
-Take the highest-ranked class with **three or more distinct beads since the watermark** and no
-open remedy bead. The ranking and threshold apply to the distinct-bead count (the first number
-on each census line), not the detection total or all-time total.
+Take the highest-ranked class with **three or more distinct causal events since the
+watermark** and no open remedy bead. The ranking and threshold apply to the causal-event
+count (the first number on each census line), not the victim count, the detection total or
+the all-time total.
 
 **Three, not two.** Two is a coincidence; one is an anecdote. The ladder already treats
 re-violation as the promotion trigger — Maechen applies the same bar to the corpus. A single
-condition re-detected by a 30-minute timer is one failure with a duration, not a pattern;
-counting its detections as occurrences would let one stuck condition outrank nine genuinely
-distinct failures.
+condition re-detected by a 30-minute timer, or a single sweep that happens to touch several
+beads at once, is one occurrence with a duration or a victim list — not a pattern; counting
+victims or detections as occurrences would let one stuck condition or one sweep outrank
+genuinely distinct failures.
 
 If no class meets the threshold, proceed directly to Step 5 (record the pass with zero beads).
 

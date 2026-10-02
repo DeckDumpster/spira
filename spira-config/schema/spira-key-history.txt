@@ -374,3 +374,4 @@ store_check_timeout
 desired_fragments_dir
 reconciler_shadow_kinds
 reconciler_effect_passes
+census_cluster_gap_s

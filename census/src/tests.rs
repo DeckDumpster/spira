@@ -99,6 +99,9 @@ impl World for Fake {
         self.env.borrow().get(k).cloned()
     }
     fn census_events_run_sql(&self, since: Option<i64>) -> Result<String, String> {
+        self.census_event_rows_run_sql(since)
+    }
+    fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
         let key = since.map(|s| s.to_string()).unwrap_or_default();
         self.events_sql.borrow().get(&key).cloned().unwrap_or_else(|| Ok(String::new()))
     }
@@ -120,10 +123,10 @@ impl World for Fake {
     fn lc_landed(&self, id: &str) -> i32 {
         self.landed.borrow().get(id).copied().unwrap_or(2)
     }
-    fn count_py(&self, tabular: &str) -> Result<String, String> {
+    fn cluster_py(&self, tabular: &str) -> Result<String, String> {
         Ok(self.count_out.borrow().get(tabular).cloned().unwrap_or_default())
     }
-    fn merge_py(&self, _all_time: &str, _since_wm: &str) -> String {
+    fn cluster_merge_py(&self, _all_time: &str, _since_wm: &str) -> String {
         self.merge_out.borrow().clone()
     }
     fn covers_py(&self, bdq_json: &str, _fold_map: &str) -> String {
@@ -232,10 +235,10 @@ fn no_watermark_file_falls_back_to_all_time_format() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "raw-rows");
-    f.set_count("raw-rows", "3 18 sp-recur-suite-red\n");
+    f.set_count("raw-rows", "3 3 18 sp-recur-suite-red\n");
     let rc = run(&f, false);
     assert_eq!(rc, 0);
-    assert_eq!(f.stdout_joined(), "3 sp-recur-suite-red (18 detections)");
+    assert_eq!(f.stdout_joined(), "3 sp-recur-suite-red (3 victims, 18 detections)");
     assert!(f.stderr.borrow().iter().any(|l| l.contains("no watermark file")));
 }
 
@@ -246,21 +249,21 @@ fn unreadable_watermark_warns_and_falls_back() {
     f.set("SPIRA_RUN", "/run");
     f.files.borrow_mut().insert(PathBuf::from("/run/maechen.watermark"), "not-a-number".into());
     f.set_events(None, "raw-rows");
-    f.set_count("raw-rows", "1 2 sp-reclaim\n");
+    f.set_count("raw-rows", "1 1 2 sp-reclaim\n");
     run(&f, false);
     assert!(f.stderr.borrow().iter().any(|l| l.contains("unreadable")));
 }
 
 #[test]
-fn valid_watermark_uses_merge_py() {
+fn valid_watermark_uses_cluster_merge_py() {
     let f = Fake::default();
     f.clean_clock();
     f.set("SPIRA_RUN", "/run");
     f.files.borrow_mut().insert(PathBuf::from("/run/maechen.watermark"), "1700000000".into());
     f.set_events(None, "all-rows");
     f.set_events(Some(1_700_000_000), "since-rows");
-    f.set_count("all-rows", "5 9 sp-recur-suite-red\n");
-    f.set_count("since-rows", "1 2 sp-recur-suite-red\n");
+    f.set_count("all-rows", "5 5 9 sp-recur-suite-red\n");
+    f.set_count("since-rows", "1 1 2 sp-recur-suite-red\n");
     *f.merge_out.borrow_mut() = "1 sp-recur-suite-red (2 detections, 5 all-time)".into();
     let rc = run(&f, false);
     assert_eq!(rc, 0);
@@ -274,7 +277,7 @@ fn open_remedy_suppresses_by_default_and_shows_with_flag() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "4 6 sp-recur-suite-red\n");
+    f.set_count("rows", "4 4 6 sp-recur-suite-red\n");
     *f.covers_out.borrow_mut() = "sp-recur-suite-red\n".into();
 
     let rc = run(&f, false);
@@ -287,7 +290,7 @@ fn open_remedy_suppressed_shown_with_suppressed_flag() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "4 6 sp-recur-suite-red\n");
+    f.set_count("rows", "4 4 6 sp-recur-suite-red\n");
     *f.covers_out.borrow_mut() = "sp-recur-suite-red\n".into();
 
     run(&f, true);
@@ -299,7 +302,7 @@ fn closed_remedy_with_live_branch_is_suppressed() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "2 3 sp-recur-doctor-gh-intake-skip\n");
+    f.set_count("rows", "2 2 3 sp-recur-doctor-gh-intake-skip\n");
     *f.covers_closed_out.borrow_mut() = "sp-4w1pp sp-recur-doctor-gh-intake-skip\n".into();
     f.landed.borrow_mut().insert("sp-4w1pp".into(), 1);
     f.branches.borrow_mut().push("sp-4w1pp".into());
@@ -313,7 +316,7 @@ fn closed_remedy_with_no_branch_is_orphaned() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "2 3 sp-recur-doctor-gh-intake-skip\n");
+    f.set_count("rows", "2 2 3 sp-recur-doctor-gh-intake-skip\n");
     *f.covers_closed_out.borrow_mut() = "sp-4w1pp sp-recur-doctor-gh-intake-skip\n".into();
     f.landed.borrow_mut().insert("sp-4w1pp".into(), 1);
     // no branch registered
@@ -329,7 +332,7 @@ fn closed_remedy_landed_is_neither_suppressed_nor_orphaned() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "2 3 sp-recur-doctor-gh-intake-skip\n");
+    f.set_count("rows", "2 2 3 sp-recur-doctor-gh-intake-skip\n");
     *f.covers_closed_out.borrow_mut() = "sp-4w1pp sp-recur-doctor-gh-intake-skip\n".into();
     f.landed.borrow_mut().insert("sp-4w1pp".into(), 0); // landed — the fix already shipped
 
@@ -344,7 +347,7 @@ fn closed_remedy_unknown_land_status_is_not_suppressed_and_warns() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "2 3 sp-recur-doctor-gh-intake-skip\n");
+    f.set_count("rows", "2 2 3 sp-recur-doctor-gh-intake-skip\n");
     *f.covers_closed_out.borrow_mut() = "sp-4w1pp sp-recur-doctor-gh-intake-skip\n".into();
     f.landed.borrow_mut().insert("sp-4w1pp".into(), 2);
 
@@ -388,9 +391,9 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
     let f = Fake::default();
     f.clean_clock();
     f.set_events(None, "rows");
-    f.set_count("rows", "7 12 sp-reopen-unrecorded\n");
+    f.set_count("rows", "7 7 12 sp-reopen-unrecorded\n");
     run(&f, false);
-    assert_eq!(f.stdout_joined(), "7 sp-reopen-unrecorded (12 detections)");
+    assert_eq!(f.stdout_joined(), "7 sp-reopen-unrecorded (7 victims, 12 detections)");
 }
 
 /// sp-oqf8c: `Real::landed` asks the lifecycle record (`spira-lc state`), never the retired

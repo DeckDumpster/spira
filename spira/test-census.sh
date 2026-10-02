@@ -107,7 +107,7 @@ echo "test-census.sh"
 
 # ==============================================================================
 echo
-echo "1. bump_* writes -> census reads (real events table, distinct beads not events)"
+echo "1. bump_* writes -> census reads (real events table, causal events not victim beads)"
 # ==============================================================================
 # POSITIVE CONTROL (law-absence-needs-a-positive-control): an empty store first, to
 # show absence is detectable before relying on it.
@@ -127,9 +127,12 @@ bump_requeue "$bid_c" quota-exceeded
 reclaim_event "$bid_c"
 
 out1="$(run_census)"
-want "bump_recur: one burst over 2 beads, 4 detections" "1 sp-recur-suite-red (4 detections, 2 beads" "$out1"
-want "bump_requeue: 1 distinct bead, 1 detection"  "1 sp-requeue-quota-exceeded (1" "$out1"
-want "bump_reclaim: 1 distinct bead, 1 detection"  "1 sp-reclaim (1"          "$out1"
+# All four bump_recur calls above land within the same test run, well inside the default
+# clustering gap — one causal event, two victims (sp-jcd0e: causal events, not victims,
+# decide the rank; the victim count is still reported alongside).
+want "bump_recur: 1 causal event (a burst), 2 victims, 4 detections" "1 sp-recur-suite-red (2 victims, 4" "$out1"
+want "bump_requeue: 1 causal event, 1 victim, 1 detection"  "1 sp-requeue-quota-exceeded (1 victims, 1" "$out1"
+want "bump_reclaim: 1 causal event, 1 victim, 1 detection"  "1 sp-reclaim (1 victims, 1"          "$out1"
 
 # UC-ops-detection-remediation-07's Sin-escalation recurrence counter is now
 # incident::ports::recurs_of (Rust, cargo test -p incident) rather than a lib.sh
@@ -184,8 +187,8 @@ echo "3. since-filter reaches the real SQL (watermark narrows the query)"
 # ==============================================================================
 # A stale event (before the watermark) and a live one (after) — the since-watermark
 # query must see only the live one, proving SPIRA_RUN/maechen.watermark really reaches
-# census_events_run_sql's since-clause and not just merge.py's ranking (table-tested
-# separately in test-census-pipeline.sh).
+# census_event_rows_run_sql's since-clause and not just cluster_merge.py's ranking
+# (table-tested separately in test-census-pipeline.sh).
 testdb_reset
 bid_stale="$(plant_bead "stale-watermark-bead")"
 _uuid="$(python3 -c 'import uuid; print(str(uuid.uuid4()))')"
@@ -200,9 +203,9 @@ _CENSUS_RUN="$TMP/wm-run"; mkdir -p "$_CENSUS_RUN"
 printf '1500000000\n' > "$_CENSUS_RUN/maechen.watermark"
 out3="$(run_census)"
 unset _CENSUS_RUN
-want "since-filter: live class counted since the watermark" "1 sp-recur-live-class (1 detections, 1 all-time)" "$out3"
+want "since-filter: live class counted since the watermark" "1 sp-recur-live-class (1 victims, 1 detections, 1 all-time)" "$out3"
 want "since-filter: stale class shows 0 since watermark, 1 all-time" \
-    "0 sp-recur-stale-class (0 detections, 1 all-time)" "$out3"
+    "0 sp-recur-stale-class (0 victims, 0 detections, 1 all-time)" "$out3"
 
 # ==============================================================================
 echo

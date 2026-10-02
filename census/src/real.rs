@@ -219,6 +219,24 @@ impl World for Real {
         }
         Err(format!("census_events_run_sql: query failed after 3 attempts: {last_stderr}"))
     }
+    fn census_event_rows_run_sql(&self, since: Option<i64>) -> Result<String, String> {
+        let since_formatted = since.filter(|&s| s > 0).map(|s| self.format_epoch_utc(s));
+        let query = crate::sql::event_rows_sql(since_formatted.as_deref(), &self.deliberate_cause_names());
+        let mut delay: u64 = self.env("CENSUS_RETRY_DELAY_S").and_then(|v| v.parse().ok()).unwrap_or(2);
+        let mut last_stderr = String::new();
+        for attempt in 1..=3 {
+            let (ok, out, err) = self.run_bd_sql(&query);
+            if ok {
+                return Ok(out);
+            }
+            last_stderr = err;
+            if attempt < 3 {
+                std::thread::sleep(std::time::Duration::from_secs(delay));
+                delay *= 2;
+            }
+        }
+        Err(format!("census_event_rows_run_sql: query failed after 3 attempts: {last_stderr}"))
+    }
     fn census_handwritten_run_sql(&self) -> String {
         self.run_events_sql(&crate::sql::handwritten_sql()).1
     }
@@ -258,13 +276,13 @@ impl World for Real {
         }
     }
 
-    fn count_py(&self, tabular: &str) -> Result<String, String> {
-        Ok(self.run_py("count.py", &[], Some(tabular)))
+    fn cluster_py(&self, tabular: &str) -> Result<String, String> {
+        Ok(self.run_py("cluster.py", &[], Some(tabular)))
     }
-    fn merge_py(&self, all_time: &str, since_wm: &str) -> String {
+    fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String {
         let a = self.write_scratch("all_time.txt", all_time);
         let b = self.write_scratch("since_wm.txt", since_wm);
-        self.run_py("merge.py", &[&a, &b], None)
+        self.run_py("cluster_merge.py", &[&a, &b], None)
     }
     fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String {
         let f = self.write_scratch("fold_map.txt", fold_map);
