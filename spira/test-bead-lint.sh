@@ -34,7 +34,7 @@ run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from
     LINT_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
-        SPIRA_INCIDENT_LABEL="incident-test" \
+        SPIRA_ALARM_LABEL="incident-test" \
         bead.sh lint "$@" 2>&1)"
     LINT_RC=$?
 }
@@ -107,9 +107,9 @@ echo "T4: a work bead blocks-dependent on an incident/alarm bead (sp-3bc6t, sp-i
 # ===========================================================================================
 # THE POSITIVE CONTROL IS FIRST: a plain work bead wired to block on an incident-labelled
 # bead — exactly the sp-pyowh/sp-kogm shape — must be caught before checking the shapes
-# that must pass it through. SPIRA_INCIDENT_LABEL is pinned to a non-default
+# that must pass it through. SPIRA_ALARM_LABEL is pinned to a non-default
 # ("incident-test") by run_lint so this proves the check reads the configured key rather
-# than a literal "incident".
+# than a literal "alarm".
 testdb_seed <<'JSONL'
 {"id":"sp-lint-inc-alarm","title":"recurring alarm","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-09-25T00:00:00Z"}
 {"id":"sp-lint-inc-work","title":"work bead wrongly blocked on the alarm","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-09-25T00:00:00Z","dependencies":[{"issue_id":"sp-lint-inc-work","depends_on_id":"sp-lint-inc-alarm","type":"blocks"}]}
