@@ -262,8 +262,7 @@ pub fn fayth_predicate(home: &Path, fayth: &str) -> Result<Predicate, Refusal> {
     for var in ["FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS"] {
         let Some(raw) = assigned_value(&text, var) else { continue };
         for name in bare_references(&raw) {
-            let empty = overlay.get(&name).map(|v| v.is_empty()).unwrap_or(true);
-            if empty {
+            if effective_value(&overlay, &name).is_empty() {
                 return Err(Refusal { fayth: fayth.to_string(), var: var.to_string(), reference: name });
             }
         }
@@ -272,6 +271,20 @@ pub fn fayth_predicate(home: &Path, fayth: &str) -> Result<Predicate, Refusal> {
         labels: fayth_get(home, fayth, "FAYTH_LABELS", ""),
         exclude_labels: fayth_get(home, fayth, "FAYTH_EXCLUDE_LABELS", ""),
     })
+}
+
+/// The value `fayth_get`'s own bash subshell actually sees for `name`: the overlay entry
+/// if [`fayth_label_overlay`] resolved one — even an explicit empty string shadows ambient,
+/// exactly as `Command::envs` behaves, since `fayth_get` sets the overlay on a `Command`
+/// that otherwise inherits this process's full environment — else that AMBIENT
+/// environment directly. In-process resolution is not the only source: a caller that
+/// sourced the real `conf.sh` already has the right value genuinely exported (every real
+/// suite; `test-spike.sh` pins `SPIRA_SPIKE_LABEL=research` by a bare `export`, under a
+/// fixture `SPIRA_HOME` with no `conf.d` at all, so [`fayth_label_overlay`]'s own
+/// `resolve_for_process` call fails outright there — that failure must not be read as "the
+/// variable itself is unresolved" when the ambient shell plainly has it).
+fn effective_value(overlay: &BTreeMap<String, String>, name: &str) -> String {
+    overlay.get(name).cloned().unwrap_or_else(|| std::env::var(name).unwrap_or_default())
 }
 
 /// `spira_fayths` — the personas this harness runs, space separated, IN PRIORITY ORDER.
@@ -615,6 +628,28 @@ mod tests {
         assert_eq!(err.var, "FAYTH_LABELS");
         assert_eq!(err.reference, "SPIRA_INCIDENT_LABEL");
         assert!(err.to_string().contains("SPIRA_INCIDENT_LABEL"));
+    }
+
+    /// test-spike.sh's own real shape: `SPIRA_HOME` is a scratch fixture with NO `conf.d`
+    /// at all (only a `chamber/` and a stub `lib.sh`), so [`fayth_label_overlay`]'s own
+    /// `resolve_for_process` call fails OUTRIGHT there — but the suite pins
+    /// `SPIRA_SPIKE_LABEL=research` by a bare `export`, genuinely present in this
+    /// process's own ambient environment. That failure must not be read as "the variable
+    /// itself is unresolved": [`fayth_predicate`] must fall back to the ambient value
+    /// `fayth_get`'s own bash subshell would actually inherit, not refuse.
+    #[test]
+    fn fayth_predicate_falls_back_to_the_ambient_environment_when_in_process_resolution_fails() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = testkit::TempDir::new("fayth-predicate-ambient-fallback");
+        write_fayth(&dir, "spike", "FAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_SPIKE_LABEL\"\nFAYTH_EXCLUDE_LABELS=\"spira-poison\"\n");
+        let saved = std::env::var("SPIRA_SPIKE_LABEL").ok();
+        std::env::set_var("SPIRA_SPIKE_LABEL", "research");
+        let got = fayth_predicate(&dir, "spike");
+        match saved {
+            Some(v) => std::env::set_var("SPIRA_SPIKE_LABEL", v),
+            None => std::env::remove_var("SPIRA_SPIKE_LABEL"),
+        }
+        assert_eq!(got.unwrap().labels, "research");
     }
 
     #[test]
