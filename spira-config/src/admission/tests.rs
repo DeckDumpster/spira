@@ -594,3 +594,62 @@ fn a_config_document_certify_par_sets_the_gate_pool_size() {
     assert_eq!(doc_size(Pool::Compile, &doc), Some(5));
     assert_eq!(doc_size(Pool::Test, &doc), None);
 }
+
+/// A process table whose compiler subtree CPU is a set value.
+struct TickProcs {
+    base: FakeProcs,
+    ticks: RefCell<u64>,
+}
+
+impl Procs for TickProcs {
+    fn start_of(&self, pid: u32) -> Option<u64> {
+        self.base.start_of(pid)
+    }
+    fn ppid_of(&self, pid: u32) -> Option<u32> {
+        self.base.ppid_of(pid)
+    }
+    fn compiler_ticks(&self, _pid: u32) -> Option<u64> {
+        Some(*self.ticks.borrow())
+    }
+}
+
+#[test]
+fn a_compile_lease_with_no_compiler_progress_is_reclaimed_as_stalled() {
+    let d = run_dir();
+    let p = TickProcs { base: FakeProcs::with(&[(10, 1, 1)]), ticks: RefCell::new(5) };
+    try_take(d.path(), Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let dir = Pool::Compile.dir(d.path());
+    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 100, 600);
+    assert_eq!((live.len(), ended.len()), (1, 0));
+    // CPU advanced: the clock restarts.
+    *p.ticks.borrow_mut() = 9;
+    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 650, 600);
+    assert_eq!((live.len(), ended.len()), (1, 0));
+    // Frozen for the whole bound: reclaimed and said so.
+    let (live, ended, _) = reap(&dir, Pool::Compile, 1, &p, 1250, 600);
+    assert!(live.is_empty());
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].end, "stalled");
+    assert_eq!(ended[0].held, 1150);
+    assert!(!dir.join("slot.1").exists() && !dir.join("progress.1").exists());
+}
+
+#[test]
+fn stall_bound_zero_and_unknown_ticks_never_reclaim() {
+    let d = run_dir();
+    let p = TickProcs { base: FakeProcs::with(&[(10, 1, 1)]), ticks: RefCell::new(0) };
+    try_take(d.path(), Pool::Compile, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let dir = Pool::Compile.dir(d.path());
+    reap(&dir, Pool::Compile, 1, &p, 100, 0);
+    let (live, _, _) = reap(&dir, Pool::Compile, 1, &p, 99_999, 0);
+    assert_eq!(live.len(), 1);
+    let q = FakeProcs::with(&[(10, 1, 1)]);
+    let (live, _, _) = reap(&dir, Pool::Compile, 1, &q, 99_999, 600);
+    assert_eq!(live.len(), 1);
+    // The test pool is never stall-reclaimed.
+    let t = Pool::Test.dir(d.path());
+    try_take(d.path(), Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    reap(&t, Pool::Test, 1, &p, 100, 600);
+    let (live, _, _) = reap(&t, Pool::Test, 1, &p, 99_999, 600);
+    assert_eq!(live.len(), 1);
+}
