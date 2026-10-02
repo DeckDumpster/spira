@@ -89,6 +89,12 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     let mut x_bead = args.bead.to_string();
 
     if (args.kind == "question" || args.kind == "decision") && db_configured {
+        if env.ask_label.is_empty() {
+            if is_operator {
+                repeat::repeat_release(repeat_guard.take().unwrap());
+            }
+            return Err("ask label does not resolve — refusing to file an ask under a guessed one".to_string());
+        }
         if let Some(dec_bead) = bead::create_tracking_bead(bd, true, args.subject, &body, &env.ask_label) {
             if !args.bead.is_empty() {
                 if env.allow_blocking {

@@ -230,6 +230,9 @@ fn run_tidy(args: &[String]) -> ExitCode {
     if let Err(e) = mail::maildir::mailbox_valid(&mailbox) {
         return fail(format!("tidy: {e}"));
     }
+    if env.ask_label.is_empty() {
+        return fail("tidy: ask label does not resolve — refusing to guess one".to_string());
+    }
     let bd = bd_cli(&env);
     let db_configured = !env.db.is_empty();
     match tidy::tidy(&bd, db_configured, &env.mail_root, &mailbox, &env.ask_label, env.tidy_fresh_s, env.id_prefix_for_regex(), dry_run) {

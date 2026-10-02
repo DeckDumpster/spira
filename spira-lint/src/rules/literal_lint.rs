@@ -105,6 +105,13 @@ fn marked(ls: &[&[u8]], i: usize) -> bool {
     has(ls[i]) || (i > 0 && has(ls[i - 1]))
 }
 
+/// An identity label's env-with-literal-fallback can never be excused: a unit does not
+/// export the key, so the literal silently becomes the value.
+fn ask_fallback(line: &[u8]) -> bool {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"ASK_LABEL[^;]*(unwrap_or|\bor\(|:-)").unwrap()).is_match(line)
+}
+
 fn is_comment(line: &[u8]) -> bool {
     let stripped = {
         let start = line.iter().position(|b| !b.is_ascii_whitespace()).unwrap_or(line.len());
@@ -125,7 +132,7 @@ pub fn scan(content: &[u8], names: &[String]) -> Vec<(usize, String)> {
     let ls = lines(content);
     let mut out = Vec::new();
     for (i, l) in ls.iter().enumerate() {
-        if is_comment(l) || marked(&ls, i) {
+        if is_comment(l) || (marked(&ls, i) && !ask_fallback(l)) {
             continue;
         }
         if re.is_match(l) {
@@ -215,6 +222,17 @@ mod tests {
     fn run(t: &TempDir) -> Result<Vec<String>, LintError> {
         let tree = Tree::from_git(t.path()).unwrap();
         LiteralLint.check(&tree).map(|v| v.iter().map(|f| f.to_string()).collect())
+    }
+
+    #[test]
+    fn literal_ok_never_excuses_an_ask_label_fallback() {
+        let names = vec!["needs-operator".to_string()];
+        let bad = scan(b"x = var(\"SPIRA_ASK_LABEL\").unwrap_or_else(|| \"needs-operator\".into()); // literal-ok: no\n", &names);
+        assert_eq!(bad.len(), 1);
+        let shell = scan(b"a=\"${SPIRA_ASK_LABEL:-needs-operator}\" # literal-ok: no\n", &names);
+        assert_eq!(shell.len(), 1);
+        let fine = scan(b"(\"SPIRA_ASK_LABEL\", \"needs-operator\"), // literal-ok: table\n", &names);
+        assert!(fine.is_empty());
     }
 
     #[test]

@@ -106,8 +106,7 @@ impl Config {
             home: nonempty(get("SPIRA_HOME", "prod")).map(PathBuf::from),
             bd: nonempty(get("SPIRA_BD", "bd")).unwrap_or_else(|| "bd".into()),
             vocab: Vocab {
-                // literal-ok: conf.sh's own default; this binary cannot source schema.sh
-                ask: or("SPIRA_ASK_LABEL", "ask_label", "needs-operator"),
+                ask: get("SPIRA_ASK_LABEL", "ask_label").unwrap_or_else(resolved_ask_label),
                 submitted: or("SPIRA_SUBMITTED_LABEL", "submitted_label", "spira-submitted"),
                 queue_wait: or("SPIRA_QUEUE_WAIT_LABEL", "queue_wait_label", "spira-queue-waiting"),
                 open_children: or("SPIRA_OPEN_CHILDREN_LABEL", "open_children_label", "spira-open-children"),
@@ -242,4 +241,14 @@ mod tests {
         assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "1")], &[]));
         assert!(r(&[("SPIRA_LIFECYCLE_ENFORCE", "true")], &[("lifecycle_enforce", "false")]));
     }
+}
+
+fn resolved_ask_label() -> String {
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let home = std::env::var("SPIRA_HOME")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or_else(|| spira_config::release_env::own_release_root_for_process().map(|r| r.join("spira")))
+        .unwrap_or_default();
+    spira_config::resolve::resolve_ask_label(&env, &home).unwrap_or_default()
 }

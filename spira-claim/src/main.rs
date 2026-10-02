@@ -1080,9 +1080,19 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     };
     let run_dir = std::path::PathBuf::from(run_dir);
     let asked_dir = env_nonempty("SPIRA_POISON_ASKED").map(Into::into).unwrap_or_else(|| run_dir.join("poison-asked"));
-    let ask_label = env_nonempty("SPIRA_ASK_LABEL")
-        .or_else(|| env.config.ask_label.clone())
-        .unwrap_or_else(|| "needs-operator".into()); // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset
+    let ask_label = match env_nonempty("SPIRA_ASK_LABEL").or_else(|| env.config.ask_label.clone()) {
+        Some(l) => l,
+        None => {
+            let home = match fayth_home() {
+                Ok(h) => h,
+                Err(e) => return Outcome::cannot_tell(format!("{e} — nothing was written")),
+            };
+            match spira_config::resolve::resolve_ask_label(&std::env::vars().collect(), &home) {
+                Ok(l) => l,
+                Err(e) => return Outcome::cannot_tell(format!("{e} — nothing was written")),
+            }
+        }
+    };
     let mut live = unpoison::Live {
         store: st,
         run_dir,
