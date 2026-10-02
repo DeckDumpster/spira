@@ -12,7 +12,7 @@
 # trusting the passing case (law-a-regression-test-must-be-seen-to-fail).
 #
 # tier: T2
-# covers: landing-pass/*
+# covers: landing-pass/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
