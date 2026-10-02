@@ -50,6 +50,7 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         &inputs.drain,
         inputs.now,
     );
+    let slots = slots_line(&snap);
     let tokens = tokens_section(
         &snap,
         cols,
@@ -89,11 +90,12 @@ pub fn frame(rows: i64, cols_in: i64, inputs: &FrameInputs) -> Vec<String> {
         Spec::new(want[5], want[5], true),
     ];
 
-    let fixed = head.len() as i64 + tokens.len() as i64 + standing.len() as i64;
+    let fixed = head.len() as i64 + 1 + tokens.len() as i64 + standing.len() as i64;
     let give = share(rows, fixed, &specs);
 
     let mut out = Vec::new();
     out.extend(head);
+    out.push(slots);
     out.extend(tokens);
     out.extend(now_v.into_iter().take(give[0].max(0) as usize));
     out.extend(next_v.into_iter().take(give[1].max(0) as usize));
@@ -143,6 +145,44 @@ mod tests {
             tok_win_spark: String::new(),
             now: 1000,
         }
+    }
+
+    fn strip(s: &str) -> String {
+        let mut o = String::new();
+        let mut esc = false;
+        for c in s.chars() {
+            if esc { if c.is_ascii_alphabetic() { esc = false } } else if c == '\x1b' { esc = true } else { o.push(c) }
+        }
+        o
+    }
+
+    fn slots_frame(snap: &'static str, rows: i64) -> String {
+        let mut i = base_inputs();
+        i.snapshot_content = snap;
+        i.snapshot_exists = true;
+        render(rows, 80, &i).iter().map(|l| strip(l)).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn slots_row_shows_live_ceiling_free_and_split() {
+        let out = slots_frame("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_SLOTS_POOL='8'\nSP_SLOTS_LANES_CAP='2'\n", 0);
+        assert!(out.contains("SLOTS   3/8  5 free  (builders 6-8, lanes 0-2)"), "{out}");
+    }
+
+    #[test]
+    fn slots_row_has_no_split_without_a_lane_cap_and_shows_question_on_failed_probe() {
+        let out = slots_frame("SP_SLOTS_LIVE='1'\nSP_SLOTS_CEILING='4'\nSP_SLOTS_FREE='3'\nSP_SLOTS_POOL='4'\nSP_SLOTS_LANES_CAP=''\n", 0);
+        assert!(out.contains("1/4  3 free") && !out.contains("builders"), "{out}");
+        let bad = slots_frame("SP_SLOTS_LIVE='?'\nSP_SLOTS_CEILING='?'\nSP_SLOTS_FREE='?'\n", 0);
+        assert!(bad.contains("? free"), "{bad}");
+    }
+
+    #[test]
+    fn slots_row_survives_a_mail_section_longer_than_the_pane() {
+        let mut snap = String::from("SP_SLOTS_LIVE='3'\nSP_SLOTS_CEILING='8'\nSP_SLOTS_FREE='5'\nSP_MAIL_UNREAD='5'\nSP_MAIL_OLDEST_AGE='120'\nSP_MAIL_N='5'\n");
+        for n in 0..5 { snap.push_str(&format!("SP_MAIL{n}='60|NEW|a mail message long enough to matter {n}'\n")); }
+        let out = slots_frame(Box::leak(snap.into_boxed_str()), 8);
+        assert!(out.contains("5 free"), "{out}");
     }
 
     #[test]
