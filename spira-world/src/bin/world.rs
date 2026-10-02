@@ -79,42 +79,58 @@ fn epoch_secs() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
+/// One `TIMER_PRIORITY` slot, resolved or not: `enumerate_timers`'s own per-base answer.
+/// sp-ivfu3-2: a base that resolves to NEITHER unit must never be silently treated as the
+/// plain name — `status`/`start`/`stop` all handle `Missing` explicitly, never acting on
+/// a name systemd has never heard of.
+enum TimerSlot {
+    Resolved(String),
+    Missing { base: &'static str, reason: String },
+}
+
 /// Every timer world.sh acts on: TIMER_PRIORITY first (instance-qualified if that form is
-/// known to systemd, else plain), then every other `spira-*.timer` systemd reports —
-/// loaded or not — deduplicated in the order first seen.
-fn enumerate_timers() -> Vec<String> {
+/// known to systemd AT ALL, else plain if THAT is known, else `Missing` — see
+/// `sysctl::choose_timer`'s own doc for why this is existence, not enabled/active state),
+/// then every other `spira-*.timer` systemd reports — loaded or not — deduplicated in the
+/// order first seen.
+fn enumerate_timers() -> Vec<TimerSlot> {
     let sfx = sfx_or_die();
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    let mut add = |t: String| {
+    let mut add_resolved = |t: String, out: &mut Vec<TimerSlot>| {
         if seen.insert(t.clone()) {
-            out.push(t);
+            out.push(TimerSlot::Resolved(t));
         }
     };
     for base in sysctl::TIMER_PRIORITY {
-        let qualified = format!("{base}{sfx}.timer");
-        // world.sh's own check is on EXIT STATUS, stdout thrown away (`>/dev/null 2>&1`):
-        // `is-enabled`/`is-active` on a timer systemd has never heard of exits nonzero
-        // with empty stdout, same as one it has heard of but printed nothing for (a
-        // stubbed systemctl in a T1 suite does exactly this) — stdout content is not the
-        // signal, the exit code is.
-        if sysctl::run_ok(&["is-enabled", &qualified]) || sysctl::run_ok(&["is-active", &qualified]) {
-            add(qualified);
-        } else {
-            add(format!("{base}.timer"));
+        match sysctl::resolve_timer(base, &sfx) {
+            Ok(name) => add_resolved(name, &mut out),
+            Err(reason) => out.push(TimerSlot::Missing { base, reason }),
         }
     }
     for line in sysctl::run_lines(&["list-unit-files", "spira-*.timer", "--no-legend"]) {
         if let Some(u) = sysctl::first_field(&line) {
-            add(u.to_string());
+            add_resolved(u.to_string(), &mut out);
         }
     }
     for line in sysctl::run_lines(&["list-units", "spira-*.timer", "--all", "--no-legend"]) {
         if let Some(u) = sysctl::first_field(&line) {
-            add(u.to_string());
+            add_resolved(u.to_string(), &mut out);
         }
     }
     out
+}
+
+/// Every `Missing` base in `timers`, formatted `"<base>: <reason>"` — the named refusal
+/// `cmd_start`/`cmd_stop` print and abort on, never silently acting on a phantom unit.
+fn missing_timers(timers: &[TimerSlot]) -> Vec<String> {
+    timers
+        .iter()
+        .filter_map(|s| match s {
+            TimerSlot::Missing { base, reason } => Some(format!("{base}: {reason}")),
+            TimerSlot::Resolved(_) => None,
+        })
+        .collect()
 }
 
 fn work_services() -> Vec<String> {
@@ -211,7 +227,16 @@ fn cmd_stop(args: &[String]) -> i32 {
 
     println!("spira: halting the loop");
     let timers = enumerate_timers();
+    let missing = missing_timers(&timers);
+    if !missing.is_empty() {
+        eprintln!("spira: REFUSING to stop — {} essential timer(s) resolve to no systemd unit at all:", missing.len());
+        for m in &missing {
+            eprintln!("  {m}");
+        }
+        return 1;
+    }
     for t in &timers {
+        let TimerSlot::Resolved(t) = t else { continue };
         if !hard && sysctl::is_ci_watcher(t) {
             continue;
         }
@@ -335,8 +360,17 @@ fn cmd_start() -> i32 {
     let instance = instance_or_die();
 
     let timers = enumerate_timers();
+    let missing = missing_timers(&timers);
+    if !missing.is_empty() {
+        eprintln!("spira: REFUSING to start — {} essential timer(s) resolve to no systemd unit at all:", missing.len());
+        for m in &missing {
+            eprintln!("  {m}");
+        }
+        return 1;
+    }
     let mut degraded = Vec::new();
     for t in &timers {
+        let TimerSlot::Resolved(t) = t else { continue };
         let is_enabled_disabled = sysctl::run(&["is-enabled", t]) == "disabled";
         let subj = sysctl::subject_of(t, &instance);
         let action = sysctl::start_action(is_enabled_disabled, suspended.get(&subj).map(String::as_str));
@@ -574,7 +608,8 @@ fn cmd_status() -> i32 {
         let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
         let suspended = spira_ctrl::load_suspended(&ctrl_data);
         let mut degraded = Vec::new();
-        for t in enumerate_timers() {
+        for slot in enumerate_timers() {
+            let TimerSlot::Resolved(t) = slot else { continue };
             if !sysctl::is_essential_timer(&t, &instance, sysctl::TIMER_PRIORITY) {
                 continue;
             }
@@ -595,11 +630,18 @@ fn cmd_status() -> i32 {
         }
     }
 
-    for t in enumerate_timers() {
-        let state = sysctl::run(&["is-active", &t]);
-        let svc = format!("{}.service", t.strip_suffix(".timer").unwrap_or(&t));
-        let svc_result = sysctl::run(&["show", &svc, "-p", "Result", "--value"]);
-        print!("{}", sysctl::status_timer_row(&t, &state, &svc_result));
+    for slot in enumerate_timers() {
+        match slot {
+            TimerSlot::Resolved(t) => {
+                let state = sysctl::run(&["is-active", &t]);
+                let svc = format!("{}.service", t.strip_suffix(".timer").unwrap_or(&t));
+                let svc_result = sysctl::run(&["show", &svc, "-p", "Result", "--value"]);
+                print!("{}", sysctl::status_timer_row(&t, &state, &svc_result));
+            }
+            TimerSlot::Missing { base, reason } => {
+                println!("  {:<26} MISSING ({reason})", format!("{base}.timer"));
+            }
+        }
     }
     println!("  {:<26} {}", "dolt-beads.service", sysctl::run(&["is-active", "dolt-beads.service"]));
     println!("  {:<26} {}", "dolt-beads-test.service", sysctl::run(&["is-active", "dolt-beads-test.service"]));

@@ -48,6 +48,49 @@ pub fn run_lines(args: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Whether `name` is a unit systemd has LOADED AT ALL — enabled or not, active or not.
+/// `list-unit-files <name> --no-legend` prints one line for a unit file systemd knows
+/// about (nothing for one it does not); `cat <name>` additionally catches a form
+/// `list-unit-files` itself does not enumerate on some systemd builds (a generator- or
+/// drop-in-only unit). Neither probe starts, stops or enables anything.
+pub fn unit_exists(name: &str) -> bool {
+    !run_lines(&["list-unit-files", name, "--no-legend"]).is_empty() || run_ok(&["cat", name])
+}
+
+/// `_choose_timer`'s own decision, pure: given whether each form is known to systemd at
+/// all, which name world.sh acts on — the instance-qualified form first, the plain form
+/// second, a NAMED REFUSAL when neither is known (never a guess). sp-ivfu3-2: the timer
+/// world.sh picked used to be decided by ENABLED/ACTIVE STATE
+/// (`is-enabled`/`is-active`), which cannot tell "known to systemd, just off" apart from
+/// "does not exist at all" — with the whole world stopped, every essential timer is
+/// disabled AND inactive, so both probes failed and `enumerate_timers` picked the plain,
+/// NONEXISTENT name (`spira-sentinel.timer` when only `spira-sentinel-prod.timer` was
+/// ever installed), which `world start` would have "started" with systemd silently
+/// no-opping on a name it has never heard of.
+pub fn choose_timer(base: &str, sfx: &str, qualified_exists: bool, plain_exists: bool) -> Result<String, String> {
+    let qualified = format!("{base}{sfx}.timer");
+    if qualified_exists {
+        return Ok(qualified);
+    }
+    let plain = format!("{base}.timer");
+    if plain == qualified {
+        return Err(format!("{plain}: no such systemd unit"));
+    }
+    if plain_exists {
+        return Ok(plain);
+    }
+    Err(format!("neither {qualified} nor {plain}: no such systemd unit"))
+}
+
+/// [`choose_timer`], querying systemd itself for the two existence facts it needs.
+pub fn resolve_timer(base: &str, sfx: &str) -> Result<String, String> {
+    let qualified = format!("{base}{sfx}.timer");
+    let plain = format!("{base}.timer");
+    let qualified_exists = unit_exists(&qualified);
+    let plain_exists = if plain == qualified { qualified_exists } else { unit_exists(&plain) };
+    choose_timer(base, sfx, qualified_exists, plain_exists)
+}
+
 /// `is-active` / `is-enabled`-style column 1 of a `list-units --no-legend` line.
 pub fn first_field(line: &str) -> Option<&str> {
     line.split_whitespace().next()
@@ -158,6 +201,37 @@ mod tests {
         assert!(is_ci_watcher("spira-gate-check.timer"));
         assert!(is_ci_watcher("spira-gate-check-prod.timer"));
         assert!(!is_ci_watcher("spira-groom.timer"));
+    }
+
+    /// sp-ivfu3-2 (a): the world stopped — the qualified unit is KNOWN to systemd but
+    /// disabled and inactive — must still choose the qualified name. Before this bead,
+    /// `enumerate_timers` asked `is-enabled`/`is-active` instead of existence, and both
+    /// say no for a disabled, inactive unit, so it picked the plain, nonexistent name —
+    /// this is the exact state (qualified exists, both probes would say "off") the old
+    /// code could not tell apart from "does not exist".
+    #[test]
+    fn choose_timer_prefers_the_qualified_name_when_it_exists_even_disabled_and_inactive() {
+        assert_eq!(choose_timer("spira-sentinel", "-prod", true, false), Ok("spira-sentinel-prod.timer".to_string()));
+    }
+
+    #[test]
+    fn choose_timer_falls_back_to_the_plain_name_when_only_it_exists() {
+        assert_eq!(choose_timer("spira-sentinel", "-prod", false, true), Ok("spira-sentinel.timer".to_string()));
+    }
+
+    /// sp-ivfu3-2 (b): neither form is known to systemd at all — a named refusal, never a
+    /// guess at either name.
+    #[test]
+    fn choose_timer_refuses_named_when_neither_exists() {
+        let err = choose_timer("spira-sentinel", "-prod", false, false).unwrap_err();
+        assert!(err.contains("spira-sentinel-prod.timer") && err.contains("spira-sentinel.timer"), "{err}");
+    }
+
+    /// An empty suffix makes the qualified and plain forms identical — refusing must not
+    /// repeat the same name twice as if two different units were tried.
+    #[test]
+    fn choose_timer_refuses_once_when_the_suffix_is_empty() {
+        assert_eq!(choose_timer("spira-sentinel", "", false, false), Err("spira-sentinel.timer: no such systemd unit".to_string()));
     }
 
     #[test]
