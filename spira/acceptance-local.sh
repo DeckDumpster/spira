@@ -268,6 +268,16 @@ git -C "$HOME/scratch-repo" push origin main >/dev/null
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/spira"
 printf "scratch-repo | %s | push | origin/main | |\n" "$HOME/scratch-repo" \
     > "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
+for _m in queue.local:scratch-queue pr:scratch-pr; do
+    git init --bare --initial-branch=main "$HOME/${_m#*:}.git" >/dev/null
+    git clone "$HOME/${_m#*:}.git" "$HOME/${_m#*:}" >/dev/null 2>&1
+    git -C "$HOME/${_m#*:}" config user.email "acceptance@spira.local"
+    git -C "$HOME/${_m#*:}" config user.name "Spira Acceptance"
+    git -C "$HOME/${_m#*:}" commit --allow-empty -m "init" >/dev/null
+    git -C "$HOME/${_m#*:}" push origin main >/dev/null 2>&1
+    printf "%s | %s | %s | origin/main | |\n" "${_m#*:}" "$HOME/${_m#*:}" "${_m%%:*}" \
+        >> "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
+done
 ' || {
     printf 'acceptance-local: could not set up the scratch repo in the container\n' >&2
     exit 2

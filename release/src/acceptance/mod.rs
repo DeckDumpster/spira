@@ -367,6 +367,49 @@ pub fn ready_has(ready_json: &str, id: &str) -> bool {
     bd_json(ready_json).is_some_and(|v| v.iter().any(|b| b.get("id").and_then(|x| x.as_str()) == Some(id)))
 }
 
+/// The applied `to_state` values of `spira-lc history <id>`, in event order, consecutive
+/// repeats collapsed. Unreadable is empty.
+pub fn lifecycle_states(history_json: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for e in bd_json(history_json).unwrap_or_default() {
+        let applied = e.get("applied").is_some_and(|a| a.as_i64() == Some(1) || a.as_bool() == Some(true));
+        let Some(s) = e.get("to_state").and_then(|s| s.as_str()).filter(|_| applied) else { continue };
+        if out.last().map(String::as_str) != Some(s) {
+            out.push(s.to_string());
+        }
+    }
+    out
+}
+
+/// The states the probe bead's history must pass through, in order, for its repository's
+/// land mode: the queue modes add the delivery machine's QUEUED and BATCHED.
+pub fn expected_lifecycle(mode: &str) -> Vec<&'static str> {
+    let mut v = vec!["READY", "WORKING", "SUBMITTED", "CERTIFIED"];
+    if is_queue_mode(mode) {
+        v.extend(["IN_DELIVERY", "QUEUED", "BATCHED"]);
+    }
+    v.push("LANDED");
+    v
+}
+
+/// The first of `want` that is not found, in order, in `got`; `None` when it all is.
+pub fn missing_in_order<'a>(want: &[&'a str], got: &[String]) -> Option<&'a str> {
+    let mut it = got.iter();
+    want.iter().copied().find(|w| !it.any(|g| g == w))
+}
+
+pub fn is_queue_mode(mode: &str) -> bool {
+    matches!(mode, "queue" | "queue.forge" | "queue.local")
+}
+
+/// The three land modes every release proves, with queue satisfied by either spelling.
+pub const LAND_MODES: [&str; 3] = ["queue", "pr", "push"];
+
+/// The land modes of `LAND_MODES` that no repository in `modes` carries.
+pub fn land_modes_missing(modes: &[String]) -> Vec<&'static str> {
+    LAND_MODES.iter().copied().filter(|m| !modes.iter().any(|x| if *m == "queue" { is_queue_mode(x) } else { x == m })).collect()
+}
+
 /// The installed `spira-*` unit files, "name state" per line, sorted; transient units
 /// excluded (a landing pass alive at snapshot time is not part of an install).
 pub fn unit_set(list_unit_files: &str) -> Vec<String> {
