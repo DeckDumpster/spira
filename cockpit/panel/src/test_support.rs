@@ -34,9 +34,10 @@ impl StubBd {
         let log = dir.join("argv.log");
         std::fs::write(&log, "").expect("init argv log");
         let script = dir.join("bd");
-        std::fs::write(
+        // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
+        testkit::write_exe(
             &script,
-            format!(
+            &format!(
                 r#"#!/usr/bin/env bash
 {{ printf 'ARGV: %s\n' "$*"; printf 'ACTOR: %s\n' "${{BEADS_ACTOR:-<none>}}"; }} >> {log:?}
 case " $* " in
@@ -66,11 +67,7 @@ esac
 exit "$rc"
 "#
             ),
-        )
-        .expect("write stub bd script");
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).expect("chmod stub bd");
+        );
 
         let saved_spira_path = std::env::var("SPIRA_PATH").ok();
         std::env::set_var("SPIRA_PATH", &dir);
@@ -98,9 +95,10 @@ exit "$rc"
     /// ran. Controlled by `RULE_RC` / `RULE_ERR`.
     pub fn rule(mut self) -> Self {
         let script = self.dir.join("rule.sh");
-        std::fs::write(
+        // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
+        testkit::write_exe(
             &script,
-            format!(
+            &format!(
                 r#"#!/usr/bin/env bash
 printf 'RULE: %s\n' "$*" >> {log:?}
 rc="${{RULE_RC:-0}}"; err="${{RULE_ERR:-}}"
@@ -109,11 +107,7 @@ exit "$rc"
 "#,
                 log = self.log
             ),
-        )
-        .expect("write stub rule.sh");
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).expect("chmod stub rule.sh");
+        );
         std::env::set_var("SPIRA_RULE", &script);
         self.set_vars.push("SPIRA_RULE".to_string());
         self
@@ -126,9 +120,10 @@ exit "$rc"
     pub fn mail(mut self) -> Self {
         let script = self.dir.join("mail");
         let inbox = self.dir.join("mail-inbox");
-        std::fs::write(
+        // testkit::write_exe, never fs::write + set_mode/set_permissions (sp-os3of).
+        testkit::write_exe(
             &script,
-            format!(
+            &format!(
                 r#"#!/usr/bin/env bash
 printf 'MAIL: %s\n' "$*" >> {log:?}
 cat > {inbox:?}
@@ -139,11 +134,7 @@ exit "$rc"
                 log = self.log,
                 inbox = inbox,
             ),
-        )
-        .expect("write stub mail");
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).expect("chmod stub mail");
+        );
         self.mail_inbox = Some(inbox);
         self
     }

@@ -1,0 +1,21 @@
+# chmod-exec-leak (sp-os3of): test files still allowed a literal
+# Permissions::from_mode(0o7xx), one repo-relative path per line. Blank lines and `#`
+# comments are ignored. Read by spira-lint's chmod-exec-leak rule.
+#
+# SHRINK-ONLY. A line leaves when its call moves to testkit::write_exe; nothing is ever
+# added for a NEW write-then-chmod.
+#
+# testenv/src/suites/real.rs, release/src/tests.rs, release/src/acceptance/tests.rs: chmod
+# ALONE, toggling the executable bit on a file some earlier line in the same test already
+# wrote some other, already-safe way — never a fresh fs::write immediately before the
+# chmod, so there is no write-fd for a concurrent fork to inherit. Converting would mean
+# rewriting file content the test never changes, just to dodge a textual pattern.
+#
+# aeon/src/worktree.rs, spira-config/src/writeback.rs: chmod on a DIRECTORY (0o555/0o755),
+# simulating and then restoring a read-only parent for an unwritable-destination test —
+# never an executable fixture, so testkit::write_exe is not the fix for either.
+testenv/src/suites/real.rs
+release/src/tests.rs
+release/src/acceptance/tests.rs
+aeon/src/worktree.rs
+spira-config/src/writeback.rs

@@ -322,6 +322,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(rules::conf_key_registry::ConfKeyRegistry),
         Box::new(rules::lib_sh_shims::LibShShims),
         Box::new(rules::tmp_leak::TmpLeak),
+        Box::new(rules::chmod_exec_leak::ChmodExecLeak),
         Box::new(rules::plan_matrix::PlanMatrix::default()),
         Box::new(rules::plan_lint::PlanLint::default()),
         Box::new(rules::testdb_mode_lint::TestdbModeLint::default()),
@@ -387,6 +388,13 @@ pub(crate) mod testutil {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(p, content).unwrap();
         }
+        /// Like [`write`](Self::write), but executable — through `testkit::write_exe`
+        /// (chmod-exec-leak, sp-os3of), never a bare `fs::write` + `set_permissions`.
+        pub fn write_exe(&self, rel: &str, content: &str) {
+            let p = self.0.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            testkit::write_exe(&p, content);
+        }
         pub fn remove(&self, rel: &str) {
             fs::remove_file(self.0.join(rel)).unwrap();
         }
@@ -444,22 +452,21 @@ mod tests {
     /// The tree-walking rules over one small fixture tree: one planted violation per rule is
     /// found, named by its rule, and nothing else is. The rules that hold named files to a
     /// contract (event-taxonomy, gate-workflow, conf-key-registry, lib-sh-shims), and
-    /// tmp-leak, which reads Rust, are fixtured in their own modules.
+    /// tmp-leak and chmod-exec-leak, which read Rust, are fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
-        use std::os::unix::fs::PermissionsExt;
         let t = TempDir::new("fixture");
         t.git_init();
         // The planted strings are assembled with concat! so this source file itself carries
         // none of them — config-fence and deps-lint scan *.rs.
         let cfg_name = concat!("spira", ".toml");
         let prog = concat!("no-such", "-prog");
-        t.write("spira/clean.sh", "#!/bin/sh\necho ok\n");
-        t.write("spira/cfg.sh", &format!("#!/bin/sh\n# see {cfg_name}\n"));
-        t.write("spira/bin.sh", "#!/bin/sh\nreconciler\n");
-        t.write("spira/payload.sh", "#!/bin/sh\nX_JSON=\"$y\" python3 -c 'print(1)'\n");
-        t.write("spira/new-fence.sh", "#!/bin/sh\n");
-        t.write("spira/probe.sh", &format!("#!/bin/sh\ncommand -v {prog}\n"));
+        t.write_exe("spira/clean.sh", "#!/bin/sh\necho ok\n");
+        t.write_exe("spira/cfg.sh", &format!("#!/bin/sh\n# see {cfg_name}\n"));
+        t.write_exe("spira/bin.sh", "#!/bin/sh\nreconciler\n");
+        t.write_exe("spira/payload.sh", "#!/bin/sh\nX_JSON=\"$y\" python3 -c 'print(1)'\n");
+        t.write_exe("spira/new-fence.sh", "#!/bin/sh\n");
+        t.write_exe("spira/probe.sh", &format!("#!/bin/sh\ncommand -v {prog}\n"));
         t.write("spira/noexec.sh", "#!/bin/sh\n");
         t.write("spira/test-own.sh", "#!/bin/sh\n# covers: spira/clean.sh spira/gone.sh\nok() { :; }\n");
         t.write("spira/deps.toml", "[[dep]]\nname = \"git\"\n");
@@ -467,13 +474,9 @@ mod tests {
         t.write("spira/payload-argv-lint-allow", "");
         t.write("spira-lint/fence-scripts-allow", "");
         t.write("spira-lint/testlib-migrated-allow", "");
-        for f in ["clean", "cfg", "bin", "payload", "new-fence", "probe"] {
-            let p = t.path().join(format!("spira/{f}.sh"));
-            std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "chmod-exec-leak", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

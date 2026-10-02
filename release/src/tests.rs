@@ -42,9 +42,9 @@ impl Sandbox {
 }
 
 fn exe(path: &Path, body: &str) {
+    // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
     fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, body).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(path, body);
 }
 
 fn file(path: &Path, body: &str) {

@@ -498,7 +498,6 @@ mod tests {
     use super::*;
     use crate::config::Source;
     use std::collections::HashMap;
-    use std::os::unix::fs::PermissionsExt;
 
     // ---- holder_alive: delegates to sending::reap (wave 4.23, sp-0ffox) -------------------
 
@@ -533,8 +532,8 @@ mod tests {
     fn mock_systemctl(dir: &std::path::Path, lines: &[&str]) -> String {
         let p = dir.join("mock-systemctl");
         let body = format!("#!/bin/sh\n{}\n", lines.iter().map(|l| format!("echo '{l}'")).collect::<Vec<_>>().join("\n"));
-        std::fs::write(&p, body).unwrap();
-        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&p, &body);
         p.to_string_lossy().into_owned()
     }
 

@@ -111,12 +111,13 @@ mod unpoison_tests {
     fn judges_an_ok_prefix_from_the_real_binary_as_success() {
         let dir = testkit::TempDir::new("groomer-unpoison");
         let stub = dir.path().join("spira-claim");
-        std::fs::write(&stub, "#!/usr/bin/env bash\nprintf 'OK   sp-1: cleared — attempts 3 -> 0\\n'\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        // testkit::write_exe, never fs::write + set_permissions: this process's own
+        // write-fd would otherwise sit open for the brief window between the two calls,
+        // and a concurrent fork elsewhere in this test binary that forks in that window
+        // inherits a duplicate of it — the kernel then refuses to exec the file
+        // (ETXTBSY) until that unrelated child closes it or execs (sp-os3of, the third
+        // occurrence after sp-xtdqi-3's spira-config and doctor).
+        testkit::write_exe(&stub, "#!/usr/bin/env bash\nprintf 'OK   sp-1: cleared — attempts 3 -> 0\\n'\n");
         let o = parse("sp-1", Some("branch-collision"), Some("worktree collision")).unwrap();
         let (rc, out) = run(stub.to_str().unwrap(), &o);
         assert_eq!(rc, 0, "output was: {out}");
