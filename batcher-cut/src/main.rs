@@ -96,7 +96,7 @@ fn parse() -> Result<Opts, String> {
 /// `repo_land` already normalizes the `queue.forge` alias to `queue`, so only `queue` and
 /// `queue.local` are ever seen here (sp-o1jm6, epic sp-hq9x8). `queue.local`'s push path is
 /// not implemented by this crate yet (sp-828tp) — `Land::Local` is recorded so `push_branch`/
-/// `force_push_branch` can refuse to guess at it.
+/// `push_branch` can refuse to guess at it.
 fn find_repo(env_: &Env, name: &str) -> Result<Repo, String> {
     // spira_config::repos (sp-k6lku, "wave 4.13") in-process, instead of three separate
     // repo_land/repo_root/spira_landref bash seam calls.
@@ -231,6 +231,10 @@ fn cut(o: &Opts) -> Result<(), String> {
     let last_arrival = pool.iter().map(|m| m.certified_at).max();
     let q_minutes: u64 = env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse::<u64>().ok()).map(|s| s / 60).unwrap_or(30);
 
+    if open.is_none() && repo.land == Land::Forge && open_prepared(&env_, &repo, &pool)? {
+        return Ok(());
+    }
+
     let inputs = TriggerInputs { pool: &pool, now: now(), last_arrival, n, q_minutes, main_red: false, batch_open: open.is_some() };
     let Some(reason) = should_cut(&inputs) else {
         println!("{}", skipped_event("no trigger").text);
@@ -238,7 +242,7 @@ fn cut(o: &Opts) -> Result<(), String> {
     };
 
     match open {
-        Some(ob) => stack_round(&env_, &repo, &pool, &reason, &ob),
+        Some(ob) => prepare_round(&env_, &repo, &pool, &ob),
         None => cut_new_round(&env_, &repo, &pool, &reason),
     }
 }
@@ -590,15 +594,27 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     if repo.land == Land::Local {
         return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
     }
-    let merged = stable.members;
-
     let batch_head = io::head_of(&wt)?;
+    open_round_pr(env_, repo, &stable.members, &batch_head, &base_sha, round_start, stable.attribution_seconds, stable.regreen_seconds)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn open_round_pr(
+    env_: &Env,
+    repo: &Repo,
+    merged: &[Member],
+    batch_head: &str,
+    base_sha: &str,
+    round_start: u64,
+    attribution_seconds: Option<u64>,
+    regreen_seconds: Option<u64>,
+) -> Result<(), String> {
     let stamp = format!("{}", round_start);
     let batch_br = format!("spira/queue/{stamp}");
-    io::set_branch(repo, &batch_br, &batch_head);
+    io::set_branch(repo, &batch_br, batch_head);
 
-    io::push_branch(repo, &batch_head, &batch_br)?;
-    let prr = pr_record(&merged);
+    io::push_branch(repo, batch_head, &batch_br)?;
+    let prr = pr_record(merged);
     let base_branch = repo.base.rsplit('/').next().unwrap_or(&repo.base).to_string();
     let title = format!("queue: {} beads for {}", merged.len(), repo.name);
     let body = format!("Merge-queue batch: {} beads for {}, onto {}.\n\n{}\n", merged.len(), repo.name, base_branch, prr.body);
@@ -610,15 +626,15 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
     // never blocking the PR or the land_mark loop below. A refusal leaves batch_id/version unset on the record,
     // so queue verdict's own land/settle wiring finds nothing to CAS against later.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, &batch_head, &base_sha, &member_pairs);
+    let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, batch_head, base_sha, &member_pairs);
 
     io::write_open_batch(
         env_,
         &repo.name,
         &io::OpenBatch {
             pr: pr_n.clone(),
-            head: batch_head.clone(),
-            base: base_sha.clone(),
+            head: batch_head.to_string(),
+            base: base_sha.to_string(),
             members: member_pairs,
             branch: batch_br.clone(),
             opened: now().to_string(),
@@ -627,7 +643,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
             version: lc_version.unwrap_or_default(),
         },
     )?;
-    for m in &merged {
+    for m in merged {
         io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
     }
     io::write_local_verdict(env_, &repo.name, "green", "");
@@ -640,154 +656,92 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
         ("members", merged.len().to_string()),
         ("pr", pr_n),
         ("duration_ms", ((now() - round_start) * 1000).to_string()),
-        ("base", base_sha),
+        ("base", base_sha.to_string()),
     ];
-    if let Some(a) = stable.attribution_seconds {
+    if let Some(a) = attribution_seconds {
         fields.push(("attribution_seconds", a.to_string()));
     }
-    if let Some(r) = stable.regreen_seconds {
+    if let Some(r) = regreen_seconds {
         fields.push(("regreen_seconds", r.to_string()));
     }
     io::tsd_append_round(env_, &fields);
     Ok(())
 }
 
-/// While a batch PR is already open, only an express or main-red trigger reaches here
-/// (`should_cut` enforces that gate) — pipelined onto that PR's own head rather than
-/// waiting for it to close (law-queue-back-pressure-is-an-open-pr).
-fn stack_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason, ob: &io::OpenBatch) -> Result<(), String> {
-    // ONE WRITER PER OPEN BATCH (sp-91hb5): owner=concierge means a hand edit to this
-    // round's branch is in flight — force-pushing a stack onto it would race that edit
-    // exactly like queue verdict's own guard exists to prevent. SPIRA_QUEUE_OWNER_OVERRIDE=1
-    // breaks the glass, same override every other mutator honors.
+/// While a batch PR is open the next round is built and proven on that PR's head, from the
+/// ordinary certified pool, and recorded as prepared. The open PR, its branch and its
+/// record are never written — only `open_prepared` turns the round into a PR, after the
+/// open one has landed.
+fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -> Result<(), String> {
     if ob.owner == "concierge" && env::var("SPIRA_QUEUE_OWNER_OVERRIDE").as_deref() != Ok("1") {
         println!("batcher {}: refused — PR {} is claimed by concierge; override with SPIRA_QUEUE_OWNER_OVERRIDE=1", repo.name, ob.pr);
         return Ok(());
     }
-    let round_start = now();
-    let mut new_members: Vec<Member> = match reason {
-        TriggerReason::Express(id) => pool.iter().filter(|m| &m.id == id).cloned().collect(),
-        TriggerReason::MainRed => pool.iter().filter(|m| m.express).cloned().collect(),
-        _ => vec![],
-    };
-    if new_members.is_empty() {
-        println!("{}", skipped_event("stacking trigger named no eligible member").text);
-        return Ok(());
-    }
-
-    // Closure (design §3): pipelining onto an open batch takes a member's own unlanded
-    // stacked prerequisites with it too, the same rule a fresh cut applies — a prerequisite
-    // still in this repo's certified pool but not itself express/main-red would otherwise
-    // pipeline its commits in unnamed and never get its own LANDED record.
-    let mut closure_ids: std::collections::BTreeSet<String> = new_members.iter().map(|m| m.id.clone()).collect();
-    let mut frontier = new_members.clone();
-    while let Some(next) = frontier.pop() {
-        for prereq_id in next.stack.keys() {
-            if closure_ids.contains(prereq_id) {
-                continue;
-            }
-            if let Some(p) = pool.iter().find(|m| &m.id == prereq_id) {
-                closure_ids.insert(prereq_id.clone());
-                new_members.push(p.clone());
-                frontier.push(p.clone());
-            }
+    let mut inputs: Vec<(String, String)> = pool.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
+    inputs.sort();
+    if let Some(p) = io::read_prepared(env_, &repo.name) {
+        let mut have = p.inputs.clone();
+        have.sort();
+        if p.parent == ob.head && have == inputs {
+            println!("batcher {}: next round already prepared on PR {}'s head ({} member(s))", repo.name, ob.pr, p.members.len());
+            return Ok(());
         }
     }
-    let new_members = topo_order(&new_members);
-    let sequenced = stack_sequencing(&new_members);
+    let round_start = now();
+    let sorted = topo_order(pool);
+    let sequenced = stack_sequencing(&sorted);
 
     let wt = env_.run.join("worktree").join(format!(".batcher-{}", repo.name));
     io::worktree_reset(repo, &wt, &ob.head)?;
 
     let mut merges = BTreeMap::new();
-    for m in &new_members {
+    for m in &sorted {
         merges.insert(m.id.clone(), io::merge_member(env_, &wt, &m.id, &m.tip));
     }
-    let combined = combine(&CombineInput { pool: &new_members, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
     }
     if combined.merged.is_empty() {
-        println!("{}", skipped_event("stacked member(s) conflicted with the open batch head").text);
+        println!("{}", skipped_event("no members merged cleanly onto the open batch head").text);
         return Ok(());
     }
 
-    let stable = match stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone())? {
-        Some(s) => s,
-        None => {
-            io::write_local_verdict(env_, &repo.name, "red", "stacked members held — local corpus red before reaching CI");
-            io::tsd_append_round(
-                env_,
-                &[
-                    ("repo", repo.name.clone()),
-                    ("verdict", "blocked".to_string()),
-                    ("pr", ob.pr.clone()),
-                    ("stacked", "true".to_string()),
-                    ("duration_ms", ((now() - round_start) * 1000).to_string()),
-                ],
-            );
-            return Ok(());
-        }
+    let stable = stabilize_round(env_, repo, &wt, &ob.head, combined.merged.clone())?;
+    let green = stable.is_some();
+    let (members, head) = match &stable {
+        Some(s) => (s.members.iter().map(|m| (m.id.clone(), m.tip.clone())).collect(), io::head_of(&wt)?),
+        None => (vec![], io::head_of(&wt)?),
     };
-    let merged = stable.members;
-
-    let new_head = io::head_of(&wt)?;
-    io::set_branch(repo, &ob.branch, &new_head);
-
-    io::force_push_branch(repo, &new_head, &ob.branch)?;
-    let mut members = ob.members.clone();
-    let new_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
-    members.extend(new_pairs.iter().cloned());
-
-    // spira-lc's own pipelining onto the already-cut batch (sp-o7nbr.4): only with
-    // lifecycle_enforce on (off, lc_stack_batch runs nothing and the record is rewritten
-    // without batch_id/version), and only when the original cut recorded a batch_id/version — a legacy or refused-cut record has
-    // neither, and there is nothing to CAS the new members against.
-    let (lc_batch_id, lc_version) = match (!ob.batch_id.is_empty(), ob.version.parse::<u64>()) {
-        (true, Ok(prior)) => match io::lc_stack_batch(env_, &repo.name, &ob.batch_id, prior, &new_pairs) {
-            Some(v) => (ob.batch_id.clone(), v),
-            None => (String::new(), String::new()),
-        },
-        _ => (String::new(), String::new()),
-    };
-
-    io::write_open_batch(
-        env_,
-        &repo.name,
-        &io::OpenBatch {
-            pr: ob.pr.clone(),
-            head: new_head.clone(),
-            base: ob.base.clone(),
-            members,
-            branch: ob.branch.clone(),
-            opened: ob.opened.clone(),
-            owner: "batcher".to_string(),
-            batch_id: lc_batch_id,
-            version: lc_version,
-        },
-    )?;
-    for m in &merged {
-        io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
+    io::set_branch(repo, io::PREPARED_BRANCH, &head);
+    let prepared = io::Prepared { head, parent: ob.head.clone(), members, inputs, green, seconds: now() - round_start };
+    io::write_prepared(env_, &repo.name, &prepared)?;
+    if green {
+        println!("batcher {}: next round prepared on PR {}'s head — {} member(s), opens when it lands", repo.name, ob.pr, prepared.members.len());
+    } else {
+        println!("batcher {}: next round on PR {}'s head is red locally — held, not opened", repo.name, ob.pr);
     }
-    io::write_local_verdict(env_, &repo.name, "green", "");
-    println!("batcher {}: PR {} stacked — +{} member(s) ({})", repo.name, ob.pr, merged.len(), ob.branch);
-
-    let mut fields = vec![
-        ("repo", repo.name.clone()),
-        ("verdict", "green".to_string()),
-        ("pr", ob.pr.clone()),
-        ("stacked", "true".to_string()),
-        ("members", merged.len().to_string()),
-        ("duration_ms", ((now() - round_start) * 1000).to_string()),
-    ];
-    if let Some(a) = stable.attribution_seconds {
-        fields.push(("attribution_seconds", a.to_string()));
-    }
-    if let Some(r) = stable.regreen_seconds {
-        fields.push(("regreen_seconds", r.to_string()));
-    }
-    io::tsd_append_round(env_, &fields);
     Ok(())
+}
+
+/// With no batch open, a prepared round that still descends from the base and still names
+/// only members certified at the same tips opens as-is, corpus not re-run. Anything else
+/// is discarded and the ordinary cut proceeds. True when a PR was opened.
+fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, String> {
+    let Some(p) = io::read_prepared(env_, &repo.name) else {
+        return Ok(false);
+    };
+    io::clear_prepared(env_, &repo.name);
+    let base_sha = io::resolve_base_sha(repo)?;
+    let current: BTreeMap<&str, &Member> = pool.iter().map(|m| (m.id.as_str(), m)).collect();
+    let still_certified = p.members.iter().all(|(id, tip)| current.get(id.as_str()).map(|m| &m.tip == tip).unwrap_or(false));
+    if !p.green || p.members.is_empty() || !still_certified || !io::is_ancestor(repo, &base_sha, &p.head) {
+        println!("batcher {}: prepared round discarded (red, stale members, or not on the new base) — cutting afresh", repo.name);
+        return Ok(false);
+    }
+    let merged: Vec<Member> = p.members.iter().filter_map(|(id, _)| current.get(id.as_str()).map(|m| (*m).clone())).collect();
+    open_round_pr(env_, repo, &merged, &p.head, &base_sha, now() - p.seconds, None, None)?;
+    Ok(true)
 }
 
 /// `batcher judgement-ci` — the CI-only judgement producer (sp-lomk3). queue verdict calls

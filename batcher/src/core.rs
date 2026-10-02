@@ -135,6 +135,8 @@ pub enum TriggerReason {
     /// An express or main-red fix cuts a round of its own, at once.
     Express(Id),
     MainRed,
+    /// A batch PR is open: the next round is prepared on its head, never opened until it lands.
+    Prepare(u32),
 }
 
 pub struct TriggerInputs<'a> {
@@ -148,8 +150,8 @@ pub struct TriggerInputs<'a> {
     /// A main-red fix is waiting: cut at once regardless of pool size.
     pub main_red: bool,
     /// A batch PR is already open: the only back pressure (law-queue-back-pressure-is-an-
-    /// open-pr). While one is open, only an express or main-red cut may fire (pipelined on
-    /// top of that PR's head); ordinary pool/idle triggers wait for it to close.
+    /// open-pr). While one is open any non-empty pool prepares the next round on that PR's
+    /// head; it opens only once the PR has landed, and the open PR is never touched.
     pub batch_open: bool,
 }
 
@@ -160,11 +162,11 @@ pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     if let Some(express) = t.pool.iter().find(|m| m.express) {
         return Some(TriggerReason::Express(express.id.clone()));
     }
-    if t.batch_open {
-        return None;
-    }
     if t.pool.is_empty() {
         return None;
+    }
+    if t.batch_open {
+        return Some(TriggerReason::Prepare(t.pool.len() as u32));
     }
     if t.pool.len() as u32 >= t.n {
         return Some(TriggerReason::PoolFull(t.pool.len() as u32));
@@ -455,6 +457,7 @@ pub fn cut_event(reason: &TriggerReason, combined: &Combined) -> Event {
         TriggerReason::Idle { waited_mins } => format!("idle {waited_mins}m with nothing new"),
         TriggerReason::Express(id) => format!("express {id}"),
         TriggerReason::MainRed => "main red".to_string(),
+        TriggerReason::Prepare(n) => format!("{n} certified while a batch is open"),
     };
     ev("cut", ids.clone(), format!("round cut ({why}): {} member(s)", ids.len()))
 }

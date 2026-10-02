@@ -19,9 +19,10 @@
 #   C. stale member    — an express-certified member whose branch conflicts with the base
 #                       itself (not just batch accumulation) is reopened for rebase at once
 #                       (section F), landstate RED, bump_requeue stamped.
-#   D. stacking        — with case A's batch PR still open, a second express-certified member
-#                       is pushed onto that PR's own head rather than waiting or opening a
-#                       second PR (law-queue-back-pressure-is-an-open-pr).
+#   D. stacking        — with case A's batch PR still open, certified members (one express)
+#                       are built and proven into a prepared round on that PR's head without
+#                       touching the open PR; once it lands the prepared round opens with no
+#                       second corpus run (law-batcher-earns-the-round-by-parity).
 #   G. land mode        — find_repo (sp-o1jm6) accepts queue.local, not only queue, and treats
 #                       queue.forge byte-identically to a bare queue row.
 #   I. suite corpus     — the round's suite corpus comes from the round branch's own tree,
@@ -513,15 +514,12 @@ is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-co
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
 # =============================================================================
-# CASE D — stacking: with case A's batch PR still open, a second express member
-# is pushed onto that PR's own head rather than a new PR being opened
-# (law-queue-back-pressure-is-an-open-pr).
+# CASE D — stacking: with case A's batch PR still open, the next round is built on its
+# head and proven, but the open PR's branch and record are untouched and nothing opens;
+# once the PR has landed, the prepared round opens without re-running the corpus.
 # =============================================================================
 echo
-echo "D. stacking: a second express member lands on the open batch's own head:"
-# Case A's own batch, reconstructed: case B and C each needed it gone to exercise their own
-# fresh-cut paths, and the branch ref spira/queue/<stamp-a> case A pushed locally is still
-# there to stack onto.
+echo "D. stacking: the next round is prepared on the open batch's head, opened after it lands:"
 {
     printf 'pr=%s\n'      "$pr_case_a"
     printf 'head=%s\n'    "$head_case_a"
@@ -532,26 +530,51 @@ echo "D. stacking: a second express member lands on the open batch's own head:"
 } > "$(open_batch_file)"
 
 pr_before="$pr_case_a"
-head_before="$head_case_a"
+open_before="$(cat "$(open_batch_file)")"
+branch_ref_before="$(git -C "$REPO" rev-parse "$branch_case_a")"
+remote_ref_before="$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 prcreate_before="$(grep -c '^pr-create' "$FORGE_LOG")"
 
-plant sp-cddd4 express
-git -C "$REPO" worktree add -q -b spira/sp-cddd4 "$RUN/worktree/sp-cddd4" main
-printf 'd\n' > "$RUN/worktree/sp-cddd4/d.txt"
-git -C "$RUN/worktree/sp-cddd4" add -A
-git -C "$RUN/worktree/sp-cddd4" commit -q -m "sp-cddd4: work"
+for spec in "sp-cddd4 express" "sp-cdde5" "sp-cddf6"; do
+    set -- $spec
+    plant "$@"
+    git -C "$REPO" worktree add -q -b "spira/$1" "$RUN/worktree/$1" main
+    printf '%s\n' "$1" > "$RUN/worktree/$1/$1.txt"
+    git -C "$RUN/worktree/$1" add -A
+    git -C "$RUN/worktree/$1" commit -q -m "$1: work"
+    certify "$1" "$(git -C "$REPO" rev-parse "spira/$1")"
+    git -C "$REPO" worktree remove -f "$RUN/worktree/$1"
+done
 tip_d="$(git -C "$REPO" rev-parse spira/sp-cddd4)"
-git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cddd4"
-certify sp-cddd4 "$tip_d"
 
-out_d="$(STUB_RED_SUITES="" cut_repo)"
-want "D: reports the PR being stacked" "PR $pr_before stacked" "$out_d"
-is   "D: open-batch pr unchanged (no new PR)" "$pr_before" "$(open_field pr)"
-is   "D: forge pr-create not called again" "$prcreate_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
-nowant "D: open-batch head unchanged (it did move)" "$head_before" "$(open_field head)"
-want "D: open-batch members now carries sp-cddd4" "sp-cddd4:$tip_d" "$(open_field members)"
-is   "D: sp-cddd4 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
-is   "D: stacked open-batch still owner=batcher" "batcher" "$(open_field owner)"
+D_ARGV="$TMP/d-argv"; : > "$D_ARGV"
+out_d="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
+want   "D: reports a round prepared on the open head" "next round prepared on PR $pr_before's head" "$out_d"
+nowant "D: no stacking message" "stacked" "$out_d"
+is     "D: the corpus ran once for the prepared round" "1" "$(grep -c '^argv:' "$D_ARGV")"
+is     "D: open-batch record untouched" "$open_before" "$(cat "$(open_batch_file)")"
+is     "D: open PR's local branch untouched" "$branch_ref_before" "$(git -C "$REPO" rev-parse "$branch_case_a")"
+is     "D: open PR's remote branch untouched (never force-pushed)" "$remote_ref_before" "$(git -C "$REMOTE" rev-parse "$branch_case_a")"
+is     "D: forge pr-create not called" "$prcreate_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "D: express member not BATCHED while the PR is open" "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
+
+: > "$D_ARGV"
+out_d2="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
+want   "D: an unchanged pool is not rebuilt" "already prepared" "$out_d2"
+is     "D: no second corpus run for an unchanged pool" "0" "$(grep -c '^argv:' "$D_ARGV")"
+
+# The open PR lands: the remote base moves to its head.
+git -C "$REMOTE" update-ref refs/heads/main "$head_case_a"
+git -C "$REPO" fetch -q origin
+rm -f "$(open_batch_file)"
+: > "$D_ARGV"
+out_d3="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
+want   "D: after landing, the prepared round opens a PR" "opened" "$out_d3"
+is     "D: the prepared round opened without re-running the corpus" "0" "$(grep -c '^argv:' "$D_ARGV")"
+is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
+want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
+is     "D: express member BATCHED once opened" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
+is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
 # =============================================================================
 # CASE E — judgement-ci (sp-lomk3): verdict.sh's own CI-red producer, on a red CI
@@ -590,7 +613,7 @@ is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out
 # the PR still opens and batch_id/version stay unset, never blocking the round.
 # =============================================================================
 echo
-echo "F. spira-lc wiring: cut and stack call spira-lc and record batch_id/version:"
+echo "F. spira-lc wiring: cut calls spira-lc and records batch_id/version; a prepared round does not:"
 rm -f "$(open_batch_file)"
 LC_LOG="$TMP/lc-log"; : > "$LC_LOG"
 
@@ -623,11 +646,11 @@ git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
 certify sp-cggg7 "$tip_g"
 
 SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
-want "F: stacking calls spira-lc stack, not cut, on the same batch-id" \
-    "stack $branch_f --members sp-cggg7:$tip_g --actor batcher" "$(cat "$LC_LOG")"
-nowant "F: stacking never calls spira-lc cut again for the same batch-id" "cut $branch_f " "$(cat "$LC_LOG")"
-is   "F: open-batch batch_id unchanged across the stack" "$branch_f" "$(open_field batch_id)"
-is   "F: open-batch version advanced to 2"               "2"         "$(open_field version)"
+nowant "F: preparing the next round never calls spira-lc stack" "stack " "$(cat "$LC_LOG")"
+nowant "F: preparing the next round never calls spira-lc cut" "cut " "$(cat "$LC_LOG")"
+is   "F: open-batch batch_id unchanged by a prepared round" "$branch_f" "$(open_field batch_id)"
+is   "F: open-batch version unchanged by a prepared round"  "1"         "$(open_field version)"
+rm -f "$LANDSTATE/sp-cggg7" "$QUEUEDIR/$REPONAME/prepared"
 
 # POSITIVE CONTROL: spira-lc refusing (rc=3, e.g. a member not CERTIFIED there) does not
 # block the round — the PR still opens, batch_id/version are simply left unset, same as
