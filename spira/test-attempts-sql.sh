@@ -153,6 +153,7 @@ testdb_seed <<'JSONL'
 {"id":"c2","title":"three failures, cleared, one new failure","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 {"id":"c3","title":"reopens and reclaims stand either side of a clear","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 {"id":"c4","title":"never cleared","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+{"id":"c5","title":"only event is poison.cleared","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 JSONL
 
 # c1: three claims before the clear, nothing after. THE CONTROL for the fixture itself: an
@@ -178,6 +179,14 @@ seedt c4 claimed '' '2026-09-06 00:00:01'
 seedt c4 claimed '' '2026-09-06 00:00:02'
 seedt c4 claimed '' '2026-09-06 00:00:03'
 is "CONTROL c4: three claims, never cleared = 3 attempts" "3" "$(num "$(attempts_of c4)")"
+
+# c5: a floor placed after every real row (created/label_added included) makes the matched
+# set truly empty; sum() over it is NULL and greatest(NULL, 0) is NULL. attempts_of must still
+# print 0 rc 0, not empty rc 1. c1's past-dated floor leaves non-attempt rows after it, so it
+# cannot reach this.
+seedt c5 poison.cleared operator '2099-01-01 00:00:00'
+is "c5: no events since the only poison.cleared = 0 attempts"   "0" "$(num "$(attempts_of c5)")"
+is "c5: attempts_of succeeds (rc 0) rather than 'cannot tell'"  "0" "$(attempts_of c5 >/dev/null 2>&1; echo $?)"
 
 echo
 echo "bump_poison_cleared writes no label (D6):"
