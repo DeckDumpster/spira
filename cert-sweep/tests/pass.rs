@@ -157,3 +157,17 @@ fn the_bead_bound_holds_the_remainder() {
     let (_, out, _) = fx.cert(&["pass", "--mode", "subset", "--subset-div", "1", "--max-beads", "1"]);
     assert_eq!(out.matches("NEW RED").count(), 1, "the held one is reported next: {out}");
 }
+
+/// Every shipped cert-sweep unit must pass the args `pass` requires (--mode, --tree);
+/// a unit that omits --tree exits 2 on every tick.
+#[test]
+fn shipped_units_satisfy_usage() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+    for u in ["spira-cert-sweep-full.service", "spira-cert-sweep-sample.service"] {
+        let t = fs::read_to_string(dir.join(u)).unwrap();
+        let l = t.lines().find(|l| l.starts_with("ExecStart=")).unwrap();
+        assert!(l.contains(" pass "), "{u}: {l}");
+        assert!(l.contains(" --mode "), "{u}: missing --mode");
+        assert!(l.contains(" --tree "), "{u}: missing --tree");
+    }
+}
