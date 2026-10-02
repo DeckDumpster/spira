@@ -453,20 +453,24 @@ fn gate_run_dirs(gate_run: &Path, bead: &str) -> Vec<std::path::PathBuf> {
     v
 }
 
-fn live_gate_running(gate_run: &Path, bead: &str) -> bool {
+fn pid_cmdline_names_gate(pid: &str) -> bool {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).unwrap_or_default();
+    cmdline_names_gate(&raw)
+}
+
+fn cmdline_names_gate(raw: &[u8]) -> bool {
+    let replaced: Vec<u8> = raw.iter().map(|&b| if b == 0 { b' ' } else { b }).collect();
+    String::from_utf8_lossy(&replaced).contains("gate")
+}
+
+fn live_gate_running(gate_run: &Path, bead: &str, is_gate: &dyn Fn(&str) -> bool) -> bool {
     for gd in gate_run_dirs(gate_run, bead) {
         let Ok(pid_s) = std::fs::read_to_string(gd.join("pid")) else { continue };
         let pid_s = pid_s.trim();
         if pid_s.is_empty() || !pid_s.chars().all(|c| c.is_ascii_digit()) {
             continue;
         }
-        let proc_dir = format!("/proc/{pid_s}");
-        if !Path::new(&proc_dir).is_dir() {
-            continue;
-        }
-        let raw = std::fs::read(format!("{proc_dir}/cmdline")).unwrap_or_default();
-        let replaced: Vec<u8> = raw.into_iter().map(|b| if b == 0 { b' ' } else { b }).collect();
-        if String::from_utf8_lossy(&replaced).contains("gate") {
+        if is_gate(pid_s) {
             return true;
         }
     }
@@ -512,8 +516,19 @@ fn newest_mtime(root: &Path) -> Option<i64> {
 /// also progress: the gate-run directory's own `rc`/`out`/`started` mtimes fold into the
 /// "last moved" clock the same as a commit or a file write would (sp-l99q6).
 pub fn aeon_fuse_minutes(bead: &str, wt: &Path, run: &Path, commit_ahead_ts: Option<i64>, now: i64) -> String {
+    aeon_fuse_minutes_with(bead, wt, run, commit_ahead_ts, now, &pid_cmdline_names_gate)
+}
+
+fn aeon_fuse_minutes_with(
+    bead: &str,
+    wt: &Path,
+    run: &Path,
+    commit_ahead_ts: Option<i64>,
+    now: i64,
+    is_gate: &dyn Fn(&str) -> bool,
+) -> String {
     let gate_run = run.join("gate-run");
-    if live_gate_running(&gate_run, bead) {
+    if live_gate_running(&gate_run, bead, is_gate) {
         return "gate".to_string();
     }
     if !wt.is_dir() {
@@ -598,14 +613,6 @@ mod tests {
 
     fn tmp(name: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("aeon-trace-{name}"))
-    }
-
-    /// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
-    /// child past its own `exec()` (sp-os3of): empty once the pid is gone.
-    fn cmdline_of(pid: u32) -> String {
-        std::fs::read(format!("/proc/{pid}/cmdline"))
-            .map(|b| String::from_utf8_lossy(&b).replace('\0', " "))
-            .unwrap_or_default()
     }
 
     const MARK: &str = "=== spira attempt";
@@ -870,36 +877,21 @@ mod tests {
         let no_gate = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
         assert!(no_gate.parse::<i64>().is_ok(), "got [{no_gate}]");
 
-        // a live process whose cmdline contains "gate". Held in a kill-on-drop guard
-        // (sp-r70dc) — this is the exact fixture that leaked as an orphan `gate.sh 9999`
-        // for up to 2.8 hours whenever the assert_eq! below failed.
-        let mut child = testkit::ChildGuard::spawn(
-            std::process::Command::new("bash").arg("-c").arg("exec -a gate.sh sleep 9999"),
-        );
-        std::fs::write(gate_dir.join("pid"), child.id().to_string()).unwrap();
-        // bash's own exec() is a second step after fork(), and /proc/<pid>/cmdline can
-        // still read as bash's (or briefly empty, mid-transition) the instant after
-        // spawn() returns — green 8/8 on a quiet box, red under a loaded gate (sp-os3of).
-        // Poll (bounded) until the exec has actually landed before the first assertion;
-        // the kill half below already waits on the child via ChildGuard.
-        //
-        // Checked by argv[0] alone, not "contains gate": bash's OWN pre-exec cmdline is
-        // `bash -c "exec -a gate.sh sleep 9999"`, which already contains the substring
-        // "gate.sh" in its `-c` argument — a naive `.contains("gate")` poll would pass
-        // instantly, during the bash phase, defeating the wait entirely.
-        let mut tries = 0;
-        while cmdline_of(child.id()).split(' ').next() != Some("gate.sh") {
-            assert!(tries < 500, "the child never finished exec'ing into gate.sh");
-            tries += 1;
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let gate_fuse = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
+        let alive = |pid: &str| pid == "4242";
+        std::fs::write(gate_dir.join("pid"), "4242").unwrap();
+        let gate_fuse = aeon_fuse_minutes_with("sp-x", &wt, &run, None, crate::util::now_epoch(), &alive);
         assert_eq!(gate_fuse, "gate");
 
-        child.kill();
-        // the pid is dead now: fuse resumes as a number or ? (acceptable per the bash suite).
-        let dead = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
+        std::fs::write(gate_dir.join("pid"), "4243").unwrap();
+        let dead = aeon_fuse_minutes_with("sp-x", &wt, &run, None, crate::util::now_epoch(), &alive);
         assert_ne!(dead, "gate");
+    }
+
+    #[test]
+    fn cmdline_names_gate_reads_nul_joined_argv() {
+        assert!(cmdline_names_gate(b"gate.sh\0sleep\09999\0"));
+        assert!(!cmdline_names_gate(b"sleep\09999\0"));
+        assert!(!cmdline_names_gate(b""));
     }
 
     #[test]
