@@ -329,17 +329,11 @@ or label writes — those stay in `sweep_repo`, chosen by the disposition return
 per id, read via `bdjson show` and mutated by `bdq label add/remove` — the same seam
 argument `test-held.sh` already made), one pass, a row per disposition.
 
-**A confirmed dead path, inherited unchanged.** `content_landed` returns true for any
-branch with zero commits ahead of the base (ahead=0 and is-ancestor are the same fact,
-sp-bf31a), so the FAST-FORWARD / non-code-delivers / open-zero-ahead arms in
-`send_disposition` — all gated on `ahead == 0` — can never run: content_landed already
-claimed the branch first. `test-sending-closed-reap.sh` already documented the identical
-shape for two other arms ("SENT, not REAPED, since the [...] arm is never reached").
-`test-sending.sh` tests what these branches actually do (SEND content-landed, labelled iff
-`ahead > 0`) rather than asserting a verdict the code cannot produce; the dead arms
-themselves are left in place, faithfully extracted rather than pruned, since removing them
-is a separate decision from the one this bead was asked to make. Filed forward as sp-53wmr
-against this area.
+**A dead path, since removed.** `content_landed` returns true for any branch with zero
+commits ahead of the base (ahead=0 and is-ancestor are the same fact, sp-bf31a), so the
+FAST-FORWARD / non-code-delivers / open-zero-ahead arms, all gated on `ahead == 0`, could
+never run; they were deleted (sp-53wmr). `test-sending.sh` pins what zero-ahead branches do:
+SEND content-landed, labelled iff `ahead > 0`.
 
 Gaps filled directly in `test-sending.sh`: HELD (including the mid-send recheck inside
 `send_branch`, exercised by calling it directly now that `sending.sh` carries the same
