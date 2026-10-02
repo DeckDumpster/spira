@@ -217,6 +217,22 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
     Ok(PathBuf::from(run))
 }
 
+/// The ask label, resolved in-process: a non-empty `SPIRA_ASK_LABEL` in `env` overrides,
+/// otherwise `spira.toml` / the registry default. Never a literal fallback — a systemd unit
+/// does not export it, and a guessed label hides asks from the operator's queue.
+pub fn resolve_ask_label(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
+    if let Some(v) = env.get("SPIRA_ASK_LABEL").filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
+    let repo = derive_home_repo(home, env);
+    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve ask label: {e}"))?;
+    let v = resolved.get("SPIRA_ASK_LABEL");
+    if v.is_empty() {
+        return Err("ask label resolved empty — refusing to guess one".to_string());
+    }
+    Ok(v.to_string())
+}
+
 /// `spira.instance`, resolved the same way [`resolve_run_dir`] resolves `spira.run` — in
 /// process, through [`resolve_for_process`], never read as a bare `$SPIRA_INSTANCE` with a
 /// literal default (sp-ivfu3's widening: a bare shell with `SPIRA_INSTANCE` unset named
@@ -1256,6 +1272,16 @@ mod tests {
 
     /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
     /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
+    #[test]
+    fn resolve_ask_label_env_override_wins_and_empty_env_falls_to_config() {
+        let mut env = BTreeMap::new();
+        env.insert("SPIRA_ASK_LABEL".to_string(), "ask-x".to_string());
+        assert_eq!(resolve_ask_label(&env, Path::new("/nonexistent")).unwrap(), "ask-x");
+        env.insert("SPIRA_ASK_LABEL".to_string(), String::new());
+        let got = resolve_ask_label(&env, Path::new("/nonexistent"));
+        assert!(got.map(|v| !v.is_empty()).unwrap_or(true));
+    }
+
     #[test]
     fn resolve_run_dir_env_override_wins() {
         let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());

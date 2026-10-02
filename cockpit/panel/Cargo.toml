@@ -14,5 +14,8 @@ lto = true
 codegen-units = 1
 strip = true
 
+[dependencies.spira-config]
+path = "../../spira-config"
+
 [dev-dependencies]
 testkit = { path = "../../testkit" }

@@ -147,8 +147,7 @@ impl Run<'_> {
             } else if let Some((2, why)) = self.gate_status() {
                 i.gate_unfinished = true;
                 gw = why;
-            // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset (same as below)
-            } else if decide::open_ask_blocker(&bd::json(self.d.bd, &["show", &id]), &id, &self.conf.or("SPIRA_ASK_LABEL", "needs-operator")) {
+            } else if decide::open_ask_blocker(&bd::json(self.d.bd, &["show", &id]), &id, &self.conf.ask_label()) {
                 i.decision_blocked = true;
             } else if self.s.session_rc == 124 && !self.s.committed {
                 // timeout — decided from session_rc / committed
@@ -238,7 +237,7 @@ impl Run<'_> {
                 NoteKey::DecisionBlocked => {
                     self.release();
                     self.bump_requeue(&cause);
-                    let ask = self.conf.or("SPIRA_ASK_LABEL", "needs-operator"); // literal-ok: Rust fallback mirroring conf.sh's default when SPIRA_ASK_LABEL is unset
+                    let ask = self.conf.ask_label();
                     self.note(&format!("Released by aeon.sh: blocked on an open decision bead ({ask} label) — waiting for operator input. No attempt charged; the bead becomes ready when the decision is resolved."));
                     self.log(&format!("{f}: {id} has open decision blocker — released, no attempt charged"));
                     return self.finish(rc, &status);

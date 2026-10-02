@@ -104,6 +104,14 @@ fn spira_home() -> String {
 /// itself — only what its ALREADY-real functions read. `SPIRA_HOME` still reaches those
 /// functions correctly: it is inherited in the subprocess's own environment, never passed
 /// as the sourcing path.
+fn resolved_ask_label() -> String {
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    spira_config::resolve::resolve_ask_label(&env, std::path::Path::new(&lib_sh_dir())).unwrap_or_else(|e| {
+        eprintln!("watchtower: FATAL: {e}");
+        std::process::exit(1);
+    })
+}
+
 fn lib_sh_dir() -> String {
     incident::which("lib.sh")
         .and_then(|p| std::path::Path::new(&p).parent().map(|d| d.to_string_lossy().into_owned()))
@@ -124,7 +132,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         lib_sh_dir: lib_sh_dir(),
         db: getenv("SPIRA_DB").unwrap_or_default(),
         home_repo: getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
-        ask_label: getenv("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()), // literal-ok: mirrors conf.sh's own derived default (this binary cannot source schema.sh)
+        ask_label: resolved_ask_label(),
         snap_stale_s: getenv_i64("SPIRA_SNAP_STALE_S", 60),
         gate_window_s: getenv_i64("SPIRA_WATCH_GATE_WINDOW", 21600),
         gate_silence_window_s: getenv_i64("SPIRA_WATCH_GATE_SILENCE_WINDOW", 3600),

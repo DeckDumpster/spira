@@ -63,7 +63,10 @@ pub fn db() -> String {
 /// predicates come to disagree about which beads are waiting on anyone, and the panel is the
 /// half nobody notices is wrong: it simply shows fewer.
 pub fn ask_label() -> String {
-    std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-operator".to_string()) // literal-ok: Rust fallback for direct invocation without conf.sh
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let exe = std::env::current_exe().unwrap_or_default();
+    let home = spira_config::release_env::own_release_root_for_process().map(|r| r.join("spira")).unwrap_or(exe);
+    spira_config::resolve::resolve_ask_label(&env, &home).unwrap_or_default()
 }
 
 /// Raw rows plus when they were fetched, and what went wrong if anything did.

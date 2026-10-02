@@ -773,6 +773,7 @@ version = "1.0.0"
 dependencies = [
  "crossterm",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
