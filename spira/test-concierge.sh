@@ -602,7 +602,7 @@ want "the fixture pane shows the half-written input line (positive control)" \
 
 WK_HOLD_RUN="$TMP/wake-hold-run"; mkdir -p "$WK_HOLD_RUN"
 (
-    SPIRA_RUN="$WK_HOLD_RUN" CONCIERGE_SOCKET="$WK_HOLD" CONCIERGE_SESSION="$WK_HOLD" \
+    CONCIERGE_WAKE_WARN_SECS=0 SPIRA_RUN="$WK_HOLD_RUN" CONCIERGE_SOCKET="$WK_HOLD" CONCIERGE_SESSION="$WK_HOLD" \
         bash "$HARNESS/concierge.sh" wake "the woken text" >"$TMP/wake-hold.out" 2>&1
 ) &
 WK_WAKE_PID=$!
@@ -613,6 +613,8 @@ want "still busy: the pane still shows only the half-written text" \
     "❯ half-written" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
 nowant "still busy: the wake has not delivered its text yet" \
     "the woken text" "$(tmux -L "$WK_HOLD" capture-pane -p -t "$WK_HOLD")"
+want "a held wake says so, so a stale input line cannot stall delivery silently" \
+    "wake held" "$(cat "$TMP/wake-hold.out")"
 is "the wake call has not returned while the line is busy" 1 \
     "$(kill -0 "$WK_WAKE_PID" 2>/dev/null && echo 1 || echo 0)"
 
