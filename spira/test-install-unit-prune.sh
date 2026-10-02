@@ -227,6 +227,13 @@ else
     ok "watcher-skip: non-watcher prune loop did not emit pruned for watcher unit"
 fi
 
+if [ ! -e "$DEST/$WATCHER_UNIT" ]; then
+    ok "watcher-prune: retired watcher unit file removed from DEST"
+else
+    bad "watcher-prune: retired watcher unit file removed from DEST" \
+        "file still exists — a leftover file blocks mask and is re-listed every run"
+fi
+
 # ==========================================================================
 echo
 tl_summary

@@ -54,7 +54,7 @@ fn ctrl_subject(unit: &str, instance: &str) -> String {
 
 /// A mask is a symlink to `/dev/null` — detect without following it into a read that would
 /// fail (a character device fails a plain existence check the way a masked unit must not).
-pub(crate) fn is_masked(path: &Path) -> bool {
+pub fn is_masked(path: &Path) -> bool {
     fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false) && fs::read_link(path).map(|t| t == Path::new("/dev/null")).unwrap_or(false)
 }
 
