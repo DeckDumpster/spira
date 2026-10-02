@@ -193,6 +193,21 @@ pub fn resolve_for_process(
 /// to an empty string (the derived default never does this, but a hand-written `spira.toml`
 /// with `run = ""` could).
 pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
+    // The env override, checked FIRST and alone — exactly `resolve`'s own `:=` rule for
+    // `SPIRA_RUN` (`resolve_colon`: a non-empty env value wins outright, before toml is
+    // even read). A caller that already has an explicit `SPIRA_RUN` (every systemd unit;
+    // a suite fixture pinning its own run dir) has no need of the REST of `resolve` —
+    // repo-map/`spira_containment_check` included, which runs unconditionally as
+    // `resolve`'s own last step and judges every OTHER registered checkout, not this
+    // key. sp-ivfu3-2: `mail`'s own test fixture pins `SPIRA_RUN` explicitly but runs in
+    // a containment-confined instance whose ambient repo-map (the container's real one,
+    // found via `discover`, unrelated to the fixture) names a checkout outside that
+    // confinement — full resolution refused on THAT, even though `SPIRA_RUN` itself was
+    // never in question. Only an UNSET override falls through to full resolution (so the
+    // derived default, and a toml override, still see the real containment check).
+    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(v));
+    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
     let run = resolved.get("SPIRA_RUN");
@@ -210,6 +225,13 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
 /// registry's own default is `"prod"` (`resolve`'s `ok_str!("prod")`), so this only refuses
 /// when `spira_config` cannot resolve at all or resolves to an empty string.
 pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
+    // The env override alone, first — same reasoning as [`resolve_run_dir`]'s own doc:
+    // `SPIRA_INSTANCE`'s own rule is also `:=` (`resolve_colon`), and a caller that
+    // already has it explicitly has no need of the containment check the rest of
+    // `resolve` runs unconditionally, over repos this key never touches.
+    if let Some(v) = env.get("SPIRA_INSTANCE").filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
     let instance = resolved.get("SPIRA_INSTANCE");
@@ -1292,5 +1314,51 @@ mod tests {
         }
         let err = got.expect_err("a malformed spira.toml must refuse, not guess /tmp/spira");
         assert!(err.contains("cannot resolve spira.run"), "{err}");
+    }
+
+    /// sp-ivfu3-2: an explicit `SPIRA_RUN` must win OUTRIGHT, before `resolve_for_process`
+    /// ever runs — `spira_containment_check` is `resolve`'s own unconditional last step,
+    /// judging every OTHER registered checkout against the confined workspace, and has
+    /// nothing to do with this key. `mail`'s own test fixture pins `SPIRA_RUN` but runs
+    /// inside a containment-confined instance whose ambient repo-map names a checkout
+    /// outside it; before this fix, `resolve_run_dir` called full resolution regardless
+    /// and that UNRELATED violation refused the whole thing — "mail: FATAL: cannot
+    /// resolve spira.run" even though `SPIRA_RUN` itself was never in doubt.
+    #[test]
+    fn resolve_run_dir_env_override_bypasses_an_unrelated_containment_violation() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-containment");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        // A genuine containment violation: a repo-map entry outside the workspaces root —
+        // the exact fixture `a_containment_violation_refuses_the_whole_resolve` (above)
+        // already proves fails resolve() on its own.
+        let outside_root = testkit::TempDir::new("spira-config-resolve-run-dir-containment-outside");
+        let outside = outside_root.join("elsewhere");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(home.join("repo-map"), format!("x|{}\n", outside.display())).unwrap();
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let with_override = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test"), ("SPIRA_RUN", "/explicit/run")]);
+        let got = resolve_run_dir(&with_override, &home);
+        let without_override = env(&[("HOME", "/h"), ("SPIRA_INSTANCE", "test")]);
+        let err = resolve_run_dir(&without_override, &home);
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert_eq!(got.unwrap(), PathBuf::from("/explicit/run"), "the override must bypass containment entirely");
+        // Positive control: without the override, the SAME fixture still refuses — the
+        // violation is real, not vacuously absent (law-absence-needs-a-positive-control).
+        assert!(err.is_err(), "the fixture's own containment violation must still refuse with no override");
     }
 }
