@@ -40,13 +40,15 @@ fn harness_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
 fn main() -> ExitCode {
     let mut dry = false;
     let mut dir: Option<PathBuf> = None;
+    let mut if_below_floor = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--dry-run" => dry = true,
+            "--if-below-floor" => if_below_floor = true,
             "--worktrees" => dir = args.next().map(PathBuf::from),
             _ => {
-                eprintln!("usage: target-reap [--dry-run] [--worktrees DIR]");
+                eprintln!("usage: target-reap [--dry-run] [--if-below-floor] [--worktrees DIR]");
                 return ExitCode::from(2);
             }
         }
@@ -71,27 +73,64 @@ fn main() -> ExitCode {
     let landed_fn = |id: &str, wt: &Path| landed::landed(&reg, wt, id);
     let busy_fn = |wt: &Path| busy::worktree_busy(wt);
 
-    match reap::reap(&dir, dry, &landed_fn, &busy_fn) {
-        Ok(r) => {
-            println!("{}", reap::describe(&r, dry));
-            let run = var("SPIRA_RUN").unwrap_or_default();
-            let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
-            let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
-            if let Some(root) = gate::target::root(&explicit, &run, gate::target::on_tmpfs(Path::new("/tmp"))) {
-                let gone = gate::target::reap_stale(&root, &dir, std::time::Duration::from_secs(max_age * 60), dry, &busy_fn);
-                println!(
-                    "target-reap: {} {} stale gate target dir(s) under {}{}",
-                    if dry { "would remove" } else { "removed" },
-                    gone.len(),
-                    root.display(),
-                    if gone.is_empty() { String::new() } else { format!(" ({})", gone.join(" ")) }
-                );
+    let doc = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());
+    let num = |k: &str, path: &str, default: u64| -> u64 {
+        var(k)
+            .or_else(|| doc.as_ref().and_then(|d| spira_config::get_path(d, path)).filter(|v| !v.is_empty()))
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(default)
+    };
+    let idle_secs = num("SPIRA_REAP_IDLE_SECS", "spira.reap_idle_secs", 6 * 3600);
+    let floor_gib = num("SPIRA_REAP_DISK_FLOOR_GIB", "spira.reap_disk_floor_gib", 50);
+    let floor_bytes = floor_gib * 1024 * 1024 * 1024;
+    let free = || reap::free_bytes(&dir);
+    let report = |label: &str, r: Result<reap::Reaped, String>| -> bool {
+        match r {
+            Ok(r) => {
+                println!("{label}{}", reap::describe(&r, dry));
+                true
             }
-            ExitCode::SUCCESS
+            Err(e) => {
+                println!("target-reap: {e}");
+                false
+            }
         }
-        Err(e) => {
-            println!("target-reap: {e}");
-            ExitCode::from(1)
+    };
+
+    if if_below_floor {
+        match free() {
+            Some(f) if f >= floor_bytes => return ExitCode::SUCCESS,
+            None => {
+                eprintln!("target-reap: cannot read free space under {} — reclaiming nothing", dir.display());
+                return ExitCode::from(1);
+            }
+            Some(f) => eprintln!(
+                "target-reap: {} MiB free is below the {floor_gib} GiB floor — reclaiming idle build output",
+                f / (1024 * 1024)
+            ),
         }
+        let r = reap::reap_idle(&dir, dry, idle_secs, &reap::idle_age_secs, &busy_fn, Some((&free, floor_bytes)));
+        return if report("", r) { ExitCode::SUCCESS } else { ExitCode::from(1) };
+    }
+
+    let landed_ok = report("", reap::reap(&dir, dry, &landed_fn, &busy_fn));
+    let idle_ok = report("idle: ", reap::reap_idle(&dir, dry, idle_secs, &reap::idle_age_secs, &busy_fn, None));
+    let run = var("SPIRA_RUN").unwrap_or_default();
+    let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
+    let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
+    if let Some(root) = gate::target::root(&explicit, &run, gate::target::on_tmpfs(Path::new("/tmp"))) {
+        let gone = gate::target::reap_stale(&root, &dir, std::time::Duration::from_secs(max_age * 60), dry, &busy_fn);
+        println!(
+            "target-reap: {} {} stale gate target dir(s) under {}{}",
+            if dry { "would remove" } else { "removed" },
+            gone.len(),
+            root.display(),
+            if gone.is_empty() { String::new() } else { format!(" ({})", gone.join(" ")) }
+        );
+    }
+    if landed_ok && idle_ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
     }
 }

@@ -107,7 +107,12 @@ One `bd show <ids…> --json` reads their status; a target whose bead is `closed
 A bead bd does not know, or a failed `bd` call, removes nothing (fail closed: never guess).
 Gate trees and testenv slots are not candidates — the gate and testenv own those.
 Output: `target-reap: removed <n> target dir(s), <MiB> MiB (<ids>)`, and one line per kept
-open bead count. Called by the landing pass once per pass (it replaced `land-build-ensure.sh`
+open bead count. A second pass reclaims `target/` of any worktree that is idle — no live
+process in it and nothing outside `target/` modified for `SPIRA_REAP_IDLE_SECS` (default
+21600) — landed or not; `--if-below-floor` runs only that pass, and only when free space under
+`DIR` is under `SPIRA_REAP_DISK_FLOOR_GIB` (default 50), oldest idle first, stopping once the
+floor clears. A `concierge-<id>` worktree is landed once the landing ref holds `spira: land
+<id>`. Called by the landing pass once per pass (it replaced `land-build-ensure.sh`
 in that slot), and by hand.
 
 ### 2.5 Why cross-tree workspace-crate hits are not reachable (sp-283wz, 2026-09-30)
