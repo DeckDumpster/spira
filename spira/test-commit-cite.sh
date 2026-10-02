@@ -121,7 +121,7 @@ nowant "no truncated stem is reported"                       "sp-ow" "$out"
 # --------------------------------------------------------------------------------------
 out="$(gate_fixture_run spira/sp-cc1 repo)"; rc=$?
 is     "store unreadable: exits NO_VERDICT, never FAIL or PASS" 75 "$rc"
-want   "names the reason"                                       "reason=cite-check-fault" "$out"
+want   "names the reason"                                       "reason=commit-cite-fault" "$out"
 nowant "never read as every id existing"                        "VERDICT=PASS" "$out"
 nowant "and never charged as a branch FAIL"                     "VERDICT=FAIL" "$out"
 
