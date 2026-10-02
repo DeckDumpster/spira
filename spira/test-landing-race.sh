@@ -29,7 +29,7 @@
 #
 # defect: sp-dupland
 # tier: T2
-# covers: landing-pass/*
+# covers: landing-pass/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

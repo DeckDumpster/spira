@@ -31,7 +31,7 @@
 # against the real compiled binary, same real-sender contract as before.
 #
 # tier: T2
-# covers: landing-pass/src/* mail/src/*
+# covers: landing-pass/src/* mail/src/* spira/lib.sh
 # hermetic-ok: uses a fixture database and a fixture SPIRA_MAIL dir, no systemd or gh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

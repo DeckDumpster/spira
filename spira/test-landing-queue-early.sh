@@ -21,7 +21,7 @@
 # this branch. The queue step is stubbed to control what the forge reports.
 #
 # tier: T2
-# covers: landing-pass/*
+# covers: landing-pass/* spira/lib.sh
 # timeout: 120
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
