@@ -136,4 +136,22 @@ is   "missing-commit-cite: exits NO_VERDICT" 75 "$rc"
 want "names the reason"                      "reason=missing-commit-cite" "$out"
 mv "$TMP/commit-cite.sh.aside" "$SH/commit-cite.sh"
 
+# A hyphen-continued name (a fixture) is not a citation; a real id beside it still is.
+commit_citing spira/sp-cc5 "$OPEN_ID"
+w5="$(mktemp -d)"; git -C "$REPO" worktree add -q -b spira/sp-cc6 "$w5" origin/main
+printf 'x\n' > "$w5/f.txt"; git -C "$w5" add -A
+git -C "$w5" commit -q -m "feat: $OPEN_ID fixtures sp-st-livehold and sp-ow-mail"
+git -C "$REPO" worktree remove --force "$w5"
+out="$(rungate_real spira/sp-cc6)"; rc=$?
+is   "hyphenated fixture names are not citations"  0 "$rc"
+want "and says PASS"                               "VERDICT=PASS" "$out"
+w7="$(mktemp -d)"; git -C "$REPO" worktree add -q -b spira/sp-cc7 "$w7" origin/main
+printf 'x\n' > "$w7/f.txt"; git -C "$w7" add -A
+git -C "$w7" commit -q -m "feat: sp-st-livehold, and sp-realshape99."
+git -C "$REPO" worktree remove --force "$w7"
+out="$(rungate_real spira/sp-cc7)"; rc=$?
+is   "a real-shaped phantom beside a fixture still fails"  1 "$rc"
+want "names the phantom"                                   "sp-realshape99" "$out"
+nowant "and not the fixture"                               "sp-st " "$out"
+
 tl_summary
