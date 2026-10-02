@@ -195,19 +195,6 @@ const DEPS_TIERS_DOCTOR_CHECK_READS: &[&str] = &["runtime", "optional", "operato
 /// Named so a missing one is a loud `COPY` failure, not a silent absence.
 pub const DOCTOR_CHECK_SPIRA_CONFIG: &str = "testenv/.doctor-check-spira-config";
 
-#[derive(serde::Deserialize)]
-struct DepsManifest {
-    #[serde(default)]
-    dep: Vec<DepsEntry>,
-}
-
-#[derive(serde::Deserialize)]
-struct DepsEntry {
-    name: String,
-    #[serde(default)]
-    tier: Option<String>,
-}
-
 /// The build closure's share of deps.toml: `<name> <tier>\n` for every entry whose tier
 /// doctor-check.sh checks, sorted by name so the text is independent of the manifest's own
 /// ordering. Unset tier defaults to "optional" (conf.sh's `spira_bin_tier` does the same).
@@ -215,11 +202,11 @@ struct DepsEntry {
 /// refuses rather than naming an image from an unreadable one.
 fn deps_closure(bytes: &[u8]) -> Option<String> {
     let text = std::str::from_utf8(bytes).ok()?;
-    let manifest: DepsManifest = toml::from_str(text).ok()?;
+    let manifest = spira_config::deps::parse(text).ok()?;
     let mut rows: Vec<(String, String)> = manifest
-        .dep
+        .deps
         .into_iter()
-        .map(|d| (d.name, d.tier.unwrap_or_else(|| "optional".to_string())))
+        .map(|d| (d.name, d.tier))
         .filter(|(_, tier)| DEPS_TIERS_DOCTOR_CHECK_READS.contains(&tier.as_str()))
         .collect();
     rows.sort();
