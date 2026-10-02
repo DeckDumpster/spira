@@ -30,7 +30,12 @@ impl RealBd {
             }
         }
         match child.wait_with_output() {
-            Ok(out) => (out.status.success(), out.stdout),
+            Ok(out) => {
+                if out.status.code() == Some(96) {
+                    eprintln!("sop: cannot source {}/lib.sh (set SPIRA_HOME) - shelf unreadable, NOT empty", self.spira_home);
+                }
+                (out.status.success(), out.stdout)
+            }
             Err(_) => (false, Vec::new()),
         }
     }
