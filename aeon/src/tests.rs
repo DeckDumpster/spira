@@ -147,6 +147,13 @@ impl Seam for FakeSeam {
                     Out::fail(1, "")
                 }
             }
+            "bead_is_decision_type" => {
+                if args[0] == "decision" {
+                    Out::ok("")
+                } else {
+                    Out::fail(1, "")
+                }
+            }
             "land_state" | "lc_bead_verified" => Out::fail(1, ""),
             "requeues_of" => Out::ok("1"),
             _ => Out::ok(""),
@@ -743,6 +750,17 @@ fn a_non_work_bead_closed_with_nothing_committed_is_reopened_by_the_verdict() {
     assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[0] == "sp-k" && c.1[1] == "closed-without-commit"), "{:?}", w.seam_calls);
     assert_eq!(w.status["sp-k"], "open");
     assert!(!w.labels["sp-k"].contains("spira-submitted"));
+}
+
+#[test]
+fn a_decision_bead_closed_with_nothing_committed_stands_closed() {
+    let f = fx("decision");
+    seed_typed(&f, "sp-d", "decision", &[]);
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    assert!(o.log.contains("decision type, no commit expected, close stands"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
+    assert_eq!(w.status["sp-d"], "closed");
 }
 
 fn l_done(o: &Outcome) -> String {
