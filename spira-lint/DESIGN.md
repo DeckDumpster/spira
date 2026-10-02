@@ -201,6 +201,11 @@ anywhere a test module's own `mod name;` loads transitively.
   this defect; a `/` in that default would still mean it is secretly a path, so it still
   counts.
 
+  A key with an entry under `spira/conf.d/` (a registered config key, other than a program
+  name: `SPIRA_BD`, `SPIRA_GH`, `SPIRA_FORGE`, `SPIRA_CTRL`, `SPIRA_SYSTEMCTL`) is refused ANY
+  literal default and `.unwrap_or_default()` too: the registry owns the default, so an
+  env read that supplies its own bypasses `spira.toml`.
+
 **Allow list.** `spira-lint/config-literal-fallback-allow`, exact paths, shrink-only. Not
 empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
 outside the eight binaries sp-ivfu3 itself fixed (`broker`, `census`, `cockpit-collect`,

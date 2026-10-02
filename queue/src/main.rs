@@ -1,29 +1,12 @@
 //! `queue` — see DESIGN.md §2.
 
-use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use queue::cli;
 use queue::ports::World;
 use queue::real::*;
 
-/// Where lib.sh and the harness scripts live: `$SPIRA_HOME`, else spira-config's
-/// `spira.prod`, else beside this binary (`<release>/bin/queue` → `<release>/spira`,
-/// `<workspace>/target/<profile>/queue` → `<workspace>/spira`).
-fn harness_home() -> Option<PathBuf> {
-    let has_lib = |p: &Path| p.join("lib.sh").is_file();
-    if let Some(h) = std::env::var_os("SPIRA_HOME").map(PathBuf::from).filter(|p| has_lib(p)) {
-        return Some(h);
-    }
-    if let Some(doc) = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok()) {
-        if let Some(p) = spira_config::get_path(&doc, "spira.prod").map(PathBuf::from).filter(|p| has_lib(p)) {
-            return Some(p);
-        }
-    }
-    let exe = std::env::current_exe().ok()?;
-    let exe = exe.canonicalize().unwrap_or(exe);
-    exe.ancestors().skip(1).take(4).map(|a| a.join("spira")).find(|p| has_lib(p))
-}
+use queue::conf::harness_home;
 
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();

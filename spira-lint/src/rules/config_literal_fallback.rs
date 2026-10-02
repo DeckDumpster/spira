@@ -50,6 +50,10 @@ const CONFIG_IDENTITY_KEYS: &[&str] = &[
     "SPIRA_HOME_REPO",
 ];
 
+/// Registered keys that name a PROGRAM this process runs from `$PATH`; a bare command-name
+/// default there is not the defect (see [`CONFIG_IDENTITY_KEYS`]).
+const PROGRAM_KEYS: &[&str] = &["SPIRA_BD", "SPIRA_GH", "SPIRA_FORGE", "SPIRA_CTRL", "SPIRA_SYSTEMCTL"];
+
 /// Passthrough combinators a chain may carry between the `env::var(...)` call and the
 /// `unwrap_or*` this rule looks for — each one's own argument list is skipped (balanced),
 /// never inspected, because none of them is the default this rule judges.
@@ -127,15 +131,15 @@ struct Hit {
 /// the chain's next `unwrap_or`/`unwrap_or_else`/`unwrap_or_default`, skipping any run of
 /// [`PASSTHROUGH`] combinators in between. Returns the literal default's own text (from
 /// `text`, with surrounding whitespace trimmed) when the chain ends in `unwrap_or`/
-/// `unwrap_or_else` — `unwrap_or_default` (the type's own default, never a guessed path)
-/// and anything else (the chain does not continue, or continues some other way) read as
-/// "no literal fallback here", not a finding.
+/// `unwrap_or_else`, or `unwrap_or_default` (an empty default), and anything else (the chain does not continue, or continues some other way) read as
+/// "no literal fallback here"; `unwrap_or_default` yields an empty default, which
+/// [`scan`] judges only for a registered key.
 fn literal_default_after<'t>(code: &[u8], text: &'t [u8], start: usize) -> Option<&'t [u8]> {
     let mut i = skip_ws(code, start);
     loop {
         let (name, end) = read_method(code, i)?;
         match name {
-            b"unwrap_or_default" => return None,
+            b"unwrap_or_default" => return Some(b""),
             b"unwrap_or" | b"unwrap_or_else" => {
                 // The call's own argument text, trimmed — `end` sits just past the `)`
                 // read_method found; its matching `(` is the first non-ws byte after the
@@ -157,7 +161,7 @@ fn literal_default_after<'t>(code: &[u8], text: &'t [u8], start: usize) -> Optio
 /// `"SPIRA_*"` string literal, chained to a literal `unwrap_or`/`unwrap_or_else` default
 /// this rule judges a violation: the key is one of [`CONFIG_IDENTITY_KEYS`], or the
 /// default literal itself is path-shaped (contains `/`).
-fn scan(src: &[u8]) -> Vec<Hit> {
+fn scan(src: &[u8], registered: &dyn Fn(&str) -> bool) -> Vec<Hit> {
     static CALL: OnceLock<Regex> = OnceLock::new();
     let cl = rust::classify(src);
     let code = cl.code_only();
@@ -175,11 +179,13 @@ fn scan(src: &[u8]) -> Vec<Hit> {
         // from an identifier, field or call with no literal in it at all has none.
         let is_literal =
             default.contains(&b'"') || (!default.is_empty() && default.iter().all(|b| b.is_ascii_digit()));
-        if !is_literal {
+        let is_empty_default = default.is_empty();
+        if !is_literal && !is_empty_default {
             continue; // the default is an identifier/expression, not itself a literal
         }
         let path_shaped = default.contains(&b'/');
-        if CONFIG_IDENTITY_KEYS.contains(&key.as_str()) || path_shaped {
+        let is_registered = registered(&key) && !PROGRAM_KEYS.contains(&key.as_str());
+        if (is_literal && (CONFIG_IDENTITY_KEYS.contains(&key.as_str()) || path_shaped)) || is_registered {
             out.push(Hit { at: whole.start(), key });
         }
     }
@@ -239,9 +245,10 @@ impl Rule for ConfigLiteralFallback {
             let in_test = |at: usize| file_is_test || s.covers(at);
 
             let mut hits: Vec<(usize, String)> = Vec::new();
-            for h in scan(src) {
+            let registered = |k: &str| tree.entry(&format!("spira/conf.d/{k}")).is_some();
+            for h in scan(src, &registered) {
                 if !in_test(h.at) {
-                    hits.push((h.at, format!("env::var(\"{}\").unwrap_or* with a literal default — resolve it through spira_config instead", h.key)));
+                    hits.push((h.at, format!("env::var(\"{}\").unwrap_or* with a literal or empty default — resolve it through spira_config instead", h.key)));
                 }
             }
             for at in tmp_spira_literal_hits(src) {
@@ -306,7 +313,7 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                "config-literal-fallback: a/src/main.rs:2: env::var(\"SPIRA_RUN\").unwrap_or* with a literal default — resolve it through spira_config instead",
+                "config-literal-fallback: a/src/main.rs:2: env::var(\"SPIRA_RUN\").unwrap_or* with a literal or empty default — resolve it through spira_config instead",
                 "config-literal-fallback: a/src/main.rs:2: \"/tmp/spira\" literal — resolve spira.run through spira_config instead, never a guessed path",
             ]
         );
@@ -337,6 +344,23 @@ mod tests {
             "fn f() -> String {\n    env::var(\"SPIRA_SYSTEMCTL\").unwrap_or_else(|_| \"systemctl\".to_string())\n}\n",
         );
         assert!(run(&t, &["c/src/main.rs"]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_registered_key_is_refused_a_literal_or_empty_default_but_an_unregistered_one_is_not() {
+        let t = TempDir::new("clf-registered");
+        t.write(ALLOW_FILE, "");
+        t.write("spira/conf.d/SPIRA_EXPRESS_LABEL", "TYPE=string\n");
+        t.write(
+            "r/src/main.rs",
+            "fn f() {\n    let a = env::var(\"SPIRA_EXPRESS_LABEL\").unwrap_or_else(|_| \"express\".into());\n    \
+             let b = env::var(\"SPIRA_EXPRESS_LABEL\").unwrap_or_default();\n    \
+             let c = env::var(\"SPIRA_UNREGISTERED\").unwrap_or_default();\n    \
+             let d = env::var(\"SPIRA_UNREGISTERED\").unwrap_or_else(|_| \"x\".into());\n}\n",
+        );
+        let got = run(&t, &["r/src/main.rs", "spira/conf.d/SPIRA_EXPRESS_LABEL"]).unwrap();
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(got[0].contains(":2:") && got[1].contains(":3:"));
     }
 
     #[test]

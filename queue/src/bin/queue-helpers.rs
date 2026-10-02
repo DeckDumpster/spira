@@ -61,10 +61,17 @@ fn run_sort_rows(args: &[String]) -> ExitCode {
     let _ = std::io::stdin().read_to_string(&mut rows_text);
     let prio_json = std::fs::read_to_string(&prio_file).unwrap_or_else(|_| "[]".into());
     let repo_path = Path::new(repo);
+    let suite_state = match queue::conf::nonempty("SPIRA_SUITE_STATE_FILE") {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("queue-helpers sort-rows: {e}");
+            return ExitCode::from(1);
+        }
+    };
     let with_trans: Vec<(String, String, i64, bool)> = queue::ops::helpers::parse_rows(&rows_text)
         .into_iter()
         .map(|(id, tip, epoch)| {
-            let is_trans = queue::ops::helpers::is_suite_transition(repo_path, &tip, base);
+            let is_trans = queue::ops::helpers::is_suite_transition(repo_path, &suite_state, &tip, base);
             (id, tip, epoch, is_trans)
         })
         .collect();
