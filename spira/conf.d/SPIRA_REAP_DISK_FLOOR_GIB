@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=testenv
+DOC=THE FREE-SPACE FLOOR, IN GiB, UNDER WHICH target-reap --if-below-floor RECLAIMS.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE FREE-SPACE FLOOR, IN GiB, UNDER WHICH target-reap --if-below-floor RECLAIMS. At or
+    # above it the frequent timer is a no-op.
+    : "${SPIRA_REAP_DISK_FLOOR_GIB:=50}"
+SPIRA_CONF_DEFAULT_EOF

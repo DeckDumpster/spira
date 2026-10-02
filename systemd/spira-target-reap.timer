@@ -1,0 +1,13 @@
+[Unit]
+Description=Check free space every two minutes and reap idle build output when it is low
+
+[Timer]
+# Two minutes: build output has filled a disk at under a gigabyte a minute. The service is a
+# statvfs and an exit while free space is at or above the floor.
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=spira-target-reap.service
+
+[Install]
+WantedBy=timers.target

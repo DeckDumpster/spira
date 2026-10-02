@@ -368,3 +368,5 @@ gate_deadline
 scratch_max_age_hours
 sccache_dav_max_gb
 round_certify_wall_secs
+reap_idle_secs
+reap_disk_floor_gib
