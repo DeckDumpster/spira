@@ -81,14 +81,43 @@ mod tests {
         assert!(try_lock(&p).unwrap().is_err());
     }
 
+    /// sp-os3of: used to take the lock in-process, drop it at the end of a scope, then
+    /// assert a fresh `try_lock` succeeds — the drop-then-assert-released shape that
+    /// flipped `spira-config::admission::tests::gate_occupancy_reads_flocks_and_their_holder_sidecars`
+    /// at round 209 (a concurrent fork elsewhere in the binary can duplicate an in-process
+    /// fd and keep the flock held past this process's own drop). Converted the same way:
+    /// the holder is a CHILD PROCESS this test owns, so this process never itself holds
+    /// the lock and no fork anywhere in the binary can inherit a copy of it.
     #[test]
     fn the_lock_is_free_again_once_the_holder_is_dropped() {
         let d = TempDir::new("watchd-lock");
         let p = d.join("x.tail.lock");
-        {
-            let _held = try_lock(&p).unwrap().unwrap();
+        let mut holder = testkit::ChildGuard::spawn(std::process::Command::new("flock").arg("-x").arg(&p).arg("sleep").arg("60"));
+        // Wait for the child to actually have the lock: a successful try_lock here just
+        // hands this process its own brief, immediately-dropped hold.
+        let mut tries = 0;
+        while try_lock(&p).unwrap().is_ok() {
+            assert!(tries < 500, "the child never took the lock on {}", p.display());
+            tries += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(try_lock(&p).unwrap().is_ok());
+        // Kill and reap the child before the release assertion. `flock -x <file> sleep 60`
+        // itself forks: the grandchild `sleep` is the actual holder, inheriting the
+        // locked fd across the launcher's exec. `kill()` SIGKILLs the whole process
+        // group (launcher and grandchild alike) and reaps the launcher, but the
+        // grandchild's own fd-closing teardown is a separate task the kernel schedules
+        // independently — same signal, not provably the same instant — so poll briefly
+        // rather than asserting the instant `kill()` returns.
+        holder.kill();
+        let mut tries = 0;
+        let mut last = try_lock(&p).unwrap();
+        while last.is_err() {
+            assert!(tries < 500, "the lock was never released after the holder was killed");
+            tries += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            last = try_lock(&p).unwrap();
+        }
+        assert!(last.is_ok());
     }
 
     #[test]

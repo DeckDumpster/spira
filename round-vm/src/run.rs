@@ -878,10 +878,9 @@ mod tests {
     }
 
     fn exe(p: &Path) {
-        use std::os::unix::fs::PermissionsExt;
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
         fs::create_dir_all(p.parent().unwrap()).unwrap();
-        fs::write(p, "x").unwrap();
-        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(p, "x");
     }
 
     #[test]
@@ -998,10 +997,11 @@ mod tests {
             for (rel, body) in files {
                 let p = local.join(rel);
                 fs::create_dir_all(p.parent().unwrap()).unwrap();
-                fs::write(&p, body).unwrap();
                 if remote_path == REMOTE_BINS {
-                    use std::os::unix::fs::PermissionsExt;
-                    fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+                    // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+                    testkit::write_exe(&p, body);
+                } else {
+                    fs::write(&p, body).unwrap();
                 }
             }
             Ok(())

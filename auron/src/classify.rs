@@ -183,9 +183,10 @@ mod tests {
         // A stand-in classifier: cat's stdin back as one firing record naming the byte count.
         let dir = testkit::TempDir::new("auron-classify");
         let stub = dir.join("stub-classify.py");
-        std::fs::write(&stub, "#!/usr/bin/env python3\nimport sys, json\nd = sys.stdin.read()\nprint(json.dumps({\"key\": \"echo\", \"title\": \"t\", \"evidence\": str(len(d))}))\n").unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of): a concurrent
+        // fork elsewhere in this test binary can inherit a duplicate of this process's
+        // own write-fd mid-window and leave the file ETXTBSY for this test's own exec.
+        testkit::write_exe(&stub, "#!/usr/bin/env python3\nimport sys, json\nd = sys.stdin.read()\nprint(json.dumps({\"key\": \"echo\", \"title\": \"t\", \"evidence\": str(len(d))}))\n");
         let obs = Observation { now: 1, ..Default::default() };
         let f = run_with(&obs, stub.to_str().unwrap());
         assert_eq!(f.len(), 1);

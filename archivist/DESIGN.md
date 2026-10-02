@@ -122,7 +122,12 @@ success) and `<session>.timeout_count` (a bare integer, the retry budget).
 
 Every pure module (`state`, `candidates`, `digest`, `prompt`, `config`) is table-tested
 directly. `transcripts` and `lock` are tested against a real temporary filesystem (real
-`flock`, real file times) — deterministic and CPU/IO-bound, no container. `run`'s
+`flock`, real file times) — deterministic and CPU/IO-bound, no container. `lock`'s
+"a second taker is refused until the first drops" case holds the first lock from a
+`testkit::ChildGuard`-spawned child, not an in-process fd (sp-os3of): a concurrent fork
+anywhere in the `cargo test -p archivist` binary can duplicate an in-process fd and keep a
+flock held past this process's own drop, which flipped the equivalent spira-config test at
+round 209. `run`'s
 orchestration (`sweep`, `archive`, `digest_send`, `mark`, `state`) is tested against
 `FakeSeam`, covering the capacity-pause skip, the per-pass budget, the timeout retry
 budget and its exhaustion, the capacity-refusal pause, and the digest's same-day dedup —

@@ -154,7 +154,11 @@ unchanged with a unit test asserting it.
   clamping, age formatting, the default `SPIRA_ACTIONABLE` filter, the escalation fingerprint.
 * **Unit with a real temp directory** (`testkit::TempDir`, no subprocess): the exact-range
   read, cursor read/write, prune's file selection, the lock's single-reader guarantee (two
-  threads racing `flock`).
+  threads racing `flock`). Its "free again once the holder is dropped" case is the one
+  exception that DOES use a subprocess: the holder is a `testkit::ChildGuard`-spawned
+  child, not an in-process fd (sp-os3of) — a concurrent fork anywhere in the
+  `cargo test -p watchd` binary can duplicate an in-process fd and keep a flock held past
+  this process's own drop, which flipped the equivalent spira-config test at round 209.
 * **Unit with a fake `Ops`** (`src/ops.rs` trait: `is_active`, `unit_show`, `restart`,
   `mail_ask`, `orphan_lock`): `status`'s three-column logic, `notify`'s two-half behaviour
   (backlog vs. dead watcher), `restart`'s all-vs-one framing — without a systemd user manager

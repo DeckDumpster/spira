@@ -52,8 +52,8 @@ fn missing_release_bins_names_what_is_missing_and_nothing_when_complete() {
     fs::create_dir_all(d.join("bin")).unwrap();
     for b in ["loom", "panel", "broker"] {
         let p = d.join("bin").join(b);
-        fs::write(&p, "#!/bin/sh\n").unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&p, "#!/bin/sh\n");
     }
     assert_eq!(missing_release_bins(&d), "bin/spira-supervise, bin/landing-pass");
     for b in ["spira-supervise", "landing-pass"] {
@@ -63,6 +63,8 @@ fn missing_release_bins_names_what_is_missing_and_nothing_when_complete() {
     }
     assert_eq!(missing_release_bins(&d), "bin/spira-supervise, bin/landing-pass", "not executable is missing");
     for b in ["spira-supervise", "landing-pass"] {
+        // chmod alone, on a file already written above (no write happens here) — no
+        // fresh write-fd opens, so no ETXTBSY exposure (allow-listed, chmod-exec-leak).
         fs::set_permissions(d.join("bin").join(b), fs::Permissions::from_mode(0o755)).unwrap();
     }
     assert_eq!(missing_release_bins(&d), "");
@@ -170,8 +172,8 @@ impl Fake {
         fs::create_dir_all(d.join("spira")).unwrap();
         for b in RELEASE_BINS {
             let p = d.join("bin").join(b);
-            fs::write(&p, "#!/bin/sh\n").unwrap();
-            fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+            // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+            testkit::write_exe(&p, "#!/bin/sh\n");
         }
         fs::write(d.join("spira/conf.sh"), "").unwrap();
         let cur = self.releases.join("current");

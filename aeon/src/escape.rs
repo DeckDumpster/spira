@@ -179,7 +179,6 @@ pub fn is_executable(p: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn ok() -> Facts {
         Facts { world_gate_ok: true, capacity_left: None, ready: Ok(3), aeon_path: Some("/rel/bin/aeon".into()) }
@@ -293,8 +292,8 @@ mod tests {
     fn run_declines_cleanly_when_nothing_ready() {
         let dir = testkit::TempDir::new("escape-run");
         let aeon_bin = dir.join("aeon");
-        std::fs::write(&aeon_bin, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&aeon_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&aeon_bin, "#!/bin/sh\n");
         let env = env_with_aeon_on_path(&dir);
         let seam = FakeSeam { world_gate_rc: 0, ready: "0".into(), ready_rc: 0, summon_argv: String::new() };
         let exec = FakeExec(std::sync::Mutex::new(None));
@@ -310,8 +309,8 @@ mod tests {
     fn run_summons_with_the_right_argv_when_ready() {
         let dir = testkit::TempDir::new("escape-run");
         let aeon_bin = dir.join("aeon");
-        std::fs::write(&aeon_bin, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&aeon_bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&aeon_bin, "#!/bin/sh\n");
         let env = env_with_aeon_on_path(&dir);
         let seam = FakeSeam { world_gate_rc: 0, ready: "4".into(), ready_rc: 0, summon_argv: "--setenv=HOME=/h\n--property=TimeoutStartSec=3600".into() };
         let exec = FakeExec(std::sync::Mutex::new(None));

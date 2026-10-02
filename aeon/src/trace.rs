@@ -600,6 +600,14 @@ mod tests {
         testkit::TempDir::new(&format!("aeon-trace-{name}"))
     }
 
+    /// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
+    /// child past its own `exec()` (sp-os3of): empty once the pid is gone.
+    fn cmdline_of(pid: u32) -> String {
+        std::fs::read(format!("/proc/{pid}/cmdline"))
+            .map(|b| String::from_utf8_lossy(&b).replace('\0', " "))
+            .unwrap_or_default()
+    }
+
     const MARK: &str = "=== spira attempt";
 
     // ---- trace_last / trace_stats (test-cockpit-*.sh had no dedicated bash suite for
@@ -869,6 +877,22 @@ mod tests {
             std::process::Command::new("bash").arg("-c").arg("exec -a gate.sh sleep 9999"),
         );
         std::fs::write(gate_dir.join("pid"), child.id().to_string()).unwrap();
+        // bash's own exec() is a second step after fork(), and /proc/<pid>/cmdline can
+        // still read as bash's (or briefly empty, mid-transition) the instant after
+        // spawn() returns — green 8/8 on a quiet box, red under a loaded gate (sp-os3of).
+        // Poll (bounded) until the exec has actually landed before the first assertion;
+        // the kill half below already waits on the child via ChildGuard.
+        //
+        // Checked by argv[0] alone, not "contains gate": bash's OWN pre-exec cmdline is
+        // `bash -c "exec -a gate.sh sleep 9999"`, which already contains the substring
+        // "gate.sh" in its `-c` argument — a naive `.contains("gate")` poll would pass
+        // instantly, during the bash phase, defeating the wait entirely.
+        let mut tries = 0;
+        while cmdline_of(child.id()).split(' ').next() != Some("gate.sh") {
+            assert!(tries < 500, "the child never finished exec'ing into gate.sh");
+            tries += 1;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         let gate_fuse = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
         assert_eq!(gate_fuse, "gate");
 
