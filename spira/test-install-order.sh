@@ -88,6 +88,7 @@ MOCK
 chmod +x "$MOCK_BIN/bd"
 for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$b"; chmod +x "$MOCK_BIN/$b"; done
 
+# ACTIVE_WAIT=0: the mock systemctl never reports active, so the end-state wait would burn its ceiling per run.
 inst() {
     : > "$LOG"; rm -f "$BD_TRIES"; rm -f "$DEST"/*.service "$DEST"/*.timer 2>/dev/null
     env -i PATH="$MOCK_BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_PATH="$MOCK_BIN" \
@@ -97,7 +98,7 @@ inst() {
         SPIRA_COCKPIT="$REAL_COCKPIT" \
         SPIRA_INSTANCE=prod MOCK_INST=prod CALL_LOG="$LOG" BD_TRIES="$BD_TRIES" \
         BD_ANSWER_AFTER="${BD_ANSWER_AFTER:-0}" \
-        SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 \
+        SPIRA_INSTALL_FORCE=1 SPIRA_DRAIN_INTERVAL=0 SPIRA_INSTALL_ACTIVE_WAIT=0 \
         units-install 2>&1
 }
 first_line() { grep -nE "$1" "$LOG" | head -1 | cut -d: -f1; }
