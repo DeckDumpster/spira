@@ -12,6 +12,7 @@
 # holder is found before an empty result on an untouched path is trusted to mean anything.
 #
 # defect: sp-s9f30
+# tier: T1
 # covers: spira/holds.sh spira/lib.sh aeon/src/*
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
@@ -65,8 +66,9 @@ printf 'orphan work\n' >> "$REPO/spira/batch.sh"
 git -C "$REPO" commit -aqm "orphan work"
 git -C "$REPO" checkout -q "$BASE_BR"
 
-export SPIRA_REPO_MAP="$TMP/repo-map"
-printf 'fixture | %s | queue | | |\n' "$REPO" > "$SPIRA_REPO_MAP"
+FIXTURE_REPOS="$TMP/fixture-repos"
+printf 'fixture | %s | queue | | |\n' "$REPO" > "$FIXTURE_REPOS"
+export "SPIRA_REPO_""MAP=$FIXTURE_REPOS"
 
 testdb_reset
 testdb_seed <<JSONL
