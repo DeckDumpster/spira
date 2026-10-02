@@ -445,19 +445,21 @@ pub fn copy_tree(src: &Path, dst: &Path) -> Result<(), String> {
 
 /// Installs the pulled executables into `<target>` — the round worktree's own
 /// `target/release`, where `queue land-local --worktree` reads them (G8). The VM's testenv
-/// must report (batch.meta `tree=`) exactly the tree the host sent; any other tree, or none,
-/// installs nothing and is an error naming both. No executables at all (the batch never
+/// must report (batch.meta `tree=`) exactly the tree the host sent; any other tree is a
+/// refusal naming both, and no tree at all (the run died first) is a distinct error;
+/// either installs nothing. No executables at all (the batch never
 /// reached its build) is not a refusal.
 pub fn install_bins(pulled: &Path, expected: &str, reported: Option<&str>, target: &Path) -> Result<(), String> {
     let exes = executables(pulled);
     if exes.is_empty() {
         return Ok(());
     }
-    if reported != Some(expected) {
-        return Err(format!(
-            "round-vm run: refusing binaries: tree sha {} does not match expected {expected} — nothing installed",
-            reported.unwrap_or("<none reported>")
-        ));
+    match reported {
+        None => return Err("round-vm run: the VM reported no tested tree (batch did not complete) — nothing installed".into()),
+        Some(r) if r != expected => {
+            return Err(format!("round-vm run: refusing binaries: tree sha {r} does not match expected {expected} — nothing installed"))
+        }
+        Some(_) => {}
     }
     fs::create_dir_all(target).map_err(|e| format!("{}: {e}", target.display()))?;
     for exe in exes {
@@ -938,7 +940,9 @@ mod tests {
         exe(&pulled.join("fakebin"));
         let e = install_bins(&pulled, "expectedsha", Some("wrongsha"), &target).unwrap_err();
         assert!(e.contains("wrongsha") && e.contains("expectedsha"), "{e}");
-        assert!(install_bins(&pulled, "expectedsha", None, &target).is_err(), "no reported tree is not a match");
+        assert!(e.contains("refusing binaries"), "{e}");
+        let none = install_bins(&pulled, "expectedsha", None, &target).unwrap_err();
+        assert!(none.contains("reported no tested tree") && !none.contains("refusing") && !none.contains("<none"), "{none}");
         assert!(!target.exists());
     }
 
