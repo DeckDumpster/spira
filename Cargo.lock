@@ -199,6 +199,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cert-sweep"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "testkit",
+ "tsd",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

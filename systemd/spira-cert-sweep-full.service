@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira cert-sweep (full) — certify the landing ref's tip: every suite on the round VM
+Documentation=file://@SPIRA_PROD_ROOT@/cert-sweep/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_HOME=@SPIRA_HOME@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/cert-sweep pass --mode full --repo @SPIRA_HOME@ --tree @SPIRA_RUN@/cert-sweep/tree
+# A sweep that finds nothing to say, or only reds it has already filed, is not a failure;
+# exit 1 (the runner returned no results) stays one.
+TimeoutStartSec=3300
+StandardOutput=append:@SPIRA_RUN@/cert-sweep.log
+StandardError=append:@SPIRA_RUN@/cert-sweep.log
+
+[X-Spira]
+Plane=observability
