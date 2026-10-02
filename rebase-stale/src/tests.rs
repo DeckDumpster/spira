@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::engine::{self, Config};
 use crate::git::{parse_worktree_list, Git};
 use crate::record::Exit;
+use crate::seam::Gate;
 use crate::resolve::{Regen, ResolveKind, ResolveRule, Rules};
 use crate::seam::{BeadStatus, RepoInfo, Seam};
 
@@ -185,6 +186,7 @@ impl Fx {
             status: RefCell::new(BTreeMap::new()),
             unreachable: false,
             green: true,
+            no_verdict: false,
             calls: RefCell::new(Vec::new()),
         }
     }
@@ -195,6 +197,7 @@ struct Fake {
     status: RefCell<BTreeMap<String, String>>,
     unreachable: bool,
     green: bool,
+    no_verdict: bool,
     calls: RefCell<Vec<String>>,
 }
 
@@ -251,17 +254,22 @@ impl Seam for Fake {
     fn note(&self, id: &str, text: &str) {
         self.calls.borrow_mut().push(format!("note {id} {text}"));
     }
-    fn submit(&self, branch: &str, repo_name: &str) -> (bool, String) {
+    fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String) {
         // The gate must see the REBASED tip on the real branch ref.
         let tip = git(&self.repo, &["rev-parse", branch]);
         self.calls
             .borrow_mut()
             .push(format!("submit {branch} {repo_name} {tip}"));
-        if self.green {
-            (true, "queue submit: certified".into())
+        if self.no_verdict {
+            (
+                Gate::NoVerdict,
+                "gate: VERDICT=NO_VERDICT reason=budget suite=-".into(),
+            )
+        } else if self.green {
+            (Gate::Green, "queue submit: certified".into())
         } else {
             (
-                false,
+                Gate::Red,
                 "gate: VERDICT=FAIL reason=suite-red suite=test-stub".into(),
             )
         }
@@ -451,6 +459,23 @@ fn a_red_gate_brings_the_leftover_back_to_the_old_tip() {
     let w = Git::new(fx.wt("sp-lr"), "t", "t@t");
     assert_eq!(w.rev("HEAD").unwrap(), old);
     assert_eq!(w.porcelain().unwrap().trim(), "");
+}
+
+#[test]
+fn a_gate_with_no_verdict_is_not_a_red() {
+    let fx = Fx::new("noverdict");
+    let old = fx.branch("sp-nv", false, |w| write(&w.join("branch-only.txt"), "b\n"));
+    fx.advance_main(|r| write(&r.join("main-only.txt"), "m\n"));
+    let mut seam = fx.seam();
+    seam.green = false;
+    seam.no_verdict = true;
+
+    let r = run(&fx, &seam, "sp-nv");
+    assert_eq!(r.exit, Exit::NotAttempted, "{r:?}");
+    assert_eq!(fx.tip("sp-nv"), old, "restored");
+    assert_eq!(seam.calls("submit").len(), 1);
+    assert!(seam.calls("reopen").is_empty(), "{:?}", seam.calls("reopen"));
+    assert!(seam.calls("land_mark").is_empty(), "{:?}", seam.calls("land_mark"));
 }
 
 /// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
@@ -717,8 +742,13 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
 
     let info = s.repo("fixture").unwrap();
     assert_eq!((info.path, info.landref.as_str()), (PathBuf::from("/r/fixture"), "local/main"));
-    let (green, text) = s.submit("spira/sp-1", "fixture");
-    assert!(!green && text.contains("out:submit spira/sp-1 fixture") && text.contains("err"), "{text}");
+    let (gate, text) = s.submit("spira/sp-1", "fixture");
+    assert!(gate == Gate::Red && text.contains("out:submit spira/sp-1 fixture") && text.contains("err"), "{text}");
+
+    testkit::write_exe(&s.queue_bin, "#!/bin/sh\nexit 75\n");
+    assert_eq!(s.submit("spira/sp-1", "fixture").0, Gate::NoVerdict);
+    testkit::write_exe(&s.queue_bin, "#!/bin/sh\nexit 0\n");
+    assert_eq!(s.submit("spira/sp-1", "fixture").0, Gate::Green);
 
     assert_eq!(s.bead_status("sp-ip"), BeadStatus::Known("in_progress".into()));
     assert_eq!(s.bead_status("sp-unknown"), BeadStatus::Known(String::new()));

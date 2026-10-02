@@ -11,7 +11,7 @@ use crate::git::Git;
 use crate::holder::{classify, Holder};
 use crate::record::{Exit, LogRecord, Outcome};
 use crate::resolve::{resolve_stop, ConflictFile, Rules};
-use crate::seam::Seam;
+use crate::seam::{Gate, Seam};
 
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -331,8 +331,16 @@ pub fn run(
     };
     sync(&holder);
 
-    let (green, gate_out) = seam.submit(&br, &name);
-    if !green {
+    let (gate, gate_out) = seam.submit(&br, &name);
+    if gate == Gate::NoVerdict {
+        let _ = repo.run(["update-ref", &bref, &old_tip, &new_tip]);
+        sync(&holder);
+        log(Outcome::Error, "gate-no-verdict");
+        return not_attempted(format!(
+            "{br} rebased but the gate reached no verdict — left at its pre-rebase tip, not reopened"
+        ));
+    }
+    if gate != Gate::Green {
         let _ = repo.run(["update-ref", &bref, &old_tip, &new_tip]);
         sync(&holder);
         log(Outcome::GateRed, &format!("tip={new_tip}"));
