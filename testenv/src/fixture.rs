@@ -12,15 +12,16 @@ use std::time::{Duration, Instant};
 
 // Baked into the image; must agree with the Containerfile (and container.rs).
 /// Units suspended (ctrl.sh) before install, each with the reason it cannot run in the
-/// container. Loom and the cockpit collector need a rustc the image does not have
-/// (sp-fud1). The queue-watch watcher execs `/workspace/bin/queue-watch`, which the
+/// container. Loom and the cockpit collector need a live Dolt data directory, and the
+/// container is configured with none (`CONFIGURE_DOLT_DATA=`); the image's rustc is not the
+/// reason. The queue-watch watcher execs `/workspace/bin/queue-watch`, which the
 /// container never has (artifacts live under `target/<profile>`), so it exits 127 on every
 /// start: a CPUQuota on its unit used to keep it `active` long enough to pass install's
 /// is-active check; with quotas retired (sp-b4oct) it is seen in `activating` (auto-restart)
 /// and install refuses, so it is suspended like the other Rust-backed units.
 pub const SUSPENDED_UNITS: [(&str, &str); 3] = [
-    ("spira-loom", "image rustc too old for lockfile v4"),
-    ("spira-cockpit", "image rustc too old for lockfile v4"),
+    ("spira-loom", "container is configured without a Dolt data directory, so it has no backing store"),
+    ("spira-cockpit", "container is configured without a Dolt data directory, so it has no backing store"),
     (
         "spira-watch-queue-watch",
         "renders /workspace/bin/queue-watch, which the container does not have",
@@ -1125,6 +1126,13 @@ pub mod fake {
 mod tests {
     use super::fake::FakeRuntime;
     use super::*;
+
+    #[test]
+    fn suspension_reasons_do_not_blame_the_image_rustc() {
+        for (unit, reason) in SUSPENDED_UNITS {
+            assert!(!reason.contains("rustc") && !reason.contains("lockfile"), "{unit}: {reason}");
+        }
+    }
 
     fn session(rt: &FakeRuntime) -> Session<'_> {
         let mut s = Session::new(rt, "abc123", "aeon");
