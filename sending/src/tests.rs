@@ -363,7 +363,7 @@ fn dry_run_says_would_and_changes_nothing() {
     assert!(out.contains("WOULD  sp-orphan  remove orphaned worktree"));
     assert!(!out.contains("LOG sending:"), "no tally line on a dry run");
     for c in f.calls.borrow().iter() {
-        assert!(c.starts_with("bead ") || c.starts_with("gh "), "a dry run only reads: {c}");
+        assert!(c == "prefetch" || c.starts_with("bead ") || c.starts_with("gh "), "a dry run only reads: {c}");
     }
     assert!(exists(&fx, "spira/sp-cl1") && Git(&fx.repo).verify("refs/archive/spira/sp-noone").is_none());
 }
