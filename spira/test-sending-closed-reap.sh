@@ -56,6 +56,13 @@ stub gh 'exit 1'
 
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$REPONAME" "$REPO" push main '' '' > "$SH/repo-map"
 
+in_fixture() {
+    SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
+    SPIRA_HOME_REPO="$REPONAME" \
+    SPIRA_REPO_MAP="$SH/repo-map" \
+        "$@"
+}
+
 sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
@@ -145,12 +152,12 @@ if content_landed "$REPO" "spira/sp-btch" "origin/main"; then
 else
     ok "sp-btch: content_landed correctly returns non-zero (conflict with post-batch base)"
 fi
-if landed "sp-btch" "$REPO" 2>/dev/null; then
+if in_fixture landed "sp-btch" "$REPO" 2>/dev/null; then
     ok "sp-btch: landed() finds the naming commit on origin/main"
 else
     bad "sp-btch: landed() must return 0 (batch commit on main names it)" "returned non-zero"
 fi
-if landed "sp-keep" "$REPO" 2>/dev/null; then
+if in_fixture landed "sp-keep" "$REPO" 2>/dev/null; then
     bad "sp-keep: landed() must return non-zero" "returned 0 — fixture is wrong"
 else
     ok "sp-keep: landed() correctly returns non-zero (not on main)"
