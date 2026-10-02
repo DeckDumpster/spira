@@ -320,8 +320,8 @@ mod stale_release_tests {
 
     #[test]
     fn an_old_release_binary_refuses_to_write_units() {
-        let d = std::env::temp_dir().join(format!("stale-rel-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&d);
+        let t = testkit::TempDir::new("stale-rel");
+        let d = t.path().to_path_buf();
         for r in ["old", "new"] {
             std::fs::create_dir_all(d.join(r).join("bin")).unwrap();
         }

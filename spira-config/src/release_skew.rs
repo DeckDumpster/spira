@@ -36,18 +36,18 @@ pub fn repoint_path(path: &str, skew: &Skew) -> String {
 mod tests {
     use super::*;
 
-    fn releases() -> PathBuf {
-        let d = std::env::temp_dir().join(format!("release-skew-{}-{:?}", std::process::id(), std::thread::current().id()));
-        let _ = fs::remove_dir_all(&d);
+    fn releases() -> (testkit::TempDir, PathBuf) {
+        let t = testkit::TempDir::new("release-skew");
+        let d = t.path().to_path_buf();
         fs::create_dir_all(d.join("aaa")).unwrap();
         fs::create_dir_all(d.join("bbb")).unwrap();
         std::os::unix::fs::symlink("bbb", d.join(CURRENT)).unwrap();
-        d
+        (t, d)
     }
 
     #[test]
     fn old_release_beside_a_newer_current_is_skewed() {
-        let d = releases();
+        let (_t, d) = releases();
         let s = skew(&d.join("aaa")).expect("aaa is not current");
         assert!(s.own.ends_with("aaa") && s.current.ends_with("bbb"));
         let p = repoint_path(&format!("{}/aaa/bin:/usr/bin", fs::canonicalize(&d).unwrap().display()), &s);
@@ -56,7 +56,7 @@ mod tests {
 
     #[test]
     fn the_current_release_and_a_non_release_are_not_skewed() {
-        let d = releases();
+        let (_t, d) = releases();
         assert_eq!(skew(&d.join("bbb")), None);
         assert_eq!(skew(&d.join("missing")), None);
         fs::remove_file(d.join(CURRENT)).unwrap();
