@@ -434,10 +434,10 @@ impl Lib for RealLib {
     fn event(&self, kind: &str, title: &str, detail: &str) {
         self.call(Op::Event, &[kind, title, detail], false);
     }
-    fn divergence(&self, repo: &str, path: &Path, forge: &str, local: &str) -> bool {
+    fn divergence(&self, queue_dir: &Path, repo: &str, path: &Path, forge: &str, local: &str) -> Divergence {
         // In-process (sp-hwjsq, "wave 4.32"); lib.sh's queue_local_check_divergence is
         // retired outright — nothing else ever called it.
-        crate::ops::helpers::check_divergence(repo, path, forge, local)
+        crate::ops::helpers::check_divergence(queue_dir, repo, path, forge, local)
     }
     fn push(&self, path: &Path, remote: &str, refspec: &str) -> bool {
         // In-process (sp-hwjsq, "wave 4.32"). Stderr discarded here, as the old seam body
@@ -1148,17 +1148,16 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         p.push(":");
         p.push(&old_path);
         std::env::set_var("PATH", &p);
-        std::env::set_var("SPIRA_QUEUE_DIR", &queue_dir);
 
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
 
         // Local ahead of forge (healthy): true, no alarm, no statefile.
-        assert!(lib.divergence("fixq", &repo, &local, &foreign));
+        assert_eq!(lib.divergence(&queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
         // Foreign commit on top of local: false, alarmed once.
-        assert!(!lib.divergence("fixq", &repo, &foreign, &local));
+        assert!(matches!(lib.divergence(&queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
         let alarmed_after_first = fs::read_to_string(queue_dir.join("fixq/divergence-alarmed")).unwrap();
         assert_eq!(alarmed_after_first.trim(), foreign);
         let mail_after_first = fs::read_to_string(&mail_log).unwrap();
@@ -1167,28 +1166,26 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
 
         // Same foreign tip again: still false, but silent (no second mail).
         fs::write(&mail_log, "").unwrap();
-        assert!(!lib.divergence("fixq", &repo, &foreign, &local));
+        assert!(matches!(lib.divergence(&queue_dir, "fixq", &repo, &foreign, &local), Divergence::Diverged(_)));
         assert_eq!(fs::read_to_string(&mail_log).unwrap(), "", "a repeated call against the SAME foreign tip must not re-alarm");
 
         // Healthy again: the marker clears.
-        assert!(lib.divergence("fixq", &repo, &local, &foreign));
+        assert_eq!(lib.divergence(&queue_dir, "fixq", &repo, &local, &foreign), Divergence::Ancestor);
         assert!(!queue_dir.join("fixq/divergence-alarmed").exists());
 
         std::env::set_var("PATH", &old_path);
-        std::env::remove_var("SPIRA_QUEUE_DIR");
     }
 
     #[test]
-    fn divergence_refuses_rather_than_guesses_when_queue_dir_is_unset() {
+    fn divergence_cannot_check_without_a_queue_dir_or_a_resolvable_repo() {
         let _serial = crate::testutil::serial();
-        let prev = std::env::var_os("SPIRA_QUEUE_DIR");
-        std::env::remove_var("SPIRA_QUEUE_DIR");
         let home = minimal_home(":");
         let lib = RealLib { home: home.to_path_buf() };
-        assert!(!lib.divergence("fixq", Path::new("/repo"), "a", "b"));
-        if let Some(v) = prev {
-            std::env::set_var("SPIRA_QUEUE_DIR", v);
-        }
+        let r = lib.divergence(Path::new(""), "fixq", Path::new("/repo"), "a", "b");
+        assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
+        let qd = crate::testutil::tmpdir("div-cc");
+        let r = lib.divergence(&qd, "fixq", Path::new("/nonexistent-repo"), "a", "b");
+        assert!(matches!(r, Divergence::CannotCheck(_)), "{r:?}");
     }
 
     #[test]
