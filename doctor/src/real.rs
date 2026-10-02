@@ -245,6 +245,20 @@ impl World for Real {
             Err(e) => Err(e.to_string()),
         }
     }
+    fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize> {
+        let o = Command::new("timeout")
+            .arg("60")
+            .arg(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
+            .arg("-C")
+            .arg(db)
+            .args(["list", "--limit", "1", "--json"])
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .output()
+            .ok()?;
+        let text = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        Some(text.lines().filter(|l| l.contains("beads.role")).count())
+    }
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta> {
         let text = std::fs::read_to_string(metadata_json).ok()?;
         Some(StoreMeta {

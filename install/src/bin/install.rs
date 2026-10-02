@@ -294,6 +294,22 @@ fn main() -> ExitCode {
         }
     }
 
+    // bd reads beads.role from the cwd's git config, not from -C; every caller runs from some
+    // other checkout, so only the user-global value reaches all of them.
+    let role_set = Command::new("git").args(["config", "--global", "--get", "beads.role"]).output().map(|o| o.status.success() && !o.stdout.is_empty()).unwrap_or(false);
+    if role_set {
+        skip("beads.role already set (git config --global)");
+    } else if opts.dry {
+        would("run: git config --global beads.role maintainer");
+    } else {
+        if Command::new("git").args(["config", "--global", "beads.role", "maintainer"]).status().map(|s| s.success()).unwrap_or(false) {
+            info("set beads.role maintainer (git config --global)");
+            changes += 1;
+        } else {
+            eprintln!("install: could not set beads.role — run: git config --global beads.role maintainer");
+        }
+    }
+
     if Path::new(&db).join(".beads").is_dir() || !opts.dry {
         let server_mode = dolt_data.is_some();
         let server_up = server_mode && tcp_up(dolt_port);

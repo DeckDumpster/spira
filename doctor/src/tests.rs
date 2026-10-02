@@ -28,6 +28,7 @@ pub struct Fake {
     pub dirs: RefCell<Vec<PathBuf>>,
     pub files: RefCell<Vec<PathBuf>>,
     pub bd_list: RefCell<Result<String, String>>,
+    pub role_warnings: RefCell<Option<usize>>,
     pub store_meta: RefCell<BTreeMap<PathBuf, StoreMeta>>,
     pub active_units: RefCell<Vec<String>>,
     pub tcp_open: RefCell<bool>,
@@ -68,6 +69,7 @@ impl Default for Fake {
             dirs: RefCell::new(Vec::new()),
             files: RefCell::new(Vec::new()),
             bd_list: RefCell::new(Err("no fixture".into())),
+            role_warnings: RefCell::new(Some(0)),
             store_meta: RefCell::new(BTreeMap::new()),
             active_units: RefCell::new(Vec::new()),
             tcp_open: RefCell::new(false),
@@ -145,6 +147,9 @@ impl World for Fake {
     }
     fn bd_list(&self, _db: &Path, _timeout_secs: u64) -> Result<String, String> {
         self.bd_list.borrow().clone()
+    }
+    fn bd_role_warnings(&self, _db: &Path, _cwd: &Path) -> Option<usize> {
+        *self.role_warnings.borrow()
     }
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta> {
         self.store_meta.borrow().get(metadata_json).cloned()
@@ -478,6 +483,21 @@ fn store_bd_read_ok_and_server_mode() {
     assert!(out.iter().any(|l| l.msg == "bd can read it"));
     assert!(out.iter().any(|l| l.msg.contains("store mode: server")));
     assert!(out.iter().all(|l| l.level != Level::Fail));
+}
+
+#[test]
+fn store_role_warning_is_named_with_its_fix() {
+    let f = Fake::default();
+    f.set("SPIRA_DB", "/db");
+    f.set("SPIRA_HOME", "/harness");
+    f.dirs.borrow_mut().push(PathBuf::from("/db/.beads"));
+    *f.bd_list.borrow_mut() = Ok("[]".into());
+    *f.role_warnings.borrow_mut() = Some(3);
+    let out = check_store(&f);
+    let l = out.iter().find(|l| l.level == Level::Warn && l.msg.contains("beads.role")).expect("warn line");
+    assert!(l.detail.as_deref().unwrap().contains("git config --global beads.role maintainer"));
+    *f.role_warnings.borrow_mut() = Some(0);
+    assert!(check_store(&f).iter().any(|l| l.level == Level::Ok && l.msg.contains("no beads.role warning")));
 }
 
 #[test]
