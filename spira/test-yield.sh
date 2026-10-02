@@ -52,7 +52,9 @@ amend() {                # amend <branch> <file-to-remove> — the fix an aeon w
     w="$TMP/w.fix.$(printf '%s' "$br" | tr / _)"
     git -C "$REPO" worktree add -q "$w" "$br"
     git -C "$w" rm -q "$f"
-    git -C "$w" commit -q -m "$br fix"
+    # THE COMMIT SUBJECT NEVER NAMES THE BRANCH — see gate-fixture.sh's own note on this;
+    # "$br" is shaped like a bead id and SPIRA_DB is deliberately unreadable here.
+    git -C "$w" commit -q -m "fixture fix"
     git -C "$REPO" worktree remove --force "$w"
 }
 

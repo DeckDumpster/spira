@@ -29,7 +29,7 @@ gate_fixture_init() {
     # found in, spira/ is the fixture's copy — the same two directories, in the same order.
     REL="$tmp/rel"; mkdir -p "$REL"
     ln -sfn "$GATE_PATH_DIR" "$REL/bin"; ln -sfn "$SH" "$REL/spira"
-    cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" \
+    cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/exclude.sh" "$HERE/commit-cite.sh" \
        "$HERE/yield.sh" "$HERE/suite-covers.sh" "$HERE/gate-sweep.sh" "$SH/"
     cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
     # `skew` is a compiled binary now (sp-yyk47): reached via `$REL/bin` (GATE_PATH_DIR,
@@ -52,7 +52,7 @@ gate_fixture_branch() {
     w="$(mktemp -d)"
     git -C "$REPO" worktree add -q -b "$br" "$w" origin/main
     printf '%s\n' "$content" > "$w/$file"
-    git -C "$w" add -A; git -C "$w" commit -q -m "feat: $br"
+    git -C "$w" add -A; git -C "$w" commit -q -m "feat: fixture change"
     git -C "$REPO" worktree remove --force "$w"
 }
 

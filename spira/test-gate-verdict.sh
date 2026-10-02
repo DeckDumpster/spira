@@ -44,7 +44,7 @@ BR=spira/sp-v1
 W="$TMP/work"
 git -C "$REPO" worktree add -q -b "$BR" "$W" origin/main
 printf 'one\n' > "$W/f1.txt"
-git -C "$W" add -A; git -C "$W" commit -q -m "feat: sp-v1 — work"
+git -C "$W" add -A; git -C "$W" commit -q -m "feat: fixture work"
 
 # THE REPOSITORY'S OWN GATE COMMAND, and it is the instrument. It records that it ran, and it
 # fails whenever the trip file exists — so "the cache held" is not inferred from a log line
@@ -120,7 +120,7 @@ want "and it was a trial, not a reuse" "VERDICT=PASS reason=pass" "$out"
 # --------------------------------------------------------------------------------------
 before="$(runs)"
 printf 'two\n' > "$W/f2.txt"
-git -C "$W" add -A; git -C "$W" commit -q -m "feat: sp-v1 — more work"
+git -C "$W" add -A; git -C "$W" commit -q -m "feat: fixture more work"
 out="$(rungate)"; rc=$?
 isnt "a changed tree is judged again"  "$before" "$(runs)"
 isnt "and its verdict is not the old one"     0   "$rc"
@@ -161,7 +161,7 @@ isnt "and does not inherit the old verdict"   0    "$rc"
 # and passes next time — so caching one would pin a flake to a branch permanently, which is
 # far worse than paying for a re-run. The trip file makes every run below red.
 # --------------------------------------------------------------------------------------
-cp "$HERE/exclude.sh" "$SH/exclude.sh"
+cp "$HERE/exclude.sh" "$HERE/commit-cite.sh" "$SH/"
 # A COMMAND NOTHING HAS PASSED UNDER, so the red below is a red and not a reused pass from
 # earlier in this suite. `:` takes an argument and does nothing with it, which moves the key
 # without changing what the command does — a `#` would comment out the rest of the line and
