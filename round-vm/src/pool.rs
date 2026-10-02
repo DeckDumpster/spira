@@ -41,6 +41,8 @@ pub struct Pool {
     pub retry_interval: Duration,
     pub max_retries: u32,
     pub wait_poll: Duration,
+    /// Zero waits forever.
+    pub acquire_deadline: Duration,
 }
 
 enum Next {
@@ -158,10 +160,19 @@ impl Pool {
         let me = ProcId::current();
         let mut attempts = 0u32;
         let mut waited = false;
+        let started = std::time::Instant::now();
+        let mut waiting_on = String::from("the first attempt");
         loop {
+            if !self.acquire_deadline.is_zero() && started.elapsed() >= self.acquire_deadline {
+                return Err(format!(
+                    "round-vm: acquire: no VM within the {}s deadline (SPIRA_ROUND_VM_ACQUIRE_DEADLINE); last waiting on {waiting_on}",
+                    self.acquire_deadline.as_secs()
+                ));
+            }
             let attempt = match (deps.factory)() {
                 Ok(a) => a,
                 Err(reason) => {
+                    waiting_on = format!("the provider: {reason}");
                     self.failed(&reason, deps.alarm, &mut attempts)?;
                     continue;
                 }
@@ -187,6 +198,7 @@ impl Pool {
                 Next::Got(vm) => return Ok((vm, if waited { AcquireMode::Cold } else { AcquireMode::Warm })),
                 Next::Wait => {
                     waited = true;
+                    waiting_on = "the provision in flight to finish".into();
                     std::thread::sleep(self.wait_poll);
                 }
                 Next::Provision => {
@@ -215,6 +227,7 @@ impl Pool {
                                 clear_mine(s);
                                 s.doomed.extend(f.doomed.clone());
                             })?;
+                            waiting_on = format!("a provision that failed: {}", f.reason);
                             self.failed(&f.reason, deps.alarm, &mut attempts)?;
                         }
                     }
@@ -345,6 +358,7 @@ mod tests {
             retry_interval: Duration::ZERO,
             max_retries,
             wait_poll: Duration::from_millis(10),
+            acquire_deadline: Duration::ZERO,
         }
     }
 
@@ -476,6 +490,20 @@ mod tests {
         assert_eq!(vm.handle, "555");
         assert_eq!(mode, AcquireMode::Cold, "it had to wait, so it was not warm");
         assert_eq!(fp.count("clone"), 0, "no second provision was started");
+    }
+
+    #[test]
+    fn acquire_against_a_pool_that_never_fills_fails_within_its_deadline() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let mut pl = pool(&d, 0);
+        pl.acquire_deadline = Duration::from_millis(200);
+        pl.with_state(|s| s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: None, since: 0 })).unwrap();
+        let f = || Ok(attempt(&fp));
+        let t = std::time::Instant::now();
+        let e = pl.acquire(&Deps { factory: &f, alarm: &alarm, spawner: &sp }, None).unwrap_err();
+        assert!(t.elapsed() < Duration::from_secs(5), "returned late: {:?}", t.elapsed());
+        assert!(e.contains("deadline") && e.contains("provision in flight"), "{e}");
     }
 
     #[test]

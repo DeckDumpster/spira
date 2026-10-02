@@ -27,6 +27,7 @@ means the same thing.
 
 | command | stdout | exit |
 |---|---|---|
+| `round-vm teardown` | — | 0; stops the mirror daemon for the state dir (nothing running is success) |
 | `round-vm acquire` | `<handle> <addr> <warm\|cold>` | 0 success; 1 gave up (only when `SPIRA_ROUND_VM_MAX_RETRIES` > 0) |
 | `round-vm release <handle>` | nothing | 0 destroyed and verified gone; 1 failed; 2 usage |
 | `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
@@ -276,6 +277,7 @@ pub struct Config {
     pub maxpar: u32,                 // SPIRA_ROUND_VM_MAXPAR      / round_vm_maxpar     / 16
     pub retry_interval: Duration,    // SPIRA_ROUND_VM_RETRY_INTERVAL / round_vm_retry_interval / 60 s
     pub max_retries: u32,            // SPIRA_ROUND_VM_MAX_RETRIES / round_vm_max_retries/ 0 = forever
+    pub acquire_deadline: Duration,  // SPIRA_ROUND_VM_ACQUIRE_DEADLINE secs / 3600; 0 = forever (env only)
     pub mirror_port: u16,            // SPIRA_ROUND_VM_MIRROR_PORT / round_vm_mirror_port/ 9430
     pub mailbox: String,             // SPIRA_ROUND_VM_MAIL_MAILBOX / operator
     pub net_iface: String,           // SPIRA_ROUND_VM_NET_IFACE   / ens18
