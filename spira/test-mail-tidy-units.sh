@@ -27,6 +27,8 @@ else
     want "ExecStart targets operator mailbox" "operator" "$execstart"
 fi
 
+want "service sets SPIRA_DB (tidy refuses without a bead store)" "Environment=SPIRA_DB=@SPIRA_DB@" "$(cat "$SVC" 2>/dev/null)"
+
 echo
 echo "=== Timer file: fires every 15 minutes ==="
 
