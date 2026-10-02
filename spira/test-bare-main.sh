@@ -3,6 +3,7 @@
 # test-bare-main.sh — bare-main.sh makes the main worktree bare, refuses to populate it, and
 # leaves existing and newly added linked worktrees able to commit.
 #
+# tier: T2
 # covers: spira/bare-main.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
