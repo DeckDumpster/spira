@@ -107,6 +107,7 @@ impl Finding {
 /// filing is logged by the caller, never fatal to the check that found the thing.
 pub fn file(incident_sh: &str, f: &Finding) -> bool {
     let mut cmd = Command::new("bash");
+cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(incident_sh).arg("file").arg(&f.title).arg("-");
     cmd.env("SPIRA_DB", &f.db);
     cmd.env("SPIRA_INCIDENT_TYPE", &f.incident_type);

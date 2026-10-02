@@ -26,7 +26,7 @@ pub fn probe(command: &str, timeout: Duration) -> Health {
     if command.is_empty() {
         return Health::NotAsserted;
     }
-    let mut child = match Command::new("bash")
+    let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
         .arg("-c")
         .arg(command)
         .stdin(Stdio::null())

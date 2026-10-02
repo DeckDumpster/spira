@@ -511,6 +511,7 @@ fn file_mtime(path: &Path) -> Option<u64> {
 fn script(s: &str) -> Command {
     if s.contains('/') {
         let mut c = Command::new("bash");
+c.envs(spira_config::release_env::child_path_env_for_process());
         c.arg(s);
         c
     } else {
