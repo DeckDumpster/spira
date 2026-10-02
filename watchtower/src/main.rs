@@ -16,6 +16,7 @@ mod landstate;
 mod lapsed;
 mod log;
 mod pr_stall;
+mod release_skew;
 mod seams;
 mod sweep;
 mod throttle;
@@ -249,6 +250,24 @@ fn main() {
             };
             disabled_timer::run(
                 &spira_home(),
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+                &cfg,
+            );
+        }
+        Some("--release-skew-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: release-skew-check skipped — world is halted");
+                return;
+            }
+            let cfg = release_skew::Cfg {
+                systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
+                max_secs: getenv_i64("SPIRA_RELEASE_SKEW_MAX_SECS", 3600),
+            };
+            release_skew::run(
+                n,
+                &run,
                 &getenv("SPIRA_DB").unwrap_or_default(),
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
                 &resolved_incident_sh(),

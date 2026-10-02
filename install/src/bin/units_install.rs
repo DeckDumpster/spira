@@ -239,6 +239,11 @@ fn main() -> ExitCode {
         }
     }
 
+    if let Some(msg) = bootstrap::refuse_if_stale_release("units-install") {
+        eprintln!("{msg}");
+        return ExitCode::from(1);
+    }
+
     // Path collisions, landref currency and live aeons — refuse before touching anything,
     // unless overridden.
     if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {

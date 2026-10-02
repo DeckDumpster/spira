@@ -185,6 +185,21 @@ fn systemd_above(exe: &Path) -> Option<PathBuf> {
 /// before exec, but a non-shell caller — `env PATH=... units-install --diff`, a direct
 /// `execvp`/`posix_spawnp` — calls `execvp` directly, which resolves the PATH search
 /// internally but passes argv[0] through to the new process completely unchanged.
+/// A refusal when `exe` lives in a release that is not the one `current` names: such a
+/// binary would re-render every installed unit back to its own, older release.
+pub fn stale_release_refusal(tool: &str, exe: &Path) -> Option<String> {
+    let skew = spira_config::release_skew::skew(exe.parent()?.parent()?)?;
+    Some(format!(
+        "{tool}: REFUSING to write units — {}; an old release never downgrades the installed units. Run it from {}/bin",
+        skew.describe(),
+        skew.current.display()
+    ))
+}
+
+pub fn refuse_if_stale_release(tool: &str) -> Option<String> {
+    stale_release_refusal(tool, &std::env::current_exe().ok()?)
+}
+
 fn argv0_path() -> Option<PathBuf> {
     let arg0 = env::args_os().next()?;
     let p = PathBuf::from(&arg0);
@@ -296,5 +311,24 @@ mod resolve_home_tests {
     fn with_no_env_and_no_exe_at_all_it_refuses() {
         let got = resolve_home(None, None, None);
         assert!(got.is_err(), "{got:?}");
+    }
+}
+
+#[cfg(test)]
+mod stale_release_tests {
+    use super::*;
+
+    #[test]
+    fn an_old_release_binary_refuses_to_write_units() {
+        let t = testkit::TempDir::new("stale-rel");
+        let d = t.path().to_path_buf();
+        for r in ["old", "new"] {
+            std::fs::create_dir_all(d.join(r).join("bin")).unwrap();
+        }
+        std::os::unix::fs::symlink("new", d.join("current")).unwrap();
+        let msg = stale_release_refusal("unit-ensure", &d.join("old/bin/unit-ensure")).expect("old release must refuse");
+        assert!(msg.contains("REFUSING") && msg.contains("/new"), "{msg}");
+        assert_eq!(stale_release_refusal("unit-ensure", &d.join("new/bin/unit-ensure")), None);
+        assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
     }
 }

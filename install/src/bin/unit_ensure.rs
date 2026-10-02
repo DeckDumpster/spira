@@ -26,6 +26,11 @@ fn main() -> ExitCode {
         };
     }
 
+    if let Some(msg) = bootstrap::refuse_if_stale_release("unit-ensure") {
+        eprintln!("{msg}");
+        return ExitCode::from(1);
+    }
+
     let templates_dir = bootstrap::templates_dir();
     let manifest = match bootstrap::manifest_from_env(&instance) {
         Ok(m) => m,
