@@ -165,6 +165,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
 
     // A landing of the harness repository publishes a release (§8 D13); every precondition
     // is checked here, before the CAS. What ships is the round's own tested build (§8 D2).
+    let pin = worktree.map(|wt| wt.join("target").join("release").join(gate::target::PIN));
     let bins = match worktree {
         Some(wt) => match round_bins(w, &path, &head, wt) {
             Ok(b) => Some(b),
@@ -238,8 +239,13 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
     let outcome = plan.as_ref().map(|p| super::deploy::run(w, p, &head));
+    if let Some(pin) = &pin {
+        let _ = fs::remove_file(pin);
+    }
+    let fault_marker = c.queue_file("deploy-fault");
     let deploy_note = match (&outcome, &plan) {
         (Some(super::deploy::Outcome::Activated(sha)), _) => {
+            let _ = fs::remove_file(&fault_marker);
             w.out(format!("queue.sh land-local: activated release {sha}"));
             format!(" Release {sha} activated.")
         }
@@ -248,6 +254,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
                 "LAND DEPLOY FAILED for {head}: {why} — current is untouched (still {}); {base} is at {head} and the landing stays recorded",
                 super::deploy::current_name(&p.releases)
             ));
+            let _ = write_atomic(&fault_marker, &format!("{head} {why}\n"));
             format!(" DEPLOY FAULT: {head} landed but its release was not activated: {why}.")
         }
         _ => String::new(),

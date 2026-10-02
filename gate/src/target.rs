@@ -14,6 +14,17 @@ use std::path::{Path, PathBuf};
 /// build fence's `make build` (release), a stray dev build, and the tree-keyed tools.
 pub const LINKED: [&str; 4] = ["aeon", "release", "debug", "gate-tools"];
 
+/// Marker inside a kept `release` dir: the binaries are promised to a hand landing, so no
+/// eviction or reaping removes them until the landing clears it or [`PIN_MAX_AGE`] passes.
+pub const PIN: &str = ".gate-pinned";
+pub const PIN_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// True when `dir` holds a pin younger than [`PIN_MAX_AGE`].
+pub fn pinned(dir: &Path) -> bool {
+    let age = std::time::SystemTime::now().duration_since(mtime(&dir.join("release").join(PIN)));
+    fs::symlink_metadata(dir.join("release").join(PIN)).is_ok() && age.is_ok_and(|a| a < PIN_MAX_AGE)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Limits {
     /// Total MiB of every tree's directory under the root before the least recently used
@@ -140,10 +151,10 @@ pub fn prepare(
         if n == name {
             continue;
         }
-        if !trees_dir.join(&n).is_dir() {
+        if !trees_dir.join(&n).is_dir() && !pinned(&e.path()) {
             let _ = fs::remove_dir_all(e.path());
             out.orphans.push(n);
-        } else {
+        } else if trees_dir.join(&n).is_dir() {
             live.push((e.path(), n));
         }
     }
@@ -163,7 +174,7 @@ pub fn prepare(
         if total <= cap && !short_of_floor {
             break;
         }
-        if !lock_free(&trees_dir.join(format!("{n}.lock"))) {
+        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) {
             continue;
         }
         let _ = fs::remove_dir_all(&p);
@@ -231,6 +242,7 @@ pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
     for d in LINKED {
         let link = tree.join("target").join(d);
         if keep_release && d == "release" {
+            let _ = fs::write(link.join(PIN), "");
             continue;
         }
         let Ok(dest) = fs::read_link(&link) else { continue };
@@ -268,7 +280,7 @@ pub fn reap_stale(
         if !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
             continue;
         }
-        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || busy(&p) || busy(&trees_dir.join(&n)) {
+        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || pinned(&p) || busy(&p) || busy(&trees_dir.join(&n)) {
             continue;
         }
         if !dry {
@@ -510,5 +522,33 @@ mod tests {
         for n in ["held", "busy", "fresh"] {
             assert!(root.join(n).join("aeon/x").is_file(), "{n} kept");
         }
+    }
+
+    #[test]
+    fn a_pinned_release_survives_eviction_over_the_cap_and_an_unpinned_one_does_not() {
+        let s = Scratch::new("pin");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        for n in [".gate.harness.pin", ".gate.harness.plain", ".gate.harness.new"] {
+            fs::create_dir_all(trees.join(n)).unwrap();
+        }
+        for n in ["pin", "plain"] {
+            let t = trees.join(format!(".gate.harness.{n}"));
+            prepare(&root, &trees, &t, &lim(1000), &roomy, &mem).unwrap();
+            write_mib(&t.join("target/release/y"), 2);
+            release_tree(&t, true);
+        }
+        fs::remove_file(root.join(".gate.harness.plain/release").join(PIN)).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for n in ["pin", "plain"] {
+            fs::File::open(root.join(format!(".gate.harness.{n}"))).unwrap().set_modified(old).unwrap();
+        }
+        let p = prepare(&root, &trees, &trees.join(".gate.harness.new"), &lim(1), &roomy, &mem).unwrap();
+        assert_eq!(p.evicted, vec![".gate.harness.plain".to_string()]);
+        assert!(root.join(".gate.harness.pin/release/y").is_file(), "pinned release kept");
+        let two_s = std::time::Duration::from_secs(0);
+        assert!(reap_stale(&root, &trees, two_s, true, &|_| false).iter().all(|n| n != ".gate.harness.pin"), "reaper spares a pin");
+        let stale = std::time::SystemTime::now() - PIN_MAX_AGE - std::time::Duration::from_secs(60);
+        fs::File::open(root.join(".gate.harness.pin/release").join(PIN)).unwrap().set_modified(stale).unwrap();
+        assert!(!pinned(&root.join(".gate.harness.pin")), "an old pin expires");
     }
 }
