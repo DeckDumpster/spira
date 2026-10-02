@@ -24,7 +24,7 @@ use std::env;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::core::{step, Event, Limits, RepoState};
@@ -170,9 +170,48 @@ fn write_health(run: &Path, t: u64, interval: u64, repos: usize, blind: &[String
     }
 }
 
+/// The dedupe key and subject line for a head-stall incident. Keyed on (repo, PR), not on the
+/// stall text: a stall still open next poll must bump incident.sh's own recurrence count on
+/// the same bead, never file a second one for the same PR.
+fn stall_incident(repo: &str, pr: &str, text: &str) -> (String, String) {
+    (format!("incident:queue-watch-stall-{repo}-{pr}"), format!("queue-watch: {repo} PR {pr} stalled — {text}"))
+}
+
+/// Give a head-stall a delivery path that survives with no session attached. incident.sh's
+/// write-ahead spool means a filing survives this process dying mid-call, and its ref-keyed
+/// dedupe means a stall still open next poll bumps a recurrence count rather than piling up
+/// duplicate beads — the head_warned latch above stops this being called again for the same
+/// stall anyway, but a restarted queue-watch process has no memory of that latch.
+fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &str, text: &str) {
+    let (ref_, subject) = stall_incident(repo, pr, text);
+    let mut cmd = Command::new("bash");
+    cmd.arg(incident_sh)
+        .arg("file")
+        .arg(&subject)
+        .arg("-")
+        .env("SPIRA_INCIDENT_REPO", repo)
+        .env("SPIRA_INCIDENT_REF", &ref_)
+        .env("SPIRA_INCIDENT_CAUSE", "queue-head-stall")
+        .env("SPIRA_INCIDENT_ACTOR", "queue-watch")
+        .env("SPIRA_INCIDENT_TYPE", "task")
+        .env("SPIRA_INCIDENT_PRIORITY", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Some(db) = db {
+        cmd.env("SPIRA_DB", db);
+    }
+    if let Ok(mut child) = cmd.spawn() {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+    }
+}
+
 fn watch(o: &Opts) -> Result<(), String> {
     let run = o.run.clone().ok_or("SPIRA_RUN unset (pass --run)")?;
-    let _home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
+    let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
         landstate: run.join("landstate"),
@@ -183,7 +222,9 @@ fn watch(o: &Opts) -> Result<(), String> {
     let lim = Limits {
         idle_stall_secs: env::var("QUEUE_WATCH_IDLE_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
         head_stall_secs: env::var("QUEUE_WATCH_HEAD_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(2700),
+        ci_queued_max_secs: env::var("SPIRA_CI_QUEUED_MAX_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
     };
+    let incident_sh = env::var_os("SPIRA_INCIDENT_SH").map(PathBuf::from).unwrap_or_else(|| home.join("incident.sh"));
     let mut states: BTreeMap<String, RepoState> = BTreeMap::new();
     let mut tick = 0u64;
     let stdout = std::io::stdout();
@@ -227,11 +268,25 @@ fn watch(o: &Opts) -> Result<(), String> {
                 blind.push(r.name.clone());
             }
             let (next, evs) = step(&prev, &snap, lim);
-            let mut out = stdout.lock();
-            for e in &evs {
-                let _ = writeln!(out, "{}", render(t, &r.name, e, o.json));
+            {
+                let mut out = stdout.lock();
+                for e in &evs {
+                    let _ = writeln!(out, "{}", render(t, &r.name, e, o.json));
+                }
+                let _ = out.flush();
             }
-            let _ = out.flush();
+            // A head-stall is by definition loop-stopping — it is the ONLY batch slot this
+            // repo's queue has — so it gets a delivery path that survives with no session
+            // attached, not just a line in a log only a live Monitor happens to be tailing.
+            // The idle-stall (no batch open at all) carries no `pr` and is excluded: an empty
+            // queue is not occupying anything.
+            for e in &evs {
+                if e.kind == "stall" {
+                    if let Some(pr) = &e.pr {
+                        file_stall_incident(&incident_sh, env_.db.as_deref(), &r.name, pr, &e.text);
+                    }
+                }
+            }
             states.insert(r.name.clone(), next);
         }
         write_health(&run, t, o.interval, repos.len(), &blind);
@@ -345,6 +400,25 @@ mod tests {
         assert_eq!(crate::io::read_ci_on(q, "459", Some(&child_path)), Ok(crate::core::Ci::Green));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // POSITIVE CONTROL: two stalls of the same PR must produce the identical ref, or
+    // incident.sh's dedupe never finds the first bead and files a second every poll.
+    #[test]
+    fn stall_incident_ref_is_stable_across_repeated_text() {
+        let (ref1, _) = stall_incident("q", "419", "PR 419 unchanged for 46m (CI running)");
+        let (ref2, _) = stall_incident("q", "419", "PR 419 CI queued 90m with no runner ever assigned (threshold 10m)");
+        assert_eq!(ref1, ref2, "the same repo+PR must dedupe to one incident regardless of wording");
+        assert!(ref1.contains("q") && ref1.contains("419"), "{ref1}");
+    }
+
+    #[test]
+    fn stall_incident_ref_distinguishes_repos_and_prs() {
+        let (a, _) = stall_incident("q", "419", "x");
+        let (b, _) = stall_incident("q", "420", "x");
+        let (c, _) = stall_incident("other", "419", "x");
+        assert_ne!(a, b);
+        assert_ne!(a, c);
     }
 
     #[test]

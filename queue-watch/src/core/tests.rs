@@ -8,7 +8,7 @@ fn m(id: &str) -> Member {
 }
 
 fn batch(pr: &str, head: &str, ids: &[&str]) -> Batch {
-    Batch { pr: pr.into(), head: head.into(), members: ids.iter().map(|i| m(i)).collect() }
+    Batch { pr: pr.into(), head: head.into(), members: ids.iter().map(|i| m(i)).collect(), branch: String::new() }
 }
 
 fn beads(spec: &[(&str, u8, &str)]) -> BTreeMap<String, Bead> {
@@ -169,6 +169,40 @@ fn a_head_that_never_moves_stalls_once() {
     let evs = replay(&[mk(0), mk(1000), mk(2800), mk(4000)]);
     assert_eq!(kinds(&evs), vec!["stall"]);
     assert!(evs[0].text.contains("unchanged for 46m (CI running)"), "{}", evs[0].text);
+}
+
+// A job queued with no runner is judged on its own queue time (ci_queued_max_secs, 600s
+// default), not on head_stall_secs (2700s) — the case that held a queue slot for three hours
+// while its log kept reading "CI running": under the old single threshold this would not
+// have said anything for another 28 minutes.
+#[test]
+fn a_queued_job_with_no_runner_stalls_at_the_queued_threshold_not_the_head_threshold() {
+    let mk = |t, qs| {
+        let mut s = snap(t);
+        s.batch = Some(batch("419", "h", &["sp-a"]));
+        s.ci = Some(Ci::Pending);
+        s.queued_since = qs;
+        s
+    };
+    let evs = replay(&[mk(0, Some(0)), mk(700, Some(0)), mk(1000, Some(0))]);
+    assert_eq!(kinds(&evs), vec!["stall"]);
+    assert!(evs[0].text.contains("CI queued 11m with no runner ever assigned"), "{}", evs[0].text);
+    assert!(!evs[0].text.contains("unchanged for"), "{}", evs[0].text);
+}
+
+// NEGATIVE CONTROL, proving the case above is not just the queued threshold always winning:
+// the same age and the same Ci::Pending, but a runner has claimed the job (no queued_since),
+// must be judged on head_stall_secs like before and say nothing this early.
+#[test]
+fn a_running_job_is_not_judged_against_the_queued_threshold() {
+    let mk = |t| {
+        let mut s = snap(t);
+        s.batch = Some(batch("420", "h", &["sp-a"]));
+        s.ci = Some(Ci::Pending);
+        s
+    };
+    let evs = replay(&[mk(0), mk(700), mk(1000)]);
+    assert!(evs.is_empty(), "a running job must not stall before head_stall_secs: {evs:?}");
 }
 
 /// A poll that could not read the forge must never read as a quiet queue.
