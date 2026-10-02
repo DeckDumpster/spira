@@ -51,6 +51,11 @@
 > in (a full corpus). A fixture that used its own private, unshared `bd`/Dolt instance rather
 > than the corpus-wide testdb server would also remove the dependency without waiting on
 > sp-nmzok; either is a real fix, not a flake suppression.
+>
+> **Re-added (sp-jxczj):** the test is back in `loom/tests/endpoint.rs`, `#[ignore]`d and run by
+> `test-cockpit-rust.sh` with `--ignored`. It builds its own embedded `bd` database in a private
+> directory (no server, nothing shared with the testdb corpus fixture), so it no longer depends
+> on sp-nmzok.
 
 > **2026-09-30 (sp-o8n10): `test-snap-stale-threshold.sh` deleted again**
 > (law-a-test-that-flips-is-deleted): red in the same 520-suite full-corpus run, on
