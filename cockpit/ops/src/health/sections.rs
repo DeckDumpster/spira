@@ -206,6 +206,8 @@ pub struct TokensExtra<'a> {
     pub tok_win_spark: &'a str,
 }
 
+const RATELIM_STALE_SECS: i64 = 900;
+
 pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<String> {
     let mut out = Vec::new();
     out.push(format!(
@@ -229,13 +231,15 @@ pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<St
         }
     }
 
-    let p5 = snap.q("SP_RATELIM_5H_PCT");
-    let p7 = snap.q("SP_RATELIM_7D_PCT");
-    let m5 = snap.q("SP_RATELIM_5H_MIN");
-    let m7 = snap.q("SP_RATELIM_7D_MIN");
-    let e5 = snap.q("SP_RATELIM_5H_ETA");
-    let e7 = snap.q("SP_RATELIM_7D_ETA");
     let cage = snap.q("SP_RATELIM_AGE");
+    let stale = cage.parse::<i64>().map_or(true, |v| v >= RATELIM_STALE_SECS);
+    let live = |k: &str| if stale { "?" } else { snap.q(k) };
+    let p5 = live("SP_RATELIM_5H_PCT");
+    let p7 = live("SP_RATELIM_7D_PCT");
+    let m5 = live("SP_RATELIM_5H_MIN");
+    let m7 = live("SP_RATELIM_7D_MIN");
+    let e5 = live("SP_RATELIM_5H_ETA");
+    let e7 = live("SP_RATELIM_7D_ETA");
 
     let band = |p: &str| -> &'static str {
         match p.parse::<i64>() {
@@ -244,6 +248,8 @@ pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<St
             _ => OK,
         }
     };
+    let u5 = if p5 == "?" { "" } else { "%" };
+    let u7 = if p7 == "?" { "" } else { "%" };
     let c5 = band(p5);
     let c7 = band(p7);
     let dur5 = dur_m(m5);
@@ -263,12 +269,12 @@ pub fn tokens_section(snap: &Snapshot, cols: i64, extra: &TokensExtra) -> Vec<St
     let eta5 = eta_sfx(e5);
     let eta7 = eta_sfx(e7);
     let age_sfx = match cage.parse::<i64>() {
-        Ok(v) if v >= 900 => format!(" {DIM}({}m ago){RST}", v / 60),
+        Ok(v) if v >= RATELIM_STALE_SECS => format!(" {DIM}({}m ago){RST}", v / 60),
         _ => String::new(),
     };
 
-    out.push(format!(" {DIM}WIN{RST}    5h {c5}{p5}%{RST}  {DIM}reset {dur5}{RST}{eta5}{age_sfx}"));
-    out.push(format!("        7d {c7}{p7}%{RST}  {DIM}reset {dur7}{RST}{eta7}"));
+    out.push(format!(" {DIM}WIN{RST}    5h {c5}{p5}{u5}{RST}  {DIM}reset {dur5}{RST}{eta5}{age_sfx}"));
+    out.push(format!("        7d {c7}{p7}{u7}{RST}  {DIM}reset {dur7}{RST}{eta7}"));
     out
 }
 
@@ -1050,6 +1056,22 @@ mod tests {
     fn snap(pairs: &[(&str, &str)]) -> Snapshot {
         let text: String = pairs.iter().map(|(k, v)| format!("{k}='{v}'\n")).collect();
         Snapshot::parse(&text)
+    }
+
+    #[test]
+    fn win_renders_question_mark_when_ratelim_is_stale() {
+        let extra = TokensExtra { renderer_rev: "", collector_rev: "", tok_win_spark: "" };
+        let vals = |age: &'static str| {
+            snap(&[("SP_RATELIM_5H_PCT", "23"), ("SP_RATELIM_7D_PCT", "96"), ("SP_RATELIM_5H_MIN", "60"),
+                   ("SP_RATELIM_7D_MIN", "900"), ("SP_RATELIM_AGE", age)])
+        };
+        let fresh = tokens_section(&vals("60"), 80, &extra).join("\n");
+        assert!(fresh.contains("23%") && fresh.contains("96%"));
+        let stale = tokens_section(&vals("7200"), 80, &extra).join("\n");
+        assert!(!stale.contains("23") && !stale.contains("96"));
+        assert!(stale.contains("5h ") && stale.contains("(120m ago)"));
+        let unknown = tokens_section(&vals("?"), 80, &extra).join("\n");
+        assert!(!unknown.contains("23%") && !unknown.contains("96%"));
     }
 
     #[test]

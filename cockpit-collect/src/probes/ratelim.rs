@@ -25,11 +25,11 @@ struct Window {
     reset: Option<i64>,
 }
 
-fn win_vals(w: &Value) -> Window {
+fn win_vals(w: &Value, now: i64) -> Window {
     let u = w.get("utilization").and_then(|v| if v.is_boolean() { None } else { v.as_f64() });
     let r = w.get("resetsAt").and_then(|v| if v.is_boolean() { None } else { v.as_f64() });
     match (u, r) {
-        (Some(u), Some(r)) if (0.0..=1.0).contains(&u) => Window { util: Some(u), reset: Some(r as i64) },
+        (Some(u), Some(r)) if (0.0..=1.0).contains(&u) && (r as i64) > now => Window { util: Some(u), reset: Some(r as i64) },
         _ => Window { util: None, reset: None },
     }
 }
@@ -99,8 +99,8 @@ pub fn ratelim_keys() -> Kv {
         return all_question_marks();
     }
 
-    let w5 = five_h.as_ref().map(win_vals).unwrap_or(Window { util: None, reset: None });
-    let w7 = seven_d.as_ref().map(win_vals).unwrap_or(Window { util: None, reset: None });
+    let w5 = five_h.as_ref().map(|w| win_vals(w, now)).unwrap_or(Window { util: None, reset: None });
+    let w7 = seven_d.as_ref().map(|w| win_vals(w, now)).unwrap_or(Window { util: None, reset: None });
 
     let mins_to = |epoch: Option<i64>| epoch.map(|e| ((e - now) / 60).max(0).to_string()).unwrap_or_else(|| "?".to_string());
 
@@ -180,13 +180,21 @@ mod tests {
 
     #[test]
     fn win_vals_rejects_bool_and_out_of_range() {
-        let w = win_vals(&serde_json::json!({"utilization": true, "resetsAt": 100}));
+        let w = win_vals(&serde_json::json!({"utilization": true, "resetsAt": 100}), 50);
         assert!(w.util.is_none());
-        let w = win_vals(&serde_json::json!({"utilization": 1.5, "resetsAt": 100}));
+        let w = win_vals(&serde_json::json!({"utilization": 1.5, "resetsAt": 100}), 50);
         assert!(w.util.is_none());
-        let w = win_vals(&serde_json::json!({"utilization": 0.42, "resetsAt": 100}));
+        let w = win_vals(&serde_json::json!({"utilization": 0.42, "resetsAt": 100}), 50);
         assert_eq!(w.util, Some(0.42));
         assert_eq!(w.reset, Some(100));
+    }
+
+    #[test]
+    fn win_vals_rejects_a_window_that_already_reset() {
+        let w = win_vals(&serde_json::json!({"utilization": 0.96, "resetsAt": 100}), 100);
+        assert!(w.util.is_none() && w.reset.is_none());
+        let w = win_vals(&serde_json::json!({"utilization": 0.96, "resetsAt": 100}), 500);
+        assert!(w.util.is_none());
     }
 
     #[test]
