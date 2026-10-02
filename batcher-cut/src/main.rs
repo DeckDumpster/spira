@@ -671,6 +671,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 
 fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
+    io::fetch_base(repo)?;
     let base_sha = io::resolve_base_sha(repo)?;
     let base_moved_at = io::base_moved_at(env_, &repo.name, &base_sha);
 
@@ -766,6 +767,8 @@ fn open_round_pr(
     attribution_seconds: Option<u64>,
     regreen_seconds: Option<u64>,
 ) -> Result<(), String> {
+    let base_sha = io::confirm_base(repo, batch_head)?;
+    let base_sha = base_sha.as_str();
     let stamp = io::utc_stamp(round_start);
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, batch_head);

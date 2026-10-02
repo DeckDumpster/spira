@@ -592,6 +592,29 @@ pub fn resolve_base_sha(repo: &Repo) -> Result<String, String> {
     Ok(out.trim().to_string())
 }
 
+/// Fetch the base's remote so `repo.base` names what the remote holds now. A no-op under
+/// `queue.local`, whose base is a local ref. A failed fetch is an error: building on an
+/// unrefreshed base is the thing this exists to stop.
+pub fn fetch_base(repo: &Repo) -> Result<(), String> {
+    if repo.land == Land::Local {
+        return Ok(());
+    }
+    let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
+    run(Command::new("git").arg("-C").arg(&repo.path).args(["fetch", "-q", remote]), "git fetch base").map(|_| ())
+}
+
+/// Re-fetch and return the base the round is about to be opened on, refusing when `head`
+/// does not descend from it — the corpus ran on an older base than the one the PR would
+/// target, and what lands would be a tree no local run saw.
+pub fn confirm_base(repo: &Repo, head: &str) -> Result<String, String> {
+    fetch_base(repo)?;
+    let base = resolve_base_sha(repo)?;
+    if !run_status(Command::new("git").arg("-C").arg(&repo.path).args(["merge-base", "--is-ancestor", &base, head])) {
+        return Err(format!("round does not descend from {} ({base}) — the base moved while the round was tested", repo.base));
+    }
+    Ok(base)
+}
+
 pub fn worktree_reset(repo: &Repo, wt: &Path, at_sha: &str) -> Result<(), String> {
     let _ = run(Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "prune"]), "git worktree prune");
     if wt.join(".git").exists() {
@@ -1581,6 +1604,53 @@ mod land_tests {
         let r = repo(Land::Forge);
         let err = push_branch(&r, "deadbeef", "spira/queue/1").unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    fn fixture(tag: &str) -> (PathBuf, PathBuf, Repo) {
+        let root = std::env::temp_dir().join(format!("confirm-base-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (remote, work, other) = (root.join("remote.git"), root.join("work"), root.join("other"));
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
+        git(&root, &["clone", "-q", remote.to_str().unwrap(), work.to_str().unwrap()]);
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        git(&work, &["push", "-q", "origin", "HEAD:main"]);
+        git(&root, &["clone", "-q", remote.to_str().unwrap(), other.to_str().unwrap()]);
+        let r = Repo { name: "r".into(), path: work.clone(), base: "origin/main".into(), forge: PathBuf::new(), land: Land::Forge };
+        (root, other, r)
+    }
+
+    // The remote advances after the round was built: confirm_base must refuse. Without the
+    // fetch the stale origin/main would still be an ancestor and the PR would open.
+    #[test]
+    fn confirm_base_refuses_when_the_remote_base_moved() {
+        let (root, other, r) = fixture("moved");
+        let head = git(&r.path, &["rev-parse", "HEAD"]);
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "landed meanwhile"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        let err = confirm_base(&r, &head).unwrap_err();
+        assert!(err.contains("does not descend"), "{err}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // POSITIVE CONTROL: an unmoved base passes, and returns the fetched value.
+    #[test]
+    fn confirm_base_returns_the_fetched_base_when_head_descends() {
+        let (root, other, r) = fixture("fresh");
+        git(&other, &["commit", "-q", "--allow-empty", "-m", "landed before the round"]);
+        git(&other, &["push", "-q", "origin", "HEAD:main"]);
+        git(&r.path, &["pull", "-q", "origin", "main"]);
+        git(&r.path, &["commit", "-q", "--allow-empty", "-m", "round"]);
+        let head = git(&r.path, &["rev-parse", "HEAD"]);
+        let want = git(&other, &["rev-parse", "HEAD"]);
+        assert_eq!(confirm_base(&r, &head).unwrap(), want);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
