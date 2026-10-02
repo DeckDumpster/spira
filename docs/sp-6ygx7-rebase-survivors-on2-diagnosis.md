@@ -16,7 +16,7 @@ Only push-mode repos reach this path — PR-mode branches return early.
 **SOP:** sop-landing-pass-rebase-survivors-on2 (this session, sp-6ygx7). Note
 `sop.sh write` updates the canonical copy of
 `wiki/notes/standard-operating-procedures.md` in the brain repo
-(`/home/ryan/spira/brain`), which is outside this worktree and was not committed
+(the brain repo), which is outside this worktree and was not committed
 here — that repo's own process owns its history. This file exists so the
 diagnosis has a citable artifact inside the spira worktree/commit history too.
 
