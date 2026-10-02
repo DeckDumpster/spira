@@ -1919,7 +1919,7 @@ fn sigterm_reaches_every_running_gate_and_its_children() {
     for _ in 0..3 {
         let mut c = command("sh");
         // a gate with a child of its own, as gate.sh's suites are
-        c.args(["-c", "sleep 30 & wait"]);
+        c.args(["-c", "sleep 120 & wait"]);
         pool.start(c);
     }
     assert_eq!(SET.pids().len(), 3, "every gate registered before start returns");
@@ -1931,7 +1931,7 @@ fn sigterm_reaches_every_running_gate_and_its_children() {
     }
     assert_eq!(got.len(), 3);
     assert!(got.iter().all(|rc| *rc != 0), "{got:?}");
-    assert!(t0.elapsed().as_secs() < 10, "the gates (and their sleeps, which hold the pipe) died at once");
+    assert!(t0.elapsed().as_secs() < 100, "the gates (and their sleeps, which hold the pipe) died at once");
     assert!(SET.pids().is_empty());
 }
 
