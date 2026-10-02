@@ -75,6 +75,14 @@ fn landing_commit_cites(repo: &Path, base: &str, id: &str) -> Option<bool> {
     }))
 }
 
+/// Whether `base` holds the queue's own merge subject `spira: land <id>` — a Concierge
+/// branch lands by a cut that rewrites its hashes, so its tip is never an ancestor.
+fn land_subject_cited(repo: &Path, base: &str, id: &str) -> Option<bool> {
+    let land = format!("spira: land {id}");
+    let lines = git_lines(repo, &["log", "--format=%s", "--grep", &land, "-F", base])?;
+    Some(lines.iter().any(|s| *s == land || s.starts_with(&format!("{land} "))))
+}
+
 /// `Some(true)`: `worktree`'s tip is an ancestor of the ref its repo lands on AND that ref
 /// holds a commit naming `id` — content landed, whatever the bead's status. `Some(false)`:
 /// either commits are still outstanding, or the tip is an ancestor but nothing on the
@@ -84,6 +92,11 @@ fn landing_commit_cites(repo: &Path, base: &str, id: &str) -> Option<bool> {
 pub fn landed(reg: &Registry, worktree: &Path, id: &str) -> Option<bool> {
     let repo = main_repo_of(worktree)?;
     let base = landref(reg, &repo.to_string_lossy())?;
+    if worktree.file_name().is_some_and(|n| n.to_string_lossy().starts_with("concierge-"))
+        && land_subject_cited(&repo, &base, id) == Some(true)
+    {
+        return Some(true);
+    }
     let tip = git_out(worktree, &["rev-parse", "HEAD"])?;
     if !is_ancestor(worktree, &tip, &base)? {
         return Some(false);
@@ -256,5 +269,20 @@ mod tests {
         assert!(!landed_wt.join("target").exists(), "landed worktree's target/ is gone");
         assert!(unlanded_wt.join("target/aeon/x").is_file(), "unlanded worktree's target/ survives untouched");
         assert!(fresh_wt.join("target/aeon/x").is_file(), "a freshly cut, zero-commit worktree must never be reaped");
+    }
+
+    #[test]
+    fn sp_blsz9_a_concierge_worktree_is_landed_when_the_queue_cut_names_it_though_its_tip_is_not_an_ancestor() {
+        let t = testkit::TempDir::new("landed-concierge");
+        let wt = repo_with_worktree(t.path(), "concierge/sp-cq", "concierge-sp-cq");
+        commit(&wt, "g", "work whose hash the queue cut rewrote");
+        let repo = t.path().join("repo");
+        let reg = registry_declaring(&repo);
+        assert_eq!(landed(&reg, &wt, "sp-cq"), Some(false), "before the land commit: kept");
+        commit(&repo, "h", "spira: land sp-cq");
+        assert_eq!(landed(&reg, &wt, "sp-cq"), Some(true));
+        let aeon = repo_with_worktree(t.path(), "feature-aeon", "sp-cq");
+        commit(&aeon, "i", "unmerged");
+        assert_eq!(landed(&reg, &aeon, "sp-cq"), Some(false), "only concierge-named dirs get this rule");
     }
 }
