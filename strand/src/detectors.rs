@@ -210,11 +210,48 @@ pub fn detect_landed_but_open(cfg: &Config) -> String {
         let repo = label_value(&b.labels, "repo:").unwrap_or(home.as_str()).to_string();
         let Some(root) = reg.root(&repo) else { continue };
         if let Some(sha) = landed_sha_via_cli(&b.id, &root) {
+            if reopened_after_landing(cfg, &reg, &b.id, &root, &sha) {
+                continue;
+            }
             let sha_disp = if sha.is_empty() { "a commit".to_string() } else { sha };
             out.push(format!("STATE {} landed-but-open — {} names it on {}'s base; close it", b.id, sha_disp, repo));
         }
     }
     out.join("\n")
+}
+
+const UTC_STAMP: &str = "--date=format-local:%Y-%m-%dT%H:%M:%SZ";
+
+/// Newest commit naming `id` on `base`, as a UTC `…Z` stamp (sorts lexicographically).
+fn newest_naming_commit(repo: &Path, base: &str, id: &str, sha: &str) -> Option<String> {
+    let stamp = |args: &[&str]| -> Option<String> {
+        let o = Command::new("git").current_dir(repo).env("TZ", "UTC").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+        let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        (o.status.success() && !s.is_empty()).then_some(s)
+    };
+    let pattern = format!("{}([^.a-z0-9]|$)", id);
+    let by_sha = if sha.is_empty() { None } else { stamp(&["show", "-s", UTC_STAMP, "--format=%cd", sha]) };
+    let by_grep = stamp(&["log", "-1", "-E", UTC_STAMP, "--format=%cd", &format!("--grep={pattern}"), base]);
+    by_sha.into_iter().chain(by_grep).max()
+}
+
+/// The bead's last `reopened` event, as a UTC `…Z` stamp, from bd's own event table.
+fn last_reopen(cfg: &Config, id: &str) -> Option<String> {
+    let q = format!("select max(created_at) as t from events where issue_id='{}' and event_type='reopened'", id.replace('\'', ""));
+    let raw = probe::bd(cfg, &["sql", "--json", q.as_str()], None).ok()?;
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    v.get(0)?.get("t")?.as_str().map(str::to_string)
+}
+
+/// A bead reopened after the newest commit naming it was reopened because that commit did
+/// not fix it; only a later commit can make it landed again.
+fn reopened_after_landing(cfg: &Config, reg: &Registry, id: &str, root: &str, sha: &str) -> bool {
+    let Some(reopen) = last_reopen(cfg, id) else { return false };
+    let Some((base, _)) = spira_config::repos::landrefs(reg, root) else { return false };
+    match newest_naming_commit(Path::new(root), &base, id, sha) {
+        Some(commit) => reopen > commit,
+        None => false,
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -554,6 +591,37 @@ mod tests {
         let labels = vec!["repo:spira".to_string(), "branch:sp-1".to_string()];
         assert_eq!(label_value(&labels, "repo:"), Some("spira"));
         assert_eq!(label_value(&labels, "team:"), None);
+    }
+
+    fn git(dir: &Path, date: &str, args: &[&str]) {
+        let st = Command::new("git")
+            .current_dir(dir)
+            .env("GIT_COMMITTER_DATE", date)
+            .env("GIT_AUTHOR_DATE", date)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+            .args(args)
+            .stdout(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(st.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn newest_naming_commit_finds_the_latest_exact_id_and_orders_against_a_reopen() {
+        let dir = std::env::temp_dir().join(format!("strand-nnc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, "2026-10-02T10:00:00Z", &["init", "-q", "-b", "main"]);
+        git(&dir, "2026-10-02T10:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abc: first"]);
+        git(&dir, "2026-10-02T12:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abcd: other bead"]);
+        let first = newest_naming_commit(&dir, "main", "sp-abc", "").unwrap();
+        assert_eq!(first, "2026-10-02T10:00:00Z");
+        assert!("2026-10-02T11:00:00Z".to_string() > first, "reopened after the commit: not landed");
+        git(&dir, "2026-10-02T13:00:00Z", &["commit", "-q", "--allow-empty", "-m", "sp-abc: real fix"]);
+        let later = newest_naming_commit(&dir, "main", "sp-abc", "").unwrap();
+        assert_eq!(later, "2026-10-02T13:00:00Z");
+        assert!("2026-10-02T11:00:00Z".to_string() < later, "commit newer than the reopen: landed");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
