@@ -312,7 +312,8 @@ Ported from `spira/test-testlib-migrated.sh`.
 **Scope.** `spira/test-*.sh` directly in `spira/`.
 
 **Violation.** A line starting `ok()`, `bad()`, `fail()`, `is()`, `want()`, `nowant()`,
-`notwant()` or `wantrc()`: one finding per file.
+`notwant()`, `wantrc()` or `pass()`; or, in a file that never sources `testlib.sh`, a bare
+`pass=N`/`fail=N` counter: one finding per file.
 
 **Allow list.** `spira-lint/testlib-migrated-allow`, exact paths, shrink-only. An entry
 naming a suite that no longer redefines a primitive is itself a finding, so the list stays
