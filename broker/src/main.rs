@@ -25,11 +25,16 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 /// file, and only matters for an operator who puts a non-secret override (a different
 /// config file path) in the resolved config document. Best-effort: a missing registry or a containment
 /// refusal leaves the environment exactly as it was.
-fn merge_resolved_env() {
+fn merge_resolved_env() -> Result<(), String> {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let home = std::path::PathBuf::from(std::env::var("SPIRA_HOME").unwrap_or_default());
     let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
+    if home.as_os_str().is_empty() {
+        eprintln!("broker: SPIRA_HOME is unset; running on the process environment alone");
+        return Ok(());
+    }
+    let resolved = spira_config::resolve::resolve_for_process(&home, &repo, &env_map)?;
+    {
         for (k, v) in resolved.values {
             if NEVER_EXPORTED.contains(&k.as_str()) {
                 continue;
@@ -39,10 +44,14 @@ fn merge_resolved_env() {
             }
         }
     }
+    Ok(())
 }
 
 fn main() -> ExitCode {
-    merge_resolved_env();
+    if let Err(e) = merge_resolved_env() {
+        eprintln!("broker: refusing to run on unresolved config: {e}");
+        return ExitCode::from(1);
+    }
     let args: Vec<String> = std::env::args().collect();
     let sub = args.get(1).map(String::as_str).unwrap_or("");
 
@@ -172,7 +181,7 @@ mod tests {
         .unwrap();
         std::env::set_var("SPIRA_HOME", &home);
 
-        merge_resolved_env();
+        merge_resolved_env().unwrap();
 
         let got_bd = std::env::var("SPIRA_BD").ok();
         let got_max_aeons = std::env::var_os("SPIRA_MAX_AEONS");

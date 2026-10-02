@@ -156,7 +156,8 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 fn merge_resolved_env(home: &Path) {
     let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
+    {
+        let resolved = spira_config::resolve::resolve_or_say("batcher-cut", home, &repo, &env_map);
         for (k, v) in resolved.values {
             if NEVER_EXPORTED.contains(&k.as_str()) {
                 continue;

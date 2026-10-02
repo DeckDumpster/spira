@@ -32,7 +32,7 @@ fn env(home: &Path, name: &str) -> Option<String> {
     raw_env(name).or_else(|| {
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-        let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map).unwrap_or_default();
+        let resolved = spira_config::resolve::resolve_or_say("gate-diag", home, &repo, &env_map);
         let v = resolved.get(name);
         (!v.is_empty()).then(|| v.to_string())
     })
