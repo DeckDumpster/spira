@@ -8,6 +8,7 @@
 
 pub mod bdq;
 pub mod event;
+pub mod latency;
 
 use std::collections::BTreeMap;
 

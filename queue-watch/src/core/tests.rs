@@ -226,8 +226,17 @@ fn blind_poll_does_not_close_the_open_batch() {
     bad.errors = vec!["open file unreadable".into()];
     let mut s2 = s0.clone();
     s2.now = 60;
-    let evs = replay(&[s0, bad, s2]);
+    let evs = replay(&[s0, bad.clone(), bad, s2]);
     assert_eq!(kinds(&evs), vec!["blind", "recovered"]);
+}
+
+/// One failed poll between good ones says nothing; two in a row is blindness.
+#[test]
+fn a_single_unreadable_poll_is_not_reported() {
+    let mut bad = snap(30);
+    bad.errors = vec!["forge unreachable".into()];
+    assert_eq!(kinds(&replay(&[snap(0), bad.clone(), snap(60)])), Vec::<&str>::new());
+    assert_eq!(kinds(&replay(&[snap(0), bad.clone(), snap(60), bad])), Vec::<&str>::new());
 }
 
 fn pub_(pr: &str, head: &str) -> Publish {
