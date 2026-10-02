@@ -105,10 +105,13 @@ red="$(trigger_after_restart "$WORK/stripped.timer")"
 case "$red" in *"Trigger: n/a"*) ok "stripped timer: Trigger: n/a after reload+restart (SEEN RED)";;
     *) bad "stripped timer reproduces sp-0djeb" "got [$red]";; esac
 
-# TODO (sp-bz7uh.6): against the real (fixed) timer, assert
-#   systemctl --user show spira-watch-notify.timer \
-#       -p NextElapseUSecRealtime -p NextElapseUSecMonotonic
-# reports at least one of the two as nonempty/nonzero after daemon-reload + restart.
+echo
+echo "fix path — the real (fixed) timer keeps a next elapse after fire + reload + restart"
+trigger_after_restart "$WORK/fixed.timer" >/dev/null
+nxt="$("${SC[@]}" show spira-watch-notify.timer -p NextElapseUSecRealtime -p NextElapseUSecMonotonic)"
+nz="$(printf '%s\n' "$nxt" | awk -F= '$2!="" && $2!="0" && $2!="n/a"' | head -1)"
+[ -n "$nz" ] && ok "fixed timer has a next elapse after reload+restart (SEEN GREEN)" \
+    || bad "fixed timer rearms after restart" "got [$nxt]"
 
 # ---------------------------------------------------------------------------
 echo
