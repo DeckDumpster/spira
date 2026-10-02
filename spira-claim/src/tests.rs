@@ -831,6 +831,54 @@ fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
     assert!(!o.err.contains("no fayth"), "{}", o.err);
 }
 
+/// sp-xsnid: under a bare environment (no `spira.toml`, no `conf.d` registry — exactly
+/// `fayth_label_overlay`'s own "resolution failure" fallback, which is what a bare
+/// `spira-sentinel.service` leaves `fayth_predicate` holding), a `FAYTH_LABELS` that
+/// references a config variable BARE (no `${VAR:+...}` guard) must refuse rather than
+/// hand back the empty string `bd --label "" ...` would read as "match everything" — the
+/// exact symptom this bead names: `ops`/`spike`/`builder` all reading `234`, the WHOLE
+/// ready queue. rc 3, never rc 2 ("no fayth") and never rc 0 with a widened count.
+#[test]
+fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = chamber_home(&[("ops", "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL", "spira-poison,$SPIRA_ASK_LABEL")]);
+    let bd = sh("echo 'bd must not be called — a widened query must never reach the store' >&2; exit 1");
+    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS", "SPIRA_TOML", "XDG_CONFIG_HOME"]);
+    std::env::set_var("SPIRA_HOME", &*home);
+    std::env::set_var("SPIRA_BD", &*bd);
+    std::env::remove_var("SPIRA_DB");
+    std::env::remove_var("SPIRA_READY_CACHE");
+    std::env::remove_var("SPIRA_FAYTHS");
+    std::env::set_var("SPIRA_TOML", "/no/such/spira.toml"); // pinned absent: no document resolves
+    std::env::remove_var("XDG_CONFIG_HOME");
+    let o = run(&["fayth-ready", "ops"], "");
+    restore_env(saved);
+    assert_eq!((o.code, o.out.as_str()), (3, "0"), "stderr: {}", o.err);
+    assert!(o.err.contains("SPIRA_INCIDENT_LABEL"), "the refusal must name the exact reference: {}", o.err);
+    assert!(!o.err.contains("no fayth in the chamber"), "{}", o.err);
+}
+
+/// The guarded `SPIRA_SCOPE_LABEL` reference (every real `FAYTH_LABELS`'s own
+/// `${SPIRA_SCOPE_LABEL:+...}` opening) must never itself trigger a refusal — "no scope
+/// restriction configured" is this harness's own common case. A literal, declared-empty
+/// `FAYTH_LABELS=""` (no `$` at all — `concierge.fayth`'s own shape) must not refuse
+/// either; it is a deliberate "no restriction", not a config gap.
+#[test]
+fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
+    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let home = chamber_home(&[("concierge", "", "")]);
+    let bd = sh("echo '[]'");
+    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS"]);
+    std::env::set_var("SPIRA_HOME", &*home);
+    std::env::set_var("SPIRA_BD", &*bd);
+    std::env::remove_var("SPIRA_DB");
+    std::env::remove_var("SPIRA_READY_CACHE");
+    std::env::remove_var("SPIRA_FAYTHS");
+    let o = run(&["fayth-ready", "concierge"], "");
+    restore_env(saved);
+    assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
+}
+
 /// sp-hh599: under `spira-sentinel.service`'s own environment (`SPIRA_RELEASE`/`PATH`,
 /// never `SPIRA_HOME` — wave 4.25, sp-obhv6, stopped `conf.sh` exporting it), this used to
 /// refuse outright with rc 2 — the SAME rc `fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero`

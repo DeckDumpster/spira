@@ -141,42 +141,29 @@ fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
     spira_config::resolve::resolve_for_process(home_path, &repo, &env_map).unwrap_or_default()
 }
 
-/// `fayth_get`'s own subshell: `. "<fayth-file>" 2>/dev/null; eval "printf '%s' \"\${$var:-$def}\""`.
-/// A `.fayth` file is an arbitrary shell fragment (the fixtures use `${SPIRA_SCOPE_LABEL:+...}`
-/// parameter expansion); this bridges to the same mechanism `fayth_get` uses rather than
-/// writing a second, partial shell-fragment parser (DESIGN.md).
-///
-/// `home` resolves `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL` (wave 4.9,
-/// sp-k80sa) and sets them explicitly on this subshell's own `Command`: `czar.fayth`/
-/// `groomer.fayth`/`maechen.fayth` each reference one by parameter expansion in
-/// `FAYTH_LABELS`, and an unset expansion there is silently empty, not an error — the
-/// SAME fix `spira-config`'s own `chamber::fayth_get` carries, and for the same scar
-/// (round 151: an unexported label read back empty and the persona roster went empty
-/// with it).
-fn fayth_get(home: &str, fayth_file: &str, var: &str, default: &str) -> String {
-    if !Path::new(fayth_file).is_file() {
-        return default.to_string();
-    }
-    let script =
-        r#"f="$1"; var="$2"; def="$3"; . "$f" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"""#;
-    let resolved = resolved_config(home);
-    let mut cmd = Command::new("bash");
-    cmd.arg("-c")
-        .arg(script)
-        .arg("fayth_get")
-        .arg(fayth_file)
-        .arg(var)
-        .arg(default);
-    for k in ["SPIRA_CZAR_LABEL", "SPIRA_GROOMER_LABEL", "SPIRA_MAECHEN_LABEL"] {
-        if let Some(v) = resolved.values.get(k) {
-            cmd.env(k, v);
-        }
-    }
-    let out = cmd.output();
-    match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-        _ => default.to_string(),
-    }
+/// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
+/// (sp-xsnid retired this crate's OWN hand-rolled bash-bridge, which carried an
+/// independently-drifted three-key label overlay — `SPIRA_CZAR_LABEL`/
+/// `SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL` only, never `SPIRA_INCIDENT_LABEL`/
+/// `SPIRA_SPIKE_LABEL`/`SPIRA_PLAN_LABEL`/`SPIRA_SCOPE_LABEL`/`SPIRA_ASK_LABEL`/
+/// `SPIRA_CI_LABEL` — a SECOND hand-curated list with its own gaps, on top of
+/// `spira-config`'s own five-key one). For REPORTING call sites only (`bead contract`,
+/// `bead lint`): an empty result here just means the report shows an empty partition for
+/// that persona, never a claim decision, so it never needs [`fayth_predicate`]'s
+/// fail-closed refusal. `home` is [`chamber_home`]'s own `$SPIRA_HOME`-override
+/// precedence, matching every other chamber read in this file.
+fn fayth_label(home: &str, fayth: &str) -> String {
+    spira_config::chamber::fayth_get(Path::new(&chamber_home(home)), fayth, "FAYTH_LABELS", "")
+}
+
+/// `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, fully resolved and FAIL-CLOSED — delegates to
+/// `spira_config::chamber::fayth_predicate`, the one shared evaluator every
+/// ready-counting/claiming/FILING caller now goes through (sp-xsnid). For the one call
+/// site that decides what a bead gets FILED as (`bead file --for`): a predicate that
+/// would otherwise widen to the whole ready queue must refuse the filing outright, never
+/// hand back an empty label silently.
+fn fayth_predicate(home: &str, fayth: &str) -> Result<spira_config::chamber::Predicate, spira_config::chamber::Refusal> {
+    spira_config::chamber::fayth_predicate(Path::new(&chamber_home(home)), fayth)
 }
 
 /// `SPIRA_HOME`, preferring an explicit override from THIS process's own environment over
@@ -431,7 +418,13 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             eprintln!("bead: no such persona: {for_fayth}");
             return 2;
         }
-        let fayth_labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
+        let fayth_labels = match fayth_predicate(home, &for_fayth) {
+            Ok(p) => p.labels,
+            Err(e) => {
+                eprintln!("bead: {e}");
+                return 2;
+            }
+        };
         if fayth_labels.is_empty() {
             eprintln!("bead: persona {for_fayth} has no partition labels");
             return 2;
@@ -635,8 +628,7 @@ fn notify_live_aeon(id: &str, changed: &str) {
 fn cmd_contract(home: &str) -> i32 {
     println!("PERSONAS");
     for f in fayth_names(home) {
-        let fpath = format!("{}/{}.fayth", chamber_dir(home), f);
-        let labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
+        let labels = fayth_label(home, &f);
         println!("{}", persona_line(&f, &labels));
     }
     println!();
@@ -704,8 +696,7 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let personas: Vec<(String, String)> = fayth_names(home)
         .into_iter()
         .map(|f| {
-            let fpath = format!("{}/{}.fayth", chamber_dir(home), f);
-            let labels = fayth_get(home, &fpath, "FAYTH_LABELS", "");
+            let labels = fayth_label(home, &f);
             (f, labels)
         })
         .collect();

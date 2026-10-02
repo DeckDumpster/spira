@@ -12,37 +12,40 @@
 //! comment: "rather than writing a second, partial shell-fragment parser"), instead of
 //! reimplementing a shell-fragment evaluator in Rust.
 //!
-//! `fayth_get`'s bash subshell needs `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/
-//! `SPIRA_MAECHEN_LABEL`/`SPIRA_BATCH_JUDGEMENT_LABEL`/`SPIRA_HOME_REPO` in its OWN
-//! environment: `czar.fayth`/`groomer.fayth`/`maechen.fayth` each write their
-//! `FAYTH_LABELS` as `${SPIRA_SCOPE_LABEL:+...}$SPIRA_CZAR_LABEL` (etc.) parameter
-//! expansion, and an unset expansion is silently empty, not an error — a persona's
-//! partition label reads as empty rather than failing loudly. Wave 4.9 (sp-k80sa) retired
-//! lib.sh's own `export` of these (its one-line shim onto this module's `fayth_get`), on
-//! the strength of [`fayth_label_overlay`] resolving them in-process and setting them
-//! explicitly on the subshell's `Command`, rather than depending on whatever this
-//! process's OWN environment happened to inherit — the scar this closes (round 151): a
-//! caller that did not itself export these left the roster silently empty.
+//! `fayth_get`'s bash subshell needs every config key a `.fayth` file's `FAYTH_LABELS`/
+//! `FAYTH_EXCLUDE_LABELS` references by parameter expansion — `SPIRA_CZAR_LABEL`,
+//! `SPIRA_INCIDENT_LABEL`, `SPIRA_SCOPE_LABEL`, `SPIRA_ASK_LABEL`, and so on — in its OWN
+//! environment, because an unset expansion is silently empty, not an error, and this
+//! process's own ambient environment (a bare `spira-sentinel.service`, never conf.sh)
+//! carries none of them. Wave 4.9 (sp-k80sa) retired lib.sh's own `export` of a five-key
+//! slice of these (its one-line shim onto this module's `fayth_get`) on the strength of
+//! [`fayth_label_overlay`] resolving THAT SLICE in-process instead — which is exactly the
+//! defect sp-xsnid found: a hand-curated list drifts the moment a persona's predicate
+//! grows a new variable, and it had, by five (`SPIRA_INCIDENT_LABEL`, `SPIRA_SPIKE_LABEL`,
+//! `SPIRA_PLAN_LABEL`, `SPIRA_SCOPE_LABEL`, `SPIRA_ASK_LABEL`, `SPIRA_CI_LABEL` — every
+//! real fayth's own label variable and both of `FAYTH_EXCLUDE_LABELS`'s, none of them in
+//! the five-key list). [`fayth_label_overlay`] now hands the subshell EVERY key
+//! [`crate::resolve::resolve_for_process`] resolved, not a slice of it, so no future fayth
+//! variable can repeat that drift. [`fayth_predicate`] is the fail-closed half on top: a
+//! `.fayth`'s own text may still reference a variable that is empty for a legitimate
+//! reason (`SPIRA_SCOPE_LABEL`'s `${VAR:+...}` guard, present in every real fayth, is
+//! exactly that — "no scope restriction configured" is this harness's own common case) or
+//! for a genuine config gap, and only the fail-closed check below can tell those apart.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::{discover, load, SpiraToml};
 
-/// The fayth-label keys a `.fayth` file's `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` may
-/// reference by parameter expansion — exactly the set `spira/lib.sh` used to `export`
-/// before wave 4.9 (sp-k80sa) retired that line in favour of this in-process resolution.
-const FAYTH_LABEL_KEYS: [&str; 5] = [
-    "SPIRA_CZAR_LABEL",
-    "SPIRA_GROOMER_LABEL",
-    "SPIRA_MAECHEN_LABEL",
-    "SPIRA_BATCH_JUDGEMENT_LABEL",
-    "SPIRA_HOME_REPO",
-];
-
-/// The pure half of [`fayth_label_overlay`]: pick [`FAYTH_LABEL_KEYS`] out of an
-/// already-[`crate::resolve::resolve_for_process`]d [`crate::resolve::Resolved`]. Split out
+/// The pure half of [`fayth_label_overlay`]: every key an
+/// already-[`crate::resolve::resolve_for_process`]d [`crate::resolve::Resolved`] carries,
+/// as the subshell's overlay — sp-xsnid widened this from a hand-curated five-key slice
+/// (`SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL`/
+/// `SPIRA_BATCH_JUDGEMENT_LABEL`/`SPIRA_HOME_REPO`) to the FULL resolved map, because the
+/// slice had already drifted: it never carried `SPIRA_INCIDENT_LABEL`, `SPIRA_SPIKE_LABEL`,
+/// `SPIRA_PLAN_LABEL`, `SPIRA_SCOPE_LABEL`, `SPIRA_ASK_LABEL` or `SPIRA_CI_LABEL` — every
+/// other real fayth's own label variable, and both of `FAYTH_EXCLUDE_LABELS`'s. Split out
 /// so it is unit-testable without a `discover()` call touching this process's real
 /// environment — the same reason `persona_model_from_doc` exists alongside `persona_model`
 /// below, and the same hazard: a test that called the `discover`-touching half directly
@@ -51,18 +54,18 @@ const FAYTH_LABEL_KEYS: [&str; 5] = [
 /// above is ALSO holding it to drive its own env mutation would deadlock (`std::sync::Mutex`
 /// is not reentrant) — so this half takes no lock and touches no env at all.
 fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String, String> {
-    FAYTH_LABEL_KEYS
-        .iter()
-        .filter_map(|k| resolved.values.get(*k).map(|v| (k.to_string(), v.clone())))
-        .collect()
+    resolved.values.clone()
 }
 
-/// Resolves [`FAYTH_LABEL_KEYS`] via [`crate::resolve::resolve_for_process`] (env > toml >
+/// Resolves the FULL config via [`crate::resolve::resolve_for_process`] (env > toml >
 /// derived default — the same precedence `conf.sh` always applied), so [`fayth_get`] can
-/// hand them to its bash subshell explicitly rather than relying on this process's own
-/// ambient environment. A resolution failure (no config document resolves, or a parse
-/// error) yields an empty overlay: the bash subshell then falls back to whatever it would
-/// have seen anyway, never a hard failure over a label.
+/// hand it to its bash subshell explicitly rather than relying on this process's own
+/// ambient environment, which a bare unit (`spira-sentinel.service`: `SPIRA_RELEASE`/
+/// `PATH` only) never carries any of it in. A resolution failure (no config document
+/// resolves, or a parse error) yields an empty overlay: the bash subshell then falls back
+/// to whatever it would have seen anyway, never a hard failure over a label — the EMPTY
+/// half of that fallback is exactly what [`fayth_predicate`]'s own fail-closed check
+/// exists to catch instead of letting it widen a partition silently.
 fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
     let repo = crate::resolve::derive_home_repo(home, &env);
@@ -125,6 +128,150 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => default.to_string(),
     }
+}
+
+/// A `.fayth`'s partition predicate, fully evaluated.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Predicate {
+    pub labels: String,
+    pub exclude_labels: String,
+}
+
+/// Why [`fayth_predicate`] refused rather than handing back a predicate that would widen
+/// a partition to the whole ready queue (sp-xsnid, law-a-control-that-cannot-check-must-
+/// refuse). `var` is `FAYTH_LABELS` or `FAYTH_EXCLUDE_LABELS`; `reference` is the ONE bare
+/// (unguarded) `$NAME` the fayth's own text uses that resolved empty — never every name in
+/// the expression, so the message points at the exact config key to fix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub fayth: String,
+    pub var: String,
+    pub reference: String,
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}.fayth: {} references ${} unguarded, and it resolved empty — refusing rather than widening this partition to the whole ready queue",
+            self.fayth, self.var, self.reference,
+        )
+    }
+}
+
+/// Every `NAME` `text` references via `${NAME:+...}` or `${NAME:-...}` — guarded forms
+/// exist precisely so an unset/empty `NAME` is fine (`SPIRA_SCOPE_LABEL` is guarded in
+/// every real `FAYTH_LABELS`: "no scope restriction configured" is this harness's own
+/// common case, not a defect). A name guarded ANYWHERE in `text` is treated as optional
+/// EVERYWHERE in it — simpler than tracking which brace a later bare occurrence sits
+/// inside, and sufficient for every real `.fayth` file, which never mixes a guarded and a
+/// required use of the same name.
+fn guarded_names(text: &str) -> HashSet<String> {
+    let b = text.as_bytes();
+    let mut out = HashSet::new();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'$' && b[i + 1] == b'{' {
+            let start = i + 2;
+            let mut j = start;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            if j > start && j + 1 < b.len() && b[j] == b':' && matches!(b[j + 1], b'+' | b'-') {
+                out.insert(text[start..j].to_string());
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Every DISTINCT `NAME` `text` references via `$NAME`, `${NAME}`, `${NAME:+...}` or
+/// `${NAME:-...}` — every shell parameter expansion at all, in first-appearance order.
+fn referenced_names(text: &str) -> Vec<String> {
+    let b = text.as_bytes();
+    let mut out: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'$' {
+            let braced = i + 1 < b.len() && b[i + 1] == b'{';
+            let start = if braced { i + 2 } else { i + 1 };
+            let mut j = start;
+            while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                j += 1;
+            }
+            if j > start {
+                let name = text[start..j].to_string();
+                if !out.contains(&name) {
+                    out.push(name);
+                }
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The names `text` references that it never guards with `${NAME:+...}`/`${NAME:-...}`
+/// anywhere — [`referenced_names`] minus [`guarded_names`] — the ones a predicate NEEDS
+/// resolved non-empty, in doc order.
+fn bare_references(text: &str) -> Vec<String> {
+    let guarded = guarded_names(text);
+    referenced_names(text).into_iter().filter(|n| !guarded.contains(n)).collect()
+}
+
+/// The RHS of the LAST `VAR=...` assignment in `text` (bash reassignment semantics: a
+/// later line wins — every real `.fayth` only assigns each var once, but a fixture or a
+/// future file might not), surrounding double quotes stripped when the whole RHS is one
+/// quoted string (every real `.fayth` writes it that way). `None` when `text` never
+/// assigns `var` at all.
+fn assigned_value(text: &str, var: &str) -> Option<String> {
+    let prefix = format!("{var}=");
+    let mut found = None;
+    for line in text.lines() {
+        if let Some(rest) = line.trim_start().strip_prefix(&prefix) {
+            found = Some(rest.to_string());
+        }
+    }
+    found.map(|v| v.strip_prefix('"').and_then(|v| v.strip_suffix('"')).map(str::to_string).unwrap_or(v))
+}
+
+/// `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS`, fully resolved and fail-closed — THE shared
+/// evaluator every ready-counting/claiming caller (`spira-claim`, sentinel's own
+/// `express_ready_in_task_pool`, `bead --for`) goes through, replacing each one's own copy
+/// (sp-xsnid: `bead`'s private `fayth_get` carried a THIRD, independently drifted
+/// three-key overlay — `SPIRA_CZAR_LABEL`/`SPIRA_GROOMER_LABEL`/`SPIRA_MAECHEN_LABEL`
+/// only — on top of this module's own five-key one; two hand-curated lists, two different
+/// sets of gaps).
+///
+/// Evaluates both vars via [`fayth_get`] (now handed the FULL resolved config — see
+/// [`fayth_label_overlay`]'s own doc), then checks the fayth's OWN raw text: any name it
+/// references UNGUARDED ([`bare_references`]) that resolved to `""` is a refusal, never a
+/// silent "match everything". A fayth file that does not exist, or that writes a var as a
+/// plain literal with no `$` at all (`concierge.fayth`'s own `FAYTH_LABELS=""` — a
+/// deliberate "no restriction", not a config gap), never refuses: only a REFERENCE that
+/// resolves empty does. Callers that need "no partition at all" to mean something
+/// (`fayth_partitions`) still read that off the plain [`fayth_get`], unaffected by this
+/// function.
+pub fn fayth_predicate(home: &Path, fayth: &str) -> Result<Predicate, Refusal> {
+    let path = chamber_dir(home).join(format!("{fayth}.fayth"));
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let overlay = fayth_label_overlay(home);
+    for var in ["FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS"] {
+        let Some(raw) = assigned_value(&text, var) else { continue };
+        for name in bare_references(&raw) {
+            let empty = overlay.get(&name).map(|v| v.is_empty()).unwrap_or(true);
+            if empty {
+                return Err(Refusal { fayth: fayth.to_string(), var: var.to_string(), reference: name });
+            }
+        }
+    }
+    Ok(Predicate {
+        labels: fayth_get(home, fayth, "FAYTH_LABELS", ""),
+        exclude_labels: fayth_get(home, fayth, "FAYTH_EXCLUDE_LABELS", ""),
+    })
 }
 
 /// `spira_fayths` — the personas this harness runs, space separated, IN PRIORITY ORDER.
@@ -421,8 +568,68 @@ mod tests {
         assert_eq!(overlay.get("SPIRA_CZAR_LABEL").map(String::as_str), Some("czar-trigger"));
         assert_eq!(overlay.get("SPIRA_GROOMER_LABEL").map(String::as_str), Some("groom"));
         assert_eq!(overlay.get("SPIRA_HOME_REPO").map(String::as_str), Some("brain"));
-        assert!(!overlay.contains_key("SPIRA_MAECHEN_LABEL"), "a key absent from Resolved must stay absent, not default to empty");
-        assert!(!overlay.contains_key("SPIRA_BATCH_JUDGEMENT_LABEL"));
-        assert!(!overlay.contains_key("SPIRA_SOME_OTHER_KEY"), "only FAYTH_LABEL_KEYS may pass through");
+        // sp-xsnid: the overlay is now the FULL resolved map, not a five-key slice — a
+        // key that slice never carried (SPIRA_SOME_OTHER_KEY, standing in for
+        // SPIRA_INCIDENT_LABEL/SPIRA_SPIKE_LABEL/SPIRA_PLAN_LABEL/SPIRA_SCOPE_LABEL/
+        // SPIRA_ASK_LABEL/SPIRA_CI_LABEL, every one of which this bead found missing)
+        // must pass through too, or the next fayth variable repeats this bug.
+        assert_eq!(overlay.get("SPIRA_SOME_OTHER_KEY").map(String::as_str), Some("irrelevant"));
+    }
+
+    #[test]
+    fn bare_references_skips_guarded_names_but_keeps_required_ones() {
+        // SPIRA_SCOPE_LABEL appears TWICE — once as the `:+` condition, once bare INSIDE
+        // its own body — and must be exempt both times; SPIRA_INCIDENT_LABEL is bare and
+        // required. This is ops.fayth's own real shape.
+        let refs = bare_references(r#"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL"#);
+        assert_eq!(refs, vec!["SPIRA_INCIDENT_LABEL".to_string()]);
+    }
+
+    #[test]
+    fn bare_references_is_empty_for_a_declared_literal() {
+        // concierge.fayth's own FAYTH_LABELS="" — no `$` at all, nothing to require.
+        assert_eq!(bare_references(""), Vec::<String>::new());
+    }
+
+    #[test]
+    fn assigned_value_strips_quotes_and_takes_the_last_assignment() {
+        let text = "FAYTH_LABELS=\"first\"\nFAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL\"\n";
+        assert_eq!(assigned_value(text, "FAYTH_LABELS").unwrap(), "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_X_LABEL");
+        assert_eq!(assigned_value(text, "FAYTH_EXCLUDE_LABELS"), None);
+    }
+
+    /// The sp-xsnid repro, pinned at the `fayth_predicate` level rather than through a
+    /// real resolved config (which would need `ENV_LOCK`/`discover()` — see
+    /// `fayth_label_overlay`'s own split): a fayth whose `FAYTH_LABELS` references a
+    /// variable this overlay never supplies refuses, naming the exact reference, rather
+    /// than handing back an empty string a caller would read as "match everything".
+    #[test]
+    fn fayth_predicate_refuses_rather_than_widen_on_an_unresolved_bare_reference() {
+        let dir = testkit::TempDir::new("fayth-predicate-refuse");
+        write_fayth(&dir, "ops", "FAYTH_LABELS=\"${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL\"\nFAYTH_EXCLUDE_LABELS=\"spira-poison,$SPIRA_ASK_LABEL\"\n");
+        // No spira.toml under this fixture, and no real conf.d registry beside it either
+        // — `fayth_label_overlay` resolves to an EMPTY map (its own documented
+        // "resolution failure" fallback), so every bare reference reads as unresolved.
+        let err = fayth_predicate(&dir, "ops").unwrap_err();
+        assert_eq!(err.fayth, "ops");
+        assert_eq!(err.var, "FAYTH_LABELS");
+        assert_eq!(err.reference, "SPIRA_INCIDENT_LABEL");
+        assert!(err.to_string().contains("SPIRA_INCIDENT_LABEL"));
+    }
+
+    #[test]
+    fn fayth_predicate_accepts_a_declared_literal_empty_with_no_reference() {
+        let dir = testkit::TempDir::new("fayth-predicate-literal");
+        write_fayth(&dir, "concierge", "FAYTH_LABELS=\"\"\nFAYTH_EXCLUDE_LABELS=\"\"\n");
+        let p = fayth_predicate(&dir, "concierge").unwrap();
+        assert_eq!(p, Predicate { labels: String::new(), exclude_labels: String::new() });
+    }
+
+    #[test]
+    fn fayth_predicate_missing_file_is_empty_not_a_refusal() {
+        let dir = testkit::TempDir::new("fayth-predicate-missing");
+        std::fs::create_dir_all(dir.join("chamber")).unwrap();
+        let p = fayth_predicate(&dir, "ghost").unwrap();
+        assert_eq!(p, Predicate::default());
     }
 }

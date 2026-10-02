@@ -862,22 +862,30 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of three things
-/// happened (sp-3ntca; widened by sp-hh599): 2 = no such fayth file — the ONE outcome a
-/// resolved chamber was actually consulted and came back empty, the only rc
+/// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things
+/// happened (sp-3ntca; widened by sp-hh599, then sp-xsnid): 2 = no such fayth file — the
+/// ONE outcome a resolved chamber was actually consulted and came back empty, the only rc
 /// `sentinel::summon::fayth_ready` may map to `ReadyAnswer::NoFayth`; 1 = "could not
 /// evaluate" — the chamber was never reached at all (SPIRA_HOME itself would not resolve)
-/// OR the file exists but the query failed; 0 = a real count, zero included.
-/// law-a-control-that-cannot-check-must-refuse: an rc that means "could not evaluate" must
-/// never collapse into "no fayth" — sp-hh599's own bug was exactly that collapse (a home
-/// resolution failure used to share rc 2 with "no such file", and the sentinel could not
-/// tell them apart). Stdout is '0' in every case but a real count — callers read only
-/// stdout, never the exit code, for the number itself.
+/// OR the file exists but the query failed; 3 = the fayth's OWN predicate would WIDEN
+/// rather than narrow (a bare config reference `FAYTH_LABELS`/`FAYTH_EXCLUDE_LABELS` uses
+/// resolved empty — sp-xsnid's own bug: `ops`/`spike`/`builder` all read `234`, the WHOLE
+/// ready queue, because `$SPIRA_INCIDENT_LABEL`/`$SPIRA_SPIKE_LABEL`/`$SPIRA_PLAN_LABEL`
+/// resolved empty under the sentinel unit's own bare environment); 0 = a real count, zero
+/// included. law-a-control-that-cannot-check-must-refuse: an rc that means "could not
+/// evaluate" (1) or "would widen" (3) must never collapse into "no fayth" (2) — both
+/// bugs this bead's own two parts fixed were exactly that collapse. Stdout is '0' in
+/// every case but a real count — callers read only stdout, never the exit code, for the
+/// number itself.
 ///
 /// DROPPED DELIBERATELY: nothing. `SPIRA_READY_CACHE` (sentinel's `export_ready_cache`,
 /// still live — it sets this for the bash child it shells into for unported dispatch
 /// logic) is kept; it is read straight from the environment because it is a per-pass
-/// signal file path, not a config key, and sentinel genuinely exports it.
+/// signal file path, not a config key, and sentinel genuinely exports it. ITS OWN COUNTS
+/// come from `ctx.fayths` (sentinel's probe script, a REAL `bash -c '. conf.sh; ...'`
+/// subshell where every label IS exported — sp-xsnid's "the sentinel's own lane count
+/// already said ops has 25" is this fast path, already correct, untouched here), so a
+/// cache hit skips [`spira_config::chamber::fayth_predicate`] entirely, on purpose.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
     if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
         return Outcome::usage(e);
@@ -907,15 +915,18 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
             }
         }
     }
-    let labels = spira_config::chamber::fayth_get(&home, &me, "FAYTH_LABELS", "");
-    let own = spira_config::chamber::fayth_get(&home, &me, "FAYTH_EXCLUDE_LABELS", "");
-    let exclude = fayth_exclude_str(env, &home, &me, &own);
+    // rc 3, NEVER 2 or an empty-string widen: see this function's own doc above.
+    let predicate = match spira_config::chamber::fayth_predicate(&home, &me) {
+        Ok(p) => p,
+        Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
+    };
+    let exclude = fayth_exclude_str(env, &home, &me, &predicate.exclude_labels);
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
     let args = ready_args_for(a, env);
-    match st.ready_count(&args, &labels, &exclude) {
+    match st.ready_count(&args, &predicate.labels, &exclude) {
         Ok(n) => Outcome::ok(n.to_string()),
         Err(e) => Outcome {
             code: 1,
@@ -938,16 +949,28 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {e}")),
     };
     let mut parts = Vec::new();
+    let mut warnings = Vec::new();
     for f in roster(&home) {
-        let inc = spira_config::chamber::fayth_get(&home, &f, "FAYTH_LABELS", "");
-        if inc.is_empty() {
+        // sp-xsnid: a fayth whose predicate would WIDEN (a bare config reference resolved
+        // empty) is skipped exactly like a declared-empty one — `bulk_ready_by_fayth`'s
+        // own `[ -n "$inc" ] || continue` already never widened on an empty label, only
+        // undercounted it, which is the safe direction — but it is LOUD here, never
+        // silent, because undercounting a real incident/spike partition is a real defect
+        // worth seeing even though it is not the dangerous one.
+        let predicate = match spira_config::chamber::fayth_predicate(&home, &f) {
+            Ok(p) => p,
+            Err(e) => {
+                warnings.push(e.to_string());
+                continue;
+            }
+        };
+        if predicate.labels.is_empty() {
             continue; // bulk_ready_by_fayth's own `[ -n "$inc" ] || continue`
         }
-        let exc = spira_config::chamber::fayth_get(&home, &f, "FAYTH_EXCLUDE_LABELS", "");
-        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&inc), exc: ready::split_csv(&exc) });
+        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&predicate.exclude_labels) });
     }
     if parts.is_empty() {
-        return Outcome::ok(String::new());
+        return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
     let raw = match std::env::var("SPIRA_READY_SNAPSHOT").ok().filter(|p| !p.is_empty()) {
         Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
@@ -963,15 +986,19 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         }
     };
     if raw.trim().is_empty() {
-        return Outcome::ok(String::new());
+        return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
     // ready-bucket.py: any parse exception is `d = []`, never a hard failure.
     let rows = rank::parse_ready(&raw).unwrap_or_default();
     let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
-    Outcome::ok(counts.into_iter().fold(String::new(), |mut s, (name, n)| {
-        s.push_str(&format!("{name} {n}\n"));
-        s
-    }))
+    Outcome {
+        code: 0,
+        out: counts.into_iter().fold(String::new(), |mut s, (name, n)| {
+            s.push_str(&format!("{name} {n}\n"));
+            s
+        }),
+        err: warnings.join("\n"),
+    }
 }
 
 /// `unpoison`'s arguments, validated, before anything is read (DESIGN.md §8.2).

@@ -104,6 +104,16 @@ struct Fixture {
 }
 
 fn build_fixture(tag: &str, with_aeon: bool) -> Fixture {
+    // bd: unconditionally one ready bead, for ANY query — the bd schema preflight inside
+    // conf.sh never reaches this stub at all (see this file's top doc); the only real
+    // consumer is spira-claim's own `ready_count`/`fayth-ready`.
+    build_fixture_with_bd(tag, with_aeon, "echo '[{\"id\":\"sp-fixture1\"}]'")
+}
+
+/// [`build_fixture`], with the `bd` stub's own script body overridable — sp-xsnid's own
+/// label-aware stub (see `fixture_bd_counts_by_label`, below) needs to answer a DIFFERENT
+/// count per `--label` query rather than one fixed bead for everything.
+fn build_fixture_with_bd(tag: &str, with_aeon: bool, bd_body: &str) -> Fixture {
     let t = testkit::TempDir::new(&format!("sp-hh599-unit-env-{tag}"));
     let root = t.join("release");
     let home = t.join("home");
@@ -116,10 +126,7 @@ fn build_fixture(tag: &str, with_aeon: bool) -> Fixture {
     std::fs::copy(build_bin("spira-config", "spira-config"), root.join("bin/spira-config")).expect("copy spira-config");
     std::fs::copy(build_bin("watchd", "watchd"), root.join("bin/watchd")).expect("copy watchd");
 
-    // bd: unconditionally one ready bead, for ANY query — the bd schema preflight inside
-    // conf.sh never reaches this stub at all (see this file's top doc); the only real
-    // consumer is spira-claim's own `ready_count`/`fayth-ready`.
-    write_script(&root.join("bin/bd"), "echo '[{\"id\":\"sp-fixture1\"}]'");
+    write_script(&root.join("bin/bd"), bd_body);
     // systemd-run: records its own argv (one line) and exits 0 — "stub the actual
     // systemd-run" (this bead's own part 3).
     let systemd_run_log = t.join("systemd-run.log");
@@ -131,6 +138,55 @@ fn build_fixture(tag: &str, with_aeon: bool) -> Fixture {
         write_script(&root.join("bin/aeon"), "exit 0");
     }
     Fixture { root, home, systemd_run_log, _dir: t }
+}
+
+/// A `bd` stub that answers a DIFFERENT, deterministic ready count depending on which
+/// substring its own `--label` argument carries — standing in for a real store whose
+/// beads are labelled so `builder`/`ops`/`spike` genuinely differ (sp-xsnid: the bug this
+/// guards is every fayth reading the SAME count, the whole queue, because every label
+/// resolved empty — a stub that answers the FIXED single-bead way `build_fixture` uses
+/// cannot tell "correct and distinct" apart from "still widened", since both would NOT be
+/// `234` for just one case; this one makes the counts distinguishable so comparing them
+/// against each fayth's own, by-hand-resolved expectation is a real assertion, not a
+/// coincidence). A query whose `--label` carries none of the three substrings — every
+/// OTHER real persona's own label, and the no-partition fayths — answers 0, same as a
+/// predicate with nothing to match.
+const FIXTURE_BD_SCRIPT: &str = r#"
+prev=""
+label=""
+for a in "$@"; do
+    if [ "$prev" = "--label" ]; then label="$a"; fi
+    prev="$a"
+done
+case "$label" in
+    *incident*) n=5 ;;
+    *spike*) n=3 ;;
+    *plan*) n=7 ;;
+    *) n=0 ;;
+esac
+i=0
+printf '['
+while [ "$i" -lt "$n" ]; do
+    [ "$i" -gt 0 ] && printf ','
+    printf '{"id":"sp-x%d"}' "$i"
+    i=$((i + 1))
+done
+printf ']\n'
+"#;
+
+/// The expected ready count [`FIXTURE_BD_SCRIPT`] answers for a persona's OWN real
+/// `FAYTH_LABELS` — the "fully resolved config" ground truth this test compares the
+/// rendered-unit-env run against: `builder` (`$SPIRA_PLAN_LABEL` = `plan`) draws 7,
+/// `ops` (`$SPIRA_INCIDENT_LABEL` = `incident`) draws 5, `spike` (`$SPIRA_SPIKE_LABEL` =
+/// `spike`) draws 3, and every other real chamber persona — none of whose own labels
+/// mention any of those three substrings — draws 0.
+fn expected_fixture_count(fayth: &str) -> u64 {
+    match fayth {
+        "builder" => 7,
+        "ops" => 5,
+        "spike" => 3,
+        _ => 0,
+    }
 }
 
 fn shell_quote(s: &str) -> String {
@@ -302,4 +358,106 @@ fn spira_landing_pass_service_already_carries_spira_home_explicitly_and_is_never
     let env = unit_env(&rendered);
     let home = env.get("SPIRA_HOME").cloned().unwrap_or_default();
     assert!(!home.is_empty(), "spira-landing-pass.service must set SPIRA_HOME explicitly — it is not part of this bead's self-resolution fix:\n{rendered}");
+}
+
+// =========================================================================================
+// sp-xsnid, part 3: the predicate itself, not just whether it resolves at all. sp-hh599
+// proved every binary GETS PAST config resolution under the rendered unit env; this
+// proves what it gets PAST IT TO is the SAME partition a fully resolved config would
+// hand back — never a predicate that silently widened to the whole ready queue because a
+// bare config reference resolved empty.
+// =========================================================================================
+
+/// Every REAL `.fayth` basename under this checkout's own chamber — never a fixture list
+/// that could drift from the real one, since the whole point is proving the real chamber's
+/// own personas behave correctly under the real rendered unit env.
+fn real_chamber_fayths() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(workspace_root().join("spira/chamber"))
+        .expect("read the real chamber")
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let p = e.path();
+            (p.extension().and_then(|x| x.to_str()) == Some("fayth"))
+                .then(|| p.file_stem().and_then(|s| s.to_str()).map(str::to_string))
+                .flatten()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+/// sp-xsnid's own repro, generalized: `spira-claim fayth-ready <fayth>` under
+/// `spira-summon.service`'s rendered environment (no `SPIRA_HOME`, no label exported —
+/// exactly `spira-sentinel-prod.service`'s own shape) must answer EXACTLY the count a
+/// fully resolved config would — [`expected_fixture_count`], computed from each real
+/// persona's OWN known label variable (`builder`→`SPIRA_PLAN_LABEL`, `ops`→
+/// `SPIRA_INCIDENT_LABEL`, `spike`→`SPIRA_SPIKE_LABEL`) against [`FIXTURE_BD_SCRIPT`]'s
+/// label-aware store — never the bug's own symptom, every persona reading the SAME,
+/// WRONG, whole-queue count.
+#[test]
+fn every_real_fayth_ready_count_matches_the_fully_resolved_config_under_the_rendered_unit_env() {
+    let fx = build_fixture_with_bd("predicate-parity", false, FIXTURE_BD_SCRIPT);
+    let mut seen_distinct_values = std::collections::HashSet::new();
+    for fayth in real_chamber_fayths() {
+        let (code, out) = run_unit(&fx, "spira-summon.service", &["spira-claim", "fayth-ready", &fayth], &[]);
+        assert_past_resolution(&format!("fayth-ready {fayth}"), &out);
+        let want = expected_fixture_count(&fayth);
+        assert_eq!(
+            (code, out.as_str()),
+            (0, want.to_string().as_str()),
+            "{fayth}: rc/count must match the fully resolved config exactly, not widen to the whole ready queue"
+        );
+        seen_distinct_values.insert(want);
+    }
+    // The bug this guards made EVERY fayth read the SAME number (the whole queue). A
+    // fixture where the expected counts are not all identical is what makes the equality
+    // assertions above actually discriminate that from "coincidentally still correct".
+    assert!(seen_distinct_values.len() > 1, "the fixture must give distinct expected counts, or a widen-to-everything bug would pass unnoticed");
+}
+
+/// [`build_fixture_with_bd`], but `spira/` is a REAL directory holding a symlink to every
+/// real top-level entry (never a single symlink to the whole tree, which would make
+/// `chamber/` itself a symlink — this checkout's own real chamber, which this test must
+/// never write into) and `chamber/` is itself a real directory of symlinks to every real
+/// `.fayth`/`.md` file PLUS one PLANTED extra, so the planted-refusal test below needs no
+/// real chamber mutation.
+fn build_fixture_with_planted_fayth(tag: &str, planted_name: &str, planted_body: &str) -> Fixture {
+    let fx = build_fixture_with_bd(tag, false, FIXTURE_BD_SCRIPT);
+    let real_spira = workspace_root().join("spira");
+    let spira_link = fx.root.join("spira");
+    std::fs::remove_file(&spira_link).expect("remove the whole-tree symlink build_fixture_with_bd made");
+    std::fs::create_dir_all(&spira_link).unwrap();
+    for entry in std::fs::read_dir(&real_spira).unwrap().filter_map(|e| e.ok()) {
+        let name = entry.file_name();
+        if name.to_str() == Some("chamber") {
+            continue;
+        }
+        std::os::unix::fs::symlink(entry.path(), spira_link.join(&name)).unwrap();
+    }
+    let chamber_link = spira_link.join("chamber");
+    std::fs::create_dir_all(&chamber_link).unwrap();
+    for entry in std::fs::read_dir(real_spira.join("chamber")).unwrap().filter_map(|e| e.ok()) {
+        std::os::unix::fs::symlink(entry.path(), chamber_link.join(entry.file_name())).unwrap();
+    }
+    std::fs::write(chamber_link.join(format!("{planted_name}.fayth")), planted_body).unwrap();
+    fx
+}
+
+/// The other half of sp-xsnid's part 3: a PLANTED fayth whose `FAYTH_LABELS` references a
+/// config variable that has no `conf.d` default AT ALL (so "fully resolved config" still
+/// leaves it unresolved — a genuine config gap, not this bead's own narrow-overlay bug)
+/// must REFUSE under the rendered unit env, never answer a count at all — rc 3, the one
+/// `sentinel::summon::fayth_ready` maps to a LOUD `CLAIM-ERROR`, never rc 2 ("no fayth")
+/// and never a silent widen.
+#[test]
+fn a_planted_unresolvable_predicate_refuses_under_the_rendered_unit_env() {
+    let fx = build_fixture_with_planted_fayth(
+        "planted-refusal",
+        "spxsnidplanted",
+        "FAYTH_NAME=spxsnidplanted\nFAYTH_LABELS=\"$SPIRA_SPXSNID_PLANTED_LABEL\"\nFAYTH_EXCLUDE_LABELS=\"spira-poison\"\n",
+    );
+    let (code, out) = run_unit(&fx, "spira-summon.service", &["spira-claim", "fayth-ready", "spxsnidplanted"], &[]);
+    assert_eq!(code, 3, "a planted unresolvable reference must refuse (rc 3), not widen or read as no-fayth:\n{out}");
+    assert!(out.contains("SPIRA_SPXSNID_PLANTED_LABEL"), "the refusal must name the exact unresolved reference:\n{out}");
+    assert!(!out.contains("no fayth in the chamber"), "{out}");
 }

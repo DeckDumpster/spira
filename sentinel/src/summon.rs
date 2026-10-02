@@ -404,21 +404,31 @@ impl<'a> Sentinel<'a> {
     /// into (sp-yh7yx).
     ///
     /// A fayth with no `FAYTH_LABELS` is skipped, same as the bash guard
-    /// (`[ -n "${FAYTH_LABELS:-}" ] || exit 1`) — never counted as ready.
+    /// (`[ -n "${FAYTH_LABELS:-}" ] || exit 1`) — never counted as ready. sp-xsnid: a
+    /// fayth whose predicate would WIDEN (a bare config reference resolved empty) is
+    /// skipped the SAME way — never counted as ready — but LOUDLY: this is the same
+    /// shared, fail-closed evaluator `spira-claim`'s own `fayth-ready`/`bulk-ready-by-
+    /// fayth` now go through, so this read-only express-lane check can never disagree
+    /// with the pool's own.
     fn express_ready_in_task_pool(&self, task_fayths: &[String], express_label: &str) -> bool {
         let home = &self.cfg.home;
         let bin = self.cfg.claim_bin.clone();
         for f in task_fayths {
-            let labels = spira_config::chamber::fayth_get(home, f, "FAYTH_LABELS", "");
-            if labels.is_empty() {
+            let predicate = match spira_config::chamber::fayth_predicate(home, f) {
+                Ok(p) => p,
+                Err(e) => {
+                    self.h.log_err(&format!("CLAIM-ERROR: {e}"));
+                    continue;
+                }
+            };
+            if predicate.labels.is_empty() {
                 continue;
             }
-            let own = spira_config::chamber::fayth_get(home, f, "FAYTH_EXCLUDE_LABELS", "");
             let ex = self
                 .h
-                .run(Spec::args_owned(bin.clone(), vec!["fayth-exclude".into(), f.clone(), own]));
+                .run(Spec::args_owned(bin.clone(), vec!["fayth-exclude".into(), f.clone(), predicate.exclude_labels]));
             let exclude = ex.stdout.trim().to_string();
-            let combined = format!("{labels},{express_label}");
+            let combined = format!("{},{express_label}", predicate.labels);
             let rc = self
                 .h
                 .run(Spec::args_owned(bin.clone(), vec!["ready-count".into(), combined, exclude]));

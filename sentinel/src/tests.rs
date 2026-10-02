@@ -1050,6 +1050,56 @@ fn no_express_ready_stays_throttled() {
     assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "nothing should launch while held at 0");
 }
 
+/// sp-xsnid: `builder`'s own `FAYTH_LABELS` references `$SPIRA_PLAN_LABEL` bare (no
+/// `${VAR:+...}` guard) — exactly `builder.fayth`'s own real shape — and nothing in this
+/// fixture resolves it (no `spira.toml`, no `conf.d` registry under `w.home`), so
+/// `fayth_predicate` refuses rather than handing back an empty label
+/// `express_ready_in_task_pool` would otherwise compose into `",express"` and query as
+/// "anything carrying the express label" — the whole queue's worth of express-tagged
+/// work, not builder's own partition. The refusal must be LOUD (CLAIM-ERROR, stderr) and
+/// must never reach `ready-count` for builder at all.
+#[test]
+fn express_ready_in_task_pool_a_claim_error_is_loud_and_never_widens() {
+    let (w, r, sink, clock) = setup("express-claim-error");
+    std::fs::create_dir_all(w.home.join("chamber")).unwrap();
+    std::fs::write(w.home.join("chamber/builder.fayth"), "FAYTH_LABELS=\"$SPIRA_PLAN_LABEL\"\nFAYTH_MAX_CONCURRENT=4\n").unwrap();
+    let bin = w.dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    exe(&bin.join("aeon"));
+    std::fs::write(w.run.join("queue-throttled"), "since=2026-10-01T00:00:00Z depth=20 since_land=60m\n").unwrap();
+    r.on(|s| {
+        if s.prog != "spira-claim" {
+            return None;
+        }
+        match s.args.first().map(String::as_str).unwrap_or("") {
+            "fayth-exclude" => ok(""),
+            "fayth-ready" => ok("0"),
+            "ready-count" => {
+                assert!(
+                    !s.args.get(1).is_some_and(|a| a.contains('$')),
+                    "a refused predicate must never reach ready-count with an unresolved reference: {:?}",
+                    s.args
+                );
+                ok("0")
+            }
+            _ => None,
+        }
+    });
+    r.on(|s| if s.prog == "systemd-run" { ok("") } else { None });
+
+    let path = format!("{}:/usr/bin:/bin", bin.display());
+    let extra: Vec<(&str, &str)> = vec![("PATH", &path)];
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonPass, &extra, None), 0);
+    assert!(
+        sink.0.borrow().iter().any(|l| l.starts_with("[stderr]") && l.contains("CLAIM-ERROR")),
+        "a claim-error must go out LOUDLY, on stderr: {}",
+        sink.text()
+    );
+    assert!(sink.has("SPIRA_PLAN_LABEL"), "{}", sink.text());
+    assert!(!sink.has("ACT summoned"), "a refused predicate must never summon: {}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "systemd-run"), 0, "a refused predicate must never widen into a summon");
+}
+
 #[test]
 fn express_ready_but_world_halted_does_not_summon() {
     let (w, r, sink, clock) = setup("express-halted");
