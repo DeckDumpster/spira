@@ -93,7 +93,7 @@ cited_on_base() {
         export SPIRA_RUN SPIRA_BDJSON_FIXTURE
         # shellcheck disable=SC1090
         . "$TMP/lib.sh"
-        bead_cited_commit_on_base "$_id" "$REPO" "$BASE"
+        landing-pass cited-commit "$_id" "$REPO" "$BASE"
     ) 2>/dev/null
 }
 

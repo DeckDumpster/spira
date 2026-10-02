@@ -126,16 +126,13 @@ fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }
 echo
 echo "the positive control — the fixture still has the shape that broke the reader:"
 # ======================================================================================
-# THE WRITER ITSELF, not a copy of what it emits. If lib.sh renames or reshapes
-# `land_mark`, the extraction below finds nothing and this control fails — which is the
-# report that is wanted, because every assertion after it would then be about a format no
-# program writes any more.
+# THE WRITER ITSELF, not a copy of what it emits: `landing-pass mark`.
 fresh
 LANDSTATE="$TMP/run/landstate"
-eval "$(sed -n '/^land_mark() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
-[ "$(type -t land_mark 2>/dev/null)" = function ] \
-    && ok "lib.sh's land_mark could be lifted out and run" \
-    || bad "lib.sh's land_mark could be lifted out and run" "no such function — the record format has moved"
+land_mark() { landing-pass mark "$@"; }
+[ -n "$(command -v landing-pass)" ] \
+    && ok "landing-pass is the writer under test" \
+    || bad "landing-pass is the writer under test" "not on PATH"
 # Same lift for write_lapse_record (gap G8) — used by the whole-snapshot render below,
 # which is also where D12's two "every section present" loops merge into one.
 eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
@@ -182,7 +179,7 @@ echo
 echo "the landing field reads a real LANDED record:"
 # ======================================================================================
 fresh
-land_mark sp-land LANDED cafe1 spira
+landing-pass mark sp-land LANDED cafe1 spira
 touch -d "@$(( NOW - 600 ))" "$LANDSTATE/sp-land" 2>/dev/null
 # 10 minutes ago, written through the real writer with a real timestamp: land_mark stamps
 # `date +%s` itself, so the age asserted here is the age the program computes, not one the
@@ -199,8 +196,8 @@ echo "a directory holding only RED records still renders ?, never 0:"
 # THE WHOLE POINT OF THE FIELD. "Nothing has landed" and "nothing landed in the last zero
 # minutes" are opposite facts, and the second is the reassuring one.
 fresh
-land_mark sp-red1 RED cafe2 gate
-land_mark sp-red2 RED cafe3 no-rebase
+landing-pass mark sp-red1 RED cafe2 gate
+landing-pass mark sp-red2 RED cafe3 no-rebase
 line="$(field "$(wt)" 'minutes since the last landing')"
 want   "only RED renders ?" "?" "$line"
 want   "and says so in words" "none recorded" "$line"
@@ -216,7 +213,7 @@ echo "an empty or malformed record is rejected without corrupting the running ma
 # directory is a set, so this plants enough offenders that find must hand at least one of
 # them over after the good record whatever order it walks in.
 fresh
-land_mark sp-good LANDED cafe4 spira
+landing-pass mark sp-good LANDED cafe4 spira
 : > "$LANDSTATE/sp-empty"
 printf 'garbage' > "$LANDSTATE/sp-junk"
 printf 'LANDED\n'  > "$LANDSTATE/sp-short"      # a state and nothing else
@@ -385,7 +382,7 @@ echo "the snapshot still renders as a whole:"
 # this one snapshot exercises every section — D12: this used to be two near-identical loops,
 # here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed aeons'.
 fresh
-land_mark sp-whole LANDED cafe5 spira
+landing-pass mark sp-whole LANDED cafe5 spira
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
 fi
