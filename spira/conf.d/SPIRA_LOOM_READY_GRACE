@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=loom
 DOC=A freshly started Loom answers its first request slowly (a cold `bd` query), so
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

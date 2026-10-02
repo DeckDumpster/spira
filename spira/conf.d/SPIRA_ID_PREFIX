@@ -1,6 +1,7 @@
 TYPE=string
 GROUP=id
 DOC=THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
+SCHEMA=REQUIRED whenever `[spira]` sets anything: the prefix of this installation's own bead ids, without the hyphen (`sp` for `sp-k6m1m`). Nothing derives it — it used to be cut from the retired `goal` key (sp-k6m1m). `spira-config validate` (doctor, pre-activate) refuses a `[spira]` table without it ([`require_id_prefix`]).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE ID PREFIX OF THIS INSTALLATION'S OWN BEADS, without the hyphen. It is what a health
     # assertion looks for to prove a watcher is reading THIS database and not one that was

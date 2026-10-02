@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=verdict
 DOC=HOW MANY COMMITS BACK aeon.sh AND sentinel CHECK5 WALK when asking "is there a commit
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=queue
 DOC=SPIRA_QUEUE_THROTTLE_STALL_MINS: if nothing has landed in this many minutes, the queue
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

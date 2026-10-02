@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=census
 DOC=SPIRA_CENSUS_CLOCK_SKEW_TOLERANCE_S — census.sh compares the substrate's own NOW() to
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

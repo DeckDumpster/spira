@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=claim
 DOC=SPIRA_CLAIM_RETRY_DELAY_S (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

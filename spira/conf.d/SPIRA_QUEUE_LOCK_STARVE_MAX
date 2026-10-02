@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=queue
 DOC=HOW MANY CONSECUTIVE TIMER TICKS may be skipped (lock held longer than LOCK_WAIT)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

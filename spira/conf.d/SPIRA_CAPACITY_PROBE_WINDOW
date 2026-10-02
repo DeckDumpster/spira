@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=capacity
 DOC=PROBE_WINDOW: horizon threshold beyond which probing makes sense, in seconds.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

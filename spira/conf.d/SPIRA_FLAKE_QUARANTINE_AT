@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=flake
 DOC=FLAKE-REPORT THRESHOLD. suites.sh observe-flake files a bead once a suite has
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

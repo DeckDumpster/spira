@@ -1,4 +1,4 @@
-TYPE=list
+TYPE=string
 GROUP=workflow
 DOC=WORKFLOW-RUN FENCE — scripts that only a workflow executes. A branch that changes
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

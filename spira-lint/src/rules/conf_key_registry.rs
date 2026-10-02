@@ -47,56 +47,25 @@ fn conf_keys_via_registry(root: &std::path::Path) -> Option<Vec<String>> {
 }
 
 /// Keys the schema types as something other than a bare string: (value written into the
-/// synthetic spira.conf, value `export --sh` must give back). Any other key is a string
-/// field, and the key's own name is written and must come back byte-for-byte.
+/// synthetic spira.conf, value `export --sh` must give back), read off the registry's TYPE.
+/// Any other key is a string field, and the key's own name is written and must come back
+/// byte-for-byte.
 pub fn typed_cases() -> BTreeMap<&'static str, (&'static str, &'static str)> {
-    let mut m = BTreeMap::new();
-    for k in [
-        "SPIRA_NOTIFY_AGE",
-        "SPIRA_VERDICT_TTL",
-        "SPIRA_MAX_AEONS",
-        "SPIRA_MAX_LIVE_AEONS",
-        "SPIRA_STACK_MAX_DEPTH",
-        "SPIRA_BATCH_MAXPAR",
-        "SPIRA_CERTIFY_PAR",
-        "SPIRA_COMPILE_PAR",
-        "SPIRA_TEST_PAR",
-        "SPIRA_QUEUE_BATCH_MAX",
-        "SPIRA_QUEUE_THROTTLE_RELEASE_AT",
-        "COCKPIT_BOTTOM_PCT",
-        "COCKPIT_RIGHT_PCT",
-        "SPIRA_BATCH_MEM_PER_SUITE_MIB",
-        "SPIRA_LANES_MAX_LIVE",
-        "SPIRA_THRASH_MINUTES",
-        "SPIRA_HOOK_LINES",
-    ] {
-        m.insert(k, ("7", "7"));
-    }
-    for k in [
-        "SPIRA_QUEUE_BATCH_WAIT",
-        "SPIRA_QUEUE_CI_MAXSEC",
-        "SPIRA_SUITES_BUDGET",
-        "SPIRA_LOOM_BUDGET_MS",
-        "SPIRA_MAIL_SETTLE",
-        "SPIRA_QUEUE_TRANSITION_POLLSEC",
-        "SPIRA_QUEUE_TRANSITION_MAXSEC",
-        "SPIRA_LOCAL_BACKLOG_COUNT",
-        "SPIRA_LOCAL_BACKLOG_AGE",
-        "SPIRA_SUMMON_LOCK_WAIT",
-        "SPIRA_SUMMON_JITTER",
-        "SPIRA_CONCIERGE_INBOX_DEDUP",
-        "SPIRA_CONCIERGE_INBOX_STALL",
-        "SPIRA_CONCIERGE_INBOX_BACKOFF",
-    ] {
-        m.insert(k, ("700", "700"));
-    }
-    for k in ["SPIRA_CERT_IDLE_SKIP", "SPIRA_QUEUE_LOCAL_GATE", "SPIRA_QUEUE_BATCH_IDLE_CUT", "SPIRA_LIFECYCLE_ENFORCE", "SPIRA_MAIL_MUTE"] {
-        m.insert(k, ("1", "true"));
-    }
-    m.insert("SPIRA_CERTIFY_SUITES", ("on", "on"));
-    m.insert("SPIRA_CZAR_STAGE_DEADLOCK", ("shadow", "shadow"));
-    m.insert("SPIRA_FAYTHS", ("alpha beta", "alpha beta"));
-    m
+    spira_config::SPIRA_KEYS
+        .iter()
+        .filter_map(|k| {
+            let case = match k.ty {
+                "u32" => ("7", "7"),
+                "u64" => ("700", "700"),
+                "bool" => ("1", "true"),
+                "onoff" => ("on", "on"),
+                "czar_stage" => ("shadow", "shadow"),
+                "list" => ("alpha beta", "alpha beta"),
+                _ => return None,
+            };
+            Some((k.key, case))
+        })
+        .collect()
 }
 
 /// conf.sh's own renaming of an `export --sh` line (`spira_toml_read`): the `SPIRA_` prefix

@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=gh
 DOC=WHAT AN INGESTED ISSUE IS WORTH. A report from outside names something broken for
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

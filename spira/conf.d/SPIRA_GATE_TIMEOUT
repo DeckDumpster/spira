@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=gate
 DOC=HOW LONG A REPOSITORY'S OWN GATE COMMAND MAY RUN, in seconds. gate.sh wraps the command
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

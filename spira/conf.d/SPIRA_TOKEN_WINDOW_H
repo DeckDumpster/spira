@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=token
 DOC=The rate limit is charged against a rolling window, and every figure the token meter
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

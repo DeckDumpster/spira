@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u32
 GROUP=lanes
 DOC=THE COLLECTIVE LANE CAP — how many fleet slots lanes may hold at once.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

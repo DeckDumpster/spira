@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=health
 DOC=HOW LONG A HEALTH COMMAND MAY RUN, in seconds. A probe is an operator-supplied command
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

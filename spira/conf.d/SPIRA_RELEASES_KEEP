@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=releases
 DOC=HOW MANY RELEASES TO KEEP. Old releases beyond this count are pruned after each
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

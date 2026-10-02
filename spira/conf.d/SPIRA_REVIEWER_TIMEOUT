@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=reviewer
 DOC=HOW LONG ONE REVIEW MAY RUN, in seconds. A review that exceeds this exits 2 (error);
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

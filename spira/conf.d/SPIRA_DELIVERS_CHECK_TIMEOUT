@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=delivers
 DOC=DELIVERS:CHECK TIMEOUT: seconds allowed for one delivers:check:<command> to run in
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

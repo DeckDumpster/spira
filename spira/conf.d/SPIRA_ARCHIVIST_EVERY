@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=archivist
 DOC=HOW MANY TURNS BETWEEN SWEEPS. The timer fires every five minutes; on each pass, a
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -19,14 +19,14 @@
 # key add two different files, which git can only merge cleanly, and the allowlist IS the
 # directory listing, so it cannot omit a key that has a file.
 #
-# WHAT THIS DOES NOT COVER. spira-config's own Rust struct, its KEY=>field mapping, and the
-# JSON schema are NOT generated from this registry — that migration is sp-t23mg's, decided
-# separately (ask sp-u9ngz) so the two efforts don't rebase-loop against each other. This
-# script's output is consumed only by spira/conf.sh.
+# SPIRA-CONFIG READS THE SAME FILES. Its build script generates SpiraSection, the KEY=>field
+# mapping and the key history from conf.d (plus spira/conf.toml.d, keys only the typed
+# config carries, which this script never lists). TYPE, MAX and SCHEMA below are read by it, not here.
 #
-# WHAT A conf.d/<KEY> FILE LOOKS LIKE — four fields, in this order:
-#   TYPE=string|u32|u64|bool|list       (documentary only today; spira-config's own types are
-#                                        unaffected until sp-t23mg lands)
+# WHAT A conf.d/<KEY> FILE LOOKS LIKE — these fields, in this order:
+#   TYPE=string|u32|u64|bool|list|onoff|czar_stage   the type of the spira-config field
+#   MAX=<n>                             optional: schema ceiling for a numeric field (spira-config)
+#   SCHEMA=<text>                       optional: the field's schema description (spira-config)
 #   GROUP=<lowercase word>              for humans browsing the directory; not consumed here
 #   DOC=<one line>                      not consumed here; for humans and future tooling
 #   DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
@@ -101,6 +101,7 @@ parse_one() {
             TYPE=*)  TYPE[$key]="${line#TYPE=}" ;;
             GROUP=*) GROUP[$key]="${line#GROUP=}" ;;
             DOC=*)   DOC[$key]="${line#DOC=}" ;;
+            MAX=*|SCHEMA=*) ;;
             "DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'") in_default=1 ;;
             "") ;;
             *) echo "conf-gen.sh: $file: unrecognised line, ignoring: $line" >&2 ;;

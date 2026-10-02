@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=capacity
 DOC=PROBE_TIMEOUT: seconds allowed for one probe request. A probe that times out is
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

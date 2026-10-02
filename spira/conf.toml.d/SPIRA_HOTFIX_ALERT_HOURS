@@ -1,0 +1,4 @@
+TYPE=u32
+GROUP=toml
+DOC=spira.toml-only key: no spira.conf spelling, not in conf.sh allowlist.
+SCHEMA=Hours a standing hotfix (`release activate --hotfix`) may run before `release status` emits its ALERT line — doctor, the ops pane and watchtower all key off that line rather than re-deriving the age themselves (sp-6p20x). Default 4 when unset.

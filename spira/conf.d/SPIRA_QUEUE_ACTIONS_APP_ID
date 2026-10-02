@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=queue
 DOC=THE GITHUB ACTIONS APP ID used in the required-status-checks rule set by queue.sh
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

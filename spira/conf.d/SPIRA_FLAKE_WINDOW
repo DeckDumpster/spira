@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=flake
 DOC=SPIRA_FLAKE_WINDOW (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=operated
 DOC=Whether an operator is present. 1 (default) means the cockpit is staffed; doctor.sh
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

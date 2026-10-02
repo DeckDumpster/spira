@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=u64
 GROUP=queue
 DOC=HOW LONG A CI RUN MAY RUN before it is a candidate for the stuck check.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

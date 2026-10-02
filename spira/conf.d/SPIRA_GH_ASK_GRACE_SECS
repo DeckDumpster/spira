@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=gh
 DOC=How long a closed bead with an open GitHub issue and no landing evidence gets before
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

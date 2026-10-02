@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=quarantine
 DOC=HOW MANY CONSECUTIVE CLEAN HOURLY RUNS lift a hand-placed quarantine, and how
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

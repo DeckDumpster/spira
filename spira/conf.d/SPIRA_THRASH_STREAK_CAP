@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=thrash
 DOC=HOW MANY CONSECUTIVE thrash requeues at an UNCHANGED branch tip a bead tolerates
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

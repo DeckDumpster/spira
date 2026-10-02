@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=list
 GROUP=fayths
 DOC=SPIRA_FAYTHS — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

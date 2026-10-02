@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=testenv
 DOC=HOW MANY testenv containers may run at once, host-wide, across every caller
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

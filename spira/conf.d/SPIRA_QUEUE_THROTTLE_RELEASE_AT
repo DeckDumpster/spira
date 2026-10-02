@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u32
 GROUP=queue
 DOC=SPIRA_QUEUE_THROTTLE_RELEASE_AT: lift when depth drops to this. Hysteresis gap prevents
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

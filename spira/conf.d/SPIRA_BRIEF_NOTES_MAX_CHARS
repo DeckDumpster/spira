@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=brief
 DOC=THE HARD CEILING ON A BEAD'S NOTES TEXT IN A BRIEF, in characters, applied after the
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

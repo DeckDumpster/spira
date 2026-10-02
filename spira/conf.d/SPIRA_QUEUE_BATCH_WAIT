@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=u64
 GROUP=queue
 DOC=HOW LONG WITH NOTHING NEW CERTIFIED before the batcher cuts an under-full round
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

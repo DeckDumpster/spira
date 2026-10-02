@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=loom
 DOC=How long a parsed snapshot is held, in seconds. This bounds the cost by TIME rather
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

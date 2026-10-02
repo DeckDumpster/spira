@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=quarantine
 DOC=SPIRA_QUARANTINE_MAX_AGE (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

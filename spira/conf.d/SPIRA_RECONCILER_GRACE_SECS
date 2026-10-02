@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=reconciler
 DOC=GRACE PERIOD: minutes a structural invariant may sit unsatisfied before the
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

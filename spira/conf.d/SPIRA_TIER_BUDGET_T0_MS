@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=tier
 DOC=PER-TIER WALL-TIME BUDGETS, in milliseconds (law-unit-tests-run-under-a-second; test
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
