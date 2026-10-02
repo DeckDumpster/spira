@@ -1322,6 +1322,21 @@ pub fn try_lock(env: &Env, repo: &str) -> Result<Option<Lock>, String> {
     }
 }
 
+/// Like `try_lock` but polls for up to `wait_secs`, for the hand path: a routine sweep's
+/// few-second hold must not make a single invocation silently do nothing.
+pub fn wait_lock(env: &Env, repo: &str, wait_secs: u64) -> Result<Option<Lock>, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait_secs);
+    loop {
+        if let Some(l) = try_lock(env, repo)? {
+            return Ok(Some(l));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+}
+
 #[cfg(test)]
 mod land_tests {
     use super::*;
@@ -1728,6 +1743,25 @@ mod land_exit_tests {
         assert_eq!(classify_land_exit(Some(2)), LandOutcome::Refused);
         assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
         assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
+    }
+}
+
+#[cfg(test)]
+mod wait_lock_tests {
+    use super::*;
+
+    #[test]
+    fn waits_out_a_short_hold_and_gives_up_on_a_long_one() {
+        let d = testkit::TempDir::new("batcher-cut-wl");
+        let e = super::lifecycle_tests_env(&d);
+        let held = try_lock(&e, "r").unwrap().unwrap();
+        assert!(wait_lock(&e, "r", 0).unwrap().is_none(), "a held lock with no wait must report busy");
+        let t = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            drop(held);
+        });
+        assert!(wait_lock(&e, "r", 10).unwrap().is_some(), "must acquire once the holder releases");
+        t.join().unwrap();
     }
 }
 

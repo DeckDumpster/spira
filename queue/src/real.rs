@@ -568,7 +568,7 @@ impl Scripts for RealScripts {
     }
     fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
         let mut c = Command::new(bin);
-        c.arg("cut").arg(repo);
+        c.arg("cut").arg(repo).arg("--home").arg(&self.home);
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
@@ -1070,6 +1070,19 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         let seen = fs::read_to_string(&rec).unwrap();
         let lines: Vec<&str> = seen.lines().collect();
         assert_eq!(lines, ["batcher spira 0", "batcher svc 1"]);
+    }
+
+    #[test]
+    fn batcher_cut_passes_home_explicitly() {
+        let _serial = crate::testutil::serial();
+        let d = crate::testutil::tmpdir("cut-home");
+        let rec = d.join("seen");
+        let bin = d.join("batcher");
+        testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", rec.display()));
+        let home = d.join("h");
+        let s = RealScripts { home: home.clone() };
+        s.batcher_cut(&bin, "spira", false, false);
+        assert_eq!(fs::read_to_string(&rec).unwrap().trim(), format!("cut spira --home {}", home.display()));
     }
 
     #[test]
