@@ -60,6 +60,7 @@ fn tmp_exe(content: &str) -> Tmp {
 }
 
 fn run(args: &[&str], stdin: &str) -> Outcome {
+    let _env = testkit::env_read();
     let a: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     dispatch(&a, &mut stdin.as_bytes())
 }
@@ -457,20 +458,16 @@ fn b_stacked_on_a() -> String {
 
 #[test]
 fn cli_stack_reports_the_certified_prerequisites_tip() {
-    // Holds the crate-wide ENV_LOCK (sp-obhv6 added it; this test set SPIRA_BD with no
-    // isolation before then) — `cmd_stack` reads `$SPIRA_BD` same as every other store
-    // caller, so this races against any other test that also sets it.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
-    let saved = save_env(&["SPIRA_BD"]);
-    std::env::set_var("SPIRA_BD", &*bd);
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+    ]);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"0","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
     let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
-    restore_env(saved);
     assert_eq!(o.code, 0, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], true);
@@ -480,17 +477,16 @@ fn cli_stack_reports_the_certified_prerequisites_tip() {
 
 #[test]
 fn cli_stack_past_the_ceiling_is_refused_but_still_names_the_attempted_depth() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bd = tmp_exe(&format!("#!/bin/sh\necho '{}'\n", b_stacked_on_a()));
-    let saved = save_env(&["SPIRA_BD"]);
-    std::env::set_var("SPIRA_BD", &*bd);
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+    ]);
     let lc = tmp(&serde_json::json!([
         {"bead_id":"B","state":"READY","holds":"[]"},
         {"bead_id":"A","state":"CERTIFIED","holds":"[]","stack_depth":"4","tip":"abc123"},
     ]).to_string());
     let recs = tmp(&serde_json::json!([{"id":"A","status":"open","issue_type":"task","labels":["repo:spira"]}]).to_string());
     let o = run(&["stack", "B", "--lifecycle", &lc, "--blocker-records", &recs], "");
-    restore_env(saved);
     assert_eq!(o.code, 3, "{}", o.err);
     let v: serde_json::Value = serde_json::from_str(&o.out).unwrap();
     assert_eq!(v["claimable"], false);
@@ -611,23 +607,8 @@ fn lifecycle_enforce_resolution_matches_aeon() {
 // `fayth-ready`/`fayth-exclude`/`bulk-ready-by-fayth`/`claim-retry` read real process
 // environment (`SPIRA_HOME`, `SPIRA_BD`, `SPIRA_TOML`, ...) — unlike the rest of this
 // file's tests, which thread every input through a file or a hand-built `Store`. These
-// serialize against each other (and against any other env-mutating test in this crate)
-// through one crate-wide lock, same shape as spira-config's own `ENV_LOCK`.
-
-static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-fn save_env(keys: &[&str]) -> Vec<(String, Option<String>)> {
-    keys.iter().map(|k| (k.to_string(), std::env::var(k).ok())).collect()
-}
-
-fn restore_env(saved: Vec<(String, Option<String>)>) {
-    for (k, v) in saved {
-        match v {
-            Some(val) => std::env::set_var(&k, val),
-            None => std::env::remove_var(&k),
-        }
-    }
-}
+// edit the environment only through `testkit::env`, which serializes them against every
+// other test in this binary and restores on drop; `run` takes the same lock to read.
 
 fn sh(body: &str) -> Tmp {
     tmp_exe(&format!("#!/bin/sh\n{body}\n"))
@@ -655,73 +636,68 @@ fn ready_args_cli_prints_one_token_a_line_in_order() {
 
 #[test]
 fn ready_count_cli_failed_query_prints_zero_and_fails_closed() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bd = sh("echo 'dolt: connection refused' >&2; exit 1");
-    let saved = save_env(&["SPIRA_BD", "SPIRA_DB"]);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+    ]);
     let o = run(&["ready-count", "plan", "spira-poison", "--noloop-label", "no-loop"], ""); // literal-ok: fixture value
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "a failed query is not a clean zero (sp-3ntca)");
     assert!(o.err.contains("connection refused"), "{}", o.err);
 }
 
 #[test]
 fn ready_count_cli_real_count() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bd = sh("echo '[1,2,3]'");
-    let saved = save_env(&["SPIRA_BD", "SPIRA_DB"]);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+    ]);
     let o = run(&["ready-count", "plan", ""], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "3", ""));
 }
 
 #[test]
 fn claim_retry_cli_succeeds_first_try_with_no_argv_parsing() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let bd = sh("echo '[{\"id\":\"sp-a\"}]'");
-    let saved = save_env(&["SPIRA_BD", "SPIRA_DB", "SPIRA_TOML"]);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_TOML");
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_TOML", None),
+    ]);
     // "--label" and "--claim" here are BD's flags, not spira-claim's — dispatch must pass
     // them through untouched rather than parsing them as its own.
     let o = run(&["claim-retry", "ready", "--limit", "0", "--claim", "--label", "plan"], "");
-    restore_env(saved);
     assert_eq!(o.code, 0);
     assert!(o.out.contains("sp-a"), "{}", o.out);
 }
 
 #[test]
 fn claim_retry_cli_retries_past_a_transient_failure() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let log = tmp("");
     let toml = tmp("[spira]\nclaim_retries = \"3\"\nclaim_retry_delay_s = \"0\"\n");
     let bd = sh(&format!(
         "n=$(wc -l < {log}); printf 'x\\n' >> {log}; if [ \"$n\" -lt 1 ]; then echo boom >&2; exit 1; fi; echo '[]'"
     ));
-    let saved = save_env(&["SPIRA_BD", "SPIRA_DB", "SPIRA_TOML"]);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::set_var("SPIRA_TOML", &*toml);
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_TOML", Some(toml.as_str())),
+    ]);
     let o = run(&["claim-retry", "ready", "--limit", "0"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, "[]\n"), "the contention case: the second attempt finds the real (empty) result");
 }
 
 #[test]
 fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let toml = tmp("[spira]\nclaim_retries = \"2\"\nclaim_retry_delay_s = \"0\"\n");
     let bd = sh("echo 'dolt: connection refused' >&2; exit 1");
-    let saved = save_env(&["SPIRA_BD", "SPIRA_DB", "SPIRA_TOML"]);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::set_var("SPIRA_TOML", &*toml);
+    let _env = testkit::env(&[
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_TOML", Some(toml.as_str())),
+    ]);
     let o = run(&["claim-retry", "ready"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (1, ""));
     assert!(o.err.contains("query failed after 2 attempt(s)"), "{}", o.err);
     assert!(o.err.contains("connection refused"), "{}", o.err);
@@ -729,20 +705,18 @@ fn claim_retry_cli_exhausts_and_reports_one_stderr_line_with_empty_stdout() {
 
 #[test]
 fn fayth_exclude_cli_own_then_shared_then_every_other_fayth() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_FAYTHS", "SPIRA_TOML", "SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::remove_var("SPIRA_FAYTHS");
-    std::env::remove_var("SPIRA_TOML");
-    // These three are what conf.sh's own derivation would hold by the time the bash shim
-    // threads them through (lib.sh's `_spira_claim`) — set explicitly here because a bare
-    // `cargo test` process has no conf.sh behind it at all.
-    std::env::set_var("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting");
-    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
-    std::env::set_var("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_FAYTHS", None),
+        ("SPIRA_TOML", None),
+        // What conf.sh's derivation would hold by the time the bash shim threads them
+        // through — a bare `cargo test` process has no conf.sh behind it.
+        ("SPIRA_QUEUE_WAIT_LABEL", Some("spira-queue-waiting")),
+        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
+        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
+    ]);
     let o = run(&["fayth-exclude", "builder", "qa-proposed"], "");
-    restore_env(saved);
     assert_eq!(o.out, "qa-proposed,spira-queue-waiting,spira-submitted,spira-open-children,fayth:ops");
     assert_eq!(o.code, 0);
 }
@@ -754,20 +728,18 @@ fn fayth_exclude_cli_defaults_to_empty_when_nothing_is_configured() {
     // themselves — only conf.sh's derivation does, and a suite that sources lib.sh alone
     // (most of them) never runs conf.sh at all. A hardcoded conf.d default here would
     // silently add exclusions no bash caller ever asked for.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("builder", "spira,plan", "")]);
-    let keys = [
-        "SPIRA_HOME", "SPIRA_FAYTHS", "SPIRA_TOML", "SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL",
-        "SPIRA_NO_LOOP_LABEL",
-    ];
-    let saved = save_env(&keys);
-    std::env::set_var("SPIRA_HOME", &*home);
-    for k in &keys[1..] {
-        std::env::remove_var(k);
-    }
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_FAYTHS", None),
+        ("SPIRA_TOML", None),
+        ("SPIRA_QUEUE_WAIT_LABEL", None),
+        ("SPIRA_SUBMITTED_LABEL", None),
+        ("SPIRA_OPEN_CHILDREN_LABEL", None),
+        ("SPIRA_NO_LOOP_LABEL", None),
+    ]);
     let o = run(&["fayth-exclude", "builder", ""], "");
     let args = run(&["ready-args", "--raw"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, ""));
     assert_eq!(args.out, "ready\n--limit\n0\n--exclude-type\nepic,event\n-u\n", "no --exclude-label when SPIRA_NO_LOOP_LABEL is unset");
 }
@@ -778,54 +750,51 @@ fn shared_exclude_cli_the_three_labels_ready_shared_exclude_carried() {
     // `fayth_exclude` — this verb exists only for that caller. The three env vars below
     // are what conf.sh's derivation would hold by the time the bash shim threads them
     // through; a bare `cargo test` process has no conf.sh behind it at all.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let saved = save_env(&["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL"]);
-    std::env::set_var("SPIRA_QUEUE_WAIT_LABEL", "spira-queue-waiting");
-    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
-    std::env::set_var("SPIRA_OPEN_CHILDREN_LABEL", "spira-open-children");
+    let _env = testkit::env(&[
+        ("SPIRA_QUEUE_WAIT_LABEL", Some("spira-queue-waiting")),
+        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
+        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
+    ]);
     let o = run(&["shared-exclude"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, "spira-queue-waiting,spira-submitted,spira-open-children"));
 }
 
 #[test]
 fn shared_exclude_cli_defaults_to_empty_when_unset() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let saved = save_env(&["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL", "SPIRA_TOML"]);
-    for k in ["SPIRA_QUEUE_WAIT_LABEL", "SPIRA_SUBMITTED_LABEL", "SPIRA_OPEN_CHILDREN_LABEL", "SPIRA_TOML"] {
-        std::env::remove_var(k);
-    }
+    let _env = testkit::env(&[
+        ("SPIRA_QUEUE_WAIT_LABEL", None),
+        ("SPIRA_SUBMITTED_LABEL", None),
+        ("SPIRA_OPEN_CHILDREN_LABEL", None),
+        ("SPIRA_TOML", None),
+    ]);
     let o = run(&["shared-exclude"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, ""));
 }
 
 #[test]
 fn fayth_ready_cli_no_fayth_file_is_rc2_stdout_zero() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[]);
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_READY_CACHE"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::remove_var("SPIRA_READY_CACHE");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_READY_CACHE", None),
+    ]);
     let o = run(&["fayth-ready", "nosuchpersona"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (2, "0"));
     assert!(o.err.contains("no fayth in the chamber"), "{}", o.err);
 }
 
 #[test]
 fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("probe", "plan", "")]);
     let bd = sh("echo 'Error: the database is locked by another dolt process' >&2; exit 1");
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_READY_CACHE");
-    std::env::remove_var("SPIRA_FAYTHS");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o = run(&["fayth-ready", "probe"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "the fayth file is right there — this is not the no-fayth code");
     assert!(o.err.contains("locked by another dolt process"), "{}", o.err);
     assert!(!o.err.contains("no fayth"), "{}", o.err);
@@ -840,19 +809,21 @@ fn fayth_ready_cli_query_failure_is_rc1_not_rc2_the_sp_3ntca_defect() {
 /// ready queue. rc 3, never rc 2 ("no fayth") and never rc 0 with a widened count.
 #[test]
 fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("ops", "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_INCIDENT_LABEL", "spira-poison,$SPIRA_ASK_LABEL")]);
     let bd = sh("echo 'bd must not be called — a widened query must never reach the store' >&2; exit 1");
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS", "SPIRA_TOML", "XDG_CONFIG_HOME"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_READY_CACHE");
-    std::env::remove_var("SPIRA_FAYTHS");
-    std::env::set_var("SPIRA_TOML", "/no/such/host-config-document"); // pinned absent: no document resolves
-    std::env::remove_var("XDG_CONFIG_HOME");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+        ("SPIRA_TOML", Some("/no/such/host-config-document")),
+        ("XDG_CONFIG_HOME", None),
+        ("SPIRA_INCIDENT_LABEL", None),
+        ("SPIRA_ASK_LABEL", None),
+        ("SPIRA_SCOPE_LABEL", None),
+    ]);
     let o = run(&["fayth-ready", "ops"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (3, "0"), "stderr: {}", o.err);
     assert!(o.err.contains("SPIRA_INCIDENT_LABEL"), "the refusal must name the exact reference: {}", o.err);
     assert!(!o.err.contains("no fayth in the chamber"), "{}", o.err);
@@ -865,17 +836,16 @@ fn fayth_ready_cli_a_bare_reference_that_resolves_empty_refuses_rc3_never_widens
 /// either; it is a deliberate "no restriction", not a config gap.
 #[test]
 fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("concierge", "", "")]);
     let bd = sh("echo '[]'");
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_READY_CACHE");
-    std::env::remove_var("SPIRA_FAYTHS");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o = run(&["fayth-ready", "concierge"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, "0"), "a declared-empty literal predicate must never refuse: {}", o.err);
 }
 
@@ -893,11 +863,10 @@ fn fayth_ready_cli_a_guarded_or_declared_literal_empty_never_refuses() {
 /// never "no fayth in the chamber" (rc 2). law-a-control-that-cannot-check-must-refuse.
 #[test]
 fn fayth_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let saved = save_env(&["SPIRA_HOME"]);
-    std::env::remove_var("SPIRA_HOME");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", None),
+    ]);
     let o = run(&["fayth-ready", "builder"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (1, "0"), "stderr: {}", o.err);
     assert!(!o.err.contains("no fayth in the chamber"), "stderr: {}", o.err);
     assert!(!o.err.contains("is not set"), "stderr: {} — SPIRA_HOME must self-resolve, not refuse on an unset env var", o.err);
@@ -916,88 +885,87 @@ fn fayth_ready_cli_unresolvable_home_is_rc1_not_rc2_the_sp_hh599_defect() {
 fn fayth_home_pure_function_prefers_the_env_override_and_falls_back_to_the_release_root() {
     // The override still wins outright — a fixture, or a lib.sh shim that already
     // resolved it, must be able to pin a different tree on purpose.
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let saved = save_env(&["SPIRA_HOME"]);
-    std::env::set_var("SPIRA_HOME", "/some/pinned/tree");
+    let pinned = testkit::env(&[("SPIRA_HOME", Some("/some/pinned/tree"))]);
     assert_eq!(super::fayth_home().as_deref(), Ok(std::path::Path::new("/some/pinned/tree")));
-    std::env::remove_var("SPIRA_HOME");
+    drop(pinned);
+    let _env = testkit::env(&[("SPIRA_HOME", None)]);
     let err = super::fayth_home().unwrap_err();
     assert!(err.contains("cannot resolve SPIRA_HOME"), "{err}");
     assert!(!err.contains("is not set"), "{err}");
-    restore_env(saved);
 }
 
 #[test]
 fn fayth_ready_cli_real_count_including_zero() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("probe", "plan", "")]);
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_CACHE", "SPIRA_FAYTHS"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_READY_CACHE");
-    std::env::remove_var("SPIRA_FAYTHS");
     let bd_zero = sh("echo '[]'");
-    std::env::set_var("SPIRA_BD", &*bd_zero);
+    let zero = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd_zero.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o = run(&["fayth-ready", "probe"], "");
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "0", ""));
+    drop(zero);
 
     let bd_seven = sh("echo '[1,2,3,4,5,6,7]'");
-    std::env::set_var("SPIRA_BD", &*bd_seven);
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd_seven.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o2 = run(&["fayth-ready", "probe"], "");
-    restore_env(saved);
     assert_eq!((o2.code, o2.out.as_str()), (0, "7"));
 }
 
 #[test]
 fn fayth_ready_cli_cache_fast_path_skips_the_query_entirely() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("probe", "plan", "")]);
     let cache = tmp("probe 9\nother 1\n");
     let bd = sh("echo 'bd must not be called' >&2; exit 1");
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_READY_CACHE", "SPIRA_FAYTHS"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::set_var("SPIRA_READY_CACHE", &*cache);
-    std::env::remove_var("SPIRA_FAYTHS");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_READY_CACHE", Some(cache.as_str())),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o = run(&["fayth-ready", "probe"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str(), o.err.as_str()), (0, "9", ""));
 }
 
 #[test]
 fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
     let bd = sh(
         r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"b","labels":["spira","ops-trigger"]},{"id":"c","labels":["spira","plan","spira-submitted"]}]'"#,
     );
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_DB", "SPIRA_READY_SNAPSHOT", "SPIRA_FAYTHS", "SPIRA_SUBMITTED_LABEL", "SPIRA_QUEUE_WAIT_LABEL"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::remove_var("SPIRA_DB");
-    std::env::remove_var("SPIRA_READY_SNAPSHOT");
-    std::env::remove_var("SPIRA_FAYTHS");
-    // What conf.sh's derivation would hold by the time bulk_ready_by_fayth's own shim
-    // threads SPIRA_SUBMITTED_LABEL through (lib.sh, matching ready-bucket.py's env prefix).
-    std::env::set_var("SPIRA_SUBMITTED_LABEL", "spira-submitted");
-    std::env::remove_var("SPIRA_QUEUE_WAIT_LABEL");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_SNAPSHOT", None),
+        ("SPIRA_FAYTHS", None),
+        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
+        ("SPIRA_QUEUE_WAIT_LABEL", None),
+    ]);
     let o = run(&["bulk-ready-by-fayth"], "");
-    restore_env(saved);
     assert_eq!(o.out, "builder 1\nops 1\n", "c is dropped by the shared spira-submitted exclusion");
 }
 
 #[test]
 fn bulk_ready_by_fayth_cli_reads_the_snapshot_instead_of_calling_bd() {
-    let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let home = chamber_home(&[("builder", "spira,plan", "")]);
     let snap = tmp(r#"[{"id":"a","labels":["spira","plan"]}]"#);
     let bd = sh("echo 'bd must not be called' >&2; exit 1");
-    let saved = save_env(&["SPIRA_HOME", "SPIRA_BD", "SPIRA_READY_SNAPSHOT", "SPIRA_FAYTHS"]);
-    std::env::set_var("SPIRA_HOME", &*home);
-    std::env::set_var("SPIRA_BD", &*bd);
-    std::env::set_var("SPIRA_READY_SNAPSHOT", &*snap);
-    std::env::remove_var("SPIRA_FAYTHS");
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_READY_SNAPSHOT", Some(snap.as_str())),
+        ("SPIRA_FAYTHS", None),
+    ]);
     let o = run(&["bulk-ready-by-fayth"], "");
-    restore_env(saved);
     assert_eq!((o.code, o.out.as_str()), (0, "builder 1\n"));
 }
