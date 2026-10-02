@@ -1,0 +1,10 @@
+TYPE=string
+GROUP=testenv
+DOC=CPU cap for each testenv container, as `podman run --cpus` (e.g. 16); empty = uncapped
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # CPU cap for each testenv container, passed to `podman run --cpus` (e.g. 16 or 12.5).
+    # A rootless container may leave the cgroup scope of the process that started it, so a
+    # cap on the caller does not bound it; the cap must ride on the container itself.
+    # Empty or non-positive: no cap is passed.
+    : "${SPIRA_TESTENV_CPUS:=}"
+SPIRA_CONF_DEFAULT_EOF

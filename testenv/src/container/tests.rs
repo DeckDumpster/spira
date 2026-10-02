@@ -229,6 +229,7 @@ fn conf(root: &str) -> Conf {
         bd_pin: Some(PathBuf::from("/run/bd-pin")),
         registry: String::new(),
         max_concurrent: 8,
+        cpus: None,
         queue_timeout: 900,
         queue_poll: 5,
         heartbeat: 60,
@@ -702,6 +703,30 @@ fn booting(f: &Fake) {
     harness(f, "/h");
     f.when(&["info", "--format"], 0, "true\n");
     f.when(&["container", "exists"], 1, "");
+}
+
+#[test]
+fn up_passes_the_configured_cpu_cap_to_podman_run() {
+    let f = Fake::new();
+    booting(&f);
+    let c = Conf { cpus: Some("12.5".into()), ..conf("/h") };
+    assert_eq!(Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n1"])), 0);
+    let run = &f.calls_with("run")[0];
+    let i = run.iter().position(|a| a == "--cpus").expect("--cpus passed");
+    assert_eq!(run[i + 1], "12.5");
+}
+
+#[test]
+fn cpu_cap_is_unset_unless_a_positive_number_is_configured() {
+    let load = |v: Option<&'static str>| {
+        let env = move |k: &str| (k == "SPIRA_TESTENV_CPUS").then(|| v.map(String::from)).flatten();
+        Conf::load(&Source { env: &env, config: None }, None).cpus
+    };
+    assert_eq!(load(None), None);
+    assert_eq!(load(Some("")), None);
+    assert_eq!(load(Some("0")), None);
+    assert_eq!(load(Some("many")), None);
+    assert_eq!(load(Some("16")), Some("16".into()));
 }
 
 #[test]
