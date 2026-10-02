@@ -140,6 +140,36 @@ kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID="
 rm -f "$RUN/world.draining"
 
 # --------------------------------------------------------------------------------------
+# 3b. systemd is the authority — a live spira-aeon-* unit with no /proc argv match.
+# --------------------------------------------------------------------------------------
+echo
+echo "drain sees a live spira-aeon-* unit that /proc cannot (control: no unit => DRAINED):"
+
+cat > "$TMP/systemctl-units" <<'SC'
+#!/usr/bin/env bash
+case "$*" in
+    *list-units*) [ -f "$UNITS_LIVE" ] && echo "spira-aeon-prod-sp-live.service loaded active running aeon sp-live" ;;
+    *) echo inactive; exit 3 ;;
+esac
+exit 0
+SC
+chmod +x "$TMP/systemctl-units"
+UNITS_LIVE="$TMP/units-live"; export UNITS_LIVE
+
+rm -f "$UNITS_LIVE" "$RUN/world.draining"
+rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
+[ "$rc" = "0" ] && ok "no live unit: drain exits 0" || bad "no live unit: drain exits 0" "rc=$rc: $out"
+want "no live unit: says DRAINED" "DRAINED" "$out"
+
+: > "$UNITS_LIVE"; rm -f "$RUN/world.draining"
+rc=0; out="$(PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_PROD="$SH" SPIRA_RUN="$RUN" SPIRA_CONF="$TMP/no.conf" \
+    SPIRA_DB="$TMP/no-db" SPIRA_SYSTEMCTL="$TMP/systemctl-units" "$SH/world.sh" drain --timeout 0 2>&1)" || rc=$?
+[ "$rc" = "1" ] && ok "live unit: drain exits 1" || bad "live unit: drain exits 1" "rc=$rc: $out"
+want "live unit: says NOT DRAINED" "NOT DRAINED" "$out"
+rm -f "$UNITS_LIVE" "$RUN/world.draining"
+
+# --------------------------------------------------------------------------------------
 # 4. GAP G11 (docs/test-plan/instance-lifecycle.md) — world.sh start revives an inactive
 #    watcher service, and leaves a oneshot or already-active one alone. Previously only
 #    source-grepped (test-world-start-revives-watchers.sh); this drives world.sh start for

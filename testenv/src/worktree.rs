@@ -51,6 +51,16 @@ pub fn scratch_room(base: &Path, min_free_mib: u64, min_mem_mib: u64) -> Result<
     Ok(())
 }
 
+/// The slot's share of the scratch ledger every gate and testenv on this filesystem reserves
+/// in (spira_config::scratch); None when the base is not a tmpfs, where nothing is shared.
+fn reserve_slot(base: &Path, mib: u64) -> Result<Option<spira_config::scratch::Guard>, String> {
+    if !crate::testdb::on_tmpfs(base) {
+        return Ok(None);
+    }
+    let ledger = spira_config::scratch::ledger_for(base);
+    spira_config::scratch::reserve(&ledger, "testenv-slot", mib, 0, &|| free_mib(base)).map(Some)
+}
+
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is
 /// smaller. `pub(crate)` so [`crate::warm::shed`] and the runner probe what a slot is refused on.
 pub(crate) fn free_mib(p: &Path) -> Option<u64> {
@@ -143,6 +153,7 @@ pub struct Worktree {
     pub path: PathBuf,
     pub kind: Kind,
     repo: PathBuf,
+    _reservation: Option<spira_config::scratch::Guard>,
 }
 
 impl Worktree {
@@ -243,6 +254,13 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
         log(&format!("no warm slot: {e}"));
         return None;
     }
+    let reservation = match reserve_slot(&base, req.min_free_mib) {
+        Ok(g) => g,
+        Err(e) => {
+            log(&format!("no warm slot: {e}"));
+            return None;
+        }
+    };
     for i in 0..slots {
         let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
         let Some(lock) = try_lock(&lock_path) else {
@@ -257,6 +275,7 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
                         _lock: lock,
                     },
                     repo: req.repo.to_path_buf(),
+                    _reservation: reservation,
                 })
             }
             Err(e) => log(&format!("warm slot {i} unusable ({e}) — trying the next")),
@@ -275,6 +294,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
                 path: cand,
                 kind: Kind::InPlace,
                 repo: req.repo.to_path_buf(),
+                _reservation: None,
             });
         }
         log(&format!(
@@ -287,6 +307,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
     fs::create_dir_all(&base)
         .map_err(|e| format!("cannot create worktree directory {}: {e}", base.display()))?;
     scratch_room(&base, req.min_free_mib, req.min_mem_mib).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
+    let reservation = reserve_slot(&base, req.min_free_mib).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
     for i in 0..req.slots {
         let slot = base.join(format!(".testenv-slot-{i}"));
         let Some(lock) = try_lock(&base.join(format!(".testenv-slot-{i}.lock"))) else {
@@ -298,6 +319,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
                     path: slot,
                     kind: Kind::Slot { _lock: lock },
                     repo: req.repo.to_path_buf(),
+                    _reservation: reservation,
                 })
             }
             Err(e) => log(&format!(
@@ -324,6 +346,7 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
         path: eph,
         kind: Kind::Ephemeral,
         repo: req.repo.to_path_buf(),
+        _reservation: reservation,
     })
 }
 

@@ -74,9 +74,24 @@ fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
-/// `<home>/chamber` — the one directory every function here resolves a fayth against.
+/// The configured `SPIRA_CHAMBER` (env, then config document, then `<home>/chamber`) — the
+/// one directory every function here resolves a fayth against. `SPIRA_CHAMBER` is never
+/// exported, so a bare caller only sees it by resolving the config in-process.
 pub fn chamber_dir(home: &Path) -> PathBuf {
-    home.join("chamber")
+    chamber_dir_with(home, &std::env::vars().collect())
+}
+
+fn chamber_dir_with(home: &Path, env: &BTreeMap<String, String>) -> PathBuf {
+    if let Some(v) = env.get("SPIRA_CHAMBER").filter(|v| !v.is_empty()) {
+        return PathBuf::from(v);
+    }
+    let repo = crate::resolve::derive_home_repo(home, env);
+    crate::resolve::resolve_for_process(home, &repo, env)
+        .ok()
+        .and_then(|r| r.values.get("SPIRA_CHAMBER").cloned())
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join("chamber"))
 }
 
 /// `fayth_names` — every persona defined in the chamber, sorted (bash's own glob
@@ -438,6 +453,15 @@ mod tests {
         write_fayth(&ws, "ops", "FAYTH_LABELS=ops\n");
         write_fayth(&ws, "builder", "FAYTH_LABELS=spira,plan\n");
         assert_eq!(fayth_names(&ws), vec!["builder".to_string(), "ops".to_string()]);
+    }
+
+    #[test]
+    fn chamber_dir_follows_configured_chamber_outside_home() {
+        let ws = testkit::TempDir::new("spira-config-chamber-configured");
+        let elsewhere = ws.join("elsewhere");
+        let env: BTreeMap<String, String> =
+            [("SPIRA_CHAMBER".to_string(), elsewhere.to_string_lossy().into_owned())].into();
+        assert_eq!(chamber_dir_with(&ws, &env), elsewhere);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 # with no verdict after it opens one pull request and never lands it.
 #
 # tier: T1
-# covers: queue/src/* landing-pass/src/*
+# covers: queue/src/* landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

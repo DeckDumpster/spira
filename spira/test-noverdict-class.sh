@@ -23,7 +23,7 @@
 # binary rather than a sourced function.
 #
 # tier: T1
-# covers: landing-pass/src/*
+# covers: landing-pass/src/* spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"

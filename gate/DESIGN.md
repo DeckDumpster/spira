@@ -812,7 +812,12 @@ Full contract: `spira-config/DESIGN-build-cache.md`. In the gate:
   `$SPIRA_GATE_TARGET_ROOT` (default `/tmp/spira-gate-target-<run hash>`); orphaned
   directories are removed, the least recently used unlocked ones evicted over
   `SPIRA_GATE_TARGET_CAP_MIB`, and short of room (`_MIN_FREE_MIB`, `_MIN_MEM_MIB`) is
-  `NO_VERDICT reason=scratch-short` — never the disk.
+  `NO_VERDICT reason=scratch-short` — never the disk. Each trial also reserves
+  `SPIRA_GATE_TARGET_RESERVE_MIB` in the scratch ledger (`spira_config::scratch`) shared with
+  testenv slots, so concurrent consumers cannot each pass the free-space check and jointly
+  overflow it; a refused reservation is the same NO_VERDICT. A build whose output says
+  `No space left on device` / `Disk quota exceeded` (branch or base trial) is
+  `scratch-short` too, never a red.
 * Measured on a one-line Rust probe (unit composition, cold gate tree): 1,020,960,768 bytes
   written before; see the bead's closing note for after.
 * **`gate.sh --release-bins <branch> <repo>`** (the hand landing): on a PASS, `cargo build

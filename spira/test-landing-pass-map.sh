@@ -18,7 +18,7 @@
 # defect: exiting 0 made 1704 no-op fires indistinguishable from a healthy pass.
 #
 # tier: T1
-# covers: landing-pass/src/main.rs landing-pass/src/seam.rs landing-pass/src/real.rs landing-pass/src/model.rs
+# covers: landing-pass/src/main.rs landing-pass/src/seam.rs landing-pass/src/real.rs landing-pass/src/model.rs spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"

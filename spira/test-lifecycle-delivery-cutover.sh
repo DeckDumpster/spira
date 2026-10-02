@@ -24,7 +24,7 @@
 #
 # defect: sp-n1ilm
 # tier: T2
-# covers: spira-lc/src/callers.rs landing-pass/* lifecycle/* spira-lc/*
+# covers: spira-lc/src/callers.rs landing-pass/* lifecycle/* spira-lc/* spira/lib.sh
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"

@@ -221,9 +221,9 @@ fn cut(o: &Opts) -> Result<(), String> {
         ));
     }
 
-    let Some(_lock) = io::try_lock(&env_, &repo.name)? else {
-        println!("batcher cut {}: another operation holds the lock", repo.name);
-        return Ok(());
+    let wait_secs = env::var("SPIRA_QUEUE_LOCK_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
+    let Some(_lock) = io::wait_lock(&env_, &repo.name, wait_secs)? else {
+        return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
 
     let pool = io::certified_pool(&env_, &repo)?;
