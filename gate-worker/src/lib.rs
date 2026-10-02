@@ -1,10 +1,48 @@
-//! gate-worker: the local gate, off the landing pass's clock. One worker drains the queue
-//! (`landing_pass::gateq`) a branch at a time, so two branches for one gate tree are never
-//! gated together, and files each verdict. The pass applies it: attribution of the four
-//! outcomes stays in `landing_pass::pass::certify_judge`.
+//! gate-worker: the local gate, off the landing pass's clock. Up to N workers each drain
+//! the queue (`landing_pass::gateq`) a branch at a time — one worker never runs two gates
+//! at once, so two branches for one gate tree are never gated together by *that* worker,
+//! and N is exactly `certify_par` (DESIGN.md §8 D14): the host's own gate-admission slots
+//! (`run/gate-admission`) already bound how many gates may run together, so draining the
+//! queue with N workers instead of one is safe at the host level (sp-kbjv6 "wave N
+//! concurrent drains"). Each worker files each verdict it gates; the pass applies it:
+//! attribution of the four outcomes stays in `landing_pass::pass::certify_judge`.
 
 use landing_pass::gateq::{Done, GateQueue, Job};
 use landing_pass::model::{GateOutcome, GateRun, GATE_NOVERDICT};
+use std::fs::OpenOptions;
+use std::os::fd::AsRawFd;
+use std::path::{Path, PathBuf};
+
+/// `certify_par` (0 or absent reads as 1): the number of worker slots to try. Never a new
+/// env var — `certify_par` is the one knob that already governs how many gates run at once
+/// (`landing_pass::model::certify_par`, `landing_pass::pass::walk_concurrent`).
+pub fn worker_count(certify_par: usize) -> usize {
+    certify_par.max(1)
+}
+
+/// Slot 0 keeps the pre-existing `worker.lock` name; every other slot gets its own numbered
+/// lock file. All N are plain sibling files under the same `gate-worker/` run directory.
+pub fn lock_path(dir: &Path, slot: usize) -> PathBuf {
+    if slot == 0 {
+        dir.join("worker.lock")
+    } else {
+        dir.join(format!("worker.lock.{slot}"))
+    }
+}
+
+/// Try slots `0..n` in order and keep the first free one (`LOCK_EX|LOCK_NB`, same idiom as
+/// the single-lock design this replaces). The held `File` must stay alive for the lock to
+/// stay held — dropping it releases the flock. None: every slot is taken.
+pub fn acquire_slot(dir: &Path, n: usize) -> Option<(usize, std::fs::File)> {
+    for slot in 0..n.max(1) {
+        let p = lock_path(dir, slot);
+        let Ok(f) = OpenOptions::new().create(true).write(true).truncate(false).open(&p) else { continue };
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Some((slot, f));
+        }
+    }
+    None
+}
 
 pub trait Gate {
     fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String);
@@ -46,14 +84,20 @@ pub struct Worker<'a> {
     pub clock: &'a dyn Clock,
     pub lock_wait: u64,
     pub log: &'a dyn Fn(&str),
+    /// Which of the N worker-lock slots this instance holds. Scopes `recover` and the
+    /// claimed-job bookkeeping to this slot alone, so concurrent slots never step on each
+    /// other's in-flight claims.
+    pub slot: usize,
 }
 
 impl Worker<'_> {
-    /// Gate every queued job, one at a time. Returns how many verdicts were filed.
+    /// Gate every queued job this slot can claim, one at a time. Returns how many verdicts
+    /// were filed. Concurrency across the queue comes from running several `Worker`s (one
+    /// per process, one per slot) at once, never from parallelizing inside one drain.
     pub fn drain(&self) -> usize {
-        self.queue.recover();
+        self.queue.recover(self.slot);
         let mut filed = 0;
-        while let Some(job) = self.queue.claim() {
+        while let Some(job) = self.queue.claim(self.slot) {
             if self.run(&job) {
                 filed += 1;
             }
@@ -65,12 +109,12 @@ impl Worker<'_> {
         match self.branches.tip(&job.repo, &job.branch) {
             None => {
                 (self.log)(&format!("gate-worker: {} in {} is gone — dropping its job", job.branch, job.repo));
-                self.queue.discard(job);
+                self.queue.discard(self.slot, job);
                 return false;
             }
             Some(t) if t != job.tip => {
                 (self.log)(&format!("gate-worker: {} moved from {} to {t} — dropping the stale job", job.branch, job.tip));
-                self.queue.discard(job);
+                self.queue.discard(self.slot, job);
                 return false;
             }
             Some(_) => {}
@@ -90,7 +134,7 @@ impl Worker<'_> {
         if run.outcome == GateOutcome::NoVerdict {
             (self.log)(&format!("gate-worker: {} — not the branch's fault ({})", job.branch, run.reason_or("unspecified")));
         }
-        self.queue.complete(&Done { job: job.clone(), run, started_ms, finished_ms }).is_ok()
+        self.queue.complete(self.slot, &Done { job: job.clone(), run, started_ms, finished_ms }).is_ok()
     }
 }
 

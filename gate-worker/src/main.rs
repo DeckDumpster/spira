@@ -1,13 +1,12 @@
-use gate_worker::{lock_wait, Branches, Clock, Gate, Worker};
+use gate_worker::{acquire_slot, lock_wait, worker_count, Branches, Clock, Gate, Worker};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::RepoRow;
 use landing_pass::ports::{Git, Tools};
 use landing_pass::real::{load_context, RealGit, RealTools};
 use landing_pass::report::Reporter;
-use std::fs::OpenOptions;
-use std::os::fd::AsRawFd;
+use landing_pass::util::command;
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Child, ExitCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct RealGate<'a>(&'a RealTools);
@@ -33,10 +32,15 @@ impl Clock for Wall {
 }
 
 fn main() -> ExitCode {
-    if std::env::args().nth(1).as_deref() != Some("run") {
-        eprintln!("usage: gate-worker run");
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) != Some("run") {
+        eprintln!("usage: gate-worker run [--worker]");
         return ExitCode::from(2);
     }
+    // The timer fires this binary once per tick with plain `run`. `--worker` marks a copy
+    // this same binary spawned to fill a second slot — it never spawns further copies, so
+    // one tick fans out to at most N processes total, never a recursive storm.
+    let spawned = args.get(2).map(String::as_str) == Some("--worker");
     let Some(home) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from) else {
         eprintln!("gate-worker: SPIRA_HOME is unset");
         return ExitCode::FAILURE;
@@ -49,33 +53,61 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let lock = s.run.join("gate-worker").join("worker.lock");
-    let _ = std::fs::create_dir_all(s.run.join("gate-worker"));
-    let f = match OpenOptions::new().create(true).write(true).truncate(false).open(&lock) {
-        Ok(f) => f,
-        Err(e) => {
-            eprintln!("gate-worker: open {}: {e}", lock.display());
-            return ExitCode::FAILURE;
+    // N is `certify_par` (DESIGN.md §8 D14) — the one knob that already governs how many
+    // gates run at once, never a new env var. The host's own gate-admission slots bound
+    // concurrency further; N worker slots just let the queue be drained that fast instead
+    // of one job at a time (sp-kbjv6 "wave N concurrent drains").
+    let n = worker_count(s.certify_par);
+    let lock_dir = s.run.join("gate-worker");
+    let _ = std::fs::create_dir_all(&lock_dir);
+
+    // One tick starts enough workers to fill the free slots: the timer-triggered process
+    // (never a `--worker` copy) spawns up to N-1 helper copies of itself, each racing the
+    // others for whichever slot is still free, and waits for all of them so the systemd
+    // unit's lifetime — and its cgroup — covers every worker it started, not just its own.
+    let mut children: Vec<Child> = Vec::new();
+    if !spawned && n > 1 {
+        match std::env::current_exe() {
+            Ok(exe) => {
+                for _ in 1..n {
+                    match command(&exe).arg("run").arg("--worker").spawn() {
+                        Ok(c) => children.push(c),
+                        Err(e) => eprintln!("gate-worker: could not start a helper worker: {e}"),
+                    }
+                }
+            }
+            Err(e) => eprintln!("gate-worker: could not resolve its own path to start helper workers: {e}"),
+        }
+    }
+
+    let result = match acquire_slot(&lock_dir, n) {
+        None => {
+            println!("gate-worker: another worker is draining the queue — nothing to do");
+            ExitCode::SUCCESS
+        }
+        Some((slot, _held)) => {
+            let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), None, Some(s.run.join("gate-admission")));
+            let queue = GateQueue::new(&s.run);
+            let gate = RealGate(&tools);
+            let branches = Repos(&repos);
+            let log = |m: &str| println!("{m}");
+            let w = Worker {
+                queue: &queue,
+                gate: &gate,
+                branches: &branches,
+                clock: &Wall,
+                lock_wait: lock_wait(std::env::var("SPIRA_GATE_TIMEOUT").ok().as_deref(), s.gate_lock_wait.as_deref()),
+                log: &log,
+                slot,
+            };
+            let filed = w.drain();
+            println!("gate-worker: {filed} verdict(s) filed (slot {slot})");
+            ExitCode::SUCCESS
         }
     };
-    if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-        println!("gate-worker: another worker is draining the queue — nothing to do");
-        return ExitCode::SUCCESS;
+
+    for mut c in children {
+        let _ = c.wait();
     }
-    let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), None, Some(s.run.join("gate-admission")));
-    let queue = GateQueue::new(&s.run);
-    let gate = RealGate(&tools);
-    let branches = Repos(&repos);
-    let log = |m: &str| println!("{m}");
-    let w = Worker {
-        queue: &queue,
-        gate: &gate,
-        branches: &branches,
-        clock: &Wall,
-        lock_wait: lock_wait(std::env::var("SPIRA_GATE_TIMEOUT").ok().as_deref(), s.gate_lock_wait.as_deref()),
-        log: &log,
-    };
-    let n = w.drain();
-    println!("gate-worker: {n} verdict(s) filed");
-    ExitCode::SUCCESS
+    result
 }

@@ -1,5 +1,5 @@
 [Unit]
-Description=Spira gate worker — gates the branches the landing pass queued, one at a time
+Description=Spira gate worker — gates the branches the landing pass queued, up to certify_par at once
 Documentation=file://@SPIRA_HOME@/../gate-worker/src/lib.rs
 After=default.target
 
@@ -8,8 +8,12 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/gate-worker run
-# A gate is bounded by SPIRA_GATE_TIMEOUT per trial and the worker drains a queue of them;
-# only the worker's own lock keeps two of these from running at once.
+# A gate is bounded by SPIRA_GATE_TIMEOUT per trial and each worker drains a queue of them
+# one at a time; this one process fans out to up to certify_par worker slots (spawning
+# certify_par-1 helper copies of itself and waiting on them) and each slot's own numbered
+# lock (worker.lock, worker.lock.1, ...) is what keeps two slots from ever taking the same
+# job (sp-kbjv6 "wave N concurrent drains"). A tick landing while an earlier tick's workers
+# are still draining finds every slot taken and exits at once, same as before.
 TimeoutStartSec=infinity
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
