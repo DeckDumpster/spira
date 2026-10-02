@@ -215,7 +215,9 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
         clauses.push(format!("JSON_CONTAINS(holds, '\"{}\"')", rows::escape(&kind)));
     }
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
-    let sql = format!("SELECT bead_id, state, tip, holder, lease_until, holds, version FROM bead{where_clause} ORDER BY bead_id");
+    let sql = format!(
+        "SELECT bead_id, state, tip, holder, lease_until, holds, version, stack, stack_depth FROM bead{where_clause} ORDER BY bead_id"
+    );
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),

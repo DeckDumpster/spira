@@ -368,6 +368,16 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # `fayth_exclude`/`bulk_ready_by_fayth`'s OWN Rust ports (below) build their own ready
 # query independently, in spira-claim/src/ready.rs — a second, Rust-only copy of this
 # predicate's SHAPE, not a bash caller asking two different functions the same question.
+
+# MACHINE_READY_ARGS — READY_ARGS's own candidate set, widened past bd's own blocker filter
+# (spira-claim/DESIGN.md §5 item 11). `bd ready` hides a bead whose blocker is CERTIFIED but
+# not yet LANDED, because bd's status field only knows open/closed; `bd list` applies the
+# same predicate with no blocker judgment at all, leaving that call to `spira-claim select
+# --blockers machine`. Read only when lifecycle_enforce is on (aeon/src/run.rs ready_args()).
+MACHINE_READY_ARGS=(list --status open --no-assignee --exclude-type epic,event --limit 0)
+[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
+[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+
 ready_raw_args() {
     local args=(ready --limit 0 --exclude-type epic,event -u)
     [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && args+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
