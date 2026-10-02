@@ -599,6 +599,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         return Finish::fault(2, "maxpar-refused", 0);
     }
     let t_batch = Instant::now();
+    let load_start = timing::load1();
     // D9: under --deadline the budget is the whole trial's; setup gets its share of it.
     // Cells: time spent waiting for an admission slot moves both later (sp-f4ig1,
     // gate/DESIGN-admission.md §3.1) — the budget meters work, not queueing.
@@ -1458,6 +1459,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             setup_secs: None,
             phases: None,
             warm: None,
+            suites: None,
+            load_start: None,
+            load_end: None,
         };
         let _ = timing::append(
             &run_root,
@@ -1682,6 +1686,9 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             setup_secs: Some(setup_secs),
             phases: Some(ph.render()),
             warm: Some(warm_word.into()),
+            suites: Some(ran as u64),
+            load_start,
+            load_end: timing::load1(),
             ..SuiteTimingRow::new(
                 &s.run_id,
                 br,

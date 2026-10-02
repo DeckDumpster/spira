@@ -278,9 +278,7 @@ pub struct RunnerTrial {
 pub fn runner_trials(textual: &str, w: Window) -> Vec<RunnerTrial> {
     rows(textual)
         .filter(|(t, v)| {
-            w.contains(*t)
-                && text(v, "family") == "suite-timing"
-                && text(v, "suite") == "__batch__"
+            w.contains(*t) && text(v, "family") == "suite-timing" && text(v, "suite") == "__batch__"
         })
         .filter_map(|(_, v)| {
             Some(RunnerTrial {
@@ -291,6 +289,49 @@ pub fn runner_trials(textual: &str, w: Window) -> Vec<RunnerTrial> {
             })
         })
         .collect()
+}
+
+/// One full-corpus run: a `__batch__` row whose `suites` count reaches `FULL_CORPUS_MIN_SUITES`.
+/// `load` is the mean of the host's 1-minute load at start and end (whichever were recorded).
+#[derive(Clone, Debug, PartialEq)]
+pub struct CorpusRun {
+    pub wall_secs: f64,
+    pub load: Option<f64>,
+    pub round_vm: bool,
+}
+
+pub const FULL_CORPUS_MIN_SUITES: f64 = 300.0;
+pub const LOADED_HOST: f64 = 16.0;
+
+/// Full-corpus runs in `w` from the host's suite-timing rows and, apart, the round VM's
+/// (the host log omits rounds cut there). Rows without `suites` cannot be told from a
+/// partial run and are skipped.
+pub fn corpus_runs(host: &str, round_vm: &str, w: Window) -> Vec<CorpusRun> {
+    let read = |textual: &str, vm: bool| {
+        rows(textual)
+            .filter(|(t, v)| {
+                w.contains(*t)
+                    && text(v, "suite") == "__batch__"
+                    && num(v.get("suites")).is_some_and(|n| n >= FULL_CORPUS_MIN_SUITES)
+                    && num(v.get("rc")).unwrap_or(0.0) == 0.0
+            })
+            .filter_map(|(_, v)| {
+                let loads: Vec<f64> = ["load_start", "load_end"]
+                    .iter()
+                    .filter_map(|k| num(v.get(*k)))
+                    .collect();
+                Some(CorpusRun {
+                    wall_secs: num(v.get("wall_secs"))?,
+                    load: (!loads.is_empty())
+                        .then(|| loads.iter().sum::<f64>() / loads.len() as f64),
+                    round_vm: vm,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut out = read(host, false);
+    out.extend(read(round_vm, true));
+    out
 }
 
 /// Seconds from each bead's latest CERTIFIED to its first LANDED in `w`.
@@ -330,6 +371,7 @@ pub struct Inputs<'a> {
     pub round_attribution: &'a str,
     pub suite_timing: &'a str,
     pub landing_event: &'a str,
+    pub round_vm_timing: &'a str,
 }
 
 pub fn render(inp: &Inputs, w: Window) -> String {
@@ -557,6 +599,45 @@ pub fn render(inp: &Inputs, w: Window) -> String {
         rt.iter().filter(|r| r.warm.is_empty() || r.warm == "off").count(),
         rt.iter().filter(|r| r.rc == 2).count()
     );
+
+    // 7. Full-corpus wall, with the host load beside it.
+    let cr = corpus_runs(inp.suite_timing, inp.round_vm_timing, w);
+    let walls = |f: &dyn Fn(&CorpusRun) -> bool| -> Vec<f64> {
+        cr.iter().filter(|r| f(r)).map(|r| r.wall_secs).collect()
+    };
+    let loads: Vec<f64> = cr.iter().filter_map(|r| r.load).collect();
+    let all_walls = walls(&|_| true);
+    let _ = writeln!(
+        o,
+        "7. Full-corpus wall (>= {:.0} suites, rc 0): {} runs ({} on the round VM); median {} s, p90 {} s, range {}-{} s",
+        FULL_CORPUS_MIN_SUITES,
+        cr.len(),
+        cr.iter().filter(|r| r.round_vm).count(),
+        q(quantile(&all_walls, 0.5)),
+        q(quantile(&all_walls, 0.9)),
+        q(quantile(&all_walls, 0.0)),
+        q(quantile(&all_walls, 1.0))
+    );
+    let quiet = walls(&|r| r.load.is_some_and(|l| l < LOADED_HOST));
+    let loaded = walls(&|r| r.load.is_some_and(|l| l >= LOADED_HOST));
+    let _ = writeln!(
+        o,
+        "   host load (1-min, run mean): median {}; quiet (< {:.0}) {} runs median {} s; loaded {} runs median {} s; load unrecorded {}",
+        q(quantile(&loads, 0.5)),
+        LOADED_HOST,
+        quiet.len(),
+        q(quantile(&quiet, 0.5)),
+        loaded.len(),
+        q(quantile(&loaded, 0.5)),
+        cr.len() - loads.len()
+    );
+    if inp.round_vm_timing.is_empty() {
+        let _ = writeln!(
+            o,
+            "   round-VM rows: none supplied (--round-vm-timing) — host rows alone under-count rounds cut on the VM"
+        );
+    }
+    let _ = writeln!(o);
 
     // 5. Certified -> landed.
     let lat = certified_to_landed(inp.landing_event, w);

@@ -23,7 +23,7 @@ history) and prints. It never writes, never calls `bd`, never touches Dolt.
 ## Contract
 
 ```
-intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfill]
+intent-report [--run <dir>] [--since <dur|ISO>] [--until <dur|ISO>] [--no-backfill] [--round-vm-timing <file>]
 ```
 
 * `--run` defaults to `$SPIRA_RUN`.
@@ -76,6 +76,12 @@ row exists). Status comes from `rc` (0 PASS, 75 NO_VERDICT, 76 BASE_FAIL, else F
   `wall_secs - setup_secs` for runs that reached their suites (rc ≠ 2); how many claimed a
   warm spare, booted cold on a warm slot, or had no warm path; how many were cut at their
   setup share (rc 2).
+* **Full-corpus wall** (section 7): `__batch__` rows with rc 0 and `suites` ≥ 300 (testenv
+  writes `suites`, `load_start`, `load_end` — the host's 1-minute load at start and end). Each
+  wall is paired with its mean load; medians are split quiet (< 16) / loaded, because wall is
+  not comparable across load. The host log omits rounds cut on the round VM: pass that VM's
+  `suite-timing.jsonl` as `--round-vm-timing` and its runs are counted apart; without it the
+  report says host rows alone under-count. Rows lacking `suites` are skipped.
 * Medians and p90 are interpolated (DuckDB `quantile_cont`), as testenv's `--report`.
 
 ## Decisions
