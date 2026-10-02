@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=land
 DOC=THE RESERVE MATCHES THE GATE BUDGET. A pass that starts a gate with fewer seconds left
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=mail
 DOC=A MACHINE EVENT (a watcher's own kind: event mail — PR transitions among them) gets its
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

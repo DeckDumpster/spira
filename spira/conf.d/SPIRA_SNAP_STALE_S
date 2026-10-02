@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=snap
 DOC=Snapshot age measures merge cadence, not probe duration. The supervisor loop calls
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

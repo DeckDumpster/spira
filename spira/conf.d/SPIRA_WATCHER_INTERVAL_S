@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=watcher
 DOC=HOW OFTEN A WATCHER FIRES, in seconds. Used by incident.sh to distinguish
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

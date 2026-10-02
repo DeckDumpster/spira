@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=archivist
 DOC=HOW MANY SESSIONS ONE SWEEP MAY ARCHIVE. Serial-and-unbounded is what turns a quiet
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

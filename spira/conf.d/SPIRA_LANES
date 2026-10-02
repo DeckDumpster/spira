@@ -1,4 +1,4 @@
-TYPE=list
+TYPE=string
 GROUP=lanes
 DOC=THE DECLARED LANES — named scheduling partitions whose capacity does not compete with
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u32
 GROUP=summon
 DOC=SPIRA_SUMMON_LOCK_WAIT — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,6 +1,7 @@
-TYPE=u32
+TYPE=u64
 GROUP=summon
 DOC=HOW MANY SECONDS AN AEON SLEEPS BEFORE ITS SESSION STARTS. A batch of aeons summoned
+SCHEMA=Seconds of random delay before an aeon's session starts (0 disables; unset: 20).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # HOW MANY SECONDS AN AEON SLEEPS BEFORE ITS SESSION STARTS. A batch of aeons summoned
     # together picks a uniform random delay in 0..=this many seconds (aeon's own

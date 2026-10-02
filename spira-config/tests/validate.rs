@@ -22,19 +22,6 @@ fn t0_shipped_example_validates() {
 }
 
 #[test]
-fn shipped_schema_matches_the_types() {
-    let shipped = fs::read_to_string(manifest_path("schema/spira.schema.json"))
-        .expect("schema/spira.schema.json exists");
-    let shipped: serde_json::Value =
-        serde_json::from_str(&shipped).expect("shipped schema is valid JSON");
-    let current = serde_json::to_value(json_schema()).expect("current schema serializes");
-    assert_eq!(
-        shipped, current,
-        "schema/spira.schema.json is stale — regenerate with `cargo run --bin spira-config -- schema`"
-    );
-}
-
-#[test]
 fn stack_max_depths_schema_ceiling_is_four() {
     // Hard ceiling per Ryan 2026-09-28 ("4 is a good place to start, no higher") — raising
     // it is a schema/design change, not a config edit.

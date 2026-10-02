@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=reviewer
 DOC=HOW MUCH OF A DIFF THE REVIEWER READS. Diffs larger than this are truncated with a
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

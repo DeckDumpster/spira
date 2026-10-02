@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=disk
 DOC=DISK FLOOR: the free-space percentage the reconciler's Disk invariant defends on
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

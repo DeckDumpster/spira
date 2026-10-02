@@ -1,6 +1,7 @@
-TYPE=u32
+TYPE=string
 GROUP=batcher
 DOC=THE BATCHER'S CUT, on or off (sp-gypjk). 1: queue cuts rounds with the release's
+SCHEMA=The batcher's cut on or off (`SPIRA_BATCHER_ENABLE`, "1"/"0", default "1" in conf.sh). "0": queue cuts no rounds — the operator does (sp-gypjk; replaces the retired `batcher_bin = "/bin/true"` idiom).
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # THE BATCHER'S CUT, on or off (sp-gypjk). 1: queue cuts rounds with the release's
     # `batcher`. 0: it cuts none (the operator cuts rounds by hand). This replaces the

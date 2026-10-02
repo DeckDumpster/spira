@@ -1,4 +1,4 @@
-TYPE=list
+TYPE=string
 GROUP=statute
 DOC=WHICH STATUTES GET FULL TEXT AT SUMMON. render_memories renders these in complete
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=maechen
 DOC=SPIRA_MAECHEN_MAX_GAP_SECONDS — maximum gap between passes. Even if the landing volume
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

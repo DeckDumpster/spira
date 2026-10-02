@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=onoff
 GROUP=certify
 DOC=Carries a same-line trailing comment; see spira_conf_defaults() in spira/conf.sh.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

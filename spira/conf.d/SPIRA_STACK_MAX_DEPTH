@@ -1,6 +1,8 @@
 TYPE=u32
 GROUP=stack
 DOC=DEEPEST A DEPENDENT'S STACK MAY GO (stacked-dependents-2026-09-28 §1) BEFORE A CLAIM
+MAX=4
+SCHEMA=Deepest a dependent's stack may go (stacked-dependents-2026-09-28 §1) before a claim naming it is refused. Hard ceiling 4: raising it past what the schema below allows is a design change, not a config edit (per Ryan 2026-09-28: "4 is a good place to start, no higher"). 0 reproduces today's behaviour — no stacking at all.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # DEEPEST A DEPENDENT'S STACK MAY GO (stacked-dependents-2026-09-28 §1) BEFORE A CLAIM
     # NAMING IT IS REFUSED. Hard ceiling 4 — spira-config's schema rejects a larger value,

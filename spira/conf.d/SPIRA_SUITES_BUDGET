@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u64
 GROUP=suites
 DOC=SPIRA_SUITES_BUDGET — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

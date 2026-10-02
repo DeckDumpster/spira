@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=suites
 DOC=THE PRIORITY A RED FROM THE TIMED PASS IS FILED AT. Routine by default: the timed pass
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

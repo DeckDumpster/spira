@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=maechen
 DOC=SPIRA_MAECHEN_LANDING_INTERVAL — how many landings trigger a pass (counted from the
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

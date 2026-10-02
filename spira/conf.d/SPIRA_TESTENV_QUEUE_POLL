@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=testenv
 DOC=SPIRA_TESTENV_QUEUE_POLL (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

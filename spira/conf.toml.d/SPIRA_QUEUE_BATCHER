@@ -1,0 +1,3 @@
+TYPE=string
+GROUP=toml
+DOC=spira.toml-only key: no spira.conf spelling, not in conf.sh allowlist.

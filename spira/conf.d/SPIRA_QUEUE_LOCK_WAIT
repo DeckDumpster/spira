@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=queue
 DOC=HOW LONG queue verdict AND batch.sh WAIT FOR THE PER-REPO QUEUE LOCK before giving up.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

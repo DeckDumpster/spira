@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=u64
 GROUP=mail
 DOC=SPIRA_MAIL_SETTLE (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

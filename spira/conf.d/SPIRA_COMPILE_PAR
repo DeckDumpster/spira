@@ -1,6 +1,7 @@
-TYPE=string
+TYPE=u32
 GROUP=compile
 DOC=SPIRA_COMPILE_PAR — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+SCHEMA=Compile admission slots (sp-f4ig1, gate/DESIGN-admission.md §5); unset derives `min(cores ÷ 10, MemAvailable ÷ 4 GiB)`. A pool size, never a per-job limit.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
     # spira_conf_defaults() today; it resolves to an empty string unless the

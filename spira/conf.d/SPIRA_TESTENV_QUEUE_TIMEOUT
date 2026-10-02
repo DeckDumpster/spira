@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=testenv
 DOC=HOW LONG `up` queues for a free slot before giving up, and how often it re-checks.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

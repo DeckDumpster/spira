@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=tier
 DOC=HOW MANY TRAILING tsd ROWS a per-suite budget median spans (tier-budget.sh's, retired sp-wx2tw). A single sample
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=bool
 GROUP=cert
 DOC=SPIRA_CERT_IDLE_SKIP — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

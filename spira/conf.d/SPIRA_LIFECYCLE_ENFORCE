@@ -1,6 +1,7 @@
-TYPE=u32
+TYPE=bool
 GROUP=lifecycle
 DOC=Whether an aeon takes the lifecycle semantic layer at all (design §3.5). Default off:
+SCHEMA=Switches an aeon onto the lifecycle semantic layer (the aeon crate's own restricted env, no bd, lc_claim_bead CAS). Default off: a tree that has simply built work/spira-lc must not flip onto it by binary presence alone (sp-74gzo) — aeon.sh only takes the restricted path when this is set, and refuses rather than falling back when set with either binary missing.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # Whether an aeon takes the lifecycle semantic layer at all (design §3.5). Default off:
     # `work` and `spira-lc` are on every release's PATH, and their presence alone must not

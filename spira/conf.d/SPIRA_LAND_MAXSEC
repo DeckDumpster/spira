@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=land
 DOC=HOW LONG A LANDING PASS MAY RUN, and how much of that it keeps in reserve so it never
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

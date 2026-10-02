@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=remedy
 DOC=SPIRA_REMEDY_WINDOW (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

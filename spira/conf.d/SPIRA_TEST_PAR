@@ -1,6 +1,7 @@
-TYPE=string
+TYPE=u32
 GROUP=test
 DOC=SPIRA_TEST_PAR — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
+SCHEMA=Test admission slots (an agent's own testenv trials); unset derives `min(cores ÷ 8, MemAvailable ÷ 8 GiB)`.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # NO DEFAULT. This key carries no `:=`/`=` statement anywhere in
     # spira_conf_defaults() today; it resolves to an empty string unless the

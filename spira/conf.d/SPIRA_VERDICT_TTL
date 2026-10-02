@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=u64
 GROUP=verdict
 DOC=HOW LONG A GATE VERDICT MAY BE REUSED, in seconds. The gate computes each verdict once
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

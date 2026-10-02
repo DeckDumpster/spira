@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=suite
 DOC=HOW LONG ANY ONE SUITE MAY RUN, in seconds, across every caller — the gate, testenv-
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

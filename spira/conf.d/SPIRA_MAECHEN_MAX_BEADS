@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=maechen
 DOC=SPIRA_MAECHEN_MAX_BEADS — output bound per pass. A retrospective that files twelve
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

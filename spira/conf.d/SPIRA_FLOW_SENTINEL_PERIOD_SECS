@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=flow
 DOC=SPIRA_FLOW_SENTINEL_PERIOD_SECS — the sentinel timer period; a pass over twice this overruns.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

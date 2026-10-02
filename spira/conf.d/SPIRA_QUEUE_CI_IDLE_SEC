@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=queue
 DOC=HOW LONG WITH NO RUN ACTIVITY before a run is treated as hung and re-queued.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

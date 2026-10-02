@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=tier
 DOC=SPIRA_TIER_BUDGET_T3_MS (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

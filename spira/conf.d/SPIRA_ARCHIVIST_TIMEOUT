@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=archivist
 DOC=A HARD CEILING, unlike an aeon's. An aeon has none because a clock cannot tell slow from
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

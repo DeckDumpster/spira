@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=self
 DOC=SELF-MONITORING WINDOW: how many minutes back cockpit-metrics.py looks when deciding
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

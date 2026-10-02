@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=brief
 DOC=HOW MANY OF A RECURRING INCIDENT'S NEWEST "Recurrence N at ..." notes an aeon brief
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

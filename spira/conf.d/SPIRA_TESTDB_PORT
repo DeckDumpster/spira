@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=testdb
 DOC=SPIRA_TESTDB_PORT (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=list
+TYPE=string
 GROUP=mail
 DOC=HOW LONG BETWEEN WAKE RETRIES while a mailbox stays unread, in seconds, one step per
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

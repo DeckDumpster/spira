@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=ctx
 DOC=SPIRA_CTX_HIGH (see spira/conf.sh history for rationale)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

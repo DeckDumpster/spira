@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u32
 GROUP=max
 DOC=THE WHOLE-FLEET CEILING — how many aeons may exist at once, counting lane fayths.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

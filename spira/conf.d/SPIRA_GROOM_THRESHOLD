@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=groom
 DOC=SPIRA_GROOM_THRESHOLD — combined score (open bead count + landings since last pass)
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

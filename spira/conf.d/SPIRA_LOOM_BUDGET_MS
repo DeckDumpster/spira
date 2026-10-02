@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=u64
 GROUP=loom
 DOC=The deadline on ONE `bd` query behind that endpoint, in milliseconds. A query per
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

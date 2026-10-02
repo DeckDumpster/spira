@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=czar_stage
 GROUP=czar
 DOC=SPIRA_CZAR_STAGE_DEADLOCK — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

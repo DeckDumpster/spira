@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=auron
 DOC=AURON RESTART-LOOP DETECTION thresholds. A Restart=always unit never reaches
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

@@ -1,4 +1,4 @@
-TYPE=string
+TYPE=u32
 GROUP=batch
 DOC=SPIRA_BATCH_MEM_PER_SUITE_MIB — no explicit default in spira/conf.sh; resolves empty unless set via environment or spira.toml.
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'

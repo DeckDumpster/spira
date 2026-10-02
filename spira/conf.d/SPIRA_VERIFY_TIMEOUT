@@ -1,4 +1,4 @@
-TYPE=u32
+TYPE=string
 GROUP=verify
 DOC=HOW LONG AN ASK'S OWN VERIFY: COMMAND MAY RUN before cockpit/verify-asks.sh kills it and
 DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
