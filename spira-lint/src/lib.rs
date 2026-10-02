@@ -311,6 +311,7 @@ pub fn lines(content: &[u8]) -> Vec<&[u8]> {
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(rules::config_fence::ConfigFence),
+        Box::new(rules::config_literal_fallback::ConfigLiteralFallback),
         Box::new(rules::payload_argv::PayloadArgv),
         Box::new(rules::fence_scripts::FenceScripts),
         Box::new(rules::testlib_migrated::TestlibMigrated),
@@ -444,7 +445,7 @@ mod tests {
     /// The tree-walking rules over one small fixture tree: one planted violation per rule is
     /// found, named by its rule, and nothing else is. The rules that hold named files to a
     /// contract (event-taxonomy, gate-workflow, conf-key-registry, lib-sh-shims), and
-    /// tmp-leak, which reads Rust, are fixtured in their own modules.
+    /// tmp-leak/config-literal-fallback, which read Rust, are fixtured in their own modules.
     #[test]
     fn all_rules_over_a_fixture_tree() {
         use std::os::unix::fs::PermissionsExt;
@@ -473,7 +474,7 @@ mod tests {
         }
         t.git(&["add", "."]);
         let tree = Tree::from_git(t.path()).unwrap();
-        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
+        let contract = ["event-taxonomy", "gate-workflow", "conf-key-registry", "lib-sh-shims", "tmp-leak", "config-literal-fallback", "plan-matrix", "plan-lint", "lockfile-lint", "tier-budget-allowlist", "tier-budget-area-allowlist", "tier-budget-areas"];
         let mut rules = all_rules();
         rules.retain(|r| !contract.contains(&r.name()));
         let mut lines = Vec::new();

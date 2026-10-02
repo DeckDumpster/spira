@@ -43,9 +43,17 @@ fn var_u64(k: &str, default: u64) -> u64 {
 
 impl Env {
     pub fn load() -> Env {
-        let run_dir = var("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira"));
         let exe = env::current_exe().unwrap_or_default();
         let home = locate_home(var("SPIRA_HOME").as_deref(), &exe).unwrap_or_else(|| PathBuf::from("."));
+        // `spira.run`, resolved in-process through `spira_config` — never the literal
+        // `/tmp/spira` a bare shell used to get whenever `$SPIRA_RUN` itself was unset
+        // (law-a-binary-resolves-the-config-it-reads, sp-ivfu3). REFUSES, named, rather
+        // than guessing, when `spira_config` itself cannot resolve.
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        let run_dir = spira_config::resolve::resolve_run_dir(&env_map, &home).unwrap_or_else(|e| {
+            eprintln!("mail: FATAL: {e}");
+            std::process::exit(1);
+        });
         let mail_root = var("SPIRA_MAIL").map(PathBuf::from).unwrap_or_else(|| run_dir.join("mail"));
         let kinds_dir = var("SPIRA_MAIL_KINDS").map(PathBuf::from).unwrap_or_else(|| home.join("mail/kinds"));
         let index_file = var("SPIRA_MAIL_INDEX").map(PathBuf::from).unwrap_or_else(|| mail_root.join("index"));

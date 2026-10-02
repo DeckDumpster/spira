@@ -136,6 +136,66 @@ pub struct ConfigAllow(BTreeSet<String>);   // entry == Finding.path
   no shell. A persona that tells an agent to write the config names it, and `name` catches
   that.
 
+## Rule `config-literal-fallback`
+
+New (sp-ivfu3); no bash fence precedes it.
+
+**Intent.** Eight release binaries read `env SPIRA_RUN || "/tmp/spira"` instead of
+resolving `spira.run` through `spira_config`: right under a systemd unit, which always
+sets `SPIRA_RUN` itself, and silently wrong — reading and writing the wrong run
+directory — from a bare operator shell. This is the fourth copy of
+law-a-binary-resolves-the-config-it-reads in one day (target-reap, inbox-triage, doctor,
+now these), so per the harness's own escalation ladder it gets a MECHANISM instead of
+another one-off fix.
+
+**Scope.** Every `*.rs` in the walk except `target/`.
+
+**Test code** is the same classifier `tmp-leak`/`script-callers` already share
+([`crate::rust_test`]): a whole file under `tests/` or named `tests.rs`, a whole file with
+its own inner `#![cfg(test)]`, an item under `#[cfg(test)]` (never `cfg(not(test))`), and
+anywhere a test module's own `mod name;` loads transitively.
+
+**Violation**, one finding per site:
+
+- A string literal `"/tmp/spira"` (exact — `"/tmp/spira-run"`/`"/tmp/spira/sub"` do not
+  match: a prefix is not the literal this bead's bug used).
+- `env::var`/`env::var_os` (optionally `std::`-qualified) called with a `"SPIRA_*"` string
+  literal, chained — through any run of `.ok()`/`.map(...)`/`.filter(...)`/`.as_deref()`/
+  `.to_owned()`/`.clone()`/`.trim()`/`.to_string()` — to `.unwrap_or(...)` or
+  `.unwrap_or_else(...)` whose own argument contains a literal (a `"` anywhere in its text,
+  since `unwrap_or_else`'s argument is a closure and the literal default usually sits
+  nested inside it — `PathBuf::from("...")`, `"...".to_string()` — not bare; or a bare run
+  of ASCII digits). `.unwrap_or_default()` is never a finding: the type's own default (an
+  empty string, `PathBuf::new()`) is an absence, never a guessed path.
+
+  The key decides which literal defaults count: [`CONFIG_IDENTITY_KEYS`] (`SPIRA_RUN`,
+  `SPIRA_HOME`, `SPIRA_REPO`, `SPIRA_INSTANCE`, `SPIRA_CHAMBER`, `SPIRA_CHAMBER_OVERLAY`,
+  `SPIRA_FAYTHS`, `SPIRA_DB`, `SPIRA_WORKSPACES`, `SPIRA_REPO_MAP`, `SPIRA_TOML`,
+  `SPIRA_CONF`, `SPIRA_HOME_REPO` — "where/who/which copy") trip it on ANY literal default;
+  every other `SPIRA_*` key trips it only when the default is PATH-SHAPED (contains `/`).
+  A key outside that list with a short, non-path default (`SPIRA_SYSTEMCTL` defaulting to
+  `"systemctl"`, `SPIRA_BD` to `"bd"`, `SPIRA_GH` to `"gh"`) is a PROGRAM NAME this process
+  shells out to on `$PATH` at exec time — not a config value `spira_config` owns, and not
+  this defect; a `/` in that default would still mean it is secretly a path, so it still
+  counts.
+
+**Allow list.** `spira-lint/config-literal-fallback-allow`, exact paths, shrink-only. Not
+empty at birth: the rule's own first run over the whole tree found 24 pre-existing sites
+outside the eight binaries sp-ivfu3 itself fixed (`broker`, `census`, `cockpit-collect`,
+`cockpit/ops`, `doctor`, `gate-run`, `gh-intake`, `groomer`, `install`, `loom`, `queue`,
+`reconciler-alert`, `rule`, `sending`, `skew`, `spira-lc`, `spira-world/src/bin/slay.rs`,
+`tsd-lifecycle-export`, `watchd`, `work`) — each the same shape, each its own follow-on fix
+in the crate it lives in, listed in the allow file rather than bundled into this bead.
+
+**Known limits.** The method-chain scan is lexical, not a real parser: it stops at the
+first method name it does not recognise as a passthrough or an `unwrap_or*`, so a chain
+that reaches the literal through some OTHER combinator (`.unwrap_or_else(|_| ...).map(...)`
+in the other order, or a `match` instead of a chain) is not seen — a false negative, not a
+false positive, and the allow list is where any such gap surfaces once a human reads the
+code it hid in. A literal that is itself computed (`format!("{x}/spira")`, no literal `/`
+of its own but a runtime value that happens to look like a path) is not seen either — this
+rule judges what the source SPELLS, not what a given run would print.
+
 ## Rule `binary-path-fence` — deleted (sp-gypjk)
 
 Every Spira tool is invoked by its bare name on a PATH the launcher sets (design

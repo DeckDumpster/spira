@@ -698,6 +698,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spira-config",
  "testkit",
 ]
 
@@ -870,6 +871,7 @@ dependencies = [
  "reconciler-engine",
  "serde",
  "serde_json",
+ "spira-config",
  "toml",
  "tsd",
 ]
@@ -1248,6 +1250,7 @@ dependencies = [
  "regex",
  "serde_json",
  "sha2",
+ "spira-config",
  "testkit",
 ]
 
@@ -1283,6 +1286,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 

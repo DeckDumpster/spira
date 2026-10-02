@@ -1,0 +1,34 @@
+# shrink-only — spira-lint/config-literal-fallback-allow (sp-ivfu3). A line is an exact
+# repo-relative path with an existing violation migrated into this fence; nothing is
+# added for a newly written file. Fix the default (resolve it through spira_config,
+# in-process, with a named refusal — never a literal) to remove a line, never to add one.
+#
+# Pre-existing debt this new rule found on its first run over the whole tree (sp-ivfu3),
+# outside the eight binaries that bead actually fixed (spira-world, spira-ctrl,
+# landing-pass, mail, reconciler, reconciler-flow, czar-pass, sop — all clean, not listed
+# here). Each is the same law-a-binary-resolves-the-config-it-reads shape; each is its own
+# follow-on fix, in the crate it lives in, not bundled into this one.
+broker/src/read.rs
+census/src/main.rs
+cockpit-collect/src/io.rs
+cockpit-collect/src/probes/mod.rs
+cockpit-collect/src/probes/queue.rs
+cockpit/ops/src/rebuild.rs
+doctor/src/real.rs
+gate-run/src/main.rs
+gh-intake/src/main.rs
+groomer/src/main.rs
+install/src/seed_instance.rs
+loom/src/lib.rs
+queue/src/ops/helpers.rs
+reconciler-alert/src/main.rs
+rule/src/main.rs
+sending/src/main.rs
+skew/src/main.rs
+spira-lc/src/client.rs
+spira-lc/src/db.rs
+spira-lc/src/main.rs
+spira-world/src/bin/slay.rs
+tsd-lifecycle-export/src/main.rs
+watchd/src/context.rs
+work/src/main.rs

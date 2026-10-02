@@ -73,10 +73,37 @@ struct Config {
     now_iso: String,
 }
 
+/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
+/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
+/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
+/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
+/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
+/// `$SPIRA_HOME` exported would otherwise hit.
+fn harness_home() -> PathBuf {
+    if let Ok(h) = env::var("SPIRA_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
+    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
+    let exe = exe.canonicalize().unwrap_or(exe);
+    exe.ancestors()
+        .skip(1)
+        .take(4)
+        .map(|a| a.join("spira"))
+        .find(|p| p.join("lib.sh").is_file())
+        .unwrap_or_default()
+}
+
 impl Config {
-    fn from_env() -> Config {
-        let spira_run = env::var("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("/tmp/spira"));
-        Config {
+    fn from_env() -> Result<Config, String> {
+        // sp-ivfu3: `spira.run`, resolved in-process through `spira_config` — never the
+        // literal `/tmp/spira` a bare shell used to get whenever `$SPIRA_RUN` itself was
+        // unset (law-a-binary-resolves-the-config-it-reads). REFUSES, named, rather than
+        // guessing, when `spira_config` itself cannot resolve.
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        let spira_run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home())?;
+        Ok(Config {
             lock_path: spira_run.join("reconciler-flow.lock"),
             state_path: env::var("SPIRA_RECONCILER_FLOW_STATE")
                 .map(PathBuf::from)
@@ -115,7 +142,7 @@ impl Config {
             now_secs: unix_now(),
             now_iso: compute_now_iso(),
             spira_run,
-        }
+        })
     }
 }
 
@@ -191,7 +218,7 @@ fn maybe_alert(cfg: &Config, alerted: &mut AlertedSinceMap, key: &str, verdict: 
 }
 
 fn run_pass() -> Result<(), String> {
-    let cfg = Config::from_env();
+    let cfg = Config::from_env()?;
 
     if cfg.spira_run.join("world.halted").exists() {
         log_print("reconciler-flow: skipped — world is halted");

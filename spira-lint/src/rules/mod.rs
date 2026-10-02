@@ -2,6 +2,7 @@
 pub mod bd_stdin_lint;
 pub mod conf_key_registry;
 pub mod config_fence;
+pub mod config_literal_fallback;
 pub mod covers_entries;
 pub mod deps_lint;
 pub mod event_taxonomy;

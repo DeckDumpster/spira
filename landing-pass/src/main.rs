@@ -92,7 +92,17 @@ fn pr() -> i32 {
         eprintln!("landing-pass: SPIRA_HOME is unset");
         return 1;
     };
-    let run = std::env::var_os("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira"));
+    // sp-ivfu3: this used to default to the literal `/tmp/spira` whenever `$SPIRA_RUN`
+    // itself was unset — `run_dir()` (below) is the same in-process `spira_config`
+    // resolution `mark`/`state` already use instead, with a named refusal, never a
+    // guessed path, when it cannot resolve at all.
+    let run = match run_dir() {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("landing-pass: {e}");
+            return 1;
+        }
+    };
     if run.join("world.halted").exists() {
         out.log("landing-pass: skipped — world is halted");
         return 0;

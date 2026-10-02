@@ -53,7 +53,7 @@
 //! cache stamp) where `resolve()` is a pure function of its [`ResolveInput`].
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{registry, spira_string_map, SpiraToml};
 
@@ -178,6 +178,45 @@ pub fn resolve_for_process(
         conf_d: &conf_d,
     })
     .map_err(|e| e.to_string())
+}
+
+/// `spira.run`, resolved the way every caller that needs the run directory now gets it:
+/// [`resolve_for_process`] (env `SPIRA_RUN` wins outright, else `spira.toml`'s `run`, else
+/// the derived XDG default) — never a bare literal
+/// (law-a-binary-resolves-the-config-it-reads, sp-ivfu3: eight binaries read `env SPIRA_RUN
+/// || "/tmp/spira"` and silently wrote/read `/tmp/spira` from a bare shell while every
+/// systemd unit, which sets `SPIRA_RUN` itself, stayed correct). `home` is the caller's own
+/// already-located `SPIRA_HOME` (or whatever fallback the caller's own `locate_home`
+/// produces) — this function does no locating of its own, the same discipline
+/// [`resolve_for_process`] itself keeps. Returns a named refusal, never a guessed path,
+/// when `spira_config` cannot resolve at all (a malformed `spira.toml`) or resolves `run`
+/// to an empty string (the derived default never does this, but a hand-written `spira.toml`
+/// with `run = ""` could).
+pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
+    let repo = derive_home_repo(home, env);
+    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.run: {e}"))?;
+    let run = resolved.get("SPIRA_RUN");
+    if run.is_empty() {
+        return Err("spira.run resolved empty — refusing to guess a run directory".to_string());
+    }
+    Ok(PathBuf::from(run))
+}
+
+/// `spira.instance`, resolved the same way [`resolve_run_dir`] resolves `spira.run` — in
+/// process, through [`resolve_for_process`], never read as a bare `$SPIRA_INSTANCE` with a
+/// literal default (sp-ivfu3's widening: a bare shell with `SPIRA_INSTANCE` unset named
+/// `spira-sentinel.timer` instead of the installed `spira-sentinel-prod.timer`, because the
+/// caller's own fallback skipped config and read the environment variable alone). The
+/// registry's own default is `"prod"` (`resolve`'s `ok_str!("prod")`), so this only refuses
+/// when `spira_config` cannot resolve at all or resolves to an empty string.
+pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
+    let repo = derive_home_repo(home, env);
+    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
+    let instance = resolved.get("SPIRA_INSTANCE");
+    if instance.is_empty() {
+        return Err("spira.instance resolved empty — refusing to guess".to_string());
+    }
+    Ok(instance.to_string())
 }
 
 /// Every resolved key, plus any warning `resolve` itself produced (today, only the
@@ -1159,5 +1198,99 @@ mod tests {
             }
         }
         assert_eq!(direct, via_wrapper);
+    }
+
+    /// sp-ivfu3: `resolve_run_dir`/`resolve_instance` are the one place a Rust caller gets
+    /// `spira.run`/`spira.instance` instead of a bare `env SPIRA_RUN || "/tmp/spira"` (or
+    /// `SPIRA_INSTANCE` unset-means-unqualified) literal. The derived default (no explicit
+    /// env or toml value) still produces a real path/instance, not a refusal.
+    #[test]
+    fn resolve_run_dir_and_instance_use_the_derived_default_with_no_literal_fallback() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let e = env(&[("HOME", "/h")]);
+        let run = resolve_run_dir(&e, &home).unwrap();
+        let instance = resolve_instance(&e, &home).unwrap();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert_eq!(run, PathBuf::from("/h/.local/share/spira/run"), "never the /tmp/spira literal");
+        assert_eq!(instance, "prod");
+    }
+
+    /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
+    /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
+    #[test]
+    fn resolve_run_dir_env_override_wins() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-override");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", "/run/spira-override"), ("SPIRA_INSTANCE", "test")]);
+        let run = resolve_run_dir(&e, &home).unwrap();
+        let instance = resolve_instance(&e, &home).unwrap();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert_eq!(run, PathBuf::from("/run/spira-override"));
+        assert_eq!(instance, "test");
+    }
+
+    /// A `spira.toml` that fails to parse is the named refusal `resolve_run_dir` returns —
+    /// never a literal path a caller could mistake for a real answer.
+    #[test]
+    fn resolve_run_dir_refuses_named_on_a_malformed_toml() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-bad-toml");
+        let (home, repo) = fixture_home_repo(&ws);
+        run_git(&repo, &["init", "-q"]);
+        let toml_path = ws.join("spira.toml");
+        std::fs::write(&toml_path, "this is not [valid toml").unwrap();
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+        std::env::set_var("SPIRA_TOML", toml_path.to_str().unwrap());
+
+        let e = env(&[("HOME", "/h")]);
+        let got = resolve_run_dir(&e, &home);
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        let err = got.expect_err("a malformed spira.toml must refuse, not guess /tmp/spira");
+        assert!(err.contains("cannot resolve spira.run"), "{err}");
     }
 }

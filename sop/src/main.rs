@@ -59,12 +59,42 @@ fn build_env() -> Env {
     Env { word_cap, why_cap, actor, cockpit_bin, cockpit_bash_prefix }
 }
 
+/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
+/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
+/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
+/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
+/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
+/// `$SPIRA_HOME` exported would otherwise hit.
+fn harness_home() -> PathBuf {
+    if let Ok(h) = std::env::var("SPIRA_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
+    let Ok(exe) = std::env::current_exe() else { return PathBuf::new() };
+    let exe = exe.canonicalize().unwrap_or(exe);
+    exe.ancestors()
+        .skip(1)
+        .take(4)
+        .map(|a| a.join("spira"))
+        .find(|p| p.join("lib.sh").is_file())
+        .unwrap_or_default()
+}
+
 fn ledger_path() -> PathBuf {
     if let Ok(p) = std::env::var("SPIRA_SOP_LEDGER") {
         return PathBuf::from(p);
     }
-    let run = env_or("SPIRA_RUN", "/tmp/spira");
-    PathBuf::from(run).join("sop").join("applied.jsonl")
+    // sp-ivfu3: `spira.run`, resolved in-process through `spira_config` — never the
+    // literal `/tmp/spira` a bare shell used to get whenever `$SPIRA_RUN` itself was
+    // unset (law-a-binary-resolves-the-config-it-reads). REFUSES, named, rather than
+    // guessing, when `spira_config` itself cannot resolve.
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let run = spira_config::resolve::resolve_run_dir(&env_map, &harness_home()).unwrap_or_else(|e| {
+        eprintln!("sop: FATAL: {e}");
+        std::process::exit(1);
+    });
+    run.join("sop").join("applied.jsonl")
 }
 
 fn print_report(r: &logic::Report) -> ExitCode {
