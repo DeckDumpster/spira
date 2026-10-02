@@ -46,6 +46,20 @@ pub fn remove(p: &Path) {
     }
 }
 
+/// Removes only the temps registered under `dir`, so an in-process pass cannot delete the
+/// live files of another pass sharing the registry.
+pub fn cleanup_under(dir: &Path) {
+    if let Ok(mut t) = TEMPS.lock() {
+        t.retain(|p| {
+            let ours = p.parent() == Some(dir);
+            if ours {
+                let _ = std::fs::remove_file(p);
+            }
+            !ours
+        });
+    }
+}
+
 pub fn cleanup() {
     if let Ok(mut t) = TEMPS.lock() {
         for p in t.drain(..) {

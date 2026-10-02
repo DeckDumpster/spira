@@ -127,7 +127,7 @@ impl<'a> Sentinel<'a> {
             self.export_ready_cache(&ready);
         }
         self.ck7_summon_pass();
-        crate::temps::cleanup();
+        crate::temps::cleanup_under(&self.cfg.run);
         self.h.unset_env("SPIRA_READY_CACHE");
         self.log(&format!(
             "summon-only pass complete — {} action(s)",
