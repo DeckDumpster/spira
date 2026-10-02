@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=certify
+DOC=WHO RUNS THE CERTIFICATION GATE for queued repositories. 1: the landing pass enqueues
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHO RUNS THE CERTIFICATION GATE for queued repositories. 1: the landing pass enqueues
+    # the branch for `gate-worker` and applies the verdict on a later pass, so a budget cut
+    # cannot defer cheap work. 0: the pass gates inline, as before the worker existed.
+    : "${SPIRA_GATE_WORKER:=1}"
+SPIRA_CONF_DEFAULT_EOF

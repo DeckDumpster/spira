@@ -2087,3 +2087,103 @@ fn real_halt_finds_podman_and_testenv_on_its_path() {
     assert!(got.contains(&podman.display().to_string()), "testenv inherits the path: {got}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// ──────────────────────────────────────────────────────────────────────────────
+// gate-worker: the pass queues the gate and applies the verdict it filed
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn h_worker(mode: LandMode) -> H {
+    let mut h = H::new(mode);
+    h.s.gate_worker = true;
+    h
+}
+
+fn file_verdict(h: &H, id: &str, tip: &str, rc: i32, out: &str) {
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    let job = crate::gateq::Job::new("spira", &format!("spira/{id}"), id, tip, false);
+    q.enqueue(&job).unwrap();
+    q.claim().unwrap();
+    q.complete(&crate::gateq::Done { job, run: GateRun::parse(rc, out.into()), started_ms: 1, finished_ms: 2 }).unwrap();
+}
+
+#[test]
+fn a_pass_with_a_gate_worker_queues_every_branch_and_no_budget_can_cut_it() {
+    let mut h = h_worker(LandMode::QueueLocal);
+    h.s.land_maxsec = 3600;
+    h.s.gate_reserve = 99_999;
+    for (i, id) in ["sp-a", "sp-b", "sp-c", "sp-d"].iter().enumerate() {
+        h.closed(id, &format!("t{i}"));
+    }
+    h.run();
+    assert!(h.tools.gate_calls.borrow().is_empty(), "the pass must not run a gate itself");
+    assert!(!h.logged("budget cut"), "{:?}", h.out.lines());
+    let q = crate::gateq::GateQueue::new(&h.s.run);
+    assert_eq!(q.queued().len(), 4);
+    assert!(h.lib.has("land_mark sp-d GATING t3"));
+    assert!(!h.lib.has("CERTIFIED"));
+}
+
+#[test]
+fn a_branch_already_queued_is_not_queued_twice() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    h.run();
+    h.run();
+    assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1);
+    assert_eq!(h.lib.count("land_mark sp-a GATING"), 1);
+    assert!(h.logged("CHECK6 sp-a: spira/sp-a is already with gate-worker at t1"));
+}
+
+#[test]
+fn a_filed_pass_certifies() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
+    h.run();
+    assert!(h.lib.has("land_mark sp-a CERTIFIED t1"));
+    assert!(h.tools.gate_calls.borrow().is_empty());
+}
+
+#[test]
+fn a_filed_fail_is_the_branchs_and_reopens_it() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    file_verdict(&h, "sp-a", "t1", 1, "gate: VERDICT=FAIL reason=suite-red branch=b repo=spira suite=test-x.sh\n");
+    h.run();
+    assert!(h.lib.has("reopen sp-a cert-gate-red"));
+    assert!(h.lib.has("land_mark sp-a RED t1 gate"));
+}
+
+#[test]
+fn a_filed_no_verdict_is_nobodys_and_charges_nothing() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    file_verdict(&h, "sp-a", "t1", 75, "gate: VERDICT=NO_VERDICT reason=gate-did-not-start\n");
+    h.run();
+    assert!(h.lib.has("noverdict sp-a spira gate-did-not-start NO_VERDICT"));
+    assert!(!h.lib.has("reopen"));
+    assert!(!h.lib.has("RED"));
+}
+
+#[test]
+fn a_filed_base_fail_holds_the_branch_and_files_the_bases_own_red() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t1");
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    file_verdict(&h, "sp-a", "t1", 76, "--- base\ntest-x.sh RED\ngate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n");
+    h.run();
+    assert_eq!(h.lib.count("incident "), 1);
+    assert!(!h.lib.has("reopen"));
+    assert!(!h.lib.has("RED"));
+}
+
+#[test]
+fn a_verdict_for_a_tree_the_branch_no_longer_has_is_not_applied() {
+    let h = h_worker(LandMode::Queue);
+    h.closed("sp-a", "t2");
+    file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
+    h.run();
+    assert!(!h.lib.has("CERTIFIED"));
+    assert!(h.lib.has("land_mark sp-a GATING t2"));
+}

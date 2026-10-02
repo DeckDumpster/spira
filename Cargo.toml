@@ -23,6 +23,7 @@ members = [
     "test-plan",
     "reconciler-alert",
     "landing-pass",
+    "gate-worker",
     "reconciler-flow",
     "lifecycle-guard",
     "lifecycle",

@@ -1,0 +1,20 @@
+[package]
+name = "gate-worker"
+version = "1.0.0"
+edition = "2021"
+description = "gate-worker — drains the gate queue one branch at a time, owns the gate tree's lock wait, and files each gate's verdict for the landing pass to apply."
+
+[lib]
+name = "gate_worker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "gate-worker"
+path = "src/main.rs"
+
+[dependencies]
+landing-pass = { path = "../landing-pass" }
+libc = "0.2"
+
+[dev-dependencies]
+testkit = { path = "../testkit" }

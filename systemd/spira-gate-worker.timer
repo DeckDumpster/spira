@@ -1,0 +1,13 @@
+[Unit]
+Description=Spira gate worker — looks for queued gates every 30 seconds
+
+[Timer]
+# An idle tick takes the worker's lock, finds an empty inbox and exits; a busy worker
+# holds the lock, so a tick that lands during a drain exits at once.
+OnBootSec=60s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=spira-gate-worker.service
+
+[Install]
+WantedBy=timers.target

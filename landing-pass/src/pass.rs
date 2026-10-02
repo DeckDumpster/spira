@@ -1,6 +1,7 @@
 //! The gated pass (`landing-pass land`, DESIGN.md §4): push, hold, queue and queue.local.
 //! pr-mode branches are counted and left to the pr pass.
 
+use crate::gateq::{GateQueue, Job as GateJob};
 use crate::budget::{gate_fits, gate_lock_wait};
 use crate::model::{BeadRow, GateOutcome, GateRun, LandMode, RepoRow, RunRecord, Settings};
 use crate::order::{basefail_fix_decision, certify_order, is_base_fix, prior_pass_suites, OrderRow};
@@ -282,7 +283,7 @@ impl<'a> Pass<'a> {
 
         // CONCURRENT CERTIFICATION (DESIGN.md §8 D14): queued repositories only, and only
         // when SPIRA_CERTIFY_PAR > 1. At 1 the serial walk below runs unchanged.
-        if repo.mode.queued() && self.s.certify_par > 1 {
+        if repo.mode.queued() && self.s.certify_par > 1 && !self.s.gate_worker {
             self.walk_concurrent(&mut w, order);
             return;
         }
@@ -432,8 +433,32 @@ impl<'a> Pass<'a> {
             Ok(tip) => tip,
             Err(f) => return f,
         };
+        if self.s.gate_worker {
+            return self.certify_queued(w, br, id, bead, &tip);
+        }
         let g = self.run_gate(&w.repo.name, br, id, true, &tip);
         self.certify_judge(w, br, id, bead, &tip, g)
+    }
+
+    /// Hand the gate to `gate-worker`: apply the verdict it filed for this tip, or queue the
+    /// branch and move on. The pass never waits on a gate, so no budget can cut it short.
+    fn certify_queued(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow, tip: &str) -> Flow {
+        let name = &w.repo.name;
+        let q = GateQueue::new(&self.s.run);
+        if let Some(d) = q.take_done(name, br, tip) {
+            self.log(&format!("CHECK6 {id}: gate-worker's verdict for {br} at {tip} is in — applying it"));
+            return self.certify_judge(w, br, id, bead, tip, d.run);
+        }
+        let fix = is_base_fix(bead.external_ref.as_deref(), name);
+        match q.enqueue(&GateJob::new(name, br, id, tip, fix)) {
+            Ok(true) => {
+                self.lib.land_mark(id, "GATING", tip, "");
+                self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
+            }
+            Ok(false) => self.log(&format!("CHECK6 {id}: {br} is already with gate-worker at {tip}")),
+            Err(e) => self.log(&format!("CHECK6 {id}: could not queue {br} for gate-worker ({e}) — it stays unjudged this pass")),
+        }
+        Flow::Next
     }
 
     /// §4.2 before the gate: one judgement per tip, then the budget. Ok(the tip to gate).
@@ -449,7 +474,7 @@ impl<'a> Pass<'a> {
                 return Err(Flow::Next);
             }
         }
-        if !self.budget_allows(bead, &repo.name, id) {
+        if !self.s.gate_worker && !self.budget_allows(bead, &repo.name, id) {
             return Err(Flow::BudgetCut);
         }
         Ok(tip)

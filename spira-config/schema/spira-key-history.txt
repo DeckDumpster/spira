@@ -118,6 +118,7 @@ gate_lock_wait
 gate_select_cap
 gate_suites
 gate_timeout
+gate_worker
 gh
 gh_api
 gh_app_config

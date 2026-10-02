@@ -421,6 +421,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "gate-worker"
+version = "1.0.0"
+dependencies = [
+ "landing-pass",
+ "libc",
+ "testkit",
+]
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
