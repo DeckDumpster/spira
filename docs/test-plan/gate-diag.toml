@@ -1,16 +1,11 @@
 api_version = "test-plan/v1"
 area = "gate-diag"
 
-# UC-gate-diag-01 was named on test-cert-gate-reopen-note.sh's # covers: line but never
-# declared in any catalogue. It is declared here only so its retirement can carry a typed
-# [use_case.uncovered] marker; gate-diag has no area page of its own.
+# UC-gate-diag-01 was named on a retired suite's # covers: line but never declared in any
+# catalogue; gate-diag has no area page of its own.
 
 [[use_case]]
 id = "UC-gate-diag-01"
 tier = "T1"
 statement = "A certification-gate reopen note for a literal-lint failure carries the offending file:line: the note's tail window of the gate output keeps the offender line and does not drop it behind the explanation block and trailer."
 
-[use_case.uncovered]
-reason = "suite test-cert-gate-reopen-note.sh retired in the 2026-09-29 Rust cutover (landing-pass/DESIGN.md §7.4, commit 047e85a23); behaviour now verified by landing-pass unit tests tests::a_red_gate_reopens_with_the_gates_own_words_and_marks_red (asserts the 20-line tail window)"
-date = "2026-09-29"
-bead = "sp-4zqoa"

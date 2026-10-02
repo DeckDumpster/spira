@@ -129,6 +129,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-landing-merge-queue-04 UC-landing-merge-queue-11
     fn base_fix_then_express_then_rest_each_by_priority_then_age() {
         let rows = vec![
             row("sp-c", 1, "2026-09-01", None, false),
@@ -145,6 +146,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-landing-merge-queue-11
     fn basefix_green_only_for_its_own_repository_and_suite() {
         let out = "--- base\ntest-x.sh RED\n--- this branch\ntest-y.sh RED\ngate: VERDICT=BASE_FAIL";
         assert!(basefail_fix_decision(Some("basefail:spira:test-x.sh"), "spira", out));

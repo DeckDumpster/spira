@@ -561,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-test-infrastructure-30
     fn parallel_records_every_outcome_and_writes_out_before_result() {
         let rt = FakeRuntime::new();
         rt.suite("test-a.sh", 0, "ok 1 - a\n");
@@ -937,6 +938,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-test-infrastructure-30
     fn timeout_is_passed_to_every_suite_exec() {
         let rt = FakeRuntime::new();
         rt.suite("test-a.sh", 0, "ok\n");

@@ -9,6 +9,10 @@
 # format itself, so the JSON this emits can never drift from what the selector and
 # batcher-cut already agree a header means (suite-select/src/header.rs).
 #
+# A Rust source line `// covers: UC-…` (a #[test] naming the use case it verifies) counts as
+# cover: it is listed as a T0 entry under the source file's own path, so the plan and the
+# orphan fence read it exactly as they read a suite's header.
+#
 # --ref reads suites out of git history, not the working tree, so a caller can compare a
 # branch's tip against its base (spira/plan-lint.sh --orphans) without a second checkout.
 #
@@ -44,6 +48,26 @@ emit_one() {  # emit_one <path-for-json> <file-on-disk>
     printf ']}'
 }
 
+emit_rust() {
+    local line file ids id first_id
+    local -A seen=()
+    while IFS= read -r line; do
+        file="${line%%:*}"
+        ids="$(printf '%s' "${line#*:}" | grep -oE 'UC-[a-z0-9-]+-[0-9]+')"
+        for id in $ids; do seen["$file"]="${seen[$file]:-} $id"; done
+    done < <(git -C "$ROOT" grep -HE '^[[:space:]]*// covers: UC-' "$@" -- '*.rs' 2>/dev/null || true)
+    for file in "${!seen[@]}"; do
+        [ "$first" = 1 ] && first=0 || printf ','
+        printf '{"path":"%s","tier":"T0","covers":[' "$(json_escape "$file")"
+        first_id=1
+        for id in $(printf '%s\n' ${seen[$file]} | sort -u); do
+            [ "$first_id" = 1 ] && first_id=0 || printf ','
+            printf '"%s"' "$id"
+        done
+        printf ']}'
+    done
+}
+
 ref=""
 case "${1:-}" in
     --ref) ref="${2:?usage: suite-coverage-json.sh --ref <ref>}" ;;
@@ -62,6 +86,7 @@ if [ -n "$ref" ]; then
         [ "$first" = 1 ] && first=0 || printf ','
         emit_one "spira/$sn" "$tmp/$sn"
     done < <(git -C "$ROOT" ls-tree -r "$ref" --name-only 2>/dev/null | grep '^spira/test-[^/]*\.sh$' || true)
+    emit_rust "$ref"
 else
     shopt -s nullglob
     for f in "$HERE"/test-*.sh; do
@@ -69,5 +94,6 @@ else
         emit_one "spira/$(basename "$f")" "$f"
     done
     shopt -u nullglob
+    emit_rust
 fi
 printf ']\n'

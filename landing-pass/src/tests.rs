@@ -594,6 +594,7 @@ fn a_submitted_labelled_open_bead_reads_as_done() {
 }
 
 #[test]
+// covers: UC-gate-diag-01
 fn a_red_gate_reopens_with_the_gates_own_words_and_marks_red() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");

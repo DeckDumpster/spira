@@ -209,4 +209,25 @@ commit "mark UC-dispatch-05 uncovered"
 out="$(lint --orphans "$before_ref")"; rc=$?
 isz "SEEN GREEN: marking the use case uncovered clears the orphan" "$rc"
 
+# ==========================================================================
+# A Rust test's `// covers: UC-…` comment is cover: the suite that covered the id can be
+# deleted with no marker, and removing the annotation orphans it again.
+# ==========================================================================
+printf '#!/usr/bin/env bash\n# tier: T2\n# covers: spira/dispatch.sh UC-dispatch-02\necho hi\n' \
+    > "$ROOT/spira/test-covers-02.sh"
+commit "a suite covering UC-dispatch-02"
+before_rs="$(git -C "$ROOT" rev-parse HEAD)"
+mkdir -p "$ROOT/somecrate/src"
+printf '#[test]\n// covers: UC-dispatch-02\nfn t() {}\n' > "$ROOT/somecrate/src/lib.rs"
+rm "$ROOT/spira/test-covers-02.sh"
+commit "migrate it into a Rust test"
+out="$(lint --orphans "$before_rs")"; rc=$?
+isz "a Rust '// covers:' annotation keeps the use case covered" "$rc"
+
+printf '#[test]\nfn t() {}\n' > "$ROOT/somecrate/src/lib.rs"
+commit "drop the annotation"
+out="$(lint --orphans "$before_rs")"; rc=$?
+isnz "SEEN RED: without the annotation the use case is orphaned" "$rc"
+want "and names the orphaned id" "UC-dispatch-02" "$out"
+
 tl_summary
