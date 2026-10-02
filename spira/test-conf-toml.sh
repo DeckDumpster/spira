@@ -256,5 +256,11 @@ want "the refusal names spira-config" "spira-config" "$(cat "$T/unresolvable.out
 want "the refusal names SPIRA_RELEASE (why spira-config could not be found)" \
     "SPIRA_RELEASE" "$(cat "$T/unresolvable.out")"
 
+if grep -q 'No such file or directory' "$T/unresolvable.out"; then
+    bad "the refusal is a named diagnostic, not a bare exec failure" "$(cat "$T/unresolvable.out")"
+else
+    ok "the refusal is a named diagnostic, not a bare exec failure"
+fi
+
 # ==========================================================================
 tl_summary
