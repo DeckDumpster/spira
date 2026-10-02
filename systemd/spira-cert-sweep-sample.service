@@ -10,7 +10,7 @@ Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
 Type=oneshot
-ExecStart=@SPIRA_PROD_ROOT@/bin/cert-sweep pass --mode subset --repo @SPIRA_HOME@ --branch cert-sweep/tip --repo-name spira
+ExecStart=@SPIRA_PROD_ROOT@/bin/cert-sweep pass --mode subset --repo @SPIRA_REPO@ --branch cert-sweep/tip --repo-name spira
 # A sweep that finds nothing to say, or only reds it has already filed, is not a failure;
 # exit 1 (the runner returned no results) stays one.
 TimeoutStartSec=1500

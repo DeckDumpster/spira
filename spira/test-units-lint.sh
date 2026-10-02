@@ -191,4 +191,13 @@ for pair in "spira-watch-notify-prod" "spira-watch-refresh-prod" \
     hasnt "$pair: but not the service behind it"    "$ilog" "enable --now $pair.service"
 done
 
+# sp-rgfi8: cert-sweep needs a git checkout; @SPIRA_HOME@ is a release dir with no .git.
+for _u in full sample; do
+    if grep -q '^ExecStart=.*cert-sweep pass.*--repo @SPIRA_REPO@' "$ROOT/systemd/spira-cert-sweep-$_u.service"; then
+        ok "cert-sweep-$_u passes --repo @SPIRA_REPO@"
+    else
+        bad "cert-sweep-$_u --repo must be @SPIRA_REPO@ (git checkout)" "not @SPIRA_REPO@"
+    fi
+done
+
 tl_summary
