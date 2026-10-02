@@ -125,6 +125,13 @@ fn pr() -> i32 {
             return 1;
         }
     };
+    if !s.repo_map_ok {
+        // An unconfigured or unreadable map is a fault, not an empty work queue: exiting 0
+        // here is what let this run 1704 times without enumerating a single repository
+        // (law-fail-closed-at-the-source, law-a-control-that-cannot-check-must-refuse).
+        out.log("landing-pass: repository map is not configured or unreadable — refusing to run");
+        return 1;
+    }
     s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
     pin_for_children(s.lifecycle_enforce);
     if !s.lifecycle_enforce {

@@ -18,6 +18,7 @@ TimeoutStartSec=120
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 Environment=SPIRA_DB=@SPIRA_DB@
+Environment=SPIRA_REPO_MAP=@SPIRA_REPO_MAP@
 StandardOutput=append:@SPIRA_RUN@/landing-pass.log
 StandardError=append:@SPIRA_RUN@/landing-pass.log
 

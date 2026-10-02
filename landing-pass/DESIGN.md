@@ -581,6 +581,10 @@ build or locate the binary — the testenv container already builds the workspac
   landed → CONTENT). (d) A delivery row's `version` may be a number (lc-delivery.sh already
   accepted one). (e) Each line was printed to stdout *and* appended to landing-pass.log,
   which the unit also appends stdout to — every line appeared twice; it now prints once.
+  (f) The context seam's `repo_map_ok` key (sp-7xnpv) tells the pr pass whether the
+  repository map conf.sh resolved is a readable file; unset or unreadable refuses (exit 1)
+  instead of an empty `repos` list reading as a real empty queue — the unit's own
+  `SPIRA_REPO_MAP` was missing for 1704 fires and every one exited 0.
 - **D3 — survivors once per pass (sp-4hs0i).** `rebase_survivors` ran after every push
   landing over the whole judged set (k landings × n survivors). It runs once per repository
   per pass, after the walk, only if something landed there. Safe because every survivor is

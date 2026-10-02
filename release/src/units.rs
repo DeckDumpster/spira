@@ -178,10 +178,10 @@ pub fn gate_open(template_name: &str, host: &BTreeMap<String, String>) -> bool {
     }
 }
 
-/// Placeholders an empty value fills rather than refuses — just `SPIRA_PATH_TAIL`
-/// (sp-c7b85): "nothing configured" is its ordinary, common case, unlike every other host key
-/// here, where an empty value means the caller forgot to set something the unit needs.
-const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL"];
+/// Placeholders an empty value fills rather than refuses: `SPIRA_PATH_TAIL` ("nothing
+/// configured" is its ordinary case) and `SPIRA_REPO_MAP` (conf.sh falls back to its own
+/// candidate search on an empty value, and the pass refuses to run when that finds nothing).
+const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL", "SPIRA_REPO_MAP"];
 
 /// Render one template against release `rel` (systemd/render.py's rules, in Rust).
 /// `host` supplies the host keys. A placeholder no key fills, or a key the template uses

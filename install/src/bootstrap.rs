@@ -63,6 +63,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         repo,
         run: env_var("SPIRA_RUN"),
         db: env_var("SPIRA_DB"),
+        repo_map: env_var("SPIRA_REPO_MAP"),
         cockpit,
         dolt_data: env_var("SPIRA_DOLT_DATA"),
         testdb_data: env_var("SPIRA_TESTDB_DATA"),

@@ -120,6 +120,12 @@ pub struct Settings {
     /// `SPIRA_REBASE_GENERATED_FILES`: space-separated path substrings `spira_is_generated_file`
     /// matches (law-regenerate-derived-summaries).
     pub rebase_generated_files: String,
+    /// Whether the repository map conf.sh resolved is a readable file. False means it was
+    /// never configured and no fallback found one either — an empty `repos` list then means
+    /// nothing could be seen, not that nothing needs landing (law-absence-needs-a-positive-
+    /// control). The pr pass refuses to run rather than treat that as a quiet empty queue;
+    /// only it consults this, because the gated pass always has the home repository.
+    pub repo_map_ok: bool,
 }
 
 impl Settings {
@@ -167,6 +173,7 @@ impl Settings {
             noverdict_class_window: 86_400,
             rebase_decompose_files: 4,
             rebase_generated_files: String::new(),
+            repo_map_ok: true,
             run,
         }
     }
