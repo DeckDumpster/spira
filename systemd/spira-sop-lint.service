@@ -9,3 +9,6 @@ CPUQuota=20%
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/sop-lint.log
 StandardError=append:@SPIRA_RUN@/sop-lint.log
+
+[X-Spira]
+Plane=work
