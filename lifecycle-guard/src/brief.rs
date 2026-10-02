@@ -1,6 +1,13 @@
 use crate::finding::{Class, Finding};
 use std::path::{Path, PathBuf};
 
+/// Only a file under a `chamber/` directory is a persona brief; `disabled/` personas are
+/// never summoned. DESIGN notes, docs and wiki pages describe bd, they do not instruct an aeon.
+pub fn is_persona_path(path: &Path) -> bool {
+    let comps: Vec<_> = path.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+    comps.iter().any(|c| c == "chamber") && !comps.iter().any(|c| c == "disabled")
+}
+
 /// Personas are `.md` briefs and `.fayth` definitions. Naming `bd` in either teaches an aeon
 /// to reach for the tool bd itself was told loses lifecycle authority, so every whole-word
 /// mention is a finding — this file is not the one place that gets to decide it still knows

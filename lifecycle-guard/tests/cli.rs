@@ -175,3 +175,9 @@ fn exit_code_is_nonzero_iff_findings_exist() {
         .unwrap();
     assert_eq!(dirty.status.code(), Some(1));
 }
+
+#[test]
+fn bd_in_docs_and_disabled_personas_and_rust_comments_is_not_reported() {
+    let findings = run("scoped", None);
+    assert!(findings.is_empty(), "{findings:#?}");
+}
