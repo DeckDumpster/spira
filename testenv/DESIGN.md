@@ -416,7 +416,7 @@ parse args ─ resolve repo, landref, tree ─ acquire worktree (in place | scra
         staged to <wt>/target/prebuilt here instead of building  ─ artifacts …/prebuilt
   ─ orphan sweeps ─ claim owner file ─ testenv container up / probe
   ─ stage the tree as a release, PATH from it (§5; rc 3 reason=stage)
-  ─ configure, suspend loom+cockpit+queue-watch units, install  (skippable)
+  ─ configure, suspend loom+cockpit+queue-watch+summon units, install  (skippable)
   ─ requirements check (skip-req records) ─ testdb template (else shared baseline)
   ─ schedule: exclusive first, then LPT; maxpar; PSI pause; per-suite timeout
   ─ faults: container death, exec storm, user-account loss → reclassify, rc 2
