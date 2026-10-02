@@ -397,14 +397,15 @@ fn reaper_takes_the_fixture_down_when_its_owner_dies() {
     };
     let root = d.join("root");
     let tpl = ensure_template(&root, &tools).unwrap();
-    let mut owner = Command::new("sleep").arg("30").spawn().unwrap();
+    // Kill-on-drop (sp-r70dc): a failed assertion between spawn and the explicit kill
+    // below used to leave this fixture running for its full 30s as an orphan.
+    let mut owner = testkit::ChildGuard::spawn(Command::new("sleep").arg("30"));
     let u = up(&root, &tpl, &tools, "r", owner.id(), None).unwrap();
     let (fx, oid) = (u.fixture.clone(), owner.id());
     let h = std::thread::spawn(move || reap(&fx, oid, Duration::from_millis(20)));
     sleep(Duration::from_millis(60));
     assert!(u.fixture.exists(), "alive owner: fixture kept");
-    owner.kill().unwrap();
-    owner.wait().unwrap();
+    owner.kill();
     h.join().unwrap();
     assert!(!u.fixture.exists());
     assert!(!pid_alive(u.pid));
@@ -444,11 +445,11 @@ fn the_server_never_holds_the_callers_pipe() {
 
 #[test]
 fn stop_never_signals_a_pid_that_is_not_this_fixtures_server() {
-    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    // Kill-on-drop (sp-r70dc).
+    let mut other = testkit::ChildGuard::spawn(Command::new("sleep").arg("30"));
     stop_server(other.id(), Path::new("/var/tmp/fx-x/data/config.yaml"));
     assert!(pid_alive(other.id()), "an unrelated process survives");
-    other.kill().unwrap();
-    other.wait().unwrap();
+    other.kill();
 }
 
 // ---- the real thing (bd + dolt), run with --ignored ----------------------------------

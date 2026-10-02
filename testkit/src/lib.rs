@@ -59,6 +59,62 @@ impl Drop for TempDir {
     }
 }
 
+/// A spawned test fixture process, killed when this value is dropped — including when a
+/// failing test unwinds out from under it (sp-r70dc).
+///
+/// A test fixture that stands in for a long-lived process (a fake aeon, a fake gate —
+/// typically `bash -c "exec -a NAME sleep 9999"`, held alive only long enough for one
+/// assertion) used to be killed by an explicit `child.kill(); child.wait();` written after
+/// the assertion. A failed assertion, a `panic!`, or the test binary itself being killed
+/// (gate timeout) skips that line, and the fixture outlives the test as an orphan — found
+/// in production as a `gate.sh 9999` process surviving up to 2.8 hours, once even holding
+/// a pipe open that failed an unrelated gate run.
+///
+/// `ChildGuard::spawn` makes the child the leader of its own process group
+/// (`process_group(0)`), so `Drop` can kill the WHOLE group, not just the one pid — a
+/// fixture that backgrounds a grandchild (`sh -c "sleep 9999 &"`) leaves nothing behind
+/// either. Killing is idempotent: calling it after the child has already exited (on its
+/// own, or via an explicit `guard.kill()` the test called itself to observe the kill's
+/// effect) is a no-op, never a signal to a reused pid.
+#[derive(Debug)]
+pub struct ChildGuard(std::process::Child);
+
+impl ChildGuard {
+    /// Spawn `cmd` as the leader of a fresh process group and hold it in a guard.
+    /// Panics if the spawn itself fails — this is test scaffolding, and a fixture that
+    /// cannot start must fail the test that needed it, the same contract `write_exe` keeps.
+    pub fn spawn(cmd: &mut Command) -> ChildGuard {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+        let child = cmd.spawn().unwrap_or_else(|e| panic!("spawn {cmd:?}: {e}"));
+        ChildGuard(child)
+    }
+
+    /// The child's pid (also its process group id, since it leads its own group).
+    pub fn id(&self) -> u32 {
+        self.0.id()
+    }
+
+    /// Kill the process group and wait for the leader to exit. Safe to call more than
+    /// once — `Drop` calls it again as a backstop — and safe to call after the child has
+    /// already exited on its own.
+    pub fn kill(&mut self) {
+        if matches!(self.0.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        // SAFETY: a plain signal(2) by pid. The negative pid form targets every process in
+        // the group this child leads (it was spawned with process_group(0)), not just it.
+        unsafe { libc::kill(-(self.0.id() as i32), libc::SIGKILL) };
+        let _ = self.0.wait();
+    }
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        self.kill();
+    }
+}
+
 /// Write `body` to `path` as an executable (mode 0755) that a test will then exec,
 /// WITHOUT THIS PROCESS EVER HOLDING A WRITE DESCRIPTOR ON IT.
 ///
@@ -98,6 +154,67 @@ mod tests {
 
     fn dir(tag: &str) -> TempDir {
         TempDir::new(&format!("testkit-{tag}"))
+    }
+
+    /// How many processes on this box currently belong to process group `pgid` — read
+    /// straight from `/proc/<pid>/stat` (field 5, past the LAST `)` so a `comm` containing
+    /// its own parens, spaces or digits never misleads the split).
+    fn group_member_count(pgid: u32) -> usize {
+        let Ok(entries) = std::fs::read_dir("/proc") else { return 0 };
+        entries
+            .flatten()
+            .filter(|e| e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()).is_some())
+            .filter(|e| {
+                let Ok(stat) = std::fs::read_to_string(e.path().join("stat")) else { return false };
+                let Some((_, rest)) = stat.rsplit_once(')') else { return false };
+                rest.split_whitespace().nth(2).and_then(|s| s.parse::<u32>().ok()) == Some(pgid)
+            })
+            .count()
+    }
+
+    #[test]
+    fn a_panicking_test_leaves_no_child_behind() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let r = std::thread::spawn(move || {
+            let mut c = Command::new("sleep");
+            c.arg("9999");
+            let g = ChildGuard::spawn(&mut c);
+            tx.send(g.id()).unwrap();
+            panic!("the test fails while the guard is still held");
+        })
+        .join();
+        assert!(r.is_err(), "the spawned thread was expected to panic");
+        let pid = rx.recv().unwrap();
+        // Drop runs during the panicking thread's unwind, before join() returns — the kill
+        // (and the wait() inside it) is already complete by the time we get here.
+        assert!(!std::path::Path::new(&format!("/proc/{pid}")).exists(), "pid {pid} survived the panic");
+    }
+
+    #[test]
+    fn kill_takes_the_whole_group_a_backgrounded_grandchild_included() {
+        let mut c = Command::new("sh");
+        c.args(["-c", "sleep 9999 & exec sleep 9999"]);
+        let mut g = ChildGuard::spawn(&mut c);
+        let pgid = g.id();
+        // Positive control: wait for the shell to actually have forked and backgrounded
+        // its grandchild before asserting anything about the group.
+        let mut tries = 0;
+        while group_member_count(pgid) < 2 && tries < 200 {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            tries += 1;
+        }
+        assert_eq!(group_member_count(pgid), 2, "fixture: leader + backgrounded grandchild both up");
+        g.kill();
+        assert_eq!(group_member_count(pgid), 0, "the whole group is gone, not just the leader");
+    }
+
+    #[test]
+    fn kill_is_idempotent_and_safe_after_the_child_exited_on_its_own() {
+        let mut c = Command::new("true");
+        let mut g = ChildGuard::spawn(&mut c);
+        let _ = g.0.wait();
+        g.kill();
+        g.kill();
     }
 
 

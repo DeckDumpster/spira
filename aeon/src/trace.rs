@@ -862,14 +862,17 @@ mod tests {
         let no_gate = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
         assert!(no_gate.parse::<i64>().is_ok(), "got [{no_gate}]");
 
-        // a live process whose cmdline contains "gate".
-        let mut child = std::process::Command::new("bash").arg("-c").arg("exec -a gate.sh sleep 9999").spawn().unwrap();
+        // a live process whose cmdline contains "gate". Held in a kill-on-drop guard
+        // (sp-r70dc) — this is the exact fixture that leaked as an orphan `gate.sh 9999`
+        // for up to 2.8 hours whenever the assert_eq! below failed.
+        let mut child = testkit::ChildGuard::spawn(
+            std::process::Command::new("bash").arg("-c").arg("exec -a gate.sh sleep 9999"),
+        );
         std::fs::write(gate_dir.join("pid"), child.id().to_string()).unwrap();
         let gate_fuse = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
         assert_eq!(gate_fuse, "gate");
 
-        let _ = child.kill();
-        let _ = child.wait();
+        child.kill();
         // the pid is dead now: fuse resumes as a number or ? (acceptable per the bash suite).
         let dead = aeon_fuse_minutes("sp-x", &wt, &run, None, crate::util::now_epoch());
         assert_ne!(dead, "gate");

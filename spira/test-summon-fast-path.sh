@@ -141,6 +141,9 @@ is "fallback: a unit is ignored when SPIRA_SUMMON is not systemd-run" "0" "$(aeo
 # `exec -a` to a name containing it, on a real backgrounded process.
 ( exec -a aeon.sh sleep 5 ) &
 FAKE_AEON_PID=$!
+# Kill-on-exit (sp-r70dc): fold into the EXIT trap as a backstop, so a failure between
+# here and the explicit kill below cannot leave this running for its full 5s unkilled.
+trap 'kill "$FAKE_AEON_PID" 2>/dev/null; testdb_drop 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 printf '%s' "$FAKE_AEON_PID" > "$SPIRA_RUN/aeon-builder-sp-fallback.pid"
 is "fallback: a live pidfile still counts (no real systemd needed)" "1" "$(aeon_count builder)"
 kill "$FAKE_AEON_PID" 2>/dev/null; wait "$FAKE_AEON_PID" 2>/dev/null

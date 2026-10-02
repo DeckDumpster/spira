@@ -6,3 +6,4 @@ publish = false
 description = "testkit — test scaffolding shared across the workspace: write an executable without an ETXTBSY race (dev-dependency only)."
 
 [dependencies]
+libc = "0.2"

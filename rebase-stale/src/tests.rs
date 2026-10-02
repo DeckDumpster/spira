@@ -489,18 +489,18 @@ fn a_live_holder_blocks_hold_pidfile() {
 #[test]
 fn a_live_holder_blocks_aeon_pidfile() {
     let (fx, old) = live_holder_fixture("live-aeon", "sp-la");
-    let mut child = Command::new("bash")
-        .args(["-c", "exec -a aeon.sh-stub sleep 30"])
-        .spawn()
-        .unwrap();
+    // Kill-on-drop (sp-r70dc): a failed assertion between spawn and the explicit kill
+    // below used to leave this fixture running for its full 30s as an orphan.
+    let mut child = testkit::ChildGuard::spawn(
+        Command::new("bash").args(["-c", "exec -a aeon.sh-stub sleep 30"]),
+    );
     std::thread::sleep(Duration::from_millis(200));
     write(
         &fx.run.join("aeon-builder-sp-la.pid"),
         &format!("{}\n", child.id()),
     );
     assert_busy(&fx, &fx.seam(), "sp-la", &old, "live aeon pid");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 }
 
 #[test]
@@ -536,14 +536,12 @@ fn a_live_holder_blocks_unreachable_database() {
 #[test]
 fn a_live_holder_blocks_process_working_in_it() {
     let (fx, old) = live_holder_fixture("live-cwd", "sp-lc");
-    let mut child = Command::new("sleep")
-        .arg("30")
-        .current_dir(fx.wt("sp-lc"))
-        .spawn()
-        .unwrap();
+    // Kill-on-drop (sp-r70dc).
+    let mut child = testkit::ChildGuard::spawn(
+        Command::new("sleep").arg("30").current_dir(fx.wt("sp-lc")),
+    );
     assert_busy(&fx, &fx.seam(), "sp-lc", &old, "is working in");
-    let _ = child.kill();
-    let _ = child.wait();
+    child.kill();
 }
 
 #[test]

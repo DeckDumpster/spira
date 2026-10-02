@@ -137,6 +137,10 @@ seed sp-h2 open
 # Start a short-lived background process to act as the holder.
 sleep 999 &
 holder_bg=$!
+# Kill-on-exit (sp-r70dc): the explicit kill a few lines down only runs if nothing between
+# here and there exits first — fold the fixture into the EXIT trap as a backstop so it
+# cannot outlive the suite.
+trap 'kill "$holder_bg" 2>/dev/null; testdb_drop; rm -rf "$TMP"' EXIT
 hold.sh sp-h2 --pid "$holder_bg" >/dev/null 2>&1
 if holder_alive sp-h2; then ok "hold is alive while holder lives"
 else bad "hold is alive while holder lives" "returned 1"; fi

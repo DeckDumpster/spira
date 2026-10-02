@@ -113,6 +113,9 @@ for _i in 1 2 3 4 5; do
     ( exec -a aeon.sh sleep 300 ) &
     FAKE_AEON_PIDS+=("$!")
 done
+# Kill-on-exit (sp-r70dc): these five `sleep 300` fixtures were never killed anywhere in
+# this suite — every run, pass or fail, orphaned all five for up to 5 minutes.
+trap 'kill "${FAKE_AEON_PIDS[@]}" 2>/dev/null; wait "${FAKE_AEON_PIDS[@]}" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 
 # set_live <fayth> <n> -> exactly <n> live pidfiles for <fayth> (clears its own first).
 set_live() {
