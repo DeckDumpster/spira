@@ -348,10 +348,7 @@ is "aeon.sh: exits 0 claiming the stacked dependent" "0" "$?"
 is "the dependent, not the prerequisite, was claimed (widened ready + --blockers machine)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
 is "the dependent's own session ran work submit to completion" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null || echo missing)"
 
-depassignee="$(bd -C "$SPIRA_DB" show "$DEP" --json 2>/dev/null | python3 -c '
-import sys,json
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-print(d[0].get("assignee","") or "" if d else "")' 2>/dev/null)"
-is "bd actually claimed the dependent (assignee is set)" "1" "$([ -n "$depassignee" ] && echo 1 || echo 0)"
+want "the dependent's machine row reads SUBMITTED: it was claimed, then work submit applied" \
+    '"state":"SUBMITTED"' "$(row_json "$DEP")"
 
 tl_summary
