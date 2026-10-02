@@ -64,6 +64,7 @@ export SPIRA_DB="$T/no-db"
 # source at its own context probe. Same one-line symlink trick test-summon-fayth.sh's own
 # `aeon --escape` fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
+ln -s "$HERE/conf.d" "$T/conf.d"
 
 # THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
 # on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
