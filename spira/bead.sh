@@ -2,8 +2,8 @@
 #
 # bead.sh — file a bead through the contract; never call bd create directly.
 #
-#   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--json] [--parent <id>]
-#   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--json] [--parent <id>]
+#   bead.sh file "<title>" --for <persona> --repo <name> [--priority N] [--body-file F] [--submitted] [--json] [--parent <id>]
+#   bead.sh file "<title>" --kind <kind> [--repo <name>] [--priority N] [--body-file F] [--submitted] [--json] [--parent <id>]
 #   bead.sh lint [--all|<id>...]     check that beads in the store satisfy the contract
 #   bead.sh contract                 legal personas, repos and kinds, read from source
 #   bead.sh amend <id> [--note "<text>"] [--body-file F] [--express]

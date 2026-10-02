@@ -96,6 +96,7 @@ run_bead() {
         SPIRA_CZAR_LABEL="czar-trigger" \
         SPIRA_INCIDENT_LABEL="incident" \
         SPIRA_PLAN_LABEL="plan" \
+        SPIRA_SUBMITTED_LABEL="testsubmitted" \
         SPIRA_SCOPE_LABEL="testscope" \
         SPIRA_BEAD_LANE_OVERRIDE="${SPIRA_BEAD_LANE_OVERRIDE:-}" \
         bead.sh file "$@" 2>&1
@@ -107,6 +108,16 @@ run_bead() {
 out="$(run_bead "work bead" --for builder --repo testrepo)"; rc=$?
 is   "work: exits 0"          "0"       "$rc"
 want "work: bd create called" "create"  "$(cat "$BD_LOG")"
+
+: > "$BD_LOG"
+out="$(run_bead "work bead" --for builder --repo testrepo)"
+nowant "work: no submitted label by default" "testsubmitted" "$(cat "$BD_LOG")"
+: > "$BD_LOG"
+out="$(run_bead "own fix" --for builder --repo testrepo --submitted)"; rc=$?
+is   "submitted: exits 0"               "0"             "$rc"
+want "submitted: configured label applied" "testsubmitted" "$(cat "$BD_LOG")"
+out="$(run_bead "an event" --kind event --submitted)"; rc=$?
+is   "submitted on event: refused"      "2"             "$rc"
 
 out="$(run_bead "something happened" --kind event)"; rc=$?
 is     "event: exits 0"                    "0"             "$rc"
