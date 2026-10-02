@@ -43,6 +43,23 @@ pub enum Wrapper {
 /// default — absent means the unit is not installed and no build points at a shared store.
 pub const STORE_ADDR_ENV: &str = "SPIRA_SCCACHE_DAV_ADDR";
 
+/// The configured store address, resolved in-process from this binary's own environment and
+/// the `spira.toml` [`crate::discover`] finds. `None` on an unset `SPIRA_HOME`, a resolution
+/// error, or an unconfigured store.
+pub fn addr_from_env() -> Option<String> {
+    let home = std::env::var("SPIRA_HOME").ok().filter(|v| !v.is_empty())?;
+    addr_for_home(Path::new(&home))
+}
+
+/// [`addr_from_env`] for a caller that located `home` itself (`unit-ensure`, which may run
+/// with `SPIRA_HOME` unset).
+pub fn addr_for_home(home: &Path) -> Option<String> {
+    let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let repo = crate::resolve::derive_home_repo(home, &env_map);
+    let resolved = crate::resolve::resolve_for_process(home, &repo, &env_map).ok()?;
+    Some(resolved.get(STORE_ADDR_ENV).to_string()).filter(|v| !v.trim().is_empty())
+}
+
 /// This box's shared compilation cache (sccache-dav, sp-xjnzl): the operator's own endpoint,
 /// resolved from config, never hardcoded. `key_prefix` is fixed at `/` — the whole store is
 /// one flat namespace today (round-vm's own generated scripts hardcode the same "/"); a
@@ -70,12 +87,8 @@ impl Store {
     /// the way `gate`/`aeon` already do. `None` on an unset `SPIRA_HOME` or any resolution
     /// error, same as a genuinely unconfigured store: a build never refuses for want of this.
     pub fn from_env() -> Option<Store> {
-        let home = std::env::var("SPIRA_HOME").ok().filter(|v| !v.is_empty())?;
-        let home = Path::new(&home);
-        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-        let repo = crate::resolve::derive_home_repo(home, &env_map);
-        let resolved = crate::resolve::resolve_for_process(home, &repo, &env_map).ok()?;
-        Store::from_values(|k| Some(resolved.get(k).to_string()).filter(|v| !v.is_empty()))
+        let addr = addr_from_env()?;
+        Store::from_values(|k| (k == STORE_ADDR_ENV).then(|| addr.clone()))
     }
 
     fn env_pairs(&self) -> [(String, String); 2] {
@@ -480,5 +493,64 @@ mod tests {
         let w = wrapper(&path, None).unwrap();
         assert!(w.env(None).iter().all(|(k, _)| !k.starts_with("SCCACHE_WEBDAV")));
         assert!(Wrapper::Off.admitted_env(Path::new("/x"), "/run", "sp-abc", None).iter().all(|(k, _)| !k.starts_with("SCCACHE_WEBDAV")));
+    }
+}
+
+#[cfg(test)]
+mod from_env_tests {
+    use super::*;
+
+    fn with_env<R>(pairs: &[(&str, Option<&str>)], f: impl FnOnce() -> R) -> R {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved: Vec<_> = pairs.iter().map(|(k, _)| (*k, std::env::var(k).ok())).collect();
+        for (k, v) in pairs {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        let r = f();
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        r
+    }
+
+    #[test]
+    fn the_store_resolves_from_spira_toml_with_no_addr_in_the_environment() {
+        let d = testkit::TempDir::new("spira-config-store-from-toml");
+        let home = d.path().join("repo/spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        let toml = d.path().join("spira.toml");
+        std::fs::write(&toml, "[spira]\nsccache_dav_addr = \"10.9.8.7:9431\"\n").unwrap();
+        let got = with_env(
+            &[
+                ("SPIRA_HOME", Some(home.to_str().unwrap())),
+                ("SPIRA_REPO", Some(d.path().join("repo").to_str().unwrap())),
+                ("SPIRA_TOML", Some(toml.to_str().unwrap())),
+                (STORE_ADDR_ENV, None),
+            ],
+            Store::from_env,
+        );
+        assert_eq!(got.map(|s| s.endpoint), Some("http://10.9.8.7:9431".to_string()));
+    }
+
+    #[test]
+    fn addr_for_home_resolves_from_spira_toml_when_spira_home_is_unset() {
+        let d = testkit::TempDir::new("spira-config-addr-for-home");
+        let home = d.path().join("repo/spira");
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        let toml = d.path().join("spira.toml");
+        std::fs::write(&toml, "[spira]\nsccache_dav_addr = \"10.9.8.7:9431\"\n").unwrap();
+        let got = with_env(
+            &[("SPIRA_HOME", None), ("SPIRA_REPO", Some(d.path().join("repo").to_str().unwrap())), ("SPIRA_TOML", Some(toml.to_str().unwrap())), (STORE_ADDR_ENV, None)],
+            || addr_for_home(&home),
+        );
+        assert_eq!(got.as_deref(), Some("10.9.8.7:9431"));
+        let unset = with_env(&[("SPIRA_TOML", Some("/nonexistent-sp-ei6jt/spira.toml")), (STORE_ADDR_ENV, None)], || addr_for_home(&home));
+        assert_eq!(unset, None, "an unconfigured store stays None");
     }
 }
