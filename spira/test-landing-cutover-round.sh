@@ -77,7 +77,7 @@ landing() {
     SPIRA_HOME_REPO="$REPONAME" SPIRA_ID_PREFIX=sp \
     SPIRA_REPO_MAP="$SH/repo-map" SPIRA_GH="$SH/gh" \
     SPIRA_CERT_IDLE_SKIP=0 SPIRA_CUTOVER_ROUND_LABEL="$CUTOVER_LABEL" \
-        PATH="$SH:$PATH" landing-pass land 2>&1
+        SPIRA_GATE_WORKER=0 PATH="$SH:$PATH" landing-pass land 2>&1
 }
 
 # branch <id> <file> <content> [labels-json] — a closed bead with a clean git branch.
