@@ -271,6 +271,13 @@ exit 0
 SCEOF
 chmod +x "$BIN/systemctl"
 
+cat > "$BIN/journalctl" <<'JCEOF'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do [ "$1" = "-u" ] && { printf 'JOURNAL-LINE-FOR %s\n' "$2"; exit 0; }; shift; done
+exit 0
+JCEOF
+chmod +x "$BIN/journalctl"
+
 # ---------------------------------------------------------------------------
 # run_deploy [env-pairs...] -- [deploy args...]
 # ---------------------------------------------------------------------------
@@ -582,6 +589,9 @@ _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed
 want   "deploy-window: the installed failed unit is reset"    "SC --user reset-failed spira-real-prod.service" "$(cat "$SC_LOG")"
 want   "deploy-window: ... and re-run under the release"      "SC --user start spira-real-prod.service" "$(cat "$SC_LOG")"
 want   "deploy-window: the re-run is logged"                  "re-ran spira-real-prod.service" "$_out"
+want   "deploy-window: the failure is surfaced"               "spira-real-prod.service FAILED inside the deploy window" "$_out"
+want   "deploy-window: ... with its own journal lines"        "JOURNAL-LINE-FOR spira-real-prod.service" "$_out"
+nowant "deploy-window: a pass is not called proof of health"  "it failed inside the deploy window and passes under" "$_out"
 rm -rf "$RELEASES"; mkdir -p "$RELEASES/$PRIOR_RELEASE"; ln -s "$PRIOR_RELEASE" "$RELEASES/current"
 _out="$(run_deploy "SC_FAILED_UNITS=spira-real-prod.service loaded failed failed A real failure" \
     "SC_START_FAILS=spira-real-prod.service" -- "$NEW_TAG" 2>&1)"
