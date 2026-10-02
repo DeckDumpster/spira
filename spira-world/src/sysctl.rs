@@ -48,6 +48,31 @@ pub fn run_lines(args: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Parse `list-units` lines into the live `spira-aeon-*` service units (instance-qualified
+/// included). Header-less, column-split: first field is the unit, the third is ACTIVE.
+pub fn parse_aeon_units(lines: &[String]) -> Vec<String> {
+    lines
+        .iter()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.split_whitespace().map(|t| t.trim_start_matches('●')).filter(|t| !t.is_empty()).collect();
+            let unit = *f.first()?;
+            if !unit.starts_with("spira-aeon-") || !unit.ends_with(".service") {
+                return None;
+            }
+            match f.get(2) {
+                Some(&"active") | Some(&"activating") | Some(&"deactivating") | Some(&"reloading") => Some(unit.to_string()),
+                _ => None,
+            }
+        })
+        .collect()
+}
+
+/// Live aeons according to systemd — the authority; a /proc argv scan is blind to any
+/// aeon whose command line is not the script path.
+pub fn live_aeon_units() -> Vec<String> {
+    parse_aeon_units(&run_lines(&["list-units", "spira-aeon-*", "--no-legend", "--plain", "--no-pager"]))
+}
+
 /// Whether `name` is a unit systemd has LOADED AT ALL — enabled or not, active or not.
 /// `list-unit-files <name> --no-legend` prints one line for a unit file systemd knows
 /// about (nothing for one it does not); `cat <name>` additionally catches a form
@@ -205,6 +230,21 @@ pub fn status_timer_row(timer: &str, state: &str, svc_result: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_aeon_units_keeps_only_active_aeon_services() {
+        let l: Vec<String> = [
+            "spira-aeon-sp-1.service loaded active running aeon sp-1",
+            "● spira-aeon-prod-sp-2.service loaded failed failed aeon sp-2",
+            "spira-aeon-sp-3.service loaded activating start aeon sp-3",
+            "spira-loom.service loaded active running loom",
+            "inactive",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        assert_eq!(parse_aeon_units(&l), vec!["spira-aeon-sp-1.service", "spira-aeon-sp-3.service"]);
+    }
 
     #[test]
     fn start_action_prefers_suspension_over_disabled() {

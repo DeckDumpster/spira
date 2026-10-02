@@ -388,6 +388,13 @@ fn cmd_stop(args: &[String]) -> i32 {
             }
             stray += 1;
         }
+        let units = sysctl::live_aeon_units();
+        if stray == 0 && !units.is_empty() {
+            for u in &units {
+                println!("  WARNING: {u} is live under systemd — not stopped; inspect: systemctl --user status {u}");
+            }
+            stray = units.len() as u32;
+        }
         if n == 0 && stray == 0 {
             println!("  no live aeons");
         }
@@ -582,7 +589,8 @@ fn cmd_drain(args: &[String]) -> i32 {
 
     let mut waited: u64 = 0;
     loop {
-        let n = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |_| String::new()).len() as u64;
+        let procs = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_path_refs, |_| String::new()).len() as u64;
+        let n = procs.max(sysctl::live_aeon_units().len() as u64);
         if n == 0 {
             break;
         }
@@ -734,6 +742,7 @@ fn cmd_status() -> i32 {
     ];
     let aeon_refs: Vec<&str> = aeon_paths.iter().map(String::as_str).collect();
     let a = spira_world::proc::live_aeons(std::path::Path::new("/proc"), &aeon_refs, |_| String::new()).len();
+    let a = a.max(sysctl::live_aeon_units().len());
     println!("  live aeons: {a}");
 
     // sp-2bkpn: name an in-flight round so a halt is never the first anyone hears of it.
