@@ -594,7 +594,8 @@ impl<'w, W: World> Trial<'w, W> {
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
+            let mut _reservation = None;
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree, &mut _reservation) {
                 return e;
             }
             return hit;
@@ -690,11 +691,12 @@ impl<'w, W: World> Trial<'w, W> {
         // A TRIAL THAT BUILDS IN THE TREE (the tools phase, the unit phases, --release-bins)
         // needs the build cache — absent, it refuses before any build (sp-z61hj) — and builds
         // on tmpfs.
+        let mut _scratch_reservation: Option<Box<dyn std::any::Any>> = None;
         let builds = tree_def.as_ref().is_some_and(|d| !d.bins.is_empty())
             || matches!(comp, Composition::Unit { .. })
             || self.a.release_bins;
         if builds {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree, &mut _scratch_reservation) {
                 return e;
             }
         }
@@ -801,6 +803,11 @@ impl<'w, W: World> Trial<'w, W> {
         if rc == NOVERDICT && out.contains(TOOLS_UNATTRIBUTED) {
             return v(NOVERDICT, "tools-unattributed", format!(
                 "{out}\ngate: no verdict on {br} — its tools could not be attributed to the tree under test."));
+        }
+        if spira_config::scratch::is_exhaustion(&out) {
+            return v(NOVERDICT, "scratch-short", format!(
+                "gate: {name}'s build ran out of scratch space mid-trial — the host's room, not a fault in {br}.\n{}",
+                parse::tail_bytes(&out, 4000)));
         }
         if let Some(d) = parse::harness_fault_detail(&out) {
             return v(NOVERDICT, "harness-fault", format!(
@@ -1063,6 +1070,11 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         }
+        if spira_config::scratch::is_exhaustion(&base_out) {
+            return v(NOVERDICT, "scratch-short", format!(
+                "gate: {name}'s base trial ran out of scratch space — the host's room; it judged neither {base} nor {br}.\n{}",
+                parse::tail_bytes(&base_out, 4000)));
+        }
         let spaced = |v: &[String]| v.join(" ");
         match parse::attribute(&out, base_ran, base_rc, &base_out, &absent) {
             Attribution::BranchRed(s) => {
@@ -1264,7 +1276,7 @@ impl<'w, W: World> Trial<'w, W> {
     }
 
     /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
-    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path, reservation: &mut Option<Box<dyn std::any::Any>>) -> Option<Verdict> {
         let w = self.w;
         if let Some(e) = &self.s.cache_refusal {
             return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
@@ -1274,13 +1286,19 @@ impl<'w, W: World> Trial<'w, W> {
             ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
             ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
             ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_RESERVE_MIB"),
         );
+        let short = |e: String| Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch.")));
         match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
-            Ok(line) => {
-                w.eprint(&line);
+            Ok(line) => w.eprint(&line),
+            Err(e) => return short(e),
+        }
+        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+            Ok(g) => {
+                *reservation = Some(g);
                 None
             }
-            Err(e) => Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."))),
+            Err(e) => short(e),
         }
     }
 

@@ -34,6 +34,7 @@ pub mod release_skew;
 pub mod repos;
 pub mod resolve;
 pub mod room;
+pub mod scratch;
 pub mod unit;
 pub mod writeback;
 

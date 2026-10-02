@@ -101,6 +101,7 @@ struct Fake {
     target_clears_tools: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
     released: RefCell<Vec<(PathBuf, bool)>>,
+    reserve_err: RefCell<Option<String>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
     /// about this cache specifically exercises it exactly as it would for real.
@@ -220,6 +221,7 @@ impl Fake {
             wrapper_asked: RefCell::new(Vec::new()),
             target_err: RefCell::new(None),
             target_clears_tools: Cell::new(false),
+            reserve_err: RefCell::new(None),
             targets: RefCell::new(Vec::new()),
             released: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
@@ -452,6 +454,12 @@ impl World for Fake {
     }
     fn release_target(&self, tree: &Path, keep_release: bool) {
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
+    }
+    fn reserve_scratch(&self, _: &Path, _: &str, _: &str, _: &crate::target::Limits) -> Result<Box<dyn std::any::Any>, String> {
+        match self.reserve_err.borrow().clone() {
+            Some(e) => Err(e),
+            None => Ok(Box::new(())),
+        }
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
         if let Some(e) = self.install_err.borrow().clone() {
@@ -3041,6 +3049,33 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
     assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
     assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// A reservation the shared ledger refuses is the same refusal as short room.
+#[test]
+fn a_refused_scratch_reservation_is_no_verdict_before_anything_builds() {
+    let f = tree_owned(Some(STEPS), Some(STEPS));
+    *f.reserve_err.borrow_mut() = Some("scratch: gate-x needs 4096 MiB but only 100 MiB is free".into());
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
+    assert!(f.cmds.borrow().is_empty(), "nothing built: {:?}", f.cmds.borrow());
+}
+
+/// A build that dies on the exhausted scratch filesystem is infrastructure — never the
+/// branch's red, and never the base's.
+#[test]
+fn a_build_that_hits_enospc_is_no_verdict_never_red() {
+    for text in ["rustc-LLVM ERROR: Disk quota exceeded", "ld: error writing x: No space left on device"] {
+        let f = Fake::new();
+        f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, format!("test-a.sh RED\n{text}")));
+        assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+        assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
+    }
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, "test-a.sh RED".into()));
+    f.runs.borrow_mut().insert(BASE.into(), (1, "test-a.sh RED\nDisk quota exceeded".into()));
+    assert_eq!(f.run(), NOVERDICT, "{}", f.stderr());
+    assert!(f.verdict_line().contains("reason=scratch-short"), "{}", f.verdict_line());
 }
 
 /// The tools phase and the unit phases are one-shot builds: no incremental cache, by a

@@ -40,17 +40,20 @@ pub struct Limits {
     /// law-reduce-the-count-never-throttle-the-job: reduce the count of cached trees here
     /// rather than refuse the trial.
     pub shed_free_mib: u64,
+    /// MiB a trial reserves in the shared scratch ledger for its build's peak.
+    pub reserve_mib: u64,
 }
 
 impl Limits {
     /// From the operator's variables (empty or unparsable = the default).
-    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str) -> Limits {
+    pub fn from_vars(cap: &str, free: &str, mem: &str, shed: &str, reserve: &str) -> Limits {
         let n = |s: &str, d: u64| s.trim().parse::<u64>().unwrap_or(d);
         Limits {
             cap_mib: n(cap, 12288),
             min_free_mib: n(free, 4096),
             min_mem_mib: n(mem, 4096),
             shed_free_mib: n(shed, 6144),
+            reserve_mib: n(reserve, 4096),
         }
     }
 }
@@ -325,7 +328,7 @@ mod tests {
     }
 
     fn lim(cap: u64) -> Limits {
-        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0 }
+        Limits { cap_mib: cap, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 0, reserve_mib: 0 }
     }
     fn roomy(_: &Path) -> Option<u64> {
         Some(1 << 20)
@@ -406,9 +409,9 @@ mod tests {
         let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
         let tree = trees.join(".gate.harness.b");
         fs::create_dir_all(&tree).unwrap();
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 4096, min_mem_mib: 1, shed_free_mib: 0, reserve_mib: 0 }, &|_| Some(100), &mem).unwrap_err();
         assert!(e.contains("100 MiB free") && e.contains("refusing to build on the disk"), "{e}");
-        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0 }, &roomy, &|| 12).unwrap_err();
+        let e = prepare(&root, &trees, &tree, &Limits { cap_mib: 100, min_free_mib: 1, min_mem_mib: 4096, shed_free_mib: 0, reserve_mib: 0 }, &roomy, &|| 12).unwrap_err();
         assert!(e.contains("MemAvailable is 12 MiB"), "{e}");
         assert!(!tree.join("target").exists(), "nothing linked, nothing built");
         assert!(prepare(&root, &trees, &tree, &lim(100), &|_| None, &mem).is_err(), "an unreadable root refuses");
@@ -422,10 +425,10 @@ mod tests {
         assert_ne!(a, root("", "/srv/b/run", true).unwrap(), "two installs never share a root");
         assert_eq!(root("", "/run", false), None);
         assert_eq!(
-            Limits::from_vars("", "x", "7", ""),
-            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144 }
+            Limits::from_vars("", "x", "7", "", ""),
+            Limits { cap_mib: 12288, min_free_mib: 4096, min_mem_mib: 7, shed_free_mib: 6144, reserve_mib: 4096 }
         );
-        assert_eq!(Limits::from_vars("1", "2", "3", "500").shed_free_mib, 500);
+        assert_eq!(Limits::from_vars("1", "2", "3", "500", "").shed_free_mib, 500);
     }
 
     /// sp-s8v5r, positive control: the byte cap alone (deliberately huge) would evict
@@ -462,7 +465,7 @@ mod tests {
             calls.set(n + 1);
             Some(if n < 2 { 50 } else { 300 })
         };
-        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200 };
+        let lim_floor = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 200, reserve_mib: 0 };
         let p = prepare(&root, &trees, &tree, &lim_floor, &short, &mem).unwrap();
         assert_eq!(p.evicted, vec![".gate.harness.old".to_string()], "held is skipped despite being the LRU; old alone clears the floor");
         assert!(root.join(".gate.harness.held/aeon/x").is_file());
@@ -472,7 +475,7 @@ mod tests {
         // is shed, so the behavior above is the floor's, not an eviction that always runs.
         let tree2 = trees.join(".gate.harness.new2");
         fs::create_dir_all(&tree2).unwrap();
-        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10 };
+        let lim_ok = Limits { cap_mib: 1_000_000, min_free_mib: 10, min_mem_mib: 10, shed_free_mib: 10, reserve_mib: 0 };
         let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem).unwrap();
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);
