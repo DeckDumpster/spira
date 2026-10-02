@@ -12,3 +12,5 @@
 # SEEDED 2026-09-25 from the shipped tree's own # tier:/# covers: headers.
 landing-merge-queue	2
 operator-channel	3
+# exposure: aeon-execution sp-3x675 — suites pre-existed at T3, previously untagged; not growth.
+aeon-execution	2

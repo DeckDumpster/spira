@@ -51,7 +51,7 @@
 #
 # tier: T3
 # defect: sp-mqnf sp-njwb sp-fx1p sp-pi3ez sp-wiyr2 sp-qd2ul
-# covers: sentinel/src/* spira/lib.sh groomer/src/deadlocked.rs spira-claim/* spira/chamber/* lifecycle/* spira-lc/*
+# covers: sentinel/src/* spira/lib.sh groomer/src/deadlocked.rs spira-claim/* spira/chamber/* lifecycle/* spira-lc/* UC-aeon-execution-21 UC-aeon-execution-22 UC-aeon-execution-23
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"

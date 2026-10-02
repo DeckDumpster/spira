@@ -26,7 +26,7 @@
 # family lives in bash or Rust.
 #
 # defect: sp-4fl2e
-# covers: aeon/src/*
+# covers: aeon/src/* UC-aeon-execution-17
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
