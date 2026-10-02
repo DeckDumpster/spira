@@ -119,8 +119,8 @@ CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
 RO_CRED="$TMP/credential-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
-    env -i PATH="$PATH" HOME="$HOME" \
-        SPIRA_ARTIFACTS="$CARGO_TARGET_DIR_FOR_BUILD/debug" SPIRA_ARTIFACTS_ROOT="$REPO" SPIRA_REPO="$REPO" \
+    env -i HOME="$HOME" \
+        PATH="$CARGO_TARGET_DIR_FOR_BUILD/debug:$PATH" SPIRA_REPO="$REPO" \
         SPIRA_HOME="$FIX" SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
         SPIRA_CONF="$CONF" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \

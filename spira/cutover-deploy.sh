@@ -61,14 +61,14 @@ fi
 [ -n "${SPIRA_LC_PASSWORD:-}" ] || { printf 'cutover-deploy: no spira_lc credential (SPIRA_LC_PASSWORD or %s) — refusing\n' "$SPIRA_LC_CRED_FILE" >&2; exit 1; }
 [ -n "${SPIRA_LC_RO_PASSWORD:-}" ] || { printf 'cutover-deploy: no spira_lc_ro credential (SPIRA_LC_RO_PASSWORD or %s) — refusing\n' "$SPIRA_LC_RO_CRED_FILE" >&2; exit 1; }
 
-[ -x "${SPIRA_LC_BIN:-}" ] || { printf 'cutover-deploy: spira-lc is not built (SPIRA_LC_BIN)\n' >&2; exit 1; }
-[ -x "${SPIRA_CONFIG_BIN:-}" ] || { printf 'cutover-deploy: spira-config is not built (SPIRA_CONFIG_BIN)\n' >&2; exit 1; }
+command -v spira-lc >/dev/null 2>&1 || { printf 'cutover-deploy: spira-lc is not on PATH\n' >&2; exit 1; }
+command -v spira-config >/dev/null 2>&1 || { printf 'cutover-deploy: spira-config is not on PATH\n' >&2; exit 1; }
 
 say() { printf 'cutover-deploy: %s\n' "$1"; }
 
 : "${SPIRA_LC_ADMIN_USER:=root}"
 : "${SPIRA_LC_ADMIN_PASSWORD:=}"
-admin_lc() { SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" "$SPIRA_LC_BIN" "$@"; }
+admin_lc() { SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
 
 say "applying schema.sql (as $SPIRA_LC_ADMIN_USER)"
 if [ "$DRY_RUN" != 1 ]; then
@@ -90,7 +90,7 @@ for name in "${REPOS[@]}"; do
         say "  would classify $name"
         continue
     fi
-    SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$SPIRA_LC_CRED_FILE" "$SPIRA_LC_BIN" classify \
+    SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$SPIRA_LC_CRED_FILE" spira-lc classify \
         --home "$SPIRA_HOME" --bd-bin "${SPIRA_BD:-bd}" --bd-db "$SPIRA_DB" \
         --landstate-dir "$SPIRA_RUN/landstate" --queue-dir "$SPIRA_QUEUE_DIR" --repo "$name" || exit 1
 done

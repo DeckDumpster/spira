@@ -31,12 +31,12 @@ fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 BUILD_LOG="$TMP/build.log"
-CARGO_TERM_COLOR=never "$CARGO_BIN" build --manifest-path "$REPO/lifecycle-guard/Cargo.toml" --release --quiet \
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$TMP/target" "$CARGO_BIN" build --manifest-path "$REPO/lifecycle-guard/Cargo.toml" --release --quiet \
     > "$BUILD_LOG" 2>&1 || bail "lifecycle-guard failed to build: $(cat "$BUILD_LOG")"
 
 echo "test-lifecycle-guard-gate.sh"
 
-BIN="$REPO/target/release/lifecycle-guard"
+BIN="$TMP/target/release/lifecycle-guard"
 [ -x "$BIN" ] || bail "lifecycle-guard did not build to $BIN"
 
 echo "gate.steps wires it:"
