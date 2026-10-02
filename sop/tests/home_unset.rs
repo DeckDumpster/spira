@@ -28,24 +28,18 @@ fn run_list(root: &Path, with_lib: bool) -> (String, String) {
     )
 }
 
-fn tmp(name: &str) -> std::path::PathBuf {
-    let p = std::env::temp_dir().join(format!("sop-home-unset-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&p);
-    p
-}
-
 #[test]
 fn list_non_empty_with_spira_home_unset() {
-    let root = tmp("pos");
+    let d = testkit::TempDir::new("sop-home-unset-pos");
+    let root = d.path().to_path_buf();
     let (out, _) = run_list(&root, true);
     assert!(out.contains("sop-fake"), "shelf must be non-empty (positive control): {out}");
-    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
 fn unsourceable_lib_is_loud_not_empty() {
-    let root = tmp("neg");
+    let d = testkit::TempDir::new("sop-home-unset-neg");
+    let root = d.path().to_path_buf();
     let (_, err) = run_list(&root, false);
     assert!(err.contains("cannot source"), "exit-96 must be loud: {err}");
-    let _ = std::fs::remove_dir_all(&root);
 }
