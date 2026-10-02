@@ -1885,7 +1885,7 @@ mod integration_tests {
         let mut env = lifecycle_tests_env(dir.path());
         let bd = dir.join("bd");
         fs::write(&bd, "#!/usr/bin/env bash\necho '[{\"id\":\"'$3'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]'\n").unwrap();
-        Command::new("chmod").arg("+x").arg(&bd).status().unwrap();
+        fs::set_permissions(&bd, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
         env.bd = bd.display().to_string();
         let key = batcher::core::round_key(&[("sp-b".into(), "2".into()), ("sp-a".into(), "1".into())]);
         write_hold(&env, "r", &key, "sp-hold1").unwrap();
