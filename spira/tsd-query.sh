@@ -15,6 +15,10 @@
 #                                                           <group>, longest-first, tab-separated
 #                                                           "<group>\t<avg>" with no header —
 #                                                           meant for a shell caller, not a human
+#   tsd-query.sh count-by <family> <group> [<hours>]
+#                                                           count(*) per distinct value of
+#                                                           <group>, tab-separated "<group>\t<n>"
+#                                                           with no header, most-frequent first
 #   tsd-query.sh suite-p50      <suite> <n>                p50 wall_secs over <suite>'s last
 #                                                           <n> suite-timing rows, every host
 #                                                           (local and CI) counted together
@@ -57,6 +61,7 @@ usage:
   tsd-query.sh rate          <family> <hours>
   tsd-query.sh dwell         <family> <field> <p> [<hours>]
   tsd-query.sh by-group      <family> <group> <field> [<hours>]
+  tsd-query.sh count-by      <family> <group> [<hours>]
   tsd-query.sh suite-p50     <suite> <n>
   tsd-query.sh suite-medians <n>
   tsd-query.sh suite-p90s    <n>
@@ -167,6 +172,23 @@ case "$cmd" in
             $where
             GROUP BY \"$group\"
             ORDER BY 2 DESC;
+        "
+        ;;
+    count-by)
+        family="${1:?family required}"; group="${2:?group required}"; hours="${3:-}"
+        _check_field "$group"
+        path="$(_check_family "$family")" || exit $?
+        where=""
+        if [ -n "$hours" ]; then
+            _check_hours "$hours"
+            where="WHERE CAST(ts AS TIMESTAMP) >= now() - INTERVAL '$hours hours'"
+        fi
+        duckdb -csv -separator '	' -noheader -c "
+            SELECT \"$group\", count(*)
+            FROM read_ndjson_auto('$path')
+            $where
+            GROUP BY \"$group\"
+            ORDER BY 2 DESC, 1;
         "
         ;;
     suite-p50)

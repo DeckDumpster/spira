@@ -167,4 +167,28 @@ file_gap
 N2="$(count_open "$REF")"
 is "second mapping-gap escape for the same suite does not double-file" "1" "$N2"
 
+# ============================================================================
+# 8. CENSUS + FLAKE — count-by over run/tsd/escape.jsonl; a flipped rerun is a flake
+# ============================================================================
+CRUN="$TMP/census-run"; mkdir -p "$CRUN/tsd"
+NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+OLD="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
+{
+    for c in mapping_gap mapping_gap gate_gap flake; do
+        printf '{"ts":"%s","family":"escape","member":"m","suite":"s","class":"%s","batch_id":""}\n' "$NOW" "$c"
+    done
+    printf '{"ts":"%s","family":"escape","member":"m","suite":"s","class":"environment_gap","batch_id":""}\n' "$OLD"
+} > "$CRUN/tsd/escape.jsonl"
+CENSUS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+    bash "$HERE/escape-classify.sh" census --hours 168)"
+is "census counts each class in the window; the old row is excluded" \
+    "2 mapping_gap, 1 gate_gap, 0 environment_gap, 1 flake" "$CENSUS"
+
+RV_PASS="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+    bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 0 | tail -1)"
+is "a suite that passes on rerun is a flip" "FLIP" "$RV_PASS"
+RV_FAIL="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_PATH="${SPIRA_PATH:-}" SPIRA_CONF="$TMP/nonexistent.conf" SPIRA_RUN="$CRUN" SPIRA_HOME="$HERE" \
+    bash "$HERE/escape-classify.sh" rerun-verdict --member mem-a --suite s --rerun-rc 1 | tail -1)"
+is "a suite that fails on rerun is a real red, not a flake" "REAL_RED" "$RV_FAIL"
+
 tl_summary
