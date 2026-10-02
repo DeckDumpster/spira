@@ -461,3 +461,108 @@ fn a_planted_unresolvable_predicate_refuses_under_the_rendered_unit_env() {
     assert!(out.contains("SPIRA_SPXSNID_PLANTED_LABEL"), "the refusal must name the exact unresolved reference:\n{out}");
     assert!(!out.contains("no fayth in the chamber"), "{out}");
 }
+
+// =========================================================================================
+// sp-8bhnr (P0, LOOP-STOPPING): the landing pass resolves 'spira' to a release directory,
+// not its configured checkout. The static check above
+// (`spira_landing_pass_service_already_carries_spira_home_explicitly...`) only ever
+// covered `spira-landing-pass.service`'s OWN template; the real defect is in CHECK6's
+// *dynamic* dispatch (`sentinel/src/dispatch.rs`'s `systemd-run --setenv=...`, never a
+// static unit file), which forwards sentinel's OWN resolved `SPIRA_HOME`/`SPIRA_REPO`/
+// `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO` into the worker it starts. Sentinel's own `SPIRA_HOME`
+// under ITS unit is a release's bundled, non-checkout `spira/` (exactly `build_fixture`'s
+// own `root/spira`, were it not a symlink into this live checkout — see
+// `non_checkout_release_spira` below for why this test cannot reuse `build_fixture`
+// as-is), so sentinel's own `SPIRA_REPO` derives to the release ROOT. `landing-pass --pass`
+// is still never executed here (same ground rule as the rest of this file: it rebases and
+// pushes for real) — this proves the SHARED mechanism every land mode funnels through
+// instead, `spira_config::repos::Registry` (`landing-pass/src/real.rs`'s own
+// `repo_registry`, `spira-config repo root` as its CLI door), by exec'ing the REAL
+// `spira-config` binary under exactly the env CHECK6 would hand the worker.
+// =========================================================================================
+
+/// A release `spira/` that genuinely is NOT a git checkout — unlike every other fixture in
+/// this file, which symlinks `root/spira` to this checkout's own real `spira/` (itself
+/// part of a real git working tree, so `git -C root/spira rev-parse --show-toplevel` would
+/// happily succeed and defeat the whole point here). Only `conf.d` is borrowed, by symlink
+/// — the one subdirectory `spira_config::resolve` reads unconditionally — so `resolve()`
+/// still succeeds while the directory itself sits in a bare tmp tree with no `.git`
+/// anywhere above it.
+fn non_checkout_release_spira(release: &Path) -> PathBuf {
+    let release_spira = release.join("spira");
+    std::fs::create_dir_all(&release_spira).unwrap();
+    std::os::unix::fs::symlink(workspace_root().join("spira/conf.d"), release_spira.join("conf.d")).unwrap();
+    release_spira
+}
+
+/// This bead's own named repro, end to end against the REAL compiled `spira-config`
+/// binary: CHECK6 forwards its own resolved `SPIRA_REPO` (the release root — sentinel's
+/// `SPIRA_HOME` is a non-checkout release `spira/`, so `derive_repo_filesystem` falls back
+/// to its parent) and `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`, but never `SPIRA_REPO_DERIVED`
+/// (`sentinel/src/dispatch.rs`'s `setenv` list omits it) into the landing worker, which
+/// shares that SAME `SPIRA_HOME`. Before the fix, `repo_override` read the missing
+/// `SPIRA_REPO_DERIVED` as THIS process's own deliberate override and handed back the
+/// release root for the home repo outright — never consulting the real per-repository
+/// row — and `landing-pass`'s own CHECK6 then saw the release directory, not a checkout,
+/// and skipped it, exactly as the 07:36:57Z–07:37:16Z pass this bead is named for did.
+#[test]
+fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_root() {
+    let t = testkit::TempDir::new("sp-8bhnr-landing-worker");
+    let release = t.join("spira-releases/deadbeef");
+    let release_spira = non_checkout_release_spira(&release);
+
+    // The REAL configured checkout for the home repo 'spira' — a per-repository catalog
+    // naming it, and a real git repo carrying the fixture branch landing-pass's own CHECK6
+    // must see.
+    let checkout = t.join("checkouts/spira");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(&checkout).args(args).output().expect("git");
+        assert!(out.status.success(), "git -C {} {:?} failed: {}", checkout.display(), args, String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "fixture root", "--author=Fixture <fixture@example.com>"]);
+    git(&["checkout", "-q", "-b", "spira/sp-x"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "fixture work", "--author=Fixture <fixture@example.com>"]);
+
+    let home = t.join("userhome");
+    let catalog = home.join(".config/spira/catalog");
+    std::fs::create_dir_all(catalog.parent().unwrap()).unwrap();
+    std::fs::write(&catalog, format!("spira | {} | queue.local | local/main |  |\n", checkout.display())).unwrap();
+
+    let spira_config_bin = build_bin("spira-config", "spira-config");
+
+    // Exactly CHECK6's own forwarded keys (`dispatch.rs`'s `setenv` list), plus `HOME` —
+    // never `SPIRA_REPO_DERIVED`.
+    let mut cmd = Command::new("env");
+    cmd.arg("-i")
+        .arg(format!("HOME={}", home.display()))
+        .arg(format!("SPIRA_RELEASE={}", release.display()))
+        .arg(format!("PATH={}", release.join("bin").display()))
+        .arg(format!("SPIRA_HOME={}", release_spira.display()))
+        .arg(format!("SPIRA_REPO={}", release.display()))
+        .arg(format!("SPIRA_REPO_MAP={}", catalog.display()))
+        .arg("SPIRA_HOME_REPO=spira")
+        .arg(&spira_config_bin)
+        .arg("repo")
+        .arg("root")
+        .arg("spira")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let out = cmd.output().expect("exec spira-config repo root spira");
+    let resolved = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    assert_eq!(
+        resolved,
+        checkout.display().to_string(),
+        "'spira' must resolve to its configured checkout, not the release root forwarded as SPIRA_REPO:\nstdout={resolved:?}\nstderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // The positive control this bead's own test list asks for: once correctly resolved,
+    // the fixture `spira/sp-x` branch landing-pass's own CHECK6 (`git.spira_refs`) looks
+    // for is actually there to be seen.
+    let refs = Command::new("git").arg("-C").arg(&resolved).args(["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/"]).output().expect("git for-each-ref");
+    let seen = String::from_utf8_lossy(&refs.stdout);
+    assert!(seen.lines().any(|l| l == "spira/sp-x"), "the fixture branch must be visible in the resolved checkout: {seen:?}");
+}

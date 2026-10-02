@@ -214,6 +214,7 @@ fn cmd_stop(args: &[String]) -> i32 {
                 std::time::Duration::from_secs(10),
                 |d| std::thread::sleep(d),
                 std::time::Instant::now,
+                spira_world::round::read,
             );
             if !cleared {
                 eprintln!("spira: round-vm still provisioning after {}s — halting anyway (it was not blocking, only named); rerun with a longer --round-drain-timeout to wait further", round_drain_timeout.as_secs());

@@ -39,6 +39,27 @@ pub fn prune_landstate(p: &Pass) {
         Err(_) => return,
     };
     let checkouts: Vec<_> = p.repos.iter().filter(|r| !r.path.as_os_str().is_empty() && r.path.join(".git").exists()).collect();
+    // law-absence-needs-a-positive-control (sp-8bhnr, LOOP-STOPPING): "no repository could
+    // be looked at" and "no repository has the branch" read identically to the loop below
+    // (`checkouts.iter().any(...)` is false either way), and a registry that resolved every
+    // configured repository to something other than a real checkout (sp-8bhnr's own repro:
+    // the home repo 'spira' resolved to a release directory, not its configured checkout)
+    // used to fall straight through as "has_branch = false for every bead" — pruning the
+    // landstate of every closed bead in the store, sight unseen. Refuse outright, loudly,
+    // whenever this pass could not actually look: any configured repository that did not
+    // resolve to a real checkout, or none did at all (no repositories configured reads the
+    // same way — nothing was checked, so nothing may be concluded from it).
+    if p.repos.is_empty() || checkouts.len() != p.repos.len() {
+        let missing: Vec<&str> = p.repos.iter().filter(|r| !checkouts.iter().any(|c| c.name == r.name)).map(|r| r.name.as_str()).collect();
+        p.out.log(&format!(
+            "landing: prune refused — {}/{} configured repositor{} resolved as a git checkout this pass ({}); a closed bead with no branch there may simply be unreadable, not actually landed. Pruning nothing.",
+            checkouts.len(),
+            p.repos.len(),
+            if p.repos.len() == 1 { "y" } else { "ies" },
+            if missing.is_empty() { "none configured".to_string() } else { missing.join(", ") }
+        ));
+        return;
+    }
     for id in ids {
         let raw = status.get(&id).map(String::as_str);
         if raw != Some("closed") {
