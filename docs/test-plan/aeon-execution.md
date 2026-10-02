@@ -538,6 +538,13 @@ rather than the suite being wrong about what it expects. No `[use_case.uncovered
 marker: `test-holds.sh` never covered a numbered `UC-aeon-execution-NN`, so no catalogue
 entry is orphaned by its removal — this section is the only record of what it checked.
 
+**Re-added (sp-caetu).** Root cause found: since aeon refuses a `--home` with no `conf.d`
+(sp-1cdgq), T5's fixture home had none, so `aeon` exited at config resolution and wrote no
+prompt — an empty capture, deterministically, not a contention effect. The suite now copies
+`conf.d` in, and T5 first asserts the shim captured a non-empty prompt (printing aeon's rc
+and output tail) so a missing capture fails as itself. T1/T2 (the lib.sh `bead_named_paths`
+and `render_holds_brief` checks) are dropped: both moved into the aeon crate, which tests them.
+
 ## 15. Wave 4.33: verdict (J) and session outcome (N) ported natively (sp-8kqww)
 
 The last eight lib.sh functions aeon still reached through the bash seam for its own
