@@ -311,7 +311,9 @@ impl RoundRunner for VmRunner<'_> {
                     return Err("the corpus already ran for this round".into());
                 }
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
-                let mut cmd = Command::new("timeout");
+                let mut cmd = Command::new("systemd-run");
+                cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
+                cmd.arg("timeout");
                 cmd.arg("-k").arg("10").arg(self.env.wall_secs.to_string());
                 cmd.arg(&self.env.round_vm).arg("run").arg(&self.wt);
                 cmd.arg("--suites").arg(suites.join(","));
@@ -499,5 +501,22 @@ mod tests {
         assert_eq!(read_rc(&d.join("j.done")), Some(1));
         assert_eq!(read_rc(&d.join("none.done")), None);
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+/// sp-kzhg6: `systemd-run` args fencing the corpus run in a user scope with a CPUQuota.
+pub fn scope_args(quota: Option<&str>) -> Vec<String> {
+    let q = quota.filter(|q| !q.is_empty()).unwrap_or("1600%");
+    ["--user", "--scope", "--quiet", "-p"].iter().map(|s| s.to_string()).chain([format!("CPUQuota={q}")]).collect()
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::scope_args;
+    #[test]
+    fn default_and_override_quota() {
+        assert!(scope_args(None).contains(&"CPUQuota=1600%".to_string()));
+        assert!(scope_args(Some("800%")).contains(&"CPUQuota=800%".to_string()));
+        assert!(scope_args(None).contains(&"--scope".to_string()));
     }
 }
