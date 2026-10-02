@@ -222,6 +222,7 @@ is "and restarts nothing"                    "" "$(acted)"
 is "and says nothing"                        "" "$(cat "$TMP/out")"
 # WITHOUT THIS the silence above proves nothing: a pass that never ran, or one whose
 # systemctl was never reached, restarts nothing in exactly the same way.
+echo "# execlog: $(tr '\n' '|' < "$EXECLOG")"; echo "# err: $(head -c 600 "$TMP/err")"; echo "# out: $(head -c 300 "$TMP/out")"
 has "but it did ask systemd"                 "$(cat "$EXECLOG")" "systemctl --user show"
 has "and it did stat the files"              "$(cat "$EXECLOG")" "stat -c %Y %n"
 has "one show for every unit at once"        "$(cat "$EXECLOG")" "spira-watch-answers-prod.service"
