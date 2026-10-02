@@ -5,7 +5,6 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use regex::Regex;
-use serde::Deserialize;
 
 use crate::{direct_child, Entry, Finding, LintError, Rule, Tree};
 
@@ -26,23 +25,12 @@ pub const SYSTEM_ALLOW: &[&str] = &[
     "gate_meter", "yield_note", "fayth_names", // shell functions, not programs
 ];
 
-#[derive(Deserialize)]
-struct Manifest {
-    #[serde(default)]
-    dep: Vec<Dep>,
-}
-
-#[derive(Deserialize)]
-struct Dep {
-    name: String,
-}
-
 /// The declared program names. An unreadable, malformed or empty manifest is a refusal.
 pub fn declared(text: Option<String>) -> Result<BTreeSet<String>, LintError> {
     let bad = |reason: String| LintError::BadAllow { file: MANIFEST.into(), line: 0, reason };
     let text = text.ok_or_else(|| bad("not found — refusing to report clean".into()))?;
-    let m: Manifest = toml::from_str(&text).map_err(|e| bad(format!("does not parse: {e}")))?;
-    let names: BTreeSet<String> = m.dep.into_iter().map(|d| d.name).collect();
+    let m = spira_config::deps::parse(&text).map_err(|e| bad(format!("does not parse: {e}")))?;
+    let names: BTreeSet<String> = m.deps.into_iter().map(|d| d.name).collect();
     if names.is_empty() {
         return Err(bad("declares no [[dep]] — refusing to report clean".into()));
     }

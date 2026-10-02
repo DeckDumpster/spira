@@ -33,10 +33,32 @@ struct RawDep {
     absent: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct RawCompat {
+    name: String,
+    alias: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Default)]
 struct RawManifest {
     #[serde(default)]
     dep: Vec<RawDep>,
+    #[serde(default)]
+    compat: Vec<RawCompat>,
+}
+
+/// One `[[compat]]` row: a real binary and the old bare-name alias that must also resolve.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Compat {
+    pub name: String,
+    pub alias: String,
+}
+
+/// The whole manifest, typed: `[[dep]]` entries with fallbacks applied, and `[[compat]]`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Manifest {
+    pub deps: Vec<Dep>,
+    pub compat: Vec<Compat>,
 }
 
 /// One declared program, with its two fallbacks already applied.
@@ -55,17 +77,31 @@ pub struct Dep {
 /// `[ -f "$_SPIRA_DEPS" ]` guard did — never a hard refusal, because every lookup below still
 /// has a fallback to answer with.
 pub fn load(path: &Path) -> Vec<Dep> {
-    let Ok(text) = std::fs::read_to_string(path) else { return Vec::new() };
-    let Ok(raw) = toml::from_str::<RawManifest>(&text) else { return Vec::new() };
-    raw.dep
-        .into_iter()
-        .map(|d| Dep {
-            name: d.name,
-            tier: d.tier.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_TIER.to_string()),
-            purpose: d.purpose.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
-            absent: d.absent.unwrap_or_default(),
-        })
-        .collect()
+    load_manifest(path).deps
+}
+
+/// Strict parse of `deps.toml` text: `Err` carries the parser's message. Callers that must
+/// refuse on an unreadable manifest use this; the lenient readers wrap it.
+pub fn parse(text: &str) -> Result<Manifest, String> {
+    let raw = toml::from_str::<RawManifest>(text).map_err(|e| e.to_string())?;
+    Ok(Manifest {
+        deps: raw
+            .dep
+            .into_iter()
+            .map(|d| Dep {
+                name: d.name,
+                tier: d.tier.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_TIER.to_string()),
+                purpose: d.purpose.filter(|s| !s.is_empty()).unwrap_or_else(|| DEFAULT_PURPOSE.to_string()),
+                absent: d.absent.unwrap_or_default(),
+            })
+            .collect(),
+        compat: raw.compat.into_iter().map(|c| Compat { name: c.name, alias: c.alias }).collect(),
+    })
+}
+
+/// [`parse`] over a file; a missing or unparseable file answers an empty manifest.
+pub fn load_manifest(path: &Path) -> Manifest {
+    std::fs::read_to_string(path).ok().and_then(|t| parse(&t).ok()).unwrap_or_default()
 }
 
 /// `spira_deps_list [tier]` — every declared name, optionally filtered to one tier.
