@@ -8,3 +8,6 @@ ExecStart=@SPIRA_PROD@/sop-lint-watch.sh
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/sop-lint.log
 StandardError=append:@SPIRA_RUN@/sop-lint.log
+
+[X-Spira]
+Plane=work
