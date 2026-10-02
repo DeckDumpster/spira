@@ -48,10 +48,25 @@ pub fn which(prog: &str) -> Option<String> {
 /// `templates_dir`'s own fallback requires `spira-sentinel.service` under its `systemd/`
 /// candidate — and refuses outright when even that fails, rather than ever rendering
 /// "/spira" again.
+///
+/// `repo` ITSELF ALSO NEEDS A FALLBACK, not just `home`: `@SPIRA_REPO@` sat
+/// unused by any unit template until the cert-sweep units started passing it as their own
+/// `--repo` (sp-rgfi8, "release dir has no .git"), at which point an unset `SPIRA_REPO` —
+/// the same "neither set" shape this function already derives `home` for — substituted the
+/// empty string into `ExecStart=`, caught live by test-unit-drift.sh's "matching units"
+/// case rendering twice (once with `SPIRA_REPO` exported, once without) and getting two
+/// different cert-sweep units. Derived exactly as `spira/conf.sh`'s own
+/// `SPIRA_REPO_DERIVED` does — `git -C "$SPIRA_HOME" rev-parse --show-toplevel`, else
+/// `dirname "$SPIRA_HOME"` — via [`spira_config::resolve::derive_repo_filesystem`], the
+/// same helper `addr_for_home`'s own resolution already calls, just never surfaced into
+/// `HostValues.repo` before now.
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
-    let repo = nonempty_env("SPIRA_REPO");
-    let home = resolve_home(nonempty_env("SPIRA_HOME"), repo.clone(), argv0_path().as_deref())?;
-    let repo = repo.unwrap_or_default();
+    let repo_env = nonempty_env("SPIRA_REPO");
+    let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
+    let repo = repo_env.unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned()
+    });
     let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         format!("{parent}/cockpit")
