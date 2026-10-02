@@ -42,6 +42,7 @@ pub struct Cfg {
     pub queue_throttle_override: String,
 
     pub incident_sh: String,
+    pub bd: String,
     pub suites_sh: Option<String>,
     pub moot_sh: Option<String>,
     pub branch_guard_sh: Option<String>,
