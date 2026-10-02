@@ -223,6 +223,63 @@ pub fn prepare(
     Ok(out)
 }
 
+/// Remove the tmpfs directories `tree`'s build links point at (a finished gate's output is
+/// read by nobody), sparing `release` when the caller still has to stage it. Returns MiB freed.
+pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
+    let mut bytes = 0;
+    let mut homes: Vec<PathBuf> = Vec::new();
+    for d in LINKED {
+        let link = tree.join("target").join(d);
+        if keep_release && d == "release" {
+            continue;
+        }
+        let Ok(dest) = fs::read_link(&link) else { continue };
+        bytes += size_of(&dest);
+        let _ = fs::remove_dir_all(&dest);
+        let _ = fs::remove_file(&link);
+        if let Some(p) = dest.parent() {
+            homes.push(p.to_path_buf());
+        }
+    }
+    homes.sort();
+    homes.dedup();
+    for h in homes {
+        let _ = fs::remove_dir(&h); // only when empty
+    }
+    bytes / (1024 * 1024)
+}
+
+/// Backstop for crashed gates: remove every `root/<name>` untouched for `max_age` that no
+/// gate holds (`trees_dir/<name>.lock` free and `busy` false). Returns the names removed (or,
+/// with `dry`, that would be).
+pub fn reap_stale(
+    root: &Path,
+    trees_dir: &Path,
+    max_age: std::time::Duration,
+    dry: bool,
+    busy: &dyn Fn(&Path) -> bool,
+) -> Vec<String> {
+    let now = std::time::SystemTime::now();
+    let mut out = Vec::new();
+    let Ok(rd) = fs::read_dir(root) else { return out };
+    for e in rd.flatten() {
+        let n = e.file_name().to_string_lossy().into_owned();
+        let p = e.path();
+        if !p.is_dir() || now.duration_since(mtime(&p)).unwrap_or_default() < max_age {
+            continue;
+        }
+        if !lock_free(&trees_dir.join(format!("{n}.lock"))) || busy(&p) || busy(&trees_dir.join(&n)) {
+            continue;
+        }
+        if !dry {
+            let _ = fs::remove_dir_all(&p);
+        }
+        out.push(n);
+    }
+    out.sort();
+    out
+}
+
 /// Space this user can still write under `p`: statvfs free or quota headroom, whichever is smaller.
 pub fn free_mib(p: &Path) -> Option<u64> {
     spira_config::room::avail_mib(p)
@@ -407,5 +464,51 @@ mod tests {
         let p2 = prepare(&root, &trees, &tree2, &lim_ok, &|_| Some(50u64), &mem).unwrap();
         assert!(p2.evicted.is_empty(), "50 MiB free already clears a 10 MiB floor — nothing to shed");
         drop(f);
+    }
+    #[test]
+    fn a_finished_gate_drops_its_target_but_can_spare_release() {
+        let s = Scratch::new("release");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.b");
+        fs::create_dir_all(&tree).unwrap();
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        write_mib(&tree.join("target/aeon/x"), 2);
+        write_mib(&tree.join("target/release/y"), 1);
+        assert_eq!(release_tree(&tree, true), 2);
+        assert!(!root.join(".gate.harness.b/aeon").exists());
+        assert!(root.join(".gate.harness.b/release/y").is_file(), "release is spared for staging");
+        release_tree(&tree, false);
+        assert!(!root.join(".gate.harness.b").exists(), "nothing left: the dir goes too");
+    }
+
+    #[test]
+    fn stale_unheld_dirs_are_reaped_and_held_or_fresh_ones_are_not() {
+        let s = Scratch::new("stale");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        fs::create_dir_all(&trees).unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3 * 3600);
+        for n in ["stale", "held", "busy", "fresh"] {
+            write_mib(&root.join(n).join("aeon/x"), 1);
+            if n != "fresh" {
+                fs::File::open(root.join(n)).unwrap().set_modified(old).unwrap();
+            }
+        }
+        let lock = trees.join("held.lock");
+        fs::write(&lock, "").unwrap();
+        let _held = {
+            use std::os::unix::io::AsRawFd;
+            let f = fs::File::open(&lock).unwrap();
+            assert_eq!(unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+            f
+        };
+        let busy = |p: &Path| p.ends_with("busy");
+        let two_h = std::time::Duration::from_secs(2 * 3600);
+        assert_eq!(reap_stale(&root, &trees, two_h, true, &busy), vec!["stale".to_string()]);
+        assert!(root.join("stale").exists(), "dry run removes nothing");
+        assert_eq!(reap_stale(&root, &trees, two_h, false, &busy), vec!["stale".to_string()]);
+        assert!(!root.join("stale").exists());
+        for n in ["held", "busy", "fresh"] {
+            assert!(root.join(n).join("aeon/x").is_file(), "{n} kept");
+        }
     }
 }

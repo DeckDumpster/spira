@@ -74,6 +74,19 @@ fn main() -> ExitCode {
     match reap::reap(&dir, dry, &landed_fn, &busy_fn) {
         Ok(r) => {
             println!("{}", reap::describe(&r, dry));
+            let run = var("SPIRA_RUN").unwrap_or_default();
+            let explicit = var("SPIRA_GATE_TARGET_ROOT").unwrap_or_default();
+            let max_age = var("SPIRA_GATE_TARGET_MAX_AGE_MIN").and_then(|v| v.parse::<u64>().ok()).unwrap_or(120);
+            if let Some(root) = gate::target::root(&explicit, &run, gate::target::on_tmpfs(Path::new("/tmp"))) {
+                let gone = gate::target::reap_stale(&root, &dir, std::time::Duration::from_secs(max_age * 60), dry, &busy_fn);
+                println!(
+                    "target-reap: {} {} stale gate target dir(s) under {}{}",
+                    if dry { "would remove" } else { "removed" },
+                    gone.len(),
+                    root.display(),
+                    if gone.is_empty() { String::new() } else { format!(" ({})", gone.join(" ")) }
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {
