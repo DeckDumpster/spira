@@ -150,3 +150,40 @@ fn subset_is_a_fraction_resampled_by_seed() {
     assert_eq!(pick_subset(&all[..2], 4, 1).len(), 1);
     assert!(pick_subset(&[], 4, 1).is_empty());
 }
+
+#[test]
+fn bisect_finds_the_first_red_and_gives_up_on_a_probe_without_a_verdict() {
+    for first in 0..7 {
+        assert_eq!(bisect(7, |i| Some(i >= first)), Some(first));
+    }
+    assert_eq!(bisect(7, |_| None), None);
+    assert_eq!(bisect(0, |_| Some(true)), None);
+}
+
+#[test]
+fn judge_calls_any_green_rerun_a_flip_and_no_verdict_inconclusive() {
+    assert_eq!(judge(&[Verdict::Red, Verdict::Ok, Verdict::Red]), Judgement::Flaky);
+    assert_eq!(judge(&[Verdict::Red, Verdict::Red]), Judgement::Reproducible);
+    assert_eq!(judge(&[Verdict::Fault, Verdict::Skip]), Judgement::Inconclusive);
+}
+
+#[test]
+fn members_name_their_bead_only_when_the_subject_is_a_merge() {
+    let m = parse_members("aaa\tround-q: merge sp-x1 (b1)\nbbb\ttweak things\n");
+    assert_eq!(m[0].bead.as_deref(), Some("sp-x1"));
+    assert_eq!(m[1], Member { commit: "bbb".into(), bead: None });
+}
+
+#[test]
+fn an_open_bead_only_covers_its_own_suite_and_kind() {
+    let open = vec![("sp-1".to_string(), "cert-sweep: test-a.sh flips on one commit".to_string())];
+    assert_eq!(open_duplicate(&open, "test-a.sh", FilingKind::Flip), Some("sp-1"));
+    assert_eq!(open_duplicate(&open, "test-a.sh", FilingKind::Red), None);
+    assert_eq!(open_duplicate(&open, "test-b.sh", FilingKind::Flip), None);
+}
+
+#[test]
+fn the_first_fail_line_is_the_first_one() {
+    assert_eq!(first_fail_line("ok\n  FAIL: one\nFAIL: two\n").as_deref(), Some("FAIL: one"));
+    assert_eq!(first_fail_line("nothing"), None);
+}
