@@ -323,7 +323,8 @@ impl ClosedRow {
             content_landed: b.has("content-landed"),
             subsumed: reason.contains("SUBSUMED")
                 || reason.contains("DUPLICATE")
-                || reason.contains("TRACKED IN EPIC"),
+                || reason.contains("TRACKED IN EPIC")
+                || reason.starts_with("MOOT"),
             branch: b.label_value("branch:").unwrap_or("").to_string(),
         }
     }
@@ -470,6 +471,11 @@ mod tests {
         assert_eq!(rows[0].branch, "spira/b");
         assert!(rows[1].subsumed && rows[1].superseded && rows[1].exempt());
         assert!(!rows[0].exempt());
+        let moot = Bead {
+            close_reason: Some("Moot (Concierge): nothing left to land".into()),
+            ..Default::default()
+        };
+        assert!(ClosedRow::of(&moot, "spira").subsumed);
     }
 
     #[test]

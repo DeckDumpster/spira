@@ -1542,6 +1542,10 @@ fn check5_resolves_proven_landings_and_files_the_rest() {
         Some("closed-not-landed:sp-n")
     );
     assert_eq!(
+        env_of(&inc, "SPIRA_INCIDENT_PATH"),
+        Some("closed-not-landed:sp-n")
+    );
+    assert_eq!(
         env_of(&inc, "SPIRA_INCIDENT_LABELS"),
         Some("spira,incident")
     );
