@@ -75,6 +75,9 @@ pub struct Settings {
     /// `SPIRA_CERTIFY_PAR`: how many certification gates the queued walk runs at once
     /// (DESIGN.md §8 D14). 1 is the serial walk.
     pub certify_par: usize,
+    /// `SPIRA_GATE_WORKER`: queued repositories enqueue their certification gate for
+    /// `gate-worker` instead of running it inside the pass.
+    pub gate_worker: bool,
     pub verdict_ttl: u64,
     pub verdicts: PathBuf,
     pub deferral_escalate_at: u32,
@@ -138,6 +141,7 @@ impl Settings {
             gate_reserve: 2700,
             gate_lock_wait: None,
             certify_par: 1,
+            gate_worker: false,
             verdict_ttl: 86_400,
             verdicts: run.join("verdicts"),
             deferral_escalate_at: 5,

@@ -1,0 +1,24 @@
+[Unit]
+Description=Spira gate worker — gates the branches the landing pass queued, one at a time
+Documentation=file://@SPIRA_HOME@/../gate-worker/src/lib.rs
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/gate-worker run
+# A gate is bounded by SPIRA_GATE_TIMEOUT per trial and the worker drains a queue of them;
+# only the worker's own lock keeps two of these from running at once.
+TimeoutStartSec=infinity
+Environment=SPIRA_HOME=@SPIRA_PROD@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+Environment=SPIRA_DB=@SPIRA_DB@
+StandardOutput=append:@SPIRA_RUN@/gate-worker.log
+StandardError=append:@SPIRA_RUN@/gate-worker.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work

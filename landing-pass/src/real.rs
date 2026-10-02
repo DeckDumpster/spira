@@ -167,6 +167,7 @@ pub fn parse_context(answer: &str, home: &Path) -> Result<(Settings, Vec<RepoRow
         gate_reserve: num("gate_reserve", 1200),
         gate_lock_wait: kv.get("gate_lock_wait").filter(|v| !v.is_empty()).cloned(),
         certify_par: certify_par(kv.get("certify_par").map(String::as_str)),
+        gate_worker: num("gate_worker", 1) != 0,
         verdict_ttl: num("verdict_ttl", 0).max(0) as u64,
         verdicts: path_opt("verdicts").unwrap_or_else(|| PathBuf::from(&run).join("verdicts")),
         deferral_escalate_at: num("deferral_at", 5).max(0) as u32,

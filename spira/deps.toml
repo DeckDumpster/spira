@@ -337,6 +337,13 @@ version_min = ""
 version_probe = "readlink -f \"$(command -v intent-report)\""
 
 [[dep]]
+name = "gate-worker"
+tier = "release"
+purpose = "Spira's gate-worker binary, from the release's bin/ — drains the gate queue the landing pass fills"
+version_min = ""
+version_probe = "readlink -f \"$(command -v gate-worker)\""
+
+[[dep]]
 name = "landing-pass"
 tier = "release"
 purpose = "Spira's landing-pass binary, from the release's bin/"
