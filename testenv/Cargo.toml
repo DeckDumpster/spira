@@ -35,6 +35,7 @@ suite-select = { path = "../suite-select" }
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+toml = "0.8"
 
 [profile.release]
 opt-level = "z"
