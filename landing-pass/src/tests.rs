@@ -629,6 +629,34 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
 }
 
 #[test]
+fn the_base_red_id_is_found_among_the_intakes_trailing_lines() {
+    let h = H::new(LandMode::QueueLocal);
+    h.closed("sp-a", "t1");
+    let out = "gate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=test-x.sh\n".to_string();
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out));
+    *h.lib.incident_out.borrow_mut() = Some(Ok("filing…\nsp-inc9\ndelivers: sp-inc9: delivers:action written\n".into()));
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    h.run();
+    assert!(h.logged("CHECK6 spira: the base's own red is sp-inc9 (suite test-x.sh)"));
+    assert!(!h.logged("the intake returned no bead id"));
+}
+
+#[test]
+fn a_base_red_with_no_suite_name_is_keyed_by_the_base_sha() {
+    let h = H::new(LandMode::QueueLocal);
+    h.closed("sp-a", "t1");
+    let out = "gate: VERDICT=BASE_FAIL reason=base-red branch=b repo=spira suite=-\n".to_string();
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (76, out));
+    fs::create_dir_all(h.s.incident.parent().unwrap()).unwrap();
+    fs::write(&h.s.incident, "").unwrap();
+    h.run();
+    let inc = h.lib.find("incident ");
+    assert!(inc.starts_with("incident plan spira basefail:spira:-@"), "{inc}");
+    assert!(!inc.contains("basefail:spira:- "), "{inc}");
+}
+
+#[test]
 fn a_red_base_files_one_incident_per_repository_per_pass_and_charges_nobody() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");
