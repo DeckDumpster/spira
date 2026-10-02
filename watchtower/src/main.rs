@@ -126,6 +126,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         ask_label: getenv("SPIRA_ASK_LABEL").unwrap_or_else(|| "needs-operator".to_string()), // literal-ok: mirrors conf.sh's own derived default (this binary cannot source schema.sh)
         snap_stale_s: getenv_i64("SPIRA_SNAP_STALE_S", 60),
         gate_window_s: getenv_i64("SPIRA_WATCH_GATE_WINDOW", 21600),
+        gate_silence_window_s: getenv_i64("SPIRA_WATCH_GATE_SILENCE_WINDOW", 3600),
         gate_log: getenv("SPIRA_GATE_LOG").map(PathBuf::from),
         yield_window_s: getenv_i64("SPIRA_YIELD_WINDOW", 86400),
         yield_sh: getenv("SPIRA_YIELD_SH"),

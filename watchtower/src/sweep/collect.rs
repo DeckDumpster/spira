@@ -31,6 +31,7 @@ pub struct SweepData {
     pub last_land_id: Option<String>,
     pub gate_wait: gate_wait::GateWait,
     pub gate_win_label: String,
+    pub gate_silence: Option<gate_wait::Silence>,
     pub nv_worst: i64,
     pub nv_worst_key: Option<String>,
 
@@ -91,6 +92,7 @@ impl SweepData {
                 oldest_branch: String::new(),
             },
             gate_win_label: "last 6h".to_string(),
+            gate_silence: None,
             nv_worst: 0,
             nv_worst_key: None,
             unsent_inflight_disp: "0".to_string(),
@@ -223,6 +225,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
     let gw = gate_wait::compute(&gate_log_text, now, cfg.gate_window_s);
     let gate_win_label = gate_wait::window_label(cfg.gate_window_s);
+    let gate_silence = gate_wait::silence(&gate_log_text, &landstate::read_dir(&landstate_dir), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------
     let yield_sh = cfg.yield_sh.clone().or_else(|| incident::which("yield.sh"));
@@ -355,6 +358,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         last_land_id,
         gate_wait: gw,
         gate_win_label,
+        gate_silence,
         nv_worst,
         nv_worst_key,
         unsent_inflight_disp,

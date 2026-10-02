@@ -29,6 +29,7 @@ pub fn run(d: &SweepData, cfg: &Cfg) {
     batched_too_long(d, cfg);
     closed_stranded(d, cfg);
     dedup_meter(d, cfg);
+    gate_silent(d, cfg);
     idle_while_ready(d, cfg);
     moot_sweep(cfg);
 }
@@ -280,6 +281,27 @@ fn dedup_meter(d: &SweepData, cfg: &Cfg) {
     log(&format!("watchtower: dedup escalation filed ({refs} dup refs, {beads} surplus beads)"));
 }
 
+fn gate_silent(d: &SweepData, cfg: &Cfg) {
+    let Some(s) = &d.gate_silence else { return };
+    let Some(inc) = usable_inc(cfg) else {
+        log(&format!("watchtower: {} is missing — gate-silent escalation not filed", cfg.incident_sh));
+        return;
+    };
+    let last = s.last_gate.as_deref().unwrap_or("none (gate.log has no timestamped line)");
+    let body = format!(
+        "{} bead(s) reached SUBMITTED in the last {}m but gate.log gained no line in that time.\n\nLast gate.log timestamp: {last}\nSubmitted: {}\n\nA gate that stops running is otherwise silent: submitted branches reach rounds ungated. Check that the landing pass runs the gate for submitted branches before certifying them.\n",
+        s.submitted.len(),
+        cfg.gate_silence_window_s / 60,
+        s.submitted.join(" ")
+    );
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SILENT: submissions with no gate.log activity", &body)
+        .priority(1)
+        .reference("incident:gate-silent")
+        .cause("gate-silent");
+    incident::file(inc, &f);
+    log(&format!("watchtower: gate-silent escalation filed (last gate {last})"));
+}
+
 fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
     if d.idle_while_ready.is_empty() {
         return;
@@ -359,6 +381,7 @@ mod tests {
             ask_label: "needs-operator".into(), // literal-ok: test fixture
             snap_stale_s: 60,
             gate_window_s: 21600,
+            gate_silence_window_s: 3600,
             gate_log: None,
             yield_window_s: 86400,
             yield_sh: None,
@@ -444,6 +467,26 @@ mod tests {
         let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
         assert!(captured.contains("REF=incident:dedup-meter-nonzero"));
         assert!(captured.contains("incident:x 3 beads"));
+    }
+
+    #[test]
+    fn gate_silent_files_once_per_ref_naming_the_last_gate_and_not_when_absent() {
+        let d = testkit::TempDir::new("wt-escalate-gate-silent");
+        let inc = fake_incident(&d);
+        let cfg = cfg_with(&d, inc);
+        let quiet = SweepData::fixture_nominal(1_700_000_000);
+        gate_silent(&quiet, &cfg);
+        assert!(!d.join("captured.txt").exists());
+
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        data.gate_silence = Some(crate::gate_wait::Silence {
+            submitted: vec!["sp-x".into()],
+            last_gate: Some("2026-09-28T07:37:41Z".into()),
+        });
+        gate_silent(&data, &cfg);
+        let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
+        assert!(captured.contains("REF=incident:gate-silent"));
+        assert!(captured.contains("2026-09-28T07:37:41Z"));
     }
 
     #[test]

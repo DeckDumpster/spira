@@ -67,6 +67,37 @@ pub fn compute(gate_log_text: &str, now: i64, window_s: i64) -> GateWait {
     }
 }
 
+pub struct Silence {
+    pub submitted: Vec<String>,
+    pub last_gate: Option<String>,
+}
+
+/// A bead reached SUBMITTED inside the window while `gate.log` gained no line in it. The
+/// last gate timestamp is taken over the whole log, not the window, so the alarm can name it.
+pub fn silence(gate_log_text: &str, landstate: &[crate::landstate::RawRecord], now: i64, window_s: i64) -> Option<Silence> {
+    let since = fmt_iso(now - window_s);
+    let mut last_gate: Option<&str> = None;
+    for line in gate_log_text.lines() {
+        let Some(ts) = line.split_whitespace().next() else { continue };
+        if is_iso_timestamp(ts) && last_gate.map(|l| ts > l).unwrap_or(true) {
+            last_gate = Some(ts);
+        }
+    }
+    if last_gate.map(|l| l >= since.as_str()).unwrap_or(false) {
+        return None;
+    }
+    let mut submitted: Vec<String> = landstate
+        .iter()
+        .filter(|r| r.status == "SUBMITTED" && r.at_secs().map(|a| a >= now - window_s).unwrap_or(false))
+        .map(|r| r.id.clone())
+        .collect();
+    if submitted.is_empty() {
+        return None;
+    }
+    submitted.sort();
+    Some(Silence { submitted, last_gate: last_gate.map(str::to_string) })
+}
+
 pub fn disp(oldest_wait: Option<i64>) -> String {
     match oldest_wait {
         Some(w) => format!("{w}s"),
@@ -127,5 +158,37 @@ mod tests {
         let log = format!("{t1} gate sp-a no-wait-field-here\n");
         let gw = compute(&log, NOW, 21600);
         assert_eq!(gw.oldest_wait, None);
+    }
+
+    fn rec(id: &str, status: &str, at: i64) -> crate::landstate::RawRecord {
+        crate::landstate::RawRecord { id: id.into(), status: status.into(), at: at.to_string(), ..Default::default() }
+    }
+
+    #[test]
+    fn submission_with_a_stale_gate_log_is_silence_and_names_the_last_gate() {
+        let old = fmt_iso(NOW - 50_000);
+        let log = format!("{old} gate sp-a waited=1s ok\n");
+        let s = silence(&log, &[rec("sp-b", "SUBMITTED", NOW - 600)], NOW, 3600).expect("silence");
+        assert_eq!(s.submitted, vec!["sp-b"]);
+        assert_eq!(s.last_gate.as_deref(), Some(old.as_str()));
+    }
+
+    #[test]
+    fn a_fresh_gate_line_is_not_silence() {
+        let log = format!("{} gate sp-a waited=1s ok\n", fmt_iso(NOW - 60));
+        assert!(silence(&log, &[rec("sp-b", "SUBMITTED", NOW - 600)], NOW, 3600).is_none());
+    }
+
+    #[test]
+    fn no_submission_in_the_window_is_not_silence() {
+        let log = format!("{} gate sp-a waited=1s ok\n", fmt_iso(NOW - 50_000));
+        let recs = [rec("sp-b", "SUBMITTED", NOW - 7200), rec("sp-c", "CERTIFIED", NOW - 60)];
+        assert!(silence(&log, &recs, NOW, 3600).is_none());
+    }
+
+    #[test]
+    fn an_absent_gate_log_with_a_submission_is_silence_with_no_last_gate() {
+        let s = silence("", &[rec("sp-b", "SUBMITTED", NOW - 60)], NOW, 3600).expect("silence");
+        assert_eq!(s.last_gate, None);
     }
 }
