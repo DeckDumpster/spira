@@ -35,6 +35,7 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -187,6 +188,9 @@ dependencies = [
 [[package]]
 name = "census"
 version = "1.0.0"
+dependencies = [
+ "spira-config",
+]
 
 [[package]]
 name = "cfg-if"
@@ -284,6 +288,9 @@ dependencies = [
 [[package]]
 name = "doctor"
 version = "1.0.0"
+dependencies = [
+ "spira-config",
+]
 
 [[package]]
 name = "dyn-clone"
@@ -550,6 +557,8 @@ name = "inbox-triage"
 version = "1.0.0"
 dependencies = [
  "regex",
+ "serde_json",
+ "spira-config",
  "testkit",
 ]
 
@@ -1643,6 +1652,8 @@ version = "1.0.0"
 dependencies = [
  "libc",
  "regex",
+ "serde_json",
+ "spira-config",
  "testkit",
 ]
 

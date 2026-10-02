@@ -34,6 +34,9 @@ pub fn run(lib_sh: &Path, name: &str, script: &str, envs: &[(&str, &str)], stdin
     let mut cmd = Command::new("bash");
     cmd.args(["-c", &full, name]);
     cmd.env("SPIRA_HOME_LIB", lib_sh);
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+    // bin/+spira/ on the CHILD's PATH, never only inherited.
+    cmd.envs(spira_config::release_env::child_path_env_for_process());
     for (k, v) in envs {
         cmd.env(k, v);
     }

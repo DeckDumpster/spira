@@ -80,6 +80,9 @@ impl LibSeam {
             .arg(self.home.join("lib.sh"))
             .arg(func)
             .args(args);
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        c.envs(spira_config::release_env::child_path_env_for_process());
         c.stdin(if payload.is_some() {
             Stdio::piped()
         } else {

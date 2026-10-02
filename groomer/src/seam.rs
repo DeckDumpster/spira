@@ -85,6 +85,9 @@ impl LibSeam {
             .arg(script)
             .arg(&self.lib_sh)
             .args(args)
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -138,6 +141,9 @@ impl Seam for LibSeam {
             .arg("-c")
             .arg(script)
             .arg(&self.lib_sh)
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process())
             .stdin(Stdio::null())
             .output()
             .map_err(|e| format!("lib.sh conf {key}: {e}"))?;

@@ -69,6 +69,14 @@ fn main() {
     let bd_timeout = env_n(&original, "SPIRA_AURON_BD_TIMEOUT", 10).max(1);
     let mut seam_env = original.clone();
     seam_env.insert("BD_TIMEOUT".to_string(), bd_timeout.to_string());
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `home` is always
+    // `<release>/spira` (resolve_home's own contract — an explicit --home/SPIRA_HOME or
+    // SPIRA_RELEASE/spira), so its parent is this binary's own release root. Prepend its
+    // bin/+spira/ onto the seam child's PATH rather than trusting `original`'s alone —
+    // SPIRA_RELEASE/SPIRA_HOME being set is no guarantee PATH was updated to match.
+    for (k, v) in spira_config::release_env::child_path_env(home.parent(), seam_env.get("PATH").map(String::as_str)) {
+        seam_env.insert(k, v);
+    }
 
     let seam = BashSeam { lib: home.join("lib.sh"), env: &seam_env };
 

@@ -20,6 +20,9 @@ pub fn lib_sh_sources(home: &Path) -> bool {
     Command::new("bash")
         .arg("-c")
         .arg(format!(". \"{}\" >/dev/null 2>&1", home.join("lib.sh").display()))
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(Stdio::null())
         .status()
         .map(|s| s.success())

@@ -29,6 +29,7 @@ pub mod eval;
 pub mod legacy_map;
 pub mod locate;
 pub mod registry;
+pub mod release_env;
 pub mod repos;
 pub mod resolve;
 pub mod unit;

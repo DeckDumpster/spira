@@ -6,6 +6,7 @@ description = "inbox-triage — the concierge's in-session Monitor over SPIRA_CO
 
 [dependencies]
 regex = "1"
+spira-config = { path = "../spira-config" }
 
 [profile.release]
 opt-level = "z"
@@ -15,3 +16,4 @@ strip = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+serde_json = "1"

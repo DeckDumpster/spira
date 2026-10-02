@@ -79,6 +79,13 @@ fn load_config(home: &Path) -> Result<Config, String> {
         .arg("inbox-triage-context")
         .arg(home)
         .args(["SPIRA_CONCIERGE_INBOX", "SPIRA_CONCIERGE_INBOX_DEDUP"])
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+        // bin/+spira/ on the CHILD's PATH, never only inherited — a bare shell with no
+        // launcher (`env -i HOME=$HOME PATH=/usr/bin:/bin … bin/inbox-triage`, exactly how
+        // the SessionStart compact hook arms this Monitor) otherwise leaves `command -v
+        // spira-config` unresolved inside conf.sh and this seam dies at "exit 97" before it
+        // reads a single config value.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()

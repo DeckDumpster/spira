@@ -131,6 +131,9 @@ where
 {
     let mut cmd = Command::new("bash");
     cmd.arg("-c").arg(r#". "$1" && shift && "$0" "$@""#).arg(func).arg(env.home.join("lib.sh")).args(args);
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+    // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
+    cmd.envs(spira_config::release_env::child_path_env_for_process());
     run(&mut cmd, &format!("lib.sh {func}"))
 }
 

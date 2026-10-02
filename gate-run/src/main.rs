@@ -57,6 +57,9 @@ fn default_repo_name(home: &Path) -> String {
         .arg(". \"$1/lib.sh\" >/dev/null 2>&1 && spira_home_repo")
         .arg("gate-run-home-repo")
         .arg(home)
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output();

@@ -132,6 +132,9 @@ impl Real {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process())
             .spawn();
         let Ok(mut child) = child else { return Answer { rc: 127, text: String::new() } };
         if let Some(mut si) = child.stdin.take() {

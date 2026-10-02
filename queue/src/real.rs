@@ -267,6 +267,9 @@ impl RealLib {
         let mut cmd = Command::new("bash");
         cmd.stdin(Stdio::piped()).stderr(Stdio::inherit());
         cmd.stdout(if capture { Stdio::piped() } else { Stdio::inherit() });
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+        // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
+        cmd.envs(spira_config::release_env::child_path_env_for_process());
         let Ok(mut child) = cmd.spawn() else { return (127, String::new()) };
         if let Some(mut si) = child.stdin.take() {
             let _ = si.write_all(&seam::stdin_bytes(op, &all));

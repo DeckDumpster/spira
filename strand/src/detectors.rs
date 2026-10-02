@@ -370,7 +370,11 @@ fn unclaimable_lines(cfg: &Config) -> String {
     }
     let script = r#". "$0" >/dev/null 2>&1 || exit 97; detect_unclaimable_ready"#;
     let lib_s = lib.to_string_lossy().into_owned();
-    let o = probe::run("bash", &["-c", script, lib_s.as_str()], None, &[]);
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+    // bin/+spira/ on the CHILD's PATH, never only inherited.
+    let extra = spira_config::release_env::child_path_env_for_process();
+    let extra: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let o = probe::run("bash", &["-c", script, lib_s.as_str()], None, &extra);
     if !o.ok {
         return String::new();
     }

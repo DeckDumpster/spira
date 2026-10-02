@@ -70,13 +70,18 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
 /// [`resolve_repos`], which reads the probe's own `@vars` section (already every `SPIRA_*`
 /// key, exported or not) to build a `spira_config::repos::Registry` in-process.
 pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String> {
-    let s = Spec::args_owned(
+    let mut s = Spec::args_owned(
         "bash",
         vec!["-c".into(), seams::PROBE.into(), "sentinel-probe".into()],
     )
     .env("SENTINEL_LIB", home.join("lib.sh").to_string_lossy())
     .out(Io::Capture)
     .err(Io::Inherit);
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+    // bin/+spira/ on the CHILD's PATH, never only inherited.
+    for (k, v) in spira_config::release_env::child_path_env_for_process() {
+        s = s.env(&k, v);
+    }
     let o = r.run(&s);
     if !o.ok() {
         return Err(format!(

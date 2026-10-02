@@ -315,6 +315,9 @@ f="$2"; shift 2
         .arg(home)
         .arg(func)
         .args(args)
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stderr(Stdio::null());
     if let Some(input) = stdin {
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped());

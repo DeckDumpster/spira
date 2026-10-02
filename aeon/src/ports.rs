@@ -72,7 +72,16 @@ impl Env {
         self.apply(self.child_base.clone())
     }
     pub fn seam(&self) -> BTreeMap<String, String> {
-        self.apply(self.original.clone())
+        let mut m = self.apply(self.original.clone());
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): the lib.sh seam re-derives
+        // conf.sh from the unit's ORIGINAL environment (this struct's own doc above) — bare
+        // whenever this aeon itself was launched with no release on PATH. Prepend this
+        // binary's own release's bin/+spira/ rather than trusting `original`'s PATH alone.
+        let release = spira_config::release_env::own_release_root_for_process();
+        for (k, v) in spira_config::release_env::child_path_env(release.as_deref(), m.get("PATH").map(String::as_str)) {
+            m.insert(k, v);
+        }
+        m
     }
     pub fn get_export(&self, k: &str) -> Option<String> {
         self.exports.read().unwrap().get(k).cloned().flatten()

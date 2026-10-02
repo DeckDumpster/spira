@@ -75,6 +75,12 @@ pub fn load(home: &Path) -> Result<Context, String> {
         .arg("watchd-context")
         .arg(home)
         .args(VARS)
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+        // bin/+spira/ on the CHILD's PATH, never only inherited — a bare shell with no
+        // launcher otherwise leaves `command -v spira-config` unresolved inside conf.sh and
+        // this seam dies at "exit 97" before it reads a single config value (inbox-triage's
+        // own scar, same seam shape).
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stdin(Stdio::null())
         .stderr(Stdio::inherit())
         .output()

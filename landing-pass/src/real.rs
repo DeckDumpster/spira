@@ -32,6 +32,9 @@ impl<'a> SeamRunner<'a> {
         let bytes = seam::stdin_bytes(op, &all);
         let mut c = command("bash");
         c.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        c.envs(spira_config::release_env::child_path_env_for_process());
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => {

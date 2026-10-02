@@ -89,6 +89,9 @@ fn bdq_status(home: &str, args: &[String]) -> i32 {
         .arg("bdq")
         .arg(home)
         .args(args)
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .status()
         .map(|s| s.code().unwrap_or(1))
         .unwrap_or(127)
@@ -103,6 +106,9 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         .arg("bdq")
         .arg(home)
         .args(args)
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .output();

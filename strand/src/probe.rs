@@ -205,6 +205,10 @@ pub fn roster(cfg: &Config, want: Option<&str>) -> Result<Vec<PartitionSpec>, St
     if let Some(w) = want {
         env.push(("STRAND_WANT", w));
     }
+    // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own release's
+    // bin/+spira/ on the CHILD's PATH, never only inherited.
+    let extra = spira_config::release_env::child_path_env_for_process();
+    env.extend(extra.iter().map(|(k, v)| (k.as_str(), v.as_str())));
     let o = run("bash", &["-s"], Some(ROSTER_SCRIPT.as_bytes()), &env);
     if !o.ok {
         return Err(format!("roster probe failed: {}", o.stderr.trim()));

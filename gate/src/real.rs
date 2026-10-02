@@ -190,6 +190,9 @@ impl Real {
             .arg(script)
             .arg(self.home.join("lib.sh"))
             .args(args)
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -214,6 +217,9 @@ impl World for Real {
             .arg(&self.home)
             .arg(repo_name.unwrap_or(""))
             .args(VARS)
+            // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+            // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+            .envs(spira_config::release_env::child_path_env_for_process())
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
             .output()

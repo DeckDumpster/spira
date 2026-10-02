@@ -60,7 +60,15 @@ impl Real {
     fn capture_env(home: &Path) -> BTreeMap<String, String> {
         let conf = home.join("conf.sh");
         let script = format!("export SPIRA_DOCTOR=1; . \"{}\" >/dev/null 2>&1; env -0", conf.display());
-        let out = Command::new("bash").arg("-c").arg(script).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `home` is always
+        // `<release>/spira` (resolve_home's own contract — an explicit SPIRA_HOME or the
+        // argv0-relative derivation, never an unrelated target repo), so its parent IS this
+        // binary's own release root; prepend its bin/+spira/ onto the child's PATH rather
+        // than only inheriting whatever PATH this process happened to start with.
+        let envs = spira_config::release_env::child_path_env(home.parent(), std::env::var("PATH").ok().as_deref());
+        let mut cmd = Command::new("bash");
+        cmd.arg("-c").arg(script).envs(envs);
+        let out = cmd.stdin(Stdio::null()).stderr(Stdio::null()).output();
         let mut map = BTreeMap::new();
         if let Ok(o) = out {
             for kv in o.stdout.split(|&b| b == 0) {
@@ -96,7 +104,10 @@ impl Real {
             self.home.display(),
             self.home.display()
         );
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): see capture_env's own note —
+        // `self.home` is always `<release>/spira`, so its parent is this binary's release.
+        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
+        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 }

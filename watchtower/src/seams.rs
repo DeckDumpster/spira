@@ -104,6 +104,9 @@ pub fn pipeline_probe(spira_home: &str, ledger_path: Option<&str>) -> Option<Pip
         .arg("_")
         .arg(spira_home)
         .arg(ledger_path.unwrap_or(""))
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .output()
         .ok()?;
     if !out.status.success() {

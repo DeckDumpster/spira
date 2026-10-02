@@ -43,7 +43,11 @@ impl Real {
             self.home.display(),
             self.home.display()
         );
-        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): `self.home` is always
+        // `<release>/spira` (resolve_home's own contract), so its parent is this binary's
+        // own release root.
+        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
+        let out = Command::new("bash").arg("-c").arg(script).arg("--").args(args).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim_end_matches('\n').to_string()).unwrap_or_default()
     }
 
@@ -157,11 +161,13 @@ impl World for Real {
             self.home.display(),
             self.home.display()
         );
+        let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
         Command::new("bash")
             .arg("-c")
             .arg(script)
             .arg("--")
             .arg(id)
+            .envs(envs)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

@@ -136,6 +136,9 @@ pub fn run_conf_seam(lib_dir: &Path) -> Result<Conf, String> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
+        // law-a-binary-resolves-the-config-it-reads (sp-kgzql): this binary's own
+        // release's bin/+spira/ on the CHILD's PATH, never only inherited.
+        .envs(spira_config::release_env::child_path_env_for_process())
         .spawn()
         .map_err(|e| format!("bash: {e}"))?;
     let mut input = CONF_SCRIPT.as_bytes().to_vec();
