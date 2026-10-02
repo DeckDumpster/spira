@@ -223,16 +223,9 @@ pub fn prepare(
     Ok(out)
 }
 
-/// `statvfs(p)` free MiB.
+/// Space this user can still write under `p`: statvfs free or quota headroom, whichever is smaller.
 pub fn free_mib(p: &Path) -> Option<u64> {
-    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
-    // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
-    #[allow(clippy::unnecessary_cast)]
-    Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64) / (1024 * 1024))
+    spira_config::room::avail_mib(p)
 }
 
 /// MemAvailable in MiB (0 when unreadable, which refuses).

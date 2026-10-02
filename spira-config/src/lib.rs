@@ -32,6 +32,7 @@ pub mod registry;
 pub mod release_env;
 pub mod repos;
 pub mod resolve;
+pub mod room;
 pub mod unit;
 pub mod writeback;
 

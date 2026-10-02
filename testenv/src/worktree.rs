@@ -51,17 +51,10 @@ pub fn scratch_room(base: &Path, min_free_mib: u64, min_mem_mib: u64) -> Result<
     Ok(())
 }
 
-/// `statvfs(p)` free MiB. `pub(crate)` so [`crate::warm::shed`] and the runner can probe the
-/// same scratch root this module refuses allocations against.
+/// Space this user can still write under `p`: statvfs free or quota headroom, whichever is
+/// smaller. `pub(crate)` so [`crate::warm::shed`] and the runner probe what a slot is refused on.
 pub(crate) fn free_mib(p: &Path) -> Option<u64> {
-    let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).ok()?;
-    // SAFETY: statvfs into a zeroed struct we own, on a NUL-terminated path.
-    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
-        return None;
-    }
-    #[allow(clippy::unnecessary_cast)]
-    Some((st.f_bavail as u64).saturating_mul(st.f_frsize as u64) / (1024 * 1024))
+    spira_config::room::avail_mib(p)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

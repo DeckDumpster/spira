@@ -512,6 +512,24 @@ mod tests {
         assert!(rt.purged.lock().unwrap().contains(&"spira-warm-1-x".to_string()));
     }
 
+    /// The filesystem has room but the user's quota does not: the combined probe is below the
+    /// floor, so the idle spare is shed.
+    #[test]
+    fn shed_fires_on_quota_headroom_even_when_the_filesystem_has_room() {
+        let (_root, run, owner) = world("shed-quota");
+        let base = crate::worktree::scratch_root(&run);
+        fs::create_dir_all(&base).unwrap();
+        let rt = FakeRuntime::new();
+        let name = "spira-warm-0-x".to_string();
+        rt.containers.lock().unwrap().push(name.clone());
+        write_spare(&paths(&run, 0).2, &Spare { name: name.clone(), tag: "t".into(), booted: 1 }).unwrap();
+        let mib = 1024 * 1024;
+        let quota = spira_config::room::Quota { limit: 20 * 1024 * mib, used: 19 * 1024 * mib };
+        let probe = move |_: &Path| spira_config::room::combine_mib(Some(6200), Some(quota));
+        assert_eq!(shed(&rt, &owner, &run, 1, 6144, &base, &probe, &|_| {}), 1);
+        assert!(rt.purged.lock().unwrap().contains(&name));
+    }
+
     #[test]
     fn shed_does_nothing_when_free_space_already_clears_the_floor() {
         let (_root, run, owner) = world("shed-ok");
