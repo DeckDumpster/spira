@@ -679,6 +679,38 @@ pub fn changed_paths(repo: &Repo, base_sha: &str, tip: &str) -> Vec<String> {
         .collect()
 }
 
+fn patch_id(repo: &Repo, base_sha: &str, tip: &str) -> Option<String> {
+    let diff = Command::new("git").arg("-C").arg(&repo.path).args(["diff", &format!("{base_sha}...{tip}")]).output().ok()?;
+    if !diff.status.success() {
+        return None;
+    }
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&repo.path)
+        .args(["patch-id", "--stable"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    std::io::Write::write_all(child.stdin.as_mut()?, &diff.stdout).ok()?;
+    let out = child.wait_with_output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string())
+}
+
+/// The members whose `refs/heads/spira/<id>` now carries a different patch than the tip the
+/// round merged and tested. A rebase alone keeps the patch-id; anything unreadable counts as
+/// moved, so the check fails closed.
+pub fn moved_members(repo: &Repo, base_sha: &str, members: &[Member]) -> Vec<String> {
+    members
+        .iter()
+        .filter(|m| {
+            let live = patch_id(repo, base_sha, &format!("refs/heads/spira/{}", m.id));
+            live.is_none() || live != patch_id(repo, base_sha, &m.tip)
+        })
+        .map(|m| m.id.clone())
+        .collect()
+}
+
 pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
     assert_eq!(repo.land, Land::Forge, "push_branch: unreachable under queue.local — it lands via queue land-local (sp-828tp), never a push");
     let remote = repo.base.split_once('/').map(|(r, _)| r).unwrap_or("origin");
@@ -1339,6 +1371,58 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
         let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
         let pr = forge_pr_create_on(&repo, "head", "base", "title", "body", Some(&path)).expect("forge_pr_create should reach the stub");
         assert_eq!(pr, "42");
+    }
+
+    fn g(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).trim().to_string()
+    }
+
+    fn member_fixture(d: &Path) -> (Repo, String, Member) {
+        g(d, &["init", "-q", "-b", "main"]);
+        fs::write(d.join("a"), "a\n").unwrap();
+        g(d, &["add", "-A"]);
+        g(d, &["commit", "-qm", "base"]);
+        let base = g(d, &["rev-parse", "HEAD"]);
+        g(d, &["checkout", "-q", "-b", "spira/m1"]);
+        fs::write(d.join("m1"), "one\n").unwrap();
+        g(d, &["add", "-A"]);
+        g(d, &["commit", "-qm", "m1"]);
+        let tip = g(d, &["rev-parse", "HEAD"]);
+        g(d, &["checkout", "-q", "main"]);
+        let r = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
+        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, certified_at: 0, stack: Default::default() };
+        (r, base, m)
+    }
+
+    #[test]
+    fn member_with_new_content_since_the_round_is_moved() {
+        let d = testkit::TempDir::new("batcher-cut-moved");
+        let (r, base, m) = member_fixture(d.path());
+        assert!(moved_members(&r, &base, std::slice::from_ref(&m)).is_empty(), "untouched member must not read as moved");
+        g(d.path(), &["checkout", "-q", "spira/m1"]);
+        fs::write(d.path().join("m1b"), "more\n").unwrap();
+        g(d.path(), &["add", "-A"]);
+        g(d.path(), &["commit", "-qm", "more"]);
+        g(d.path(), &["checkout", "-q", "main"]);
+        assert_eq!(moved_members(&r, &base, std::slice::from_ref(&m)), vec!["m1".to_string()]);
+    }
+
+    #[test]
+    fn member_only_rebased_is_not_moved() {
+        let d = testkit::TempDir::new("batcher-cut-rebased");
+        let (r, base, m) = member_fixture(d.path());
+        fs::write(d.path().join("b"), "b\n").unwrap();
+        g(d.path(), &["add", "-A"]);
+        g(d.path(), &["commit", "-qm", "main moves"]);
+        let newbase = g(d.path(), &["rev-parse", "HEAD"]);
+        g(d.path(), &["checkout", "-q", "spira/m1"]);
+        g(d.path(), &["rebase", "-q", "main"]);
+        g(d.path(), &["checkout", "-q", "main"]);
+        assert_ne!(g(d.path(), &["rev-parse", "spira/m1"]), m.tip);
+        assert!(moved_members(&r, &newbase, std::slice::from_ref(&m)).is_empty());
+        let _ = base;
     }
 }
 
