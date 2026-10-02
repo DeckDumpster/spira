@@ -568,7 +568,15 @@ wake)
     # these to 0 rather than also waiting out two real cadences on top of it.
     _wake_poll_secs="${CONCIERGE_WAKE_POLL_SECS:-2}"
     _wake_settle_secs="${CONCIERGE_WAKE_SETTLE_SECS:-1}"
-    while _wake_input_busy; do sleep "$_wake_poll_secs"; done
+    _wake_warn_secs="${CONCIERGE_WAKE_WARN_SECS:-60}"
+    _wake_t0=$SECONDS; _wake_warned=0
+    while _wake_input_busy; do
+        if [ "$_wake_warned" = 0 ] && [ $((SECONDS - _wake_t0)) -ge "$_wake_warn_secs" ]; then
+            printf 'concierge: wake held %ss — the input line of %s still holds text; delivery waits until it is cleared\n' "$_wake_warn_secs" "$SESSION" >&2
+            _wake_warned=1
+        fi
+        sleep "$_wake_poll_secs"
+    done
     # SETTLE: he may be between keystrokes; require a second quiet check before delivering.
     sleep "$_wake_settle_secs"
     while _wake_input_busy; do sleep "$_wake_poll_secs"; done
