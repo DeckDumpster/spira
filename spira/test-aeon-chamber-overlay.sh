@@ -136,16 +136,35 @@ want   "and the seven-outcome table is present" "OUTCOME: submitted" "$task_f0"
 nowant "and the restricted work-verb finishing text is absent" "work submit" "$task_f0"
 close_bead "$BID_F0"
 
-# lifecycle_enforce=1: the restricted path, exercised end to end against stub SPIRA_LC_BIN /
-# SPIRA_WORK_BIN — this suite is about brief rendering, not lc_claim_bead's own protocol
+# lifecycle_enforce=1: the restricted path, exercised end to end against a stub spira-lc
+# (SPIRA_LC_BIN is retired, sp-gypjk — spira-lc is found by name on PATH, which is why this
+# stub is dropped ahead of the real binary on PATH rather than pointed to by env var) and a
+# stub `work` — this suite is about brief rendering, not lc_claim_bead's own protocol
 # correctness (test-aeon-lifecycle-cutover.sh covers that against a real spira-lc server), so
-# the stub answers just enough of spira-lc's `show`/`event` surface for the claim to apply.
+# the stub answers just enough of spira-lc's `show`/`list`/`event` surface for the claim to
+# apply. `list` backs Store::lifecycle_snapshot (spira-claim's `select --blockers machine`,
+# sp-s9675.2): the real spira-lc always answers with a JSON array, even an empty one, never
+# truly-empty stdout — and machine mode fails a candidate closed when its own bead_id is
+# absent from that array (DESIGN.md §7 "fails closed on a missing own row"), so the stub
+# must report this section's one candidate READY by its real id, not just any id. It reads
+# that id straight from bd — the same ready set aeon itself just claimed from — rather than
+# a hardcoded one, so it stays correct across every bead this section creates.
 # work-env.sh is retired (sp-zpaq0): the aeon binary builds its own restricted environment.
 STUB_BIN="$TMP/lc-bin"; mkdir -p "$STUB_BIN"
 cat > "$STUB_BIN/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
     show) printf '{"bead":{"state":"READY","version":0,"holder":null,"lease_until":null}}\n' ;;
+    list)
+        ids="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --status open --no-assignee \
+            --exclude-type epic,event --limit 0 --json 2>/dev/null \
+            | grep -oE '"id"[[:space:]]*:[[:space:]]*"sp-[a-zA-Z0-9]+"' | grep -oE 'sp-[a-zA-Z0-9]+')"
+        rows=""
+        for id in $ids; do
+            rows="${rows:+$rows,}{\"bead_id\":\"$id\",\"state\":\"READY\"}"
+        done
+        printf '[%s]\n' "$rows"
+        ;;
     event) exit 0 ;;
     *) exit 0 ;;
 esac
