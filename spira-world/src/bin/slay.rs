@@ -125,8 +125,15 @@ fn say(s: &str) {
     println!("{s}");
 }
 
+/// sp-ivfu3: `spira_world::spira_run` resolves `spira.run` in-process through
+/// `spira_config` and REFUSES with a named error rather than guess `/tmp/spira` — slay.sh
+/// has no sensible "keep going anyway" here (it would act on the wrong aeon's pidfiles),
+/// so the refusal exits.
 fn spira_run() -> PathBuf {
-    spira_world::spira_run()
+    spira_world::spira_run().unwrap_or_else(|e| {
+        eprintln!("spira: FATAL slay: {e}");
+        std::process::exit(1);
+    })
 }
 
 fn now_iso() -> String {

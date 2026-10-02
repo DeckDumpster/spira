@@ -1017,14 +1017,13 @@ fn a_deadline_run_that_finishes_everything_is_a_full_green() {
 // ---- --artifacts: prebuilt executables, no cargo (DESIGN.md D8) ------------------------
 
 fn prebuilt_dir(w: &World, names: &[&str], body: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let d = w.root.join("bin");
     let _ = fs::remove_dir_all(&d);
     fs::create_dir_all(&d).unwrap();
     for n in names {
         let p = d.join(n);
-        fs::write(&p, format!("{n} {body}")).unwrap();
-        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&p, &format!("{n} {body}"));
     }
     d
 }

@@ -151,9 +151,32 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 /// every `env::var(...)` read below sees a toml override exactly as conf.sh would have
 /// resolved it. Best-effort: a missing registry or a containment refusal leaves the
 /// environment exactly as it was.
+/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — the
+/// same "a compiled binary has no BASH_SOURCE, `current_exe()` is the equivalent" fallback
+/// `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own `harness_home`
+/// already use. `resolve_for_process` needs a REAL `home/conf.d` to resolve almost every
+/// key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it refuse outright
+/// ("no config registry at conf.d"), which is exactly what a bare shell with no
+/// `$SPIRA_HOME` exported would otherwise hit.
+fn harness_home() -> PathBuf {
+    if let Ok(h) = env::var("SPIRA_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
+    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
+    let exe = exe.canonicalize().unwrap_or(exe);
+    exe.ancestors()
+        .skip(1)
+        .take(4)
+        .map(|a| a.join("spira"))
+        .find(|p| p.join("lib.sh").is_file())
+        .unwrap_or_default()
+}
+
 fn merge_resolved_env() {
     let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-    let home = PathBuf::from(env::var("SPIRA_HOME").unwrap_or_default());
+    let home = harness_home();
     let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
     if let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) {
         for (k, v) in resolved.values {
@@ -170,7 +193,15 @@ fn merge_resolved_env() {
 impl Config {
     fn from_env() -> Config {
         merge_resolved_env();
-        let spira_run_str = env::var("SPIRA_RUN").unwrap_or_else(|_| "/tmp/spira".to_string());
+        // sp-ivfu3: `merge_resolved_env` above already set `SPIRA_RUN` in this process's
+        // own environment when `spira_config` could resolve it at all — the only way this
+        // read still comes up empty is a `spira.toml` that failed to parse, and that is a
+        // named refusal now, never the literal `/tmp/spira` a bare shell used to get.
+        let spira_run_str = env::var("SPIRA_RUN").unwrap_or_default();
+        if spira_run_str.is_empty() {
+            eprintln!("reconciler: FATAL: cannot resolve spira.run (SPIRA_RUN is unset and spira_config could not resolve it)");
+            std::process::exit(1);
+        }
         let spira_run = PathBuf::from(&spira_run_str);
         let spira_home = env::var("SPIRA_HOME").unwrap_or_default();
         let sessions = env::var("COCKPIT_SESSIONS")

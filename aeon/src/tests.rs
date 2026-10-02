@@ -3,7 +3,6 @@
 //! because the worktree contract is about git's own refusals.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -236,8 +235,10 @@ fn fx(name: &str) -> Fx {
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let work_stub = bin.join("work");
-    std::fs::write(&work_stub, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&work_stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // testkit::write_exe, never fs::write + set_permissions (sp-os3of): this fixture is
+    // execed by name off PATH by every test built on Fx, so an ETXTBSY from a concurrent
+    // fork elsewhere in the binary would not be an isolated flake.
+    testkit::write_exe(&work_stub, "#!/bin/sh\nexit 0\n");
     let w: W = Arc::new(Mutex::new(World::default()));
     Fx { _dir: dir, home, run, repo, bin, w }
 }
@@ -846,8 +847,8 @@ fn sweep_runs_without_a_bead() {
 
 fn stub(f: &Fx, name: &str) -> PathBuf {
     let p = f.bin.join(name);
-    std::fs::write(&p, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+    testkit::write_exe(&p, "#!/bin/sh\nexit 0\n");
     p
 }
 

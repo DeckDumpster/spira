@@ -260,13 +260,11 @@ mod tests {
     fn gh_pr_facts_parses_conflicting_with_an_empty_conclusions_list() {
         let d = testkit::TempDir::new("wt-prstall-ghfacts");
         let gh = d.join("gh-stub.sh");
-        std::fs::write(
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(
             &gh,
             "#!/usr/bin/env bash\ncase \"$*\" in\n  *'--jq .allowAutoMerge'*) echo true ;;\n  *'pr view'*'--json mergeable,statusCheckRollup'*) printf 'CONFLICTING\\t\\n' ;;\nesac\n",
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let cfg = Cfg {
             stall_secs: 3600,
             gh_bin: gh.to_string_lossy().into_owned(),

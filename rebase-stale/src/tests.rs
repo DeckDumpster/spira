@@ -453,6 +453,14 @@ fn a_red_gate_brings_the_leftover_back_to_the_old_tip() {
     assert_eq!(w.porcelain().unwrap().trim(), "");
 }
 
+/// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
+/// child past its own `exec()` (sp-os3of): empty once the pid is gone.
+fn cmdline_of(pid: u32) -> String {
+    std::fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|b| String::from_utf8_lossy(&b).replace('\0', " "))
+        .unwrap_or_default()
+}
+
 fn assert_busy(fx: &Fx, seam: &Fake, id: &str, old: &str, want: &str) {
     let r = run(fx, seam, id);
     assert_eq!(r.exit, Exit::NotAttempted, "{r:?}");
@@ -494,7 +502,22 @@ fn a_live_holder_blocks_aeon_pidfile() {
     let mut child = testkit::ChildGuard::spawn(
         Command::new("bash").args(["-c", "exec -a aeon.sh-stub sleep 30"]),
     );
-    std::thread::sleep(Duration::from_millis(200));
+    // bash's own exec() is a second step after fork(), and /proc/<pid>/cmdline can still
+    // read as bash's (or briefly empty, mid-transition) the instant after spawn()
+    // returns — green in isolation, red under a loaded gate (sp-os3of, aeon/src/trace.rs
+    // had the same shape). Poll (bounded) until the exec has actually landed, rather than
+    // a fixed sleep that is merely usually enough.
+    //
+    // Checked by argv[0] alone, not "contains aeon.sh-stub": bash's OWN pre-exec cmdline
+    // is `bash -c "exec -a aeon.sh-stub sleep 30"`, which already contains the substring
+    // "aeon.sh-stub" in its `-c` argument — a naive `.contains(...)` poll would pass
+    // instantly, during the bash phase, defeating the wait entirely.
+    let mut tries = 0;
+    while cmdline_of(child.id()).split(' ').next() != Some("aeon.sh-stub") {
+        assert!(tries < 500, "the child never finished exec'ing into aeon.sh-stub");
+        tries += 1;
+        std::thread::sleep(Duration::from_millis(10));
+    }
     write(
         &fx.run.join("aeon-builder-sp-la.pid"),
         &format!("{}\n", child.id()),

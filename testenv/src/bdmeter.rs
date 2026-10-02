@@ -108,15 +108,15 @@ pub fn shell_status(st: std::process::ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn tmp(tag: &str) -> testkit::TempDir {
         testkit::TempDir::new(&format!("bdmeter-{tag}"))
     }
 
     fn exe(p: &Path) {
-        fs::write(p, "#!/bin/sh\n").unwrap();
-        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of): the same
+        // ETXTBSY race a concurrent fork elsewhere in this binary can trigger.
+        testkit::write_exe(p, "#!/bin/sh\n");
     }
 
     #[test]

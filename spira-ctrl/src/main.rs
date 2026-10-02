@@ -21,8 +21,48 @@ use std::process::{Command, ExitCode};
 
 use spira_ctrl::{self as ctrl, CtrlData};
 
+/// `$SPIRA_HOME`, else the first ancestor of this executable that holds `lib.sh` — same
+/// fallback `spira_world::locate_home`/`mail::env::locate_home`/landing-pass's own
+/// `harness_home` already use. `resolve_for_process` needs a REAL `home/conf.d` to
+/// resolve almost every key (`SPIRA_RUN` included — sp-ivfu3) — an empty `home` makes it
+/// refuse outright ("no config registry at conf.d"), exactly what a bare shell with no
+/// `$SPIRA_HOME` exported would otherwise hit.
+fn spira_home() -> PathBuf {
+    if let Ok(h) = env::var("SPIRA_HOME") {
+        if !h.is_empty() {
+            return PathBuf::from(h);
+        }
+    }
+    let Ok(exe) = env::current_exe() else { return PathBuf::new() };
+    let exe = exe.canonicalize().unwrap_or(exe);
+    exe.ancestors()
+        .skip(1)
+        .take(4)
+        .map(|a| a.join("spira"))
+        .find(|p| p.join("lib.sh").is_file())
+        .unwrap_or_default()
+}
+
+fn die(msg: &str) -> ! {
+    eprintln!("ctrl: FATAL: {msg}");
+    std::process::exit(1);
+}
+
+/// `spira.run`, resolved in-process through `spira_config` — never the literal `/tmp/spira`
+/// a bare shell used to get whenever `$SPIRA_RUN` itself was unset
+/// (law-a-binary-resolves-the-config-it-reads, sp-ivfu3). REFUSES, named, rather than
+/// guessing, when `spira_config` itself cannot resolve.
 fn spira_run() -> PathBuf {
-    env::var_os("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira"))
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    spira_config::resolve::resolve_run_dir(&env_map, &spira_home()).unwrap_or_else(|e| die(&e))
+}
+
+/// `spira.instance`, resolved the same way [`spira_run`] resolves `spira.run` — never a bare
+/// `env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string())`, which skipped the
+/// resolved config document entirely and only ever saw this process's own environment.
+fn spira_instance() -> String {
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    spira_config::resolve::resolve_instance(&env_map, &spira_home()).unwrap_or_else(|e| die(&e))
 }
 
 fn ctrl_path() -> PathBuf {
@@ -225,7 +265,7 @@ fn cmd_divergence() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let inst = env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string());
+    let inst = spira_instance();
     let mut found = false;
 
     // Direction 1: declared-but-running.

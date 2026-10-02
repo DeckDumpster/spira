@@ -1240,10 +1240,9 @@ mod tests {
             )
         );
         assert!(!s0.contains("aeon-fence.sh"), "no fence installed: --settings does not name it");
-        use std::os::unix::fs::PermissionsExt;
         let fence = d.join("hooks/aeon-fence.sh");
-        std::fs::write(&fence, "#!/bin/sh\n").unwrap();
-        std::fs::set_permissions(&fence, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // testkit::write_exe, never fs::write + set_permissions (sp-os3of).
+        testkit::write_exe(&fence, "#!/bin/sh\n");
         let s1 = aeon_settings(&d);
         assert!(s1.contains("\"PreToolUse\": [{\"hooks\": [{\"type\": \"command\", \"command\": \""));
         let v: serde_json::Value = serde_json::from_str(&s1).unwrap();

@@ -33,7 +33,38 @@ use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use spira_world::sysctl::{self, StartAction};
-use spira_world::{drain_stamp, halt_stamp, instance_suffix, spira_prod_or_home, spira_run};
+use spira_world::spira_prod_or_home;
+
+/// sp-ivfu3: `spira.run`/`spira.instance` are resolved in-process through `spira_config`
+/// (`spira_world::spira_run`/`instance`/`instance_suffix`/`halt_stamp`/`drain_stamp`), which
+/// REFUSE with a named error rather than fall back to a literal when they cannot resolve.
+/// This prints that refusal and exits — world.sh has no sensible "guess and keep going"
+/// here, the same reason `supervise`/`broker` already exit rather than default a missing
+/// `SPIRA_RUN`.
+fn die(msg: &str) -> ! {
+    eprintln!("spira: FATAL world: {msg}");
+    std::process::exit(1);
+}
+
+fn run_or_die() -> PathBuf {
+    spira_world::spira_run().unwrap_or_else(|e| die(&e))
+}
+
+fn instance_or_die() -> String {
+    spira_world::instance().unwrap_or_else(|e| die(&e))
+}
+
+fn sfx_or_die() -> String {
+    spira_world::instance_suffix().unwrap_or_else(|e| die(&e))
+}
+
+fn halt_stamp_or_die() -> PathBuf {
+    spira_world::halt_stamp().unwrap_or_else(|e| die(&e))
+}
+
+fn drain_stamp_or_die() -> PathBuf {
+    spira_world::drain_stamp().unwrap_or_else(|e| die(&e))
+}
 
 fn now_iso() -> String {
     Command::new("date")
@@ -52,7 +83,7 @@ fn epoch_secs() -> u64 {
 /// known to systemd, else plain), then every other `spira-*.timer` systemd reports —
 /// loaded or not — deduplicated in the order first seen.
 fn enumerate_timers() -> Vec<String> {
-    let sfx = instance_suffix();
+    let sfx = sfx_or_die();
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     let mut add = |t: String| {
@@ -87,7 +118,7 @@ fn enumerate_timers() -> Vec<String> {
 }
 
 fn work_services() -> Vec<String> {
-    let sfx = instance_suffix();
+    let sfx = sfx_or_die();
     sysctl::run_lines(&["list-units", "spira-*.service", "--state=active", "--no-legend"])
         .into_iter()
         .filter_map(|l| sysctl::first_field(&l).map(str::to_string))
@@ -96,7 +127,7 @@ fn work_services() -> Vec<String> {
 }
 
 fn aeon_pidfiles() -> Vec<PathBuf> {
-    let run = spira_run();
+    let run = run_or_die();
     let Ok(rd) = std::fs::read_dir(&run) else { return Vec::new() };
     let mut v: Vec<PathBuf> = rd
         .flatten()
@@ -195,7 +226,7 @@ fn cmd_stop(args: &[String]) -> i32 {
                 units.insert(u.to_string());
             }
         }
-        let sfx = instance_suffix();
+        let sfx = sfx_or_die();
         for l in sysctl::run_lines(&["list-units", &format!("spira-watch-*{sfx}.service"), "--state=active", "--no-legend"]) {
             if let Some(u) = sysctl::first_field(&l) {
                 units.insert(u.to_string());
@@ -282,9 +313,9 @@ fn cmd_stop(args: &[String]) -> i32 {
         println!("  no live aeons");
     }
 
-    let run = spira_run();
+    let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
-    let _ = std::fs::write(halt_stamp(), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
+    let _ = std::fs::write(halt_stamp_or_die(), format!("{}\nwhy: {}\n", now_iso(), if why.is_empty() { "unstated" } else { &why }));
 
     if svc_failed {
         eprintln!("spira: stop INCOMPLETE — work service(s) could not be stopped (see warnings above)");
@@ -298,11 +329,10 @@ fn cmd_start() -> i32 {
     println!("spira: starting the loop");
     let ctrl_path = env::var_os("SPIRA_CTRL")
         .map(PathBuf::from)
-        .unwrap_or_else(|| spira_run().join("control"));
+        .unwrap_or_else(|| run_or_die().join("control"));
     let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
     let suspended = spira_ctrl::load_suspended(&ctrl_data);
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
-    let instance = if instance.is_empty() { "".to_string() } else { instance };
+    let instance = instance_or_die();
 
     let timers = enumerate_timers();
     let mut degraded = Vec::new();
@@ -332,7 +362,7 @@ fn cmd_start() -> i32 {
         }
     }
 
-    let sfx = instance_suffix();
+    let sfx = sfx_or_die();
     let mut watchers = BTreeSet::new();
     for l in sysctl::run_lines(&["list-unit-files", "spira-watch@*", "--no-legend"]) {
         if let Some(u) = sysctl::first_field(&l) {
@@ -389,7 +419,7 @@ fn cmd_start() -> i32 {
         }
     }
 
-    let _ = std::fs::remove_file(halt_stamp());
+    let _ = std::fs::remove_file(halt_stamp_or_die());
     if !degraded.is_empty() {
         eprintln!(
             "spira: RUNNING (DEGRADED: {} essential timer(s) disabled with no recorded suspension: {})",
@@ -426,11 +456,11 @@ fn cmd_drain(args: &[String]) -> i32 {
         }
     }
 
-    let run = spira_run();
+    let run = run_or_die();
     let _ = std::fs::create_dir_all(&run);
     let exe = env::args().next().unwrap_or_else(|| "world.sh".to_string());
     let _ = std::fs::write(
-        drain_stamp(),
+        drain_stamp_or_die(),
         format!(
             "{}\nsummons gated in summon_fayth; loop and landing still running. Lift with: {exe} resume\nexpires {}\n",
             Command::new("date").arg("+%Y-%m-%d %H:%M:%S %Z").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default(),
@@ -497,8 +527,8 @@ fn cmd_drain(args: &[String]) -> i32 {
 }
 
 fn cmd_resume() -> i32 {
-    if drain_stamp().is_file() {
-        let _ = std::fs::remove_file(drain_stamp());
+    if drain_stamp_or_die().is_file() {
+        let _ = std::fs::remove_file(drain_stamp_or_die());
         println!("spira: summons resumed");
     } else {
         println!("spira: was not draining — nothing to resume");
@@ -507,23 +537,23 @@ fn cmd_resume() -> i32 {
 }
 
 fn cmd_status() -> i32 {
-    if drain_stamp().is_file() {
-        let text = std::fs::read_to_string(drain_stamp()).unwrap_or_default();
+    if drain_stamp_or_die().is_file() {
+        let text = std::fs::read_to_string(drain_stamp_or_die()).unwrap_or_default();
         let mut lines = text.lines();
         println!("spira: DRAINING since {}", lines.next().unwrap_or(""));
         if let Some(l2) = lines.next() {
             println!("{l2}");
         }
     }
-    let instance = env::var("SPIRA_INSTANCE").unwrap_or_default();
-    if halt_stamp().is_file() {
-        let text = std::fs::read_to_string(halt_stamp()).unwrap_or_default();
+    let instance = instance_or_die();
+    if halt_stamp_or_die().is_file() {
+        let text = std::fs::read_to_string(halt_stamp_or_die()).unwrap_or_default();
         let mut lines = text.lines();
         println!("spira: HALTED since {}", lines.next().unwrap_or(""));
         if let Some(l2) = lines.next() {
             println!("{l2}");
         }
-        let sfx = instance_suffix();
+        let sfx = sfx_or_die();
         let mut ci_watching = Vec::new();
         for b in sysctl::CI_WATCHER_BASES {
             for t in [format!("{b}{sfx}.timer"), format!("{b}.timer")] {
@@ -540,7 +570,7 @@ fn cmd_status() -> i32 {
         }
     } else {
         println!("spira: not halted by world.sh");
-        let ctrl_path = env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| spira_run().join("control"));
+        let ctrl_path = env::var_os("SPIRA_CTRL").map(PathBuf::from).unwrap_or_else(|| run_or_die().join("control"));
         let ctrl_data = spira_ctrl::read(&ctrl_path).unwrap_or_default();
         let suspended = spira_ctrl::load_suspended(&ctrl_data);
         let mut degraded = Vec::new();

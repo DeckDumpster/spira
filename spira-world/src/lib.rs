@@ -12,16 +12,40 @@ pub mod round;
 pub mod seam;
 pub mod sysctl;
 
+use std::collections::BTreeMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
-/// `$SPIRA_RUN`, defaulting the way conf.sh and every Rust caller in this workspace already
-/// do (landing-pass, czar-pass, reconciler): `/tmp/spira` when unset. This binary does not
-/// source conf.sh itself — every caller that starts it (a systemd unit, the sentinel, an
-/// operator shell) has already sourced it, so the value conf.sh resolved is already in the
-/// environment (conf.sh exports `SPIRA_RUN`; see its export list).
-pub fn spira_run() -> PathBuf {
-    env::var_os("SPIRA_RUN").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp/spira"))
+/// This process's own `SPIRA_HOME` — [`locate_home`] against [`env::current_exe`], for a
+/// caller (`spira_run`/`instance`) that has no executable path of its own to hand in. An
+/// unlocatable `current_exe` (never observed outside a test harness) falls back to an empty
+/// path, which [`spira_config::resolve::resolve_run_dir`] still resolves correctly: the
+/// derived default depends on `$HOME`/XDG, not on `home` itself (see that function's doc).
+fn resolve_home() -> PathBuf {
+    let exe = env::current_exe().unwrap_or_else(|_| PathBuf::from("spira-world"));
+    locate_home(&exe).unwrap_or_default()
+}
+
+/// `spira.run`, resolved in-process through `spira_config` (`SPIRA_RUN` in the environment
+/// still wins outright — every systemd unit sets it explicitly, so a production unit's
+/// behaviour is unchanged — else the resolved config document, else the derived XDG default).
+/// law-a-binary-resolves-the-config-it-reads (sp-ivfu3): this used to default to the
+/// literal `/tmp/spira` whenever `SPIRA_RUN` was unset, which is exactly what a bare
+/// operator shell (no systemd unit to set it) got — `world status` read and wrote the
+/// wrong run directory while reporting on the real one. REFUSES, named, rather than
+/// guessing, when `spira_config` itself cannot resolve.
+pub fn spira_run() -> Result<PathBuf, String> {
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    spira_config::resolve::resolve_run_dir(&env_map, &resolve_home())
+}
+
+/// `spira.instance`, resolved the same way [`spira_run`] resolves `spira.run` — never a
+/// bare `$SPIRA_INSTANCE` read with an empty-string default (sp-ivfu3's widening: that
+/// literal default is what made a bare shell's `world status` name the unqualified
+/// `spira-sentinel.timer` instead of the installed `spira-sentinel-prod.timer`).
+pub fn instance() -> Result<String, String> {
+    let env_map: BTreeMap<String, String> = env::vars().collect();
+    spira_config::resolve::resolve_instance(&env_map, &resolve_home())
 }
 
 /// `$SPIRA_HOME` — the checkout this instance runs from. Resolved the way `sentinel::locate_home`
@@ -50,8 +74,8 @@ pub fn spira_prod_or_home(home: &Path) -> PathBuf {
 }
 
 /// The world-halt stamp path: `$SPIRA_RUN/world.halted`.
-pub fn halt_stamp() -> PathBuf {
-    spira_run().join("world.halted")
+pub fn halt_stamp() -> Result<PathBuf, String> {
+    spira_run().map(|r| r.join("world.halted"))
 }
 
 /// The argv paths `live_workers` matches against — every one of them, not just gate.sh:
@@ -79,42 +103,97 @@ pub fn live_worker_paths(home: &Path) -> Vec<String> {
 }
 
 /// The drain stamp path: `$SPIRA_RUN/world.draining`.
-pub fn drain_stamp() -> PathBuf {
-    spira_run().join("world.draining")
+pub fn drain_stamp() -> Result<PathBuf, String> {
+    spira_run().map(|r| r.join("world.draining"))
 }
 
-/// `$SPIRA_INSTANCE`-qualified suffix — `""` when unset, else `-<instance>` — the same
-/// `_inst_sfx` every per-instance timer/unit name in world.sh builds.
-pub fn instance_suffix() -> String {
-    match env::var("SPIRA_INSTANCE") {
-        Ok(s) if !s.is_empty() => format!("-{s}"),
-        _ => String::new(),
-    }
+/// `$SPIRA_INSTANCE`-qualified suffix for a UNIT NAME — `-<instance>`, always, including
+/// `-prod` (NOT [`spira_config::resolve`]'s own `inst_sfx`, which special-cases `"prod"`
+/// to empty for a DATA DIRECTORY's name — a different convention for a different thing;
+/// see `spira_config::unit`'s own doc on the scar (sp-smbq0) of the two being confused).
+/// The real installed units on this harness are always instance-qualified
+/// (`spira-sentinel-prod.timer`), which is exactly what `sysctl::subject_of`/
+/// `is_essential_timer` already assume when stripping or matching a suffix.
+pub fn instance_suffix() -> Result<String, String> {
+    instance().map(|i| format!("-{i}"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// Serializes this crate's own env-mutating tests against each other — `cargo test`
+    /// runs them on separate threads by default, and `std::env::set_var` is process-global
+    /// (the same hazard `spira_config`'s own `ENV_LOCK` exists for, `pub(crate)` there so
+    /// this crate needs its own).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// `resolve_for_process` needs a real, readable `conf.d` under `SPIRA_HOME` to resolve
+    /// ANY key at all (an existing-but-empty directory is fine; a missing one is a named
+    /// refusal — see `spira_config::registry::load`'s own doc). Pointing `SPIRA_HOME` at
+    /// this fixture, rather than leaving it unset and trusting `resolve_home`'s own
+    /// ancestor search to stumble onto this checkout's real `spira/conf.d`, is what keeps
+    /// these two tests hermetic: the gate builds from a tmpfs copy with no `spira/`
+    /// sibling at the same relative depth, where that ancestor search finds nothing.
+    fn fixture_harness_home(tag: &str) -> testkit::TempDir {
+        let home = testkit::TempDir::new(tag);
+        std::fs::create_dir_all(home.join("conf.d")).unwrap();
+        home
+    }
+
+    /// sp-ivfu3: the old contract was "defaults to the literal /tmp/spira when SPIRA_RUN is
+    /// unset" — exactly the bug (a bare shell silently read/wrote the wrong run directory).
+    /// The new contract: resolved in-process via spira_config, which still produces a real
+    /// path with NO env/toml override present (the derived XDG default), never /tmp/spira.
     #[test]
-    fn spira_run_defaults_to_tmp_spira() {
-        let saved = env::var("SPIRA_RUN").ok();
-        env::remove_var("SPIRA_RUN");
-        assert_eq!(spira_run(), PathBuf::from("/tmp/spira"));
-        if let Some(v) = saved {
-            env::set_var("SPIRA_RUN", v);
+    fn spira_run_resolves_via_config_never_the_tmp_spira_literal() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_RUN", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
+        for n in names {
+            env::remove_var(n);
         }
+        let xdg_home = testkit::TempDir::new("spira-world-run-default");
+        let harness_home = fixture_harness_home("spira-world-run-default-harness");
+        env::set_var("HOME", xdg_home.to_str().unwrap());
+        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
+        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
+
+        let got = spira_run();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => env::set_var(n, v),
+                None => env::remove_var(n),
+            }
+        }
+        let got = got.unwrap();
+        assert_ne!(got, PathBuf::from("/tmp/spira"));
+        assert_eq!(got, xdg_home.join(".local/share/spira/run"));
     }
 
     #[test]
-    fn instance_suffix_empty_when_unset() {
-        let saved = env::var("SPIRA_INSTANCE").ok();
-        env::remove_var("SPIRA_INSTANCE");
-        assert_eq!(instance_suffix(), "");
-        if let Some(v) = saved {
-            env::set_var("SPIRA_INSTANCE", v);
-        } else {
-            env::remove_var("SPIRA_INSTANCE");
+    fn instance_suffix_defaults_to_prod_suffixed() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_INSTANCE", "SPIRA_HOME", "SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, env::var(n).ok())).collect();
+        for n in names {
+            env::remove_var(n);
         }
+        let xdg_home = testkit::TempDir::new("spira-world-instance-default");
+        let harness_home = fixture_harness_home("spira-world-instance-default-harness");
+        env::set_var("HOME", xdg_home.to_str().unwrap());
+        env::set_var("XDG_CONFIG_HOME", xdg_home.join("no-such-xdg").to_str().unwrap());
+        env::set_var("SPIRA_HOME", harness_home.to_str().unwrap());
+
+        let got = instance_suffix();
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => env::set_var(n, v),
+                None => env::remove_var(n),
+            }
+        }
+        assert_eq!(got.unwrap(), "-prod", "the real installed units are always instance-qualified");
     }
 }

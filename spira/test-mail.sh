@@ -152,6 +152,11 @@ echo "UC-17: reply routing"
 
 export SPIRA_HOME="$TMP/uc17-home"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_MAIL/concierge/new" "$SPIRA_MAIL/concierge/tmp" "$SPIRA_MAIL/concierge/cur"
+# sp-ivfu3: mail now resolves spira.run in-process through spira_config, which needs a
+# real conf.d registry under SPIRA_HOME to resolve ANY key (including the ones this UC
+# never pins, SPIRA_LOOM_BUDGET_MS included) — law-a-binary-resolves-the-config-it-reads;
+# a fixture SPIRA_HOME that runs a binary needs conf.d, the same way $HERE already is one.
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 
 send_plain() {   # send_plain <mailbox> <from> <subject> -> bare Message-ID on stdout
     local mailbox="$1" from="$2" subject="$3" newest
