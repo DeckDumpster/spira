@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # test-holds.sh — holds.sh reports which OPEN beads have a branch touching a set of paths,
-#   right now; bead_named_paths and render_holds_brief (lib.sh) turn that into the brief an
-#   aeon reads before it edits.
+#   right now; aeon turns that into the brief a claiming aeon reads before it edits.
 #
 # THE CASE THIS REPRODUCES. Three writers can add a case to the same few lines of a shared
 # file on the same day without any existing tool noticing, because the duplicate-work guard
