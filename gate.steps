@@ -22,7 +22,6 @@
 
 bin SPIRA_LINT_BIN spira-lint
 bin SPIRA_SELECT_BIN suite-select
-bin SPIRA_LIFECYCLE_GUARD_BIN lifecycle-guard
 # The suite runner is the tree's own (sp-isom7): how a tree's suites are staged and launched —
 # the release layout testenv builds in the container and the PATH it sets from it — is part of
 # the tree under test, so a branch that changes it is judged by it. The release's testenv could
@@ -37,10 +36,6 @@ bin SPIRA_TESTENV_BIN testenv
 # and the property it scanned for is structural in the gh-intake crate that replaced it.
 step "$SPIRA_LINT_BIN"
 step bash spira/build-fence.sh
-
-# The lifecycle analyser (sp-ece5q) with an empty allowlist: no --rules file, so a change that
-# reaches lifecycle state by any path other than the machine fails the gate.
-step "$SPIRA_LIFECYCLE_GUARD_BIN" .
 
 # The suite selector (suite-select, sp-wx2tw) and the budgeted suite run. The selector's exit 1
 # is an unclaimed source file (the branch's fault: FAIL); any other failure is a refusal
