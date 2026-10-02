@@ -893,7 +893,7 @@ mod tests {
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
-            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home"])
+            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", ""])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
