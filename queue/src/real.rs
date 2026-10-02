@@ -625,6 +625,9 @@ impl Forge for RealForge {
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool {
         ok(Command::new(forge).arg("branch-protect").arg(repo).arg(branch))
     }
+    fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String> {
+        stdout_of(Command::new(forge).arg("pr-state").arg(repo).arg(pr)).map(|s| s.trim().to_string())
+    }
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String> {
         stdout_of(Command::new(forge).arg("check-status").arg(repo).arg(pr).arg(branch))
     }
