@@ -39,10 +39,7 @@ iszero() { [ "$2" = 0 ] && ok "$1" || bad "$1" "exit $2"; }
 
 echo "test-watch-notify-rearm.sh"
 
-command -v podman >/dev/null 2>&1 || {
-    printf 'SKIP test-watch-notify-rearm.sh: podman not found on PATH\n' >&2
-    exit 77
-}
+command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
 TESTENV="$HERE/testenv.sh"
 CNAME="spira-testenv-watchnotify-$$"
@@ -56,8 +53,9 @@ bash "$TESTENV" up --name "$CNAME" >&2
 iszero "container up exits 0" "$?"
 
 if ! bash "$TESTENV" probe --name "$CNAME"; then
-    printf 'SKIP test-watch-notify-rearm.sh: user systemd not available in container\n' >&2
-    exit 77
+    bad "user systemd running in container" "probe failed"
+    tl_summary
+    exit
 fi
 ok "user systemd running in container"
 
