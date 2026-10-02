@@ -125,8 +125,8 @@ chmod +x "$BIN/claude"
 
 # THE ENVIRONMENT IS NAMED, NOT INHERITED. Two keys make this mandatory rather than tidy: an
 # inherited SPIRA_CONF would let a real box decide these verdicts, and an inherited
-# SPIRA_WIKI could write into a real wiki page. HOME is the real one because `bd` and `dolt` read their
-# credentials from it, and SPIRA_PATH is passed because conf.sh rebuilds PATH from it.
+# SPIRA_WIKI could write into a real wiki page. HOME is the real one because `bd` and `dolt`
+# read their credentials from it, and SPIRA_PATH is passed because conf.sh rebuilds PATH from it.
 run_aeon() {             # run_aeon <fayth> <act>
     printf '%s' "$2" > "$TMP/act"
     rm -rf "$RUN/worktree"
@@ -151,17 +151,18 @@ labels() { bd -C "$SPIRA_DB" label list "$1" 2>/dev/null | tr '\n' ' '; }
 # the rendered form passes or fails on where the wrap fell rather than on what was recorded.
 notes()  { bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null | tr -s '[:space:]' ' '; }
 
-fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead and one runbook
+fresh() {                # fresh <bead-id> [extra-label] — an empty world with one bead
     testdb_reset
-    rm -rf "$TMP/elsewhere"
-    shelf
     seed "$1" "${2:-}"
 }
+# A delivers:action bead is exempt from the submitted conversion, so its close stands.
+fresh_incident() { fresh "$1" delivers:action; }
+
 echo
 echo "a BUILDER that closed — its close stands as submitted:"
 fresh sp-oc-8; run_aeon builder none
 # A builder's plain work bead: its close is converted to open + spira-submitted at teardown
-# (sp-qsona) — the closing rule still never touches it.
+# (sp-qsona).
 is     "the bead's close stands as submitted, not undone" open "$(field sp-oc-8 status)"
 want   "carrying the submitted label" "spira-submitted" "$(labels sp-oc-8)"
 nowant "it is not poisoned"        "spira-poison" "$(labels sp-oc-8)"
