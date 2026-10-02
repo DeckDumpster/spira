@@ -122,14 +122,38 @@ fn tail_n_keeps_last_lines_only() {
 
 #[test]
 fn red_suites_json_shape() {
-    let j = red_suites_json(&["a.sh".into(), "b.sh".into()], &["c.sh".into()]);
-    assert_eq!(j, "{\"red\":[\"a.sh\",\"b.sh\"],\"flaky\":[\"c.sh\"],\"red_count\":2}");
+    let j = red_suites_json(&["a.sh".into(), "b.sh".into()], &["c.sh".into()], &[]);
+    assert_eq!(
+        j,
+        "{\"red\":[\"a.sh\",\"b.sh\"],\"flaky\":[\"c.sh\"],\"red_count\":2,\"fault\":[],\"fault_count\":0}"
+    );
 }
 
 #[test]
 fn red_suites_json_escapes_quotes_and_backslashes() {
-    let j = red_suites_json(&["weird\"suite\\.sh".into()], &[]);
+    let j = red_suites_json(&["weird\"suite\\.sh".into()], &[], &[]);
     assert!(j.contains("weird\\\"suite\\\\.sh"));
+}
+
+/// sp-3azqi: a fault-only batch (no genuine red) still names the faulted suite in
+/// red-suites.json, distinctly from `red` — nothing reading this file may treat it as a
+/// clean pass just because `red` is empty.
+#[test]
+fn red_suites_json_names_faults_distinctly_from_red() {
+    let j = red_suites_json(&[], &[], &["test-strand-reclaim-n.sh".into()]);
+    assert_eq!(
+        j,
+        "{\"red\":[],\"flaky\":[],\"red_count\":0,\"fault\":[\"test-strand-reclaim-n.sh\"],\"fault_count\":1}"
+    );
+}
+
+#[test]
+fn is_fault_matches_only_the_fault_status() {
+    assert!(is_fault("fault"));
+    assert!(!is_fault("red"));
+    assert!(!is_fault("timeout"));
+    assert!(!is_fault("ok"));
+    assert!(!is_fault(""));
 }
 
 #[test]

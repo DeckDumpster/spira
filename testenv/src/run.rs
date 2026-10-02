@@ -1709,6 +1709,19 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deps.log(&format!("harness fault — {d}"));
         return Finish::fault(2, "user-account", ran);
     }
+    // sp-3azqi: podman's own exec lost one or more suites' exit status (conmon's
+    // exit-file wait gave up under load) — their verdict is unknown, never a red, and
+    // takes priority over whatever other suites did: a batch that can't vouch for every
+    // suite reports VERDICT FAULT, not RED, and names the ones it lost.
+    let faulted = outcome.faulted();
+    if !faulted.is_empty() {
+        deps.log(&format!(
+            "harness fault — podman lost the exit status for {} suite(s), not a suite defect: {}",
+            faulted.len(),
+            faulted.join(" ")
+        ));
+        return Finish::fault(2, "exec-lost", ran);
+    }
     let qreds = outcome.quarantined_reds();
     if !qreds.is_empty() {
         deps.log(&format!(
@@ -1987,6 +2000,10 @@ fn build(
         Err(BuildError::Deadline) => {
             stderr("batch: cargo was still building at the trial's setup cutoff — killed; this is not the candidate's build failure");
             return Some(Finish::fault(2, "deadline-build", 0));
+        }
+        Err(BuildError::Cancelled) => {
+            stderr("batch: interrupted — cargo was still building");
+            return Some(Finish::fault(2, "interrupted", 0));
         }
         Err(BuildError::Failed(rc)) => {
             stderr(&format!(

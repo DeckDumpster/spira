@@ -9,6 +9,13 @@ pub fn is_red(status: &str) -> bool {
     matches!(status, "red" | "timeout")
 }
 
+/// podman's own exec lost the suite's exit status (sp-3azqi, testenv's `Status::Fault`):
+/// its own verdict unknown, never a suite defect — `is_red` deliberately excludes it, and
+/// callers must check this too rather than let an all-fault batch read as "all passed".
+pub fn is_fault(status: &str) -> bool {
+    status == "fault"
+}
+
 /// `grep -E '^  FAIL  |^FAIL[: ]|^not ok '` — the tight tier: a line the suite itself marked
 /// as a failure in one of testlib.sh's own shapes.
 fn tier1_fail_line(line: &str) -> bool {
@@ -173,13 +180,17 @@ fn json_str_array(items: &[String]) -> String {
 }
 
 /// `red-suites.json` — the artifact `forge.sh` reads instead of per-suite annotations
-/// (GitHub caps those at 10 per step).
-pub fn red_suites_json(red: &[String], flaky: &[String]) -> String {
+/// (GitHub caps those at 10 per step). `fault` (sp-3azqi) is additive: a suite whose exit
+/// status podman's own exec lost, named here distinctly from `red` so nothing reading this
+/// file mistakes a batch with no genuine red for one that fully passed.
+pub fn red_suites_json(red: &[String], flaky: &[String], fault: &[String]) -> String {
     format!(
-        "{{\"red\":{},\"flaky\":{},\"red_count\":{}}}",
+        "{{\"red\":{},\"flaky\":{},\"red_count\":{},\"fault\":{},\"fault_count\":{}}}",
         json_str_array(red),
         json_str_array(flaky),
-        red.len()
+        red.len(),
+        json_str_array(fault),
+        fault.len()
     )
 }
 
