@@ -15,11 +15,11 @@ impl RealBd {
     /// entries, never interpolated into the script text, so a SOP's own text can never be
     /// read as shell syntax.
     fn seam(&self, body: &str, args: &[&str], stdin: Option<&[u8]>) -> (bool, Vec<u8>) {
-        let script = format!(". \"$0\" >/dev/null 2>&1 || exit 96\n{body}");
+        let script = format!(". \"$0\" >/dev/null || {{ echo \"sop: cannot source $0 (set SPIRA_HOME)\" >&2; exit 96; }}\n{body}");
         let mut cmd = Command::new("bash");
         cmd.arg("-c").arg(script).arg(format!("{}/lib.sh", self.spira_home)).args(args);
         cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() });
-        cmd.stdout(Stdio::piped()).stderr(Stdio::null());
+        cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(_) => return (false, Vec::new()),
