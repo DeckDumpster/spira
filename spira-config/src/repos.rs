@@ -136,6 +136,45 @@ pub fn parse(text: &str) -> Vec<Row> {
     text.lines().filter_map(parse_row).collect()
 }
 
+/// The `[repo.<name>]` tables as map rows, for a box whose `spira.toml` is the only source:
+/// no `repo-map` file is read when this applies, and a map file that exists always wins.
+/// `gate` is retired from the schema, so that column is empty.
+pub fn rows_from_toml(doc: &crate::SpiraToml) -> Vec<Row> {
+    use crate::{Lane, LandMode};
+    doc.repo
+        .iter()
+        .map(|(name, r)| Row {
+            name: name.clone(),
+            path: r.path.clone(),
+            land: match r.mode {
+                LandMode::Push => "push",
+                LandMode::Pr => "pr",
+                LandMode::Hold => "hold",
+                LandMode::Queue => "queue",
+                LandMode::QueueForge => "queue.forge",
+                LandMode::QueueLocal => "queue.local",
+            }
+            .to_string(),
+            base: r.base.clone().unwrap_or_default(),
+            format: r.format.clone().unwrap_or_default(),
+            gate: String::new(),
+            lanes: r
+                .lanes
+                .iter()
+                .map(|l| match l {
+                    Lane::Plan => "plan",
+                    Lane::Incident => "incident",
+                    Lane::Groom => "groom",
+                    Lane::MaechenSweep => "maechen-sweep",
+                    Lane::Spike => "spike",
+                    Lane::CzarTrigger => "czar-trigger",
+                })
+                .collect::<Vec<_>>()
+                .join(","),
+        })
+        .collect()
+}
+
 /// `repo_field <name> <col>` — the first row named `name`'s column, or `""` when no row
 /// matches (matching bash: not-found and found-but-blank are the same empty answer).
 pub fn field(rows: &[Row], name: &str, col: Column) -> String {
@@ -237,6 +276,11 @@ impl Registry {
     pub fn from_env(env: BTreeMap<String, String>, home: &Path) -> Registry {
         let env = registry_env(env, home);
         let map_text = env.get("SPIRA_REPO_MAP").filter(|p| !p.is_empty()).and_then(|p| std::fs::read_to_string(p).ok());
+        if map_text.is_none() {
+            if let Some(rows) = crate::locate::locate(None).found().and_then(|p| crate::load(&p).ok()).map(|d| rows_from_toml(&d)) {
+                return Registry { rows, home: home_repo(&env, home), root_override: repo_override(&env), map_present: true };
+            }
+        }
         Registry::new(map_text.as_deref(), &env, home)
     }
 
@@ -652,6 +696,19 @@ pub fn registry_env(mut env: std::collections::BTreeMap<String, String>, home: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registry_reads_repo_tables_from_spira_toml_when_no_map_file_exists() {
+        let doc = crate::validate("[repo.alpha]\npath = \"/tmp/alpha\"\nmode = \"queue.local\"\nbase = \"local/main\"\nlanes = [\"plan\", \"spike\"]\n").unwrap();
+        let rows = rows_from_toml(&doc);
+        assert_eq!(names(&rows), vec!["alpha".to_string()]);
+        assert_eq!(field(&rows, "alpha", Column::Path), "/tmp/alpha");
+        assert_eq!(field(&rows, "alpha", Column::Land), "queue.local");
+        assert_eq!(field(&rows, "alpha", Column::Base), "local/main");
+        assert_eq!(field(&rows, "alpha", Column::Lanes), "plan,spike");
+        assert_eq!(field(&rows, "alpha", Column::Gate), "");
+        assert_eq!(field(&rows, "nope", Column::Path), "");
+    }
 
     /// sp-z3eyk: conf.sh resolves the repo map but never exports it, so queue's own
     /// environment lacks it (queue: sp-z3eyk). The registry must still find it, resolved in-process.
