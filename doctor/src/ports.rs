@@ -60,6 +60,9 @@ pub trait World {
     fn file_exists(&self, p: &Path) -> bool;
     /// `timeout 60 bd -C <db> list --limit 1 --json` -> Ok(json) or Err(combined output).
     fn bd_list(&self, db: &Path, timeout_secs: u64) -> Result<String, String>;
+    /// Lines naming `beads.role` that `bd -C <db> list` writes when run from `cwd` — `None` if
+    /// bd could not be run. bd reads the role from the cwd's git config, not from `-C`.
+    fn bd_role_warnings(&self, db: &Path, cwd: &Path) -> Option<usize>;
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta>;
     fn systemd_user_is_active(&self, unit: &str) -> bool;
     fn tcp_connect(&self, host: &str, port: u16) -> bool;

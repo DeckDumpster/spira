@@ -296,7 +296,17 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
     if w.dir_exists(&beads_dir) {
         out.push(ok(format!("{db} has a .beads")));
         match w.bd_list(db_path, 60) {
-            Ok(_) => out.push(ok("bd can read it")),
+            Ok(_) => {
+                out.push(ok("bd can read it"));
+                let cwd = w.env("SPIRA_HOME").unwrap_or_default();
+                match w.bd_role_warnings(db_path, Path::new(&cwd)) {
+                    Some(n) if n > 0 => out.push(warn(
+                        format!("bd warns beads.role is unset ({n} line(s)) when run from {cwd}"),
+                        "Fix: git config --global beads.role maintainer",
+                    )),
+                    _ => out.push(ok("bd emits no beads.role warning")),
+                }
+            }
             Err(bd_out) => {
                 let dolt_data = w.env("SPIRA_DOLT_DATA").filter(|v| !v.is_empty());
                 if install && dolt_data.is_some() && !w.systemd_user_is_active("dolt-beads.service") {
