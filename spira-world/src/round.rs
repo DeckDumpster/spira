@@ -67,10 +67,25 @@ pub fn read() -> Option<RoundVmStatus> {
 /// `poll` — `world stop --round-drain`'s loop. Returns `true` if it cleared, `false` on
 /// timeout. `round-vm` not being on PATH clears immediately (nothing to wait for; FAIL
 /// CLOSED belongs to the read, not to a wait with no subject).
-pub fn wait_for_clear(timeout: Duration, poll: Duration, mut sleep: impl FnMut(Duration), mut now: impl FnMut() -> std::time::Instant) -> bool {
+///
+/// `reader` is [`read`] itself in production — injected (sp-8bhnr, law-probe-a-fixture-
+/// not-production) so a test can hand in a deterministic closure instead of this function
+/// shelling to the REAL `round-vm` binary. Before this, the one test exercising "cleared"
+/// called [`read`] directly: on a box with no `round-vm` on PATH it reads as clear by
+/// construction, but on THIS box (round-vm ships in the release's own `bin/`, which is on
+/// every dev/gate PATH once installed) it instead drove the real tool and got whatever its
+/// actual, un-fixtured state happened to be — exactly the production state this function's
+/// own `wait` is supposed to be tested against a FIXTURE of, never against.
+pub fn wait_for_clear(
+    timeout: Duration,
+    poll: Duration,
+    mut sleep: impl FnMut(Duration),
+    mut now: impl FnMut() -> std::time::Instant,
+    mut reader: impl FnMut() -> Option<RoundVmStatus>,
+) -> bool {
     let deadline = now() + timeout;
     loop {
-        match read() {
+        match reader() {
             Some(s) if in_flight_description(&s).is_some() => {
                 if now() >= deadline {
                     return false;
@@ -111,16 +126,59 @@ mod tests {
         );
     }
 
+    /// sp-8bhnr, law-probe-a-fixture-not-production: `reader` stands in for [`read`] so
+    /// this never shells to the real `round-vm` binary. Before this, the test called
+    /// `read()` directly and relied on `round-vm` being ABSENT from PATH to get a
+    /// deterministic `None` — true of a bare dev box, false of this one (and every gate
+    /// run), once the release's own `bin/round-vm` is on it: it then drove the real tool
+    /// and asserted against whatever un-fixtured state it actually reported.
     #[test]
-    fn wait_for_clear_returns_true_immediately_when_round_vm_is_not_on_path() {
-        // read() shells to the real `round-vm` binary and cannot be stubbed from this pure
-        // test; on a box with no round-vm installed (true of every dev/test box) it
-        // returns None, which this function must treat as "cleared" rather than hang.
+    fn wait_for_clear_returns_true_immediately_when_the_reader_reports_nothing_in_flight() {
         use std::time::Instant;
         let t0 = Instant::now();
         let mut sleeps = 0;
-        let ok = wait_for_clear(Duration::from_secs(5), Duration::from_millis(0), |_| sleeps += 1, move || t0);
-        assert!(ok, "no round-vm on PATH must not hang a drain forever");
+        let ok = wait_for_clear(Duration::from_secs(5), Duration::from_millis(0), |_| sleeps += 1, move || t0, || None);
+        assert!(ok, "a reader with nothing in flight must not hang a drain forever");
         assert_eq!(sleeps, 0, "the first read already clears; no poll should be needed");
+    }
+
+    /// The positive control the single-read test above cannot give: a reader that reports
+    /// in-flight a few times before clearing must be polled exactly that many times, then
+    /// return `true` — never timing out early, never lying about having waited.
+    #[test]
+    fn wait_for_clear_polls_until_the_reader_clears_then_returns_true() {
+        use std::time::Instant;
+        let t0 = Instant::now();
+        let mut sleeps = 0;
+        let mut reads = 0;
+        let reader = move || {
+            reads += 1;
+            (reads <= 3).then(|| parse("ready: none\nprovisioning: pid 1\noutage: none\n"))
+        };
+        let ok = wait_for_clear(Duration::from_secs(5), Duration::from_millis(0), |_| sleeps += 1, move || t0, reader);
+        assert!(ok, "a reader that eventually clears must return true, not time out");
+        assert_eq!(sleeps, 3, "one sleep per in-flight read before the clearing read");
+    }
+
+    /// The other side of the same contract: a reader that NEVER clears must time out
+    /// `false` once the deadline passes, not hang (there is no real round-vm to shell to
+    /// in a test, so a reader that always reports in-flight is the fixture for "it never
+    /// clears before the deadline").
+    #[test]
+    fn wait_for_clear_times_out_false_when_the_reader_never_clears() {
+        use std::time::{Duration as D, Instant};
+        let t0 = Instant::now();
+        let mut now_calls = 0;
+        let now = move || {
+            now_calls += 1;
+            // Called once to set the deadline, then once per loop iteration to check it —
+            // answer past the deadline from the second call on, so this terminates without
+            // a real sleep.
+            if now_calls == 1 { t0 } else { t0 + D::from_secs(10) }
+        };
+        let ok = wait_for_clear(Duration::from_secs(5), Duration::from_millis(0), |_| {}, now, || {
+            Some(parse("ready: none\nprovisioning: pid 1\noutage: none\n"))
+        });
+        assert!(!ok, "a reader that never clears before the deadline must time out, not hang or lie");
     }
 }
