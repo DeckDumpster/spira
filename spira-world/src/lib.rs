@@ -28,7 +28,7 @@ fn resolve_home() -> PathBuf {
 
 /// `spira.run`, resolved in-process through `spira_config` (`SPIRA_RUN` in the environment
 /// still wins outright — every systemd unit sets it explicitly, so a production unit's
-/// behaviour is unchanged — else `spira.toml`, else the derived XDG default).
+/// behaviour is unchanged — else the resolved config document, else the derived XDG default).
 /// law-a-binary-resolves-the-config-it-reads (sp-ivfu3): this used to default to the
 /// literal `/tmp/spira` whenever `SPIRA_RUN` was unset, which is exactly what a bare
 /// operator shell (no systemd unit to set it) got — `world status` read and wrote the

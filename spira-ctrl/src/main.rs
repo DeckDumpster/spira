@@ -58,8 +58,8 @@ fn spira_run() -> PathBuf {
 }
 
 /// `spira.instance`, resolved the same way [`spira_run`] resolves `spira.run` — never a bare
-/// `env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string())`, which skipped
-/// `spira.toml` entirely and only ever saw this process's own environment.
+/// `env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string())`, which skipped the
+/// resolved config document entirely and only ever saw this process's own environment.
 fn spira_instance() -> String {
     let env_map: BTreeMap<String, String> = env::vars().collect();
     spira_config::resolve::resolve_instance(&env_map, &spira_home()).unwrap_or_else(|e| die(&e))
