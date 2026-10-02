@@ -79,6 +79,7 @@ const VARS: &[&str] = &[
     "SPIRA_GATE_BEAD",
     "SPIRA_GATE_CALLER",
     "SPIRA_GATE_ALL",
+    "SPIRA_GATE_CLASS",
     "SPIRA_VERDICT_REPEAT_CONSIDERED",
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
@@ -782,13 +783,21 @@ impl World for Real {
     fn release_target(&self, tree: &Path, keep_release: bool) {
         crate::target::release_tree(tree, keep_release);
     }
-    fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits) -> Result<Box<dyn std::any::Any>, String> {
+    fn reserve_scratch(&self, tree: &Path, explicit_root: &str, run: &str, lim: &crate::target::Limits, class: &str, wait_secs: u64) -> Result<Box<dyn std::any::Any>, String> {
         use crate::target;
         let Some(root) = target::root(explicit_root, run, target::on_tmpfs(Path::new("/tmp"))) else {
             return Ok(Box::new(()));
         };
         let owner = format!("gate-{}", tree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-        let g = spira_config::scratch::reserve(&spira_config::scratch::ledger_for(&root), &owner, lim.reserve_mib, 0, &|| target::free_mib(&root))?;
+        let g = spira_config::scratch::reserve_class(
+            &spira_config::scratch::ledger_for(&root),
+            &owner,
+            spira_config::scratch::Class::parse(class),
+            lim.reserve_mib,
+            0,
+            std::time::Duration::from_secs(wait_secs),
+            &|| target::free_mib(&root),
+        )?;
         Ok(Box::new(g))
     }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {

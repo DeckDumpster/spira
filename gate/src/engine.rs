@@ -1293,7 +1293,8 @@ impl<'w, W: World> Trial<'w, W> {
             Ok(line) => w.eprint(&line),
             Err(e) => return short(e),
         }
-        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+        let wait = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT")).unwrap_or(0);
+        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, ctx.var("SPIRA_GATE_CLASS"), wait) {
             Ok(g) => {
                 *reservation = Some(g);
                 None
