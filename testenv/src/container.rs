@@ -153,12 +153,15 @@ impl Conf {
     }
 }
 
+/// `up`'s exit when it gave up waiting for a container slot: not a failure to boot.
+pub const RC_QUEUE: i32 = 71;
+
 /// The marker [`crate::run::Harness::locate`] and the warm refill look for.
 pub const HARNESS_MARKER: &str = "spira/testenv/Containerfile";
 
 pub const USAGE: &[&str] = &[
     "usage: testenv container up|down|exec|probe|tag|image|publish [OPTIONS]",
-    "  up      [--name NAME] [--checkout PATH]",
+    "  up      [--name NAME] [--checkout PATH] [--queue-timeout SECS]",
     "  down    [--name NAME] [--volumes] [--force-foreign]",
     "  exec    [--name NAME] [--user USER] CMD ARGS...",
     "  probe   [--name NAME]",
@@ -548,8 +551,10 @@ impl Driver<'_> {
         (rc == 0).then(|| out.lines().filter(|l| !l.trim().is_empty()).count())
     }
 
-    /// Block until fewer than `max_concurrent` testenv containers run (0 disables).
-    pub fn admit(&self) -> bool {
+    /// Block until fewer than `max_concurrent` testenv containers run (0 disables), for at
+    /// most `bound` seconds. Every wait says its length as `testenv: queue-wait=<n>s
+    /// pool=container`, the line the gate sums into its queue field.
+    pub fn admit(&self, bound: u64) -> bool {
         let max = self.conf.max_concurrent;
         if max <= 0 {
             return true;
@@ -564,11 +569,11 @@ impl Driver<'_> {
         ));
         let mut waited = 0;
         while n >= max {
-            if waited >= self.conf.queue_timeout {
+            if waited >= bound {
                 self.err(&format!(
-                    "testenv: gave up waiting for a slot after {}s (still {n}/{max} running)",
-                    self.conf.queue_timeout
+                    "testenv: gave up waiting for a slot after {bound}s (still {n}/{max} running)"
                 ));
+                self.err(&format!("testenv: queue-wait={waited}s pool=container"));
                 return false;
             }
             self.host.sleep(Duration::from_secs(self.conf.queue_poll));
@@ -578,6 +583,7 @@ impl Driver<'_> {
         self.err(&format!(
             "testenv: slot free ({n}/{max} running) — starting"
         ));
+        self.err(&format!("testenv: queue-wait={waited}s pool=container"));
         true
     }
 
@@ -721,9 +727,17 @@ impl Driver<'_> {
     pub fn cmd_up(&self, args: &[String]) -> i32 {
         let mut name = s(DEFAULT_NAME);
         let mut checkout: Option<String> = None;
+        let mut queue_bound = self.conf.queue_timeout;
         let mut i = 0;
         while i < args.len() {
             match (args[i].as_str(), args.get(i + 1)) {
+                ("--queue-timeout", Some(v)) => match v.parse() {
+                    Ok(n) => queue_bound = n,
+                    Err(_) => {
+                        self.err(&format!("testenv up: --queue-timeout is not a number: {v}"));
+                        return 1;
+                    }
+                },
                 ("--name", Some(v)) => name = v.clone(),
                 ("--checkout", Some(v)) => checkout = Some(v.clone()),
                 (a, _) => {
@@ -749,8 +763,8 @@ impl Driver<'_> {
         let Some(img) = self.ensure_image() else {
             return 1;
         };
-        if !self.admit() {
-            return 1;
+        if !self.admit(queue_bound) {
+            return RC_QUEUE;
         }
         // sp-e5v53-3: a checkout whose build directories are themselves symlinks elsewhere
         // (a gate tree's `target/{aeon,release,debug,gate-tools}`, gate/src/target.rs's

@@ -78,6 +78,8 @@ pub struct GateRun {
     pub reason: String,
     pub waited_secs: u64,
     pub ran_secs: u64,
+    /// Seconds of `ran_secs` spent waiting for a testenv slot.
+    pub queue_secs: u64,
     /// `unit` / `suites`; empty when the trial ended before the mode was read.
     pub gate_mode: String,
     /// The composition label gate.log carries; empty before one was chosen.
@@ -106,6 +108,7 @@ pub fn render(ts: &str, host: &str, r: &GateRun) -> Result<String, String> {
         ("reason".into(), s(&r.reason)),
         ("waited_secs".into(), Value::from(r.waited_secs)),
         ("ran_secs".into(), Value::from(r.ran_secs)),
+        ("queue_secs".into(), Value::from(r.queue_secs)),
         ("wall_secs".into(), Value::from(r.waited_secs + r.ran_secs)),
         ("gate_mode".into(), s(&r.gate_mode)),
         ("compose".into(), s(&r.compose)),
@@ -179,6 +182,7 @@ mod tests {
             reason: "timeout".into(),
             waited_secs: 12,
             ran_secs: 150,
+            queue_secs: 40,
             gate_mode: "unit".into(),
             compose: "unit".into(),
             branch_type: "rust-only".into(),
@@ -192,6 +196,7 @@ mod tests {
         assert_eq!(v["rc"], 75);
         assert_eq!(v["wall_secs"], 162);
         assert_eq!(v["ran_secs"], 150);
+        assert_eq!(v["queue_secs"], 40);
         assert_eq!(v["branch_type"], "rust-only");
         assert_eq!(v["gate_mode"], "unit");
         assert_eq!(v["phases"], "fences:30,unit:120");

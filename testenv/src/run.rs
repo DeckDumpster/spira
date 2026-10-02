@@ -1070,6 +1070,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         let lease = admit(admission::Pool::Compile, admission::profile_weight(&args.profile));
         shift(lease.waited);
         if lease.waited > 0 {
+            deps.log(&format!("queue-wait={}s pool=compile", lease.waited));
             ph.mark("admit-compile");
         }
         let built = build(args, deps, &wt.path, br, &artifacts, setup_cutoff.get());
@@ -1088,6 +1089,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let _test_lease = admit(admission::Pool::Test, 1);
     shift(_test_lease.waited);
     if _test_lease.waited > 0 {
+        deps.log(&format!("queue-wait={}s pool=test", _test_lease.waited));
         ph.mark("admit-test");
     }
 
@@ -1102,6 +1104,11 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     session.liveness_retries = s.liveness_retries;
     session.liveness_sleep = Duration::from_secs(s.liveness_sleep);
     session.setup_deadline = setup_cutoff.get();
+    // A container slot may eat at most half of what is left of setup: past that the trial
+    // judged nothing and says `queue`, rather than being cut mid-wait as `deadline-up`.
+    session.queue_bound = setup_cutoff
+        .get()
+        .map(|c| (c.saturating_duration_since(Instant::now()).as_secs() / 2).max(1));
     // The batch's own owner file: one live run per key, warm or cold (§4.2).
     let key_owner = deps.owner_dir.join(format!("{}.owner", session.name));
     let warm_slot = wt.warm_index();
@@ -1191,6 +1198,10 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         if let crate::fixture::Fault::Deadline(p) = f {
             share_note(p, &ph);
             return Finish::fault(2, deadline_reason(p), 0);
+        }
+        if f == crate::fixture::Fault::Queue {
+            deps.log("no container slot came free inside the queue bound — no verdict; the trial judged nothing");
+            return Finish::fault(2, "queue", 0);
         }
         deps.log(f.message());
         return Finish::fault(f.rc(), "container-up", 0);

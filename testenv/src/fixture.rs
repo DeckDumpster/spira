@@ -4,6 +4,7 @@
 
 use crate::plan;
 use crate::record::Mode;
+use crate::container::RC_QUEUE;
 use crate::runtime::{ContainerRuntime, ExecOutcome, ExecRequest, RC_DEADLINE};
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -119,12 +120,14 @@ pub enum Fault {
     /// rc 2: a setup phase was still running at the trial's setup cutoff (DESIGN.md D9).
     /// The phase word is the VERDICT reason's suffix (`deadline-<phase>`).
     Deadline(&'static str),
+    /// rc 2: no container slot came free inside the queue bound; the trial judged nothing.
+    Queue,
 }
 
 impl Fault {
     pub fn rc(&self) -> i32 {
         match self {
-            Fault::Up(_) | Fault::Deadline(_) => 2,
+            Fault::Up(_) | Fault::Deadline(_) | Fault::Queue => 2,
             Fault::Install(_) => 3,
         }
     }
@@ -132,6 +135,7 @@ impl Fault {
         match self {
             Fault::Up(m) | Fault::Install(m) => m,
             Fault::Deadline(p) => p,
+            Fault::Queue => "queue",
         }
     }
 }
@@ -264,6 +268,8 @@ pub struct Session<'a> {
     /// The trial's setup cutoff (`--deadline`, DESIGN.md D9): every setup exec and
     /// `testenv container` call carries it. None = unbounded, as before.
     pub setup_deadline: Option<Instant>,
+    /// Seconds `up` may wait for a container slot before it is a queue fault, not a boot one.
+    pub queue_bound: Option<u64>,
 }
 
 fn kv(k: &str, v: impl Into<String>) -> (String, String) {
@@ -282,6 +288,7 @@ impl<'a> Session<'a> {
             liveness_retries: 3,
             liveness_sleep: Duration::from_secs(3),
             setup_deadline: None,
+            queue_bound: None,
         }
     }
 
@@ -360,18 +367,22 @@ impl<'a> Session<'a> {
 
     /// `testenv container up --name <n> --checkout <worktree>`, then `probe`.
     pub fn up(&self, checkout: &Path) -> Result<(), Fault> {
-        let up = self.rt.testenv(
-            &[
-                "up".into(),
-                "--name".into(),
-                self.name.clone(),
-                "--checkout".into(),
-                checkout.display().to_string(),
-            ],
-            self.setup_deadline,
-        );
+        let mut args: Vec<String> = vec![
+            "up".into(),
+            "--name".into(),
+            self.name.clone(),
+            "--checkout".into(),
+            checkout.display().to_string(),
+        ];
+        if let Some(b) = self.queue_bound {
+            args.extend(["--queue-timeout".into(), b.to_string()]);
+        }
+        let up = self.rt.testenv(&args, self.setup_deadline);
         if up.rc == RC_DEADLINE {
             return Err(Fault::Deadline("up"));
+        }
+        if up.rc == RC_QUEUE {
+            return Err(Fault::Queue);
         }
         if !up.ok() {
             return Err(Fault::Up(format!(

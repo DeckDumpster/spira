@@ -84,6 +84,9 @@ struct State {
     compose: String,
     /// (phase, wall seconds), in the order they ran; the base trial's carry a `base-` prefix.
     phases: Vec<(String, u64)>,
+    /// Seconds the trial spent waiting for a slot (testenv's `queue-wait=` lines), inside
+    /// the `gate` phase's wall.
+    queue_secs: u64,
     /// The tree certificate (cert.rs) a PASS writes: the merged tree judged, the revision
     /// that carries it, where verdicts live, the harness hash and the suites covered.
     merged_tree: String,
@@ -704,6 +707,7 @@ impl<'w, W: World> Trial<'w, W> {
             "",
         );
         self.s.phases.extend(ph);
+        self.s.queue_secs = parse::queue_secs(&out);
         if w.signalled() {
             return v(
                 NOVERDICT,
@@ -793,6 +797,12 @@ impl<'w, W: World> Trial<'w, W> {
         // not finish inside its share of SPIRA_GATE_BUDGET, or whose every suite was deferred,
         // judged nothing — a named NO_VERDICT, never a pass and never the branch's red.
         if rc == NOVERDICT {
+            if parse::testenv_fault_reason(&out).as_deref() == Some("queue") {
+                return v(NOVERDICT, "queue", format!(
+                    "gate: {name}'s suites trial waited {}s for a testenv slot and gave up inside its share of SPIRA_GATE_BUDGET={}s; it judged nothing.\ngate: this is the host's queue, not a fault in the branch.\ngate: command: {cmd}\n{out}",
+                    parse::queue_secs(&out),
+                    ctx.var_or("SPIRA_GATE_BUDGET", "300")));
+            }
             if let Some(r) = parse::testenv_fault_reason(&out).filter(|r| r.starts_with("deadline-")) {
                 let phase = &r["deadline-".len()..];
                 return v(NOVERDICT, "budget", format!(
@@ -1348,7 +1358,7 @@ impl<'w, W: World> Trial<'w, W> {
                     ran,
                     vd.status,
                     vd.reason,
-                    meter_suffix(&self.s.compose, &self.s.phases)
+                    meter_suffix(&self.s.compose, &self.s.phases, self.s.queue_secs)
                 ),
             );
             let run = crate::telemetry::GateRun {
@@ -1364,7 +1374,8 @@ impl<'w, W: World> Trial<'w, W> {
                 gate_mode: self.s.gate_mode.clone(),
                 compose: self.s.compose.clone(),
                 branch_type: self.s.branch_type.clone(),
-                phases: meter_suffix(&self.s.compose, &self.s.phases)
+                queue_secs: self.s.queue_secs,
+                phases: meter_suffix(&self.s.compose, &self.s.phases, 0)
                     .split_once(" phases=")
                     .map(|(_, p)| p.to_string())
                     .unwrap_or_default(),
@@ -1412,9 +1423,6 @@ impl<'w, W: World> Trial<'w, W> {
     }
 }
 
-/// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,…`, empty
-/// until a composition was chosen. Readers split the note on spaces and take its first word
-/// as the reason (yield.sh), so trailing fields are compatible.
 fn summary_mismatch(listed: usize, runner_ran: Option<usize>) -> Option<String> {
     match runner_ran {
         Some(n) if listed < n => Some(format!(
@@ -1424,7 +1432,10 @@ fn summary_mismatch(listed: usize, runner_ran: Option<usize>) -> Option<String> 
     }
 }
 
-pub fn meter_suffix(compose: &str, phases: &[(String, u64)]) -> String {
+/// The gate.log fields after the reason: ` compose=<label> phases=<name>:<secs>,… queue=<secs>`
+/// (the last only when the trial waited for a slot), empty until a composition was chosen. Readers split the note on spaces and take its first word
+/// as the reason (yield.sh), so trailing fields are compatible.
+pub fn meter_suffix(compose: &str, phases: &[(String, u64)], queue_secs: u64) -> String {
     if compose.is_empty() {
         return String::new();
     }
@@ -1434,7 +1445,12 @@ pub fn meter_suffix(compose: &str, phases: &[(String, u64)]) -> String {
     } else {
         ph.join(",")
     };
-    format!(" compose={compose} phases={ph}")
+    let queue = if queue_secs > 0 {
+        format!(" queue={queue_secs}")
+    } else {
+        String::new()
+    };
+    format!(" compose={compose} phases={ph}{queue}")
 }
 
 /// The line the trial prints once it has chosen what to run.

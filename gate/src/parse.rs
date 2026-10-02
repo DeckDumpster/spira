@@ -129,6 +129,14 @@ pub fn testenv_fault_reason(out: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Total seconds the trial's runner reports waiting for a slot: every `queue-wait=<n>s` word,
+/// whichever pool said it.
+pub fn queue_secs(out: &str) -> u64 {
+    out.split_whitespace()
+        .filter_map(|w| w.strip_prefix("queue-wait=")?.strip_suffix('s')?.parse::<u64>().ok())
+        .sum()
+}
+
 /// Whether the suites step started at all: testenv always ends with a `VERDICT` line (its
 /// DESIGN.md §2.3). A trial red before it (a fence, the selector) never reached the suites.
 /// A per-suite line (a red, a ran suite) counts too: a runner that died before its VERDICT

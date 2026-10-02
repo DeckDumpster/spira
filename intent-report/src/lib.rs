@@ -69,6 +69,7 @@ pub struct Trial {
     pub reason: String,
     pub waited: f64,
     pub ran: f64,
+    pub queue: f64,
     pub gate_mode: String,
     pub branch_type: String,
     pub from_log: bool,
@@ -92,6 +93,7 @@ pub fn gate_rows(textual: &str) -> Vec<Trial> {
             reason: text(&v, "reason").to_string(),
             waited: num(v.get("waited_secs")).unwrap_or(0.0),
             ran: num(v.get("ran_secs")).unwrap_or(0.0),
+            queue: num(v.get("queue_secs")).unwrap_or(0.0),
             gate_mode: text(&v, "gate_mode").to_string(),
             branch_type: match text(&v, "branch_type") {
                 "" => "unknown".to_string(),
@@ -124,9 +126,12 @@ pub fn gate_log_line(l: &str) -> Option<Trial> {
     let rc: i64 = w.next()?.strip_prefix("rc=")?.parse().ok()?;
     let mut reason = String::new();
     let mut compose = String::new();
+    let mut queue = 0.0;
     for f in w {
         if let Some(c) = f.strip_prefix("compose=") {
             compose = c.to_string();
+        } else if let Some(q) = f.strip_prefix("queue=") {
+            queue = q.parse().unwrap_or(0.0);
         } else if reason.is_empty() && !f.starts_with("phases=") {
             reason = f.to_string();
         }
@@ -149,6 +154,7 @@ pub fn gate_log_line(l: &str) -> Option<Trial> {
         reason,
         waited,
         ran,
+        queue,
         gate_mode: gate_mode.to_string(),
         branch_type: branch_type.to_string(),
         from_log: true,
@@ -389,6 +395,20 @@ pub fn render(inp: &Inputs, w: Window) -> String {
     }
     let cached = trials.iter().filter(|t| t.cached()).count();
     let _ = writeln!(o, "   cached verdicts (no work, excluded above): {cached}");
+    let queued: Vec<f64> = trials
+        .iter()
+        .filter(|t| !t.cached() && t.queue > 0.0)
+        .map(|t| t.queue)
+        .collect();
+    let _ = writeln!(
+        o,
+        "   testenv queue wait inside ran: {} of {} trials waited; median {} s, p90 {} s, total {} s",
+        queued.len(),
+        trials.iter().filter(|t| !t.cached()).count(),
+        q(quantile(&queued, 0.5)),
+        q(quantile(&queued, 0.9)),
+        queued.iter().sum::<f64>().round()
+    );
     let rust_pass: Vec<f64> = trials
         .iter()
         .filter(|t| !t.cached() && t.branch_type == "rust-only" && t.status == "PASS")

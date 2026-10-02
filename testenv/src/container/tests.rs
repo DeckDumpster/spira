@@ -971,12 +971,23 @@ fn a_full_host_gives_up_after_the_queue_timeout_and_zero_disables_the_gate() {
     };
     assert_eq!(
         Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "q"])),
-        1
+        RC_QUEUE
     );
     assert!(f.calls_with("run").is_empty());
     assert!(f
         .errs()
         .contains("gave up waiting for a slot after 12s (still 2/2 running)"));
+    assert!(f.errs().contains("testenv: queue-wait=15s pool=container"));
+
+    // The caller's bound outranks the configured one.
+    let f = Fake::new();
+    booting(&f);
+    f.when(&["ps"], 0, "a\nb\n");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "q", "--queue-timeout", "4"])),
+        RC_QUEUE
+    );
+    assert!(f.errs().contains("gave up waiting for a slot after 4s"));
 
     let f = Fake::new();
     booting(&f);
