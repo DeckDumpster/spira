@@ -148,6 +148,9 @@ enum TimerSlot {
 /// then every other `spira-*.timer` systemd reports — loaded or not — deduplicated in the
 /// order first seen.
 fn enumerate_timers() -> Vec<TimerSlot> {
+    if let Some(e) = sysctl::bus_unreachable() {
+        die(&e);
+    }
     let sfx = sfx_or_die();
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
