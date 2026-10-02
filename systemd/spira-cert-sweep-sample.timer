@@ -2,8 +2,7 @@
 Description=Twice-hourly sampled certification sweep of the landing ref's tip
 
 [Timer]
-OnBootSec=10min
-OnUnitActiveSec=30min
+OnCalendar=*-*-* *:07,37:00
 AccuracySec=1min
 Persistent=true
 Unit=spira-cert-sweep-sample.service

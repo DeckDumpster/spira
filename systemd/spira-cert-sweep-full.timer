@@ -2,8 +2,7 @@
 Description=Hourly full certification sweep of the landing ref's tip, on the round VM
 
 [Timer]
-OnBootSec=15min
-OnUnitActiveSec=1h
+OnCalendar=*-*-* *:07:00
 AccuracySec=1min
 Persistent=true
 Unit=spira-cert-sweep-full.service
