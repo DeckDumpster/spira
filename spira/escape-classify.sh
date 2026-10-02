@@ -9,6 +9,15 @@
 #                                [--gate-log <path>] [--branch <name>]
 #       -> prints one of: mapping_gap gate_gap environment_gap
 #
+#   escape-classify.sh census [--hours <n>]
+#       -> prints "<n> mapping_gap, <n> gate_gap, <n> environment_gap, <n> flake" over the
+#          trailing window (default 168h); MAPPING GAP trending to zero is the convergence metric.
+#
+#   escape-classify.sh rerun-verdict --member <id> --suite <name> --rerun-rc <n> [record options]
+#       -> the caller reran the red suite on the settled member: rc=0 means it flipped, so
+#          record class=flake and print FLIP for the existing flip policy (delete + file a
+#          deterministic replacement); a non-zero rc is a real red and records nothing.
+#
 #   escape-classify.sh record --member <id> --suite <name> --class <class>
 #                              [--batch-id <id>] [--repo <name>] [--paths <csv>] [--evidence <text>]
 #       -> appends one escape row (run/tsd/escape) and, for class=mapping_gap, files (or
@@ -128,6 +137,30 @@ escape_record() {
     return 0
 }
 
+escape_census() {
+    local hours="${1:-168}" class n counts out="" sep=""
+    counts="$("$HERE/tsd-query.sh" count-by escape class "$hours" 2>/dev/null)" || counts=""
+    for class in mapping_gap gate_gap environment_gap flake; do
+        n="$(printf '%s\n' "$counts" | awk -F'\t' -v c="$class" '$1 == c { print $2 }')"
+        out="$out$sep${n:-0} $class"; sep=", "
+    done
+    printf '%s\n' "$out"
+}
+
+escape_rerun_verdict() {
+    local rc="" args=() a
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --rerun-rc) rc="$2"; shift 2 ;;
+            *) args+=("$1"); shift ;;
+        esac
+    done
+    [[ "$rc" =~ ^[0-9]+$ ]] || { printf 'usage: escape-classify.sh rerun-verdict --rerun-rc <n> --member <id> --suite <name> ...\n' >&2; return 2; }
+    [ "$rc" -eq 0 ] || { printf 'REAL_RED\n'; return 0; }
+    escape_record "${args[@]}" --class flake || return $?
+    printf 'FLIP\n'
+}
+
 if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
     SUB="${1:-}"; shift || true
     case "$SUB" in
@@ -151,6 +184,12 @@ if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
             escape_classify "$REPO" "$BASE" "$TIP" "$SUITE_FILE" "$GATE_LOG" "$BRANCH"
             ;;
         record) escape_record "$@" ;;
-        *) printf 'usage: escape-classify.sh classify|record ...\n' >&2; exit 2 ;;
+        rerun-verdict) escape_rerun_verdict "$@" ;;
+        census)
+            HOURS=168
+            [ "${1:-}" = --hours ] && HOURS="${2:-168}"
+            escape_census "$HOURS"
+            ;;
+        *) printf 'usage: escape-classify.sh classify|record|rerun-verdict|census ...\n' >&2; exit 2 ;;
     esac
 fi
