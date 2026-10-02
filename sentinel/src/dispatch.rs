@@ -305,6 +305,7 @@ impl<'a> Sentinel<'a> {
             "--throttle-check",
             "--czar-outcome-check",
             "--pr-stall-check",
+            "--lock-holders-check",
             "--disabled-timer-check",
         ] {
             self.h.run(

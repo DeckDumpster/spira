@@ -13,6 +13,7 @@ mod git;
 mod incident;
 mod landstate;
 mod lapsed;
+mod lock_holders;
 mod log;
 mod pr_stall;
 mod seams;
@@ -230,6 +231,36 @@ fn main() {
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
                 &resolved_incident_sh(),
                 &cfg,
+            );
+        }
+        Some("--lock-holders-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: lock-holders-check skipped — world is halted");
+                return;
+            }
+            let stall_mins = getenv_i64("SPIRA_QUEUE_THROTTLE_STALL_MINS", 50);
+            let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
+            let land_ref = getenv("SPIRA_TC_LAND_REF")
+                .or_else(|| tc_repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
+            let landstate = run.join("landstate");
+            let depth = throttle::compute_depth(&landstate, tc_repo.as_deref(), land_ref.as_deref());
+            let since = throttle::minutes_since_last_landed(&landstate, n);
+            if depth == 0 || since.map(|m| m < stall_mins).unwrap_or(false) {
+                log::log(&format!("watchtower: lock-holders-check — no stall (depth={depth} since_land={}m)", throttle::disp(since)));
+                return;
+            }
+            let queue_dir = getenv("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue"));
+            lock_holders::run(
+                n,
+                &format!("depth {depth}, no landing for {}m", throttle::disp(since)),
+                &lock_holders::Ctx {
+                    run: &run,
+                    queue_dir: &queue_dir,
+                    proc_root: std::path::Path::new("/proc"),
+                    db: &getenv("SPIRA_DB").unwrap_or_default(),
+                    home_repo: &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                    incident_sh: &resolved_incident_sh(),
+                },
             );
         }
         Some("--disabled-timer-check") => {
