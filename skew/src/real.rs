@@ -32,11 +32,12 @@ pub fn lib_sh_sources(home: &Path) -> bool {
 pub struct Real {
     pub home: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
+    releases: OnceCell<Option<String>>,
 }
 
 impl Real {
     pub fn new(home: PathBuf) -> Real {
-        Real { home, registry: OnceCell::new() }
+        Real { home, registry: OnceCell::new(), releases: OnceCell::new() }
     }
 
     /// The repo registry (`spira_config::repos::Registry::from_env`, sp-k6lku "wave
@@ -50,6 +51,13 @@ impl Real {
     /// `ref_remote` and `ref_branch` below all read this same registry.
     fn registry(&self) -> &spira_config::repos::Registry {
         self.registry.get_or_init(|| spira_config::repos::Registry::from_env(std::env::vars().collect(), &self.home))
+    }
+
+    fn resolved_releases(&self) -> Option<String> {
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let repo = spira_config::resolve::derive_home_repo(&self.home, &env);
+        let r = spira_config::resolve::resolve_for_process(&self.home, &repo, &env).ok()?;
+        Some(r.get("SPIRA_RELEASES").to_string()).filter(|v| !v.is_empty())
     }
 
     fn git(&self, repo: &Path, args: &[&str]) -> (bool, String) {
@@ -319,6 +327,9 @@ impl World for Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
     fn env(&self, k: &str) -> Option<String> {
+        if k == "SPIRA_RELEASES" && std::env::var(k).map_or(true, |v| v.is_empty()) {
+            return self.releases.get_or_init(|| self.resolved_releases()).clone();
+        }
         std::env::var(k).ok().filter(|v| !v.is_empty() || k == "SPIRA_ALLOW_FOREIGN_HARNESS")
     }
     fn is_symlink(&self, p: &Path) -> bool {

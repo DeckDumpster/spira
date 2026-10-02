@@ -38,6 +38,21 @@ fn usable_inc(cfg: &Cfg) -> Option<&str> {
     incident::is_usable(&cfg.incident_sh).then_some(cfg.incident_sh.as_str())
 }
 
+/// True unless the store positively answers that no open bead holds the unit. A failed
+/// query counts as tracked: re-filing on a probe that did not answer is noise.
+fn tracked_by_open_bead(cfg: &Cfg, unit: &str) -> bool {
+    let out = Command::new(&cfg.bd)
+        .args(["-C", &cfg.db, "list", "--external-ref", &format!("incident:failed-unit-{unit}")])
+        .args(["--status", "open,in_progress,blocked,deferred", "--json", "--limit", "0", "--brief"])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => serde_json::from_slice::<Vec<serde_json::Value>>(&o.stdout)
+            .map(|v| !v.is_empty())
+            .unwrap_or(true),
+        _ => true,
+    }
+}
+
 fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
     let Some(units) = &d.failed_units else { return };
     let state_path = cfg.failed_units_state();
@@ -46,7 +61,8 @@ fn failed_units_escalation(d: &SweepData, cfg: &Cfg) {
     let mut new_rows = Vec::new();
     for unit in units {
         let prev = prev_rows.iter().find(|r| &r.unit == unit);
-        let (row, should_escalate) = failed_units::decide(d.now, unit, prev, cfg.failed_units_warn_mins);
+        let (row, decided) = failed_units::decide(d.now, unit, prev, cfg.failed_units_warn_mins);
+        let should_escalate = decided || (row.escalated && !tracked_by_open_bead(cfg, unit));
         if should_escalate {
             if let Some(inc) = inc {
                 let logs = Command::new(&cfg.journalctl)
@@ -406,10 +422,44 @@ mod tests {
             throttle_stamp: None,
             queue_throttle_override: String::new(),
             incident_sh,
+            bd: "/does/not/exist/bd".into(),
             suites_sh: None,
             moot_sh: Some("/does/not/exist/moot-sweep.sh".into()),
             branch_guard_sh: None,
         }
+    }
+
+    fn fake_bd(d: &std::path::Path, stdout: &str, rc: i32) -> String {
+        let bd = d.join("bd.sh");
+        testkit::write_exe(&bd, &format!("#!/usr/bin/env bash\necho '{stdout}'\nexit {rc}\n"));
+        bd.to_str().unwrap().to_string()
+    }
+
+    fn refile_case(tag: &str, bd_out: &str, bd_rc: i32) -> bool {
+        let d = testkit::TempDir::new(tag);
+        let inc = fake_incident(&d);
+        let mut cfg = cfg_with(&d, inc);
+        cfg.bd = fake_bd(&d, bd_out, bd_rc);
+        std::fs::write(d.join("failed-units.state"), "a.service 1700000000 1\n").unwrap();
+        let mut data = SweepData::fixture_nominal(1_700_100_000);
+        data.failed_units = Some(vec!["a.service".into()]);
+        failed_units_escalation(&data, &cfg);
+        d.join("captured.txt").exists()
+    }
+
+    #[test]
+    fn a_still_failing_unit_whose_incident_bead_is_closed_is_filed_again() {
+        assert!(refile_case("wt-fu-closed", "[]", 0));
+    }
+
+    #[test]
+    fn a_still_failing_unit_with_an_open_incident_bead_is_not_filed_again() {
+        assert!(!refile_case("wt-fu-open", "[{\"id\":\"sp-x\"}]", 0));
+    }
+
+    #[test]
+    fn a_failed_bead_query_does_not_refile() {
+        assert!(!refile_case("wt-fu-bdfail", "", 1));
     }
 
     #[test]

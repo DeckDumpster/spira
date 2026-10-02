@@ -154,6 +154,7 @@ fn build_sweep_cfg() -> sweep::Cfg {
         incident_sh: resolved_incident_sh(),
         suites_sh: getenv("SPIRA_SUITES_SH"),
         moot_sh: getenv("SPIRA_MOOT_SH"),
+        bd: "bd".to_string(),
         branch_guard_sh: getenv("SPIRA_BRANCH_GUARD_SH"),
     }
 }
