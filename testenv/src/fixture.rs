@@ -439,6 +439,14 @@ impl<'a> Session<'a> {
         let mut env = vec![
             kv("XDG_RUNTIME_DIR", USER_RUNTIME),
             kv("SPIRA_RUN", self.batch_run()),
+            // sp-bp249 follow-up: an explicit SPIRA_RUN now also needs a real config
+            // registry in-process (the containment check), so ctrl can no longer infer its
+            // home from its own exe's location alone — `bin/ctrl` here is a symlink into
+            // `self.artifacts`, outside the staged release tree entirely, so `current_exe`'s
+            // ancestor-walk finds no `spira/lib.sh` nearby and comes back empty. Named
+            // explicitly, matching the staged layout ([`Self::in_release`]), so this setup
+            // step never depends on that inference succeeding.
+            kv("SPIRA_HOME", self.in_release("spira")),
         ];
         env.extend(self.release_env());
         // ctrl.sh is the `ctrl` binary now (sp-6onps): a native executable under bin/, not

@@ -189,6 +189,49 @@ fn resolve_process(
     .map_err(|e| e.to_string())
 }
 
+/// The harness home used ONLY to judge an explicit `SPIRA_RUN`'s containment (sp-bp249
+/// follow-up) — never for the ordinary derived-default path below, which keeps trusting the
+/// caller's own `home` exactly as it always has. Climbs the same three rungs the rest of the
+/// codebase climbs when `SPIRA_HOME` is absent: `$SPIRA_HOME` itself (if it carries a real
+/// registry), else `$SPIRA_RELEASE/spira` (every unit that sets `SPIRA_RUN` without
+/// `SPIRA_HOME` still carries `SPIRA_RELEASE` — law-a-binary-resolves-the-config-it-reads),
+/// else the `home` the caller already handed in (its own best-effort locate). NEVER falls
+/// through to an empty/relative path for [`registry::load`] to turn into the literal
+/// "no config registry at conf.d" — when none of the three carries a `conf.d`, the refusal
+/// names exactly which were missing or empty.
+fn containment_home(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
+    let has_registry = |p: &Path| !p.as_os_str().is_empty() && p.join("conf.d").is_dir();
+    let spira_home = env.get("SPIRA_HOME").filter(|v| !v.is_empty());
+    if let Some(h) = spira_home.map(PathBuf::from) {
+        if has_registry(&h) {
+            return Ok(h);
+        }
+    }
+    let spira_release = env.get("SPIRA_RELEASE").filter(|v| !v.is_empty());
+    if let Some(r) = spira_release {
+        let h = PathBuf::from(r).join("spira");
+        if has_registry(&h) {
+            return Ok(h);
+        }
+    }
+    if has_registry(home) {
+        return Ok(home.to_path_buf());
+    }
+    Err(format!(
+        "cannot resolve the harness home to check spira.run's containment: SPIRA_HOME is {}, \
+         SPIRA_RELEASE is {}, and the fallback home ({}) has no conf.d",
+        match spira_home {
+            Some(h) => format!("set to {h} but it has no conf.d"),
+            None => "unset".to_string(),
+        },
+        match spira_release {
+            Some(r) => format!("set to {r} but {r}/spira has no conf.d"),
+            None => "unset".to_string(),
+        },
+        if home.as_os_str().is_empty() { "none given".to_string() } else { home.display().to_string() },
+    ))
+}
+
 /// `spira.run`, resolved the way every caller that needs the run directory now gets it:
 /// [`resolve_for_process`] (env `SPIRA_RUN` wins outright, else `spira.toml`'s `run`, else
 /// the derived XDG default) — never a bare literal
@@ -204,10 +247,17 @@ fn resolve_process(
 pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<PathBuf, String> {
     // An explicit SPIRA_RUN skips the repo-map walk (unrelated checkouts are not this key's
     // business) but is still judged itself: a confined instance may not name a run dir
-    // outside its workspaces root.
+    // outside its workspaces root. That judgement needs SPIRA_INSTANCE/SPIRA_WORKSPACES,
+    // which means a REAL config registry — [`containment_home`], not the bare `home` the
+    // caller handed in, since that is routinely whatever a caller's own best-effort
+    // ancestor-walk produced (sp-bp249 follow-up: a release's `bin/<tool>` is routinely a
+    // symlink into a build-artifacts tree with no `spira/` anywhere nearby, so the walk
+    // comes back empty — and every caller of THIS function already had `SPIRA_RELEASE` in
+    // its own environment the whole time, per law-a-binary-resolves-the-config-it-reads).
     if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
-        let repo = derive_home_repo(home, env);
-        let resolved = resolve_process(home, &repo, env, resolve_unchecked)
+        let home = containment_home(env, home)?;
+        let repo = derive_home_repo(&home, env);
+        let resolved = resolve_process(&home, &repo, env, resolve_unchecked)
             .map_err(|e| format!("cannot resolve spira.run: {e}"))?;
         crate::containment::check_path(
             resolved.get("SPIRA_INSTANCE"),
@@ -1452,5 +1502,78 @@ mod tests {
     fn an_unconfined_instance_resolves_an_explicit_run_anywhere() {
         let (got, value) = run_dir_under_instance("prod", |_| "/outside/spira/run".to_string());
         assert_eq!(got.unwrap(), PathBuf::from(value));
+    }
+
+    /// sp-bp249 follow-up: `ctrl`'s own best-effort `home` (an ancestor-walk off its own
+    /// exe) comes back empty whenever `bin/ctrl` is really a symlink into a build-artifacts
+    /// tree with no `spira/` nearby — exactly what testenv's staged release layout does.
+    /// `SPIRA_HOME` is unset too (every unit, and testenv's own `suspend_request`, exports
+    /// only `SPIRA_RELEASE` and `PATH`), so the containment check this function now has to
+    /// run must still find a real registry via `$SPIRA_RELEASE/spira`, never by handing
+    /// `registry::load` the caller's empty `home` and letting it build a bare relative
+    /// `"conf.d"`.
+    #[test]
+    fn resolve_run_dir_with_explicit_run_falls_back_to_spira_release_when_spira_home_is_unset() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-release-home");
+        let (_release_home, release_repo) = fixture_home_repo(&ws.join("release"));
+        run_git(&release_repo, &["init", "-q"]);
+        std::env::set_var("HOME", "/h");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let run_target = ws.join("run").display().to_string();
+        let e = env(&[("HOME", "/h"), ("SPIRA_RELEASE", release_repo.to_str().unwrap()), ("SPIRA_RUN", &run_target)]);
+        // The caller's own `home` is empty — its ancestor-walk already failed, exactly as
+        // `ctrl::spira_home()`'s `unwrap_or_default()` leaves it.
+        let got = resolve_run_dir(&e, Path::new(""));
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert_eq!(
+            got.unwrap(),
+            PathBuf::from(&run_target),
+            "must resolve via $SPIRA_RELEASE/spira/conf.d, not refuse on the caller's empty home"
+        );
+    }
+
+    /// The other half: when NOTHING can supply a registry — no `SPIRA_HOME`, no
+    /// `SPIRA_RELEASE`, and the caller's own `home` is empty — this must refuse with a
+    /// message naming what was missing, never silently hand `registry::load` a relative
+    /// `"conf.d"` the way the un-fixed code did.
+    #[test]
+    fn resolve_run_dir_with_explicit_run_and_no_resolvable_home_names_what_was_missing() {
+        let _g = crate::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let names = ["SPIRA_TOML", "SPIRA_CONF", "SPIRA_REPO", "XDG_CONFIG_HOME", "HOME"];
+        let saved: Vec<(&str, Option<String>)> = names.iter().map(|n| (*n, std::env::var(n).ok())).collect();
+        for n in names {
+            std::env::remove_var(n);
+        }
+        std::env::set_var("HOME", "/h");
+        let ws = testkit::TempDir::new("spira-config-resolve-run-dir-no-home");
+        std::env::set_var("XDG_CONFIG_HOME", ws.join("no-such-xdg").to_str().unwrap());
+
+        let e = env(&[("HOME", "/h"), ("SPIRA_RUN", "/tmp/some-run")]);
+        let err = resolve_run_dir(&e, Path::new("")).expect_err("no home anywhere must refuse, not guess");
+
+        for (n, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(n, v),
+                None => std::env::remove_var(n),
+            }
+        }
+        assert!(err.contains("SPIRA_HOME") && err.contains("SPIRA_RELEASE"), "{err}");
+        assert!(
+            !err.contains("at conf.d") && err != "no config registry at conf.d",
+            "must never surface the bare relative path: {err}"
+        );
     }
 }
