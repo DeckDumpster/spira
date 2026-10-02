@@ -617,8 +617,8 @@ jobs:
             *) printf 'gate: suites failed (batch rc=%s)\n' "$_b" >&2; exit "$_b" ;;
           esac
 
-      - name: G12 — install-rehearsal and cadence-tool (real systemd, host podman)
-        # test-install-rehearsal.sh and test-cadence-tool.sh each build their OWN
+      - name: G12 — bare-host suites (real systemd, host podman)
+        # Every suite marked `# bare-host:` (host-check.sh --bare-suites) builds its OWN
         # container via `testenv container up`. Run through the step above they would be nested
         # inside the corpus's own container, whose image carries no podman — that
         # is why they only ever SKIP (77) there. acceptance.yml is no longer the
@@ -640,7 +640,7 @@ jobs:
           set -uo pipefail
           _selected=",${{ needs.select.outputs.suites }},"
           _g12_fail=0
-          for _s in test-install-rehearsal.sh test-cadence-tool.sh; do
+          for _s in $(bash spira/host-check.sh --bare-suites); do
             case "$_selected" in
               *",$_s,"*) ;;
               *) printf 'gate: %s not selected — skipping\n' "$_s"; continue ;;
