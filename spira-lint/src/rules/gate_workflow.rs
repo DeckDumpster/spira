@@ -483,6 +483,9 @@ pub fn judge(w: &Workflows) -> Vec<(&'static str, String)> {
             j.located(ACCEPTANCE, "the retract step", &rs);
             j.want(ACCEPTANCE, "retract checks isDraft before deleting", "isDraft", &rs);
             j.want(ACCEPTANCE, "retract refuses on an already-published release", "$_draft\" != \"true\"", &rs);
+            let retract_if = rs.lines().find_map(|l| l.trim().strip_prefix("if:")).unwrap_or("");
+            j.want(ACCEPTANCE, "retract also fires on a cancelled run", "cancelled()", retract_if);
+            j.want(ACCEPTANCE, "retract still fires on a failed run", "failure()", retract_if);
             let gj = block(a, "guard");
             j.located(ACCEPTANCE, "the guard job", &gj);
             j.want(ACCEPTANCE, "guard runs only on a tag push", "github.event_name == 'push'", &gj);
@@ -622,6 +625,12 @@ mod tests {
         assert!(provision_if_ok(""));
         let got = planted(acc, "!cancelled() && needs.provision.result == 'success' &&", "always() &&");
         assert!(got.iter().any(|m| m.contains("runs on the provisioned runner")), "{got:?}");
+    }
+
+    #[test]
+    fn a_retract_that_ignores_cancellation_is_caught() {
+        let got = planted(acc, "if: ${{ failure() || cancelled() }}", "if: failure()");
+        assert!(got.iter().any(|m| m.contains("retract also fires on a cancelled run")), "{got:?}");
     }
 
     #[test]

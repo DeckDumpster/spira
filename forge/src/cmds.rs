@@ -575,6 +575,35 @@ pub fn run_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     ok(passthrough(&r))
 }
 
+/// Escalation once `run-cancel` did not take. Force-cancel abandons the job graph, so the
+/// workflow's own teardown never runs; the runner label(s) are printed first so the VM can
+/// be destroyed at once rather than by the reaper's age cutoff.
+pub fn force_cancel(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
+    if run_id.is_empty() {
+        eprintln!("forge: force-cancel: run id required");
+        return fail(vec![]);
+    }
+    let jobs = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/jobs")]);
+    let mut labels: Vec<String> = serde_json::from_slice::<Value>(&jobs.stdout)
+        .ok()
+        .and_then(|v| v.get("jobs").and_then(Value::as_array).cloned())
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|j| j.get("labels").and_then(Value::as_array).cloned().unwrap_or_default())
+        .filter_map(|l| l.as_str().map(str::to_string))
+        .filter(|l| l != "self-hosted")
+        .collect();
+    labels.sort();
+    labels.dedup();
+    if labels.is_empty() {
+        eprintln!("forge: force-cancel: run {run_id} - no runner label found in its jobs");
+    } else {
+        eprintln!("forge: force-cancel: run {run_id} provisioned runner(s) - destroy explicitly, do not wait for the reaper:\n{}", labels.join("\n"));
+    }
+    let r = gh.call(Some(repo), &["api", "--method", "POST", &format!("repos/{{owner}}/{{repo}}/actions/runs/{run_id}/force-cancel")]);
+    Out { code: r.code, lines: passthrough(&r) }
+}
+
 pub fn workflow_rerun(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
     let st = gh.call(Some(repo), &["run", "view", run_id, "--json", "status", "-q", ".status"]);
     let status = st.text().trim().to_string();
