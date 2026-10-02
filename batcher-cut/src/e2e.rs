@@ -123,6 +123,12 @@ impl RoundOps for ProofOps {
     fn incident(&mut self, kind: &str, suites: &[String]) {
         panic!("no incident expected: {kind} {suites:?}");
     }
+    fn touching(&self, _suite: &str, _members: &[String]) -> Vec<String> {
+        vec![]
+    }
+    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
+        panic!("no flip expected: {suites:?}");
+    }
     fn record(&mut self, iteration: u32, d: &Decision) {
         self.decisions.push((iteration, d.clone()));
     }

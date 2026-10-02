@@ -4,9 +4,9 @@
 //! the round lands. Every effect goes through `RoundRunner` (suite runs) or `RoundOps`
 //! (git, the bead store, incidents, TSD), so the whole loop runs against fakes in tests.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use batcher::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Shape};
+use batcher::attrib::{Attributor, Budget, Decision, Job, JobResult, Outcome, Purpose, Shape};
 use batcher::core::{Id, Member};
 
 /// What one poll of the main run returned: results that became final since the last poll,
@@ -57,6 +57,11 @@ pub trait RoundOps {
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String>;
     /// `kind`: `base`, `unattributed` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
+    /// The members whose diff touches `suite`.
+    fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id>;
+    /// Commit the deletion of every proven flip into the round tree and re-run the checks
+    /// the deletion can break; an error blocks the round.
+    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String>;
     fn record(&mut self, iteration: u32, decision: &Decision);
 }
 
@@ -125,6 +130,75 @@ pub fn drive<R: RoundRunner, O: RoundOps + ?Sized>(
     }
 }
 
+const FLIP_JOB_BASE: u64 = 1 << 40;
+
+/// A flip is never shipped (law-a-test-that-flips-is-deleted): each flaky suite must run green
+/// alone twice on the round tree, alone on the base, and alone on every member that touches
+/// it; then it is deleted from the round. Any other result is a real red and blocks the round.
+fn remove_flips<R: RoundRunner, O: RoundOps>(
+    runner: &mut R,
+    ops: &mut O,
+    flaky: &[String],
+    members: &[Member],
+    budget: Budget,
+) -> Result<(), String> {
+    let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+    let mut queue: VecDeque<Job> = VecDeque::new();
+    let mut next = FLIP_JOB_BASE;
+    let mut push = |suite: &str, removal: Vec<Id>, purpose: Purpose| {
+        queue.push_back(Job { id: next, suite: suite.to_string(), removal, purpose });
+        next += 1;
+    };
+    for suite in flaky {
+        push(suite, vec![], Purpose::Plain);
+        push(suite, vec![], Purpose::Plain);
+        push(suite, ids.clone(), Purpose::Base);
+        for x in ops.touching(suite, &ids) {
+            let mut keep = vec![x.clone()];
+            while let Some(p) = members.iter().filter(|m| keep.contains(&m.id)).flat_map(|m| m.stack.keys()).find(|p| ids.contains(*p) && !keep.contains(*p)) {
+                keep.push(p.clone());
+            }
+            push(suite, ids.iter().filter(|i| !keep.contains(i)).cloned().collect(), Purpose::Without(x));
+        }
+    }
+    let suite_of: BTreeMap<u64, String> = queue.iter().map(|j| (j.id, j.suite.clone())).collect();
+    let mut running = 0usize;
+    let mut unproven: BTreeSet<String> = BTreeSet::new();
+    while !queue.is_empty() || running > 0 {
+        while running < budget.slots as usize {
+            let Some(job) = queue.pop_front() else { break };
+            if unproven.contains(&job.suite) {
+                continue;
+            }
+            match runner.launch(&job) {
+                Ok(()) => running += 1,
+                Err(e) => {
+                    eprintln!("batcher: flip proof job {} ({}) not launched: {e}", job.id, job.suite);
+                    unproven.insert(job.suite);
+                }
+            }
+        }
+        for (id, r) in runner.poll_jobs() {
+            if let Some(suite) = suite_of.get(&id) {
+                running = running.saturating_sub(1);
+                if r != JobResult::Green {
+                    unproven.insert(suite.clone());
+                }
+            }
+        }
+        if running > 0 {
+            runner.wait();
+        }
+    }
+    if !unproven.is_empty() {
+        let reds: Vec<String> = unproven.into_iter().collect();
+        ops.incident("unattributed", &reds);
+        return Err(format!("red that is not a flip: {}", reds.join(",")));
+    }
+    println!("batcher: flip proven, deleting from the round: {}", flaky.join(","));
+    ops.delete_flips(flaky)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum RoundEnd {
     /// Land these members; `attribution_secs` is the longest per-red attribution wall.
@@ -186,6 +260,11 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             return Ok(RoundEnd::Blocked(format!("unattributed red: {}", d.unattributed.join(","))));
         }
         if d.owners.is_empty() {
+            if !d.flaky.is_empty() {
+                if let Err(why) = remove_flips(runner, ops, &d.flaky, &members, budget) {
+                    return Ok(RoundEnd::Blocked(why));
+                }
+            }
             return Ok(RoundEnd::Land { members, attribution_secs: worst });
         }
         // Every owner leaves with its suites; a member stacked on an owner leaves with it.
@@ -364,6 +443,7 @@ pub(crate) mod tests {
         pub rebuilt: Vec<Vec<String>>,
         pub incidents: Vec<(String, Vec<String>)>,
         pub recorded: Vec<(u32, Decision)>,
+        pub deleted: Vec<Vec<String>>,
     }
 
     impl RoundOps for Ops {
@@ -382,6 +462,14 @@ pub(crate) mod tests {
         }
         fn incident(&mut self, kind: &str, suites: &[String]) {
             self.incidents.push((kind.into(), suites.to_vec()));
+        }
+        fn touching(&self, suite: &str, members: &[Id]) -> Vec<Id> {
+            let t = self.touch.get(suite).cloned().unwrap_or_default();
+            members.iter().filter(|m| t.contains(m)).cloned().collect()
+        }
+        fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
+            self.deleted.push(suites.to_vec());
+            Ok(())
         }
         fn record(&mut self, iteration: u32, decision: &Decision) {
             self.recorded.push((iteration, decision.clone()));
@@ -434,6 +522,32 @@ pub(crate) mod tests {
         let corpus_first_run = &f.main_kind[0];
         assert_eq!(corpus_first_run.1.len(), 30);
         assert!(f.use_log.iter().any(|(_, _, j)| *j == 2), "the two spare slots were used");
+    }
+
+    #[test]
+    fn a_flip_is_proven_green_alone_and_deleted_from_the_round_never_landed() {
+        let mut f = Fake::new(|_, _| false);
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        ops.touch.insert("test-04.sh".into(), vec!["m2".into()]);
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3));
+        assert_eq!(ops.deleted, vec![vec!["test-04.sh".to_string()]]);
+        let proofs: Vec<_> = f.jobs.iter().filter(|(j, _, _)| j.id >= FLIP_JOB_BASE).map(|(j, _, _)| j.removal.clone()).collect();
+        assert_eq!(proofs.len(), 4, "two alone, the base, one touching member: {proofs:?}");
+        assert!(proofs.contains(&vec!["m1".to_string(), "m3".to_string()]), "the touching member alone: {proofs:?}");
+        assert!(proofs.contains(&vec!["m1".to_string(), "m2".to_string(), "m3".to_string()]), "the base alone: {proofs:?}");
+    }
+
+    #[test]
+    fn a_red_on_the_base_is_not_a_flip_and_blocks_the_round() {
+        let mut f = Fake::new(|s, tree| s == "test-04.sh" && tree.is_empty());
+        f.flaky.insert("test-04.sh".into());
+        let mut ops = Ops::default();
+        let end = attribute_round(&mut f, &mut ops, &corpus(6), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)), "{end:?}");
+        assert!(ops.deleted.is_empty());
+        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["test-04.sh".to_string()])]);
     }
 
     #[test]

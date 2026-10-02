@@ -23,6 +23,7 @@
 //! reproduction.
 
 mod drive;
+mod flip;
 mod io;
 mod vm;
 
@@ -346,6 +347,23 @@ impl drive::RoundOps for LiveOps<'_> {
             Ok(id) => println!("batcher {}: {what} ({}) — filed {id} for Ops", self.repo.name, suites.join(",")),
             Err(e) => println!("batcher {}: {what} ({}) — could not file for Ops: {e}", self.repo.name, suites.join(",")),
         }
+    }
+
+    fn touching(&self, suite: &str, members: &[batcher::core::Id]) -> Vec<batcher::core::Id> {
+        let text = std::fs::read_to_string(self.wt.join("spira").join(suite)).unwrap_or_default();
+        let covers = suite_select::header::covers_of(&text);
+        members.iter().filter(|m| batcher::attrib::touches(suite, covers.as_deref(), self.changed.get(*m).map_or(&[][..], |v| v))).cloned().collect()
+    }
+
+    fn delete_flips(&mut self, suites: &[String]) -> Result<(), String> {
+        let mut flips = vec![];
+        for s in suites {
+            let bead = io::file_flip_bead(self.env, self.repo, s, &self.round_branch).map_err(|e| format!("cannot file the follow-up for flipped {s}: {e}"))?;
+            println!("batcher {}: {s} flipped — deleted from the round, follow-up {bead}", self.repo.name);
+            flips.push((s.clone(), bead));
+        }
+        io::commit_flip_deletion(self.env, self.wt, &flips)?;
+        io::recheck_after_deletion(self.wt, &self.start_sha).map_err(|e| format!("a flip's deletion broke a check: {e}"))
     }
 
     fn record(&mut self, iteration: u32, d: &batcher::attrib::Decision) {

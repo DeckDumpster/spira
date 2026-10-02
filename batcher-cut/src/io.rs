@@ -1118,6 +1118,10 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
     // THE ID COMES FROM PARSING THE JSON, not scanning human output for an id-shaped token
     // (law-never-derive-an-id-from-output): `bd create` without --silent prints an advisory
     // that echoes the title before the id, and this title itself names suites and a repo.
+    bead_id(&out)
+}
+
+fn bead_id(out: &str) -> Result<String, String> {
     let start = out.find('{').ok_or_else(|| format!("bead.sh file: no JSON in output: {out}"))?;
     let v: serde_json::Value = serde_json::from_str(&out[start..]).map_err(|e| format!("bead.sh file: unparsed output: {e}"))?;
     let v = match v {
@@ -1125,6 +1129,56 @@ pub fn file_judgement(env: &Env, repo: &Repo, j: &batcher::core::Judgement, memb
         o => o,
     };
     v.get("id").and_then(|i| i.as_str()).map(str::to_string).ok_or_else(|| format!("bead.sh file: no id in output: {out}"))
+}
+
+/// File the follow-up bead for a deleted flip and return its id.
+pub fn file_flip_bead(env: &Env, repo: &Repo, suite: &str, round_branch: &str) -> Result<String, String> {
+    let title = format!("{}: {suite} flipped in a batcher round and was deleted — restore it fixed", repo.name);
+    let body = format!(
+        "{suite} was red in the round's corpus and green on every re-run alone (twice on the round tree, on the base, and on each member touching it), so the batcher deleted it from the round ({round_branch}) rather than send a flip to CI (law-a-test-that-flips-is-deleted).\n\nDeliverable: find the nondeterminism, fix it and re-add the suite.\n"
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("flip-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("bead.sh").args(["file", &title, "--for", "batcher", "--repo", &repo.name, "--body-file"]).arg(&tmp).arg("--json"),
+        "bead.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    bead_id(&out?)
+}
+
+/// Commit the deletion of `flips` (suite, follow-up bead) into the round worktree, naming
+/// the follow-up beads in the message.
+pub fn commit_flip_deletion(env: &Env, wt: &Path, flips: &[(String, String)]) -> Result<(), String> {
+    let date = run(Command::new("date").arg("+%F"), "date")?;
+    crate::flip::apply(wt, flips, date.trim())?;
+    run(Command::new("git").arg("-C").arg(wt).args(["add", "-A"]), "git add")?;
+    let names: Vec<String> = flips.iter().map(|(s, b)| format!("{s} ({b})")).collect();
+    let msg = format!("batcher: delete flipped suite(s) {}", names.join(", "));
+    run(
+        Command::new("git")
+            .arg("-C")
+            .arg(wt)
+            .args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)])
+            .args(["commit", "-q", "-m", &msg]),
+        "git commit",
+    )?;
+    Ok(())
+}
+
+/// The checks a suite deletion can break: the plan-matrix and its orphan fence, where the
+/// round tree has them. Err names what failed.
+pub fn recheck_after_deletion(wt: &Path, base_sha: &str) -> Result<(), String> {
+    for (script, args) in [("plan-matrix.sh", vec![]), ("plan-lint.sh", vec!["--orphans", base_sha])] {
+        let path = wt.join("spira").join(script);
+        if !path.exists() {
+            continue;
+        }
+        run(Command::new("bash").arg(&path).args(&args).current_dir(wt), script)?;
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------------------
