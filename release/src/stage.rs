@@ -121,6 +121,27 @@ fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     Ok(())
 }
 
+const GIT_LOCATION_VARS: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+];
+
+/// A git command that cannot be redirected at the caller's repository: an inherited
+/// `GIT_DIR` makes a dirless `git init --bare` or `git config` write into that repository's config.
+fn git() -> Command {
+    let mut c = Command::new("git");
+    for v in GIT_LOCATION_VARS {
+        c.env_remove(v);
+    }
+    c
+}
+
 /// `release stage up`.
 pub fn up(o: &StageOpts) -> Result<Stage, String> {
     let root = match &o.root {
@@ -168,10 +189,10 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     // ---- git: bare remote + working checkout.
     let remote = root.join("remote.git");
     let repo = root.join("repo");
-    run(Command::new("git").args(["init", "-q", "--bare", "-b", "main"]).arg(&remote), "git init --bare")?;
-    run(Command::new("git").args(["init", "-q", "-b", "main"]).arg(&repo), "git init")?;
+    run(git().args(["init", "-q", "--bare", "-b", "main"]).arg(&remote), "git init --bare")?;
+    run(git().args(["init", "-q", "-b", "main"]).arg(&repo), "git init")?;
     run(
-        Command::new("git")
+        git()
             .current_dir(&repo)
             .env("GIT_AUTHOR_NAME", "stage")
             .env("GIT_AUTHOR_EMAIL", "stage@example.invalid")
@@ -180,9 +201,9 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
             .args(["commit", "-q", "--allow-empty", "-m", "stage: initial"]),
         "git commit",
     )?;
-    run(Command::new("git").current_dir(&repo).args(["remote", "add", "origin"]).arg(&remote), "git remote add")?;
-    run(Command::new("git").current_dir(&repo).args(["push", "-q", "origin", "main"]), "git push")?;
-    run(Command::new("git").current_dir(&repo).args(["fetch", "-q", "origin"]), "git fetch")?;
+    run(git().current_dir(&repo).args(["remote", "add", "origin"]).arg(&remote), "git remote add")?;
+    run(git().current_dir(&repo).args(["push", "-q", "origin", "main"]), "git push")?;
+    run(git().current_dir(&repo).args(["fetch", "-q", "origin"]), "git fetch")?;
 
     // ---- SPIRA_RUN.
     fs::create_dir_all(root.join("run/worktree")).map_err(|e| format!("cannot create run/worktree: {e}"))?;
@@ -257,4 +278,19 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
         return Err(format!("cp -rp {} {} failed ({st})", from.display(), to.display()));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod git_env_tests {
+    use super::*;
+
+    #[test]
+    fn git_command_strips_every_location_var() {
+        let c = git();
+        let removed: Vec<String> =
+            c.get_envs().filter(|(_, v)| v.is_none()).map(|(k, _)| k.to_string_lossy().to_string()).collect();
+        for v in GIT_LOCATION_VARS {
+            assert!(removed.iter().any(|r| r == v), "{v} not stripped");
+        }
+    }
 }
