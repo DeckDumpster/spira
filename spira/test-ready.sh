@@ -70,6 +70,7 @@ if [[ "$*" == *"is-enabled"* ]]; then
     fi
     exit 1
 fi
+[[ "$*" == *"show"* ]] && { printf '123456789\n'; exit 0; }
 exit 0
 MOCK
 chmod +x "$BIN/systemctl"
@@ -132,6 +133,10 @@ exit 1
 MOCK
 chmod +x "$FAKE_SPIRA_HOME/sentinel.sh"
 
+# ready.sh runs `sentinel --report` by name.
+printf '#!/usr/bin/env bash\nexec bash "%s/sentinel.sh" "$@"\n' "$FAKE_SPIRA_HOME" > "$BIN/sentinel"
+chmod +x "$BIN/sentinel"
+
 # Loom probe — controlled by FAKE_LOOM_RESULT.
 cat > "$BIN/loom-probe" <<'MOCK'
 #!/usr/bin/env bash
@@ -176,7 +181,7 @@ run_ready() {
     done
     [ "${1:-}" = "--" ] && shift
     env -i \
-        PATH="$BIN:/usr/local/bin:/usr/bin:/bin" \
+        PATH="$BIN:$FAKE_SPIRA_HOME:/usr/local/bin:/usr/bin:/bin" \
         HOME="$FAKE_HOME" \
         SPIRA_PATH="$BIN" \
         SPIRA_CONF="$TMP/no.conf" \
