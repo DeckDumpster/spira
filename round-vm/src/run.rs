@@ -946,13 +946,22 @@ mod tests {
         }
     }
 
+    fn wait_until(cond: impl Fn() -> bool) {
+        let t = Instant::now();
+        while !cond() {
+            assert!(t.elapsed() < Duration::from_secs(60), "fake remote: condition never held");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// A VM whose remote tree is a map of remote path → files it holds.
     struct FakeRemote {
         reachable: bool,
         rc: Result<i32, String>,
         files: BTreeMap<&'static str, Vec<(&'static str, &'static str)>>,
         jobs: Mutex<Vec<String>>,
-        batch_secs: u64,
+        /// the corpus runs until the first attribution rerun has started (no sleep to race)
+        hold_for_attr: bool,
         /// (job id, whether the batch was still running when the job started)
         attrs: Mutex<Vec<(String, bool)>>,
         batch_running: std::sync::atomic::AtomicBool,
@@ -975,7 +984,7 @@ mod tests {
                 rc: Ok(0),
                 files,
                 jobs: Mutex::new(vec![]),
-                batch_secs: 0,
+                hold_for_attr: false,
                 attrs: Mutex::new(vec![]),
                 batch_running: std::sync::atomic::AtomicBool::new(false),
             }
@@ -988,11 +997,16 @@ mod tests {
         fn run_batch(&self, _: &str, job: &BatchJob) -> Result<i32, String> {
             self.jobs.lock().unwrap().push(remote_command(job));
             self.batch_running.store(true, std::sync::atomic::Ordering::SeqCst);
-            std::thread::sleep(Duration::from_millis(self.batch_secs));
+            if self.hold_for_attr {
+                wait_until(|| !self.attrs.lock().unwrap().is_empty());
+            }
             self.batch_running.store(false, std::sync::atomic::Ordering::SeqCst);
             self.rc.clone()
         }
         fn run_attr(&self, _: &str, job: &crate::spool::AttrJob) -> Result<i32, String> {
+            if self.hold_for_attr && job.job == "j1" {
+                wait_until(|| self.batch_running.load(std::sync::atomic::Ordering::SeqCst));
+            }
             let running = self.batch_running.load(std::sync::atomic::Ordering::SeqCst);
             self.attrs.lock().unwrap().push((job.job.clone(), running));
             Ok(if job.job == "j2" { 1 } else { 0 })
@@ -1217,7 +1231,26 @@ mod tests {
         (a, Spool { dir })
     }
 
-    // Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
+    #[test]
+    fn the_spool_serves_reruns_while_the_corpus_runs_and_a_round_build_after_it() {
+        let fx = fixture();
+        let remote = FakeRemote { hold_for_attr: true, ..FakeRemote::green() };
+        let (a, sp) = spool_fixture(&fx);
+        assert_eq!(go(&fx, &remote, &a), 0, "the exit code is the corpus's");
+        let attrs = remote.attrs.lock().unwrap().clone();
+        assert!(attrs.contains(&("j1".to_string(), true)), "j1 ran while the corpus did: {attrs:?}");
+        assert!(attrs.contains(&("j2".to_string(), false)), "the round build waited for the corpus: {attrs:?}");
+        let res = sp.res_dir();
+        assert_eq!(fs::read_to_string(res.join("j1.done")).unwrap(), "rc=0\n");
+        assert!(res.join("j1/test-a.sh.result").is_file(), "flattened out of the key dir");
+        assert_eq!(fs::read_to_string(res.join("j2.done")).unwrap(), "rc=1\n");
+        assert!(res.join("j2/bins/batcher").is_file(), "a round build brings its binaries back");
+        assert_eq!(fs::read_to_string(res.join("j3.done")).unwrap(), "rc=2\n", "a branch that cannot be mirrored is a fault");
+        assert_eq!(fs::read_to_string(sp.dir.join("corpus.done")).unwrap(), "rc=0\n");
+        assert!(fs::read_to_string(fx.d.path().join("results/test-b.sh.result")).is_ok(), "the corpus's results streamed in");
+        assert!(fx.fp.live_vms().is_empty(), "released once the spool closed");
+    }
+
     #[test]
     fn a_spool_run_whose_ssh_fails_writes_corpus_done_and_does_not_linger() {
         let fx = fixture();

@@ -186,7 +186,7 @@ pub fn read_beads(env: &Env, ids: &BTreeSet<String>) -> Result<(BTreeMap<String,
     Ok((beads, repos))
 }
 
-fn forge(repo: &Repo, sub: &str, pr: &str) -> Result<String, String> {
+fn forge(repo: &Repo, sub: &str, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
     // A bare name (the release's `forge` binary, default since sp-yv4b3) is exec'd by name
     // on PATH; a configured path via bash.
     let mut c = if repo.forge.components().count() == 1 {
@@ -196,6 +196,9 @@ fn forge(repo: &Repo, sub: &str, pr: &str) -> Result<String, String> {
         c.arg(&repo.forge);
         c
     };
+    if let Some(p) = path {
+        c.env("PATH", p);
+    }
     let out = run(
         c.arg(sub).arg(&repo.path).arg(pr),
         &format!("forge {sub} {pr}"),
@@ -204,7 +207,12 @@ fn forge(repo: &Repo, sub: &str, pr: &str) -> Result<String, String> {
 }
 
 pub fn read_ci(repo: &Repo, pr: &str) -> Result<Ci, String> {
-    match forge(repo, "check-status", pr)?.as_str() {
+    read_ci_on(repo, pr, None)
+}
+
+/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
+pub fn read_ci_on(repo: &Repo, pr: &str, path: Option<&std::ffi::OsStr>) -> Result<Ci, String> {
+    match forge(repo, "check-status", pr, path)?.as_str() {
         "pending" => Ok(Ci::Pending),
         "green" => Ok(Ci::Green),
         "red" => Ok(Ci::Red),
@@ -214,7 +222,7 @@ pub fn read_ci(repo: &Repo, pr: &str) -> Result<Ci, String> {
 }
 
 pub fn read_pr_state(repo: &Repo, pr: &str) -> PrState {
-    match forge(repo, "pr-state", pr).as_deref() {
+    match forge(repo, "pr-state", pr, None).as_deref() {
         Ok("open") => PrState::Open,
         Ok("merged") => PrState::Merged,
         Ok("closed") => PrState::Closed,

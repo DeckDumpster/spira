@@ -302,15 +302,10 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvGuard {
-        path: Option<std::ffi::OsString>,
         forge: Option<std::ffi::OsString>,
     }
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            match &self.path {
-                Some(p) => env::set_var("PATH", p),
-                None => env::remove_var("PATH"),
-            }
             match &self.forge {
                 Some(f) => env::set_var("SPIRA_FORGE", f),
                 None => env::remove_var("SPIRA_FORGE"),
@@ -318,35 +313,24 @@ mod tests {
         }
     }
 
-    // REGRESSION (sp-yv4b3): production queue-watch went blind — "forge check-status 459:
-    // No such file or directory (os error 2)" — because this default named the retired
-    // `forge.sh` instead of the release's `forge` binary. With SPIRA_FORGE unset and a PATH
-    // holding only a stub named `forge` (never `forge.sh`), the old default could not have
-    // found anything to exec; this fails on the pre-fix default.
+    // REGRESSION (sp-yv4b3): the default named the retired `forge.sh`, not the release's
+    // `forge` binary. PATH goes to the spawn only; mutating the process PATH raced the
+    // other tests' forks.
     #[test]
     fn queue_repos_default_forge_is_the_bare_release_binary_and_is_actually_reachable() {
         let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard { path: env::var_os("PATH"), forge: env::var_os("SPIRA_FORGE") };
+        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE") };
         env::remove_var("SPIRA_FORGE");
 
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
         let dir = testkit::TempDir::new(&format!("queue-watch-default-forge-test-{n}"));
-        // A PATH holding ONLY a stub named `forge` (no `forge.sh` anywhere) — exactly what
-        // forge.sh's deletion left production with.
         testkit::write_exe(
             dir.join("forge"),
             "#!/bin/sh\ncase \"$1\" in check-status) echo green ;; *) exit 1 ;; esac\n",
         );
-        // PREPEND (never replace): other tests run concurrently in this binary and need the
-        // real PATH (git, sh, …) to keep resolving; the stub only needs to win the lookup
-        // for the bare name `forge` itself, which the real PATH never contains anyway
-        // (forge.sh is retired and nothing on the real PATH is named plain `forge` yet in a
-        // conflicting way for this test process).
-        let real_path = env::var_os("PATH").unwrap_or_default();
-        let mut new_path = dir.path().as_os_str().to_os_string();
-        new_path.push(":");
-        new_path.push(&real_path);
-        env::set_var("PATH", &new_path);
+        let mut child_path = dir.path().as_os_str().to_os_string();
+        child_path.push(":");
+        child_path.push(env::var_os("PATH").unwrap_or_default());
 
         let cfg = dir.join("spira.toml");
         fs::write(&cfg, "[repo.q]\npath = \"/tmp/q\"\nmode = \"queue\"\n").unwrap();
@@ -358,11 +342,7 @@ mod tests {
         };
         let q = repos.iter().find(|r| r.name == "q").unwrap();
         assert_eq!(q.forge, PathBuf::from("forge"), "default must name the bare release binary, not forge.sh");
-
-        // End-to-end: the resolved default actually reaches the forge on this PATH — the
-        // stub answers "green"; pre-fix, Command::new("forge.sh") would error with "No such
-        // file or directory" (os error 2), exactly production's "spira blind" log line.
-        assert_eq!(crate::io::read_ci(q, "459"), Ok(crate::core::Ci::Green));
+        assert_eq!(crate::io::read_ci_on(q, "459", Some(&child_path)), Ok(crate::core::Ci::Green));
 
         let _ = fs::remove_dir_all(&dir);
     }
