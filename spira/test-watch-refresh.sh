@@ -364,7 +364,7 @@ has "and every restart names the file behind it" "$(cat "$TMP/out")" "$COCKPIT/d
 # `watchd restart <name>` is the fourth.
 n_execs="$(execs)"
 is "a restarting pass costs one exec more, and no more than that" "4" "$n_execs"
-[ "$n_execs" = 4 ] || echo "# execlog: $(tr "\n" "|" < "$EXECLOG")"
+[ "$n_execs" = 4 ] || DUMP="n=$n_execs log=$(tr "\n" "|" < "$EXECLOG")"
 # The restart is not bookkeeping: a counter that moved without systemctl being called would
 # be a meter measuring itself.
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/db.sh"
@@ -559,4 +559,5 @@ out="$(env -i HOME="$TMP/home" PATH="$SHIM:$PATH" SPIRA_CONF="$CONF" SPIRA_CONFI
 is "an argument it does not know is refused" "2" "$rc"
 has "with a usage line"                      "$out" "usage: watch-refresh.sh"
 
+echo "# $DUMP"
 tl_summary
