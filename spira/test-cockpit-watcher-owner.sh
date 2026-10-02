@@ -19,6 +19,21 @@
 #   For (2): when no orphan holds the lock, the escalation carries no "pid"
 #             line — proves the orphan probe is live.
 #
+# sp-mczuy: PART 2's orphan fixture flipped in round 213's certification (VM, maxpar 16):
+# "not ok 2 - notify fixture: orphan holds the lock # lock acquisition failed", checks 3-4
+# failing as a consequence. Root cause: the fixture's own acquisition was a single
+# non-blocking `flock -n`, racing the test's `wait_locked`/`lock_free` probe further down
+# this file, which transiently takes-and-releases a probe flock on the SAME path while
+# polling for "has the orphan grabbed it yet" — the probe's subshell can still be mid-exit,
+# holding the flock, the instant the fixture's one-shot attempt lands (the async-release
+# race sp-os3of found in the Rust lock tests). With no retry, that single collision failed
+# the fixture for good. Per law-a-test-that-flips-is-deleted: fixed in place (not
+# deleted/re-added across two beads, since the root cause and fix landed together) by
+# giving the fixture's own acquisition a bounded wait (`flock -w`, a kernel wait queue —
+# never a fixed sleep) instead of a single try. See the fixture's own comment below.
+# Proof: green in 20 consecutive separate `testenv` runs, and alongside a 30-suite load
+# list to keep the race reproducible.
+#
 # tier: T1
 # covers: cockpit/remote/cockpit-remote watchd/*
 set -uo pipefail
@@ -126,11 +141,22 @@ chmod +x "$FAKE_HOME/mail"
 # Uses trap+subshell pattern: the bash process holds fd 9 while a background
 # child runs WITHOUT fd 9 (closed before exec), so killing bash releases the
 # lock without leaving a child that still holds it.
+#
+# sp-mczuy: acquisition below used to be a single non-blocking `flock -n`, which flipped
+# PART 2 under load (cert round 213). The caller starts this fixture and then immediately
+# polls for "is it held yet" with its own `wait_locked`/`lock_free` (further down this
+# file), which itself takes and releases a probe flock on the SAME path while it polls.
+# That probe's subshell can still be mid-exit — holding the flock — the instant this
+# fixture's own one-shot attempt lands, the same async-release race sp-os3of found in the
+# Rust lock tests; with no retry, that single collision fails the fixture for good, and
+# the test then times out waiting for a holder that already gave up. Fix: wait on the real
+# condition — the lock becoming free — with a bound, via `flock`'s own blocking wait
+# (kernel wait queue, not a userspace poll or a fixed sleep) instead of a single try.
 ORPHAN_BIN="$TMP/view-watcher-testfixture"
 cat > "$ORPHAN_BIN" <<'ORPHANEOF'
 #!/usr/bin/env bash
 exec 9>"${1:?need lock path}"
-flock -n 9 || { echo "lock already held" >&2; exit 75; }
+flock -w 5 9 || { echo "lock acquisition timed out" >&2; exit 75; }
 trap 'exit 0' TERM INT
 ( exec 9>&-; exec sleep 60 ) &
 wait
