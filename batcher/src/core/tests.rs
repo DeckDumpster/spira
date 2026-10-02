@@ -367,7 +367,7 @@ fn a_red_suite_missing_from_the_rerun_fails_closed_to_double_red() {
 /// prefix, closed per standing operator instruction after bouncing from batch 327 — nothing
 /// like a test landing ahead of its code. sp-29g55's own real dependency (sp-qvjzb, round
 /// 1's occurrence of the same suite) is covered separately below as a negative case, not
-/// here — see `waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix`.
+/// here — see `waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix`.
 #[test]
 fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
     let assertion = "test-testlib-migrated: a lint ahead of the migration it checks, sequenced behind sp-29g55";
@@ -378,13 +378,12 @@ fn a_recorded_test_ahead_of_code_shape_sequences_behind_its_dependency() {
 
 /// sp-29g55's real round-1 dependency was sp-qvjzb (concierge-as-batcher-2026-09-24.md,
 /// "What the first two rounds actually found": "`sp-29g55` adds a lint that cannot pass
-/// until `sp-qvjzb` lands"). `waits_on` requires a digit after "sp-" so prose like a bare
-/// "sp-" is never mistaken for an id (see `waits_on_ignores_a_bare_sp_dash_with_no_digits`
-/// above) — but `sp-qvjzb`'s suffix is all letters, so the real dependency is missed.
-/// Filed forward as sp-odxhz; not this bead's fix to make.
+/// until `sp-qvjzb` lands"). The suffix is all letters, so `waits_on` accepts a five-letter
+/// suffix as well as one containing a digit.
 #[test]
-fn waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix() {
-    assert_eq!(waits_on("adds a lint that cannot pass until sp-qvjzb lands"), None);
+fn waits_on_finds_a_real_dependency_id_with_no_digit_in_its_suffix() {
+    assert_eq!(waits_on("adds a lint that cannot pass until sp-qvjzb lands"), Some("sp-qvjzb".to_string()));
+    assert_eq!(waits_on("see sp-ish thing"), None);
 }
 
 #[test]
@@ -683,12 +682,8 @@ fn judgement_body_renders_no_members_explicitly() {
 ///   lands. Reopened and made to depend on `sp-qvjzb` by hand.
 ///
 /// `test_ahead_of_code` (design Section E) did not exist at the time — all three were
-/// resolved by a person, not this mechanism. So `judgement_for` must still flag all three by
-/// name (the crate's only mechanical read of a corpus run), and `test_ahead_of_code` resolves
-/// none of them replayed against real assertion text today either: the first two never named
-/// a dependency, and the third's real dependency, `sp-qvjzb`, has no digit in its suffix and
-/// so is missed by `waits_on` (`waits_on_misses_a_real_dependency_id_with_no_digit_in_its_suffix`
-/// above; filed forward as sp-odxhz).
+/// resolved by a person. Replayed today, `judgement_for` still flags all three by name, and
+/// only the third names a dependency, which `test_ahead_of_code` now sequences behind.
 #[test]
 fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_was_done() {
     let round1 = [
@@ -708,11 +703,9 @@ fn round_1s_three_double_reds_are_flagged_for_judgement_and_resolve_like_what_wa
 
     for (suite_name, assertion) in round1 {
         let own = vec![suite(suite_name, SuiteOutcome::Red, &[assertion])];
-        assert_eq!(
-            test_ahead_of_code(&"member".to_string(), &own),
-            None,
-            "{suite_name}: none of round 1's fixes were auto-sequenced, by hand on 2026-09-24 or by the matcher replayed today"
-        );
+        let expected = (suite_name == "test-testlib-migrated")
+            .then(|| SetAsideReason::TestAheadOfCode { waits_on: "sp-qvjzb".into() });
+        assert_eq!(test_ahead_of_code(&"member".to_string(), &own).map(|sa| sa.reason), expected, "{suite_name}");
     }
 }
 
