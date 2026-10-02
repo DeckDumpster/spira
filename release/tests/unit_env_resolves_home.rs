@@ -19,9 +19,9 @@
 //!
 //! FIXTURE ONLY, never production (per this bead's own ground rules):
 //!   - `HOME` is a fresh, empty tmp directory — never this box's real `$HOME` (which has a
-//!     real `~/.config/spira/spira.toml` naming the real production run directory). With
-//!     no `spira.toml` anywhere under it, `spira_config::resolve` falls back to pure
-//!     derived defaults scoped entirely inside this fixture `HOME`.
+//!     real host config document under `~/.config/spira/`, naming the real production run
+//!     directory). With no such document anywhere under it, `spira_config::resolve` falls
+//!     back to pure derived defaults scoped entirely inside this fixture `HOME`.
 //!   - The fixture release's `spira/` is symlinked to this checkout's own (same trick
 //!     `release/tests/session_hook_minimal_env.rs` already uses): the REAL `conf.sh`/
 //!     `lib.sh`/`conf.d`/chamber, unmodified — `builder.fayth` genuinely exists, which is
