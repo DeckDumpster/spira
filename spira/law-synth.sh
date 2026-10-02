@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# law-synth.sh — regenerate wiki/notes/common-law.md from the statute book.
+# law-synth.sh — regenerate the SPIRA_STATUTE_PAGE page of the llm-wiki statute source from the statute book.
 #
 # rule.sh's default synth hook (see SPIRA_WIKI_HOOK in conf.sh). REGENERATED WHOLE, NEVER
 # PATCHED: this page is a derived copy of `bd memories`, so editing it by hand does nothing —
@@ -15,7 +15,15 @@ SPIRA_HOME_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SPIRA_HOME_DIR/conf.sh"
 export BEADS_NO_AUTO_IMPORT=1
 DB="$SPIRA_DB"
-OUT=wiki/notes/common-law.md
+OUT="$SPIRA_STATUTE_PAGE"
+
+if [ "$SPIRA_STATUTE_SOURCE" != "llm-wiki" ]; then
+    echo "law-synth: unknown SPIRA_STATUTE_SOURCE '$SPIRA_STATUTE_SOURCE' (only llm-wiki exists)" >&2
+    exit 1
+fi
+case "$OUT" in
+    ""|/*|*..*) echo "law-synth: SPIRA_STATUTE_PAGE '$OUT' must be a relative path inside SPIRA_WIKI" >&2; exit 1 ;;
+esac
 
 if [ -z "${SPIRA_WIKI:-}" ]; then
     echo "law-synth: SPIRA_WIKI is not configured — nothing to synthesise."

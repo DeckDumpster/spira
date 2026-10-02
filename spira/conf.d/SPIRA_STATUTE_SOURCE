@@ -1,0 +1,8 @@
+TYPE=string
+GROUP=statute
+DOC=WHERE THE STATUTE CORPUS IS PUBLISHED. Only llm-wiki exists: a git checkout (SPIRA_WIKI) with a
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # WHERE THE STATUTE CORPUS IS PUBLISHED. Only `llm-wiki` exists: a git checkout
+    # (SPIRA_WIKI) holding the generated page SPIRA_STATUTE_PAGE. An unknown kind is refused.
+    : "${SPIRA_STATUTE_SOURCE:=llm-wiki}"
+SPIRA_CONF_DEFAULT_EOF
