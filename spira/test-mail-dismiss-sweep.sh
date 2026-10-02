@@ -42,6 +42,14 @@ export SPIRA_HOME="$TMP/home"
 export SPIRA_RUN="$TMP/run"
 export SPIRA_OPERATOR_ACTOR="ryan-op"                         # non-default: catches a hardcoded "operator"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+# sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
+# resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
+# registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
+# any registry read. Without it `mail send` hits "mail: FATAL: cannot resolve spira.run: no
+# config registry at .../home/conf.d" before send() runs at all, so no message is ever
+# written and the suite reads as "no decision bead filed". test-mail.sh's UC-17 fixture
+# already carries this same symlink for the same reason (sp-ivfu3); this fixture never did.
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 
 MAIL=mail   # invoked by name on the suite's PATH (sp-gypjk)
 run() { "$MAIL" "$@"; }
