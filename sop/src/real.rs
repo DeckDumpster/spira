@@ -37,8 +37,18 @@ impl RealBd {
 }
 
 impl Bd for RealBd {
-    fn remember(&self, key: &str, text: &str) -> bool {
-        self.seam("bdq remember --key \"$1\" \"$2\" >/dev/null", &[key, text], None).0
+    fn remember(&self, key: &str, text: &str) -> Result<(), String> {
+        // stderr folded into stdout so the failure cause survives; exit status appended.
+        let (ok, out) = self.seam(
+            "o=$(bdq remember --key \"$1\" \"$2\" 2>&1 >/dev/null); rc=$?; printf '%s\nexit=%s' \"$o\" \"$rc\"; exit $rc",
+            &[key, text],
+            None,
+        );
+        if ok {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out).trim().to_string())
+        }
     }
 
     fn recall(&self, key: &str) -> Option<String> {
