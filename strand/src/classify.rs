@@ -80,6 +80,8 @@ pub struct Facts {
     /// Some(detail) while the account is out of capacity.
     pub capacity_paused: Option<String>,
     pub pool_paused: bool,
+    /// Some("draining"|"halted") while the operator has stopped the world on purpose.
+    pub world: Option<&'static str>,
     pub pass_truncated: bool,
     pub throttle: Throttle,
     /// in_progress bead id -> a live process holds it.
@@ -101,6 +103,7 @@ impl Default for Facts {
             max_aeons: 0,
             capacity_paused: None,
             pool_paused: false,
+            world: None,
             pass_truncated: false,
             throttle: Throttle::Open,
             holders: HashMap::new(),
@@ -268,7 +271,15 @@ impl<'a> Partition<'a> {
         sorted.sort();
         let head = sorted.iter().take(6).map(|s| s.as_str()).collect::<Vec<_>>().join(" ");
         let n = self.ready.len();
-        let row = if let Some(detail) = &f.capacity_paused {
+        let row = if let Some(state) = f.world {
+            Row::new(
+                "world-drained",
+                "-",
+                Disposition::Info,
+                format!("world is {state} by the operator — {n} bead(s) ready and deliberately not being summoned: {head}"),
+                "none — world.sh start resumes summoning".into(),
+            )
+        } else if let Some(detail) = &f.capacity_paused {
             Row::new(
                 "capacity-paused",
                 "-",
@@ -931,6 +942,12 @@ mod tests {
         let rows = run_with(&s, &["r"], &f);
         assert_eq!(kinds(&rows), vec![("starved".into(), "-".into())]);
         assert_eq!(rows[0].detail, "1 bead(s) ready and no live aeon: r");
+        f.world = Some("draining");
+        let r = run_with(&s, &["r"], &f);
+        assert_eq!((r[0].kind.as_str(), r[0].disp), ("world-drained", Disposition::Info));
+        f.world = Some("halted");
+        assert_eq!(run_with(&s, &["r"], &f)[0].kind, "world-drained");
+        f.world = None;
         f.capacity_paused = Some("out".into());
         assert_eq!(run_with(&s, &["r"], &f)[0].kind, "capacity-paused");
         f.capacity_paused = None;

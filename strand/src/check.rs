@@ -37,6 +37,13 @@ pub fn from_tsv(cfg: &Config, text: &str) -> Classified {
     Classified { rows, watching: vec![part] }
 }
 
+fn world_state(run_dir: &std::path::Path) -> Option<&'static str> {
+    [("world.halted", "halted"), ("world.draining", "draining")]
+        .into_iter()
+        .find(|(stamp, _)| run_dir.join(stamp).exists())
+        .map(|(_, state)| state)
+}
+
 /// Classify every partition against the live store. Err means an input could not be read,
 /// and the caller must neither report "nothing stranded" nor rewrite the episode state (R7).
 pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
@@ -89,6 +96,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
             max_aeons: cfg.max_live_aeons,
             capacity_paused: capacity.clone(),
             pool_paused: cfg.max_aeons == Some(0),
+            world: world_state(&run_dir),
             pass_truncated: probe::pass_truncated(&log_text, &fayths),
             throttle: throttle.clone(),
             holders,
