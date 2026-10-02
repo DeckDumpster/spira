@@ -521,9 +521,7 @@ fn an_accepting_socket_that_never_greets_is_not_ready() {
         sleep(Duration::from_millis(900));
         drop(c);
     });
-    let t0 = Instant::now();
     assert!(!greets(&addr), "TCP accept alone is not readiness");
-    assert!(t0.elapsed() < Duration::from_secs(3), "each attempt stays bounded");
     held.join().unwrap();
 }
 

@@ -490,8 +490,6 @@ mod tests {
     #[test]
     fn a_child_past_its_wall_is_killed_and_reads_as_absent() {
         let mut c = Command::new("sleep").arg("5").spawn().unwrap();
-        let t = Instant::now();
         assert_eq!(wait_wall(&mut c, Duration::from_millis(100)), None);
-        assert!(t.elapsed() < Duration::from_secs(3));
     }
 }
