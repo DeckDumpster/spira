@@ -44,3 +44,6 @@ StandardError=append:@SPIRA_RUN@/auron.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability

@@ -58,3 +58,6 @@ StandardError=append:@SPIRA_RUN@/ops.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

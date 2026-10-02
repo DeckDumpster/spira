@@ -21,3 +21,6 @@ StandardError=append:@SPIRA_RUN@/straggler-sweep.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

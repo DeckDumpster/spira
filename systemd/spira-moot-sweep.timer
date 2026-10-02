@@ -14,3 +14,6 @@ Unit=spira-moot-sweep.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

@@ -29,3 +29,6 @@ StandardError=append:@SPIRA_RUN@/watch-refresh.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability

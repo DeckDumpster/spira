@@ -145,13 +145,51 @@ pub const TIMER_PRIORITY: &[&str] = &[
     "spira-skew",
 ];
 
-/// Timers treated as CI watchers — left running on a plain `stop` (only `--hard` stops them).
-pub const CI_WATCHER_BASES: &[&str] = &["spira-gate-check"];
+/// The three planes a unit can belong to, declared by the unit itself as `Plane=` in an
+/// `[X-Spira]` section (systemd ignores `X-` sections), never listed here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Plane {
+    Work,
+    Observability,
+    Maintenance,
+}
 
-pub fn is_ci_watcher(timer: &str) -> bool {
-    CI_WATCHER_BASES
-        .iter()
-        .any(|b| timer == format!("{b}.timer") || timer.starts_with(&format!("{b}-")))
+pub const PLANES: [Plane; 3] = [Plane::Work, Plane::Observability, Plane::Maintenance];
+
+impl Plane {
+    pub fn name(self) -> &'static str {
+        match self {
+            Plane::Work => "work",
+            Plane::Observability => "observability",
+            Plane::Maintenance => "maintenance",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Plane> {
+        PLANES.into_iter().find(|p| p.name() == s.trim())
+    }
+}
+
+/// The `Plane=` a unit file's text declares in its `[X-Spira]` section. A unit that
+/// declares none — or a value no plane has — is `None`; callers treat that as `Work`, so a
+/// forgotten declaration is stopped by a halt rather than left running unseen.
+pub fn plane_from_unit_text(text: &str) -> Option<Plane> {
+    let mut in_section = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_section = line == "[X-Spira]";
+        } else if in_section {
+            if let Some(v) = line.strip_prefix("Plane=") {
+                return Plane::parse(v);
+            }
+        }
+    }
+    None
+}
+
+pub fn plane_of(unit: &str) -> Plane {
+    plane_from_unit_text(&run(&["cat", unit])).unwrap_or(Plane::Work)
 }
 
 /// `_status_timer_row`: one formatted status line for a timer, given its state and the
@@ -197,10 +235,16 @@ mod tests {
     }
 
     #[test]
-    fn ci_watcher_matches_base_and_instance_qualified_form() {
-        assert!(is_ci_watcher("spira-gate-check.timer"));
-        assert!(is_ci_watcher("spira-gate-check-prod.timer"));
-        assert!(!is_ci_watcher("spira-groom.timer"));
+    fn plane_is_read_from_the_x_spira_section_only() {
+        let unit = "[Unit]\nPlane=maintenance\n[X-Spira]\nPlane=observability\n[Timer]\nPlane=work\n";
+        assert_eq!(plane_from_unit_text(unit), Some(Plane::Observability));
+    }
+
+    #[test]
+    fn plane_is_none_when_undeclared_or_unknown() {
+        assert_eq!(plane_from_unit_text("[Unit]\nDescription=x\n"), None);
+        assert_eq!(plane_from_unit_text("[X-Spira]\nPlane=bogus\n"), None);
+        assert_eq!(plane_from_unit_text(""), None);
     }
 
     /// sp-ivfu3-2 (a): the world stopped — the qualified unit is KNOWN to systemd but

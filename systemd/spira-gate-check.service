@@ -31,3 +31,6 @@ StandardError=append:@SPIRA_RUN@/gate-check.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability

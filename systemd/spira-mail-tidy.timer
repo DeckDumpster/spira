@@ -11,3 +11,6 @@ Unit=spira-mail-tidy.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=maintenance

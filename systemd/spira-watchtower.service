@@ -16,3 +16,6 @@ Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 StandardOutput=append:@SPIRA_RUN@/watchtower.log
 StandardError=append:@SPIRA_RUN@/watchtower.log
+
+[X-Spira]
+Plane=observability

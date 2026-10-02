@@ -20,3 +20,6 @@ Unit=spira-watch-notify.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=observability

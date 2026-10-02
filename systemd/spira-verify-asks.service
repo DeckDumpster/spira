@@ -24,3 +24,6 @@ StandardError=append:@SPIRA_RUN@/verify-asks.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability

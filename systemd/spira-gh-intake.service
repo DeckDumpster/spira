@@ -29,3 +29,6 @@ StandardError=append:@SPIRA_RUN@/gh-intake.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

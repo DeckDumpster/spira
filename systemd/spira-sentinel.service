@@ -28,3 +28,6 @@ StandardError=append:@SPIRA_RUN@/sentinel.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=work

@@ -47,3 +47,6 @@ StandardError=append:@SPIRA_RUN@/watchd/%i.log
 
 [Install]
 WantedBy=default.target
+
+[X-Spira]
+Plane=observability
