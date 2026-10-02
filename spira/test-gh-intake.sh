@@ -54,6 +54,7 @@ BIN="$T/target/debug/gh-intake"
 STUB_DIR="$T/stub"; mkdir -p "$STUB_DIR"
 REQLOG="$T/requests.log"; : > "$REQLOG"
 STUB_PID=""
+PORTFILE="$T/stub.port"
 start_stub() {
     STUB_DIR="$STUB_DIR" REQLOG="$REQLOG" python3 -c '
 import http.server, os, sys, json
@@ -82,33 +83,23 @@ class H(http.server.BaseHTTPRequestHandler):
         if data:
             self.wfile.write(data)
 
-port = int(sys.argv[1])
-http.server.HTTPServer(("127.0.0.1", port), H).serve_forever()
-' "$1" &
+srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+tmp = sys.argv[1] + ".tmp"
+with open(tmp, "w") as pf:
+    pf.write(str(srv.server_address[1]))
+os.rename(tmp, sys.argv[1])
+srv.serve_forever()
+' "$PORTFILE" &
     STUB_PID=$!
-    # POLL FOR READY, NOT A FIXED SLEEP. A fixed 0.3s was enough on a bare-metal sandbox
-    # but not always under testenv's container, where process/port startup is slower
-    # under load — the exact "budget/deadline is infrastructure" class of flake this
-    # suite must not paper over with a longer fixed sleep (law-absence-needs-a-positive-
-    # control: waiting on the real signal, not a guess at how long it takes).
-    local _tries=0
-    while ! python3 -c "
-import socket, sys
-s = socket.socket()
-s.settimeout(0.2)
-try:
-    s.connect(('127.0.0.1', $1))
-except OSError:
-    sys.exit(1)
-s.close()
-" 2>/dev/null; do
-        _tries=$((_tries + 1))
-        [ "$_tries" -lt 50 ] || { echo "test-gh-intake: stub HTTP server never accepted a connection" >&2; return 1; }
+    local _deadline=$((SECONDS + 60))
+    until [ -s "$PORTFILE" ]; do
+        kill -0 "$STUB_PID" 2>/dev/null || { echo "test-gh-intake: stub HTTP server exited before binding" >&2; return 1; }
+        [ "$SECONDS" -lt "$_deadline" ] || { echo "test-gh-intake: stub HTTP server not ready within 60s" >&2; return 1; }
         sleep 0.1
     done
+    STUB_PORT="$(cat "$PORTFILE")"
 }
-STUB_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
-start_stub "$STUB_PORT" || bail "stub HTTP server failed to start"
+start_stub || bail "stub HTTP server failed to start"
 API="http://127.0.0.1:$STUB_PORT"
 
 put_fixture() { printf '%s' "$2" > "$STUB_DIR/$1.json"; }
