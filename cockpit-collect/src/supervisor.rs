@@ -41,6 +41,7 @@ pub const PROBES: &[Probe] = &[
     Probe { name: "dup_refs", interval_s: 600, timeout_s: 300, subcommand: "dup_refs" },
     Probe { name: "unsent", interval_s: 600, timeout_s: 300, subcommand: "unsent" },
     Probe { name: "statute", interval_s: 600, timeout_s: 300, subcommand: "statute" },
+    Probe { name: "drift", interval_s: 600, timeout_s: 300, subcommand: "drift" },
     Probe { name: "czar_triggers", interval_s: 600, timeout_s: 300, subcommand: "czar_triggers" },
     Probe { name: "sending", interval_s: 600, timeout_s: 300, subcommand: "sending" },
 ];

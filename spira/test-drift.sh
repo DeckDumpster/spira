@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # tier: T1
-# covers: spira/drift.sh spira/owned.sh spira/cockpit.sh spira/watchtower.sh spira/collect.sh
-#         sentinel/src/dispatch.rs
+# covers: spira/drift.sh spira/owned.sh cockpit-collect/src/* watchtower/src/* sentinel/src/dispatch.rs
 #
 # test-drift.sh — drift.sh finds an untracked file in a production checkout and an unshipped
 # drop-in in the installed unit directory; a clean checkout and unit dir report nothing.
@@ -162,11 +161,11 @@ is "check: an unreadable half exits 3" "3" "$rc"
 
 # ==========================================================================
 echo
-echo "cockpit.sh drift: the pane's own keys, OK/DIRTY/UNSHIPPED, ? when unreadable:"
+echo "cockpit-collect probe drift: the pane's own keys, OK/DIRTY/UNSHIPPED, ? when unreadable:"
 # ==========================================================================
 drift_keys_out() {
-    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_REPO="$1" \
-        bash "$HERE/cockpit.sh" drift 2>/dev/null
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$1" \
+        cockpit-collect probe drift 2>/dev/null
 }
 
 out="$(drift_keys_out "$REPO")"
@@ -183,7 +182,7 @@ want "unreadable checkout: SP_CHECKOUT_DRIFT=?" "SP_CHECKOUT_DRIFT=?" "$out"
 
 # ==========================================================================
 echo
-echo "watchtower.sh --drift-check: files one incident per class, deduped by ref:"
+echo "watchtower --drift-check: files one incident per class, deduped by ref:"
 # ==========================================================================
 MOCK_INC="$TMP/mock-inc.sh"
 cat > "$MOCK_INC" <<MOCK
@@ -193,9 +192,9 @@ MOCK
 chmod +x "$MOCK_INC"
 
 wt_drift_check() {   # wt_drift_check <repo> <unitdir>
-    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$1" SPIRA_INCIDENT_SH="$MOCK_INC" \
-        bash "$HERE/watchtower.sh" --drift-check 2>&1
+        watchtower --drift-check 2>&1
 }
 inc_calls() { cat "$TMP/inc-calls" 2>/dev/null || true; }
 
