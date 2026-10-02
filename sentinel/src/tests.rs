@@ -2552,3 +2552,48 @@ fn check3c_skips_a_bead_that_moved_since_the_snapshot() {
     assert!(sink.has("CHECK3c sp-a: open in this pass's snapshot, closed now — skipped"));
     assert_eq!(r.count(|s| is_bd(s, "show")), 1, "one re-read for the whole check");
 }
+
+// ---------------------------------------------------------------------------------------
+// release skew: a sentinel running from an old release neither spawns nor pins its units
+
+fn two_releases(tag: &str) -> (String, String) {
+    let d = std::env::temp_dir().join(format!("sentinel-skew-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    for r in ["old", "new"] {
+        std::fs::create_dir_all(d.join(r).join("bin")).unwrap();
+    }
+    std::os::unix::fs::symlink("new", d.join("current")).unwrap();
+    let d = std::fs::canonicalize(&d).unwrap();
+    (d.join("old").to_string_lossy().into_owned(), d.join("new").to_string_lossy().into_owned())
+}
+
+#[test]
+fn a_summoner_from_an_old_release_spawns_nothing() {
+    let (w, r, sink, clock) = setup("skew-refuse");
+    let (old, _new) = two_releases("refuse");
+    assert_eq!(run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[("SPIRA_RELEASE", old.as_str())], None), 0);
+    assert!(sink.has("RELEASE SKEW"), "{}", sink.text());
+    assert_eq!(r.count(|s| is_bd(s, "ready")), 0, "a skewed summoner reads nothing and spawns nothing");
+    assert_eq!(r.count(|s| s.args.iter().any(|a| a.starts_with("--property=ExecStopPost"))), 0);
+}
+
+#[test]
+fn spawned_units_are_pinned_to_current_not_the_callers_release() {
+    let (w, r, sink, clock) = setup("skew-argv");
+    let (old, new) = two_releases("argv");
+    let path = format!("{old}/bin:{old}/spira:/usr/bin");
+    let h: &Host = Box::leak(Box::new(Host::new(&r, &clock, &sink)));
+    let s = Sentinel::new(
+        h,
+        w.ctx(&[("SPIRA_RELEASE", old.as_str()), ("PATH", path.as_str())], None),
+        &w.home,
+        Mode::SummonOnly,
+        "/opt/bin/sentinel".into(),
+        "host-1-1".into(),
+        Lifecycle::Off,
+    );
+    let argv = s.summon_argv("builder").join("\n");
+    assert!(argv.contains(&format!("--setenv=SPIRA_RELEASE={new}")), "{argv}");
+    assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
+    assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
+}

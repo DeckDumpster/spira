@@ -30,6 +30,7 @@ pub mod legacy_map;
 pub mod locate;
 pub mod registry;
 pub mod release_env;
+pub mod release_skew;
 pub mod repos;
 pub mod resolve;
 pub mod room;

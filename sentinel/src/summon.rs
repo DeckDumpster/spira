@@ -99,7 +99,7 @@ impl<'a> Sentinel<'a> {
         // other cost `summon_fayth` would otherwise pay per fayth; each `summon_fayth`
         // call below checks it again on its own (wave 4.27 — `world_gate` is in-process
         // now, so asking twice costs nothing like the bash seam call it replaced did).
-        if !self.world_gate("fleet", "summon-only") {
+        if !self.world_gate("fleet", "summon-only") || !self.skew_gate("summon-only") {
             return 0;
         }
         // Capacity (family K, wave 4.26): a pure read, in-process — sentinel never probes
@@ -440,14 +440,51 @@ impl<'a> Sentinel<'a> {
         false
     }
 
+    /// This process's release when it is not the one `current` names. Spawning from it
+    /// would keep that release alive past the landing that replaced it.
+    pub fn release_skew(&self) -> Option<spira_config::release_skew::Skew> {
+        let own = self.cfg.raw("SPIRA_RELEASE");
+        if own.is_empty() {
+            return None;
+        }
+        spira_config::release_skew::skew(std::path::Path::new(own))
+    }
+
+    /// Refuses, loudly, to spawn a successor from a non-current release.
+    pub fn skew_gate(&self, prefix: &str) -> bool {
+        match self.release_skew() {
+            None => true,
+            Some(s) => {
+                self.log(&format!("{prefix}: RELEASE SKEW — {}; not spawning successors, the current release's sentinel will", s.describe()));
+                false
+            }
+        }
+    }
+
+    /// The release every spawned unit is pinned to: `current`, never the caller's own sha.
+    pub fn current_release(&self) -> String {
+        match self.release_skew() {
+            Some(s) => s.current.to_string_lossy().into_owned(),
+            None => self.cfg.raw("SPIRA_RELEASE").to_string(),
+        }
+    }
+
+    fn current_path(&self) -> String {
+        let path = self.cfg.raw("PATH");
+        match self.release_skew() {
+            Some(s) => spira_config::release_skew::repoint_path(path, &s),
+            None => path.to_string(),
+        }
+    }
+
     /// summon_refill_argv -> the ExecStopPost property that refills this slot the instant
     /// the aeon it is attached to exits (lib.sh:1141; sp-0y2av). The resolved path, not the
     /// bare name: systemd validates an ExecStopPost command line itself and refuses a bare
     /// "systemd-run" as "not an absolute path".
     fn summon_refill_argv(&self) -> String {
-        let path = self.cfg.raw("PATH");
-        let summon_bin = pass::on_path(&self.cfg.summon, path);
-        let sentinel_bin = pass::on_path("sentinel", path);
+        let path = self.current_path();
+        let summon_bin = pass::on_path(&self.cfg.summon, &path);
+        let sentinel_bin = pass::on_path("sentinel", &path);
         format!("--property=ExecStopPost={summon_bin} --user --collect --quiet {sentinel_bin} --summon-only")
     }
 
@@ -455,7 +492,7 @@ impl<'a> Sentinel<'a> {
     /// path (lib.sh:1150: `summon_fayth`, `aeon --escape`), one argv token per element.
     pub fn summon_argv(&self, f: &str) -> Vec<String> {
         let timeout = spira_config::chamber::fayth_get(&self.cfg.home, f, "FAYTH_TIMEOUT_SECONDS", "3600");
-        let release = self.cfg.raw("SPIRA_RELEASE");
+        let release = self.current_release();
         vec![
             format!("--property=TimeoutStartSec={timeout}"),
             self.summon_refill_argv(),
@@ -482,7 +519,7 @@ impl<'a> Sentinel<'a> {
     /// summon itself. **Safety-critical** (wave4-decomposition.md (c)8) — every refusal
     /// keeps its own log line, because the pass's stdout IS the sentinel log.
     pub fn summon_fayth(&self, f: &str, pool: Option<i64>, require_label: &str, reuse_ready: Option<i64>) -> Attempt {
-        if !self.world_gate(f, "CHECK7") {
+        if !self.world_gate(f, "CHECK7") || !self.skew_gate(&format!("CHECK7 {f}")) {
             return Attempt { summoned: false, ready: reuse_ready };
         }
         // THE ACCOUNT BEFORE THE QUEUE, and a pure in-process read — never a probe (wave

@@ -306,6 +306,7 @@ impl<'a> Sentinel<'a> {
             "--czar-outcome-check",
             "--pr-stall-check",
             "--disabled-timer-check",
+            "--release-skew-check",
         ] {
             self.h.run(
                 Spec::args_owned("watchtower", vec![flag.into()])
@@ -346,7 +347,8 @@ impl<'a> Sentinel<'a> {
             self.log("CHECK6: no landing has ever completed on this host");
         }
 
-        if self.unit_active(&unit) {
+        if !self.skew_gate("CHECK6") {
+        } else if self.unit_active(&unit) {
             self.log("CHECK6: a landing is already in flight — this pass does not start another");
         } else {
             let mut a = vec![
