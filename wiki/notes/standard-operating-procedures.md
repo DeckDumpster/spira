@@ -16,7 +16,7 @@ spira/sop.sh write <slug> -   # text on stdin
 
 Statutes are how to behave; SOPs are how to fix. They share one mechanism, split by prefix — `law-` and `sop-` — so the [[spira]] Ops persona reads its runbooks exactly the way every agent already reads [[common-law]]. Ops is summoned by an incident bead filed from a failed systemd unit, matches the payload against the `MATCH:` lines below, and executes the first one that fires.
 
-**76 SOP(s)** on the shelf as of 2026-09-28.
+**82 SOP(s)** on the shelf as of 2026-09-28.
 
 ## The closing rule
 
@@ -86,15 +86,15 @@ no `local` remote present, or `git fetch local main` also fails — real
 
 `sop-applied-trace-instrumentation`
 
-**Symptom** — `sop.sh applied` hangs/times out. sp-ohnz7: 3 subprocess calls each <1s in isolation — believed to hang only under live contention. UPDATE (sp-q1rln): reproduced a ~131s hang on ONE uncontended `applied --why -` heredoc call, no induced load. Not yet known whether host was secretly contended or `--why -` stdin path itself is costly — see sp-vf9l9.
+**Symptom** — `sop.sh applied` hangs/stalls, uncontended (no dolt/mysql load), even on a plain `--why -` heredoc call. Gap scales with shelf size.
 
-**Check** — grep -q 'SOP_APPLIED_TRACE' spira/lib.sh && echo pass || echo fail
+**Check** — bash -x timing isolates the stall to one line: `raw="$(_sop_shelf_raw)"` then `if [ -z "${raw//[[:space:]]/}" ]` (pre-fix sop.sh:406/660/799) — no bd/dolt/lock call between them.
 
-**Fix** — sp-h54i5 was to land timing in bdq() (spira/lib.sh) but per sp-lov93, reconfirmed here, it never landed — CHECK still fails, no trace exists yet. Next hang: launch explicitly backgrounded (`cmd & pid=$!`) and strace/lsof that pid live — do not rely on a wrapper's own foreground timeout, which backgrounds it for you but the process may finish before you attach (lost here).
+**Fix** — ROOT CAUSE FOUND AND FIXED (sp-krqu0, commit 43e57c268). Not dolt/mysql contention — sp-h54i5's landing status is irrelevant to this symptom. `${raw//[[:space:]]/}` is bash glob-substitution stripping all whitespace from the ~200KB shelf JSON just to test blank; near-quadratic on inputs with many whitespace matches. Replaced with `[[ "$raw" =~ ^[[:space:]]*$ ]]` (single regex match, O(n), ~12ms on 205KB). If this SOP matches again after that commit lands, it's a NEW cause — don't assume dolt-contention either. Detail/measurements: REF wiki page.
 
-**Escalate** — trace shows hang outside bd subprocess calls -> different mechanism. Also escalate sp-h54i5 landing (sp-lov93) — it blocks ever diagnosing this class.
+**Escalate** — if fix has landed (`git log origin/main --format=%s | grep 43e57c268`) and this still reproduces, file fresh — the dolt-contention theory is ruled out (reproduces alone, no external load).
 
-**Reference** — sp-ohnz7, sp-h54i5, sp-lov93, sp-q1rln, sp-vf9l9
+**Reference** — sp-ohnz7, sp-h54i5, sp-lov93, sp-q1rln, sp-vf9l9, sp-oju37, sp-40yup, sp-tpyn6, sp-krqu0, wiki/notes/sop-applied-trace-instrumentation-detail.md
 
 **Matches** `(sop\.sh applied.*(hang|timeout|contention)|applied\(\).*ledger.*contention|SOP_APPLIED_TRACE)`
 
@@ -256,46 +256,50 @@ bd show $ID | grep "CLOSED"; git merge-base --is-ancestor $COMMIT origin/main &&
 
 `sop-closed-not-landed-false-alarm`
 
-**Symptom** — A watcher-filed incident reports that a closed bead has no LANDED record in the landing state database.
+**Symptom** — A watcher-filed incident reports that a closed bead has no LANDED record.
 
 **Check**
 
 ```
-Verify the bead's commit is actually on base. Re-derive the commit by
-grep on the bead id — a close reason's cited hash can belong to a different
-bead's land commit (sp-825tb).
 ```
-bead_id=sp-vcobo  # substitute the bead from the incident title
+bead_id=sp-vcobo  # substitute
 commit=$(git log --all --oneline | grep "$bead_id" | head -1 | awk '{print $1}')
 git merge-base --is-ancestor "$commit" origin/main
 ```
-0 → landed: false alarm from the systemic bug, not a missing commit.
+0 → landed: false alarm, close citing it.
+Nonzero AND `bd show` finds bead OPEN → shape 2 (flapped).
+Nonzero, `$commit` empty, close reason cites direct ops action → shape 3.
+Nonzero otherwise: recheck against $SPIRA_PROD (stale origin/main, no SSH).
 
-Nonzero AND `bd show` finds the bead OPEN → doesn't apply, likely flapped closed->open (sp-2d14d). File a bead; don't apply FIX.
-
-Nonzero, `$commit` empty, close reason is a direct ops/infra action (prune, host config, manual mitigation) → no-commit-ever case, see REF.
+PITFALL (sp-bd3lu): the grep can hit an unrelated commit whose subject just
+contains the bead id by coincidence. Cross-check the matched commit's diff
+against the target's own close reason before trusting it either way.
 ```
 
 **Fix**
 
 ```
-ESCALATE if sp-2dvyh (land_mark fix) not yet landed — add as blocker dep, leave open (guard sp-kz8ob).
+1. Landed, no record — false alarm, close citing check.
+2. Flapped open — `bd show <bead_id>` first: then `bd dep add <incident_id>
+   <bead_id>` directly, skip incident.sh. Title >500 chars kills drain
+   silently (sp-xt0ez/sp-nredi) — file that instead if drain shows 0 filed.
+3. No commit ever — close false-alarm citing target's close reason. Check
+   `bd show <target> | grep LABELS`: no `delivers:*` means CHECK5's
+   exemption (sp-qsona) doesn't cover it and it refiles forever — add one:
+   `bd label add <target> delivers:action`.
 
-Once sp-2dvyh IS landed: blocked incidents self-resolve; close citing reasons.
-
-No-commit-ever case: PERMANENT, watcher refiles forever. Do NOT close as false
-alarm. File/link a bead against the watcher's predicate, `bd dep add` this
-incident onto it, leave OPEN. Worked example: REF.
-
-Dependency rot: a blocker closed SUBSUMED/DUPLICATE/SUPERSEDED (not landed)
-still reads as satisfied to `bd dep`. Check `bd show <dep-id>` for a
-"SUPERSEDED BY" line before trusting a dep edge; re-point at the open
-successor too.
+CODE FIX 2026-09-28: sp-qsona (1d7d27f9a) skips closed work beads carrying
+a delivers: label — label-gated, not close-reason-gated, see FIX step 3.
 ```
 
-**Escalate** — Only the land_mark-bug case, while sp-2dvyh is unlanded.
+**Escalate**
 
-**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-b8ot4-closed-not-landed-resolution.md, wiki/notes/sp-4xb7m-no-commit-ever-case.md
+```
+Shape 1 while sp-2dvyh unlanded. Drain stuck at 0, shared-infra
+bug (sp-xt0ez), not Ops-fixable.
+```
+
+**Reference** — wiki/notes/standard-operating-procedures.md, wiki/notes/sp-ehyvd-check5-label-gate.md, sp-qsona, sp-b8fhm, sp-xt0ez, sp-nredi
 
 **Matches** `CLOSED NOT LANDED.*has no LANDED record|CHECK 5.*closed.*not.*landed`
 
@@ -473,6 +477,33 @@ bd show $bead_id | grep -i "delivers:action"
 
 **Matches** `circuit breaker is open|client connection went away while a query was executing|groupByGroupingIter|errguard.*WaitGroup`
 
+### Drain debug synthetic incident
+
+`sop-drain-debug-synthetic-incident`
+
+**Symptom** — An incident bead titled TEST-DRAIN-DEBUG(-N)?(-DELETE-ME)? with description "test body", external_ref incident:test-drain-debug*, owned by aeon-yojimbo. A synthetic probe of the drain/queue pipeline itself, not a real production fault. Seen as sp-0fl3v (TEST-DRAIN-DEBUG-5) and sp-kv1hl (TEST-DRAIN-DEBUG-DELETE-ME), both on 2026-09-28.
+
+**Check**
+
+```
+bd -C "$SPIRA_DB" show <id> | grep -q 'TEST-DRAIN-DEBUG' && bd -C "$SPIRA_DB" show <id> | grep -q '^  test body'
+```
+
+**Fix**
+
+```
+No production defect to fix. Close with a commit naming the bead (the closing gate requires one even when no code changed — commit this SOP page as the evidence commit): `bd -C "$SPIRA_DB" close <id> --reason-file - <<'REASON'
+OUTCOME: delivered
+Synthetic test bead from the drain/queue pipeline's own test harness (title says DELETE-ME). No real fault. Verified per sop-drain-debug-synthetic-incident.
+REASON`
+```
+
+**Escalate** — If these recur frequently or in volume, escalate to the operator: something is periodically firing synthetic test incidents into the real incident queue, consuming aeon wall-clock on beads that were never real. Ask whether the test harness producing incident:test-drain-debug* should target a sandbox queue instead of production incident intake.
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `TEST-DRAIN-DEBUG`
+
 ### Duplicate incident host cores
 
 `sop-duplicate-incident-host-cores`
@@ -573,6 +604,22 @@ bd -C $SPIRA_DB list | grep sp-yuiuc; verify the incident has no_cause in the de
 **Reference** — wiki/notes/false-alarms-from-misconfigured-probes.md
 
 **Matches** `^The intake gathered NO payload.*systemctl.*produced nothing`
+
+### Fenced unit timeout host contention
+
+`sop-fenced-unit-timeout-host-contention`
+
+**Symptom** — A fenced systemd --user oneshot unit (CPUQuota/Nice/idle IO already set) hits TimeoutStartSec and is killed, despite LOW CPU time vs wall clock (seen: straggler-sweep 1m38s CPU / 10m wall vs 1m4s/5m37s the prior day). Starved, not hung.
+
+**Check** — `uptime` load average >> `nproc`. `ps aux --sort=-%cpu` shows many concurrent testenv-batch.sh/round/cargo/podman procs. Compare unit's journalctl history on a quieter day: same CPU-seconds, much shorter wall then.
+
+**Fix** — Same root cause as sp-ql2wk/sp-oc2i6/sp-ld9j3 (unbounded testenv-batch.sh/round concurrency starving fenced tools). Do not re-diagnose per unit: `bd dep add <bead> sp-ql2wk`, leave open. Do NOT raise TimeoutStartSec/CPUQuota to quiet it (law-alerts-must-be-actionable). Ops has no lever for a fleet-wide concurrency cap; that's infra policy for testenv-batch.sh/round owners.
+
+**Escalate** — if CPU time consumed is instead HIGH (near TimeoutStartSec), that's not contention — the unit's own work regressed/hung.
+
+**Reference** — wiki/notes/sop-fenced-unit-timeout-host-contention.md
+
+**Matches** `FAILED UNIT.*spira-.*-prod\.service.*timeout|Failed with result 'timeout'.*prod\.service`
 
 ### File io buffering subshell
 
@@ -729,6 +776,38 @@ pool priority between callers (landing pass vs ad-hoc queue submit) is a policy
 
 **Matches** `certify_par.*(queue submit|bypass)|host-wide gate admission`
 
+### Incident drain title limit
+
+`sop-incident-drain-title-limit`
+
+**Symptom** — `incident.sh drain` reports "drained 0, still spooled N" every run; count never drops.
+
+**Check**
+
+```
+for f in $SPIRA_RUN/incident-spool/2026*; do t=$(grep '^TITLE:' "$f"|head -1|cut -c8-); echo "${#t} $(basename "$f")"; done
+  Any title >500 chars confirms this: bd create hard-refuses titles over 500 chars.
+```
+
+**Fix**
+
+```
+file_one() (spira/incident.sh ~L430-434) passes $title straight to
+`bd create "$title" ... 2>/dev/null`, so the validation error is invisible
+and the entry re-spools forever. Fix needs two parts in incident.sh itself:
+truncate title before create (full text stays in body), and stop discarding
+stderr on that call. Ops files a bead (see sp-nredi), does not hand-patch
+incident.sh. WORKAROUND to unblock one downstream dependency: `bd create`
+by hand with title truncated <500 chars, --external-ref from the spool
+file's REF: line, --body-file the spool body; then delete that spool file.
+```
+
+**Escalate** — never — clear code bug, not a decision.
+
+**Reference** — wiki/notes/standard-operating-procedures.md
+
+**Matches** `incident\.sh drain.*drained 0.*still spooled|drain stuck.*still spooled`
+
 ### Incident host mismatch
 
 `sop-incident-host-mismatch`
@@ -787,6 +866,22 @@ pinning which mechanism fired for a given bead needs the landing pass's own log
 **Reference** — wiki/notes/sp-9geby-landed-citation-mismatch.md
 
 **Matches** `closed .* 'landed'.*citing|citing.*(unrelated|wrong).*commit|orphan-work.*count unchanged`
+
+### Landing pass rebase survivors on2
+
+`sop-landing-pass-rebase-survivors-on2`
+
+**Symptom** — Landing pass duration cliffs non-linearly as open branch count grows (sp-uk1gc: 40->80 branches 72s->312s, 80->90 branches 312s->~3000s). Push-mode repos only.
+
+**Check** — grep -n 'rebase_survivors.*judged\[@\]' <landing-pass-script>. If that call sits inside the per-branch landing loop (not after it), this is the mechanism.
+
+**Fix** — Not yet implemented -- diagnosis only (sp-6ygx7), fix tracked as sp-4hs0i. Recommended: coalesce the sweep to run once at end of pass instead of after every landing (k*n -> n). A per-branch re-check already exists right before each landing, so one-generation-stale mid-pass is expected safe; builder must confirm.
+
+**Escalate** — Implementing is builder work on a branch through the normal gate, not Ops's to fix live. If this SOP already has a prior `sop.sh applied` record with check=pass for this bead, do not just re-confirm and re-decline again: mail the operator asking for direct builder dispatch instead of another Ops re-summon (already done -- see sp-9h2m5). Mailing alone did not stop the re-summon loop (4 Ops sessions on sp-4hs0i as of 2026-09-28T19:34Z): a `relates-to` dep to the decision bead does not affect `bd ready --claim`. Instead run `bd dep add <bead> --blocked-by <decision-bead-id>` (a real `blocks` dependency) so the bead is skipped by ready/claim until the decision bead closes. Check first whether that dependency already exists before re-adding it.
+
+**Reference** — sp-6ygx7, sp-4hs0i, sp-uk1gc, sp-qzw0t, sp-9h2m5, wiki/notes/sp-4hs0i-ops-summon-loop.md
+
+**Matches** `(rebase_survivors|rebase-survivors sweep|judged-survivor.*O\(n|landing pass.*O\(n\^?2\)|land_repo.*rebase_survivors)`
 
 ### Mail send kind question body format
 
@@ -891,6 +986,22 @@ File the builder-fix bead with plain `bd create --type bug` (no
 
 **Matches** `mail\.sh send.*(hang|timed? ?out|exit 124)|mail\.sh.*>?120s`
 
+### Operator side fix invisible to repo grep
+
+`sop-operator-side-fix-invisible-to-repo-grep`
+
+**Symptom** — A decision bead's close reason describes a systemd wrapper/cap (e.g. round.sh now runs in a scope with CPUQuota=1600%) that a repo grep finds zero trace of, and systemctl list-units shows no matching scope at check time. Both probes read as "the fix does not exist".
+
+**Check** — grep for the var/wrapper across the OPERATOR-SIDE tree too: grep -rn '<VAR>' $SPIRA_RUN/concierge-notes/*.sh -- Concierge scripts under $SPIRA_RUN are operator-side and outside the harness git tree ($SPIRA_HOME), so a harness-repo grep will never see them. A systemd-run --user --scope wrapper is also TRANSIENT: it exists only while the wrapped process runs, so a point-in-time list-units check between rounds is a coin flip, not evidence of absence.
+
+**Fix** — Do not reopen the decision bead on the grep alone. If found in concierge-notes: close reason is TRUE, describing operator-side infra; leave the decision bead closed. File/point at a separate follow-up bead for making the cap durable and in-repo if that is wanted -- do not conflate "exists but unversioned" with "does not exist".
+
+**Escalate** — If the wrapper cannot be found in either tree, or is found but demonstrably not applied to the running process (wraps wrong command, cgroup delegation silently not enforcing), that is a real gap -- file against the concurrency-cap bead.
+
+**Reference** — wiki/notes/sp-p5ifw-operator-side-fix.md
+
+**Matches** `closed claiming.*(CPUQuota|scope|wrapper).*fix but no such fix exists in code|grep.*ROUND_CPU_QUOTA|no such fix exists`
+
 ### Ops wall cannot write fix
 
 `sop-ops-wall-cannot-write-fix`
@@ -978,6 +1089,22 @@ Until answered, leave ORPHAN_WORK alone and keep the incident blocked on it.
 **Reference** — wiki/notes/orphaned-branches-archive-mechanism.md, sp-cc7gs, sp-vazlj
 
 **Matches** `SP_UNSENT_OLDEST_H remains high.*orphaned.*branch|sending\.sh.*blocked|round-[0-9]+.*no.*bead`
+
+### Oversized task wall stall
+
+`sop-oversized-task-wall-stall`
+
+**Symptom** — A bead's task needs several long serial non-interruptible steps (write a ~100+ line container-harness file, podman SEEN-RED run, SEEN-GREEN fix-assertion run, full suites.sh pass) exceeding one session's wall. Each session re-derives the same plan an earlier one already wrote down and is killed before committing, so the bead recurs unchanged.
+
+**Check** — Bead description/notes already contain a prior session's plan plus "not done here: no code was written or committed"; `bd show <bead>` shows repeated sessions, zero commits naming the bead.
+
+**Fix** — Decompose into checkpointed sub-beads: `bd create --parent <bead>` one per natural commit boundary. Chain with `bd dep add <stepN+1> <stepN>`. Copy the prior session's plan verbatim into each sub-bead -- do not re-derive it.
+
+**Escalate** — If the smallest checkpoint still can't fit, check first whether the floor cost is a real wall-clock wait (timer anchor, sleep, poll interval) rather than serial work. If so, prefer shortening/faking that interval on a test-only copy over raising the wall budget -- it reaches the elapsed state in seconds and matches law-unit-tests-run-under-a-second. Send the operator both options with that default per law-decisions-surface-immediately; only raise wall budget when no interval is fakeable. sp-k93ij/sp-n1sj8 (2026-09-28): operator confirmed the mock-clock default.
+
+**Reference** — wiki/notes/sp-lw2op-oversized-task-wall-stall.md
+
+**Matches** `(repeatedly killed at wall|killed at wall).*(no commit|neither committed)|re-deriv(e|ing|ed).*(same plan|same finding)`
 
 ### Partition label no match
 
@@ -1183,13 +1310,13 @@ if another ref-walking instrument does the same no-bead-is-orphan classification
 
 `sop-sopsh-applied-ledger-contention`
 
-**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Slow under contention, not a deadlock. Recurred sp-ejjiv, sp-ovng3, sp-oc2i6, sp-q1rln, and sp-40yup 2026-09-28 (reproduced inside the Ops session's own `applied` call for that bead, task bccl5hjo0, rc=0 after backgrounding).
+**Symptom** — `sop.sh applied` takes 60-120s+ or hits a caller's short `timeout` (124), possibly with NO entry appended. Recurred sp-ejjiv, sp-ovng3, sp-oc2i6, sp-q1rln, sp-40yup, sp-ql2wk, sp-krqu0 2026-09-28.
 
-**Check** — Two `applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms this (sp-ejjiv: 610/610).
+**Check** — Two `applied` calls on the same bead, short timeouts back to back; diff applied.jsonl line count before/after. Both timing out with no line added confirms slow-path, not deadlock.
 
-**Fix** — No lock or wiki-regen in `applied` (sp-ohnz7); cost is 3 bd/dolt subprocess calls, append is a cheap unlocked printf. Ops: background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`. If your wall forces you to move on, note the backgrounded PID/output path on the bead -- it finishes on its own. Builder: sp-h54i5's per-call trace instrumentation was closed as landed but is still NOT an ancestor of origin/main as of sp-40yup 2026-09-28 (closed-not-landed, outlived sp-lov93 too). Tracked at sp-oju37 -- check it lands before assuming the trace exists.
+**Fix** — ROOT CAUSE FOUND (sp-krqu0, 2026-09-28): NOT dolt/lock/host contention. sop.sh lines 406/660/799 use `[ -z "${raw//[[:space:]]/}" ]` to blank-check the full shelf JSON (~200-300KB) -- bash's glob-substitution builtin is near-quadratic on inputs with many whitespace runs, confirmed to scale a ~200KB shelf to 100s+ of wall time with zero external load. Fixed in commit 43e57c268 by replacing all three sites with `[[ "$raw" =~ ^[[:space:]]*$ ]]` (single regex match, O(n), ~12ms regardless of content) -- on branch spira/sp-krqu0, NOT YET landed on local/main as of sp-oc2i6 2026-09-28T~08:56Z (`git merge-base --is-ancestor 43e57c268 local/main` fails). Until it lands, production sop.sh still has the O(n^2) bug and `applied`/`write` calls against a shelf this size will still stall. Ops: until landed, background with `nohup ... </dev/null >out.log 2>&1 &`, never a short `timeout`; note the PID/output path on the bead if the wall forces a move-on. Once 43e57c268 is confirmed on local/main, re-test with a plain foreground call before reaching for nohup again.
 
-**Escalate** — different mechanism than bd/dolt latency -> amend here. A hang that never returns even after minutes backgrounded is new -- escalate.
+**Escalate** — a hang that persists even after 43e57c268 lands on local/main is a new mechanism -- escalate/re-diagnose, don't re-apply this FIX.
 
 **Reference** — wiki/notes/sop-sopsh-applied-ledger-contention.md
 
@@ -1629,15 +1756,15 @@ bd show <bead> | grep -E '\b(groom|incident|maechen-sweep|plan|spike|czar-trigge
 
 `sop-verdict-repeat-refused`
 
-**Symptom** — Re-run refused: SPIRA_VERDICT_REPEAT_CONSIDERED not set/too short. Recurrence suggests environmental, not code defect.
+**Symptom** — Re-run refused: SPIRA_VERDICT_REPEAT_CONSIDERED not set/too short.
 
 **Check** — First: `bd -C $SPIRA_DB show <branch-bead>` — if CLOSED OUTCOME:landed, confirm the cited commit is an ancestor of origin/main (`git merge-base --is-ancestor <sha> origin/main`). If landed, the incident is stale/moot — close citing that commit. Otherwise: aeons can't run testenv-batch.sh (no SSH); verify the first refusal mailed Concierge: `mail list concierge --all | grep -i <branch-or-suite>` and `grep -rli <branch-or-suite> $SPIRA_RUN/mail/concierge`. Confirmed ABSENT once (sp-0dgzr/sp-58zvx). Also check for a round-assembly bead — moot until the round assembles.
 
-**Fix** — Landed already: close citing the commit, nothing else. Not landed: re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a code fix (new tree = new key). Round-assembly member: close citing the round bead. Mail absent: file/link the mailer bug once, close citing it. Don't re-investigate the suite red — it belongs to the branch owner.
+**Fix** — landed/stale-recertified: close citing commit. Withdrawn: close citing ejection+dep, recertify is owner's job. Else: re-run with SPIRA_VERDICT_REPEAT_CONSIDERED="environmental: <reason>", or commit a fix. Mail absent: file mailer bug once. Don't re-investigate the suite red.
 
-**Escalate** — Never needs-ryan — mechanical. Missing mail is a mailer bug (file it), not an escalation.
+**Escalate** — never needs-ryan; missing mail is a mailer bug (file it).
 
-**Reference** — spira/testenv-batch.sh mailer. sp-58zvx. sp-fq4r9 (spira/sp-91hb5 landed at 3e0975592, incident was stale).
+**Reference** — sp-58zvx, sp-fq4r9, sp-uiypm, sp-df4c7 (spira/sp-qz2yj recertified 042f44952 at 10:05:02Z, after red 09:41:16Z on stale key fa6488f7; closed stale).
 
 **Matches** `repeat.refused|repeat-refused`
 

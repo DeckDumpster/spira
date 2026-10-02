@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-use spira_config::{json_schema, missing_from_retirement, validate};
+use spira_config::{is_secret_shaped, json_schema, missing_from_retirement, validate};
 
 fn manifest_path(rel: &str) -> String {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -41,6 +41,72 @@ fn stack_max_depths_schema_ceiling_is_four() {
     let schema = serde_json::to_value(json_schema()).expect("schema serializes");
     let field = &schema["definitions"]["SpiraSection"]["properties"]["stack_max_depth"];
     assert_eq!(field["maximum"], serde_json::json!(4.0), "{field}");
+}
+
+// spira.toml must never hold a secret (design's credential-storage requirement): a real
+// credential belongs in its own 0600 file, never a field this schema types and `export --sh`
+// can put into every shell's environment. This is the schema's half of that rule — a new
+// field named like one is refused here before it ever ships, rather than relying on someone
+// noticing at review time.
+//
+// GRANDFATHERED: `broker_gh_token` predates this rule and is not exported (see
+// `export_sh_omits_a_secret_shaped_field` in lib.rs's own tests); migrating it out of
+// `spira.toml` entirely is separate, coordinated work. No other field may be added to this
+// list — a new secret-shaped field is a defect, not a second exception.
+const GRANDFATHERED_SECRET_SHAPED_FIELDS: &[&str] = &["broker_gh_token"];
+
+fn collect_property_names(schema: &serde_json::Value, out: &mut BTreeSet<String>) {
+    match schema {
+        serde_json::Value::Object(obj) => {
+            if let Some(serde_json::Value::Object(props)) = obj.get("properties") {
+                for key in props.keys() {
+                    out.insert(key.clone());
+                }
+            }
+            for v in obj.values() {
+                collect_property_names(v, out);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for v in items {
+                collect_property_names(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn schema_refuses_new_secret_shaped_field_names() {
+    let schema = serde_json::to_value(json_schema()).expect("schema serializes");
+    let mut names = BTreeSet::new();
+    collect_property_names(&schema, &mut names);
+    assert!(names.len() > 20, "sanity: expected many property names, got {}", names.len());
+
+    let offenders: Vec<&String> = names
+        .iter()
+        .filter(|n| is_secret_shaped(n))
+        .filter(|n| !GRANDFATHERED_SECRET_SHAPED_FIELDS.contains(&n.as_str()))
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "secret-shaped field name(s) added to the schema: {offenders:?} — a credential \
+         belongs in its own file, never spira.toml"
+    );
+}
+
+// POSITIVE CONTROL: a planted secret-shaped name must be caught by the same walk, proving
+// the check above could have found a real offender instead of passing vacuously.
+#[test]
+fn schema_refuses_new_secret_shaped_field_names_positive_control() {
+    let mut names = BTreeSet::new();
+    names.insert("db_password".to_string());
+    let offenders: Vec<&String> = names
+        .iter()
+        .filter(|n| is_secret_shaped(n))
+        .filter(|n| !GRANDFATHERED_SECRET_SHAPED_FIELDS.contains(&n.as_str()))
+        .collect();
+    assert_eq!(offenders, vec!["db_password"]);
 }
 
 mod spira_section {

@@ -302,6 +302,8 @@ impl Run<'_> {
             ("reopen", "closed-without-commit") => {
                 if self.sv("bead_is_work_type", &s(&[&issue_type])).success() {
                     self.log(&format!("{f}: {id} closed with nothing committed — work type, left to the submitted conversion at teardown"));
+                } else if self.sv("bead_is_decision_type", &s(&[&issue_type])).success() {
+                    self.log(&format!("{f}: {id} closed with nothing committed — decision type, no commit expected, close stands"));
                 } else {
                     self.bead_reopen("closed-without-commit", &format!("Reopened by aeon.sh: closed without a commit naming {id} on {branch}. Closed is not landed."));
                     self.log(&format!("{f}: {id} REOPENED — closed with nothing committed"));

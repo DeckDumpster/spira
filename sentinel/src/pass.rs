@@ -592,6 +592,11 @@ impl<'a> Sentinel<'a> {
         self.check4(snap);
         if !self.cfg.skip_closed {
             self.check5(snap);
+            if self.lc == Lifecycle::On {
+                if let Some(rows) = self.lc_rows() {
+                    self.check5_lc(snap, &rows);
+                }
+            }
         }
         self.check6b();
         if !self.cfg.skip_reclaim {

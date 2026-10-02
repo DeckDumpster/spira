@@ -148,6 +148,58 @@ pub fn write_exe(path: impl AsRef<Path>, body: &str) {
         .unwrap_or_else(|e| panic!("chmod 755 {}: {e}", path.display()));
 }
 
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+thread_local! {
+    static ENV_HELD: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Process environment edits for one test, serialized across every test thread in the
+/// binary and undone on drop — including when the test panics. The only way test code in
+/// this workspace mutates the environment (spira-lint `env-set-var-leak`).
+#[must_use]
+pub struct EnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(String, Option<std::ffi::OsString>)>,
+}
+
+/// Hold the environment lock, then set (`Some`) or unset (`None`) each key.
+pub fn env(edits: &[(&str, Option<&str>)]) -> EnvGuard {
+    let lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    ENV_HELD.with(|h| h.set(true));
+    let mut saved = Vec::new();
+    for (k, v) in edits {
+        saved.push((k.to_string(), std::env::var_os(k)));
+        match v {
+            Some(v) => std::env::set_var(k, v),
+            None => std::env::remove_var(k),
+        }
+    }
+    EnvGuard { _lock: lock, saved }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for (k, v) in self.saved.drain(..).rev() {
+            match v {
+                Some(v) => std::env::set_var(&k, v),
+                None => std::env::remove_var(&k),
+            }
+        }
+        ENV_HELD.with(|h| h.set(false));
+    }
+}
+
+/// Held by a test that READS the environment without editing it, so no [`env`] edit lands
+/// under it. Reentrant: a no-op on a thread already holding an [`EnvGuard`].
+pub fn env_read() -> Option<std::sync::MutexGuard<'static, ()>> {
+    if ENV_HELD.with(|h| h.get()) {
+        None
+    } else {
+        Some(ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

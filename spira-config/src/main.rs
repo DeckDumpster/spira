@@ -78,9 +78,9 @@ use spira_config::locate::locate;
 use spira_config::repos::{Column, Registry};
 use spira_config::resolve::{resolve, ResolveError, ResolveInput, EXPORT_KEYS};
 use spira_config::{
-    convert, discover, export_sh, get_path, json_schema, load,
-    migrate_goal_to_id_prefix_in_file, set_path, shrink_reason, tail_refusals, unset_path,
-    validate, validate_strict, write_atomic, LocateOutcome, SpiraToml,
+    atomic_write_commit, atomic_write_start, backup_existing, convert, discover, export_sh,
+    get_path, json_schema, load, migrate_goal_to_id_prefix_in_file, set_path, shrink_reason,
+    tail_refusals, unset_path, validate, validate_strict, write_atomic, LocateOutcome, SpiraToml,
 };
 
 /// The message `locate`'s CLI surface and `read_input`'s no-file-argument path both print on
@@ -822,10 +822,10 @@ fn read_doc_or_default(file: &str) -> Result<SpiraToml, String> {
     }
 }
 
-/// ATOMIC (temp file + rename, [`write_atomic`]), not a plain `fs::write` — a reader racing
-/// this writer (`validate`, another `get`) must never observe a half-written document
-/// truncated by a writer killed mid-write. The same guarantee `convert`'s own writer below
-/// already has; `set`/`unset` lacked it until this bead (wave 4.7, sp-ksrss).
+/// Writes `doc` to `file` for `set`/`unset`: temp file, validate the temp file's own
+/// contents, back up whatever `file` currently holds, then rename — in that order, so a
+/// crash at any point before the rename leaves `file` exactly as it was, and a doc that
+/// fails to round-trip through validation is never renamed into place at all.
 fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
     let out = match toml::to_string_pretty(doc) {
         Ok(s) => s,
@@ -834,7 +834,23 @@ fn write_doc(file: &str, doc: &SpiraToml, verb: &str) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match write_atomic(Path::new(file), &out) {
+    let path = Path::new(file);
+    let pending = match atomic_write_start(path, &out) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("spira-config {verb}: {file}: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if let Err(e) = validate(&out) {
+        eprintln!("spira-config {verb}: {file}: refusing to write a document that fails to validate: {e}");
+        return ExitCode::FAILURE;
+    }
+    if let Err(e) = backup_existing(path) {
+        eprintln!("spira-config {verb}: {file}: could not back up existing file: {e}");
+        return ExitCode::FAILURE;
+    }
+    match atomic_write_commit(pending) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("spira-config {verb}: {file}: {e}");

@@ -679,6 +679,39 @@ cost 302 s against a 60 s pass budget (§5).
    env and body.
 9. **Summary lines**, identical to today's.
 
+**CHECK5-LC — the ON-path replacement, alongside CHECK 5, never instead of it** (audit;
+design sp-pswer.2: "design ON-path replacement for CHECK5 / groomer STATE sweeps"). CHECK 5
+and lib.sh's three groomer STATE sweeps (`detect_landed_but_open`,
+`detect_closed_unlanded_states`, `detect_false_blockers`) all prove the same three drifts —
+bd's own status disagreeing with what actually landed — from git log and a hand-maintained
+exclusion list, because `spira_lifecycle` had no equivalent record. It does now: a work
+bead's `spira-lc` row reaches `LANDED`/`SUPERSEDED`/`DROPPED`/`DONE` only through a
+proof-carrying transition (`content_on_base`, `delivered`, `done`, `supersede`, `drop`,
+never a bare bd close), so the row's own terminal-ness is the same fact CHECK 5 spends a
+`git log` walk proving, and comparing it against `bd`'s status is a lookup, not a walk.
+
+Only when `lifecycle_enforce` is ON (`lc_rows()`, the same one read CHECK 2/2c already share
+this pass), run unconditionally in `Lifecycle::On` right after CHECK 5, never gating CHECK
+5's own call — `spira/test-legacy-state-checks-ungated.sh` (sp-pswer.1) fails the build the
+day anyone tries. `lifecycle.rs`'s `landed_but_open` / `closed_unlanded` / `false_blockers`:
+
+1. **landed-but-open** — a work bead `bd` shows open/in_progress whose `spira-lc` row is
+   `LANDED`. `STATE-LC <id> landed-but-open — spira-lc row is LANDED; close it`.
+2. **closed-unlanded** — a work bead `bd` shows closed whose `spira-lc` row is *not* one of
+   the four terminal states (`BeadState::is_terminal`, lifecycle crate) — replacing the
+   legacy sweep's whole hand-maintained exclusion list (`supersedes`, `spira-dropped`,
+   `delivers:*`, `content-landed`) with the one property those all encode. `STATE-LC <id>
+   closed-unlanded — spira-lc row is <state>, not a terminal state`.
+3. **false-blockers** — an open/in_progress bead with a `blocks` dependency on one of (2)'s
+   ids. `STATE-LC <id> blocked-by-unlanded <blocker> — depends on <blocker>, which is closed
+   but its spira-lc row is not a terminal state`.
+
+Detect, never repair — the same posture as CHECK 2c's `INCONSISTENT` lines, for the same
+reason: this is the side-by-side comparison the epic's scope needs before either legacy path
+is retired, not a fourth writer racing `bd_close_on_land`. Summary: `CHECK5-LC: <n> state
+drift line(s) from spira-lc, alongside CHECK 5's own`; act `surfaced <n> CHECK5-LC line(s)`;
+silent when `<n>` is 0.
+
 **CHECK 6b — the Sending** (audit).
 
 1. **Skip test.** Skip only when the `sending.base` stamp matches every swept repository's

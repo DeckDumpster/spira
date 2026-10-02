@@ -519,7 +519,15 @@ fn script(s: &str) -> Command {
 }
 
 fn run_forge(forge_sh: &str, args: &[&str]) -> Result<String, String> {
+    run_forge_on(forge_sh, args, None)
+}
+
+/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
+fn run_forge_on(forge_sh: &str, args: &[&str], path: Option<&std::ffi::OsStr>) -> Result<String, String> {
     let mut cmd = script(forge_sh);
+    if let Some(p) = path {
+        cmd.env("PATH", p);
+    }
     for a in args {
         cmd.arg(a);
     }
@@ -1279,32 +1287,21 @@ mod tests {
         assert_eq!(cfg.forge_sh, "forge", "default must name the bare release binary, not forge.sh");
     }
 
-    // End-to-end: with SPIRA_FORGE unset and a PATH holding ONLY a stub named `forge`
-    // (never `forge.sh`, exactly what forge.sh's deletion left production with), the
-    // resolved default must actually reach it through `run_forge`/`script`.
+    // End-to-end: the default's bare name must reach a stub named `forge` (never `forge.sh`)
+    // on the child's PATH. PATH goes to the spawn only; mutating the process PATH raced the
+    // other tests' forks.
     #[test]
     fn default_forge_sh_actually_reaches_a_bare_forge_stub_on_path() {
-        let _lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _restore = EnvGuard { forge: env::var_os("SPIRA_FORGE"), path: env::var_os("PATH") };
-        env::remove_var("SPIRA_FORGE");
-
         let dir = scratch_dir("default-forge-stub");
         testkit::write_exe(
             dir.join("forge"),
             "#!/bin/sh\ncase \"$1\" in batch-ci-status) printf 'run-id: 1\\nrun-conclusion: success\\n' ;; *) exit 1 ;; esac\n",
         );
-        // PREPEND (never replace): other tests run concurrently in this binary and need the
-        // real PATH to keep resolving; the stub only needs to win the lookup for the bare
-        // name `forge` itself.
-        let real_path = env::var_os("PATH").unwrap_or_default();
-        let mut new_path = dir.path().as_os_str().to_os_string();
-        new_path.push(":");
-        new_path.push(&real_path);
-        env::set_var("PATH", &new_path);
+        let mut child_path = dir.path().as_os_str().to_os_string();
+        child_path.push(":");
+        child_path.push(env::var_os("PATH").unwrap_or_default());
 
-        let cfg = Config::from_env();
-        assert_eq!(cfg.forge_sh, "forge");
-        let out = run_forge(&cfg.forge_sh, &["batch-ci-status", "/tmp/r", "branch"]).expect("run_forge should reach the stub");
+        let out = run_forge_on("forge", &["batch-ci-status", "/tmp/r", "branch"], Some(&child_path)).expect("run_forge should reach the stub");
         assert!(out.contains("run-conclusion"), "unexpected output: {out:?}");
     }
 

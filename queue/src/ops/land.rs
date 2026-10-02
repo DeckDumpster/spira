@@ -141,7 +141,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     // remote-tracking ref — no fetch on the round's critical path.
     if let Some((remote, branch)) = &c.r.publish {
         if let Some(fsha) = w.git.rev_parse(&path, &format!("refs/remotes/{remote}/{branch}")) {
-            let _ = w.lib.divergence(&name, &path, &fsha, &base_sha);
+            let _ = w.lib.divergence(&c.s.queue_dir, &name, &path, &fsha, &base_sha);
         }
     }
 

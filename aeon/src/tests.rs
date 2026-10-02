@@ -273,7 +273,7 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce
     let mut vars: BTreeMap<String, String> = [
         ("SPIRA_RUN", f.run.display().to_string()),
         ("SPIRA_DB", "/db".to_string()),
-        ("SPIRA_ASK_LABEL", "needs-ryan".to_string()),
+        ("SPIRA_ASK_LABEL", "needs-ryan".to_string()), // literal-ok: fixture/fallback
         ("SPIRA_WORLD_STOP_LABEL", "world-stop".to_string()), // literal-ok: test fixture
         ("SPIRA_TESTDB_LIB", "spira/testdb.sh".to_string()),
         ("SPIRA_TRACE_MARK", "=== spira attempt".to_string()),
@@ -1064,6 +1064,23 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     assert!(!o.log.contains("summon jitter"));
 }
 
+#[test]
+fn an_enforced_sessions_cargo_still_goes_through_spira_admit_and_sccache() {
+    let f = fx("admit-enforced");
+    seed(&f, "sp-admenf");
+    let admit = stub(&f, "spira-admit");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], true, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    let get = |k: &str| env.get(k).map(String::as_str);
+    assert!(env.contains_key("SPIRA_WORK_BEAD_ID"), "the model must be restricted: {env:?}");
+    assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-admenf"));
+    assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT"), Some("http://192.168.1.56:9431"));
+    assert_eq!(get("SCCACHE_WEBDAV_KEY_PREFIX"), Some("/"));
+}
+
 /// THE POSITIVE CONTROL (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
 /// `self.conf` exactly like every other config-file-only key (`merge_resolved_config`),
 /// reaches an agent's own build as the two `SCCACHE_WEBDAV_*` vars — the fix for "a server
@@ -1141,7 +1158,7 @@ fn rapid_recur_parks_a_bead_after_three_consecutive_sub_10s_summons() {
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr"));
+    assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr")); // literal-ok: fixture/fallback
     assert!(w.labels.get("sp-rr").is_some_and(|l| l.contains("overseer")), "{:?}", w.labels.get("sp-rr"));
     assert!(w.notes.iter().any(|(id, n)| id == "sp-rr" && n.contains("RAPID-RECUR")), "{:?}", w.notes);
     assert!(o.log.contains("RAPID-RECUR: 3 consecutive sub-10s runs"), "{}", o.log);
@@ -1164,5 +1181,5 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), Box::new(|_, _, _| 1));
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
-    assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2"));
+    assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback
 }

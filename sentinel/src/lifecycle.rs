@@ -3,13 +3,14 @@
 //! sweep, and CHECK 4's poison hold. sp-i2m7y moved these onto spira-lc unconditionally;
 //! there is no bd-label mode to fall back to, and nothing here reads lifecycle_enforce.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
 use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
+use crate::store::Snapshot;
 
 /// The hold kind's serde tag and implied cause (spira-lc callers.rs `hold_cause`; lc.sh's
 /// `_lc_hold_kind_tag` / `_lc_hold_kind_cause` before sp-arpjt).
@@ -122,6 +123,87 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+/// Whether an `LcRow.state` tag is one of the machine's terminal states (`lifecycle::bead::
+/// BeadState::is_terminal`) — this crate depends on the tag strings `spira-lc list` emits,
+/// not the `lifecycle` crate itself.
+fn lc_terminal(state: &str) -> bool {
+    matches!(state, "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
+}
+
+/// CHECK5-LC (ON path, design sp-pswer.2 — "design ON-path replacement for CHECK5 / groomer
+/// STATE sweeps"): the landed-but-open shape lib.sh's `detect_landed_but_open` proves today
+/// by grepping every open bead's repo base for a commit subject naming it. A LANDED row is
+/// the same fact spira_lifecycle already carries — reached only via `content_on_base` or
+/// `delivered`, both proof-carrying transitions — so this is a lookup, not a git walk.
+pub fn landed_but_open(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
+    let lc: HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.bead_id.as_str(), r.state.as_str()))
+        .collect();
+    snap.list
+        .iter()
+        .filter(|b| matches!(b.status.as_str(), "open" | "in_progress"))
+        .filter(|b| work_types.iter().any(|t| t == b.typ()))
+        .filter(|b| lc.get(b.id.as_str()) == Some(&"LANDED"))
+        .map(|b| {
+            format!(
+                "STATE-LC {} landed-but-open — spira-lc row is LANDED; close it",
+                b.id
+            )
+        })
+        .collect()
+}
+
+/// CHECK5-LC: the closed-unlanded shape `detect_closed_unlanded_states` proves today from the
+/// base's commit graph plus a hand-maintained exclusion list (supersedes, spira-dropped,
+/// delivers:, content-landed) — every entry of which is one of the machine's own terminal
+/// states, so `is_terminal` alone replaces the whole list. Returns (id, lc_state) pairs; the
+/// ids are also `false_blockers`'s input.
+pub fn closed_unlanded(
+    snap: &Snapshot,
+    rows: &[LcRow],
+    work_types: &[String],
+) -> Vec<(String, String)> {
+    let lc: HashMap<&str, &str> = rows
+        .iter()
+        .map(|r| (r.bead_id.as_str(), r.state.as_str()))
+        .collect();
+    snap.list
+        .iter()
+        .filter(|b| b.status == "closed")
+        .filter(|b| work_types.iter().any(|t| t == b.typ()))
+        .filter_map(|b| {
+            let st = *lc.get(b.id.as_str())?;
+            (!lc_terminal(st)).then(|| (b.id.clone(), st.to_string()))
+        })
+        .collect()
+}
+
+/// CHECK5-LC: the false-blockers shape `detect_false_blockers` proves today by re-reading
+/// `detect_closed_unlanded_states`'s own ids as the blocker set — the same relation, against
+/// `closed_unlanded`'s ids instead.
+pub fn false_blockers(snap: &Snapshot, closed_unlanded_ids: &HashSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for b in &snap.list {
+        if !matches!(b.status.as_str(), "open" | "in_progress") {
+            continue;
+        }
+        for d in &b.dependencies {
+            if d.r#type.as_deref() != Some("blocks") {
+                continue;
+            }
+            let Some(t) = d.target() else { continue };
+            if closed_unlanded_ids.contains(t) {
+                out.push(format!(
+                    "STATE-LC {} blocked-by-unlanded {t} — depends on {t}, which is closed but its spira-lc row is not a terminal state",
+                    b.id
+                ));
+            }
+        }
+    }
+    out
 }
 
 impl<'a> Sentinel<'a> {
@@ -347,6 +429,30 @@ impl<'a> Sentinel<'a> {
             lines.len()
         ));
     }
+
+    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes CHECK 5 and
+    /// the groomer's STATE sweeps prove from git log / bd status, read instead from the row
+    /// `spira-lc list` already gave this pass. Advisory only, run alongside the legacy checks
+    /// so the two can be compared before either is retired (design sp-pswer.2).
+    pub fn check5_lc(&self, snap: &Snapshot, rows: &[LcRow]) {
+        let work_types = self.cfg.work_types.clone();
+        let mut lines = landed_but_open(snap, rows, &work_types);
+        let unlanded = closed_unlanded(snap, rows, &work_types);
+        let unlanded_ids: HashSet<String> = unlanded.iter().map(|(id, _)| id.clone()).collect();
+        lines.extend(unlanded.iter().map(|(id, st)| {
+            format!("STATE-LC {id} closed-unlanded — spira-lc row is {st}, not a terminal state")
+        }));
+        lines.extend(false_blockers(snap, &unlanded_ids));
+        if lines.is_empty() {
+            return;
+        }
+        self.h.print(&lines.join("\n"));
+        self.log(&format!(
+            "CHECK5-LC: {} state drift line(s) from spira-lc, alongside CHECK 5's own",
+            lines.len()
+        ));
+        self.act(&format!("surfaced {} CHECK5-LC line(s)", lines.len()));
+    }
 }
 
 fn sql_str(s: &str) -> String {
@@ -493,5 +599,103 @@ mod tests {
         let u = uuid4();
         assert_eq!(u.len(), 36);
         assert_eq!(&u[14..15], "4");
+    }
+
+    // ── CHECK5-LC (design sp-pswer.2) ──────────────────────────────────────────────────
+
+    fn lc5_snap() -> Snapshot {
+        Snapshot::from_json(
+            r#"[
+            {"id":"a","status":"open","issue_type":"task"},
+            {"id":"b","status":"in_progress","issue_type":"task"},
+            {"id":"c","status":"closed","issue_type":"task"},
+            {"id":"d","status":"closed","issue_type":"task"},
+            {"id":"e","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"c","type":"blocks"}]},
+            {"id":"f","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"d","type":"blocks"}]},
+            {"id":"g","status":"open","issue_type":"epic"}
+        ]"#,
+            None,
+        )
+    }
+
+    fn lc5_row(id: &str, state: &str) -> LcRow {
+        LcRow {
+            bead_id: id.into(),
+            state: state.into(),
+            ..Default::default()
+        }
+    }
+
+    fn wt() -> Vec<String> {
+        vec!["task".into(), "bug".into(), "feature".into()]
+    }
+
+    #[test]
+    fn landed_but_open_flags_only_a_landed_row_on_an_open_bead() {
+        let rows = vec![lc5_row("a", "LANDED"), lc5_row("b", "WORKING")];
+        assert_eq!(
+            landed_but_open(&lc5_snap(), &rows, &wt()),
+            vec!["STATE-LC a landed-but-open — spira-lc row is LANDED; close it".to_string()]
+        );
+    }
+
+    #[test]
+    fn landed_but_open_is_silent_when_bd_and_lc_agree() {
+        // SEEN RED: swapping b's row to LANDED (agreeing with a's already-planted offender)
+        // would add a second line — proving this fixture's silence on b is not a tautology.
+        let rows = vec![lc5_row("a", "LANDED"), lc5_row("b", "WORKING")];
+        assert!(!landed_but_open(&lc5_snap(), &rows, &wt())
+            .iter()
+            .any(|l| l.contains(" b ")));
+        let rows_seen_red = vec![lc5_row("a", "LANDED"), lc5_row("b", "LANDED")];
+        assert_eq!(landed_but_open(&lc5_snap(), &rows_seen_red, &wt()).len(), 2);
+    }
+
+    #[test]
+    fn landed_but_open_ignores_a_non_work_type() {
+        let rows = vec![lc5_row("g", "LANDED")];
+        assert!(landed_but_open(&lc5_snap(), &rows, &wt()).is_empty());
+    }
+
+    #[test]
+    fn closed_unlanded_flags_a_non_terminal_row_on_a_closed_bead() {
+        let rows = vec![lc5_row("c", "WORKING"), lc5_row("d", "LANDED")];
+        assert_eq!(
+            closed_unlanded(&lc5_snap(), &rows, &wt()),
+            vec![("c".to_string(), "WORKING".to_string())]
+        );
+    }
+
+    #[test]
+    fn closed_unlanded_accepts_every_terminal_state() {
+        for st in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
+            let rows = vec![lc5_row("c", st)];
+            assert!(
+                closed_unlanded(&lc5_snap(), &rows, &wt()).is_empty(),
+                "{st} should be accepted as a legitimate close"
+            );
+        }
+    }
+
+    #[test]
+    fn false_blockers_flags_only_the_dependent_of_a_closed_unlanded_blocker() {
+        let ids: HashSet<String> = ["c".to_string()].into();
+        assert_eq!(
+            false_blockers(&lc5_snap(), &ids),
+            vec!["STATE-LC e blocked-by-unlanded c — depends on c, which is closed but its spira-lc row is not a terminal state".to_string()]
+        );
+    }
+
+    #[test]
+    fn false_blockers_is_silent_once_the_blocker_is_no_longer_in_the_unlanded_set() {
+        // SEEN RED: e's dependency on c is real; only clearing c from the set (as landing c
+        // would) silences it — proving the filter is doing the work, not vacuously passing.
+        assert!(!false_blockers(&lc5_snap(), &HashSet::new())
+            .iter()
+            .any(|l| l.contains(" e ")));
+        let ids: HashSet<String> = ["c".to_string()].into();
+        assert!(false_blockers(&lc5_snap(), &ids)
+            .iter()
+            .any(|l| l.contains(" e ")));
     }
 }

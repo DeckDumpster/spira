@@ -2522,6 +2522,17 @@ bead_is_work_type() {
     landing-pass is-work-type "$1"
 }
 
+# bead_is_decision_type <issue-type> -> 0 if it is one of SPIRA_DECISION_TYPES: a bead whose
+# deliverable is the close itself, so a close with no commit is never reopened.
+bead_is_decision_type() {
+    local t="$1"
+    [ -n "$t" ] || return 1
+    case " ${SPIRA_DECISION_TYPES:-decision} " in
+        *" $t "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # bead_close_on_land — the only place a work bead is closed for a landed reason.
 #
 # A builder's own close of a work bead is converted back to open carrying

@@ -876,6 +876,17 @@ fn snapshot_stale_fails() {
     assert_eq!(out[0].level, Level::Fail);
 }
 
+#[test]
+fn snapshot_threshold_key_decides_between_fresh_and_stale() {
+    let f = Fake::default();
+    f.set("SPIRA_RUN", "/run");
+    f.set("SPIRA_SNAP_STALE_S", "7");
+    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 20);
+    assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Fail]);
+    f.file_ages.borrow_mut().insert(PathBuf::from("/run/cockpit.env"), 0);
+    assert_eq!(levels(&check_snapshot_fresh(&f)), vec![Level::Ok]);
+}
+
 // ============================================================================ operator channel
 
 #[test]

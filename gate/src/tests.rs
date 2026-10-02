@@ -3051,6 +3051,25 @@ fn release_bins_builds_the_judged_tree_in_the_gate_tree_after_a_pass() {
     assert!(!g.cmds.borrow().iter().any(|c| c.contains("--release")), "{:?}", g.cmds.borrow());
 }
 
+/// A cached PASS with --release-bins keeps its cached verdict and still builds the judged
+/// tree's release binaries in the gate tree.
+#[test]
+fn a_cached_pass_with_release_bins_still_builds_the_judged_tree() {
+    let f = Fake::new();
+    let k = key_for(&f, "", "none");
+    f.files.borrow_mut().insert(
+        PathBuf::from(format!("{RUN}/verdicts/{k}")),
+        key::render_entry("2026-09-28T00:00:00Z", 999_000, "aeon", "spira", BR, "test-a.sh"),
+    );
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("VERDICT=PASS reason=cached"), "{}", f.stderr());
+    let cmds = f.cmds.borrow().clone();
+    assert_eq!(cmds.last(), Some(&crate::engine::release_bins_command()), "{cmds:?}");
+    assert!(cmds.iter().all(|c| c.contains("--release")), "a cached verdict runs no trial: {cmds:?}");
+    assert!(f.checkouts.borrow().iter().any(|_| true), "the judged tree is checked out");
+    assert!(f.stderr().contains(&format!("--worktree {GATE_TREE}")), "{}", f.stderr());
+}
+
 /// No PASS, no release build; a failed release build is said out loud and the verdict stands.
 #[test]
 fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
@@ -3065,6 +3084,20 @@ fn release_bins_never_builds_for_a_red_tree_and_a_failed_build_is_loud() {
     }
     assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
     assert!(f.stderr().contains("the release build FAILED (exit 101)"), "{}", f.stderr());
+}
+
+/// A release build that wrote into a full disk or an exhausted quota is a failure even when
+/// cargo exited 0: the target is emptied and the message names EDQUOT/ENOSPC.
+#[test]
+fn release_bins_write_failure_is_loud_and_empties_the_target() {
+    let f = Fake::new();
+    for at in [MERGE_SHA, BR, BASE] {
+        f.unit_runs.borrow_mut().insert((at.to_string(), "build"), (0, "error: failed to write: Disk quota exceeded".into()));
+    }
+    assert_eq!(f.run_with(true), PASS, "{}", f.stderr());
+    assert!(f.stderr().contains("EDQUOT/ENOSPC"), "{}", f.stderr());
+    assert!(!f.stderr().contains("are in "), "{}", f.stderr());
+    assert!(f.cmds.borrow().last().unwrap().contains("find target/release -mindepth 1 -delete"), "{:?}", f.cmds.borrow());
 }
 
 /// sp-f4ig1-fix: a gate never loses its verdict to a compile-slot wait. Every command that can

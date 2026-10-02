@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 
 use super::{czar_ok, idents, landing_log, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
 use crate::model::{LandMode, Member};
+use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
 
 pub fn publish(w: &World, repo: Option<&str>) -> i32 {
@@ -65,11 +66,18 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         w.err(format!("queue.sh publish: cannot resolve {base}"));
         return FAIL;
     };
-    if !w.lib.divergence(&name, &path, &forge_sha, &head_sha) {
-        w.err(format!(
-            "queue.sh publish: {remote}/{forge_branch} is not an ancestor of {base} — refusing to publish (something else moved the forge)"
-        ));
-        return FAIL;
+    match w.lib.divergence(&c.s.queue_dir, &name, &path, &forge_sha, &head_sha) {
+        Divergence::Ancestor => {}
+        Divergence::Diverged(foreign) => {
+            w.err(format!(
+                "queue.sh publish: {remote}/{forge_branch} is not an ancestor of {base} — refusing to publish (something else moved the forge; foreign range {foreign})"
+            ));
+            return FAIL;
+        }
+        Divergence::CannotCheck(why) => {
+            w.err(format!("queue.sh publish: cannot check whether {remote}/{forge_branch} is an ancestor of {base} — refusing to publish: {why}"));
+            return FAIL;
+        }
     }
     if forge_sha == head_sha {
         let short: String = head_sha.chars().take(12).collect();
