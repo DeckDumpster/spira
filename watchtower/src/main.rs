@@ -288,4 +288,19 @@ mod tests {
         assert_eq!(getenv_i64("SPIRA_SNAP_STALE_S", 60), 99, "an explicit env override still wins over the registry");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn world_halted_guards_every_periodic_subcommand() {
+        let dir = testkit::TempDir::new("watchtower-halted");
+        let run = dir.join("run");
+        std::fs::create_dir_all(&run).unwrap();
+        assert!(!world_halted(&run), "no marker: the world is running");
+        std::fs::write(run.join("world.halted"), "").unwrap();
+        assert!(world_halted(&run), "marker present: halted");
+        let src = include_str!("main.rs");
+        for sub in ["throttle-check", "czar-outcome-check", "pr-stall-check", "disabled-timer-check"] {
+            let msg = format!("watchtower: {sub} skipped \u{2014} world is halted");
+            assert!(src.contains(&format!("\"{}\"", msg)), "{sub} must carry the halted-world skip");
+        }
+    }
 }
