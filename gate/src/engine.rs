@@ -577,7 +577,8 @@ impl<'w, W: World> Trial<'w, W> {
 
         // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
         if let Some(hit) = cached {
-            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
+            let mut _reservation = None;
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree, &mut _reservation) {
                 return e;
             }
             return hit;
