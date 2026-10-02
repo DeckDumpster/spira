@@ -384,21 +384,17 @@ mod tests {
 
     #[test]
     fn apply_mouse_mode_binds_drag_without_alternate_on() {
-        use std::os::unix::fs::PermissionsExt;
         use std::process::Command;
         if Command::new("tmux").arg("-V").output().is_err() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("sp-ihxxy-drag-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("sp-ihxxy-drag");
         let sock = format!("sp-ihxxy-{}", std::process::id());
         let wrap = dir.join("tmux-scratch");
-        fs::write(
+testkit::write_exe(
             &wrap,
-            format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
-        )
-        .unwrap();
-        fs::set_permissions(&wrap, fs::Permissions::from_mode(0o755)).unwrap();
+            &format!("#!/bin/sh\nTMUX_TMPDIR='{}' exec tmux -L {sock} \"$@\"\n", dir.display()),
+        );
         let tmux = Tmux::with_bin(wrap.to_string_lossy().to_string());
         assert!(tmux.run_ok(&["new-session", "-d", "-s", "x"]));
         let conf = Conf {
@@ -422,7 +418,6 @@ mod tests {
         let t = Tmux::with_bin(wrap.to_string_lossy().to_string());
         let after = t.stdout(&["list-keys", "-T", "root", "MouseDrag1Pane"]).unwrap_or_default();
         t.run_ok(&["kill-server"]);
-        let _ = fs::remove_dir_all(&dir);
         assert!(after.contains("mouse_any_flag"), "{after}");
         assert!(!after.contains("alternate_on"), "{after}");
     }
