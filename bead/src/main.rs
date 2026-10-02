@@ -184,7 +184,7 @@ fn chamber_home(home_arg: &str) -> String {
 }
 
 fn chamber_dir(home: &str) -> String {
-    format!("{}/chamber", chamber_home(home))
+    spira_config::chamber::chamber_dir(Path::new(&chamber_home(home))).to_string_lossy().into_owned()
 }
 
 /// `fayth_names`: every `*.fayth` basename under `<home>/chamber`, sorted — bash's own
