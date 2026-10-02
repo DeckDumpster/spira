@@ -21,10 +21,8 @@
 # the container and removed in a trap. The host's ~/.config/systemd/user is snapshotted
 # before and after; any change fails the test.
 #
-# STATUS: checkpoint 1 of 3 (sp-bz7uh.4). This commit is the container-harness skeleton only,
-# copied from test-cadence-tool.sh — TODO markers below mark where the real
-# spira-watch-notify.timer install + POSITIVE CONTROL + NextElapseUSec* assertions land in
-# checkpoints 2 and 3 (sp-bz7uh.5, sp-bz7uh.6). No podman run has been exercised yet.
+# STATUS: checkpoint 2 of 3. The positive control is in; the fixed-timer assertion lands in
+# checkpoint 3 (sp-bz7uh.6).
 #
 # tier: T1
 # covers: systemd/spira-watch-notify.timer
@@ -41,18 +39,17 @@ echo "test-watch-notify-rearm.sh"
 
 command -v podman >/dev/null 2>&1 || skip "podman not on PATH"
 
-TESTENV="$HERE/testenv.sh"
 CNAME="spira-testenv-watchnotify-$$"
 
 cleanup() {
-    bash "$TESTENV" down --name "$CNAME" --volumes >/dev/null 2>&1 || true
+    testenv container down --name "$CNAME" --volumes >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
-bash "$TESTENV" up --name "$CNAME" >&2
+testenv container up --name "$CNAME" >&2
 iszero "container up exits 0" "$?"
 
-if ! bash "$TESTENV" probe --name "$CNAME"; then
+if ! testenv container probe --name "$CNAME"; then
     bad "user systemd running in container" "probe failed"
     tl_summary
     exit
@@ -75,15 +72,39 @@ SC=(podman exec --user spirauser
 # written into this source file (inventory.sh refuses shipped home-directory literals).
 UDIR="$("${CEXEC[@]}" "$CNAME" bash -c 'printf "%s/.config/systemd/user" "$HOME"')"
 
-# TODO (sp-bz7uh.5): install the real systemd/spira-watch-notify.timer + .service as user
-# units in the container (no reboot), systemctl --user daemon-reload, restart the timer.
-#
-# TODO (sp-bz7uh.5): POSITIVE CONTROL FIRST — run the same install/reload/restart sequence
-# against an OnActiveSec-stripped copy of the timer and confirm it IS seen going
-# "active (elapsed)" with NextElapseUSecRealtime and NextElapseUSecMonotonic both empty.
-# Only once that is SEEN RED does an assertion about the fixed unit mean anything
-# (law-a-regression-test-must-be-seen-to-fail, law-absence-needs-a-positive-control).
-#
+# Units are rendered to a dummy absolute path: raw templates do not load. Intervals are
+# shrunk to 5s; the bug needs a timer that has already fired, so each variant is started,
+# allowed to fire, then daemon-reloaded and restarted.
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"; cleanup' EXIT INT TERM
+sed -e 's#@[A-Za-z_]*@#/opt/x#g' -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
+    -e '/^Standard\(Output\|Error\)=/d' "$HERE/../systemd/spira-watch-notify.service" \
+    > "$WORK/spira-watch-notify.service"
+sed -e 's/=5min$/=5s/' "$HERE/../systemd/spira-watch-notify.timer" > "$WORK/fixed.timer"
+grep -v '^OnActiveSec=' "$WORK/fixed.timer" > "$WORK/stripped.timer"
+
+# trigger_after_restart <timer file>: prints the `Trigger:` line after fire + reload + restart.
+trigger_after_restart() {
+    "${CEXEC[@]}" "$CNAME" mkdir -p "$UDIR"
+    podman cp "$WORK/spira-watch-notify.service" "$CNAME:$UDIR/spira-watch-notify.service"
+    podman cp "$1" "$CNAME:$UDIR/spira-watch-notify.timer"
+    podman exec --user root "$CNAME" chown -R spirauser "$UDIR"
+    "${SC[@]}" daemon-reload
+    "${SC[@]}" stop spira-watch-notify.timer
+    "${SC[@]}" start spira-watch-notify.timer
+    sleep 8
+    "${SC[@]}" daemon-reload
+    "${SC[@]}" restart spira-watch-notify.timer
+    sleep 1
+    "${SC[@]}" status spira-watch-notify.timer --no-pager | grep 'Trigger:'
+}
+
+echo
+echo "positive control — the OnActiveSec-stripped timer is seen to go red"
+red="$(trigger_after_restart "$WORK/stripped.timer")"
+case "$red" in *"Trigger: n/a"*) ok "stripped timer: Trigger: n/a after reload+restart (SEEN RED)";;
+    *) bad "stripped timer reproduces sp-0djeb" "got [$red]";; esac
+
 # TODO (sp-bz7uh.6): against the real (fixed) timer, assert
 #   systemctl --user show spira-watch-notify.timer \
 #       -p NextElapseUSecRealtime -p NextElapseUSecMonotonic
