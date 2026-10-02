@@ -121,7 +121,7 @@ impl World for Fake {
     fn deliberate_py(&self, _tabular: &str) -> String {
         self.deliberate_out.borrow().clone()
     }
-    fn bd_list_json(&self, _status: &str, _label: &str) -> String {
+    fn bd_list_json(&self, _status: &str, _label_pattern: &str) -> String {
         "[]".to_string()
     }
     fn git_branch_exists_matching(&self, _repo: &str, pattern: &str) -> bool {

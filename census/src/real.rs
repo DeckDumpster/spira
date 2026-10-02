@@ -200,13 +200,13 @@ impl World for Real {
         self.run_py("deliberate.py", &[], Some(tabular))
     }
 
-    fn bd_list_json(&self, status: &str, label: &str) -> String {
+    fn bd_list_json(&self, status: &str, label_pattern: &str) -> String {
         let db = self.env("SPIRA_DB").unwrap_or_default();
         let bd = self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
         Command::new(bd)
             .arg("-C")
             .arg(db)
-            .args(["list", "--status", status, "--label", label, "--json"])
+            .args(["list", "--status", status, "--label-pattern", label_pattern, "--limit", "0", "--json"])
             .stdin(Stdio::null())
             .stderr(Stdio::null())
             .output()

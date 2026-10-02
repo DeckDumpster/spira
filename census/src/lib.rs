@@ -71,17 +71,17 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     };
 
     let fold_map = w.census_class_fold_map();
-    let remedy_label = w.env("SPIRA_MAECHEN_REMEDY_LABEL").unwrap_or_default();
+    let covers_pattern = "covers:*";
 
     let suppressed: HashSet<String> = {
-        let json = w.bd_list_json("open,in_progress,blocked,deferred", &remedy_label);
+        let json = w.bd_list_json("open,in_progress,blocked,deferred", covers_pattern);
         w.covers_py(&json, &fold_map).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
     };
 
     let mut suppressed_closed: HashSet<String> = HashSet::new();
     let mut orphaned_by_class: BTreeMap<String, Vec<String>> = BTreeMap::new();
     {
-        let json = w.bd_list_json("closed", &remedy_label);
+        let json = w.bd_list_json("closed", covers_pattern);
         let closed_out = w.covers_closed_py(&json, &fold_map);
         let repo = w.repo_root();
         for line in closed_out.lines() {

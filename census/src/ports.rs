@@ -43,7 +43,7 @@ pub trait World {
     fn deliberate_py(&self, tabular: &str) -> String;
 
     // ---- bd, direct (a `list` read: bdq's guards apply only to create/reopen/update/close) ----
-    fn bd_list_json(&self, status: &str, label: &str) -> String;
+    fn bd_list_json(&self, status: &str, label_pattern: &str) -> String;
 
     // ---- git ----
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool;
