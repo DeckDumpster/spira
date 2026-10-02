@@ -3,7 +3,7 @@
 //! stdout/stderr/exit code. Replaces spira/mail.sh (sp-ooh1k).
 //!
 //!   mail send <mailbox> --from "<s>" --subject "<s>" [--kind K] [--urgent]
-//!                       [--default D] [--bead ID] [--digest] < body
+//!                       [--default D] [--class permissions|policy|destructive] [--bead ID] [--digest] < body
 //!   mail template <kind>
 //!   mail list <mailbox> [--unread]
 //!   mail read <mailbox> [<message>]
@@ -62,6 +62,7 @@ fn run_send(args: &[String]) -> ExitCode {
     let mut subject = String::new();
     let mut kind = String::new();
     let mut default = String::new();
+    let mut class = String::new();
     let mut bead = String::new();
     let mut urgent = false;
     let mut digest = false;
@@ -83,6 +84,10 @@ fn run_send(args: &[String]) -> ExitCode {
             }
             "--default" => {
                 default = args.get(i + 1).cloned().unwrap_or_default();
+                i += 2;
+            }
+            "--class" => {
+                class = args.get(i + 1).cloned().unwrap_or_default();
                 i += 2;
             }
             "--bead" => {
@@ -116,7 +121,7 @@ fn run_send(args: &[String]) -> ExitCode {
     };
 
     let bd = bd_cli(&env);
-    let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, bead: &bead, urgent, digest };
+    let send_args = SendArgs { mailbox: &mailbox, from: from.as_deref(), subject: &subject, kind: &kind, default: &default, class: &class, bead: &bead, urgent, digest };
     match cmds::send(&bd, &env, &send_args, body) {
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => fail(format!("send: {e}")),

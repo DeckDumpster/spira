@@ -453,4 +453,32 @@ is "SPIRA_MAIL_MUTE=1 sendmail: recorded in cur/ instead" "$((conc_cur_before + 
     "$(ls "$SPIRA_MAIL/concierge/cur" 2>/dev/null | wc -l | tr -d ' ')"
 
 echo
+echo "escalation class: an aeon's operator ask must declare one (law-escalate-decisions-not-problems)"
+CLS_BODY="$(printf '## Question\nwhich shape?\n\n## Default\nthe crate\n\n## Class basis\nneeds a credential\n')"
+CLS_NOBASIS="$(printf '## Question\nwhich shape?\n\n## Default\nthe crate\n')"
+cls_send() { # <subject> <class-args...> ; body on $CLS_STDIN
+    local subj="$1"; shift
+    printf '%s\n' "$CLS_STDIN" | BEAD_ID=sp-aaaaa run send operator --from "Builder <builder@spira>" \
+        --subject "$subj" --kind question --default "the crate" "$@" 2>&1
+}
+op_before="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+conc_before="$(ls "$SPIRA_MAIL/concierge/new" 2>/dev/null | wc -l | tr -d ' ')"
+CLS_STDIN="$CLS_BODY"
+out="$(cls_send "Which crate layout should gate-worker take" --class architecture)"
+want "architecture class: aeon is told it was routed to the concierge" "routed to the concierge" "$out"
+is "architecture class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+is "architecture class: concierge got it" "$((conc_before + 1))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+out="$(cls_send "Which verb layout should gate-worker take" )"
+want "no class: routed to the concierge" "routed to the concierge" "$out"
+is "no class: operator inbox unchanged" "$op_before" "$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l | tr -d ' ')"
+CLS_STDIN="$CLS_NOBASIS"
+out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"
+want "class without a basis section: routed to the concierge" "routed to the concierge" "$out"
+CLS_STDIN="$CLS_BODY"
+out="$(cls_send "Grant the aeon a deploy credential" --class permissions)"; rc=$?
+is "permissions ask exits 0" 0 "$rc"
+is "permissions ask reaches the operator" "$((op_before + 1))" "$(ls "$SPIRA_MAIL/operator/new" | wc -l | tr -d ' ')"
+is "permissions ask is not routed to the concierge" "$((conc_before + 3))" "$(ls "$SPIRA_MAIL/concierge/new" | wc -l | tr -d ' ')"
+
+echo
 tl_summary
