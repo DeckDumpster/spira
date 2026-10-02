@@ -843,6 +843,13 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
                 no_all_fallback: true,
                 no_nocov: false,
                 tiers: suite_select::select::parse_tiers(&s.tiers),
+                reach: match suite_select::reach::Reach::load(&repo.path) {
+                    Ok(r) => r,
+                    Err(r) => {
+                        stderr(&format!("batch: suite selection refused: {r}"));
+                        return Finish::fault(2, "select-refused", 0);
+                    }
+                },
             };
             let corpus = match suite_select::corpus::Corpus::load(&suite_dir) {
                 Ok(c) => c,
