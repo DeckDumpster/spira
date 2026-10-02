@@ -670,6 +670,121 @@ fn happy_path_legacy_close_is_converted_to_submitted() {
     assert!(o.log.contains("builder: sp-h closed a work bead directly — converted to submitted"));
 }
 
+/// The model's stand-in for a close with nothing committed: closes the bead, optionally
+/// recording a successor, writes a result record.
+fn closes_only(supersede: bool) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    Box::new(move |spec, w, _| {
+        let id = spec.env.get("BEAD_ID").unwrap().clone();
+        let mut w = w.lock().unwrap();
+        w.status.insert(id.clone(), "closed".into());
+        if supersede {
+            w.supersedes.insert(id);
+        }
+        crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
+        0
+    })
+}
+
+fn seed_typed(f: &Fx, id: &str, ty: &str, extra_labels: &[&str]) {
+    seed(f, id);
+    let mut w = f.w.lock().unwrap();
+    w.issue_type.insert(id.into(), ty.into());
+    w.labels.get_mut(id).unwrap().extend(extra_labels.iter().map(|l| l.to_string()));
+}
+
+#[test]
+fn a_work_bead_closed_with_an_empty_branch_stays_closed_and_is_not_converted() {
+    let f = fx("emptybranch");
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    assert_eq!(o.code, 0, "{}", o.log);
+    assert!(o.log.contains("carries no commit of its own ahead of"), "{}", o.log);
+    assert!(l_done(&o).contains("status=closed"), "{}", o.ledger);
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status["sp-e"], "closed");
+    assert!(!w.labels["sp-e"].contains("spira-submitted"));
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}", w.seam_calls);
+    assert!(!o.log.contains("REOPENED"), "{}", o.log);
+}
+
+#[test]
+fn a_superseded_work_bead_with_no_commit_stays_closed_and_is_not_converted() {
+    let f = fx("supersedednocommit");
+    seed(&f, "sp-s");
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(true));
+    assert!(o.log.contains("closed with nothing committed and NOT reopened — superseded"), "{}", o.log);
+    assert!(o.log.contains("closed a superseded work bead — not converted"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status["sp-s"], "closed");
+    assert!(!w.labels["sp-s"].contains("spira-submitted"));
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"));
+}
+
+#[test]
+fn a_delivers_labelled_work_bead_with_no_commit_stays_closed_and_is_not_converted() {
+    let f = fx("deliversaction");
+    seed_typed(&f, "sp-d", "task", &["delivers:action"]);
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    assert!(o.log.contains("closed with nothing committed and NOT reopened"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert_eq!(w.status["sp-d"], "closed");
+    assert!(!w.labels["sp-d"].contains("spira-submitted"));
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"));
+    assert!(!o.log.contains("REOPENED"), "{}", o.log);
+}
+
+#[test]
+fn a_non_work_bead_closed_with_nothing_committed_is_reopened_by_the_verdict() {
+    let f = fx("spike");
+    seed_typed(&f, "sp-k", "spike", &[]);
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    assert!(o.log.contains("sp-k REOPENED — closed with nothing committed"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[0] == "sp-k" && c.1[1] == "closed-without-commit"), "{:?}", w.seam_calls);
+    assert_eq!(w.status["sp-k"], "open");
+    assert!(!w.labels["sp-k"].contains("spira-submitted"));
+}
+
+fn l_done(o: &Outcome) -> String {
+    ledger_lines(o).into_iter().find(|l| l.starts_with("done ")).unwrap_or_default()
+}
+
+fn brief_fx(name: &str, extra: &[(&str, &str)]) -> String {
+    let f = fx(name);
+    std::fs::write(f.home.join("chamber/builder.md"), "sys\n<!-- task -->\nwork {{BEAD_ID}}\n{{DEADLINE}}\n{{PARK}}\n").unwrap();
+    seed(&f, "sp-b");
+    go(&f, "spira,plan", extra, false, Mode::Claim, BTreeMap::new(), closes_only(false));
+    std::fs::read_to_string(f.run.join("sp-b.task.md")).unwrap()
+}
+
+#[test]
+fn a_persona_with_a_wall_is_told_its_deadline_inside_the_window() {
+    let before = crate::util::now_epoch();
+    let task = brief_fx("walled", &[("FAYTH_TIMEOUT_SECONDS", "300")]);
+    assert!(!task.contains("{{"), "{task}");
+    assert!(task.contains("This session is killed at"), "{task}");
+    assert!(!task.contains("no wall-clock deadline"), "{task}");
+    let left: i64 = task.split("— ").filter_map(|p| p.split_once(" seconds from now")).filter_map(|(n, _)| n.trim().parse().ok()).next().expect(&task);
+    assert!(left > 0 && left <= 300, "{left}");
+    let epoch: i64 = task.split("echo $(( ").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()).expect(&task);
+    assert!(epoch > before && epoch <= crate::util::now_epoch() + 300, "{epoch}");
+}
+
+#[test]
+fn a_persona_without_a_wall_is_told_it_has_no_clock() {
+    let task = brief_fx("nowall", &[]);
+    assert!(!task.contains("{{"), "{task}");
+    assert!(task.contains("no wall-clock deadline"), "{task}");
+    assert!(!task.contains("This session is killed at"), "{task}");
+}
+
+#[test]
+fn the_brief_names_supersede_for_already_done_work() {
+    let task = brief_fx("alreadydone", &[]);
+    assert!(task.contains("bd -C /db supersede sp-b --with <successor-id>"), "{task}");
+    assert!(task.contains("Verify the successor actually landed"), "{task}");
+}
+
 // sp-1zxru: aeon-ledger.log since 2026-10-02T07:36Z showed sp-6a4rb/sp-0k18y/etc resumed
 // every ~75s by the SAME aeon — a session that ends in_progress with no commit was treated
 // exactly like a real failed attempt (charged, immediately reclaimable). The three tests

@@ -9,22 +9,15 @@
 > classified it `red-green (flake)`, distinct from `test-governor-deleted.sh`'s `red-red` on
 > the same run (a real defect, not a flake). Root cause not yet isolated.
 >
-> **Coverage lost — UC-aeon-execution-13** (close verdict; aeon.sh's post-teardown submitted
-> conversion, sp-qsona). This suite carried the only coverage, end to end through a real
-> `aeon.sh` teardown, for: a WORK bead closed with a commit → converted to `spira-submitted`;
-> a WORK bead closed with an empty branch → stays closed, not converted (sp-iqb8n); a
-> superseded or `delivers:`-labelled WORK bead → exempt from conversion; and a NON-work type
-> (spike) closed with nothing committed → still reopened by `close_verdict` regardless (the
-> case that flaked). `test-aeon-teardown-e2e.sh` deliberately does not cover disposition/close
-> logic (its own header defers that to T1 tables), and `test-incident-delivers-reopen-mismatch.sh`
-> covers only `incident.sh`'s own `delivers:note` stamping — neither picks any of this up. The
-> T1 (`close_verdict`/`delivers_verdict` direct-call table) and T2 (`verdict_committed` landref
-> walk) rows this file also carried (section 5's planned `DEMOTE-TO-T1` extraction) go with it;
-> they were never split into their own suite. Also lost: two of the three UC-aeon-execution-07
-> brief-rendering cases row 68 credits to this file (walled/no-wall persona deadline,
-> already-done brief) — `test-aeon-resume.sh`'s 7 runs are the only coverage left for that UC.
->
-> **Re-add** once the flake's root cause is found. Filed as **sp-jupa4** (P1).
+> **Coverage re-added — UC-aeon-execution-13 / -07** (sp-jupa4). The close verdict and
+> submitted conversion are covered in `aeon/src/tests.rs` (whole runs over an in-memory bd
+> world with real git: commit → submitted, empty branch → stays closed, superseded and
+> `delivers:` → exempt, spike with no commit → reopened) and `aeon/src/verdict.rs` (T1
+> `close_verdict`/`delivers_verdict`, T2 `verdict_committed`). The walled/no-wall deadline
+> and already-done briefs are whole-run tests in `aeon/src/tests.rs`. No shared bd or git
+> fixture is involved, so a loaded CI box cannot starve them. The flake itself (a 428s red
+> against a 172s green of the same tree) is consistent with load on the old suite's real bd,
+> but the CI log is not readable from an aeon, so that cause is unconfirmed.
 
 Part of [[test-plan-2026-09-23]], section 5. Area id `aeon-execution`; use-case ids are `UC-aeon-execution-NN`.
 
