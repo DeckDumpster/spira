@@ -283,7 +283,16 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
             });
         }
     }
-    let name = by_map.or_else(home).unwrap_or_else(|| {
+    let by_common = || {
+        let out = git(&canon, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).ok()?;
+        let common = fs::canonicalize(out.trim()).ok()?;
+        let owner = common.parent()?.to_path_buf();
+        cfg_repos?
+            .iter()
+            .find(|(_, s)| fs::canonicalize(&s.path).map(|p| p == owner).unwrap_or(false))
+            .map(|(n, _)| n.clone())
+    };
+    let name = by_map.or_else(by_common).or_else(home).unwrap_or_else(|| {
         canon
             .file_name()
             .map(|f| f.to_string_lossy().into_owned())
