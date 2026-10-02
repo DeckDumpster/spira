@@ -591,6 +591,9 @@ build or locate the binary — the testenv container already builds the workspac
   re-checked individually (gone, holder, content) before its replay, and branches walked
   after the last landing already sit on the latest base (the ancestry skip). Log wording:
   "…after this pass's landings".
+  A survivor whose CERTIFIED record matched its tip before a clean rebase is re-marked
+  CERTIFIED at the new tip (reason `carried`), so the next pass lands it instead of
+  re-queueing it to gate-worker; conflicted re-cuts are never carried.
 - **D4 — the prune (§5, sp-bauwt)**: never deletes a LANDED record whose tip is not on the
   forge; absorbs the `landstate-keep-unpublished` override, generalised from the home
   repository's `origin/main` to each repository's forge ref.

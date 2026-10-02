@@ -855,11 +855,17 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: {} now contains every change on {br} — nothing left to rebase", w.base));
                 continue;
             }
+            let old_tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
+            let certified = self.files.land_state(id).is_some_and(|ls| ls.state == "CERTIFIED" && ls.tip == old_tip);
             let rb = self.lib.rebase(br, &w.base_fq, &repo.path, name);
             if rb.ok {
                 self.swept.set(self.swept.get() + 1);
                 let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-                self.lib.land_mark(id, "REBASED", &tip, "swept");
+                if certified {
+                    self.lib.land_mark(id, "CERTIFIED", &tip, "carried");
+                } else {
+                    self.lib.land_mark(id, "REBASED", &tip, "swept");
+                }
                 self.log(&format!("CHECK6 {id}: rebased {br} onto {} after this pass's landings — still landable", w.base));
                 continue;
             }

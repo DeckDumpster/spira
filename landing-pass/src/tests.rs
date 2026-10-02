@@ -1083,6 +1083,26 @@ fn prune_with_a_real_checkout_still_prunes_a_truly_branchless_closed_bead() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
+fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
+    let h = H::new(LandMode::Push);
+    h.git.tree.set(true);
+    for (i, id) in ["sp-b", "sp-c", "sp-d"].iter().enumerate() {
+        let mut b = h.bead(id, "closed", &[]);
+        b.priority = i as i64;
+        h.beads.rows.borrow_mut().insert(id.to_string(), b);
+        h.git.add(&format!("spira/{id}"), &format!("t{i}"));
+    }
+    let nv = "gate: VERDICT=NO_VERDICT reason=lock branch=b repo=spira suite=-\n";
+    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (75, nv.into()));
+    h.tools.gates.borrow_mut().insert("spira/sp-c".into(), (75, nv.into()));
+    crate::landstate::land_mark(&h.s.run, "sp-b", "CERTIFIED", "t0", "", "");
+    h.run();
+    assert!(h.lib.has("land_mark sp-b CERTIFIED t0 carried"), "a certified survivor keeps its verdict");
+    assert!(!h.lib.has("land_mark sp-b REBASED"));
+    assert!(h.lib.has("land_mark sp-c REBASED t1 swept"), "an uncertified survivor is only marked rebased");
+}
+
+#[test]
 fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     let h = H::new(LandMode::Push);
     h.git.tree.set(true);
