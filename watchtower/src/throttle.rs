@@ -111,7 +111,7 @@ pub fn is_deliberate_stall(async_on_main_count: u32) -> bool {
     async_on_main_count != 2
 }
 
-fn disp(v: Option<i64>) -> String {
+pub fn disp(v: Option<i64>) -> String {
     v.map(|n| n.to_string()).unwrap_or_else(|| "?".into())
 }
 
