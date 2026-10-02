@@ -235,3 +235,37 @@ fn two_workers_at_different_slots_each_gate_a_job_exactly_once() {
         assert_eq!(q.find("r", &format!("spira/sp-{n}"), &format!("t{n}")), Some(Where::Done));
     }
 }
+
+#[test]
+fn a_superseded_release_stops_after_its_in_flight_job() {
+    let d = tmp("stale");
+    let q = GateQueue::new(&d);
+    for n in ["a", "b"] {
+        q.enqueue(&Job::new("r", &format!("spira/sp-{n}"), &format!("sp-{n}"), "t1", false)).unwrap();
+    }
+    let g = Scripted(RefCell::new(vec![(0, String::new()), (0, String::new())]));
+    let w = Worker { queue: &q, gate: &g, branches: &Tip(Some("t1".into())), clock: &Tick(AtomicU64::new(0)), lock_wait: 1, log: &|_| {}, slot: 0 };
+    let calls = std::cell::Cell::new(0);
+    let filed = w.drain_while(&|| {
+        calls.set(calls.get() + 1);
+        calls.get() == 1
+    });
+    assert_eq!(filed, 1);
+    assert_eq!(g.0.borrow().len(), 1, "the second job must not be gated");
+}
+
+#[test]
+fn release_currency_follows_the_sibling_current_link() {
+    let d = tmp("rel");
+    let old = d.join("old");
+    let new = d.join("new");
+    std::fs::create_dir_all(&old).unwrap();
+    std::fs::create_dir_all(&new).unwrap();
+    assert!(release_is_current(&old), "no current link: a dev checkout is never superseded");
+    std::os::unix::fs::symlink("old", d.join("current")).unwrap();
+    assert!(release_is_current(&old));
+    assert!(!release_is_current(&new));
+    std::fs::remove_file(d.join("current")).unwrap();
+    std::os::unix::fs::symlink("new", d.join("current")).unwrap();
+    assert!(!release_is_current(&old));
+}

@@ -44,6 +44,18 @@ pub fn acquire_slot(dir: &Path, n: usize) -> Option<(usize, std::fs::File)> {
     None
 }
 
+/// Whether `home` is still the release its siblings' `current` link names. A home with no
+/// sibling `current` link (a dev checkout) is never superseded.
+pub fn release_is_current(home: &Path) -> bool {
+    let Some(parent) = home.parent() else { return true };
+    let link = parent.join("current");
+    match (std::fs::canonicalize(&link), std::fs::canonicalize(home)) {
+        (Ok(cur), Ok(me)) => cur == me,
+        (Err(_), _) => true,
+        (Ok(_), Err(_)) => false,
+    }
+}
+
 pub trait Gate {
     fn gate(&self, branch: &str, repo: &str, lock_wait: &str, bead: &str) -> (i32, String);
 }
@@ -95,9 +107,16 @@ impl Worker<'_> {
     /// were filed. Concurrency across the queue comes from running several `Worker`s (one
     /// per process, one per slot) at once, never from parallelizing inside one drain.
     pub fn drain(&self) -> usize {
+        self.drain_while(&|| true)
+    }
+
+    /// `drain`, but checks `keep_going` before each claim: a worker whose release has been
+    /// superseded finishes its in-flight job and exits, so the next tick runs the new code.
+    pub fn drain_while(&self, keep_going: &dyn Fn() -> bool) -> usize {
         self.queue.recover(self.slot);
         let mut filed = 0;
-        while let Some(job) = self.queue.claim(self.slot) {
+        while keep_going() {
+            let Some(job) = self.queue.claim(self.slot) else { break };
             if self.run(&job) {
                 filed += 1;
             }
