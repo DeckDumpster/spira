@@ -339,6 +339,23 @@ pub fn should_retry(rc: i32, try_n: u32, max_tries: u32, stderr_has_invalid_conn
     rc != 0 && try_n < max_tries.max(1) && stderr_has_invalid_connection
 }
 
+const READ_VERBS: &[&str] = &["show", "list", "count", "ready", "blocked", "query", "search", "stats", "status", "children", "dep", "graph", "find", "export"];
+
+/// A read may be retried on any dropped connection. A write only when bd never got as far as
+/// the statement ("failed to open database"), so it cannot have committed.
+pub fn retryable(args: &[String], stderr: &str) -> bool {
+    if !stderr.contains("invalid connection") {
+        return false;
+    }
+    let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
+    READ_VERBS.contains(&verb) || stderr.contains("failed to open database")
+}
+
+/// Sleep before attempt `try_n + 1`: base, then doubling.
+pub fn backoff_ms(base_ms: u64, try_n: u32) -> u64 {
+    base_ms.saturating_mul(1u64 << (try_n.saturating_sub(1)).min(10))
+}
+
 /// A repo registry built the same way `spira-config`'s own CLI builds one (see
 /// `spira-config/src/main.rs::repo_registry`): `$SPIRA_REPO_MAP`/`$SPIRA_HOME`/`$SPIRA_REPO`/
 /// `$SPIRA_REPO_DERIVED`/`$SPIRA_HOME_REPO` read straight out of an env map the caller
@@ -557,6 +574,22 @@ mod tests {
         assert!(!should_retry(0, 1, 2, true), "success never retries");
         assert!(!should_retry(1, 2, 2, true), "budget exhausted");
         assert!(!should_retry(1, 1, 2, false), "a different error never retries");
+    }
+
+    #[test]
+    fn retryable_reads_on_any_drop_writes_only_before_the_statement() {
+        let a = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert!(retryable(&a(&["show", "x"]), "Error: invalid connection"));
+        assert!(retryable(&a(&["--json", "count"]), "Error: invalid connection"));
+        assert!(!retryable(&a(&["close", "x"]), "Error: invalid connection"));
+        assert!(retryable(&a(&["close", "x"]), "failed to open database: invalid connection"));
+        assert!(!retryable(&a(&["show", "x"]), "bead not found"));
+    }
+
+    #[test]
+    fn backoff_doubles() {
+        assert_eq!(backoff_ms(1000, 1), 1000);
+        assert_eq!(backoff_ms(1000, 2), 2000);
     }
 
     #[test]
