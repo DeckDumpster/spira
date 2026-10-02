@@ -106,12 +106,10 @@ fn world_status_refuses_named_when_the_only_config_is_malformed() {
 /// bus, `world status` names that, never classifying the timers as MISSING.
 #[test]
 fn world_status_refuses_when_the_user_bus_is_unreachable() {
-    use std::os::unix::fs::PermissionsExt;
     let tmp = testkit::TempDir::new("wf3gc-world-status-no-bus");
     let (home, harness_home, _run) = build_fixture(&tmp);
     let stub = tmp.join("systemctl");
-    std::fs::write(&stub, "#!/bin/sh\necho 'Failed to connect to user scope bus via local transport' >&2\nexit 1\n").unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    testkit::write_exe(&stub, "#!/bin/sh\necho 'Failed to connect to user scope bus via local transport' >&2\nexit 1\n");
     let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
 
     let out = Command::new("env")
