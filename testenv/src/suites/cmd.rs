@@ -4,7 +4,7 @@
 use std::collections::BTreeSet;
 use std::fs;
 
-use super::model::{self, Entry, LandState, LastResult, Runs, Unreadable};
+use super::model::{self, Entry, LastResult, Runs, Unreadable};
 use super::ports::{FlakeFiling, World};
 use crate::suite::{SuiteState, SuiteStates};
 
@@ -481,34 +481,11 @@ pub fn lint(w: &World) -> i32 {
 pub fn hygiene(w: &World) -> i32 {
     let states = lifecycle(w);
     let now = w.clock.now();
-    let (mut activated, mut mailed) = (0, 0);
+    let mut mailed = 0;
     let from = "Suite hygiene <hygiene@spira>";
     for r in states.rows().filter(|r| r.state == SuiteState::Quarantined) {
         let s = &r.suite;
-        let clean_f = w.s.state_file(s, "clean-runs");
         let mailed_f = w.s.state_file(s, "maxage-mailed");
-        // -- reactivation: the bead LANDED and the suite ran clean often enough --
-        if !r.bead.is_empty() && model::valid_suite_name(&r.bead) {
-            let landed = model::read_text(&w.s.landstate.join(&r.bead))
-                .and_then(|t| LandState::parse(&t))
-                .is_some_and(|l| l.landed());
-            let cr = model::parse_clean_runs(model::read_text(&clean_f).as_deref());
-            if landed && cr >= w.s.clean_runs {
-                match transition(w, &Transition::Activate, s, None) {
-                    Ok(branch) => {
-                        let _ = fs::remove_file(&clean_f);
-                        let _ = fs::remove_file(&mailed_f);
-                        w.out(format!("hygiene: {s} reactivated (bead {} LANDED, {cr} clean runs)", r.bead));
-                        w.out(format!("hygiene: {s} activation submitted on {branch}"));
-                        let body = format!("## Note\n{s} was reactivated after LANDING with {cr} consecutive clean runs.\n");
-                        let _ = w.mail.send_operator(from, &format!("{s} reactivated"), Some(&r.bead), &body);
-                        activated += 1;
-                        continue;
-                    }
-                    Err(_) => w.err(format!("hygiene: {s} is due for reactivation but the activate transition failed")),
-                }
-            }
-        }
         // -- max age: mail the operator once per quarantine period --
         let Some(since) = model::parse_iso_utc(&r.since) else {
             continue;
@@ -527,6 +504,6 @@ pub fn hygiene(w: &World) -> i32 {
             }
         }
     }
-    w.out(format!("hygiene: {activated} reactivated, {mailed} max-age mailed"));
+    w.out(format!("hygiene: {mailed} max-age mailed"));
     OK
 }

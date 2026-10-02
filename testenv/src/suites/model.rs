@@ -188,37 +188,6 @@ pub fn flakeobs_in_window(obs: &[FlakeObs], now: u64, window: u64) -> u64 {
     seen.len() as u64
 }
 
-/// `STATE/<suite>.clean-runs`: one integer; unreadable or malformed = 0.
-pub fn parse_clean_runs(text: Option<&str>) -> u64 {
-    let t = text.unwrap_or("").trim();
-    if t.is_empty() || !t.bytes().all(|b| b.is_ascii_digit()) {
-        return 0;
-    }
-    t.parse().unwrap_or(0)
-}
-
-/// `$LANDSTATE/<id>`: `<STATE> <tip|none> <epoch> [reason…]` (lib.sh land_mark).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LandState {
-    pub state: String,
-    pub tip: String,
-    pub at: u64,
-}
-
-impl LandState {
-    pub fn parse(text: &str) -> Option<LandState> {
-        let mut f = text.split_whitespace();
-        Some(LandState {
-            state: f.next()?.to_string(),
-            tip: f.next().unwrap_or("none").to_string(),
-            at: f.next().and_then(|a| a.parse().ok()).unwrap_or(0),
-        })
-    }
-    pub fn landed(&self) -> bool {
-        self.state == "LANDED"
-    }
-}
-
 // ------------------------------------------------------------------ suite-state rewrite
 
 /// A new row for `spira/suite-state`.
@@ -393,17 +362,6 @@ mod tests {
         assert_eq!(flakeobs_in_window(&obs, 300, 250), 3, "the cutoff is inclusive");
         assert_eq!(flakeobs_in_window(&obs, 300, 1000), 3);
         assert_eq!(flakeobs_in_window(&[], 300, 1000), 0);
-    }
-
-    #[test]
-    fn clean_runs_and_land_state() {
-        assert_eq!(parse_clean_runs(Some("12\n")), 12);
-        assert_eq!(parse_clean_runs(Some("x")), 0);
-        assert_eq!(parse_clean_runs(None), 0);
-        let l = LandState::parse("LANDED abc 1790 merged").unwrap();
-        assert!(l.landed());
-        assert!(!LandState::parse("GATED abc 1 BASE_FAIL:base-red").unwrap().landed());
-        assert_eq!(LandState::parse(""), None);
     }
 
     #[test]

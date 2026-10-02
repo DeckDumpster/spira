@@ -23,9 +23,7 @@ pub struct Settings {
     pub suite_state_file: String,
     pub flake_at: u64,
     pub flake_window: u64,
-    pub clean_runs: u64,
     pub max_age: u64,
-    pub landstate: PathBuf,
     /// SPIRA_AEON is non-empty: transitions are refused.
     pub aeon: bool,
     pub git_name: String,
@@ -79,16 +77,7 @@ impl Settings {
                 .unwrap_or_else(|| "spira/suite-state".into()),
             flake_at: num("SPIRA_FLAKE_QUARANTINE_AT", Some("spira.flake_quarantine_at"), 2),
             flake_window: num("SPIRA_FLAKE_WINDOW", Some("spira.flake_window"), 604_800),
-            clean_runs: num(
-                "SPIRA_QUARANTINE_CLEAN_RUNS",
-                Some("spira.quarantine_clean_runs"),
-                10,
-            ),
             max_age: num("SPIRA_QUARANTINE_MAX_AGE", Some("spira.quarantine_max_age"), 604_800),
-            landstate: src
-                .get("LANDSTATE", None)
-                .map(PathBuf::from)
-                .unwrap_or_else(|| run.join("landstate")),
             aeon: src.get("SPIRA_AEON", None).is_some(),
             git_name: src.get("SPIRA_GIT_NAME", None).unwrap_or_else(|| "spira".into()),
             git_email: src
@@ -247,13 +236,12 @@ mod tests {
         assert_eq!(s.priority, 1);
         assert_eq!(s.flake_at, 2, "a malformed value falls back to the default");
         assert_eq!(s.gate_list, PathBuf::from("/h/spira/gate-suites"));
-        assert_eq!(s.landstate, PathBuf::from("/run/x/landstate"));
         assert_eq!(s.lifecycle_file(), PathBuf::from("/h/spira/suite-state"));
         assert!(s.aeon);
         let none = |_: &str| None;
         let d = Settings::load(&Source { env: &none, config: None }, Path::new("/h"));
         assert_eq!(d.priority, 3, "conf.sh's default, not suites.sh's shadowed 2");
-        assert_eq!((d.flake_window, d.clean_runs, d.max_age), (604_800, 10, 604_800));
+        assert_eq!((d.flake_window, d.max_age), (604_800, 604_800));
         assert!(!d.aeon);
         let home = |k: &str| (k == "SPIRA_HOME").then(|| "/prod/spira".to_string());
         let h = Settings::load(&Source { env: &home, config: None }, Path::new("/h"));

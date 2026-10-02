@@ -47,8 +47,8 @@ literally named `suites`, write `testenv -- suites` (the parser already ends opt
 4. **Change a suite's lifecycle only through the queue** (`quarantine|disable|activate`):
    the state file is tracked code read from the tree under test, so a change to it is a
    commit on a `spira-suite-state/*` branch, certified and landed by `queue submit`.
-5. **Keep hand-placed quarantines honest** (`hygiene`): lift one whose bead has landed and
-   whose suite has run clean N times; mail the operator once when one outlives its max age.
+5. **Keep hand-placed quarantines honest** (`hygiene`): mail the operator once when one
+   outlives its max age. It never lifts one.
 
 ## 2. Contract
 
@@ -128,9 +128,8 @@ list is unreadable the whole block is the one line
 at or over the threshold, then `observe-flake: <suite> reported (bead: <id>)` or
 `observe-flake: <suite> crossed threshold but the finding could not be filed`.
 
-**`hygiene`** — per suite `hygiene: <s> reactivated (bead <b> LANDED, <n> clean runs)` and
-`hygiene: mailed operator about <s> (age <n>s)`; last line
-`hygiene: <a> reactivated, <m> max-age mailed`.
+**`hygiene`** — per suite `hygiene: mailed operator about <s> (age <n>s)`; last line
+`hygiene: <m> max-age mailed`.
 
 **`lint`** (§6b, sp-9gd4e; replaces `spira/suite-state.sh`'s `suite_state_lint` +
 `suite_state_parse`, deleted) — diagnostics on **stderr**, one per violation:
@@ -164,8 +163,7 @@ empty rather than a fault).
 | `<harness>/$SPIRA_SUITE_STATE_FILE` (default `spira/suite-state`) | list, corpus, hygiene | — (never the working tree; §6 D3) |
 | `STATE/<suite>.result` | list, status | nothing any more (§7 F1) |
 | `STATE/<suite>.flakeobs` | observe-flake | observe-flake (append) |
-| `STATE/<suite>.clean-runs` | hygiene | hygiene (removed on reactivation); no producer (§7 F2) |
-| `STATE/<suite>.maxage-mailed` | hygiene | hygiene (created after a sent mail; removed on reactivation) |
+| `STATE/<suite>.maxage-mailed` | hygiene | hygiene (created after a sent mail) |
 | `$LANDSTATE/<bead>` (default `$SPIRA_RUN/landstate`) | hygiene | — (lib.sh `land_mark`) |
 | home repo: `refs/heads/spira-suite-state/<suite-sans-.sh>-<YYYYmmddTHHMMSSZ>` | — | transitions (created, never moved) |
 | home repo objects: one blob, one tree, one commit | — | transitions |
@@ -193,7 +191,6 @@ Precedence as testenv's own (§2.5 of DESIGN.md): environment, then spira.toml t
 | `SPIRA_SUITE_STATE_FILE` | `spira.suite_state_file` | `spira/suite-state` |
 | `SPIRA_FLAKE_QUARANTINE_AT` | `spira.flake_quarantine_at` | 2 |
 | `SPIRA_FLAKE_WINDOW` | `spira.flake_window` | 604800 |
-| `SPIRA_QUARANTINE_CLEAN_RUNS` | `spira.quarantine_clean_runs` | 10 |
 | `SPIRA_QUARANTINE_MAX_AGE` | `spira.quarantine_max_age` | 604800 |
 | `SPIRA_INCIDENT` | — | `incident.sh` on PATH (sp-gypjk) |
 | `SPIRA_MAIL_CMD` (new) | — | `mail` on PATH (sp-gypjk) |
@@ -240,9 +237,6 @@ struct LastResult { status: String, at: u64, secs: String, fingerprint: String }
 /// STATE/<suite>.flakeobs — one `<epoch> <run_id>` per line, append-only.
 struct FlakeObs { at: u64, run_id: String }
 /// The count that matters: distinct run ids with at >= now - window.
-
-/// STATE/<suite>.clean-runs — one integer; unreadable/malformed = 0.
-struct CleanRuns(u64);
 
 /// A spira/suite-state row (testenv::suite::SuiteStateRow, shared with the runner):
 /// `<suite> | <state> | <since UTC> | <bead> | <reason>`.
@@ -348,15 +342,6 @@ incident.sh, mail, host-check.sh and the queue (whole programs, §5).
   plumbing on `<base>` (default: the landing ref, not whatever HEAD happened to be) in the
   home repository — the one `queue submit` resolves, so the branch is where the queue
   looks for it. `--base` overrides.
-* **D3 — hygiene lifts a quarantine through the queue.** suites.sh's reactivation rewrote
-  the working-tree `spira/suite-state` in place, uncommitted: invisible to the gate (which
-  reads the tree under test) and a dirty production checkout. It now runs the `activate`
-  transition (branch + `queue submit`), and only on success clears the counters and mails.
-* **D4 — hygiene reads LANDED from landstate, not a bd label.** suites.sh asked
-  `bd show` for a label `land_state:LANDED`; nothing in the harness writes that label (the
-  only bead carrying it is a leaked test fixture, sp-8h8dd), so reactivation could never
-  fire. Land state lives in `$LANDSTATE/<id>` (lib.sh `land_mark`), whose first field is
-  read. hygiene no longer needs bd at all.
 * **D5 — host-check has a 30 s wall** in `status`, which the watchtower embeds and which
   must not be another thing that hangs during an outage. A timeout renders `?`.
 * **D6 — transitions validate what the file format cannot carry** (§3.3): a `#` or newline
@@ -415,9 +400,6 @@ file's).
   a scan, not a read, so `status` cannot switch to it without an index. Either retire the
   timed-result lines or have testenv maintain `STATE/<suite>.result` (latest record per
   suite for a run of the landing ref). An operator decision; unchanged here.
-* **F2 — clean-run counters have no producer** (`cleanruns_inc` was the timed runner's), so
-  reactivation still cannot fire after D4 unless a counter is written by hand. The natural
-  producer is a run of the landing ref in which a quarantined suite passed.
 * **F3 — `hygiene` and `corpus` have no automated caller.** gate-spira.sh:235 and
   suite-state-fence.sh:6 describe hygiene as if it ran.
 * **F4 — the Ops prompt instructs a retired command.** spira/chamber/ops.md:55 tells every
@@ -462,7 +444,7 @@ Tests (bash; none run here):
 
 | suite | action |
 |---|---|
-| `test-suites-hygiene.sh`, `test-suites-flake-report.sh`, `test-suites-stale-unreached.sh` | **retire** — covered by `cargo test -p testenv suites::` (flake window/dedupe/threshold/filing, hygiene reactivation/max-age/once-only, stale debris ignored) |
+| `test-suites-hygiene.sh`, `test-suites-flake-report.sh`, `test-suites-stale-unreached.sh` | **retire** — covered by `cargo test -p testenv suites::` (flake window/dedupe/threshold/filing, hygiene max-age/once-only, stale debris ignored) |
 | `test-queue-submit.sh:226-290` (transition → queue submit) | **repoint** to `"$SPIRA_TESTENV_BIN" suites quarantine …` with `SPIRA_QUEUE_BIN` pointing at its queue stub; assert the branch exists in the fixture repo **and the fixture checkout's HEAD did not move** (D2) |
 | `test-guards.sh:256` | the rendered-brief allow case `"${FAKE_PROD}/suites.sh status"` becomes `"${FAKE_PROD_BIN}/testenv suites status"` (whatever path row 5 renders) |
 | `test-guards.sh:609-616` | repoint the aeon refusal to `SPIRA_AEON=x "$SPIRA_TESTENV_BIN" suites quarantine …` (message unchanged) |
