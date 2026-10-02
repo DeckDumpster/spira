@@ -37,6 +37,9 @@ fn read_rc(path: &Path) -> Option<i32> {
     fs::read_to_string(path).ok()?.lines().find_map(|l| l.strip_prefix("rc=")).and_then(|v| v.trim().parse().ok())
 }
 
+/// round-vm's exit code for a container install that failed before any suite ran.
+pub const INSTALL_FAILED_RC: i32 = 3;
+
 /// How many of round-vm's last stderr lines a fault carries into the round log.
 const STDERR_TAIL_LINES: usize = 40;
 
@@ -69,7 +72,7 @@ pub fn corpus_end(rc: i32, stderr: &str, wall_secs: u64) -> Result<MainEnd, Stri
             }
             "round-vm: harness fault — the round VM did not come up, its container died, or round-vm itself failed".to_string()
         }
-        3 => "round-vm: harness fault — install failed".to_string(),
+        INSTALL_FAILED_RC => "round-vm: harness fault — install failed".to_string(),
         124 | 137 => format!("round-vm: harness fault — exceeded the {wall_secs}s wall bound"),
         c => format!("round-vm: harness fault — exit {c}, outside round-vm's contract (0-4)"),
     };
@@ -83,6 +86,15 @@ enum Main {
     Verify { job: String, suites: Vec<String> },
 }
 
+/// What a bare `round-vm run` exit says about the install: 3 broke it, 0/1/4 got past it.
+pub fn install_probe_result(rc: i32) -> JobResult {
+    match rc {
+        INSTALL_FAILED_RC => JobResult::Red,
+        0 | 1 | 4 => JobResult::Green,
+        _ => JobResult::Fault,
+    }
+}
+
 pub struct VmRunner<'a> {
     env: &'a Env,
     repo: &'a Repo,
@@ -93,6 +105,8 @@ pub struct VmRunner<'a> {
     pub results: PathBuf,
     child: Option<Child>,
     child_rc: Option<i32>,
+    install_failed: bool,
+    probe_n: u32,
     stderr_path: PathBuf,
     members: Vec<Member>,
     changed: BTreeMap<Id, Vec<String>>,
@@ -121,6 +135,8 @@ impl<'a> VmRunner<'a> {
             results,
             child: None,
             child_rc: None,
+            install_failed: false,
+            probe_n: 0,
             members: vec![],
             changed,
             main: Main::None,
@@ -204,6 +220,58 @@ impl<'a> VmRunner<'a> {
             fs::copy(e.path(), &to).map_err(|err| format!("{}: {err}", to.display()))?;
         }
         Ok(())
+    }
+
+        /// Did the corpus run end on a failed container install?
+    pub fn install_failed(&self) -> bool {
+        self.install_failed
+    }
+
+    /// Does the container install on the round tree minus `removal`? One `round-vm run` of
+    /// `suite` on a fresh VM; only the exit code is read.
+    pub fn probe_install(&mut self, removal: &[Id], suite: &str) -> JobResult {
+        self.probe_n += 1;
+        let wt = self.env.run.join("worktree").join(format!(".batcher-install-{}-{}", self.repo.name, self.probe_n));
+        let built = io::worktree_reset(self.repo, &wt, &self.base_sha).and_then(|_| {
+            for m in self.members.iter().filter(|m| !removal.contains(&m.id)) {
+                if io::merge_member(self.env, &wt, &m.id, &m.tip) == MergeResult::Conflict {
+                    return Err(format!("{} does not merge without {}", m.id, removal.join(",")));
+                }
+            }
+            Ok(())
+        });
+        let result = match built {
+            Err(e) => {
+                eprintln!("batcher: install probe tree not built: {e}");
+                JobResult::Fault
+            }
+            Ok(()) => {
+                let results = wt.join(".install-probe-results");
+                let status = Command::new("timeout")
+                    .arg("-k")
+                    .arg("10")
+                    .arg(self.env.wall_secs.to_string())
+                    .arg(&self.env.round_vm)
+                    .arg("run")
+                    .arg(&wt)
+                    .args(["--suites", suite])
+                    .arg("--maxpar")
+                    .arg(self.env.maxpar.to_string())
+                    .arg("--toolchain")
+                    .arg(&self.env.rust_toolchain)
+                    .arg("--results-dir")
+                    .arg(&results)
+                    .env("SPIRA_HOME", &self.env.home)
+                    .env("SPIRA_RUN", &self.env.run)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+                status.ok().and_then(|st| st.code()).map_or(JobResult::Fault, install_probe_result)
+            }
+        };
+        let _ = Command::new("git").arg("-C").arg(&self.repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
+        result
     }
 
     /// Tells round-vm the round is done with the VM and waits for it to release it.
@@ -300,6 +368,7 @@ impl RoundRunner for VmRunner<'_> {
                 (None, Some(rc)) => rc,
                 (None, None) => return Ok(p),
             };
+            self.install_failed = rc == INSTALL_FAILED_RC;
             p.done = Some(corpus_end(rc, &self.stderr_text(), self.env.wall_secs)?);
             self.main = Main::Finished(p.done.unwrap());
             return Ok(p);
@@ -399,6 +468,17 @@ mod tests {
         assert!(corpus_end(124, "", 600).unwrap_err().contains("600s wall bound"));
         let mismatch = corpus_end(2, "batch: unknown suite: test-x.sh\n", 600).unwrap_err();
         assert!(mismatch.contains("suite list mismatch, not a harness fault"), "{mismatch}");
+    }
+
+    #[test]
+    fn only_rc_3_reads_as_a_broken_install_and_an_unknown_exit_never_reads_as_either() {
+        assert_eq!(install_probe_result(3), JobResult::Red);
+        for rc in [0, 1, 4] {
+            assert_eq!(install_probe_result(rc), JobResult::Green, "rc {rc}");
+        }
+        for rc in [2, 124, 137, 101, -1] {
+            assert_eq!(install_probe_result(rc), JobResult::Fault, "rc {rc}");
+        }
     }
 
     #[test]

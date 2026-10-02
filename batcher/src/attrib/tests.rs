@@ -294,3 +294,54 @@ fn the_round_attribution_row_names_owners_and_leaves_unsettled_time_empty() {
     assert_eq!(f["owner"], "");
     assert_eq!(f["attribution_secs"], "", "never 0 for a red that never settled");
 }
+
+#[test]
+fn an_install_fault_names_the_planted_member_and_costs_a_logarithmic_ladder() {
+    let members = ["m1", "m2", "m3", "m4", "m5", "m6", "m7"];
+    for bad in members {
+        let shape = flat(&members);
+        let mut probes = 0;
+        let got = attribute_install_fault(&shape, |removal| {
+            probes += 1;
+            if members.iter().any(|m| *m == bad && !removal.iter().any(|r| r == m)) { JobResult::Red } else { JobResult::Green }
+        });
+        assert_eq!(got, InstallFault::Owner(bad.to_string()), "planted {bad}");
+        assert!(probes <= 6, "planted {bad}: {probes} probes");
+    }
+}
+
+#[test]
+fn an_install_fault_that_survives_removing_everything_is_the_bases() {
+    assert_eq!(attribute_install_fault(&flat(&["m1", "m2"]), |_| JobResult::Red), InstallFault::Base);
+}
+
+#[test]
+fn a_faulting_install_probe_is_retried_once_and_never_exonerates() {
+    let shape = flat(&["m1", "m2"]);
+    let mut n = 0;
+    let got = attribute_install_fault(&shape, |removal| {
+        n += 1;
+        if n == 1 { JobResult::Fault } else if removal.iter().any(|r| r == "m2") { JobResult::Green } else { JobResult::Red }
+    });
+    assert_eq!(got, InstallFault::Owner("m2".into()));
+    assert_eq!(attribute_install_fault(&shape, |_| JobResult::Fault), InstallFault::Unattributed);
+}
+
+#[test]
+fn two_members_that_each_break_install_are_not_pinned_on_one() {
+    let shape = flat(&["m1", "m2", "m3"]);
+    let got = attribute_install_fault(&shape, |removal| {
+        if removal.len() < 2 { JobResult::Red } else { JobResult::Green }
+    });
+    assert_eq!(got, InstallFault::Unattributed);
+}
+
+#[test]
+fn a_dependent_s_install_fault_is_confirmed_by_removing_its_prerequisite_set() {
+    let prereqs = BTreeMap::from([("m2".to_string(), vec!["m1".to_string()])]);
+    let shape = Shape::new(&ids(&["m1", "m2", "m3"]), &prereqs);
+    let got = attribute_install_fault(&shape, |removal| {
+        if removal.iter().any(|r| r == "m1") { JobResult::Green } else { JobResult::Red }
+    });
+    assert_eq!(got, InstallFault::Owner("m1".into()));
+}
