@@ -371,10 +371,17 @@ case "${1:-attach}" in
   keys)   set_keybindings ;;
   watch)
     exec 9>"$LOCK"
-    # Losing the lock is a failure to start, not a clean finish. Exiting 0 here made systemd
-    # report Result=success on every pass of a unit it had respawned 108 times, so the
-    # journal agreed with the loop instead of contradicting it.
-    flock -n 9 || { echo "cockpit watcher already running" >&2; exit 75; }
+    # Losing the lock to an unidentified holder is a failure to start (75), never a clean
+    # finish; only a live `cockpit-remote watch` holder counts as the watcher being satisfied.
+    if ! flock -n 9; then
+        holder="$(_lock_pid)" || holder=""
+        if [ -n "$holder" ] && case "$(tr '\0' ' ' <"/proc/$holder/cmdline" 2>/dev/null)" in
+            *"cockpit-remote watch"*) true ;; *) false ;; esac; then
+            echo "cockpit watcher already running (pid $holder holds $LOCK); satisfied elsewhere" >&2
+            exit 0
+        fi
+        echo "cockpit watcher already running" >&2; exit 75
+    fi
     watch_loop
     ;;
   status) cmd_status ;;
