@@ -100,7 +100,10 @@ so a present, parseable result is final):
      strictly contains an owner's (a prerequisite whose dependent is the owner is not blamed).
    - Base run red → S is a **base red**: charged to nobody.
    - Every run red but the base green (two members each break S alone) → S is
-     **unattributed**: the round is blocked and filed for Ops, as before.
+     **unattributed**. If the base moved since the cut and no owner was found, the round is
+     rebuilt on the new base and only the unattributed suites re-run, once
+     (`RoundOps::base_moved`; an unmoved base changes no input, so there is no retry). Still
+     unattributed → the round is blocked and a judgement bead is filed for the Judge.
    - A rerun that faulted (the harness, not the suite) is retried once; a second fault makes S
      unattributed. A fault never reads as green or red.
 
@@ -113,13 +116,14 @@ corpus tail frees.
 **At corpus end**, once every red is settled:
 - every owner is ejected with the suites named against it through the existing eject path
   (`eject_member`: bead reopened `queue-eject-local`, `land_mark EJECTED <tip> <suites>` —
-  what the re-entry check reads); a member stacked on an owner leaves with it;
+  what the re-entry check reads); the reopen note names each suite and its first FAIL line
+  (`io::suite_first_fail`); a member stacked on an owner leaves with it;
 - **only the owners' red suites** are re-run on the survivors' tree (the release build of that
   tree, whose binaries land). Green → the survivors land. Red → that verification is the next
   iteration's corpus, attributed the same way;
 - flaky and base reds do not block landing; a base red is filed for Ops (the old
   `file_local_red_incident(..., "base")` path, deduped by incident.sh);
-- an unattributed red blocks the round and is filed for Ops (`"unattributed"`).
+- an unattributed red blocks the round and is filed as a judgement bead (`RoundOps::judge`).
 
 **Record.** One TSD row per red, family `round-attribution`: `repo`, `round`, `iteration`,
 `suite`, `outcome` (`owner|flaky|base|unattributed`), `owner` (comma list, empty unless owner),

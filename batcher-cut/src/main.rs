@@ -338,7 +338,11 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn eject(&mut self, member: &Member, suites: &[String]) {
-        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites);
+        let fails: Vec<(String, String)> = suites
+            .iter()
+            .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
+            .collect();
+        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites, &fails);
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -357,6 +361,25 @@ impl drive::RoundOps for LiveOps<'_> {
                 println!("batcher {}: integration fix failed: {e}", self.repo.name);
                 false
             }
+        }
+    }
+
+    fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
+        let sha = io::resolve_base_sha(self.repo)?;
+        if sha == self.start_sha {
+            return Ok(None);
+        }
+        self.start_sha = sha.clone();
+        self.changed = members.iter().map(|m| (m.id.clone(), io::changed_paths(self.repo, &sha, &m.tip))).collect();
+        let rebuilt = merge_round(self.env, self.repo, self.wt, &sha, members.to_vec())?;
+        Ok(Some((sha, rebuilt)))
+    }
+
+    fn judge(&mut self, suites: &[String], members: &[String]) {
+        let j = batcher::core::Judgement { source: batcher::core::RedSource::Local, suites: suites.to_vec() };
+        match io::file_judgement(self.env, self.repo, &j, members, &self.evidence) {
+            Ok(id) => println!("{} — filed {id}", batcher::core::judgement_event(&j, &self.repo.name).text),
+            Err(e) => println!("batcher {}: red {} not attributable to any member — could not file the judgement: {e}", self.repo.name, suites.join(",")),
         }
     }
 

@@ -36,6 +36,8 @@ pub enum MainKind {
 pub trait RoundRunner {
     /// The members whose merges make up the round tree from here on (round order).
     fn set_members(&mut self, members: &[Member]);
+    /// The base the round tree (and every job tree) is built on, after the base moved.
+    fn set_base(&mut self, sha: &str);
     fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String>;
     /// A harness fault of the main run is an error: the round is not judged.
     fn poll_main(&mut self) -> Result<MainPoll, String>;
@@ -58,6 +60,12 @@ pub trait RoundOps {
     /// Mechanically repair what the merged tree alone broke (a commit on the round tree naming
     /// every member); false when there was nothing to repair.
     fn fix_integration(&mut self, members: &[Member], suites: &[String]) -> bool;
+    /// If the base moved since the round was cut: rebuild the round on the new base with
+    /// `members` and return that base and the members that merged. `None` when it did not
+    /// move — a retry would change no input.
+    fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String>;
+    /// A red no single member reproduces, still red on a changed input: summon the Judge.
+    fn judge(&mut self, suites: &[String], members: &[Id]);
     /// `kind`: `base`, `unattributed`, `integration` or `workspace-build`.
     fn incident(&mut self, kind: &str, suites: &[String]);
     /// The members whose diff touches `suite`.
@@ -245,6 +253,7 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
     let mut worst: Option<u64> = None;
     let mut fixed = false;
     let bound = members.len() as u32 + 2;
+    let mut retried = false;
     let t0 = runner.now();
     for iteration in 0..bound {
         let s = drive(runner, &*ops, kind, &suites, &members, budget)?;
@@ -291,7 +300,19 @@ pub fn attribute_round<R: RoundRunner, O: RoundOps>(
             return Ok(RoundEnd::Blocked(format!("integration red survived the in-round fix: {}", integration.join(","))));
         }
         if !d.unattributed.is_empty() {
-            ops.incident("unattributed", &d.unattributed);
+            if !retried && d.owners.is_empty() {
+                retried = true;
+                if let Some((sha, rebuilt)) = ops.base_moved(&members)? {
+                    println!("batcher: unattributed red {} — base moved, retrying once on {sha}", d.unattributed.join(","));
+                    runner.set_base(&sha);
+                    members = rebuilt;
+                    suites = d.unattributed.clone();
+                    kind = MainKind::Verify;
+                    continue;
+                }
+            }
+            let ids: Vec<Id> = members.iter().map(|m| m.id.clone()).collect();
+            ops.judge(&d.unattributed, &ids);
             return Ok(RoundEnd::Blocked(format!("unattributed red: {}", d.unattributed.join(","))));
         }
         if d.owners.is_empty() {
@@ -383,6 +404,8 @@ pub(crate) mod tests {
         /// (t, corpus suites running, attribution jobs running)
         pub use_log: Vec<(u64, usize, usize)>,
         pub done_jobs: BTreeSet<u64>,
+        pub bases: Vec<String>,
+        pub on_base: Option<std::rc::Rc<std::cell::Cell<bool>>>,
     }
 
     impl Fake {
@@ -403,6 +426,8 @@ pub(crate) mod tests {
                 first_launch: None,
                 use_log: vec![],
                 done_jobs: BTreeSet::new(),
+                bases: vec![],
+                on_base: None,
             }
         }
         fn verdict(&mut self, suite: &str, tree: &BTreeSet<String>) -> bool {
@@ -422,6 +447,12 @@ pub(crate) mod tests {
     impl RoundRunner for Fake {
         fn set_members(&mut self, members: &[Member]) {
             self.members = members.iter().map(|m| m.id.clone()).collect();
+        }
+        fn set_base(&mut self, sha: &str) {
+            self.bases.push(sha.to_string());
+            if let Some(c) = &self.on_base {
+                c.set(true);
+            }
         }
         fn start_main(&mut self, kind: MainKind, suites: &[String]) -> Result<(), String> {
             self.main_kind.push((kind, suites.to_vec()));
@@ -493,6 +524,9 @@ pub(crate) mod tests {
         pub recorded: Vec<(u32, Decision)>,
         pub deleted: Vec<Vec<String>>,
         pub escaped: Vec<(String, String, Option<JobResult>)>,
+        pub judged: Vec<(Vec<String>, Vec<String>)>,
+        /// Base shas the base will move to, one per `base_moved` call; empty means it never moves.
+        pub moves: Vec<String>,
     }
 
     impl RoundOps for Ops {
@@ -517,6 +551,12 @@ pub(crate) mod tests {
                 }
             }
             self.can_fix
+        }
+        fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
+            Ok(if self.moves.is_empty() { None } else { Some((self.moves.remove(0), members.to_vec())) })
+        }
+        fn judge(&mut self, suites: &[String], members: &[Id]) {
+            self.judged.push((suites.to_vec(), members.to_vec()));
         }
         fn incident(&mut self, kind: &str, suites: &[String]) {
             self.incidents.push((kind.into(), suites.to_vec()));
@@ -714,12 +754,39 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_unattributed_red_blocks_the_round_and_is_filed() {
+    fn an_unattributed_red_with_the_base_unmoved_goes_straight_to_the_judge() {
         let mut f = Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
         let mut ops = Ops::default();
         let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
         assert!(matches!(end, RoundEnd::Blocked(_)));
-        assert_eq!(ops.incidents, vec![("unattributed".to_string(), vec!["test-01.sh".to_string()])]);
+        assert_eq!(ops.judged, vec![(vec!["test-01.sh".to_string()], vec!["m1".to_string(), "m2".to_string(), "m3".to_string()])]);
+        assert!(ops.incidents.is_empty());
+        assert!(ops.ejected.is_empty());
+        assert_eq!(f.main_kind.len(), 1, "no retry: the base did not move");
+    }
+
+    #[test]
+    fn an_unattributed_red_is_retried_once_on_the_moved_base_then_judged() {
+        let mut f = Fake::new(|s, tree| s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
+        let mut ops = Ops { moves: vec!["base2".into(), "base3".into()], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Blocked(_)));
+        assert_eq!(f.bases, vec!["base2".to_string()], "retried once, never twice");
+        assert_eq!(f.main_kind.len(), 2);
+        assert_eq!(f.main_kind[1], (MainKind::Verify, vec!["test-01.sh".to_string()]));
+        assert_eq!(ops.judged.len(), 1);
+    }
+
+    #[test]
+    fn an_unattributed_red_that_clears_on_the_moved_base_lands() {
+        let moved = std::rc::Rc::new(std::cell::Cell::new(false));
+        let m2 = moved.clone();
+        let mut f = Fake::new(move |s, tree| !m2.get() && s == "test-01.sh" && (tree.contains("m1") || tree.contains("m2")));
+        f.on_base = Some(moved);
+        let mut ops = Ops { moves: vec!["base2".into()], ..Ops::default() };
+        let end = attribute_round(&mut f, &mut ops, &corpus(4), three(), Budget { slots: 6, maxpar: 2 }).unwrap();
+        assert!(matches!(end, RoundEnd::Land { ref members, .. } if members.len() == 3), "{end:?}");
+        assert!(ops.judged.is_empty());
         assert!(ops.ejected.is_empty());
     }
 
@@ -729,6 +796,9 @@ pub(crate) mod tests {
         impl RoundRunner for Silent {
             fn set_members(&mut self, m: &[Member]) {
                 self.0.set_members(m)
+            }
+            fn set_base(&mut self, sha: &str) {
+                self.0.set_base(sha)
             }
             fn start_main(&mut self, k: MainKind, s: &[String]) -> Result<(), String> {
                 self.0.start_main(k, s)
