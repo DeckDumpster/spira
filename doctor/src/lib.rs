@@ -72,6 +72,7 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
+        Section { title: "round-vm mirror", lines: check_round_vm_mirror(w) },
         Section { title: "events substrate", lines: check_events_probe(w) },
         Section {
             title: "systemd units",
@@ -498,6 +499,36 @@ pub fn check_sccache_backend(w: &dyn World) -> Vec<Line> {
             ),
         )]
     }
+}
+
+// ============================================================================ round-vm mirror
+
+/// A git-daemon already on the mirror port serves whatever `--base-path` it was started
+/// with; `prepare_mirror` trusts its pidfile and never restarts it, so a daemon left by
+/// another state dir answers every round with a stale or absent mirror.
+pub fn check_round_vm_mirror(w: &dyn World) -> Vec<Line> {
+    let state = w
+        .env("SPIRA_ROUND_VM_STATE_DIR")
+        .filter(|v| !v.is_empty())
+        .or_else(|| w.env("SPIRA_RUN").filter(|v| !v.is_empty()).map(|r| format!("{}/round-vm", r.trim_end_matches('/'))));
+    let Some(state) = state else {
+        return vec![ok("no round-vm state dir configured — nothing to check")];
+    };
+    let port = w.env("SPIRA_ROUND_VM_MIRROR_PORT").and_then(|v| v.parse::<u16>().ok()).unwrap_or(9430);
+    let bases = w.git_daemon_base_paths(port);
+    if bases.is_empty() {
+        return vec![ok(format!("no git-daemon on the round-vm mirror port {port}"))];
+    }
+    let want = state.trim_end_matches('/');
+    let stray: Vec<&String> = bases.iter().filter(|b| b.trim_end_matches('/') != want).collect();
+    if stray.is_empty() {
+        return vec![ok(format!("git-daemon on port {port} serves {want}"))];
+    }
+    let list = stray.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+    vec![warn(
+        format!("git-daemon on round-vm mirror port {port} serves {list}, not the configured {want}"),
+        format!("round-vm reuses a live daemon without checking its --base-path, so rounds read the wrong mirror. Stop it and the next round starts one on {want}."),
+    )]
 }
 
 // ============================================================================ events probe
