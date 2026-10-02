@@ -3,6 +3,7 @@
 //! only argv dispatch and environment resolution — every module it calls is independently
 //! unit-tested.
 
+mod cpu_throttle;
 mod czar_outcome;
 mod disk_mem;
 mod disabled_timer;
@@ -132,6 +133,10 @@ fn build_sweep_cfg() -> sweep::Cfg {
         mem_warn_mb: getenv_i64("SPIRA_MEM_WARN_MB", 1500),
         meminfo_path: getenv("SPIRA_MEMINFO_PATH").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/proc/meminfo")),
         failed_units_warn_mins: getenv_i64("SPIRA_FAILED_UNITS_WARN_MINS", 15),
+        cpu_throttle_units: getenv("SPIRA_CPU_THROTTLE_UNITS").unwrap_or_else(|| cpu_throttle::DEFAULT_UNITS.to_string()).split_whitespace().map(String::from).collect(),
+        cpu_throttle_warn_pct: getenv_i64("SPIRA_CPU_THROTTLE_WARN_PCT", 5),
+        cpu_throttle_min_periods: getenv_i64("SPIRA_CPU_THROTTLE_MIN_PERIODS", 100),
+        cgroup_root: getenv("SPIRA_CGROUP_ROOT").unwrap_or_else(|| "/sys/fs/cgroup".to_string()),
         unsent_warn_h: getenv_i64("SPIRA_UNSENT_WARN_H", 24),
         closed_stranded_warn_h: getenv_i64("SPIRA_CLOSED_STRANDED_WARN_H", 48),
         drain_warn_mins: getenv_i64("SPIRA_DRAIN_WARN_MINS", 15),

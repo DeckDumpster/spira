@@ -61,6 +61,7 @@ pub fn is_nominal(d: &SweepData, snap_stale_s: i64) -> bool {
         && d.throttle.since.is_none()
         && !d.disk.disk_breach
         && !d.disk.mem_breach
+        && !d.cpu_throttle_breach
         && d.failed_units.as_ref().map(|v| v.is_empty()).unwrap_or(false)
 }
 
@@ -125,6 +126,7 @@ reading `?` is one this pass COULD NOT READ — never treat it as a zero.
   /tmp used (? = cannot read)         {tmp_pct}
   / used (? = cannot read)            {disk_disp}
   memory available (? = cannot read)  {mem_disp}
+  CPU quota throttling                {cpu_throttle_disp}   (share of periods throttled since last pass, per unit; FAULT = over the warn share under load)
   throttle                            {throttle_since}      (stamp: queue-throttled; depth at engage: {throttle_depth})
   draining since (? = cannot read)    {drain_mins}      minutes   (stamp: world.draining)
   aeons alive                         {aeons_live}      (counted now, not from the snapshot)
@@ -237,6 +239,7 @@ Run the scans named in the menu above if you have wall time remaining.
         tmp_pct = d.tmp_pct,
         disk_disp = d.disk.disk_disp,
         mem_disp = d.disk.mem_disp,
+        cpu_throttle_disp = d.cpu_throttle_disp,
         throttle_since = throttle_since_disp,
         throttle_depth = throttle_depth_disp,
         drain_mins = drain_mins_disp,
@@ -348,6 +351,10 @@ mod tests {
 
         let mut d = SweepData::fixture_nominal(base.now);
         d.disk.mem_breach = true;
+        assert!(!is_nominal(&d, 60));
+
+        let mut d = SweepData::fixture_nominal(base.now);
+        d.cpu_throttle_breach = true;
         assert!(!is_nominal(&d, 60));
 
         let mut d = SweepData::fixture_nominal(base.now);

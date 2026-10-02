@@ -1,5 +1,5 @@
 use super::Cfg;
-use crate::{disk_mem, env::Env, failed_units, gate_wait, incident, landstate, lapsed, log::fmt_compact, seams};
+use crate::{cpu_throttle, disk_mem, env::Env, failed_units, gate_wait, incident, landstate, lapsed, log::fmt_compact, seams};
 use std::process::Command;
 
 pub struct Halt {
@@ -42,6 +42,8 @@ pub struct SweepData {
     pub tmp_pct: String,
     pub disk: disk_mem::DiskMem,
     pub aeons_live_disp: String,
+    pub cpu_throttle_breach: bool,
+    pub cpu_throttle_disp: String,
     pub failed_units: Option<Vec<String>>,
     pub failed_unit_names: String,
     pub failed_units_warn_mins: i64,
@@ -102,6 +104,8 @@ impl SweepData {
                 mem_disp: "8000MB".to_string(),
             },
             aeons_live_disp: "1".to_string(),
+            cpu_throttle_breach: false,
+            cpu_throttle_disp: "baseline".to_string(),
             failed_units: Some(Vec::new()),
             failed_unit_names: String::new(),
             failed_units_warn_mins: 15,
@@ -164,6 +168,17 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
 
     // FAILED UNITS ---------------------------------------------------------------------
     let failed_units = failed_units::gather(&cfg.systemctl);
+    let cpu_cfg = cpu_throttle::Cfg {
+        units: cfg.cpu_throttle_units.clone(),
+        warn_pct: cfg.cpu_throttle_warn_pct,
+        min_periods: cfg.cpu_throttle_min_periods,
+        cgroup_root: cfg.cgroup_root.clone(),
+        systemctl: cfg.systemctl.clone(),
+    };
+    let (cpu_throttle_breach, cpu_throttle_disp) = cpu_throttle::summarize(
+        &cpu_throttle::gather(&cpu_cfg, &cfg.spira_run.join("cpu-throttle.state")),
+        cfg.cpu_throttle_warn_pct,
+    );
     let failed_unit_names = failed_units.as_deref().unwrap_or(&[]).join(" ");
 
     // COCKPIT.ENV SNAPSHOT ---------------------------------------------------------------
@@ -348,6 +363,8 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         tmp_pct,
         disk,
         aeons_live_disp,
+        cpu_throttle_breach,
+        cpu_throttle_disp,
         failed_units,
         failed_unit_names,
         failed_units_warn_mins: cfg.failed_units_warn_mins,
