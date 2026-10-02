@@ -322,4 +322,4 @@ Largest single lever: extracting a sourceable `systemd/install.sh` library (`_un
 
 ## Deleted suites
 
-- **test-install-exec.sh** — deleted by sp-uy2gd (2026-09-30): flipped on an unchanged tree (render-fallback cases read a malformed watcher manifest, then passed alone). Coverage lost: install.sh's ExecStart executability fence (missing / non-executable target refused, clean pass), conf.sh's empty-SPIRA_PROD preservation, and the --render fallback. sp-osl2c finds the root cause and re-adds it.
+- **test-install-exec.sh** — deleted by sp-uy2gd (2026-09-30): flipped on an unchanged tree (render-fallback cases read a malformed watcher manifest, then passed alone). Coverage lost: install.sh's ExecStart executability fence (missing / non-executable target refused, clean pass), conf.sh's empty-SPIRA_PROD preservation, and the --render fallback. Re-added by sp-osl2c against `units-install`, with SPIRA_WATCHERS pinned to a fixture manifest in every scenario (the fallback case let it default from SPIRA_HOME, so the manifest depended on the tree under test); `watch_names` now reports watchd's exit status and stderr instead of a bare "malformed".
