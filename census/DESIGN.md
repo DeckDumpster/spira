@@ -26,10 +26,10 @@ deliberate-cause event silently** (they are real state, shown separately, never 
   Re-deriving 400-character generated SQL strings in Rust would be exactly the duplication
   that comment exists to prevent, and it buys nothing: this bead's scope is `spira/census.sh`,
   not `spira/lib.sh`.
-- **The six `census/*.py` scripts** (`count.py`, `merge.py`, `covers.py`, `covers_closed.py`,
+- **The six `census/*.py` scripts** (`cluster.py`, `cluster_cluster_merge.py`, `covers.py`, `covers_closed.py`,
   `handwritten.py`, `deliberate.py`) keep doing the actual class-name mapping, ranking and
   JSON parsing, run as subprocesses exactly as bash ran them (same argv shapes: file-path
-  arguments for `merge.py`/`covers.py`/`covers_closed.py`, stdin for the rest). This mirrors
+  arguments for `cluster_merge.py`/`covers.py`/`covers_closed.py`, stdin for the rest). This mirrors
   `forge`'s own precedent (keeping its artifact-zip Python rather than adding a zip crate,
   `forge/DESIGN.md` §2): the class-mapping logic is fully specified, already has its own
   suite (`test-census-pipeline.sh`, kept — §6), and re-deriving it in Rust risks a silent
@@ -100,7 +100,7 @@ trait World {
 ```
 
 `real.rs` implements the Python calls with a process-lifetime scratch directory (removed on
-`Drop`) for the three scripts that need on-disk file arguments (`merge.py`'s two inputs,
+`Drop`) for the three scripts that need on-disk file arguments (`cluster_merge.py`'s two inputs,
 `covers.py`/`covers_closed.py`'s fold-map file) — the same tempdir role census.sh's own
 `_TMPDIR` played, just owned by the Rust process instead of a `trap ... EXIT`.
 `tests.rs`'s `Fake` stands in for the SQL/Python layer directly (it has its own,
@@ -131,7 +131,7 @@ watermark fallback, the three suppression outcomes, and the `--with-suppressed` 
 
 No dedicated bash suite tests census.sh's own orchestration logic in isolation — the
 closest, `test-census-pipeline.sh`, is explicitly about the **Python** decision logic
-(`count.py`/`merge.py`/`covers.py`/`covers_closed.py`'s class mapping and ranking, table-
+(`cluster.py`/`cluster_merge.py`/`covers.py`/`covers_closed.py`'s class mapping and ranking, table-
 tested on canned rows) and is **kept**, repointed (`CENSUS="$HERE/census.sh"` →
 `CENSUS="$(command -v census)"`), because nothing here replaces Python it doesn't run.
 `test-census.sh` (the one real-`bd`-fixture suite, `UC-ops-detection-remediation-07/12/14`),
@@ -139,7 +139,7 @@ tested on canned rows) and is **kept**, repointed (`CENSUS="$HERE/census.sh"` �
 real end-to-end coverage against a live Dolt fixture that a fake-backed unit test does not
 replace. This crate's 17 unit tests are the new coverage for the orchestration itself: the
 clock-skew guard (pass, beyond-tolerance, query failure, unparseable row), the watermark
-fallback (missing file, unreadable content, valid — routed to `merge.py`), all three
+fallback (missing file, unreadable content, valid — routed to `cluster_merge.py`), all three
 suppression outcomes (open remedy, closed-and-landed-branch, closed-with-no-branch =
 orphaned) plus the landed/unknown and landed-clean asymmetry (§3.2), and the
 `--with-suppressed` gate for both the suppression annotations and the trailing
@@ -163,7 +163,16 @@ the same principle: an unresolved state must not be read as "resolved, so suppre
 
 17 unit tests (`cargo test -p census`) cover every orchestration branch against a `Fake`.
 Not covered here, and not fixable from this side without a live Dolt server: the real SQL
-text `_census_events_sql` generates, the real `count.py`/`merge.py`/`covers.py` class-name
+text `_census_events_sql` generates, the real `cluster.py`/`cluster_merge.py`/`covers.py` class-name
 mapping, and `bd sql`'s actual `DATE_FORMAT(UTC_TIMESTAMP(), ...)` row shape. Those remain
 `test-census.sh`, `test-census-pipeline.sh`, `test-census-events.sh` and
 `test-census-actor-filter.sh`'s job, all kept and repointed (§6).
+
+## 9. Ranking by causal event (sp-jcd0e)
+
+The rank is the count of distinct causal events, not victim beads: same-class events less
+than `SPIRA_CENSUS_CLUSTER_GAP_S` (default 300) apart are one event. `sql::event_rows_sql`
+emits one raw `(type, cause, issue, epoch)` row per event with the same predicates as
+`events_sql`; `cluster.py` clusters them and emits `<causal> <victims> <detections>
+<class>`. Victims and detections are reported, never the rank; the aggregated `events_sql`
+remains for `census sql run-events`.

@@ -1,7 +1,7 @@
 //! The production [`crate::ports::World`]: the `conf.sh`+`lib.sh` seam for the SQL runners
 //! and the fold map (never re-derived — DESIGN.md §2), direct `bd`/`git`/`date` calls, and
 //! the unchanged `census/*.py` pipeline run as subprocesses with a scratch temp directory
-//! for the two scripts that take file-path arguments (`merge.py`, `covers.py`,
+//! for the two scripts that take file-path arguments (`cluster_merge.py`, `covers.py`,
 //! `covers_closed.py`).
 
 use crate::ports::World;
@@ -282,7 +282,7 @@ impl World for Real {
     fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String {
         let a = self.write_scratch("all_time.txt", all_time);
         let b = self.write_scratch("since_wm.txt", since_wm);
-        self.run_py("cluster_merge.py", &[&a, &b], None)
+        self.run_py("cluster_cluster_merge.py", &[&a, &b], None)
     }
     fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String {
         let f = self.write_scratch("fold_map.txt", fold_map);
