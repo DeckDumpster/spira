@@ -343,3 +343,6 @@ memories_cache
 memories_cache_age
 rebase_decompose_files
 rebase_generated_files
+czar_stage_pool_idle
+queue_round_min_n
+queue_round_stall_secs

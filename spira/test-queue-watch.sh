@@ -173,8 +173,8 @@ nowant "the push-mode repo is not watched"          " p watching" "$out"
 "$BIN" health --run "$RUN" >/dev/null 2>&1 && ok "health passes after a good poll" || bad "health passes after a good poll"
 
 rm -rf "$RUN/landstate"
-blind="$("$BIN" watch --ticks 1 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
-want "an unreadable queue is reported blind"      "q blind: cannot see the queue" "$blind"
+blind="$("$BIN" watch --ticks 2 --interval 1 --run "$RUN" --home "$FX" --config "$FX/spira.toml" 2>&1)"
+want "an unreadable queue is reported blind after two failed polls"      "q blind: cannot see the queue" "$blind"
 herr="$("$BIN" health --run "$RUN" 2>&1)"; hrc=$?
 [ "$hrc" -ne 0 ] && ok "health fails after a blind poll" || bad "health fails after a blind poll (rc=$hrc)"
 want "health says why"                            "blind" "$herr"

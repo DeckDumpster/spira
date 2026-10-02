@@ -58,6 +58,8 @@ struct Config {
     lock_path: PathBuf,
     reconciler_state: PathBuf,
     reconciler_status_log: PathBuf,
+    round_min_n: u32,
+    round_stall_secs: u64,
     spira_db: String,
     scope_label: String,
     czar_label: String,
@@ -180,6 +182,18 @@ impl Config {
             reconciler_status_log: env::var("SPIRA_RECONCILER_STATUS_LOG")
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| spira_run.join("reconciler-status.jsonl")),
+            // Batcher's own adaptive_n floor (batcher/src/core.rs: raw.clamp(4.0, 30.0)) — a
+            // pool below this can never be a PoolFull trigger, whatever the adaptive ceiling
+            // turns out to be, so it is the one threshold this detector can check without
+            // replaying batcher's own pool-history math.
+            round_min_n: env::var("SPIRA_QUEUE_ROUND_MIN_N")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(4),
+            round_stall_secs: env::var("SPIRA_QUEUE_ROUND_STALL_SECS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(900),
             spira_db: env::var("SPIRA_DB").unwrap_or_default(),
             scope_label: env::var("SPIRA_SCOPE_LABEL").unwrap_or_default(),
             czar_label: env::var("SPIRA_CZAR_LABEL")
@@ -612,6 +626,9 @@ fn run_pass() -> Result<(), String> {
     // ── DETECTOR: base-red (the base ref's own gate run, not a batch's) ──────
     let (br_v, br_rem, br_tier) = detect_base_red(&cfg, &mut state);
 
+    // ── DETECTOR: pool-idle (certified pool full, no batch open, no round cut) ──
+    let (pi_v, pi_rem, pi_tier) = detect_pool_idle(&cfg, &mut state);
+
     // Telemetry — one line per class per pass.
     telem(&cfg, "deadlock",           &dl_v,  dl_rem,  dl_tier);
     telem(&cfg, "attribution-failed", &af_v,  af_rem,  af_tier);
@@ -620,6 +637,7 @@ fn run_pass() -> Result<(), String> {
     telem(&cfg, "ci-stalled",         &cis_v, cis_rem, cis_tier);
     telem(&cfg, "ci-red",             &cir_v, cir_rem, cir_tier);
     telem(&cfg, "base-red",           &br_v,  br_rem,  br_tier);
+    telem(&cfg, "pool-idle",          &pi_v,  pi_rem,  pi_tier);
 
     let _ = save_state(&cfg.reconciler_state, &state);
 
@@ -1202,6 +1220,122 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
     (rollup(&verdicts), remedy, tier)
 }
 
+/// Which of `repo_path`'s own `refs/heads/spira/*` branches exist — the same authority
+/// `certified_pool` (batcher-cut) and `queue_certified_list` (lib.sh) use to scope a shared
+/// landstate directory to one repository.
+fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
+    let Ok(out) = Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"])
+        .output()
+    else {
+        return Vec::new();
+    };
+    if !out.status.success() {
+        return Vec::new();
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.strip_prefix("spira/").map(str::to_string))
+        .collect()
+}
+
+/// This repo's own CERTIFIED depth — czar-pass's read of the same count
+/// `watchtower.sh --throttle-check` computes, without the title/priority/express enrichment
+/// `certified_pool` (batcher-cut) does: a stall detector needs only the number.
+fn certified_depth(repo_path: &Path, landstate_dir: &Path) -> u32 {
+    let mut n = 0u32;
+    for id in repo_branch_ids(repo_path) {
+        let Ok(content) = fs::read_to_string(landstate_dir.join(&id)) else { continue };
+        if content.split_whitespace().next() == Some("CERTIFIED") {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// The queue-mode rows of the repo-map (`land` column `queue` or `queue.forge`, the same
+/// alias `repo_land` in lib.sh normalizes). Unlike `find_open_files`, this is not gated on an
+/// open batch existing — a repo whose pool has filled with NO batch open is exactly the
+/// failure `detect_pool_idle` exists to catch.
+fn queue_repo_names(repo_map: &Option<PathBuf>) -> Vec<(String, PathBuf)> {
+    let Some(map_path) = repo_map else { return Vec::new() };
+    let Ok(content) = fs::read_to_string(map_path) else { return Vec::new() };
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let t = line.trim();
+        if t.starts_with('#') || t.is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = t.splitn(6, '|').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        let (name, path, land) = (parts[0].trim(), parts[1].trim(), parts[2].trim());
+        if name.is_empty() || path.is_empty() {
+            continue;
+        }
+        if land != "queue" && land != "queue.forge" {
+            continue;
+        }
+        out.push((name.to_string(), PathBuf::from(path)));
+    }
+    out
+}
+
+/// The certified-pool trigger (sp-ji62y/sp-forah): today a chat-session while-true loop or a
+/// re-armed Monitor dies with the session that started it — this detector is the harness-
+/// owned replacement, on czar-pass's own 30s timer. Fires once a repo's certified pool has
+/// sat at or past `round_min_n` (batcher's adaptive_n floor: at that depth the batcher would
+/// already have cut, whatever its ceiling turns out to be) with no batch open, for longer
+/// than `round_stall_secs`. A batch already open is deliberate back-pressure
+/// (law-queue-back-pressure-is-an-open-pr), not a stall: silent there, whatever the depth.
+fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str, &'static str) {
+    let mut remedy: &'static str = "none";
+    let mut tier: &'static str = "det";
+    let mut verdicts: Vec<Verdict> = Vec::new();
+
+    for (repo_name, repo_path) in queue_repo_names(&cfg.repo_map) {
+        let repo_safe = repo_name.replace(',', "-");
+        let key = format!("pool-idle:{}", repo_safe);
+        let batch_open = cfg.queue_dir.join(&repo_name).join("open").is_file();
+        let depth = certified_depth(&repo_path, &cfg.spira_run.join("landstate"));
+
+        let raw = if !batch_open && depth >= cfg.round_min_n {
+            RawStatus::Gap {
+                desired: format!("{}'s certified pool cuts a round at {}", repo_name, cfg.round_min_n),
+                observed: format!("{}'s certified pool sits at {} with no batch open", repo_name, depth),
+                since_hint: None,
+            }
+        } else {
+            RawStatus::Satisfied
+        };
+        let v = evaluate(cfg, state, &key, raw, cfg.round_stall_secs);
+        verdicts.push(v.clone());
+        if v.is_gap {
+            let age = v.since.map(|s| cfg.now_secs.saturating_sub(s)).unwrap_or(0);
+            let body = format!(
+                "{}'s certified pool has sat at {} member(s) (round threshold: {}) for {}s \
+                 with no batch open — a round should have cut by now.\n\n\
+                 Check: is spira-verdict.timer active, is SPIRA_BATCHER_BIN built and \
+                 executable, and is queue/{}'s own lock stuck.\n",
+                repo_name, depth, cfg.round_min_n, age, repo_name
+            );
+            infer(
+                cfg,
+                "pool-idle",
+                &format!("pool-idle-{}", repo_safe),
+                &format!("QUEUE: {}'s certified pool ({}) idle {}s with no round cut", repo_name, depth, age),
+                &body,
+            );
+            remedy = "inference";
+            tier = "inf";
+        }
+    }
+    (rollup(&verdicts), remedy, tier)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1489,6 +1623,8 @@ mod tests {
             lock_path: dir.join("czar-pass.lock"),
             reconciler_state: dir.join("reconciler-state.json"),
             reconciler_status_log: dir.join("reconciler-status.jsonl"),
+            round_min_n: 4,
+            round_stall_secs: 900,
             spira_db: String::new(),
             scope_label: String::new(),
             czar_label: "czar-trigger".to_string(),
@@ -1786,6 +1922,106 @@ mod tests {
         cfg.now_secs = now + cfg.base_unreadable_grace + 1;
         let (v2, remedy2, tier2) = detect_base_red(&cfg, &mut state);
         assert!(v2.is_gap, "past the grace window an unreadable base is failed, not green");
+        assert_eq!(remedy2, "inference");
+        assert_eq!(tier2, "inf");
+    }
+
+    // ────────────────────────────────────────────────────────────────────────────────
+    // pool-idle: the certified-pool trigger (sp-ji62y/sp-forah), harness-owned.
+    // ────────────────────────────────────────────────────────────────────────────────
+
+    // A real repo, unlike base-red's fixtures: detect_pool_idle shells to `git
+    // for-each-ref`, so the branches it counts must actually exist.
+    fn init_repo_with_certified_branches(dir: &Path, ids: &[&str]) -> PathBuf {
+        let repo = dir.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap();
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["commit", "-q", "--allow-empty", "-m", "base"]);
+        for id in ids {
+            git(&["branch", &format!("spira/{}", id)]);
+        }
+        let landstate = dir.join("landstate");
+        fs::create_dir_all(&landstate).unwrap();
+        for id in ids {
+            fs::write(landstate.join(id), "CERTIFIED deadbeef 1700000000\n").unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn detect_pool_idle_silent_when_pool_below_the_floor() {
+        let dir = scratch_dir("pool-idle-below");
+        let repo = init_repo_with_certified_branches(&dir, &["sp-aaa1", "sp-aaa2", "sp-aaa3"]);
+        let mut cfg = test_config(&dir, KNOWN_EPOCH);
+        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
+        assert!(!v.is_gap, "3 certified members must not fire against the floor of 4");
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_pool_idle_silent_when_a_batch_is_already_open() {
+        // POSITIVE CONTROL for the back-pressure exemption: full pool, but an open batch
+        // is deliberate (law-queue-back-pressure-is-an-open-pr), never a stall.
+        let dir = scratch_dir("pool-idle-batch-open");
+        let repo = init_repo_with_certified_branches(&dir, &["sp-bbb1", "sp-bbb2", "sp-bbb3", "sp-bbb4"]);
+        let mut cfg = test_config(&dir, KNOWN_EPOCH);
+        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
+        write_repo_open(&dir, "poolrepo", "spira/queue/x");
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
+        assert!(!v.is_gap, "an open batch is back-pressure, not a stall, however full the pool");
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_pool_idle_silent_within_the_window() {
+        // POSITIVE CONTROL: a pool at the floor with no batch open, but the very first
+        // pass to observe it — age 0 is inside SPIRA_QUEUE_ROUND_STALL_SECS.
+        let dir = scratch_dir("pool-idle-within-window");
+        let repo = init_repo_with_certified_branches(&dir, &["sp-ccc1", "sp-ccc2", "sp-ccc3", "sp-ccc4"]);
+        let mut cfg = test_config(&dir, KNOWN_EPOCH);
+        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
+        let mut state = StateMap::new();
+        let (v, remedy, tier) = detect_pool_idle(&cfg, &mut state);
+        assert!(!v.is_gap, "a full pool noticed for the first time must not fire before its window elapses");
+        assert_eq!(remedy, "none");
+        assert_eq!(tier, "det");
+    }
+
+    #[test]
+    fn detect_pool_idle_fires_once_the_full_pool_outlasts_the_window() {
+        // SEEN RED: nothing alarms today (this detector is the fix). Replayed here as the
+        // real engine would run it — first pass starts the streak (asserted quiet above),
+        // then a second pass past SPIRA_QUEUE_ROUND_STALL_SECS later must fire.
+        let dir = scratch_dir("pool-idle-fire");
+        let repo = init_repo_with_certified_branches(&dir, &["sp-ddd1", "sp-ddd2", "sp-ddd3", "sp-ddd4"]);
+        let now = KNOWN_EPOCH + 100_000;
+        let mut cfg = test_config(&dir, now);
+        cfg.repo_map = Some(write_repo_map(&dir, "poolrepo", repo.to_str().unwrap(), "origin/main"));
+        let mut state = StateMap::new();
+
+        let (v1, _remedy1, _tier1) = detect_pool_idle(&cfg, &mut state);
+        assert!(!v1.is_gap, "the pass that first notices the full pool must not fire immediately");
+
+        cfg.now_secs = now + cfg.round_stall_secs + 1;
+        let (v2, remedy2, tier2) = detect_pool_idle(&cfg, &mut state);
+        assert!(v2.is_gap, "a full pool with no batch open for longer than the window must fire");
         assert_eq!(remedy2, "inference");
         assert_eq!(tier2, "inf");
     }

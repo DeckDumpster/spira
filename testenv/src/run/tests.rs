@@ -111,6 +111,7 @@ struct World {
     /// Warm slots whose refill the run asked for.
     refills: Mutex<Vec<usize>>,
     sweeps: Mutex<usize>,
+    config: Option<super::RunConfig>,
 }
 
 impl World {
@@ -176,6 +177,7 @@ impl World {
             lines: Mutex::new(vec![]),
             refills: Mutex::new(vec![]),
             sweeps: Mutex::new(0),
+            config: None,
         }
     }
 
@@ -199,7 +201,7 @@ impl World {
                 root: self.harness.clone(),
             },
             env: &env,
-            config: None,
+            config: self.config.as_ref(),
             stdin: &read_stdin,
             out: &out,
             owner_dir: self.owner.clone(),
@@ -618,6 +620,52 @@ fn a_cached_red_is_refused_until_a_reason_is_given() {
     let key = res.file_name().unwrap().to_string_lossy().to_string();
     let v = fs::read_to_string(w.root.join(format!("run/verdicts/batch-{key}"))).unwrap();
     assert!(v.contains("override_reason=the runner VM was destroyed mid-run"));
+}
+
+fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
+    let log = w.root.join("incident.log");
+    let cmd = w.root.join("incident-fake.sh");
+    fs::write(&cmd, format!("#!/bin/sh\necho \"$SPIRA_INCIDENT_REPO $SPIRA_INCIDENT_REF\" >> {}\n", log.display())).unwrap();
+    sh(&w.root, &format!("chmod +x {}", cmd.display()));
+    w.env.insert("SPIRA_BATCH_INCIDENT_CMD".into(), cmd.display().to_string());
+    w.env.insert("SPIRA_DB".into(), "fixture.db".into());
+    if in_map {
+        let mut c = super::RunConfig::default();
+        c.repo.insert(
+            "mapped-name".into(),
+            spira_config::RepoSection {
+                path: w.repo.display().to_string(),
+                mode: spira_config::LandMode::Queue,
+                base: None,
+                format: None,
+                lanes: vec![],
+                forge: None,
+                gate_mode: None,
+            },
+        );
+        w.config = Some(c);
+    }
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let args = ["--suites", "test-b.sh", "topic"];
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 1);
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 2);
+    fs::read_to_string(&log).unwrap_or_default()
+}
+
+#[test]
+fn a_repeat_refused_incident_is_not_filed_for_a_repo_that_is_not_registered() {
+    let mut w = World::new("repeat-unmapped");
+    let filed = repeat_incident_filings(&mut w, false);
+    assert_eq!(filed, "");
+    assert!(w.has_line(|l| l.contains("incident not filed")));
+}
+
+#[test]
+fn a_repeat_refused_incident_names_the_repo_that_was_tested() {
+    let mut w = World::new("repeat-mapped");
+    let filed = repeat_incident_filings(&mut w, true);
+    assert!(filed.starts_with("mapped-name repeat-refused:topic:"), "{filed}");
 }
 
 /// sp-tj8k3: a *given* SPIRA_BATCH_MAXPAR of 0 or garbage refuses by name before any

@@ -133,6 +133,7 @@ pub struct RepoState {
     idle_since: Option<u64>,
     idle_warned: bool,
     blind: Option<String>,
+    failed_polls: u32,
     publish: Option<Publish>,
     publish_ci: Option<Ci>,
 }
@@ -143,6 +144,9 @@ impl RepoState {
     }
     pub fn publish(&self) -> Option<&Publish> {
         self.publish.as_ref()
+    }
+    pub fn is_blind(&self) -> bool {
+        self.blind.is_some()
     }
 }
 
@@ -201,11 +205,18 @@ fn rank(b: Option<&Bead>) -> u8 {
     b.and_then(|b| b.priority).unwrap_or(u8::MAX)
 }
 
+/// One unreadable poll is a blip, not a fact worth a wake (law-alerts-must-be-actionable).
+const BLIND_AFTER_FAILED_POLLS: u32 = 2;
+
 pub fn step(prev: &RepoState, snap: &Snapshot, lim: Limits) -> (RepoState, Vec<Event>) {
     let mut st = prev.clone();
     let mut out = Vec::new();
 
     if !snap.errors.is_empty() {
+        st.failed_polls += 1;
+        if st.failed_polls < BLIND_AFTER_FAILED_POLLS {
+            return (st, out);
+        }
         let why = snap.errors.join("; ");
         if st.blind.as_deref() != Some(why.as_str()) {
             out.push(ev("blind", None, vec![], format!("cannot see the queue — {why}")));
@@ -213,6 +224,7 @@ pub fn step(prev: &RepoState, snap: &Snapshot, lim: Limits) -> (RepoState, Vec<E
         }
         return (st, out);
     }
+    st.failed_polls = 0;
     if let Some(was) = st.blind.take() {
         out.push(ev("recovered", None, vec![], format!("queue readable again (was: {was})")));
     }

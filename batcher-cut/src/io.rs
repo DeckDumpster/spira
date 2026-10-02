@@ -14,7 +14,7 @@ use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use batcher::core::{Member, MergeResult, PoolHistory};
@@ -723,6 +723,43 @@ pub fn push_branch(repo: &Repo, sha: &str, branch: &str) -> Result<(), String> {
 
 pub fn set_branch(repo: &Repo, branch: &str, sha: &str) {
     let _ = Command::new("git").arg("-C").arg(&repo.path).args(["branch", "-f", branch, sha]).status();
+}
+
+pub fn local_branches(repo: &Repo, prefix: &str) -> Vec<String> {
+    let out = run(
+        Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short)", &format!("refs/heads/{prefix}")]),
+        "git for-each-ref",
+    )
+    .unwrap_or_default();
+    out.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
+}
+
+pub fn reap_branches(repo: &Repo, prefix: &str) {
+    for b in local_branches(repo, prefix) {
+        let _ = Command::new("git")
+            .arg("-C")
+            .arg(&repo.path)
+            .args(["branch", "-D", &b])
+            .env("SPIRA_REF_SANCTIONED", "1")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+/// `%Y%m%dT%H%M%SZ`, the stamp every other batch path names its branches with.
+pub fn utc_stamp(t: u64) -> String {
+    let (days, rem) = ((t / 86400) as i64, t % 86400);
+    let z = days + 719468;
+    let era = z.div_euclid(146097);
+    let doe = z.rem_euclid(146097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
 }
 
 pub fn head_of(wt: &Path) -> Result<String, String> {
@@ -1694,6 +1731,27 @@ mod certify_tests {
         assert!(gate::cert::certifies(&text, "spira", &older).is_none());
         assert!(gate::cert::path(&e.verdicts, "spira", &older).map(|p| !p.exists()).unwrap_or(true));
         assert!(certify_round(&e, &repo, "no-such-rev", "x").is_err(), "an unresolvable head certifies nothing");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn reaping_an_aborted_round_leaves_no_attr_branch_and_the_stamp_is_utc() {
+        let d = testkit::TempDir::new("batcher-cut-reap");
+        git(&d, &["init", "-q"]);
+        fs::write(d.join("a"), "1").unwrap();
+        git(&d, &["add", "a"]);
+        git(&d, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a"]);
+        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+        for b in ["spira/batcher-attr/spira-1-j1", "spira/batcher-attr/spira-1-survivors", "spira/batcher-attr/other-1"] {
+            set_branch(&repo, b, "HEAD");
+        }
+        assert_eq!(local_branches(&repo, "spira/batcher-attr/spira-*").len(), 2);
+        reap_branches(&repo, "spira/batcher-attr/spira-*");
+        assert_eq!(local_branches(&repo, "spira/batcher-attr/*"), vec!["spira/batcher-attr/other-1".to_string()]);
+        assert!(local_branches(&repo, "spira/queue/*").is_empty());
+        assert_eq!(utc_stamp(1790551299), "20260927T232139Z");
+        assert_eq!(utc_stamp(0), "19700101T000000Z");
+        assert_eq!(utc_stamp(951782400), "20000229T000000Z");
         let _ = fs::remove_dir_all(&d);
     }
 }

@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=queue
+DOC=HOW LONG A REPO'S CERTIFIED POOL MAY SIT AT OR PAST SPIRA_QUEUE_ROUND_MIN_N, with no batch open, before pool-idle fires
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A REPO'S CERTIFIED POOL MAY SIT AT OR PAST SPIRA_QUEUE_ROUND_MIN_N, with no
+    # batch open, before czar-pass fires pool-idle. In seconds.
+    : "${SPIRA_QUEUE_ROUND_STALL_SECS:=900}"
+SPIRA_CONF_DEFAULT_EOF

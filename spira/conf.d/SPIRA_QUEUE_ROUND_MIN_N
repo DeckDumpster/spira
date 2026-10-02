@@ -1,0 +1,9 @@
+TYPE=u32
+GROUP=queue
+DOC=THE CERTIFIED-POOL DEPTH AT WHICH THE BATCHER'S OWN ADAPTIVE TRIGGER MUST ALREADY HAVE cut a round
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THE CERTIFIED-POOL DEPTH AT WHICH THE BATCHER'S OWN ADAPTIVE TRIGGER MUST ALREADY HAVE
+    # cut a round (batcher/src/core.rs: adaptive_n's floor — the two move together). At or
+    # above it, czar-pass's pool-idle detector may fire.
+    : "${SPIRA_QUEUE_ROUND_MIN_N:=4}"
+SPIRA_CONF_DEFAULT_EOF
