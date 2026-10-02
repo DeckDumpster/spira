@@ -4,13 +4,3 @@
 # finding the path produces is suppressed while it is listed, not just the one named below).
 #
 # Suites still naming scripts retired into Rust binaries; repoint each to its binary and drop the line.
-spira/test-batch-preflight.sh
-spira/test-eject-unattributed.sh
-spira/test-land-build-ensure.sh
-spira/test-landing-pass.sh
-spira/test-landing-pr.sh
-spira/test-queue-eject-mail.sh
-spira/test-snap-stale-threshold.sh
-spira/test-testenv-scratch.sh
-spira/test-verdict.sh
-spira/test-watchtower-czar-outcome-classify.sh
