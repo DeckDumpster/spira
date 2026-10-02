@@ -51,6 +51,12 @@ const CONDITIONAL: &[&str] = &[
     "BEAD_ID",
     "BEADS_ACTOR",
     "SPIRA_MAIL",
+    "RUSTC_WRAPPER",
+    "SPIRA_ADMIT_INNER",
+    "SPIRA_ADMIT_WHO",
+    "SCCACHE_IGNORE_SERVER_IO_ERROR",
+    "SCCACHE_WEBDAV_ENDPOINT",
+    "SCCACHE_WEBDAV_KEY_PREFIX",
 ];
 
 /// The child environment the model runs under, given the bead it is bound to, the
@@ -178,6 +184,12 @@ mod tests {
             ("BEAD_ID", "sp-x"),
             ("BEADS_ACTOR", "aeon-ifrit"),
             ("SPIRA_MAIL", "/run/spira/mail"),
+            ("RUSTC_WRAPPER", "/rel/bin/spira-admit"),
+            ("SPIRA_ADMIT_INNER", "/usr/bin/sccache"),
+            ("SPIRA_ADMIT_WHO", "sp-x"),
+            ("SCCACHE_IGNORE_SERVER_IO_ERROR", "1"),
+            ("SCCACHE_WEBDAV_ENDPOINT", "http://box:9431"),
+            ("SCCACHE_WEBDAV_KEY_PREFIX", "/"),
         ]);
         let e = restricted_env("sp-x", &b, "/rel/bin");
         for k in CONDITIONAL {
