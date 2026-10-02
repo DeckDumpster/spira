@@ -10,7 +10,7 @@
 # to default from SPIRA_HOME, so the manifest came from whatever tree the suite ran in.
 #
 # defect: sp-ncxv, sp-osl2c
-# tier: T1
+# tier: T2
 # covers: install/src/** systemd/*.service systemd/*.timer spira/conf.sh spira/lib-test-install.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
