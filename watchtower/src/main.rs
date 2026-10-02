@@ -6,6 +6,7 @@
 mod cpu_throttle;
 mod czar_outcome;
 mod deadline;
+mod deploy_fault;
 mod disk_mem;
 mod disabled_timer;
 mod env;
@@ -274,6 +275,28 @@ fn main() {
             };
             release_skew::run(
                 n,
+                &run,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+                &cfg,
+            );
+        }
+        Some("--deploy-fault-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: deploy-fault-check skipped — world is halted");
+                return;
+            }
+            let cfg = deploy_fault::Cfg {
+                release_bin: getenv("SPIRA_RELEASE_BIN").unwrap_or_else(|| "release".to_string()),
+                repo: getenv("SPIRA_REPO").unwrap_or_default(),
+                retry_secs: getenv_i64("SPIRA_DEPLOY_FAULT_RETRY_SECS", 1800),
+                build_timeout_secs: getenv_i64("SPIRA_DEPLOY_FAULT_BUILD_TIMEOUT", 1800).max(1) as u64,
+            };
+            let queue_dir = getenv("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue"));
+            deploy_fault::run(
+                n,
+                &queue_dir,
                 &run,
                 &getenv("SPIRA_DB").unwrap_or_default(),
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
