@@ -331,3 +331,15 @@ flow_rework_window_hours
 flow_sentinel_period_secs
 watchtower_probe_timeout_s
 watchtower_start_timeout_s
+cockpit_client_idle_secs
+czar_outcome_mins
+czar_unclaimed_mins
+lc_socket
+lc_testdb_data
+lc_testdb_port
+lc_unix_group
+lc_unix_user
+memories_cache
+memories_cache_age
+rebase_decompose_files
+rebase_generated_files
