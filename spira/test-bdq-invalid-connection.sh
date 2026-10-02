@@ -41,6 +41,7 @@ export SPIRA_HOME="$HERE"
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
 export SPIRA_DB="$T/db"
+export SPIRA_BDQ_CONN_BACKOFF_MS=0
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
@@ -99,7 +100,7 @@ is   "other-error: bd was called exactly once — no blind retry" "1" "$(cat "$C
 
 # ==========================================================================================
 echo
-echo "3. POSITIVE CONTROL — invalid connection every time: bounded to one retry, not forever"
+echo "3. POSITIVE CONTROL — invalid connection every time: bounded to three tries, not forever"
 # ==========================================================================================
 rm -f "$CALLS"
 cat > "$SPIRA_BD" <<'STUB'
@@ -118,6 +119,21 @@ errmsg="$(cat "$ERRF" 2>/dev/null)"
 is   "bounded-retry: rc is 1"                       "1"  "$rc"
 is   "bounded-retry: stdout is empty"                ""   "$out"
 want "bounded-retry: stderr carries the last attempt's error" "invalid connection" "$errmsg"
-is   "bounded-retry: bd was called exactly twice, not forever" "2" "$(cat "$CALLS")"
+is   "bounded-retry: bd was called exactly three times, not forever" "3" "$(cat "$CALLS")"
+
+echo
+echo "4. a write that dropped mid-statement is not retried; one that never opened is"
+rm -f "$CALLS"
+cat > "$SPIRA_BD" <<'STUB'
+#!/usr/bin/env bash
+n=0
+[ -f "$CALLS" ] && n="$(cat "$CALLS")"
+echo $((n + 1)) > "$CALLS"
+echo 'Error: invalid connection' >&2
+exit 1
+STUB
+chmod +x "$SPIRA_BD"
+bdq note sp-abc hi >/dev/null 2>&1
+is   "write-mid-statement: bd called exactly once" "1" "$(cat "$CALLS")"
 
 tl_summary

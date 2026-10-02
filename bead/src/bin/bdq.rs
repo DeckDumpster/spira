@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::bdq::{
     check_destructive, check_repo_label, check_schema_delete, czar_fence_class, is_create, json_count, json_only,
-    should_retry,
+    should_retry, retryable, backoff_ms,
 };
 use spira_config::repos::Registry;
 
@@ -261,19 +261,29 @@ fn cmd_bdq(args: &[String]) -> i32 {
 
     let bd_bin = env_or("SPIRA_BD", "bd");
     let timeout_s = env_or("BD_TIMEOUT", "180");
-    let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES").and_then(|s| s.parse().ok()).unwrap_or(2);
+    let max_tries: u32 = env_nonempty("SPIRA_BDQ_CONN_RETRIES").and_then(|s| s.parse().ok()).unwrap_or(3);
+    let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
+    let t_start = std::time::Instant::now();
 
     let mut try_n: u32 = 1;
     let (rc, stderr_buf) = loop {
         let (rc, err) = run_bd_once(&timeout_s, &bd_bin, &db, args);
-        let has_invalid_connection = err.contains("invalid connection");
-        if should_retry(rc, try_n, max_tries, has_invalid_connection) {
+        if should_retry(rc, try_n, max_tries, retryable(args, &err)) {
+            eprintln!("bdq: invalid connection (attempt {try_n}/{max_tries}); retrying");
+            std::thread::sleep(std::time::Duration::from_millis(backoff_ms(backoff_base, try_n)));
             try_n += 1;
             continue;
         }
         break (rc, err);
     };
     eprint!("{stderr_buf}");
+    if let Some(run) = env_nonempty("SPIRA_RUN") {
+        let dir = format!("{run}/bdq");
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(format!("{dir}/latency.log")) {
+            let _ = writeln!(f, "{} rc={} tries={} ms={} verb={}", date_now_utc_nanos(), rc, try_n, t_start.elapsed().as_millis(), args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or(""));
+        }
+    }
 
     if let (Some(tf), Some(t0)) = (trace_file, t0) {
         let t1 = date_now_utc_nanos();
