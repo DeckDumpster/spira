@@ -2124,21 +2124,23 @@ fn refuse_repeat(
         }
     }
     let incident = s.incident_cmd.clone().or_else(|| deps.which("incident.sh"));
-    if let Some(incident) = incident.filter(|i| i.is_file() && s.spira_db.is_some()) {
+    let in_map = deps.config.is_some_and(|c| c.repo.contains_key(&repo.name));
+    if !in_map {
+        deps.log(&format!(
+            "repeat-refused incident not filed: repo {} is not in the repo-map",
+            repo.name
+        ));
+    }
+    if let Some(incident) = incident.filter(|i| in_map && i.is_file() && s.spira_db.is_some()) {
         let mut body = format!(
             "Repeat attempt refused. Prior red at {when}. Key: batch-{key}. Red suites: {red_suites}. Branch: {br}. SPIRA_VERDICT_REPEAT_CONSIDERED was not set or was too short.\n\nTwo routes forward:\n1. Commit a fix — the new tree produces a new key and the cache does not apply.\n2. If the red was environmental (not a code defect), re-run with SPIRA_VERDICT_REPEAT_CONSIDERED set to a sentence describing why (min 10 chars): SPIRA_VERDICT_REPEAT_CONSIDERED=\"<reason>\" testenv --suites {csv} {br}\n"
         );
         if let Some(p) = prior_override {
             body.push_str(&format!("Prior override attempted: {p}\n"));
         }
-        let home_repo = deps
-            .config
-            .and_then(|c| c.spira.as_ref())
-            .and_then(|s| s.home_repo.clone())
-            .unwrap_or_default();
         let env = [
             ("SPIRA_INCIDENT_REF", format!("repeat-refused:{br}:{short}")),
-            ("SPIRA_INCIDENT_REPO", home_repo),
+            ("SPIRA_INCIDENT_REPO", repo.name.clone()),
             ("SPIRA_INCIDENT_TYPE", "task".into()),
             ("SPIRA_INCIDENT_CAUSE", "repeat-refused".into()),
             ("SPIRA_INCIDENT_PRIORITY", "3".into()),
