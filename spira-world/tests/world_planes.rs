@@ -101,7 +101,10 @@ exit 0
 "#,
         )
         .unwrap();
-        Command::new("chmod").arg("+x").arg(&stub).status().unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         Fixture { tmp }
     }
 
