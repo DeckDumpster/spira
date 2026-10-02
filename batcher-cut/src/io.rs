@@ -1355,10 +1355,8 @@ mod pool_parity_tests {
         run(Command::new("git").arg("-C").arg(dir).args(args), "git").unwrap().trim().to_string()
     }
 
-    fn tmp_repo(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("batcher-cut-pool-{}-{tag}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
-        fs::create_dir_all(&d).unwrap();
+    fn tmp_repo(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(&format!("batcher-cut-pool-{tag}"));
         git(&d, &["init", "-q", "-b", "main"]);
         git(&d, &["config", "user.email", "t@t"]);
         git(&d, &["config", "user.name", "t"]);
@@ -1389,7 +1387,7 @@ mod pool_parity_tests {
         let moved_tip = git_out(&d, &["rev-parse", "spira/sp-test1"]);
         assert_ne!(tip1, moved_tip, "positive control: the branch really did move");
 
-        let repo = Repo { name: "r".into(), path: d.clone(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
         let branches = repo_branch_tips(&repo).unwrap();
 
         assert!(!tip_current(&tip1, "sp-test1", &branches), "the OLD certified tip is no longer this branch's live tip");
