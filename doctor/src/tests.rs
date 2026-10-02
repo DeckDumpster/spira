@@ -920,6 +920,23 @@ fn operator_channel_everything_present() {
 }
 
 #[test]
+fn operator_channel_reports_mail_mute_only_when_on() {
+    let f = Fake::default();
+    f.which.borrow_mut().insert("inotifywait".into(), "/bin/inotifywait".into());
+    f.which.borrow_mut().insert("go".into(), "/usr/bin/go".into());
+    f.exec_files.borrow_mut().push("/usr/bin/go".into());
+    let has = |f: &Fake| check_operator_channel(f).iter().any(|l| l.msg.contains("mail is muted"));
+    assert!(!has(&f));
+    f.set("SPIRA_MAIL_MUTE", "0");
+    assert!(!has(&f));
+    f.set("SPIRA_MAIL_MUTE", "true");
+    assert!(has(&f));
+    f.set("SPIRA_MAIL_MUTE", "1");
+    assert!(has(&f));
+    assert!(check_operator_channel(&f).iter().all(|l| l.level == Level::Ok));
+}
+
+#[test]
 fn operator_channel_missing_inotify_fails_when_operated() {
     let f = Fake::default();
     f.exec_files.borrow_mut().push("/usr/bin/go".into());

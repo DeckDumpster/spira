@@ -657,6 +657,10 @@ pub fn check_operator_channel(w: &dyn World) -> Vec<Line> {
     };
     let mut out = Vec::new();
 
+    if matches!(w.env("SPIRA_MAIL_MUTE").as_deref(), Some("1") | Some("true")) {
+        out.push(ok("mail is muted (spira.mail_mute) — messages are recorded already read; no mailbox shows unread"));
+    }
+
     match w.which("inotifywait") {
         Some(p) => out.push(ok(format!("inotifywait — {}", p.display()))),
         None => out.push(make("inotifywait is not on PATH — no mail reaches you until a session starts".into(), "Install: apt install inotify-tools".into())),
