@@ -233,8 +233,18 @@ enum BeadStatus {
 /// `BD_TIMEOUT=2 bdjson show <id>` — deliberately short: this runs once per branch across
 /// every repository on the 600s tier, and a hung `bd` must not stall the whole probe.
 fn bead_status(id: &str) -> BeadStatus {
+    match bead_status_at(id, "2") {
+        // An empty/error-shaped answer under the short timeout is ambiguous (sp-cyc1t: an extant
+        // closed bead read as NoBead). Re-confirm once with a longer timeout; only a second
+        // not-found counts as NoBead, anything else is a probe fault.
+        BeadStatus::NoBead => bead_status_at(id, "10"),
+        other => other,
+    }
+}
+
+fn bead_status_at(id: &str, timeout: &str) -> BeadStatus {
     let prev = std::env::var("BD_TIMEOUT").ok();
-    std::env::set_var("BD_TIMEOUT", "2");
+    std::env::set_var("BD_TIMEOUT", timeout);
     let raw = io::bdjson(&["show", id]);
     match prev {
         Some(p) => std::env::set_var("BD_TIMEOUT", p),
