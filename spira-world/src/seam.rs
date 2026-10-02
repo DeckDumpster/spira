@@ -111,10 +111,23 @@ say() { printf '%s\n' "$*"; }
 status_of() { bdjson show "$ID" | python3 -c 'import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("status","") if d else "")' 2>/dev/null; }
 st="$(status_of)"
+carries_own=0
+if [ "$st" = in_progress ] && [ "$MODE" = reopen ] && [ "$KEEP" = 1 ]; then
+    _rn="$(bead_repo "$ID" 2>/dev/null)"; _rp=""
+    [ -n "$_rn" ] && _rp="$(repo_root "$_rn" 2>/dev/null)"
+    if [ -n "$_rp" ] && _base="$(spira_landref "$_rp" 2>/dev/null)" \
+        && git -C "$_rp" log --format='%s%n%b' "$_base..spira/$ID" 2>/dev/null | grep -qF -- "$ID"; then
+        carries_own=1
+    fi
+fi
 if [ "$st" = in_progress ]; then
     spira-lc holder-dead "$ID" slay >/dev/null 2>&1 || true
 fi
 bdq update "$ID" --assignee "" --force >/dev/null 2>&1 || bdq update "$ID" --assignee "" >/dev/null 2>&1
+if [ "$carries_own" = 1 ]; then
+    bdq label add "$ID" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" >/dev/null 2>&1 || true
+    say "bead: spira/$ID already carries a commit of $ID — reopened as submitted, not for redo"
+fi
 
 repo_name="$(bead_repo "$ID" 2>/dev/null)"; repo=""
 [ -n "$repo_name" ] && repo="$(repo_root "$repo_name" 2>/dev/null)"
