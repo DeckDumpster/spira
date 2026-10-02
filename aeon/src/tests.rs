@@ -27,6 +27,11 @@ struct World {
     ready: Vec<String>,
     seam_calls: Vec<(String, Vec<String>)>,
     exec_calls: Vec<(String, Vec<String>, Option<String>)>,
+    /// Every `bd` invocation, verbatim argv — `seam_calls`/`exec_calls`' own generic
+    /// recording, extended to the one port (`Bd`) that did not have it yet (sp-1zxru: the
+    /// no-progress hold's `bd update <id> --defer <ts>` is otherwise invisible to a test —
+    /// `FakeBd::bd`'s own match falls through every argv it does not special-case).
+    bd_calls: Vec<Vec<String>>,
     ready_fails: bool,
     claim_taken: BTreeSet<String>,
     /// `spira-claim stack <id>`'s canned stdout for these tests — `None` falls back to `"{}"`
@@ -63,6 +68,7 @@ fn row_json(w: &World, id: &str) -> String {
 impl Bd for FakeBd {
     fn bd(&self, a: &[String]) -> Out {
         let mut w = self.0.lock().unwrap();
+        w.bd_calls.push(a.to_vec());
         let a: Vec<&str> = a.iter().map(|s| s.as_str()).collect();
         match a.as_slice() {
             ["ready", ..] => {
@@ -648,15 +654,29 @@ fn happy_path_legacy_close_is_converted_to_submitted() {
     assert!(o.log.contains("builder: sp-h closed a work bead directly — converted to submitted"));
 }
 
+// sp-1zxru: aeon-ledger.log since 2026-10-02T07:36Z showed sp-6a4rb/sp-0k18y/etc resumed
+// every ~75s by the SAME aeon — a session that ends in_progress with no commit was treated
+// exactly like a real failed attempt (charged, immediately reclaimable). The three tests
+// below pin the fix: no commit is a no-progress exit (held, not resumed, not charged, not
+// asked about); a commit still charges (a real failed attempt still counts); and a streak
+// of no-progress exits at the cap is routed to the Concierge, never to Ryan.
+
 #[test]
-fn a_session_that_leaves_the_bead_open_is_unlanded_and_exits_its_rc() {
+fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held_not_resumed() {
     let f = fx("unlanded");
     seed(&f, "sp-o");
     // A believable trace (acted, no API error) so the native session_outcome classifies it
     // as `unlanded` rather than `refused` — this is the exact shape test-attempts.sh's
-    // "clean.log" fixture asserted against the bash classifier.
+    // "clean.log" fixture asserted against the bash classifier. No commit lands on the
+    // branch (the shape aeon-ledger.log showed for sp-0k18y: "Nothing has changed since the
+    // last check, so I'm leaving the bead open with a note").
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
-        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        crate::run::append(
+            &spec.log,
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Nothing has changed since the last check, so I'm leaving the bead open with a note\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+             {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n",
+        );
         1
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
@@ -664,8 +684,90 @@ fn a_session_that_leaves_the_bead_open_is_unlanded_and_exits_its_rc() {
     let l = ledger_lines(&o);
     assert!(l[2].starts_with("done builder sp-o rc=1 status=in_progress"), "{l:?}");
     let w = o.w.lock().unwrap();
-    assert!(w.notes.iter().any(|(_, n)| n.starts_with("Unlanded (unlanded): the session ran to its own end")));
-    assert_eq!(w.status["sp-o"], "open", "released");
+    assert!(
+        w.notes.iter().any(|(_, n)| n.starts_with("No progress (unlanded): Nothing has changed since the last check")),
+        "the note carries the aeon's own last word: {:?}",
+        w.notes
+    );
+    assert_eq!(w.status["sp-o"], "open", "released, not left claimed");
+    // Exempt, not charged: the events fold's `unjudged-` prefix, same as every other
+    // never-judged disposition, so CHECK 4 never counts this toward the attempts ask.
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-o", "unjudged-no-progress"]), "{:?}", w.seam_calls);
+    // Held, not resumed: a real defer, not just release() (which alone put it right back
+    // in front of the next summon — the whole bug).
+    assert!(
+        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--defer".to_string())),
+        "{:?}",
+        w.bd_calls
+    );
+    // The streak this hold counts is the SAME tip-keyed counter real thrash uses — reused,
+    // not a second one built in parallel.
+    assert!(w.seam_calls.iter().any(|c| c.0 == "thrash_streak_bump" && c.1[0] == "sp-o"), "{:?}", w.seam_calls);
+}
+
+#[test]
+fn a_committed_but_still_open_session_still_charges_a_real_attempt() {
+    let f = fx("unlanded-committed");
+    seed(&f, "sp-p");
+    // A commit naming the bead DOES land on the branch this time — the session made
+    // progress and still left the bead open. `law-attempts-count-the-harness` cuts the
+    // other way here: this is a verdict about the work, so it counts.
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        let id = spec.env.get("BEAD_ID").unwrap().clone();
+        std::fs::write(spec.cwd.join("f"), "partial work\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", &format!("{id} — partial, not done")]);
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        1
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    assert_eq!(o.code, 1, "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.notes.iter().any(|(_, n)| n.starts_with("Unlanded (unlanded): the session ran to its own end")),
+        "{:?}",
+        w.notes
+    );
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bump_requeue"), "a charged attempt writes no exempt requeue cause: {:?}", w.seam_calls);
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "thrash_streak_bump"), "committed work is not a no-progress exit: {:?}", w.seam_calls);
+    assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
+    assert_eq!(w.status["sp-p"], "open");
+}
+
+#[test]
+fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
+    let f = fx("unlanded-cap");
+    seed(&f, "sp-q");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, _, _| {
+        crate::run::append(
+            &spec.log,
+            "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Still blocked on the same missing fixture.\"}]}}\n\
+             {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n\
+             {\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n",
+        );
+        1
+    });
+    // literal-ok: SPIRA_THRASH_STREAK_CAP defaults to 2 (unset by this fixture's `vars`) —
+    // a canned streak at the cap stands in for the Nth consecutive no-progress exit at the
+    // same tip without actually running N sessions.
+    let answers = BTreeMap::from([("thrash_streak_bump", Out::ok("2"))]);
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, answers, act);
+    assert_eq!(o.code, 1, "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(
+        !w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())),
+        "at the cap this routes to the Concierge instead of deferring again: {:?}",
+        w.bd_calls
+    );
+    let mail = w.exec_calls.iter().find(|c| c.0 == "mail").unwrap_or_else(|| panic!("no mail send concierge: {:?}", w.exec_calls));
+    assert_eq!(mail.1[0], "send");
+    assert_eq!(mail.1[1], "concierge", "never operator/ryan — the Concierge's own mailbox");
+    let bead_at = mail.1.iter().position(|a| a == "--bead").expect("--bead flag");
+    assert_eq!(mail.1[bead_at + 1], "sp-q");
+    let subj_at = mail.1.iter().position(|a| a == "--subject").expect("--subject flag");
+    assert!(mail.1[subj_at + 1].starts_with("aeon cannot progress:"), "{:?}", mail.1);
+    assert!(w.notes.iter().any(|(_, n)| n.contains("routed to the Concierge")), "{:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-q", "unjudged-no-progress"]), "still exempt past the cap: {:?}", w.seam_calls);
+    assert_eq!(w.status["sp-q"], "open", "released, not left claimed, not re-held");
 }
 
 #[test]

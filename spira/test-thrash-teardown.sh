@@ -84,10 +84,17 @@ command -v aeon >/dev/null 2>&1 \
     || bail "aeon is not on PATH — refusing to run the real model"
 
 # Shim A (positive control): exits with the bead open and no marker — attempt IS charged.
+# COMMITS (sp-1zxru): this row's whole point is a real charged attempt to contrast the
+# thrash-exempt cases below against — a session with no commit is a no-progress exit now
+# (its own suite, test-aeon-teardown-e2e.sh's "no commit, left open" row), not this one.
 cat > "$BIN/claude-no-thrash" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+if [ -n "${BEAD_ID:-}" ]; then
+    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
+    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — the work"
+fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 0
 SHIM

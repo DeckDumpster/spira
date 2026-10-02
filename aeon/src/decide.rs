@@ -65,6 +65,7 @@ pub enum NoteKey {
     YieldHeadless,
     PreSession,
     Unlanded,
+    NoProgress,
     NotJudged,
 }
 
@@ -101,10 +102,17 @@ fn d(status: &str, charge: bool, cause: Option<&str>, note: NoteKey) -> Disposit
     Disposition { ledger_status: status.to_string(), charge, requeue_cause: cause.map(|s| s.to_string()), note }
 }
 
-/// `outcome_charges`: only a session that ran to its own end (`unlanded`) may charge.
+/// `outcome_charges`: only a session that ran to its own end (`unlanded`) may charge —
+/// and even then, only once [`disposition`] also finds a commit (see [`NoteKey::NoProgress`]).
 pub fn outcome_charges(outcome: &str) -> bool {
     outcome == "unlanded"
 }
+
+/// The exempt requeue cause an `unlanded`-but-uncommitted exit writes (sp-1zxru):
+/// `events::is_legacy_exempt` reads the `unjudged-` prefix the same way every other
+/// never-judged disposition's cause already does, so this return is never counted toward
+/// the poison threshold and CHECK 4 never files its "N attempts" ask over it.
+pub const NO_PROGRESS_CAUSE: &str = "unjudged-no-progress";
 
 pub fn disposition(i: &DispositionIn) -> Disposition {
     use NoteKey::*;
@@ -151,7 +159,16 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
     let outcome = i.outcome.clone().filter(|o| o != "-").unwrap_or_default();
     if outcome_charges(&outcome) {
-        d(status, true, None, Unlanded)
+        if i.committed {
+            d(status, true, None, Unlanded)
+        } else {
+            // sp-1zxru: the session ran to its own end and left the bead in_progress, but
+            // nothing it did moved the branch — no new commit naming this bead. That is
+            // the no-progress exit (law-attempts-count-the-harness: a retry that cannot
+            // change an input is the harness's loop, not the work's failure), not a
+            // judged attempt. teardown.rs holds it for a backoff instead of resuming it.
+            d(status, false, Some(NO_PROGRESS_CAUSE), NoProgress)
+        }
     } else {
         Disposition { ledger_status: status.to_string(), charge: false, requeue_cause: Some(format!("unjudged-{outcome}")), note: NotJudged }
     }
@@ -357,6 +374,48 @@ pub fn session_yield_headless(segment: &str) -> bool {
     PATTERNS.iter().any(|p| regex::Regex::new(&format!("(?is){p}")).unwrap().is_match(&last_text))
 }
 
+/// The session's own last word (sp-1zxru): the last non-empty assistant text block in the
+/// trace segment, trimmed. Used only to label a no-progress exit with the aeon's own
+/// one-line reason — never to decide anything (that stays [`session_outcome`]'s).
+/// `None` for a segment with no readable assistant text at all (missing trace, pure tool
+/// noise, or nothing parses).
+pub fn last_assistant_text(segment: Option<&str>) -> Option<String> {
+    let seg = segment?;
+    let mut last = String::new();
+    for line in seg.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(e) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+        if e.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let content: Vec<serde_json::Value> = e.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()).cloned().unwrap_or_default();
+        for c in &content {
+            if c.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(t) = c.get("text").and_then(|t| t.as_str()) {
+                    if !t.trim().is_empty() {
+                        last = t.trim().to_string();
+                    }
+                }
+            }
+        }
+    }
+    (!last.is_empty()).then_some(last)
+}
+
+/// The no-progress backoff window (sp-1zxru): starts at 30 minutes and doubles with every
+/// consecutive no-progress exit the streak counts at the same branch tip ([`thrash_streak_bump`
+/// in counters.rs] drives the streak; this is pure arithmetic over its result, capped at
+/// 2^6 so a runaway streak before the poison cap still returns a plain number). The caller
+/// stops calling this at all once the streak reaches `SPIRA_THRASH_STREAK_CAP` — see
+/// teardown.rs's `NoteKey::NoProgress`.
+pub fn no_progress_backoff_minutes(streak: i64) -> i64 {
+    let shift = streak.saturating_sub(1).clamp(0, 6) as u32;
+    30i64 << shift
+}
+
 /// Python truthiness over a JSON value (`None`/`false`/`0`/`""`/`[]`/`{}` are the only falsy
 /// shapes) — `run_in_background`'s own test in the original lib.sh helper.
 fn truthy(v: Option<&serde_json::Value>) -> bool {
@@ -425,7 +484,10 @@ mod tests {
     #[test]
     fn disposition_table() {
         let mut i = base();
-        assert_eq!(disposition(&i), d("open", true, None, NoteKey::Unlanded));
+        assert_eq!(disposition(&i), d("open", false, Some(NO_PROGRESS_CAUSE), NoteKey::NoProgress), "unlanded with no commit is a no-progress exit, not charged (sp-1zxru)");
+        i.committed = true;
+        assert_eq!(disposition(&i), d("open", true, None, NoteKey::Unlanded), "a real failed attempt — committed work, still open — still counts");
+        i.committed = false;
         i.outcome = Some("killed".into());
         assert_eq!(disposition(&i), d("open", false, Some("unjudged-killed"), NoteKey::NotJudged));
         i.session_started = false;
@@ -462,7 +524,7 @@ mod tests {
     fn disposition_unreadable_status_renders_question_mark() {
         let i = DispositionIn { status: String::new(), ..base() };
         assert_eq!(disposition(&i).ledger_status, "?");
-        let r = DispositionIn { requeue_cause: Some("-".into()), ..base() };
+        let r = DispositionIn { requeue_cause: Some("-".into()), committed: true, ..base() };
         assert_eq!(disposition(&r).note, NoteKey::Unlanded, "`-` is no cause");
     }
 
@@ -600,5 +662,31 @@ mod tests {
         let real = done("90");
         assert_eq!(rapid_recur_streak(&[&a, &real]), 0, "a real run (wall_s>=10) resets the streak to 0");
         assert_eq!(rapid_recur_streak(&[&real, &a]), 1, "the streak resets AFTER the real run, not before it");
+    }
+
+    // ---- sp-1zxru: no-progress exits ----------------------------------------------------
+
+    #[test]
+    fn last_assistant_text_takes_the_last_nonempty_block() {
+        assert_eq!(last_assistant_text(None), None, "no trace at all");
+        assert_eq!(last_assistant_text(Some("")), None, "empty trace");
+        assert_eq!(last_assistant_text(Some("not json\nnot json either")), None);
+        let seg = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"first\"}]}}\n\
+                   {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\"}]}}\n\
+                   {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"Nothing has changed since the last check, so I'm leaving the bead open with a note\"}]}}\n";
+        assert_eq!(last_assistant_text(Some(seg)), Some("Nothing has changed since the last check, so I'm leaving the bead open with a note".to_string()));
+        let blank = "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"kept\"}]}}\n\
+                     {\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"   \"}]}}\n";
+        assert_eq!(last_assistant_text(Some(blank)), Some("kept".to_string()), "a later blank text block does not overwrite a real one");
+    }
+
+    #[test]
+    fn no_progress_backoff_minutes_doubles_from_thirty() {
+        assert_eq!(no_progress_backoff_minutes(1), 30, "first no-progress exit: 30m");
+        assert_eq!(no_progress_backoff_minutes(2), 60);
+        assert_eq!(no_progress_backoff_minutes(3), 120);
+        assert_eq!(no_progress_backoff_minutes(0), 30, "a streak of 0 (or less) still floors at 30m");
+        assert_eq!(no_progress_backoff_minutes(-5), 30);
+        assert_eq!(no_progress_backoff_minutes(100), 30 * (1 << 6), "the shift is capped so a huge streak is still a plain number");
     }
 }

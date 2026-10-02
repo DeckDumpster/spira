@@ -12,6 +12,7 @@ use crate::decide::{self, DispositionIn, NoteKey};
 use crate::ledger;
 use crate::ports::s;
 use crate::run::{Run, FIXTURE_DROP};
+use crate::util;
 
 impl Run<'_> {
     fn stop_heartbeat(&self) {
@@ -99,6 +100,7 @@ impl Run<'_> {
             let mut i = DispositionIn { status: if st.is_empty() { "?".into() } else { st.clone() }, session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
             let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
             let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
+            let mut unlanded_reason = String::new();
             let run = self.run_dir().to_path_buf();
             let work = self.s.work.clone();
             let short_tip = |this: &Self| {
@@ -158,6 +160,10 @@ impl Run<'_> {
                 // pre-session death
             } else {
                 let seg = ledger::trace_segment(self.s.logf.as_deref(), 0, &self.conf.trace_mark());
+                // The aeon's own last word, gathered here and used only if the disposition
+                // below lands on NoProgress (sp-1zxru) — never consulted for the decision
+                // itself, which stays session_outcome's and committed's alone.
+                unlanded_reason = decide::last_assistant_text(seg.as_deref()).unwrap_or_default();
                 i.outcome = Some(decide::session_outcome(seg.as_deref()).to_string());
             }
             // SESSION_RC, committed and REQUEUE_CAUSE are passed whatever was gathered, as
@@ -278,6 +284,48 @@ impl Run<'_> {
                     self.note(&format!("Unlanded ({o}): the session ran to its own end and left this bead open. That is a verdict about the work; the next claim counts toward the poison threshold via the events trail."));
                     self.log(&format!("{f}: {id} not closed ({o}), released"));
                     self.release();
+                }
+                // sp-1zxru: ran to its own end, left the bead in_progress, but nothing it
+                // did moved the branch. This is the harness's loop (law-attempts-count-
+                // the-harness), not a judged attempt — release() alone would put it right
+                // back in front of the next summon (aeon-ledger.log: resumed every ~75s).
+                // Reuses the thrash streak (same tip-keyed counter thrash_streak_bump
+                // already maintains) to tell "stuck again at the same commit" from "moved
+                // on", and bump_requeue's exempt cause so the events fold never charges it
+                // or lets CHECK 4 count it toward the attempts ask.
+                NoteKey::NoProgress => {
+                    let o = i.outcome.clone().unwrap_or_default();
+                    let tip = short_tip(self);
+                    let reason = {
+                        let r = unlanded_reason.trim().lines().next().unwrap_or("").trim();
+                        let r: String = r.chars().take(300).collect();
+                        if r.is_empty() { "no reason given".to_string() } else { r }
+                    };
+                    let streak: i64 = self.sv("thrash_streak_bump", &s(&[&id, &tip, &reason])).text().trim().parse().unwrap_or(0);
+                    let cap = self.conf.n("SPIRA_THRASH_STREAK_CAP", 2);
+                    self.bump_requeue(&cause);
+                    self.release();
+                    if streak >= cap {
+                        let subj = format!("aeon cannot progress: {reason}");
+                        let body = format!(
+                            "## Note\n{id} has made no progress across {streak} consecutive no-progress exits, branch {} stuck at {tip}. Each exit was held for a backoff instead of resumed, and no attempt was charged for any of them. The aeon's own last word: {reason}\n\nChange the approach, split the bead, or drop it.\n",
+                            self.s.branch
+                        );
+                        let _ = self.d.exec.exec(
+                            "mail",
+                            &s(&["send", "concierge", "--from", "Aeon <aeon@spira>", "--subject", &subj, "--kind", "note", "--bead", &id]),
+                            Some(body.into_bytes()),
+                            None,
+                        );
+                        self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge instead of held again. No attempt charged."));
+                        self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
+                    } else {
+                        let backoff_min = decide::no_progress_backoff_minutes(streak);
+                        let until = util::iso_utc(self.now() + backoff_min * 60);
+                        let _ = self.d.bd.bd(&s(&["update", &id, "--defer", &until]));
+                        self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
+                        self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
+                    }
                 }
                 NoteKey::NotJudged => {
                     let o = i.outcome.clone().unwrap_or_default();

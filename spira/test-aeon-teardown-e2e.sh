@@ -106,11 +106,39 @@ is     "the branch still carries the aeon's commit after the requeue" "1" "$_nc"
 # make aeon itself exit non-zero — reusing this run rather than a dedicated one, since the
 # fix side of the same UC (a CLOSED bead, claude rc=1, aeon exits 0) still gets its own row
 # below where a stray non-zero exit is the whole point.
-fa_reset; fa_seed sp-rq-2; shim 0 0 0 1; rc="$(fa_run_aeon)"
+#
+# COMMITS this time (sp-1zxru): a real failed attempt — the session moved the branch and
+# still left the bead open — still charges. The no-commit shape of this exact shim call
+# (commit=0) is its own row below, since sp-1zxru that shape is a no-progress exit instead.
+fa_reset; fa_seed sp-rq-2; shim 1 0 0 1; rc="$(fa_run_aeon)"
 is   "session did not close the bead — bead is open" open "$(field sp-rq-2 status)"
 is   "and one attempt IS charged (the normal unlanded case)" "1" "$(count_of sp-rq-2)"
 is   "with nothing on the requeue counter"     "0" "$(requeue_of sp-rq-2)"
 want "and the note reads Unlanded"             "Unlanded" "$(fa_notes sp-rq-2)"
+is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
+
+# ==========================================================================================
+echo
+echo "ROW: no commit, left open — no-progress exit, held for a backoff, not charged (sp-1zxru)"
+# ==========================================================================================
+# THE DEFECT THIS GUARDS: aeon-ledger.log since 2026-10-02T07:36Z showed sp-6a4rb/sp-0k18y/
+# etc resumed every ~75s by the SAME aeon because a session that left the bead in_progress
+# with no commit was charged and immediately reclaimable exactly like a real failed attempt
+# — beads got poisoned and round-duty's attempts ask flooded Ryan's inbox over what is a
+# harness loop, not a judged attempt (law-attempts-count-the-harness). Same shim shape
+# sp-rq-2 used before this bead (commit=0, close=0, claude-rc=1) — no commit is the whole
+# point this time.
+fa_reset; fa_seed sp-np-1; shim 0 0 0 1; rc="$(fa_run_aeon)"
+is   "no attempt is charged" "0" "$(count_of sp-np-1)"
+is   "and nothing on the requeue counter either" "0" "$(requeue_of sp-np-1)"
+notes_np="$(fa_notes sp-np-1)"
+want   "the note reads No progress, not Unlanded"   "No progress" "$notes_np"
+nowant "the note does not read Unlanded"            "Unlanded"    "$notes_np"
+want   "the note says no attempt was charged"       "No attempt charged" "$notes_np"
+is     "held for the backoff — deferred, not left plain open for the next summon" \
+       "deferred" "$(field sp-np-1 status)"
+[ -n "$(field sp-np-1 defer_until)" ] && _defer_set=yes || _defer_set=no
+is   "a defer_until is recorded — the hold the next ready query reads" "yes" "$_defer_set"
 is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
 
 # ==========================================================================================
@@ -171,6 +199,12 @@ id="$(BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" list --json 2>/dev/null \
     | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
       print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
 if [ -n "$id" ]; then
+    # COMMITS (sp-1zxru): this row proves the own-closeout ask is not a decision-blocker,
+    # which needs the session to reach the real unlanded/charged path to show — a session
+    # with no commit now lands on the no-progress exit instead (its own row covers that
+    # shape), which would make the "No attempt charged" nowant below a false positive.
+    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
+    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
     BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" create \
         "Close GitHub issue github:fixture/testrepo#99 for bead $id" \
         -l "${SPIRA_ASK_LABEL:-needs-operator},overseer" \
@@ -282,6 +316,13 @@ cat > "$FA_BIN/claude" <<'SHIM'
 #!/usr/bin/env bash
 cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
+# COMMITS (sp-1zxru): this row proves the stale marker is ignored, which needs the real
+# unlanded/charged path to show it landed on — a session with no commit now lands on the
+# no-progress exit instead (its own row covers that shape).
+if [ -n "${BEAD_ID:-}" ]; then
+    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
+    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — the work"
+fi
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
 exit 1
 SHIM
