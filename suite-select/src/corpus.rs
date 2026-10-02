@@ -17,6 +17,8 @@ pub struct Suite {
     pub tier: Option<Tier>,
     /// `# selects-on:` events (`added`, `mode`).
     pub selects_on: Vec<String>,
+    /// Words of the non-comment lines: what the suite can invoke.
+    pub words: Vec<String>,
 }
 
 impl Suite {
@@ -46,6 +48,7 @@ impl Suite {
             covers: header::covers_of(text).filter(|c| !c.is_empty()),
             tier,
             selects_on: header::selects_on_of(text),
+            words: crate::reach::words_of(text),
         })
     }
 

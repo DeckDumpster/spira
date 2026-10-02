@@ -170,6 +170,11 @@ fn cmd_select(args: &[String]) -> i32 {
         .map(PathBuf::from)
         .unwrap_or_else(|| io::parent_of(&suite_dir));
     let buckets = Buckets::from_env(&env);
+    let mut a = a;
+    match suite_select::reach::Reach::load(&repo) {
+        Ok(r) => a.opts.reach = r,
+        Err(r) => return refused("select", &r),
+    }
     let corpus = match Corpus::load(&suite_dir) {
         Ok(c) => c,
         Err(r) => return refused("select", &r),

@@ -272,3 +272,25 @@ fn buckets_read_the_environment_overrides() {
     assert_eq!(b.source, ["spira/*.sh"], "empty means the default, as ${{VAR:-default}}");
     assert!(b.plumbing.contains(&"spira/lib.sh".to_string()));
 }
+
+#[test]
+fn a_change_to_a_crate_selects_the_suite_that_runs_a_binary_depending_on_it() {
+    let t = testkit::TempDir::new("suite-select-reach-sel");
+    let p = t.path();
+    std::fs::write(p.join("Cargo.toml"), "[workspace]\nmembers = [\"a\", \"b\"]\n").unwrap();
+    std::fs::create_dir_all(p.join("a/src")).unwrap();
+    std::fs::create_dir_all(p.join("b/src")).unwrap();
+    std::fs::write(p.join("a/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+    std::fs::write(p.join("b/Cargo.toml"), "[package]\nname = \"b\"\n[dependencies]\na = { path = \"../a\" }\n").unwrap();
+    std::fs::write(p.join("b/src/main.rs"), "").unwrap();
+    let c = Corpus::new(vec![
+        Suite::parse("test-s.sh", "# covers: spira/s.sh\n\"$BIN/b\" run\n").unwrap(),
+        Suite::parse("test-t.sh", "# covers: spira/t.sh\n# b is only prose here\n").unwrap(),
+    ]);
+    let mut o = nofallback();
+    let without = run(&c, &m(&["a/src/lib.rs"]), &o).unwrap();
+    assert!(without.suites.is_empty(), "no reach: only covers selects");
+    o.reach = crate::reach::Reach::load(p).unwrap();
+    let with = run(&c, &m(&["a/src/lib.rs"]), &o).unwrap();
+    assert_eq!(with.suites, ["test-s.sh"]);
+}

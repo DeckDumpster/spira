@@ -184,6 +184,7 @@ mod tests {
             covers: covers.map(|c| c.iter().map(|x| x.to_string()).collect()),
             tier,
             selects_on: vec![],
+            words: vec![],
         }
     }
 
