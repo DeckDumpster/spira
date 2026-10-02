@@ -73,7 +73,7 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
     publish_record(&t);
     t.forge.status.borrow_mut().push(Some("green\nrun-url: http://r/1\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert_eq!(t.forge.calls.borrow()[0], "check-status 77 spira/publish/X");
+    assert_eq!(t.forge.calls.borrow()[1], "check-status 77 spira/publish/X");
     assert!(t.lib.has("push origin m3:refs/heads/main"));
     assert!(has_call(&t.forge.calls, "pr-close 77"));
     assert!(!t.qfile("publish").exists());
@@ -81,6 +81,34 @@ fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
     assert!(t.lib.has("notify spira publish PR 77 merged"));
     assert!(t.out().contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"));
     t.assert_lc_untouched();
+}
+
+#[test]
+fn publish_on_a_pr_that_is_not_open_never_moves_the_forge_target() {
+    for state in ["closed", "merged"] {
+        let t = T::new(LandMode::QueueLocal);
+        publish_record(&t);
+        *t.forge.pr_state.borrow_mut() = Some(state.into());
+        t.forge.status.borrow_mut().push(Some("green\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(!t.lib.has("push origin"), "{state}");
+        assert!(!has_call(&t.forge.calls, "check-status"), "{state}");
+        assert!(!t.qfile("publish").exists());
+        assert!(t.landing_log().contains(&format!("QUEUE PUBLISH_ABANDONED 1000 repo=spira pr=77 state={state}")));
+        assert!(!t.landing_log().contains("PUBLISH_GREEN"));
+    }
+}
+
+#[test]
+fn publish_with_unreadable_pr_state_waits_and_keeps_the_record() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    *t.forge.pr_state.borrow_mut() = Some("unknown".into());
+    assert_eq!(t.run(&["verdict", "spira"]), 0);
+    assert!(t.out().contains("cannot read PR state (unknown) — waiting"), "{}", t.out());
+    assert!(t.qfile("publish").exists());
+    assert!(!t.lib.has("push origin"));
+    assert!(!has_call(&t.forge.calls, "check-status"));
 }
 
 #[test]

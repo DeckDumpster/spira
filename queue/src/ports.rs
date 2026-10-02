@@ -207,6 +207,8 @@ pub trait Forge {
     /// One bounded line (DESIGN.md §5).
     fn pr_comment(&self, forge: &Path, repo: &Path, pr: &str, line: &str);
     fn branch_protect(&self, forge: &Path, repo: &Path, branch: &str) -> bool;
+    /// `pr-state <repo> <pr>` → `open`, `closed`, `merged` or `unknown`; None when the call failed.
+    fn pr_state(&self, forge: &Path, repo: &Path, pr: &str) -> Option<String>;
     /// `check-status <repo> <pr> <branch>` → stdout, or None when the call failed.
     fn check_status(&self, forge: &Path, repo: &Path, pr: &str, branch: &str) -> Option<String>;
     /// `run-id <repo> <branch>` → the latest run's id (None when empty or failed).

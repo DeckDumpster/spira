@@ -36,6 +36,9 @@
 #                       Ops incident, never attributed suite by suite and never a harness fault
 #                       that drops the round unreported; a hung round-vm.sh is killed at the
 #                       configured wall bound.
+#   N. batcher parity (sp-7qk8u) — a CERTIFIED landstate record whose bead is open and not
+#                       spira-submitted (the shape an ejected-then-recertified bead is in) is
+#                       excluded from the round pool, not batched.
 #
 # tier: T2
 # covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
@@ -305,6 +308,15 @@ print(" ".join(d[0].get("labels") or []))' 2>/dev/null; }
 # (sp-1346p) — a CERTIFIED record of a closed bead is stale and never batched.
 plant() {   # plant <id> [express]
     local id="$1" express_label="" lbls="\"spira\",\"plan\",\"repo:$REPONAME\",\"spira-submitted\""
+    [ "${2:-}" = express ] && lbls="$lbls,\"express\""
+    printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
+        "$id" "$id" "$lbls" | testdb_seed
+}
+
+# plant_open <id> [express] — status=open, no spira-submitted: the shape a bead re-marked
+# CERTIFIED right after an eject (sp-pedat) is actually in, still waiting on its aeon.
+plant_open() {
+    local id="$1" lbls="\"spira\",\"plan\",\"repo:$REPONAME\""
     [ "${2:-}" = express ] && lbls="$lbls,\"express\""
     printf '{"id":"%s","title":"%s bead","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-25T00:00:00Z"}\n' \
         "$id" "$id" "$lbls" | testdb_seed
@@ -1002,5 +1014,35 @@ head_m="$(git -C "$LREPO" rev-parse local/main)"
 is     "M: merged in topological order A, B, C" \
        "$(printf 'sp-cmaa1\nsp-cmbb2\nsp-cmcc3')" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
+
+# =============================================================================
+# CASE N — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
+# member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
+# again, not spira-submitted — the same admission batch.sh's own _certified_list already
+# refuses ("CERTIFIED landstate but bead status=open; refusing admission"). Upstream landed the filter (sp-1346p); this pins it.
+# =============================================================================
+echo
+echo "N. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
+# sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
+# cases and their branches persist in $REPO — retire them first so this round is only
+# sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).
+rm -f "$(open_batch_file)" "$LANDSTATE/sp-cjjjj" "$LANDSTATE/sp-cgcc3" "$LANDSTATE/sp-cgdd4"
+plant_open sp-ciiii express
+git -C "$REPO" worktree add -q -b spira/sp-ciiii "$RUN/worktree/sp-ciiii" main
+printf 'i\n' > "$RUN/worktree/sp-ciiii/i.txt"
+git -C "$RUN/worktree/sp-ciiii" add -A
+git -C "$RUN/worktree/sp-ciiii" commit -q -m "sp-ciiii: work"
+tip_n="$(git -C "$REPO" rev-parse spira/sp-ciiii)"
+git -C "$REPO" worktree remove -f "$RUN/worktree/sp-ciiii"
+certify sp-ciiii "$tip_n"
+
+prcreate_before_n="$(grep -c '^pr-create' "$FORGE_LOG")"
+out_n="$(STUB_RED_SUITES="" cut_repo)"
+nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
+is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
+is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
+is     "N: sp-ciiii landstate stays CERTIFIED — untouched, not re-ejected" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-ciiii")"
+is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
 
 tl_summary

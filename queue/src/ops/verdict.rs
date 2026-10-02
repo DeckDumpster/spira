@@ -122,6 +122,26 @@ fn settle_locked(w: &World, c: &Ctx, path: &Path) -> (i32, String) {
         w.err(format!("verdict {name}: publish record is missing a field — leaving it for a hand look: {}", pfile.display()));
         return (FAIL, String::new());
     }
+    // A closed PR's retriggered Gate run can conclude green with its required jobs skipped,
+    // so CI's word is not read until the PR itself is known open.
+    match w.forge.pr_state(&c.s.forge, path, &pr).as_deref().map(str::trim) {
+        Some("open") => {}
+        Some(s @ ("closed" | "merged")) => {
+            let _ = std::fs::remove_file(&pfile);
+            landing_log(&c.s.run, &format!("QUEUE PUBLISH_ABANDONED {} repo={name} pr={pr} state={s}", w.clock.now()));
+            w.lib.notify(
+                name,
+                &format!("publish PR {pr} abandoned ({s})"),
+                &format!("PR {pr} for {name} is {s}, not open — retiring the publish record without moving {remote}/{forge_branch}. A closed-unmerged PR is never green regardless of what its CI says; the next publish carries anything since."),
+            );
+            w.out(format!("verdict {name}: publish PR {pr} is {s}, not open — abandoned, {remote}/{forge_branch} untouched"));
+            return (OK, String::new());
+        }
+        s => {
+            w.out(format!("verdict {name}: publish PR {pr}: cannot read PR state ({}) — waiting", s.filter(|v| !v.is_empty()).unwrap_or("unknown")));
+            return (OK, String::new());
+        }
+    }
     let out = publish_status(w, c, path, &kv);
     let rc = match normalize_status(first_line(&out)) {
         "green" => {

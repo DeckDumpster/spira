@@ -317,7 +317,8 @@ phase=gate; `land_mark GATING tip`; run the gate. Then by outcome:
 - **FAIL/BASE_FAIL/NO_VERDICT** → log `certification gate <OUTCOME> …`, `land_mark GATED tip
   <OUTCOME>:<reason>`.
   - BASE_FAIL: "held — the base fails its own gate (suite S)"; a base-fix branch green on its
-    suite (`basefail_fix_decision`) → re-read status, closed → `CERTIFIED` + submitted
+    suite, or (S=`-`, a fence red with no suite named) green on every suite
+    (`basefail_fix_decision`) → re-read status, closed → `CERTIFIED` + submitted
     `certified` + progress "certified <br> in <name> — base-fix (suite S)"; otherwise file the
     base incident **once per repository per pass**.
   - NO_VERDICT → `spira_land_noverdict` (seam; its `progress` lines cross the mailbox).
