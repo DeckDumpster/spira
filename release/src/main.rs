@@ -349,7 +349,7 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
     }
 
     let cfg = Config::resolve(&a.flags, &env).map_err(|e| (1, e))?;
-    let repo = || a.repo.clone().or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
+    let repo = || release::repo::resolve(a.repo.as_deref().map(Path::new), &env).or_else(|| a.repo.clone().map(PathBuf::from)).or_else(|| env.get("SPIRA_REPO").filter(|s| !s.is_empty()).map(PathBuf::from));
     match cmd.as_str() {
         "build" => {
             want(1)?;
