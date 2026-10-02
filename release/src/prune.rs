@@ -99,3 +99,10 @@ pub fn prune(cfg: &Config) -> Result<Pruned, String> {
     }
     Ok(out)
 }
+
+/// Activate `sha`, then prune; a prune failure is reported and never fails the activation.
+pub fn activate_and_prune(ctx: &activate::Ctx, sha: &str, hotfix_reason: Option<&str>) -> Result<(activate::Switched, Pruned), String> {
+    let switched = activate::activate(ctx, sha, hotfix_reason)?;
+    let pruned = prune(ctx.cfg).unwrap_or_else(|e| Pruned { failed: vec![e], ..Pruned::default() });
+    Ok((switched, pruned))
+}

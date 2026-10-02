@@ -374,8 +374,11 @@ fn run(argv: &[String]) -> Result<(), (u8, String)> {
             let ctx = Ctx { cfg: &cfg, sc: &sc, git: &RealGit, repo: repo(), landed_ref: a.landed_ref.clone(), settle: a.settle };
             if cmd == "activate" {
                 want(1)?;
-                let s = activate::activate(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;
-                println!("release: {} active; {} unit file(s) rewritten, restarted [{}], deferred to next start [{}]", rest[0], s.rewritten.len(), s.restarted.join(" "), s.deferred.join(" "));
+                let (s, p) = release::prune::activate_and_prune(&ctx, &rest[0], a.hotfix.as_deref()).map_err(fail)?;
+                println!("release: {} active; {} unit file(s) rewritten, restarted [{}], deferred to next start [{}]; {} release(s) pruned", rest[0], s.rewritten.len(), s.restarted.join(" "), s.deferred.join(" "), p.removed.len());
+                if !p.failed.is_empty() {
+                    eprintln!("release: WARN: prune could not remove: {}", p.failed.join("; "));
+                }
             } else {
                 want(0)?;
                 let sha = activate::rollback(&ctx).map_err(fail)?;
