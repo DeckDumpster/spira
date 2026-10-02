@@ -92,7 +92,6 @@ pub struct State {
     pub requeue_why: String,
     pub session_epoch: i64,
     pub rebase_conflicts: String,
-    pub sop_before: Option<String>,
     pub groom_lines_before: usize,
     /// The claim's stack proposal (design stacked-dependents-2026-09-28 §1): the certified
     /// tip of every prerequisite this claim was built on, keyed by prerequisite bead id.
@@ -759,21 +758,9 @@ impl<'a> Run<'a> {
         // ---- the brief ----
         self.write_prompt(&work, fixture_ms, &resume, &slain, &rebase_text, &dirty);
 
-        // ---- the closing rule's shelf, and the groom log, before ----
+        // ---- the groom log, before ----
         self.s.session_epoch = self.now();
         self.d.env.set("SESSION_EPOCH", &self.s.session_epoch.to_string());
-        if self.fayth.sop_required {
-            let sop = "sop";
-            if !self.d.exec.exec(sop, &s(&["ledger-init"]), None, None).success() {
-                self.log(&format!("{}: could not create the SOP applications ledger — the closing rule cannot be judged this run", self.f()));
-            }
-            let dg = self.d.exec.exec(sop, &s(&["digest"]), None, None);
-            if dg.success() {
-                self.s.sop_before = Some(dg.text());
-            } else {
-                self.log(&format!("{}: could not read the SOP shelf before the session — the closing rule cannot be judged this run", self.f()));
-            }
-        }
         if self.fayth.groom_escalation_check {
             self.s.groom_lines_before = std::fs::read_to_string(self.run_dir().join("groom.log")).map(|t| t.lines().count()).unwrap_or(0);
         }

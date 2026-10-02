@@ -171,7 +171,7 @@ Every seam below turns a full `aeon.sh` or `sentinel.sh` run on a real Dolt stor
 | G14 | CHECK 4 performance: "no per-bead queries" (sp-f1m7f motive) is claimed but never asserted | test-check4-batch.sh. Add a T1 row: `check4` loop with `attempts_of` stubbed to fail if called. |
 | G15 | `unjudged-<cause>` requeue for killed, refused and unknown outcomes (note "Not judged", no charge) is asserted only by grep | aeon.sh 916-921; test-attempts.sh::not-judged branch grep |
 | G16 | Test integrity: test-attempts.sh's exit-77 skip can fire after earlier failures and hide them, and wiki-concurrent can pass without the lock (no forced interleave) | mapper notes. Fix within the suites. |
-| G17 | **Decision for Ryan, not a test gap:** the SOP closing rule (`FAYTH_SOP_REQUIRED`) is OFF for every shipped fayth (sp-q27cp), yet it holds about 11 of the 15 aeon runs in test-ops-closing.sh. Either retire the mechanism with its tests or keep it at T1 only. | test-ops-closing.sh; chamber/ops.fayth |
+| G17 | **Resolved by retirement (sp-loycl):** the SOP closing rule (`FAYTH_SOP_REQUIRED`) and its aeon runs in test-ops-closing.sh are gone; a fayth still carrying the key is ignored with a warning. | test-ops-closing.sh; chamber/ops.fayth |
 
 ## 7. Cost
 

@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use crate::bd;
-use crate::decide::{self, Eviction, SopVerdict};
+use crate::decide::{self, Eviction};
 use crate::ports::{s, Bd, Exec, Git};
 use crate::run::Run;
 use crate::trace;
@@ -16,7 +16,6 @@ use crate::util;
 
 pub const EVICTION_RACE: &str = "eviction-race";
 pub const PROD_DIRTY: &str = "prod-dirty";
-pub const SOP_SILENT: &str = "sop-silent";
 pub const UNFINISHED_REASON: &str = "unfinished-reason";
 pub const GROOM_SILENT: &str = "groom-silent";
 pub const REBASE_CONFLICT: &str = "rebase-conflict";
@@ -343,34 +342,8 @@ impl Run<'_> {
             }
         }
 
-        // ---- the closing rule: an incident resolved without a runbook is not resolved ----
-        let mut sop_silent = false;
-        if self.fayth.sop_required && st == "closed" && !superseded {
-            let sop = "sop";
-            let after = self.d.exec.exec(&sop, &s(&["digest"]), None, None);
-            let applied = self.d.exec.exec(&sop, &s(&["log", "--bead", &id, "--check", "pass", "--since", &self.s.session_epoch.to_string()]), None, None).code;
-            let before = self.s.sop_before.clone();
-            let (wrote, v) = decide::sop_rule_verdict(before.is_some(), before.as_deref().unwrap_or(""), after.success(), &after.text(), applied);
-            self.ts_print(&format!("{f}: {id} closing-rule wrote={wrote} applied={applied}"));
-            match v {
-                SopVerdict::Satisfied => {}
-                SopVerdict::Decline => self.ts_print(&format!(
-                    "{f}: {id} closing rule NOT judged — the shelf or the applications ledger could not be read (wrote={wrote} applied={applied}). Absence is not proven, so nothing is poisoned."
-                )),
-                SopVerdict::Poison => {
-                    self.bead_reopen("no-sop", "Reopened and poisoned by aeon.sh: this incident was closed and no runbook came out of it. The session recorded neither an SOP written or amended (sop write) nor a runbook whose CHECK confirmed (sop applied --check pass), so nothing on the shelf is any better for this incident having happened and the next occurrence costs exactly as much. The closing rule is not optional: an incident resolved without an SOP must produce one. To clear this, write the runbook this incident should have left — or, if one already fitted and held, record it — then remove the spira-poison label.");
-                    let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
-                    self.ts_print(&format!("{f}: {id} REOPENED and POISONED — closed with no runbook written and no SOP application recorded"));
-                    sop_silent = true;
-                    if committed {
-                        self.requeue(SOP_SILENT, "The incident was closed with no runbook behind it, so the close was undone and the bead poisoned; that poison is the verdict and this counter is not.".into());
-                    }
-                }
-            }
-        }
-
         // ---- close-reason fence (law-no-close-reason-admits-unfinished) ----
-        if st == "closed" && committed && !sop_silent {
+        if st == "closed" && committed {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
                 let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
@@ -386,7 +359,7 @@ impl Run<'_> {
 
         // ---- the groom escalation rule ----
         let mut groom_silent = false;
-        if self.fayth.groom_escalation_check && st == "closed" && !superseded && !sop_silent {
+        if self.fayth.groom_escalation_check && st == "closed" && !superseded {
             let text = std::fs::read_to_string(self.run_dir().join("groom.log")).unwrap_or_default();
             let new: String = text.lines().skip(self.s.groom_lines_before).map(|l| format!("{l}\n")).collect();
             let new = new.trim_end_matches('\n').to_string();
@@ -412,7 +385,7 @@ impl Run<'_> {
         }
 
         // ---- close-time workflow-run fence (law-a-workflow-lands-on-its-own-run) ----
-        if st == "closed" && committed && !sop_silent {
+        if st == "closed" && committed {
             if self.conf.set_nonempty("SPIRA_WORKFLOW_RUN_CONSIDERED") {
                 self.log(&format!("{f}: {id} workflow-run fence skipped (SPIRA_WORKFLOW_RUN_CONSIDERED={})", self.conf.s("SPIRA_WORKFLOW_RUN_CONSIDERED")));
             } else {
@@ -444,7 +417,7 @@ impl Run<'_> {
         // ---- closed behind the base is not finished ----
         // A superseded close is not judged by whether its stale branch still replays: its
         // work landed under the successor's id, so a conflict is expected (sp-dz39p).
-        if st == "closed" && committed && !superseded && !sop_silent && !groom_silent {
+        if st == "closed" && committed && !superseded && !groom_silent {
             if !self.s.base_remote.is_empty() && !self.d.git.git(&self.s.repo, &["fetch", "-q", &self.s.base_remote]).success() {
                 self.log(&format!("{f}: fetch of {} failed — judging currency against a possibly stale {base}", self.s.base_remote));
             }
