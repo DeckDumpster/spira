@@ -15,7 +15,7 @@ pub const CASE_TIMING: &str = "case-timing";
 pub const BATCH_ROW: &str = "__batch__";
 
 /// One `suite-timing` row's producer fields (the envelope — ts, host, family — is tsd's).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SuiteTimingRow {
     pub run_id: String,
     pub branch: String,
@@ -37,6 +37,24 @@ pub struct SuiteTimingRow {
     /// warm slot), `off` (no warm path).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warm: Option<String>,
+    /// `__batch__` only: suites that executed, and the host's 1-minute load average at the
+    /// start and end of the run — wall time is not comparable across load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suites: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_start: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub load_end: Option<f64>,
+}
+
+/// The host's 1-minute load average; `None` where /proc/loadavg is unreadable.
+pub fn load1() -> Option<f64> {
+    fs::read_to_string("/proc/loadavg")
+        .ok()?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 impl SuiteTimingRow {
@@ -62,6 +80,9 @@ impl SuiteTimingRow {
             setup_secs: None,
             phases: None,
             warm: None,
+            suites: None,
+            load_start: None,
+            load_end: None,
         }
     }
 }
@@ -285,6 +306,9 @@ mod tests {
             setup_secs: None,
             phases: None,
             warm: None,
+            suites: None,
+            load_start: None,
+            load_end: None,
         }
     }
 

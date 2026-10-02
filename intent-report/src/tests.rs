@@ -159,6 +159,7 @@ fn the_report_prints_every_intent_measure_against_its_target() {
             round_attribution: &ra,
             suite_timing: &st,
             landing_event: &le,
+            round_vm_timing: "",
         },
         all(),
     );
@@ -211,6 +212,7 @@ fn an_empty_window_says_no_data_never_zero_or_met() {
             round_attribution: "",
             suite_timing: "",
             landing_event: "",
+            round_vm_timing: "",
         },
         all(),
     );
@@ -242,6 +244,7 @@ fn unmetered_suite_rows_are_not_reported_as_zero_wait() {
             round_attribution: "",
             suite_timing: &st,
             landing_event: "",
+            round_vm_timing: "",
         },
         all(),
     );
@@ -280,6 +283,7 @@ fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
             round_attribution: "",
             suite_timing: &st,
             landing_event: "",
+            round_vm_timing: "",
         },
         all(),
     );
@@ -290,7 +294,9 @@ fn runner_trials_split_setup_from_suites_and_skip_rows_without_phases() {
     // suites+teardown of the two that reached the suites: 100 and 140 -> median 120
     assert!(out.contains("suites+teardown median 120 s"), "{out}");
     assert!(
-        out.contains("warm spare 1, cold on a warm slot 2, no warm path 0; cut at the setup share (rc 2): 1"),
+        out.contains(
+            "warm spare 1, cold on a warm slot 2, no warm path 0; cut at the setup share (rc 2): 1"
+        ),
         "{out}"
     );
 }
@@ -304,8 +310,62 @@ fn the_report_shows_the_queue_wait_inside_ran_from_rows_and_the_log() {
     let t = gate_log_line("2026-09-29T00:00:10Z spira b waited=0s ran=1s rc=75 queue compose=suites(mode) phases=gate:1 queue=40").unwrap();
     assert_eq!((t.reason.as_str(), t.queue), ("queue", 40.0));
     let out = render(
-        &Inputs { gate_run: &row, gate_log: None, round_attribution: "", suite_timing: "", landing_event: "" },
+        &Inputs {
+            gate_run: &row,
+            gate_log: None,
+            round_attribution: "",
+            suite_timing: "",
+            landing_event: "",
+            round_vm_timing: "",
+        },
         all(),
     );
-    assert!(out.contains("testenv queue wait inside ran: 1 of 1 trials waited; median 120 s"), "{out}");
+    assert!(
+        out.contains("testenv queue wait inside ran: 1 of 1 trials waited; median 120 s"),
+        "{out}"
+    );
+}
+
+#[test]
+fn corpus_wall_pairs_each_run_with_load_and_counts_round_vm_rows_apart() {
+    let b = |off: u64, suites: u64, wall: u64, ls: &str, le: &str, rc: u64| {
+        format!(
+            "{{\"ts\":\"{}\",\"family\":\"suite-timing\",\"suite\":\"__batch__\",\"rc\":{rc},\"suites\":{suites},\"wall_secs\":{wall}{ls}{le}}}\n",
+            ts(off)
+        )
+    };
+    let host = [
+        b(1, 450, 700, ",\"load_start\":4.0", ",\"load_end\":6.0", 0),
+        b(
+            2,
+            450,
+            1400,
+            ",\"load_start\":28.0",
+            ",\"load_end\":32.0",
+            0,
+        ),
+        b(3, 12, 30, "", "", 0),
+        b(4, 450, 50, "", "", 2),
+        b(5, 450, 800, "", "", 0),
+    ]
+    .concat();
+    let vm = b(6, 460, 900, ",\"load_start\":2.0", "", 0);
+    let runs = corpus_runs(&host, &vm, all());
+    assert_eq!(runs.len(), 4, "partial and cut runs are not corpus runs");
+    assert_eq!(runs[0].load, Some(5.0));
+    assert_eq!(runs[2].load, None);
+    assert!(runs[3].round_vm && !runs[0].round_vm);
+    let inp = |vm: &'static str| Inputs {
+        gate_run: "",
+        gate_log: None,
+        round_attribution: "",
+        suite_timing: Box::leak(host.clone().into_boxed_str()),
+        landing_event: "",
+        round_vm_timing: vm,
+    };
+    let r = render(&inp(Box::leak(vm.clone().into_boxed_str())), all());
+    assert!(r.contains("4 runs (1 on the round VM)"), "{r}");
+    assert!(r.contains("quiet (< 16) 2 runs median"), "{r}");
+    assert!(r.contains("loaded 1 runs median 1400 s"), "{r}");
+    assert!(render(&inp(""), all()).contains("under-count"));
 }
