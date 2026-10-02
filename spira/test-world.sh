@@ -220,8 +220,12 @@ wcount="$(printf '%s' "$out" | grep 'live workers' | grep -oE '[0-9]+' | tail -1
 
 kill -- -"$WORKER_PID" 2>/dev/null; wait "$WORKER_PID" 2>/dev/null; WORKER_PID=""
 
-out="$(world status)"
-wcount="$(printf '%s' "$out" | grep 'live workers' | grep -oE '[0-9]+' | tail -1)"
+for _ in $(seq 50); do
+  out="$(world status)"
+  wcount="$(printf '%s' "$out" | grep 'live workers' | grep -oE '[0-9]+' | tail -1)"
+  [ "${wcount:-?}" = 0 ] && break
+  sleep 0.1
+done
 is "and is 0 after the process exits" "0" "${wcount:-?}"
 
 # ---- DRAIN / RESUME -----------------------------------------------------------------
