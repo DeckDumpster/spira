@@ -26,11 +26,16 @@ impl Cargo for RealCargo {
         if wrapper == spira_config::build::Wrapper::Off {
             eprintln!("release: {}", wrapper.describe());
         }
+        // THE SHARED STORE (sp-xtdqi): resolved in-process from this binary's own
+        // environment and the operator's own config, exactly like `wrapper_from_env` itself — never a bare
+        // `~/.cargo/config.toml` dependency, which only ever reached a build that happened to
+        // run under a shell that had sourced it.
+        let store = spira_config::build::Store::from_env();
         let st = Command::new("cargo")
             .args(["build", "--release", "--workspace", "--locked", "--target-dir"])
             .arg(target)
             .args(spira_config::build::one_shot("release"))
-            .envs(wrapper.env())
+            .envs(wrapper.env(store.as_ref()))
             .env_remove("CARGO_TARGET_DIR")
             .env_remove("CARGO_INCREMENTAL")
             .current_dir(tree)

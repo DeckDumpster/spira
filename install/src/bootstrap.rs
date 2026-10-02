@@ -71,6 +71,9 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         testdb_port: nonempty_env("SPIRA_TESTDB_PORT").unwrap_or_else(|| "3308".to_string()),
         snap_stale_s: nonempty_env("SPIRA_SNAP_STALE_S").unwrap_or_else(|| "60".to_string()),
         path_tail: crate::orchestrate::path_tail().unwrap_or_default(),
+        // sp-xtdqi-2: the key name lives once, in `release::units` — `release`'s own
+        // activate/render gate reads the same constant, never a second hand-written literal.
+        sccache_dav_addr: env_var(release::units::SCCACHE_DAV_ADDR_KEY),
     })
 }
 
@@ -213,6 +216,7 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         testdb_data_set: nonempty_env("SPIRA_TESTDB_DATA").is_some(),
         broker_enable: env_var("SPIRA_BROKER_ENABLE") == "1",
         inotify_present,
+        sccache_dav_addr_set: nonempty_env(release::units::SCCACHE_DAV_ADDR_KEY).is_some(),
         watch_names: watch_names(),
     })?;
     for note in &m.notes {

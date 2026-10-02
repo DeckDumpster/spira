@@ -45,6 +45,7 @@ pub struct Fake {
     pub stray: RefCell<Vec<String>>,
     pub stdout: RefCell<Vec<String>>,
     pub sccache_help: RefCell<Option<String>>,
+    pub sccache_show_stats: RefCell<Option<String>>,
 }
 
 impl Default for Fake {
@@ -83,6 +84,7 @@ impl Default for Fake {
             stray: RefCell::new(Vec::new()),
             stdout: RefCell::new(Vec::new()),
             sccache_help: RefCell::new(None),
+            sccache_show_stats: RefCell::new(None),
         }
     }
 }
@@ -189,6 +191,9 @@ impl World for Fake {
     }
     fn sccache_help(&self) -> Option<String> {
         self.sccache_help.borrow().clone()
+    }
+    fn sccache_show_stats(&self) -> Option<String> {
+        self.sccache_show_stats.borrow().clone()
     }
     fn out(&self, s: &str) {
         self.stdout.borrow_mut().push(s.to_string());
@@ -593,6 +598,68 @@ fn sccache_present_but_unresponsive_to_help_fails() {
     let lines = check_sccache(&f);
     assert_eq!(levels(&lines), vec![Level::Fail]);
     assert!(lines[0].msg.contains("did not answer --help"), "{:?}", lines[0].msg);
+}
+
+// -------------------------------------------------------- compilation cache backend (sp-xtdqi)
+
+#[test]
+fn backend_check_is_a_no_op_when_no_store_is_configured() {
+    let f = Fake::default();
+    // SPIRA_SCCACHE_DAV_ADDR left unset.
+    assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Ok]);
+    assert!(check_sccache_backend(&f)[0].msg.contains("no shared store configured"));
+}
+
+/// THE POSITIVE CONTROL: a configured store whose live server answers with a NON-webdav
+/// `Cache location` (the local-disk shape) must FAIL on an operated box — this is the exact
+/// defect sp-xtdqi exists to catch (a gate restarted the daemon before anyone re-exported
+/// `SCCACHE_WEBDAV_ENDPOINT`, and it silently kept answering from disk).
+#[test]
+fn backend_check_fails_when_the_live_server_is_on_a_different_backend() {
+    let f = Fake::default();
+    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_show_stats.borrow_mut() = Some("Compile requests                      0\nCache location                  Local disk: \"/var/cache/sccache\"\nVersion (client)                0.18.0\n".into());
+    let lines = check_sccache_backend(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].msg.contains("NOT on the shared store"), "{:?}", lines[0].msg);
+    assert!(lines[0].msg.contains("Local disk"), "{:?}", lines[0].msg);
+}
+
+#[test]
+fn backend_check_only_warns_off_an_operated_box() {
+    let f = Fake::default();
+    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    f.set("SPIRA_OPERATED", "0");
+    *f.sccache_show_stats.borrow_mut() = Some("Cache location                  Local disk: \"/x\"\n".into());
+    assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Warn]);
+}
+
+#[test]
+fn backend_check_passes_when_the_live_server_is_on_the_store() {
+    let f = Fake::default();
+    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_show_stats.borrow_mut() = Some("Cache location                  webdav, name: , prefix: /\nVersion (client)                0.18.0\n".into());
+    assert_eq!(levels(&check_sccache_backend(&f)), vec![Level::Ok]);
+}
+
+#[test]
+fn backend_check_fails_when_show_stats_does_not_answer() {
+    let f = Fake::default();
+    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    // sccache_show_stats left at its default None.
+    let lines = check_sccache_backend(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].msg.contains("did not answer"), "{:?}", lines[0].msg);
+}
+
+#[test]
+fn backend_check_fails_when_show_stats_answers_with_no_cache_location_line() {
+    let f = Fake::default();
+    f.set("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    *f.sccache_show_stats.borrow_mut() = Some("some unexpected garbage\n".into());
+    let lines = check_sccache_backend(&f);
+    assert_eq!(levels(&lines), vec![Level::Fail]);
+    assert!(lines[0].msg.contains("did not report a Cache location"), "{:?}", lines[0].msg);
 }
 
 // ============================================================================ events probe

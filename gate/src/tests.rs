@@ -2887,6 +2887,30 @@ fn every_run_compiles_through_the_wrapper_resolved_on_the_commands_path() {
     }
 }
 
+/// THE POSITIVE CONTROL (sp-xtdqi): a configured shared store reaches the build's own
+/// environment — `SPIRA_SCCACHE_DAV_ADDR` on `ctx.vars` (resolved in-process by
+/// `merge_resolved_config`/`RETIRED_VARS` in real life; injected directly here, same as
+/// every other `ctx.var` this suite drives the engine through) must produce
+/// `SCCACHE_WEBDAV_ENDPOINT` on the command the trial actually runs.
+#[test]
+fn a_configured_shared_store_reaches_the_build_as_webdav_vars() {
+    let f = Fake::new();
+    f.set_var("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431");
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_ENDPOINT"), "http://192.168.1.56:9431");
+    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_KEY_PREFIX"), "/");
+}
+
+/// Without `SPIRA_SCCACHE_DAV_ADDR` set, no webdav var reaches the build at all — the
+/// no-store case stays exactly as it was before sp-xtdqi.
+#[test]
+fn no_configured_store_means_no_webdav_vars_on_the_build() {
+    let f = Fake::new();
+    assert_eq!(f.run(), PASS, "{}", f.stderr());
+    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_ENDPOINT"), "");
+    assert_eq!(f.env_of(0, "SCCACHE_WEBDAV_KEY_PREFIX"), "");
+}
+
 /// No sccache: a trial that builds in the tree (here, the definition's tools) refuses before
 /// any build — never a cold build of every dependency. A trial that builds nothing (a
 /// column-gated repository) does not need the cache and is judged.

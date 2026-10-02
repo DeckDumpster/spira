@@ -8,8 +8,21 @@
 //! wiring exists only for its C/C++ frontend), and adding `--remap-path-prefix` would hash
 //! literally, regressing the dependency-crate cache hits this module already gets right.
 //! Read §2.5 before reaching for either on a workspace-crate cross-tree miss.
+//!
+//! THE SHARED STORE (sp-xtdqi, reversing sccache-dav/DESIGN.md §5's earlier call): a box
+//! that runs `sccache-dav` (sp-xjnzl) names it with `SPIRA_SCCACHE_DAV_ADDR` — resolved
+//! in-process, `[spira]`-table-aware, via [`Store::from_values`]/[`Store::from_env`], never a
+//! bare environment read (law-a-binary-resolves-the-config-it-reads) — and [`Wrapper::env`]/
+//! [`Wrapper::admitted_env`] carry it (`SCCACHE_WEBDAV_ENDPOINT`/`SCCACHE_WEBDAV_KEY_PREFIX`)
+//! into every build this module wires up, not only the one whose own `~/.cargo/config.toml`
+//! happened to set it. The earlier design (DESIGN.md §5) kept this an "ambient environment
+//! change" on purpose; it did not survive a gate restarting the box's one sccache client
+//! daemon, which fixes its backend at spawn time and then ignores every later invocation's
+//! environment — the daemon silently kept answering from the LOCAL DISK cache until an
+//! operator noticed and re-exported the webdav vars by hand.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 /// The operator's switch: unset, empty or `sccache` — the cache is required; `off` — an
 /// explicit, loud opt-out (a host or container without sccache).
@@ -26,18 +39,158 @@ pub enum Wrapper {
     Off,
 }
 
+/// The conf.d key naming this box's shared compilation cache (sp-xtdqi): `ip:port`, no
+/// default — absent means the unit is not installed and no build points at a shared store.
+pub const STORE_ADDR_ENV: &str = "SPIRA_SCCACHE_DAV_ADDR";
+
+/// This box's shared compilation cache (sccache-dav, sp-xjnzl): the operator's own endpoint,
+/// resolved from config, never hardcoded. `key_prefix` is fixed at `/` — the whole store is
+/// one flat namespace today (round-vm's own generated scripts hardcode the same "/"); a
+/// second namespace is a config knob to add later, not a speculative one to carry now.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Store {
+    pub endpoint: String,
+    pub key_prefix: String,
+}
+
+impl Store {
+    /// From an already-resolved config snapshot (`gate`'s `Ctx::vars`, `aeon`'s `Conf`, a
+    /// test fixture) — `get` answers exactly like that snapshot's own accessor: an absent or
+    /// empty value is "not set". `None` when the operator never named a store — a build must
+    /// treat that exactly like any other absence: the local-disk cache, never a refusal.
+    pub fn from_values(get: impl Fn(&str) -> Option<String>) -> Option<Store> {
+        let addr = get(STORE_ADDR_ENV).filter(|v| !v.trim().is_empty())?;
+        let endpoint = if addr.contains("://") { addr } else { format!("http://{addr}") };
+        Some(Store { endpoint, key_prefix: "/".to_string() })
+    }
+
+    /// [`Store::from_values`], resolved in-process from this binary's own environment and
+    /// whichever `spira.toml` [`crate::discover`] finds (law-a-binary-resolves-the-config-it-
+    /// reads) — for a caller (`testenv`, `release`) that builds no config snapshot of its own
+    /// the way `gate`/`aeon` already do. `None` on an unset `SPIRA_HOME` or any resolution
+    /// error, same as a genuinely unconfigured store: a build never refuses for want of this.
+    pub fn from_env() -> Option<Store> {
+        let home = std::env::var("SPIRA_HOME").ok().filter(|v| !v.is_empty())?;
+        let home = Path::new(&home);
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let repo = crate::resolve::derive_home_repo(home, &env_map);
+        let resolved = crate::resolve::resolve_for_process(home, &repo, &env_map).ok()?;
+        Store::from_values(|k| Some(resolved.get(k).to_string()).filter(|v| !v.is_empty()))
+    }
+
+    fn env_pairs(&self) -> [(String, String); 2] {
+        [
+            ("SCCACHE_WEBDAV_ENDPOINT".into(), self.endpoint.clone()),
+            ("SCCACHE_WEBDAV_KEY_PREFIX".into(), self.key_prefix.clone()),
+        ]
+    }
+}
+
+/// What [`ensure_store_backend`] found and did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BackendCheck {
+    /// No server answered `--show-stats` (none running and none could be started, or the
+    /// binary itself could not be run) — nothing to compare against; never refuses a build
+    /// over a diagnostic that could not run.
+    Unknown,
+    /// A server answered and is already on the configured webdav store.
+    Matches,
+    /// A server answered on a DIFFERENT backend (almost always the local-disk default from a
+    /// build that started it before `SCCACHE_WEBDAV_ENDPOINT` was ever set) and was stopped —
+    /// the next cargo invocation this process's own [`Wrapper::env`]/[`Wrapper::admitted_env`]
+    /// already point at the store starts a fresh one on the right backend. Carries the stale
+    /// `Cache location` line that was seen, for the caller's own log line.
+    Restarted(String),
+}
+
+/// `sccache --show-stats`'s `Cache location` line, verbatim (trimmed), or `None` if the
+/// binary could not be run at all. Querying a server that is already running only reads its
+/// socket; one that is not running is started by this call — on whatever backend ITS OWN
+/// environment (this process's, via `extra_env`) names, which is exactly why callers pass the
+/// configured store's own vars here rather than the bare ambient environment.
+fn show_stats_cache_location(sccache_bin: &Path, extra_env: &[(String, String)]) -> Option<String> {
+    let out = Command::new(sccache_bin).arg("--show-stats").envs(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str()))).output().ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find(|l| l.trim_start().starts_with("Cache location"))
+        .map(|l| l.trim().to_string())
+}
+
+/// A `Cache location` line names the webdav backend — matched case-insensitively and by
+/// substring, not by the exact phrasing sccache 0.18.0 happens to use today (`"webdav, name:
+/// ..., prefix: ..."`), which is sccache's own `fmt::Display`, not this crate's contract.
+fn is_webdav_location(line: &str) -> bool {
+    line.to_ascii_lowercase().contains("webdav")
+}
+
+/// Before trusting a build to `store`, make sure the sccache CLIENT DAEMON already running on
+/// this box (if any) is actually on it (sp-xtdqi): sccache fixes a daemon's backend at spawn
+/// time and ignores every later invocation's environment once one is listening, so a server a
+/// previous build (or a gate that has since exited) started before the store was configured
+/// silently keeps every later build on the LOCAL DISK cache, a correctly-wired `Wrapper::env`
+/// notwithstanding.
+///
+/// RESTARTS, NEVER REFUSES, on a mismatch. A refusal would turn a one-line, idempotent
+/// self-heal into a hard stop for every build on the box until an operator happens to notice
+/// and runs the same stop by hand — worse for throughput and no safer, since every caller of
+/// [`Wrapper::env`]/[`Wrapper::admitted_env`] already sets `SCCACHE_IGNORE_SERVER_IO_ERROR=1`
+/// for exactly a server vanishing mid-build (see `env`'s own comment): a build concurrent with
+/// the stop falls back to an uncached `rustc` rather than failing. Call once per build setup
+/// (inside `env`/`admitted_env` themselves, not once per `cargo` invocation) — `--show-stats`
+/// always talks to, or spawns, the daemon, so this is not free.
+fn ensure_store_backend(sccache_bin: &Path, store: &Store) -> BackendCheck {
+    let extra = store.env_pairs();
+    match show_stats_cache_location(sccache_bin, &extra) {
+        None => BackendCheck::Unknown,
+        Some(line) if is_webdav_location(&line) => BackendCheck::Matches,
+        Some(line) => {
+            let _ = Command::new(sccache_bin).arg("--stop-server").output();
+            BackendCheck::Restarted(line)
+        }
+    }
+}
+
+/// [`ensure_store_backend`] plus the two `SCCACHE_WEBDAV_*` vars, in one call — the one place
+/// [`Wrapper::env`]/[`Wrapper::admitted_env`] reach for either, so neither can add the vars
+/// without also running the check (or vice versa).
+fn sync_and_append(sccache_bin: &Path, store: &Store, v: &mut Vec<(String, String)>) {
+    if let BackendCheck::Restarted(line) = ensure_store_backend(sccache_bin, store) {
+        eprintln!(
+            "spira_config::build: sccache server was not on the shared store ({line}) — \
+             stopped it; the next build starts a fresh one on {}",
+            store.endpoint
+        );
+    }
+    v.extend(store.env_pairs());
+}
+
 impl Wrapper {
     /// The environment a cargo invocation gets. `RUSTC_WRAPPER=""` (off) also overrides a
     /// wrapper an operator's cargo config names. Never a `CARGO_*` variable: sccache hashes
     /// those into every key, so one would split the cache between callers (DESIGN §2.2).
-    pub fn env(&self) -> Vec<(String, String)> {
+    ///
+    /// `store`: the shared compilation cache this box names, if any (sp-xtdqi) —
+    /// [`Store::from_values`]/[`Store::from_env`], resolved by the caller. `None` here means
+    /// exactly what an absent `SPIRA_SCCACHE_DAV_ADDR` means: no shared store, build through
+    /// whatever backend the operator's own `~/.cargo/config.toml` (if any) already names.
+    /// `Some` is taken only for [`Wrapper::Sccache`] — [`Wrapper::Off`] runs no wrapper at all,
+    /// so a store to point it at is moot — and, before the vars are added, synchronises the
+    /// box's one sccache client daemon onto it (see [`ensure_store_backend`]'s own doc for why
+    /// this restarts a wrong-backend daemon rather than refusing the build).
+    pub fn env(&self, store: Option<&Store>) -> Vec<(String, String)> {
         match self {
-            Wrapper::Sccache(p) => vec![
-                ("RUSTC_WRAPPER".into(), p.display().to_string()),
-                // The server dies with whichever client's unit spawned it; a compile whose
-                // server vanished runs rustc locally instead of failing the build.
-                ("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()),
-            ],
+            Wrapper::Sccache(p) => {
+                let mut v = vec![
+                    ("RUSTC_WRAPPER".into(), p.display().to_string()),
+                    // The server dies with whichever client's unit spawned it; a compile whose
+                    // server vanished runs rustc locally instead of failing the build.
+                    ("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()),
+                ];
+                if let Some(s) = store {
+                    sync_and_append(p, s, &mut v);
+                }
+                v
+            }
             Wrapper::Off => vec![("RUSTC_WRAPPER".into(), String::new())],
         }
     }
@@ -48,7 +201,8 @@ impl Wrapper {
     /// been is `SPIRA_ADMIT_INNER` (empty when off: rustc itself); `run` is the pools' home
     /// and `who` the lease's label. Still no `CARGO_*` variable (DESIGN §2.2). The gate and
     /// testenv never use this: they take their slots in-process and keep [`Wrapper::env`].
-    pub fn admitted_env(&self, admit: &Path, run: &str, who: &str) -> Vec<(String, String)> {
+    /// `store`: see [`Wrapper::env`]'s own doc — same meaning, same synchronisation.
+    pub fn admitted_env(&self, admit: &Path, run: &str, who: &str, store: Option<&Store>) -> Vec<(String, String)> {
         let inner = match self {
             Wrapper::Sccache(p) => p.display().to_string(),
             Wrapper::Off => String::new(),
@@ -59,8 +213,11 @@ impl Wrapper {
             (crate::admission::WHO_ENV.into(), who.to_string()),
             ("SPIRA_RUN".into(), run.to_string()),
         ];
-        if matches!(self, Wrapper::Sccache(_)) {
+        if let Wrapper::Sccache(p) = self {
             env.push(("SCCACHE_IGNORE_SERVER_IO_ERROR".into(), "1".into()));
+            if let Some(s) = store {
+                sync_and_append(p, s, &mut env);
+            }
         }
         env
     }
@@ -147,9 +304,11 @@ mod tests {
         for s in [None, Some(""), Some("sccache"), Some(" sccache ")] {
             assert_eq!(wrapper(&path, s).unwrap(), Wrapper::Sccache(d.path().join("sccache")), "{s:?}");
         }
-        let env = wrapper(&path, None).unwrap().env();
+        let env = wrapper(&path, None).unwrap().env(None);
         assert_eq!(env[0], ("RUSTC_WRAPPER".into(), d.path().join("sccache").display().to_string()));
         assert!(env.iter().any(|(k, v)| k == "SCCACHE_IGNORE_SERVER_IO_ERROR" && v == "1"));
+        // No store configured: no webdav var at all, not even an empty one.
+        assert!(env.iter().all(|(k, _)| !k.starts_with("SCCACHE_WEBDAV")), "{env:?}");
     }
 
     #[test]
@@ -167,15 +326,18 @@ mod tests {
         let (_d, path) = bin_dir(false);
         let w = wrapper(&path, Some("off")).unwrap();
         assert_eq!(w, Wrapper::Off);
-        assert_eq!(w.env(), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
+        assert_eq!(w.env(None), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
         assert!(w.describe().contains("OFF"));
+        // Off ignores a configured store too — there is no wrapper to point at it.
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        assert_eq!(w.env(Some(&store)), vec![("RUSTC_WRAPPER".to_string(), String::new())]);
     }
 
     #[test]
     fn an_agents_build_is_fronted_by_spira_admit_with_the_same_compiler_inside() {
         let (d, path) = bin_dir(true);
         let admit = Path::new("/rel/bin/spira-admit");
-        let env = wrapper(&path, None).unwrap().admitted_env(admit, "/run/spira", "sp-abc");
+        let env = wrapper(&path, None).unwrap().admitted_env(admit, "/run/spira", "sp-abc", None);
         let get = |k: &str| env.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("RUSTC_WRAPPER").as_deref(), Some("/rel/bin/spira-admit"));
         assert_eq!(get("SPIRA_ADMIT_INNER"), Some(d.path().join("sccache").display().to_string()));
@@ -184,7 +346,7 @@ mod tests {
         assert_eq!(get("SCCACHE_IGNORE_SERVER_IO_ERROR").as_deref(), Some("1"));
         assert!(env.iter().all(|(k, _)| !k.starts_with("CARGO_")), "{env:?}");
         // Off: admission still fronts rustc; the inner compiler is rustc itself.
-        let off = Wrapper::Off.admitted_env(admit, "/run/spira", "sp-abc");
+        let off = Wrapper::Off.admitted_env(admit, "/run/spira", "sp-abc", None);
         assert!(off.contains(&("SPIRA_ADMIT_INNER".to_string(), String::new())));
         assert!(off.contains(&("RUSTC_WRAPPER".to_string(), "/rel/bin/spira-admit".to_string())));
     }
@@ -200,9 +362,119 @@ mod tests {
         // sccache hashes every CARGO_* variable into a key (DESIGN §2.2): none may come from here.
         let (_d, path) = bin_dir(true);
         for w in [wrapper(&path, None).unwrap(), Wrapper::Off] {
-            assert!(w.env().iter().all(|(k, _)| !k.starts_with("CARGO_")), "{:?}", w.env());
+            assert!(w.env(None).iter().all(|(k, _)| !k.starts_with("CARGO_")), "{:?}", w.env(None));
         }
         assert_eq!(one_shot("aeon"), ["--config".to_string(), "profile.aeon.incremental=false".to_string()]);
         assert_eq!(one_shot_words("release"), "--config profile.release.incremental=false");
+    }
+
+    // ------------------------------------------------------------- Store (sp-xtdqi)
+
+    #[test]
+    fn store_from_values_defaults_the_scheme_and_fixes_the_key_prefix() {
+        let v: std::collections::BTreeMap<_, _> = [(STORE_ADDR_ENV.to_string(), "192.168.1.56:9431".to_string())].into();
+        let s = Store::from_values(|k| v.get(k).cloned()).expect("an address was given");
+        assert_eq!(s.endpoint, "http://192.168.1.56:9431");
+        assert_eq!(s.key_prefix, "/");
+
+        let v2: std::collections::BTreeMap<_, _> = [(STORE_ADDR_ENV.to_string(), "https://box:9431".to_string())].into();
+        let s2 = Store::from_values(|k| v2.get(k).cloned()).unwrap();
+        assert_eq!(s2.endpoint, "https://box:9431", "a scheme already present is kept, not doubled");
+    }
+
+    #[test]
+    fn store_from_values_is_none_when_the_operator_never_named_a_store() {
+        assert!(Store::from_values(|_| None).is_none(), "absent key");
+        assert!(Store::from_values(|_| Some("   ".to_string())).is_none(), "blank value");
+        assert!(Store::from_values(|_| Some(String::new())).is_none(), "empty value");
+    }
+
+    // ---------------------------------------------------- backend sync (sp-xtdqi, part c)
+
+    /// A fake `sccache` that logs every invocation to `log` and, on `--show-stats`, prints a
+    /// single `Cache location` line — enough for [`show_stats_cache_location`]/
+    /// [`ensure_store_backend`] to drive without ever touching the box's real daemon.
+    fn fake_sccache(dir: &Path, cache_location: &str, log: &Path) -> PathBuf {
+        let p = dir.join("sccache");
+        let script = format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> \"{log}\"\nif [ \"$1\" = '--show-stats' ]; then\n  printf 'Cache location                  %s\\n' \"{loc}\"\nfi\n",
+            log = log.display(),
+            loc = cache_location,
+        );
+        std::fs::write(&p, script).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    #[test]
+    fn a_server_already_on_the_store_is_left_alone() {
+        let d = testkit::TempDir::new("spira-config-build-backend");
+        let log = d.path().join("calls.log");
+        let bin = fake_sccache(d.path(), "webdav, name: , prefix: /", &log);
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        assert_eq!(ensure_store_backend(&bin, &store), BackendCheck::Matches);
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        assert!(!calls.contains("--stop-server"), "a matching server must not be touched: {calls:?}");
+    }
+
+    /// THE POSITIVE CONTROL for part (c): a server on the wrong backend (the shape
+    /// `sccache --show-stats` prints for the local-disk default) is STOPPED, never silently
+    /// trusted and never a build refusal.
+    #[test]
+    fn a_server_on_the_wrong_backend_is_stopped_not_silently_used_and_not_refused() {
+        let d = testkit::TempDir::new("spira-config-build-backend");
+        let log = d.path().join("calls.log");
+        let bin = fake_sccache(d.path(), "Local disk: \"/tmp/wrong\"", &log);
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let check = ensure_store_backend(&bin, &store);
+        assert!(matches!(check, BackendCheck::Restarted(ref l) if l.contains("Local disk")), "{check:?}");
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("--stop-server"), "the wrong-backend server must be stopped: {calls:?}");
+    }
+
+    #[test]
+    fn a_sccache_binary_that_cannot_run_is_unknown_never_a_refusal() {
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let check = ensure_store_backend(Path::new("/nonexistent-sp-xtdqi/sccache"), &store);
+        assert_eq!(check, BackendCheck::Unknown);
+    }
+
+    /// THE POSITIVE CONTROL for part (b): `Wrapper::env`/`admitted_env` carry the store's own
+    /// vars into the build, and run the backend sync as a side effect of doing so — a build
+    /// configured with a store can never silently skip both.
+    #[test]
+    fn env_with_a_store_adds_the_webdav_vars_and_syncs_the_backend() {
+        let d = testkit::TempDir::new("spira-config-build-envstore");
+        let log = d.path().join("calls.log");
+        let bin = fake_sccache(d.path(), "Local disk: \"/tmp/wrong\"", &log);
+        let w = Wrapper::Sccache(bin);
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let env = w.env(Some(&store));
+        let get = |k: &str| env.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT").as_deref(), Some("http://box:9431"));
+        assert_eq!(get("SCCACHE_WEBDAV_KEY_PREFIX").as_deref(), Some("/"));
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert!(calls.contains("--stop-server"), "{calls:?}");
+    }
+
+    #[test]
+    fn admitted_env_with_a_store_adds_the_webdav_vars() {
+        let d = testkit::TempDir::new("spira-config-build-admitstore");
+        let log = d.path().join("calls.log");
+        let bin = fake_sccache(d.path(), "webdav, name: , prefix: /", &log);
+        let w = Wrapper::Sccache(bin);
+        let store = Store { endpoint: "http://box:9431".into(), key_prefix: "/".into() };
+        let env = w.admitted_env(Path::new("/rel/bin/spira-admit"), "/run/spira", "sp-abc", Some(&store));
+        let get = |k: &str| env.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
+        assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT").as_deref(), Some("http://box:9431"));
+        assert_eq!(get("SCCACHE_WEBDAV_KEY_PREFIX").as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn off_and_no_store_add_no_webdav_vars() {
+        let (_d, path) = bin_dir(true);
+        let w = wrapper(&path, None).unwrap();
+        assert!(w.env(None).iter().all(|(k, _)| !k.starts_with("SCCACHE_WEBDAV")));
+        assert!(Wrapper::Off.admitted_env(Path::new("/x"), "/run", "sp-abc", None).iter().all(|(k, _)| !k.starts_with("SCCACHE_WEBDAV")));
     }
 }

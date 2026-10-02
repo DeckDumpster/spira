@@ -31,6 +31,12 @@ pub struct HostValues {
     pub testdb_port: String,
     pub snap_stale_s: String,
     pub path_tail: String,
+    /// `SPIRA_SCCACHE_DAV_ADDR` (sp-xtdqi) — this box's own LAN address for the shared
+    /// compilation cache, if any. Empty is a legal value (the template is never installed
+    /// when it is, per `manifest::Inputs::sccache_dav_addr_set`), substituted as empty like
+    /// `SPIRA_DOLT_DATA` rather than refused, in case a caller ever renders the template
+    /// directly (`--render`) without going through the manifest's own gate.
+    pub sccache_dav_addr: String,
 }
 
 impl HostValues {
@@ -46,6 +52,7 @@ impl HostValues {
         m.insert("SPIRA_DB".into(), self.db.clone());
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
+        m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
         m.insert("SPIRA_TESTDB_DATA".into(), self.testdb_data.clone());
         m.insert("DOLT".into(), self.dolt.clone());
         m.insert("SPIRA_PROD".into(), prod.clone());
@@ -134,6 +141,7 @@ mod tests {
             testdb_port: "3308".into(),
             snap_stale_s: "600".into(),
             path_tail: "".into(),
+            sccache_dav_addr: "".into(),
         }
     }
 

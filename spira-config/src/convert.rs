@@ -468,6 +468,7 @@ pub fn spira_section(
             "SPIRA_ROUND_VM_MAX_RETRIES" => s.round_vm_max_retries = Some(val.clone()),
             "SPIRA_ROUND_VM_RETRY_INTERVAL" => s.round_vm_retry_interval = Some(val.clone()),
             "SPIRA_ROUND_VM_MIRROR_PORT" => s.round_vm_mirror_port = Some(val.clone()),
+            "SPIRA_SCCACHE_DAV_ADDR" => s.sccache_dav_addr = Some(val.clone()),
             other => errors.push(format!(
                 "spira.conf: unknown key {other}, refused (not in conf.sh's SPIRA_CONF_KEYS \
                  or a typo — widen the schema in spira-config/src/convert.rs if this key is real)"

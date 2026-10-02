@@ -182,6 +182,15 @@ pub struct Switched {
     /// Services whose Exec lines changed but were not restarted (inactive, or a oneshot
     /// mid-run): they pick up the new file on their next start.
     pub deferred: Vec<String>,
+    /// An already-installed unit whose template's gate (`units::gate_open`) is now closed —
+    /// disabled, stopped and removed rather than re-rendered (sp-xtdqi-2): the same thing
+    /// `install`'s manifest does for a template it declines, applied to a copy that was
+    /// already on disk before the gate existed. Best-effort and never rolled back: a
+    /// disable/stop/remove failure here is printed to stderr (named, not silent) but never
+    /// fails the activation or undoes an otherwise-successful one — the box not wanting this
+    /// unit is a fact about its config, not about whether this activation's own restarts
+    /// came up.
+    pub retired: Vec<String>,
 }
 
 fn is_up(active: &str) -> bool {
@@ -202,7 +211,17 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
     let host = cfg.host_values()?;
     let mut changes = Vec::new();
     let mut errors = Vec::new();
+    let mut retiring = Vec::new();
     for m in units::installed(&cfg.unit_dir, &rel, &instance)? {
+        // sp-xtdqi-2: a template whose gate has closed (its installing key is unset) is
+        // never rendered — not even to discover it is unchanged. The unit was installed
+        // before the gate existed (a hand-render, or an earlier release that had no gate at
+        // all); the new release's own answer is that it should not exist, the same answer
+        // `install`'s manifest already gives a fresh box.
+        if !units::gate_open(&m.template, &host) {
+            retiring.push(m);
+            continue;
+        }
         let tp = rel.join("systemd").join(&m.template);
         let text = fs::read_to_string(&tp).map_err(|e| format!("cannot read {}: {e}", tp.display()))?;
         let new = match units::render(&m.template, &text, &rel, &host, m.watcher.as_deref(), &instance) {
@@ -236,12 +255,26 @@ pub fn switch(ctx: &Ctx, sha: &str) -> Result<Switched, String> {
         return Err(e);
     }
     eprintln!("release: current -> {sha} ({} unit file(s) rewritten)", changes.len());
+    let mut retired = Vec::new();
+    for m in &retiring {
+        if let Err(e) = ctx.sc.disable_now(&m.installed) {
+            eprintln!("release: {} is gated off by {sha} but could not be disabled: {e}", m.installed);
+            continue;
+        }
+        match fs::remove_file(cfg.unit_dir.join(&m.installed)) {
+            Ok(()) => {
+                eprintln!("release: retired {} (its gate key is unset)", m.installed);
+                retired.push(m.installed.clone());
+            }
+            Err(e) => eprintln!("release: disabled {} but could not remove its file: {e}", m.installed),
+        }
+    }
     if let Err(e) = ctx.sc.daemon_reload() {
         let undo = undo(ctx, &changes, prev.as_deref(), &[]);
         return Err(format!("daemon-reload failed: {e}; rolled back{undo}"));
     }
 
-    let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), ..Default::default() };
+    let mut out = Switched { rewritten: changes.iter().map(|c| c.unit.clone()).collect(), retired, ..Default::default() };
     for c in &changes {
         if !c.unit.ends_with(".service") || !units::exec_changed(&c.old, &c.new) {
             continue;

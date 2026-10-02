@@ -1014,13 +1014,21 @@ impl<'a> Run<'a> {
         // loudly, to the plain wrapper: a scheduling tool never stops a session.
         let admit = spira_config::build::find_on(&path, spira_config::admission::BIN);
         let run_dir = self.conf.run.display().to_string();
+        // THE SHARED STORE (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
+        // `self.conf` (`conf::merge_resolved_config`) the same as every other
+        // `spira.toml`-only key — never a bare env read, which only ever saw it when an
+        // operator's own shell had happened to export it first.
+        let store = spira_config::build::Store::from_values(|k| {
+            let v = self.conf.s(k);
+            (!v.is_empty()).then_some(v)
+        });
         match spira_config::build::wrapper(&path, setting.as_deref()) {
             Ok(w) => {
                 let vars = match &admit {
-                    Some(a) => w.admitted_env(a, &run_dir, &bead),
+                    Some(a) => w.admitted_env(a, &run_dir, &bead, store.as_ref()),
                     None => {
                         self.log(&format!("{}: spira-admit not on PATH — this session's builds are not admitted", self.f()));
-                        w.env()
+                        w.env(store.as_ref())
                     }
                 };
                 for (k, v) in vars {

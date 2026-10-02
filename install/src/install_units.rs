@@ -468,11 +468,11 @@ mod tests {
     use std::fs;
 
     fn host() -> HostValues {
-        HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), path_tail: "".into() }
+        HostValues { home: "/h".into(), repo: "/h".into(), run: "/run".into(), db: "/db".into(), cockpit: "/h/cockpit".into(), dolt_data: "".into(), testdb_data: "".into(), dolt: "/usr/bin/dolt".into(), prod: "".into(), instance: "prod".into(), testdb_port: "3308".into(), snap_stale_s: "600".into(), path_tail: "".into(), sccache_dav_addr: "".into() }
     }
 
     fn tiny_manifest() -> Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, watch_names: Ok(vec![]) }).unwrap();
+        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, watch_names: Ok(vec![]) }).unwrap();
         m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
         m
     }

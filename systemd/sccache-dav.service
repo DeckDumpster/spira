@@ -18,7 +18,13 @@ Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/b
 # is one past the mirror git-daemon's 9430 (round-vm's own DESIGN.md §2.5), both owned by
 # this box. config_from_env() in sccache-dav itself refuses a wildcard bind as a second,
 # code-level guard against this ever drifting.
-Environment=SCCACHE_DAV_ADDR=192.168.1.56:9431
+#
+# THE ADDRESS ITSELF IS OPERATOR INVENTORY (sp-xtdqi, law-harness-ships-mechanism-not-
+# inventory): never a literal in this public template. `@SPIRA_SCCACHE_DAV_ADDR@` comes
+# from the `SPIRA_SCCACHE_DAV_ADDR` conf.d key (no default), which is also why this unit is
+# installed at all — `install/src/manifest.rs` declines it outright when that key is unset,
+# the same as it would a template with an unfillable placeholder.
+Environment=SCCACHE_DAV_ADDR=@SPIRA_SCCACHE_DAV_ADDR@
 Environment=SCCACHE_DAV_ROOT=@SPIRA_RUN@/sccache-dav
 Type=simple
 ExecStart=@SPIRA_PROD@/sccache-dav.sh

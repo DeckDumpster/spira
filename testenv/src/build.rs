@@ -66,6 +66,9 @@ impl Builder for Cargo {
         if wrapper == spira_config::build::Wrapper::Off {
             eprintln!("testenv: {}", wrapper.describe());
         }
+        // THE SHARED STORE (sp-xtdqi): resolved in-process, same as `wrapper_from_env` —
+        // never the ambient `~/.cargo/config.toml` dependency this bead retires.
+        let store = spira_config::build::Store::from_env();
         let stdout_to_stderr = {
             use std::os::fd::AsFd;
             std::io::stderr()
@@ -80,7 +83,7 @@ impl Builder for Cargo {
             // One-shot: no incremental cache (a switch, not CARGO_INCREMENTAL, which would
             // split the compilation cache's keys).
             .args(spira_config::build::one_shot(profile))
-            .envs(wrapper.env())
+            .envs(wrapper.env(store.as_ref()))
             .current_dir(worktree)
             // cargo's DEFAULT target dir, always: the stable path is what makes it incremental,
             // and <worktree>/target/<p> is the one place SPIRA_ARTIFACTS may point.
