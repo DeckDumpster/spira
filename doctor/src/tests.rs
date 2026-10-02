@@ -957,6 +957,14 @@ fn concierge_singleton_stray_found_fails() {
 }
 
 #[test]
+fn concierge_singleton_resolves_from_release_when_repo_unset() {
+    let f = Fake::default();
+    f.set("SPIRA_HOME", "/rel/spira");
+    f.exec_files.borrow_mut().push("/rel/spira/../concierge.sh".into());
+    assert_eq!(levels(&check_concierge_singleton(&f)), vec![Level::Ok]);
+}
+
+#[test]
 fn concierge_singleton_no_concierge_sh_warns() {
     let f = Fake::default();
     f.set("SPIRA_REPO", "/repo");

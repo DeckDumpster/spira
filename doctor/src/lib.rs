@@ -676,11 +676,17 @@ pub fn check_operator_channel(w: &dyn World) -> Vec<Line> {
 // ============================================================================ concierge singleton
 
 pub fn check_concierge_singleton(w: &dyn World) -> Vec<Line> {
-    let repo = w.env("SPIRA_REPO").unwrap_or_default();
-    let conc = Path::new(&repo).join("concierge.sh");
-    if !w.is_executable_file(&conc.to_string_lossy()) {
-        return vec![warn(format!("no concierge.sh at {} — cannot check for a second concierge", conc.display()), "")];
+    let mut candidates = Vec::new();
+    if let Some(repo) = w.env("SPIRA_REPO").filter(|r| !r.is_empty()) {
+        candidates.push(Path::new(&repo).join("concierge.sh"));
     }
+    if let Some(home) = w.env("SPIRA_HOME").filter(|h| !h.is_empty()) {
+        candidates.push(Path::new(&home).join("..").join("concierge.sh"));
+    }
+    let Some(conc) = candidates.iter().find(|c| w.is_executable_file(&c.to_string_lossy())).cloned() else {
+        let tried = candidates.iter().map(|c| c.display().to_string()).collect::<Vec<_>>().join(", ");
+        return vec![warn(format!("no concierge.sh at {tried} — cannot check for a second concierge"), "")];
+    };
     let stray = w.concierge_stray_holders(&conc);
     if stray.is_empty() {
         vec![ok("Remote Control name 'concierge' held by no more than the managed session")]
