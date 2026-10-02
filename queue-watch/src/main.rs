@@ -264,10 +264,10 @@ fn watch(o: &Opts) -> Result<(), String> {
         for r in &repos {
             let prev = states.remove(&r.name).unwrap_or_default();
             let snap = snapshot(&env_, r, &prev, t);
-            if !snap.errors.is_empty() {
+            let (next, evs) = step(&prev, &snap, lim);
+            if next.is_blind() {
                 blind.push(r.name.clone());
             }
-            let (next, evs) = step(&prev, &snap, lim);
             {
                 let mut out = stdout.lock();
                 for e in &evs {

@@ -27,9 +27,30 @@ fn main() {
         Some("__json_only") => cmd_json_only(),
         Some("__json_count") => cmd_json_count(),
         Some("__ghq") => cmd_ghq(&argv[1..]),
+        Some("__latency") => cmd_latency(),
         _ => cmd_bdq(&argv),
     };
     std::process::exit(rc);
+}
+
+fn cmd_latency() -> i32 {
+    let path = match env_nonempty("SPIRA_RUN") {
+        Some(run) => format!("{run}/bdq/latency.log"),
+        None => {
+            eprintln!("bdq __latency: SPIRA_RUN is unset");
+            return 1;
+        }
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(log) => {
+            print!("{}", bead::latency::render(&bead::latency::rollup(&log)));
+            0
+        }
+        Err(e) => {
+            eprintln!("bdq __latency: cannot read {path}: {e}");
+            1
+        }
+    }
 }
 
 fn env_or(key: &str, default: &str) -> String {
