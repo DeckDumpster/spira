@@ -1,0 +1,6 @@
+TYPE=f64
+GROUP=flow
+DOC=SPIRA_FLOW_REWORK_WINDOW_HOURS — hours of reopens and landings the rework invariant ratios over.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_FLOW_REWORK_WINDOW_HOURS:=6}"
+SPIRA_CONF_DEFAULT_EOF

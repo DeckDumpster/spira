@@ -34,6 +34,28 @@ const ROUND_HEALTH_MIN_FLIPS: u64 = 2;
 /// thrash this frequent is never healthy regardless of history.
 const ROUND_HEALTH_ABSOLUTE_FLOOR: f64 = 0.2;
 
+/// How many timer periods a sentinel pass may run before its own wall time is itself a flow
+/// gap (design reconciler-time-series-2026-09-27 §3: "pass wall time more than twice the
+/// timer period").
+const SENTINEL_OVERRUN_RATIO: f64 = 2.0;
+
+/// A stage's p90 dwell compared to this multiple of its own trailing baseline p90 — a
+/// coarser, longer-horizon regression signal than `dwell_raw`'s (which compares a p95 to a
+/// configured limit, falling back to a 2x baseline ratio only when no limit is set). This one
+/// has no configured limit at all, only ever its own history.
+const DWELL_REGRESSION_RATIO: f64 = 3.0;
+
+/// Reopens per landed bead above which the rate is a gap — one reopen per landed bead, taken
+/// as-is rather than derived from a fixture. The caller (reconciler-flow's main) holds this
+/// report-only until 24h of `bead-stage` history exist.
+const REWORK_THRESHOLD: f64 = 1.0;
+
+/// The lifecycle states `stage_dwell_regression_raw` is evaluated for every pass — the same
+/// list design row 116 names for the existing per-stage dwell invariant, so a bead sitting in
+/// a terminal state (LANDED, DONE, SUPERSEDED, DROPPED) is never asked "how much longer than
+/// usual", which has no meaning once nothing follows.
+pub const DWELL_REGRESSION_STATES: [&str; 5] = ["READY", "WORKING", "SUBMITTED", "IN_DELIVERY", "REWORK"];
+
 /// Current vs. trailing-baseline backlog size (a self-produced tsd series — see
 /// `io::backlog_count` and the `backlog` family it appends to every pass).
 pub struct BacklogObserved {
@@ -41,7 +63,7 @@ pub struct BacklogObserved {
     pub baseline: f64,
 }
 
-/// "The backlog drains" (per the design's intent, verbatim from Ryan): a backlog trending
+/// "The backlog drains" (the design's intent): a backlog trending
 /// past `BACKLOG_GROWTH_RATIO` times its own trailing 24h average is the flow gap this
 /// invariant exists to catch. A `baseline` of zero means there is no history yet — not a
 /// gap, since there is nothing yet to have grown past.
@@ -149,6 +171,123 @@ pub fn round_health_raw(o: &RoundHealthObserved) -> RawStatus {
         RawStatus::Gap {
             desired: format!("flip rate <= {threshold:.2}"),
             observed: format!("{rate:.2} ({} of {} transitions)", o.flips, o.transitions),
+            since_hint: None,
+        }
+    } else {
+        RawStatus::Satisfied
+    }
+}
+
+/// One `slots` family sample (see `io::slots_samples`): the fleet's live/ceiling capacity,
+/// how much work is ready to claim, and whether admission is deliberately throttled right
+/// now — a paused fleet's idle slots are a decision, not a gap.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlotsSample {
+    pub live: u64,
+    pub ceiling: u64,
+    pub ready: u64,
+    pub capacity_paused: bool,
+}
+
+fn slot_is_idle(s: &SlotsSample) -> bool {
+    !s.capacity_paused && s.ready > 0 && s.live < s.ceiling
+}
+
+/// "A free slot while ready work exists, across two `slots` samples a pass apart" (design
+/// §3): a single blip must not fire this — a fleet in the middle of turning a slot over can
+/// show one idle sample and be fine a moment later, so only two consecutive idle readings are
+/// a gap.
+pub fn idle_capacity_raw(prev: &SlotsSample, current: &SlotsSample) -> RawStatus {
+    if slot_is_idle(prev) && slot_is_idle(current) {
+        RawStatus::Gap {
+            desired: format!("live == ceiling ({}) while ready work waits, or ready == 0", current.ceiling),
+            observed: format!(
+                "live {} < ceiling {} with {} ready, on two consecutive samples",
+                current.live, current.ceiling, current.ready
+            ),
+            since_hint: None,
+        }
+    } else {
+        RawStatus::Satisfied
+    }
+}
+
+/// "Sentinel overrun: pass wall time more than twice the timer period" (design §3) — only a
+/// pass running past double the period fires.
+pub fn sentinel_overrun_raw(pass_wall_secs: u64, timer_period_secs: u64) -> RawStatus {
+    let ceiling = timer_period_secs as f64 * SENTINEL_OVERRUN_RATIO;
+    if (pass_wall_secs as f64) > ceiling {
+        RawStatus::Gap {
+            desired: format!("<= {ceiling:.0}s ({SENTINEL_OVERRUN_RATIO:.0}x the {timer_period_secs}s timer period)"),
+            observed: format!("{pass_wall_secs}s"),
+            since_hint: None,
+        }
+    } else {
+        RawStatus::Satisfied
+    }
+}
+
+/// Reopens (transitions to REWORK) and beads landed, both over the rework window (design: 6h,
+/// distinct from the 30-minute flow window the other new invariants share).
+pub struct ReworkObserved {
+    pub reopens: u64,
+    pub landed: u64,
+}
+
+/// A landed bead with no reopens at all is always satisfied, even before any bead has landed
+/// in the window — `landed == 0` alone is not a gap, since there is no denominator to judge a
+/// rate against yet. But a reopen with nothing landing in the same window (an all-rework
+/// window) is never satisfied: the ratio is not merely high, it is undefined in the healthy
+/// direction, so it is treated as the worst case rather than skipped.
+pub fn rework_raw(o: &ReworkObserved) -> RawStatus {
+    if o.reopens == 0 {
+        return RawStatus::Satisfied;
+    }
+    if o.landed == 0 {
+        return RawStatus::Gap {
+            desired: format!("<= {REWORK_THRESHOLD:.1} reopens per landed bead"),
+            observed: format!("{} reopens, 0 landed", o.reopens),
+            since_hint: None,
+        };
+    }
+    let rate = o.reopens as f64 / o.landed as f64;
+    if rate > REWORK_THRESHOLD {
+        RawStatus::Gap {
+            desired: format!("<= {REWORK_THRESHOLD:.1} reopens per landed bead"),
+            observed: format!("{rate:.2} ({} reopens / {} landed)", o.reopens, o.landed),
+            since_hint: None,
+        }
+    } else {
+        RawStatus::Satisfied
+    }
+}
+
+/// One lifecycle state's p90 dwell (seconds) for the current window and its trailing
+/// baseline, plus how many completed transitions (a bead entering the state and then leaving
+/// it) each is drawn from.
+pub struct DwellRegressionObserved {
+    pub p90_seconds: f64,
+    pub n: u64,
+    pub baseline_p90_seconds: f64,
+    pub baseline_n: u64,
+}
+
+/// "Stage dwell regression: p90 more than 3x its trailing baseline" (design §3) — unlike
+/// `dwell_raw`'s configured-limit case, this has no floor to fall back on: no baseline yet
+/// (or no transitions this pass) is satisfied, since there is nothing yet to have regressed
+/// against.
+pub fn dwell_regression_raw(o: &DwellRegressionObserved) -> RawStatus {
+    if o.n == 0 || o.baseline_n == 0 || o.baseline_p90_seconds <= 0.0 {
+        return RawStatus::Satisfied;
+    }
+    let ceiling = o.baseline_p90_seconds * DWELL_REGRESSION_RATIO;
+    if o.p90_seconds > ceiling {
+        RawStatus::Gap {
+            desired: format!(
+                "p90 <= {ceiling:.0}s ({DWELL_REGRESSION_RATIO:.0}x the trailing baseline p90 {:.0}s)",
+                o.baseline_p90_seconds
+            ),
+            observed: format!("p90 {:.0}s over {} transitions", o.p90_seconds, o.n),
             since_hint: None,
         }
     } else {
@@ -298,6 +437,146 @@ mod tests {
         // absolute floor this rate would pass by comparison to a baseline with no real
         // signal in it.
         let s = round_health_raw(&RoundHealthObserved { flips: 5, transitions: 10, baseline_flip_rate: 0.0 });
+        assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    // ── idle capacity ───────────────────────────────────────────────────────────────────
+
+    fn busy() -> SlotsSample {
+        SlotsSample { live: 8, ceiling: 8, ready: 12, capacity_paused: false }
+    }
+
+    fn idle() -> SlotsSample {
+        SlotsSample { live: 3, ceiling: 8, ready: 12, capacity_paused: false }
+    }
+
+    #[test]
+    fn idle_capacity_satisfied_when_full() {
+        let s = idle_capacity_raw(&busy(), &busy());
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn idle_capacity_satisfied_on_a_single_idle_sample() {
+        // A blip: idle on the most recent sample only must not fire.
+        let s = idle_capacity_raw(&busy(), &idle());
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn idle_capacity_gap_when_idle_across_two_samples() {
+        // Positive control: the literal case the invariant exists to catch.
+        let s = idle_capacity_raw(&idle(), &idle());
+        assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    #[test]
+    fn idle_capacity_satisfied_with_nothing_ready() {
+        let empty_queue = SlotsSample { ready: 0, ..idle() };
+        let s = idle_capacity_raw(&empty_queue, &empty_queue);
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn idle_capacity_satisfied_while_capacity_is_deliberately_paused() {
+        let paused = SlotsSample { capacity_paused: true, ..idle() };
+        let s = idle_capacity_raw(&paused, &paused);
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    // ── sentinel overrun ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn sentinel_overrun_satisfied_at_the_median_recon_finding() {
+        // The literal recon number (213s against a 2-minute/120s timer) is over one period
+        // but not two — this invariant's whole point is not to fire on that.
+        let s = sentinel_overrun_raw(213, 120);
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn sentinel_overrun_gap_past_twice_the_period() {
+        let s = sentinel_overrun_raw(241, 120);
+        assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    #[test]
+    fn sentinel_overrun_satisfied_at_exactly_twice_the_period() {
+        let s = sentinel_overrun_raw(240, 120);
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    // ── rework ──────────────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn rework_satisfied_with_no_reopens() {
+        let s = rework_raw(&ReworkObserved { reopens: 0, landed: 0 });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn rework_satisfied_at_or_under_one_reopen_per_landed() {
+        let s = rework_raw(&ReworkObserved { reopens: 4, landed: 4 });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn rework_gap_over_one_reopen_per_landed() {
+        // Positive control: the design's own default threshold, crossed.
+        let s = rework_raw(&ReworkObserved { reopens: 5, landed: 4 });
+        assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    #[test]
+    fn rework_gap_when_reopens_exist_and_nothing_landed() {
+        let s = rework_raw(&ReworkObserved { reopens: 2, landed: 0 });
+        assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
+    }
+
+    // ── stage dwell regression ──────────────────────────────────────────────────────────
+
+    #[test]
+    fn dwell_regression_satisfied_with_no_baseline_yet() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 99999.0,
+            n: 10,
+            baseline_p90_seconds: 0.0,
+            baseline_n: 0,
+        });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn dwell_regression_satisfied_with_no_transitions_this_window() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 0.0,
+            n: 0,
+            baseline_p90_seconds: 300.0,
+            baseline_n: 20,
+        });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn dwell_regression_satisfied_within_three_times_baseline() {
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 800.0,
+            n: 10,
+            baseline_p90_seconds: 300.0,
+            baseline_n: 20,
+        });
+        assert_eq!(s, RawStatus::Satisfied);
+    }
+
+    #[test]
+    fn dwell_regression_gap_past_three_times_baseline() {
+        // Positive control: the design's own ratio, crossed.
+        let s = dwell_regression_raw(&DwellRegressionObserved {
+            p90_seconds: 901.0,
+            n: 10,
+            baseline_p90_seconds: 300.0,
+            baseline_n: 20,
+        });
         assert!(matches!(s, RawStatus::Gap { .. }), "expected a gap, got {s:?}");
     }
 }

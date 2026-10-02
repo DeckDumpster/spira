@@ -262,6 +262,134 @@ pub fn append_backlog_sample(tsd_bin: &str, root: &Path, count: u64) {
         .status();
 }
 
+/// The last two `slots` samples, most recent second — "two samples a pass apart" (design §3).
+/// `Err` when fewer than two rows exist yet (a fresh install, or the collector not running
+/// long enough), or when a sample has a field the collector could not read (written as the
+/// literal string `"?"` by `_tsd_slots_sample`, never fabricated as a number).
+pub fn slots_samples(duckdb_bin: &str, root: &Path) -> Result<(crate::core::SlotsSample, crate::core::SlotsSample), String> {
+    let path = family_path(root, "slots");
+    if !path.exists() {
+        return Err(format!("{}: no rows yet", path.display()));
+    }
+    let path_str = path.to_string_lossy();
+    let sql = format!(
+        "SELECT TRY_CAST(live AS BIGINT) AS live, TRY_CAST(ceiling AS BIGINT) AS ceiling,
+                TRY_CAST(ready AS BIGINT) AS ready, TRY_CAST(capacity_paused AS BIGINT) AS capacity_paused
+         FROM read_ndjson_auto('{path_str}')
+         ORDER BY CAST(ts AS TIMESTAMP) DESC
+         LIMIT 2;"
+    );
+    let rows = duckdb_json(duckdb_bin, &sql)?;
+    if rows.len() < 2 {
+        return Err(format!("{}: fewer than two samples yet", path.display()));
+    }
+    let sample = |row: &Value| -> Result<crate::core::SlotsSample, String> {
+        let live = row.get("live").and_then(Value::as_u64).ok_or_else(|| "slots: unreadable live field".to_string())?;
+        let ceiling = row.get("ceiling").and_then(Value::as_u64).ok_or_else(|| "slots: unreadable ceiling field".to_string())?;
+        let ready = row.get("ready").and_then(Value::as_u64).ok_or_else(|| "slots: unreadable ready field".to_string())?;
+        let capacity_paused = row.get("capacity_paused").and_then(Value::as_u64).unwrap_or(0) != 0;
+        Ok(crate::core::SlotsSample { live, ceiling, ready, capacity_paused })
+    };
+    // rows[0] is the most recent sample (DESC); the pure function takes (prev, current).
+    Ok((sample(&rows[1])?, sample(&rows[0])?))
+}
+
+/// The most recently observed sentinel pass's total wall time: every `sentinel-phase` row for
+/// the pass with the latest timestamp, summed — sentinel.sh's own `_phase` gives every second
+/// of a pass to exactly one CHECK row, so the sum over one `pass` id is that pass's wall time.
+pub fn sentinel_pass_wall_seconds(duckdb_bin: &str, root: &Path) -> Result<u64, String> {
+    let path = family_path(root, "sentinel-phase");
+    if !path.exists() {
+        return Err(format!("{}: no rows yet", path.display()));
+    }
+    let path_str = path.to_string_lossy();
+    let sql = format!(
+        "SELECT CAST(sum(secs) AS DOUBLE) AS wall_s
+         FROM read_ndjson_auto('{path_str}')
+         WHERE pass = (
+            SELECT pass FROM read_ndjson_auto('{path_str}')
+            ORDER BY CAST(ts AS TIMESTAMP) DESC LIMIT 1
+         );"
+    );
+    let rows = duckdb_json(duckdb_bin, &sql)?;
+    let row = rows.first().ok_or_else(|| "sentinel-phase query returned no row".to_string())?;
+    Ok(f64_field(row, "wall_s") as u64)
+}
+
+/// Reopens (transitions to REWORK) and beads landed over `window_hours`, plus how many hours
+/// of `bead-stage` history exist at all — the caller holds the rework invariant report-only
+/// until that history passes 24h (design: "report-only for 24h, then alerting"), since a
+/// ratio computed from a few hours of a brand-new series has no baseline behind it yet.
+pub fn rework_metrics(duckdb_bin: &str, root: &Path, window_hours: f64) -> Result<(u64, u64, f64), String> {
+    let path = family_path(root, "bead-stage");
+    if !path.exists() {
+        return Err(format!("{}: no rows yet", path.display()));
+    }
+    let path_str = path.to_string_lossy();
+    let sql = format!(
+        "SELECT
+            count(*) FILTER (WHERE applied AND to_state = 'REWORK' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS reopens,
+            count(*) FILTER (WHERE applied AND to_state = 'LANDED' AND CAST(ts AS TIMESTAMP) >= now() - INTERVAL '{window_hours} hours') AS landed,
+            epoch(now()) - epoch(min(CAST(ts AS TIMESTAMP))) AS history_secs
+         FROM read_ndjson_auto('{path_str}');"
+    );
+    let rows = duckdb_json(duckdb_bin, &sql)?;
+    let row = rows.first().ok_or_else(|| "rework query returned no row".to_string())?;
+    let history_hours = f64_field(row, "history_secs") / 3600.0;
+    Ok((u64_field(row, "reopens"), u64_field(row, "landed"), history_hours))
+}
+
+/// Per lifecycle state, the p90 dwell (seconds) for the current window and the trailing
+/// baseline, plus how many completed transitions (a bead entering the state, then leaving it
+/// for any next state) each is drawn from. A state with no completed transition in either
+/// window is simply absent from the result — the caller (main.rs) evaluates every state in
+/// [`crate::core::DWELL_REGRESSION_STATES`] regardless, defaulting an absent one to "no
+/// history", the same as a fresh install.
+pub fn dwell_regression_metrics(
+    duckdb_bin: &str,
+    root: &Path,
+    window_hours: f64,
+    baseline_hours: f64,
+) -> Result<Vec<(String, f64, u64, f64, u64)>, String> {
+    let path = family_path(root, "bead-stage");
+    if !path.exists() {
+        return Err(format!("{}: no rows yet", path.display()));
+    }
+    let path_str = path.to_string_lossy();
+    // Bucketed by when a dwell COMPLETED (the row leaving the state), not when it started —
+    // the same convention `dwell_metrics` uses for CERTIFIED->LANDED: a dwell is only knowable
+    // once it is over, so "the current window" means "finished recently", and a dwell that
+    // started long ago but only just ended still counts as current.
+    let sql = format!(
+        "WITH ordered AS (
+            SELECT \"key\", to_state AS state, CAST(ts AS TIMESTAMP) AS ts,
+                   LAG(to_state) OVER (PARTITION BY \"key\" ORDER BY seq) AS prev_state,
+                   LAG(CAST(ts AS TIMESTAMP)) OVER (PARTITION BY \"key\" ORDER BY seq) AS prev_ts
+            FROM read_ndjson_auto('{path_str}')
+            WHERE applied
+         ), dwells AS (
+            SELECT prev_state AS state, ts, epoch(ts) - epoch(prev_ts) AS dwell_s
+            FROM ordered
+            WHERE prev_state IS NOT NULL
+         )
+         SELECT state,
+            quantile_cont(dwell_s, 0.9) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_p90,
+            count(*) FILTER (WHERE ts >= now() - INTERVAL '{window_hours} hours') AS cur_n,
+            quantile_cont(dwell_s, 0.9) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_p90,
+            count(*) FILTER (WHERE ts >= now() - INTERVAL '{baseline_hours} hours') AS base_n
+         FROM dwells
+         GROUP BY state;"
+    );
+    let rows = duckdb_json(duckdb_bin, &sql)?;
+    Ok(rows
+        .iter()
+        .filter_map(|r| {
+            let state = r.get("state")?.as_str()?.to_string();
+            Some((state, f64_field(r, "cur_p90"), u64_field(r, "cur_n"), f64_field(r, "base_p90"), u64_field(r, "base_n")))
+        })
+        .collect())
+}
+
 /// The optional per-stage overrides from the desired-state document (sp-xqhog): a velocity
 /// floor for the "queue" stage (events/hour) and a dwell limit for the "review" stage
 /// (seconds) — the same stage names the document's own shipped example fragment uses. Any
