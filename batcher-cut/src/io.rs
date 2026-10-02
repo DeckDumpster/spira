@@ -883,6 +883,11 @@ pub fn write_local_verdict(env: &Env, repo: &str, verdict: &str, detail: &str) {
 // ---------------------------------------------------------------------------------------
 
 pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &str) -> Result<String, String> {
+    forge_pr_create_on(repo, head, base, title, body, None)
+}
+
+/// `path`, when given, is the child's PATH — the seam tests use instead of mutating the process PATH.
+fn forge_pr_create_on(repo: &Repo, head: &str, base: &str, title: &str, body: &str, path: Option<&std::ffi::OsStr>) -> Result<String, String> {
     // A bare name (the default, `forge`, since sp-yv4b3) is the launcher-PATH program, run
     // directly; a configured SPIRA_FORGE path is run with bash, as batch.sh did.
     let mut cmd = if repo.forge.components().count() == 1 {
@@ -892,6 +897,9 @@ pub fn forge_pr_create(repo: &Repo, head: &str, base: &str, title: &str, body: &
         c.arg(&repo.forge);
         c
     };
+    if let Some(p) = path {
+        cmd.env("PATH", p);
+    }
     cmd.arg("pr-create").arg(&repo.path).arg(head).arg(base).arg(title);
     cmd.stdin(std::process::Stdio::piped());
     cmd.stdout(std::process::Stdio::piped());
@@ -1118,7 +1126,32 @@ mod land_tests {
         let _ = force_push_branch(&r, "deadbeef", "spira/queue/1");
     }
 }
-// Deleted by sp-xbe3u (law-a-test-that-flips-is-deleted): it failed under the full-workspace unit gate and passed in isolation; sp-ajonc fixes the race and re-adds it.
+#[cfg(test)]
+mod forge_default_tests {
+    use super::*;
+
+    // The default must be a bare `forge`, and a bare `forge` must be found on the child's PATH
+    // alone. PATH goes to the spawn, never into this process: other tests fork concurrently.
+    #[test]
+    fn a_bare_forge_stub_on_the_childs_path_is_reached() {
+        let dir = testkit::TempDir::new("batcher-cut-default-forge-test");
+        testkit::write_exe(
+            dir.join("forge"),
+            "#!/bin/sh
+case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
+",
+        );
+        let real_path = std::env::var_os("PATH").unwrap_or_default();
+        let mut path = dir.path().as_os_str().to_os_string();
+        path.push(":");
+        path.push(&real_path);
+
+        let repo = Repo { name: "r".into(), path: PathBuf::from("/tmp/r"), base: "local/main".into(), forge: PathBuf::from("forge"), land: Land::Forge };
+        let pr = forge_pr_create_on(&repo, "head", "base", "title", "body", Some(&path)).expect("forge_pr_create should reach the stub");
+        assert_eq!(pr, "42");
+    }
+}
+
 #[cfg(test)]
 mod result_path_tests {
     #[test]
