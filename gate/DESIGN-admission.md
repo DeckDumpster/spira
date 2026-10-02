@@ -353,6 +353,36 @@ the pools, all run against real pool directories through the real `try_take` / `
 * jitter bounds, and the sizes read from typed config (`compile_par`, `test_par`,
   `summon_jitter`).
 
+> **2026-10-01: `gate_occupancy_reads_flocks_and_their_holder_sidecars` deleted and
+> re-added same round** (sp-os3of; `law-a-test-that-flips-is-deleted`). Flipped between the
+> round-209 certification (green) and the full VM sweep (red) at the same commit
+> (`16a5fa144`): `assertion failed: gate_occupancy(&d, 3).holders.is_empty()`. Cause: it held
+> an flock on an in-process fd, dropped it, and asserted the slot free in the same step —
+> but other `spira-config` lib tests (`containment.rs`, `repos.rs`, `resolve.rs`) fork real
+> `git` children, and a fork duplicates the open file description; a concurrently-forked
+> child held a copy of the lock past this test's own `drop()`, until that child execed.
+> Re-added holding the lock from a `testkit::ChildGuard`-spawned `flock -x <file> sleep 60`
+> child instead of an in-process fd, so this process never opens the lock file itself and no
+> concurrent fork anywhere in the binary can inherit a copy of a lock it never held; the
+> child is killed and reaped before the release assertion. Audited the rest of the tree for
+> the same shape (an in-process flock, dropped, then asserted released/free) and converted
+> `archivist/src/lock.rs::a_second_try_lock_is_refused_until_the_first_drops` and
+> `watchd/src/lock.rs::the_lock_is_free_again_once_the_holder_is_dropped` the same way.
+> Left alone, with reasons: `queue/src/lock.rs`'s two equivalents (already serialised against
+> every fork in that crate's lib tests by `testutil::serial()`, which every forking test in
+> that crate already takes); `gate/src/real.rs::run_gate_never_lets_a_daemon_it_starts_inherit_the_callers_lock_fd`
+> (the in-process, non-`O_CLOEXEC` fd it opens IS what it tests — a daemon inheriting the
+> caller's real lock fd — swapping it for a child-held lock would stop testing that);
+> `testenv/src/worktree.rs`'s slot-reuse test (the in-process fd it drops is the real
+> `Worktree` object under test, not a fabricated "another process holds it" setup; already
+> carries a documented bounded retry for the same race).
+>
+> Seen red once, 2026-10-01 (pre-fix): looping `cargo test -p spira-config --lib` flipped
+> this test at iteration 107 of 200: `thread
+> 'admission::tests::gate_occupancy_reads_flocks_and_their_holder_sidecars' panicked at
+> spira-config/src/admission/tests.rs:268:5: assertion failed:
+> gate_occupancy(&d, 3).holders.is_empty()`.
+
 **The full 14-agent acceptance replay runs only on a quiet box.** The bead's load criteria are
 memory full-stall under 5%, io full avg60 under 30% sustained, and more landings per hour than
 unshaped at the same N. The Concierge schedules that replay after the rewrite waves land. The

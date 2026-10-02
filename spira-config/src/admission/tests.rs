@@ -1,6 +1,7 @@
 use super::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::process::Command;
 
 /// A process table: pid → (starttime, ppid).
 #[derive(Default)]
@@ -250,6 +251,23 @@ fn real_procs_reads_this_process() {
     assert_eq!(RealProcs.start_of(u32::MAX - 1), None);
 }
 
+/// sp-os3of: this used to hold the flock on an in-process fd, drop it, and assert the
+/// slot free — but other tests in this binary fork real children (containment.rs,
+/// repos.rs, resolve.rs all shell out to `git`), and a fork duplicates the open file
+/// description. A concurrent fork's child kept a copy of the lock, open past this
+/// process's own drop, until that child execs — so `gate_occupancy` after `drop(held)`
+/// still saw the slot held and the test flipped red at round 209 on an unchanged tree
+/// (law-a-test-that-flips-is-deleted; see DESIGN-admission.md's test plan note).
+///
+/// Fixed by holding the lock from a CHILD PROCESS this test owns instead of an in-process
+/// fd: this process never opens `slot.2.lock` itself, so no concurrent fork anywhere in
+/// the binary can ever inherit a copy of a lock it never held. `flock -x <file> sleep 60`
+/// itself forks: the grandchild `sleep` is the actual holder, inheriting the locked fd
+/// across the `flock` launcher's exec. `holder.kill()` SIGKILLs the whole process group
+/// (both the launcher and that grandchild) and reaps the launcher, but the grandchild's
+/// own fd-closing teardown is a separate task the kernel schedules independently — same
+/// signal, not provably the same instant — so the release assertion polls briefly rather
+/// than firing the instant `kill()` returns.
 #[test]
 fn gate_occupancy_reads_flocks_and_their_holder_sidecars() {
     let d = run_dir();
@@ -258,14 +276,31 @@ fn gate_occupancy_reads_flocks_and_their_holder_sidecars() {
     for n in 1..=3 {
         File::create(dir.join(format!("slot.{n}.lock"))).unwrap();
     }
-    let held = OpenOptions::new().write(true).open(dir.join("slot.2.lock")).unwrap();
-    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) }, 0);
+    let lock_path = dir.join("slot.2.lock");
+    let mut holder = testkit::ChildGuard::spawn(Command::new("flock").arg("-x").arg(&lock_path).arg("sleep").arg("60"));
+    // Wait for the child to actually have the lock before asserting occupancy.
+    let mut tries = 0;
+    while gate_occupancy(&d, 3).holders.is_empty() && tries < 500 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        tries += 1;
+    }
     fs::write(dir.join("slot.2.holder"), gate_holder_line(4242, 9, "concierge/sp-x", 100)).unwrap();
     let o = gate_occupancy(&d, 3);
     assert_eq!(o.holders.len(), 1);
     assert_eq!((o.holders[0].slot, o.holders[0].who.as_str(), o.holders[0].pid), (2, "concierge/sp-x", 4242));
-    drop(held);
-    assert!(gate_occupancy(&d, 3).holders.is_empty());
+    // Kill and reap the child BEFORE asserting release: this process never held the lock
+    // itself, so once the actual holder (the grandchild `sleep`) finishes exiting, the
+    // kernel has already dropped it — poll briefly for that, rather than asserting once.
+    holder.kill();
+    let mut tries = 0;
+    let mut o = gate_occupancy(&d, 3);
+    while !o.holders.is_empty() {
+        assert!(tries < 500, "the lock was never released after the holder was killed");
+        tries += 1;
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        o = gate_occupancy(&d, 3);
+    }
+    assert!(o.holders.is_empty());
 }
 
 #[test]
