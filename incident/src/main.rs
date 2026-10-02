@@ -280,8 +280,14 @@ fn drain_one(env: &Env, bd: &dyn Bd, mailer: &dyn Mailer, clock: &dyn Clock, pat
     let mut cfg = env.file_config(&provenance);
     cfg.cause = &cause;
     let mut log = Vec::new();
+    let alarm_label = env_or("SPIRA_ALARM_LABEL", "alarm");
+    let file_labels = if entry.reference.starts_with("incident:") && !env.labels.split(',').any(|l| l == alarm_label) {
+        format!("{},{}", env.labels, alarm_label)
+    } else {
+        env.labels.clone()
+    };
     let locked = with_incident_lock(&env.lock_path, env.lock_wait_s, || {
-        run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &env.labels, &mut log)
+        run::file_one(bd, mailer, clock, &cfg, &entry.reference, &entry.title, &entry.body, &file_labels, &mut log)
     });
     let Some(outcome) = locked else {
         ilog(env, &format!("another intake held {} for {}s — {} stays spooled, drain will retry", env.lock_path.display(), env.lock_wait_s, entry.reference));
