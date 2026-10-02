@@ -228,7 +228,7 @@ fn cut(o: &Opts) -> Result<(), String> {
         return Err(format!("{}: another operation holds the lock (waited {wait_secs}s)", repo.name));
     };
 
-    let pool = io::certified_pool(&env_, &repo)?;
+    let pool = batcher::core::base_fix_lane(io::certified_pool(&env_, &repo)?);
     let open = io::read_open_batch(&env_, &repo.name)?;
     let hist = io::pool_history(&env_.run, &repo.name, pool.len());
     let n = adaptive_n(hist);

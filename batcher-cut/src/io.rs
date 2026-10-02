@@ -349,6 +349,7 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     };
     let submitted_label = std::env::var("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
     let mut by_id: BTreeMap<String, (Option<u8>, String, bool)> = BTreeMap::new();
+    let mut texts: BTreeMap<String, (bool, String)> = BTreeMap::new();
     for it in items {
         let Some(id) = it.get("id").and_then(|x| x.as_str()) else { continue };
         let labels: Vec<&str> = it
@@ -363,15 +364,57 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         let express = labels.contains(&env.express_label.as_str());
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let own_ref = it.get("external_ref").and_then(|x| x.as_str()).unwrap_or("");
+        let text = format!("{title}\n{}", it.get("description").and_then(|d| d.as_str()).unwrap_or(""));
+        texts.insert(id.to_string(), (own_ref.starts_with(&format!("basefail:{}:", repo.name)), text));
         by_id.insert(id.to_string(), (priority, title, express));
     }
+    let fixes = base_fix_ids(env, repo, &texts);
     let mut out = Vec::new();
     for (id, tip, epoch) in certified {
         let Some((priority, title, express)) = by_id.get(&id) else { continue };
         let stack = read_stack(env, &id);
-        out.push(Member { id, tip, title: title.clone(), priority: *priority, express: *express, certified_at: epoch, stack });
+        let base_fix = fixes.contains(&id);
+        let priority = if base_fix { Some(0) } else { *priority };
+        out.push(Member { id, tip, title: title.clone(), priority, express: *express, base_fix, certified_at: epoch, stack });
     }
     Ok(out)
+}
+
+/// The certified ids that fix an open base-red bead of `repo`: a bead the basefail bead
+/// depends on, one citing it by id, or one carrying the basefail external ref itself. A
+/// failed lookup yields none — the lane is an acceleration, never a gate on the round.
+fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>) -> std::collections::BTreeSet<String> {
+    let mut fixes: std::collections::BTreeSet<String> = texts.iter().filter(|(_, (own, _))| *own).map(|(id, _)| id.clone()).collect();
+    let mut cmd = Command::new(&env.bd);
+    if let Some(db) = &env.db {
+        cmd.current_dir(db);
+    }
+    cmd.args(["list", "--json", "--limit", "0", "--status", "open,in_progress,blocked", "--external-contains"]).arg(format!("basefail:{}:", repo.name));
+    let Ok(text) = run(&mut cmd, "bd list basefail") else { return fixes };
+    let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&text) else { return fixes };
+    let open: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
+    for (id, (_, body)) in texts {
+        if open.iter().any(|b| body.contains(b.as_str())) {
+            fixes.insert(id.clone());
+        }
+    }
+    if let Ok(shown) = bd_show(env, &open) {
+        let shown = match shown {
+            serde_json::Value::Array(a) => a,
+            o => vec![o],
+        };
+        for b in shown {
+            for d in b.get("dependencies").and_then(|d| d.as_array()).into_iter().flatten() {
+                let blocks = d.get("dependency_type").and_then(|t| t.as_str()) != Some("parent-child");
+                if let (true, Some(id)) = (blocks, d.get("id").and_then(|i| i.as_str())) {
+                    fixes.insert(id.to_string());
+                }
+            }
+        }
+    }
+    fixes.retain(|id| texts.contains_key(id));
+    fixes
 }
 
 // ---------------------------------------------------------------------------------------
