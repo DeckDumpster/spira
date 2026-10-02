@@ -16,3 +16,6 @@ ExecStart=@SPIRA_PROD_ROOT@/bin/cert-sweep pass --mode subset --repo @SPIRA_HOME
 TimeoutStartSec=1500
 StandardOutput=append:@SPIRA_RUN@/cert-sweep.log
 StandardError=append:@SPIRA_RUN@/cert-sweep.log
+
+[X-Spira]
+Plane=observability

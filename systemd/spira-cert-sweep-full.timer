@@ -9,3 +9,6 @@ Unit=spira-cert-sweep-full.service
 
 [Install]
 WantedBy=timers.target
+
+[X-Spira]
+Plane=observability
