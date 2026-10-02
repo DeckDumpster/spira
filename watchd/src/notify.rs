@@ -375,4 +375,25 @@ mod tests {
         assert_eq!(out.code, 0);
         assert_eq!(ops.asks.borrow().len(), 0);
     }
+
+    #[test]
+    fn an_unread_backlog_and_a_dead_watcher_escalate_as_two_asks_from_two_stamps() {
+        let d = TempDir::new("watchd-notify");
+        let mut c = ctx(d.path().to_str().unwrap());
+        let rows = vec![row("pool", Kind::Daemon, "pool.sh", ""), row("gamma", Kind::Daemon, "gamma.sh", "")];
+        let lf = paths::logfile(&c.run, "pool", Kind::Daemon, "pool.sh").unwrap();
+        std::fs::create_dir_all(lf.parent().unwrap()).unwrap();
+        std::fs::write(&lf, "pool: FAIL suite x\n").unwrap();
+        let mut ops = Fake::default();
+        ops.shown.insert(paths::watch_unit_name("gamma", "prod"), ("failed".into(), "3".into()));
+        assert_eq!(cmd_notify(&rows, &ops, &c).unwrap().code, 0);
+        c.now += 3600;
+        let out = cmd_notify(&rows, &ops, &c).unwrap();
+        assert_eq!(out.code, 1, "{}", out.report);
+        assert_eq!(ops.asks.borrow().len(), 2);
+        let wd = paths::watchd_dir(&c.run);
+        assert!(wd.join("notify.escalated").exists() && wd.join("notify-health.escalated").exists());
+        cmd_notify(&rows, &ops, &c).unwrap();
+        assert_eq!(ops.asks.borrow().len(), 2, "a pass at the same instant asks nothing new");
+    }
 }
