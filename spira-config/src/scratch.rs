@@ -157,11 +157,8 @@ pub fn sweep(root: &Path, prefixes: &[&str], min_age: Duration, held: &dyn Fn(&P
 mod tests {
     use super::*;
 
-    fn tmp(tag: &str) -> PathBuf {
-        let p = std::env::temp_dir().join(format!("scratch-{tag}-{}-{}", std::process::id(), line!()));
-        let _ = fs::remove_dir_all(&p);
-        fs::create_dir_all(&p).unwrap();
-        p
+    fn tmp(tag: &str) -> testkit::TempDir {
+        testkit::TempDir::new(&format!("scratch-{tag}"))
     }
 
     #[test]
