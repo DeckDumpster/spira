@@ -619,7 +619,7 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
         store: Store { bd, db: Some("/fake/db".into()), lc, timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: dir.join("run/poison-asked"),
-        ask_label: "needs-ryan".into(),
+        ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
         beads_actor: "harness".into(),
         landing_pass: String::new(), // not exercised by any unpoison test
     };
@@ -663,6 +663,7 @@ fn live_bead_and_asks() {
   show) if [ "$4" = sp-a ]; then echo '[{"id":"sp-a","status":"open","labels":["spira-poison"]}]';
         elif [ "$4" = sp-down ]; then echo 'dolt: connection refused' >&2; exit 1;
         else echo '{"error":"no issues found matching the provided IDs"}'; echo "Error fetching $4: no issue found matching \"$4\"" >&2; exit 1; fi ;;
+  # literal-ok: fixture
   list) [ "$7" = needs-ryan ] || exit 9; echo '[{"id":"sp-ask1","title":"t"}]' ;;
 esac"#,
         "exit 0",
