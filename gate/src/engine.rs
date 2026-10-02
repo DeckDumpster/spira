@@ -426,15 +426,20 @@ impl<'w, W: World> Trial<'w, W> {
                 ejected: &ejected,
             });
         }
+        let mut cached: Option<Verdict> = None;
         if !self.s.key.is_empty() {
             if let Some(entry) = w.read(&verdict_dir.join(&self.s.key)) {
                 if let Some((when, by)) =
                     key::cache_fresh(&entry, ctx.var_or("SPIRA_VERDICT_TTL", "0"), w.now())
                 {
                     self.s.pass_suites = key::cached_suites(&entry);
-                    return v(PASS, "cached", format!(
+                    let hit = v(PASS, "cached", format!(
                         "gate: this exact tree already passed {name}'s gate at {when} ({by})\ngate: key {} — same tree, same changed files, same command, same harness.\ngate: gate PASS covered suites: {}",
                         self.s.key, key::cached_suites(&entry)));
+                    if !self.a.release_bins {
+                        return hit;
+                    }
+                    cached = Some(hit);
                 }
             }
         }
@@ -452,7 +457,7 @@ impl<'w, W: World> Trial<'w, W> {
         // are fixed below: a first message on blocking (and one on being admitted, if the
         // wait was not instant), and the wait accumulated into `self.s.waited` so the
         // tree-lock section's own wait adds to it instead of overwriting it.
-        if suites_mode != "off" || !ejected.trim().is_empty() {
+        if suites_mode != "off" || !ejected.trim().is_empty() || cached.is_some() {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
@@ -567,6 +572,14 @@ impl<'w, W: World> Trial<'w, W> {
             return v(NOVERDICT, "tree-unidentified", "");
         }
 
+        // A cached PASS keeps its verdict, but --release-bins still needs the judged tree's binaries.
+        if let Some(hit) = cached {
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
+                return e;
+            }
+            return hit;
+        }
+
         let list = if status_list.trim().is_empty() {
             files.clone()
         } else {
@@ -661,22 +674,8 @@ impl<'w, W: World> Trial<'w, W> {
             || matches!(comp, Composition::Unit { .. })
             || self.a.release_bins;
         if builds {
-            if let Some(e) = &self.s.cache_refusal {
-                return v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge"));
-            }
-            // THE BUILD IS ON TMPFS (sp-z61hj): the tree's build directories are links into a
-            // RAM-backed root; short of room is a refusal, never the disk.
-            let lim = crate::target::Limits::from_vars(
-                ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
-                ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
-                ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
-                ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
-            );
-            match w.target_on_tmpfs(&tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
-                Ok(line) => w.eprint(&line),
-                Err(e) => {
-                    return v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."));
-                }
+            if let Some(e) = self.prepare_build_tree(&ctx, &tree) {
+                return e;
             }
         }
         // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
@@ -1235,6 +1234,27 @@ impl<'w, W: World> Trial<'w, W> {
         };
         w.mkdir_p(&dir);
         w.write_atomic(&dir, &self.s.merged_tree, &cert::render(&c));
+    }
+
+    /// The refusals a tree build meets before it starts: no build cache, no room on tmpfs.
+    fn prepare_build_tree(&self, ctx: &Ctx, tree: &Path) -> Option<Verdict> {
+        let w = self.w;
+        if let Some(e) = &self.s.cache_refusal {
+            return Some(v(NOVERDICT, "no-build-cache", format!("gate: {e} — refusing to judge")));
+        }
+        let lim = crate::target::Limits::from_vars(
+            ctx.var("SPIRA_GATE_TARGET_CAP_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_FREE_MIB"),
+            ctx.var("SPIRA_GATE_TARGET_MIN_MEM_MIB"),
+            ctx.var("SPIRA_TMPFS_SHED_FREE_MIB"),
+        );
+        match w.target_on_tmpfs(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+            Ok(line) => {
+                w.eprint(&line);
+                None
+            }
+            Err(e) => Some(v(NOVERDICT, "scratch-short", format!("{e}\ngate: this is the host's room, not a fault in the branch."))),
+        }
     }
 
     /// The one way out: meters, records, certifies and cleans up.
