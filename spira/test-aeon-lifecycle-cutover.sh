@@ -114,7 +114,7 @@ root_sql --use-db spira_lifecycle sql -q \
     "INSERT INTO bead (bead_id, state, holds, version, updated_at, stack, stack_depth) VALUES ('sp-lc-unstacked','READY','[]',0,0,JSON_OBJECT(),0)" >/dev/null 2>&1
 root_sql --use-db spira_lifecycle sql -q \
     "INSERT INTO bead (bead_id, state, holds, version, updated_at, stack, stack_depth) VALUES ('sp-lc-stacked','CERTIFIED','[]',0,0,JSON_OBJECT('sp-lc-below','tip-below'),2)" >/dev/null 2>&1
-list_json="$("$SPIRA_LC_BIN" list 2>/dev/null)"
+list_json="$(spira-lc list 2>/dev/null)"
 # POSITIVE CONTROL: the unstacked row must read depth 0, so the stacked row's depth 2 below
 # is the SELECT actually returning the column, not every row defaulting to a fixed value.
 stacked_row="$(printf '%s' "$list_json" | python3 -c '
@@ -343,7 +343,7 @@ nowant "bd ready hides the dependent behind its bd-open, CERTIFIED blocker" " $D
 wide_ids=" $(bdq "${MACHINE_READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
 want "MACHINE_READY_ARGS (bd list, no blocker filter) carries the dependent through" " $DEP " "$wide_ids"
 
-"$SPIRA_AEON_BIN" --home "$SPIRA_HOME" builder >"$TMP/aeon-stack.log" 2>&1
+aeon --home "$SPIRA_HOME" builder >"$TMP/aeon-stack.log" 2>&1
 is "aeon.sh: exits 0 claiming the stacked dependent" "0" "$?"
 is "the dependent, not the prerequisite, was claimed (widened ready + --blockers machine)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
 is "the dependent's own session ran work submit to completion" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null || echo missing)"
