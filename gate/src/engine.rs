@@ -654,15 +654,6 @@ impl<'w, W: World> Trial<'w, W> {
             .collect()
         };
 
-        // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
-        // holds, which must be the merge's.
-        let want_tree = w.rev_parse(&repo, &format!("{rev}^{{tree}}")).unwrap_or_default();
-        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs) {
-            Ok(t) => t,
-            Err(e) => {
-                return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
-            }
-        };
         // A TRIAL THAT BUILDS IN THE TREE (the tools phase, the unit phases, --release-bins)
         // needs the build cache — absent, it refuses before any build (sp-z61hj) — and builds
         // on tmpfs.
@@ -688,6 +679,15 @@ impl<'w, W: World> Trial<'w, W> {
                 }
             }
         }
+        // THE TOOLS ARE THE TREE'S, PROVABLY (sp-g9f3t): keyed by the tree id the gate tree
+        // holds, which must be the merge's.
+        let want_tree = w.rev_parse(&repo, &format!("{rev}^{{tree}}")).unwrap_or_default();
+        let tools = match tools_for(w, &tree, &want_tree, tree_def.as_ref(), jobs) {
+            Ok(t) => t,
+            Err(e) => {
+                return v(NOVERDICT, "tools-unattributed", format!("{e}\ngate: no trial of {br} ran — refusing to judge with tools it cannot attribute."));
+            }
+        };
         let (rc, out, ph) = run_composed(
             w,
             &tree,
