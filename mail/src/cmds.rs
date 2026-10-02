@@ -44,6 +44,7 @@ pub struct SendArgs<'a> {
     pub subject: &'a str,
     pub kind: &'a str,
     pub default: &'a str,
+    pub class: &'a str,
     pub bead: &'a str,
     pub urgent: bool,
     pub digest: bool,
@@ -54,9 +55,40 @@ pub struct SendOutcome {
     pub x_bead: Option<String>,
 }
 
+pub const ESCALATION_CLASSES: [&str; 3] = ["permissions", "policy", "destructive"];
+
+/// Why an aeon's decision ask for the operator does not qualify, or None if it does.
+/// A class is supported only when declared, one of `ESCALATION_CLASSES`, and argued in a
+/// non-empty `## Class basis` section (law-escalate-decisions-not-problems).
+pub fn class_refusal(class: &str, body: &str) -> Option<String> {
+    if class.is_empty() {
+        return Some("no --class declared".to_string());
+    }
+    if !ESCALATION_CLASSES.contains(&class) {
+        return Some(format!("class '{class}' is not an escalation class"));
+    }
+    if kinds::section_empty("Class basis", body) {
+        return Some(format!("class '{class}' declared but the body has no '## Class basis' section supporting it"));
+    }
+    None
+}
+
 pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<SendOutcome, String> {
     let mut mailbox = args.mailbox.to_string();
     maildir::mailbox_valid(&mailbox)?;
+
+    let mut body = body;
+    let mut rerouted = false;
+    if mailbox == "operator" && env.bead_id.is_some() && (args.kind == "question" || args.kind == "decision") {
+        if let Some(why) = class_refusal(args.class, &body) {
+            eprintln!(
+                "mail: routed to the concierge, not the operator — {why}. Only permissions, policy and destructive-on-production-data asks go to the operator (--class); everything else is the concierge's judgement."
+            );
+            body = format!("(Routed here from an operator ask: {why}.)\n\n{body}");
+            mailbox = "concierge".to_string();
+            rerouted = true;
+        }
+    }
 
     if let Some(bid) = mailbox.strip_prefix("aeon:") {
         let bid = bid.to_string();
@@ -88,7 +120,7 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     let db_configured = !env.db.is_empty();
     let mut x_bead = args.bead.to_string();
 
-    if (args.kind == "question" || args.kind == "decision") && db_configured {
+    if (args.kind == "question" || args.kind == "decision") && db_configured && !rerouted {
         if env.ask_label.is_empty() {
             if is_operator {
                 repeat::repeat_release(repeat_guard.take().unwrap());
@@ -369,4 +401,26 @@ pub fn sweep_dismissed(bd: &dyn Bd, db_configured: bool, mail_root: &Path, index
         }
     }
     Ok(SweepOutcome::Report(report))
+}
+
+#[cfg(test)]
+mod class_tests {
+    use super::class_refusal;
+
+    const BASIS: &str = "## Question\nq\n\n## Class basis\nneeds a credential I lack\n";
+
+    #[test]
+    fn a_declared_supported_class_qualifies() {
+        for c in ["permissions", "policy", "destructive"] {
+            assert_eq!(class_refusal(c, BASIS), None);
+        }
+    }
+
+    #[test]
+    fn no_class_an_architecture_class_or_no_basis_is_refused() {
+        assert!(class_refusal("", BASIS).is_some());
+        assert!(class_refusal("architecture", BASIS).is_some());
+        assert!(class_refusal("policy", "## Question\nq\n").is_some());
+        assert!(class_refusal("policy", "## Class basis\n\n").is_some());
+    }
 }
