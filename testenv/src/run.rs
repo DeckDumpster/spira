@@ -1466,6 +1466,23 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             &host,
             &row,
         );
+        let src = fs::read_to_string(suite_dir.join(suite)).unwrap_or_default();
+        let uc: Vec<String> = suite_select::header::covers_of(&src)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|t| t.starts_with("UC-"))
+            .collect();
+        let out = fs::read_to_string(results.join(format!("{suite}.out"))).unwrap_or_default();
+        for c in timing::case_rows(
+            &s.run_id,
+            &branch,
+            suite,
+            tiers.get(suite).map_or("", String::as_str),
+            &uc,
+            &out,
+        ) {
+            let _ = timing::append(&run_root, timing::CASE_TIMING, &iso_utc(now_epoch()), &host, &c);
+        }
     };
     let psi_threshold = s.psi_threshold;
     let psi = move || {

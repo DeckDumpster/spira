@@ -84,6 +84,7 @@ _TL_INITED=0
 _TL_SUBSHELL_SAFE=0
 _TL_COUNTS=""
 _TL_LAST_S=$SECONDS
+_TL_LAST_US="${EPOCHREALTIME/./}"
 _TL_SUITE="$(basename "${BASH_SOURCE[1]:-${0:-suite}}")"
 _TL_JSONL="${SPIRA_TESTLIB_JSONL:-}"
 
@@ -152,6 +153,14 @@ _tl_json_escape() {
     printf '%s' "$s"
 }
 
+# _tl_case_ms -> milliseconds since the previous case (or source time), printed as the
+# `#ms=<n>` line testenv reads into the case-timing family.
+_tl_case_ms() {
+    local now="${EPOCHREALTIME/./}"
+    printf '#ms=%s\n' "$(( (now - _TL_LAST_US) / 1000 ))"
+    _TL_LAST_US=$now
+}
+
 # _tl_jsonl <case> <status> [detail] -> append one row, or do nothing when no sink is set.
 _tl_jsonl() {
     [ -n "$_TL_JSONL" ] || return 0
@@ -176,6 +185,7 @@ ok() {
     _tl_counts_load
     _TL_NUM=$((_TL_NUM + 1)); _TL_PASS=$((_TL_PASS + 1))
     printf 'ok %s - %s\n' "$_TL_NUM" "$1"
+    _tl_case_ms
     _tl_jsonl "$1" pass
     _tl_counts_flush
 }
@@ -186,6 +196,7 @@ bad() {
     _TL_NUM=$((_TL_NUM + 1)); _TL_FAIL=$((_TL_FAIL + 1))
     printf 'not ok %s - %s\n' "$_TL_NUM" "$1"
     [ -n "${2:-}" ] && printf '# %s\n' "$2"
+    _tl_case_ms
     _tl_jsonl "$1" fail "${2:-}"
     _tl_counts_flush
 }

@@ -283,6 +283,13 @@ fields ignore them.
 from TAP lines `1..N`, `ok N - d`, `not ok N - d`, `# SKIP`/`# TODO` directives and
 `Bail out! reason`. Informational: the verdict is the suite's exit status, not its TAP.
 
+### 3.4a `CaseTimingRow` — run/tsd family `case-timing`
+
+One row per testlib case: `{run_id, branch, suite, case, status, ms, tier, uc[]}`, appended
+after the suite's `suite-timing` row. testlib.sh prints `#ms=<n>` (milliseconds since the
+previous case) after each `ok`/`not ok` and its detail; testenv reads it from the captured
+`.out`, so the data travels wherever the output does. A suite not on testlib.sh yields no rows.
+
 ### 3.5a `jsonl_rows` — a suite's `results.jsonl` rows (sp-9gd4e)
 
 Replaces `spira/tap-jsonl.sh`'s `tap_jsonl_rows`, deleted (sp-9gd4e). Its only caller,
