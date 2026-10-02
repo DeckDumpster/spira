@@ -1320,14 +1320,15 @@ fn the_suites_get_what_setup_left_of_the_budget_not_the_whole_budget_again() {
     let rt = FakeRuntime::new();
     slow_suite(&rt, "test-b.sh", 30_000);
     rt.suite("test-a.sh", 0, "1..1\nok 1 - a\n");
-    // --deadline 3: setup takes 1.2 s of its 1.5 s share, so the suites get ~1.8 s
+    // --deadline 6: setup takes 1.2 s of its 3 s share, so the suites get ~4.8 s — slack
+    // enough that a loaded gate host's extra setup time never leaves test-a no budget
     let b = FakeBuilder::slow(Duration::from_millis(1200));
     let rc = w.run(
         &rt,
         &b,
         &[
             "--deadline",
-            "3",
+            "6",
             "--suites",
             "test-b.sh,test-a.sh",
             "topic",
@@ -1336,8 +1337,8 @@ fn the_suites_get_what_setup_left_of_the_budget_not_the_whole_budget_again() {
         &w.root,
     );
     assert_eq!(rc, 0);
-    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 3s)");
-    assert!(w.has_line(|l| l.contains("deadline 3s on the trial — setup took ")
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 6s)");
+    assert!(w.has_line(|l| l.contains("deadline 6s on the trial — setup took ")
         && l.contains("s, the suites get the remaining ")));
 }
 
