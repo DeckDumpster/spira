@@ -50,6 +50,10 @@ SPIRA_DIR="$FIXTURE/spira"
 SYSTEMD_DIR="$FIXTURE/systemd"
 COCKPIT_DIR="$FIXTURE/cockpit"
 mk_install_fixture "$FIXTURE" "$TMP"
+# sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
+# resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
+# registry under SPIRA_HOME ($SPIRA_DIR here). mk_install_fixture never symlinked one.
+ln -s "$HERE/conf.d" "$SPIRA_DIR/conf.d"
 
 cat > "$SPIRA_DIR/doctor" <<'EOF'
 #!/usr/bin/env bash

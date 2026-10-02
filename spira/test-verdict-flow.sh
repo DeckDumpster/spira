@@ -40,6 +40,11 @@ export SPIRA_ID_PREFIX="sp"
 export SPIRA_HOME="$TMP/home"
 export SPIRA_RUN="$TMP/run"
 mkdir -p "$SPIRA_HOME/chamber" "$SPIRA_RUN"
+# sp-bp249: resolve_run_dir now judges an explicit SPIRA_RUN through containment too, which
+# resolves SPIRA_INSTANCE/SPIRA_WORKSPACES via spira_config — that needs a real conf.d
+# registry under SPIRA_HOME, where previously an explicit SPIRA_RUN short-circuited before
+# any registry read. Same fix as test-mail.sh's UC-17 fixture (sp-ivfu3).
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 
 run() { mail "$@"; }
 
