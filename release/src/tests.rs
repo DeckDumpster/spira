@@ -669,7 +669,7 @@ fn every_shipped_service_carries_path(tail: &str, want_tail: &str) {
     let r = rel.display().to_string();
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
     let mut host = BTreeMap::new();
-    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR"] {
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "SPIRA_TESTDB_PORT", "SPIRA_SNAP_STALE_S", "SPIRA_WATCHTOWER_START_TIMEOUT_S", "DOLT", "SPIRA_INSTANCE", "SPIRA_SCCACHE_DAV_ADDR"] {
         host.insert(k.to_string(), format!("/host/{k}"));
     }
     host.insert("SPIRA_PATH_TAIL".to_string(), tail.to_string());

@@ -30,6 +30,7 @@ pub struct HostValues {
     pub instance: String,
     pub testdb_port: String,
     pub snap_stale_s: String,
+    pub watchtower_start_timeout_s: String,
     pub path_tail: String,
     /// `SPIRA_SCCACHE_DAV_ADDR` (sp-xtdqi) — this box's own LAN address for the shared
     /// compilation cache, if any. Empty is a legal value (the template is never installed
@@ -59,6 +60,7 @@ impl HostValues {
         m.insert("SPIRA_INSTANCE".into(), self.instance.clone());
         m.insert("SPIRA_TESTDB_PORT".into(), self.testdb_port.clone());
         m.insert("SPIRA_SNAP_STALE_S".into(), self.snap_stale_s.clone());
+        m.insert("SPIRA_WATCHTOWER_START_TIMEOUT_S".into(), self.watchtower_start_timeout_s.clone());
         m.insert("SPIRA_PATH_TAIL".into(), if self.path_tail.is_empty() { String::new() } else { format!(":{}", self.path_tail) });
         m.insert("SPIRA_PROD_COCK".into(), format!("{prod_root}/cockpit"));
         m.insert("SPIRA_PROD_ROOT".into(), prod_root.clone());
@@ -140,6 +142,7 @@ mod tests {
             instance: "prod".into(),
             testdb_port: "3308".into(),
             snap_stale_s: "600".into(),
+            watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(),
             sccache_dav_addr: "".into(),
         }

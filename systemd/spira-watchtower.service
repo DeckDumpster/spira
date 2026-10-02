@@ -11,7 +11,7 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD_ROOT@/bin/watchtower
-TimeoutStartSec=120
+TimeoutStartSec=@SPIRA_WATCHTOWER_START_TIMEOUT_S@
 Environment=SPIRA_HOME=@SPIRA_PROD@
 Environment=SPIRA_RUN=@SPIRA_RUN@
 StandardOutput=append:@SPIRA_RUN@/watchtower.log

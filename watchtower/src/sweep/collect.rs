@@ -66,6 +66,7 @@ pub struct SweepData {
     // Carried through for escalate.rs, computed once here to avoid a second gather pass.
     pub idle_while_ready: Vec<(String, u32, String)>, // (fayth, ready, last_idle_reason)
     pub release_status: Option<String>,
+    pub slow_probes: Vec<String>,
 }
 
 #[cfg(test)]
@@ -126,6 +127,7 @@ impl SweepData {
             ask_label: "needs-operator".to_string(), // literal-ok: test fixture
             idle_while_ready: Vec::new(),
             release_status: None,
+            slow_probes: Vec::new(),
         }
     }
 }
@@ -230,13 +232,14 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     // YIELD ------------------------------------------------------------------------------
     let yield_sh = cfg.yield_sh.clone().or_else(|| incident::which("yield.sh"));
     if let Some(ysh) = &yield_sh {
-        if let Ok(out) = Command::new("bash")
-            .arg(ysh)
-            .arg("report")
-            .env("SPIRA_RUN", run)
-            .env("SPIRA_YIELD_WINDOW", cfg.yield_window_s.to_string())
-            .output()
-        {
+        if let Ok(out) = crate::deadline::output(
+            "yield",
+            Command::new("bash")
+                .arg(ysh)
+                .arg("report")
+                .env("SPIRA_RUN", run)
+                .env("SPIRA_YIELD_WINDOW", cfg.yield_window_s.to_string()),
+        ) {
             env.merge_lines(&String::from_utf8_lossy(&out.stdout), "YIELD_");
         }
     }
@@ -341,9 +344,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
 
     // RELEASE STATUS (for the hotfix escalation, computed here so escalate.rs need not
     // spawn `release` a second time).
-    let release_status = Command::new("release")
-        .arg("status")
-        .output()
+    let release_status = crate::deadline::output("release status", Command::new("release").arg("status"))
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
@@ -384,6 +385,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         ask_label: cfg.ask_label.clone(),
         idle_while_ready,
         release_status,
+        slow_probes: crate::deadline::slow_probes(),
     }
 }
 
@@ -399,7 +401,7 @@ fn extract_kv(line: &str, key: &str) -> Option<String> {
 }
 
 fn tmp_pct() -> String {
-    let out = Command::new("df").arg("/tmp").output();
+    let out = crate::deadline::output("df /tmp", Command::new("df").arg("/tmp"));
     match out {
         Ok(o) if o.status.success() => {
             let text = String::from_utf8_lossy(&o.stdout);
@@ -440,9 +442,9 @@ pub(super) fn czar_block(env: &Env) -> String {
 
 fn suites_block(cfg: &Cfg) -> String {
     let out = if let Some(sh) = &cfg.suites_sh {
-        Command::new("bash").arg(sh).arg("status").output()
+        crate::deadline::output("suites status", Command::new("bash").arg(sh).arg("status"))
     } else {
-        Command::new("testenv").args(["suites", "status"]).output()
+        crate::deadline::output("suites status", Command::new("testenv").args(["suites", "status"]))
     };
     match out {
         Ok(o) if !o.stdout.is_empty() => String::from_utf8_lossy(&o.stdout).into_owned(),
@@ -455,7 +457,7 @@ fn guard_block(cfg: &Cfg) -> String {
     let Some(sh) = guard_sh.filter(|p| incident::is_usable(p)) else {
         return "  (unavailable — branch-guard.sh is missing or unreadable)".to_string();
     };
-    match Command::new("bash").arg(&sh).arg("check").output() {
+    match crate::deadline::output("branch guard", Command::new("bash").arg(&sh).arg("check")) {
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stdout).into_owned()
                 + &String::from_utf8_lossy(&o.stderr);

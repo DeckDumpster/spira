@@ -1,0 +1,8 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Seconds systemd allows a watchtower pass to run before killing it (TimeoutStartSec).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # The detector must outlast the load it detects: a pass is mostly waiting on bd/dolt, so
+    # the budget is wall time under a saturated host, not CPU.
+    : "${SPIRA_WATCHTOWER_START_TIMEOUT_S:=360}"
+SPIRA_CONF_DEFAULT_EOF

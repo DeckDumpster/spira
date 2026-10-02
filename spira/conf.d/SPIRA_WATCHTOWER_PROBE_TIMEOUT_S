@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Seconds a single watchtower probe may run before it is abandoned and rendered as ?.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_WATCHTOWER_PROBE_TIMEOUT_S:=30}"
+SPIRA_CONF_DEFAULT_EOF

@@ -38,6 +38,7 @@ fn main() -> ExitCode {
             "--instance" => host.instance = val,
             "--testdb-port" => host.testdb_port = val,
             "--snap-stale-s" => host.snap_stale_s = val,
+            "--watchtower-start-timeout-s" => host.watchtower_start_timeout_s = val,
             "--watcher-name" => watcher = if val.is_empty() { None } else { Some(val) },
             "--path-tail" => host.path_tail = val,
             _ => {
