@@ -39,7 +39,20 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
-T="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+T="$(mktemp -d)"
+_fastpath_cleanup() { testdb_drop 2>/dev/null; rm -rf "$T"; }
+# sp-pnogc (round 209, check 29): EXIT alone runs the handler and stops, which is fine, but
+# bash's default for a TRAPPED INT/TERM is to run the handler and then CONTINUE the script
+# — the signal is "handled", not fatal, unless the handler itself exits. The original
+# 'EXIT INT TERM' trap here only ever cleaned up; under a full-corpus sweep this suite can
+# outlive its share of testenv's per-suite wall budget and be sent SIGTERM mid-run (DESIGN
+# D7/D9) — the handler fired, deleted $T, and the script kept going into section E, whose
+# sentinel probe then found $T/lib.sh gone ("No such file or directory", rc=97) and recorded
+# a false, misleading red instead of the real timeout. Re-raising after cleanup restores the
+# signal's own default disposition so a genuinely killed suite stays killed.
+trap _fastpath_cleanup EXIT
+trap '_fastpath_cleanup; trap - INT; kill -INT $$' INT
+trap '_fastpath_cleanup; trap - TERM; kill -TERM $$' TERM
 mkdir -p "$T/run" "$T/chamber" "$T/bin"
 export SPIRA_RUN="$T/run"
 export SPIRA_CONF="$T/no-such.conf"
@@ -141,9 +154,25 @@ is "fallback: a unit is ignored when SPIRA_SUMMON is not systemd-run" "0" "$(aeo
 # `exec -a` to a name containing it, on a real backgrounded process.
 ( exec -a aeon.sh sleep 5 ) &
 FAKE_AEON_PID=$!
-# Kill-on-exit (sp-r70dc): fold into the EXIT trap as a backstop, so a failure between
-# here and the explicit kill below cannot leave this running for its full 5s unkilled.
-trap 'kill "$FAKE_AEON_PID" 2>/dev/null; testdb_drop 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+# Kill-on-exit (sp-r70dc): fold into cleanup as a backstop, so a failure between here and
+# the explicit kill below cannot leave this running for its full 5s unkilled. Redefining
+# the function is enough — the trap commands above already call it by name on EXIT/INT/TERM.
+_fastpath_cleanup() { kill "$FAKE_AEON_PID" 2>/dev/null; testdb_drop 2>/dev/null; rm -rf "$T"; }
+# sp-pnogc (round 209, check 11): `$!` is valid the instant the subshell forks, but the
+# `exec -a aeon.sh sleep 5` inside it has not necessarily landed by then — /proc/<pid>/cmdline
+# still reads the pre-exec subshell's own argv for a few scheduler ticks, and aeon_alive
+# (strand/src/probe.rs) requires the cmdline to actually say "aeon.sh". Wait on that real
+# condition rather than assuming the race already lost — never a fixed sleep.
+_wait_execed_as() {   # _wait_execed_as <pid> <needle> -> 0 once /proc/<pid>/cmdline contains it, 1 if the pid dies first
+    local _pid="$1" _want="$2"
+    while [ -d "/proc/$_pid" ]; do
+        case "$(tr '\0' ' ' < "/proc/$_pid/cmdline" 2>/dev/null)" in
+            *"$_want"*) return 0 ;;
+        esac
+    done
+    return 1
+}
+_wait_execed_as "$FAKE_AEON_PID" "aeon.sh" || bail "fixture never exec'd into aeon.sh"
 printf '%s' "$FAKE_AEON_PID" > "$SPIRA_RUN/aeon-builder-sp-fallback.pid"
 is "fallback: a live pidfile still counts (no real systemd needed)" "1" "$(aeon_count builder)"
 kill "$FAKE_AEON_PID" 2>/dev/null; wait "$FAKE_AEON_PID" 2>/dev/null

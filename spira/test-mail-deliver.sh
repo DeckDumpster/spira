@@ -191,6 +191,19 @@ run_notify() {
         SPIRA_MAIL_REPEAT_WINDOW=0 \
         "${@}" \
         watchd notify 2>/dev/null
+    local _rc=$?
+    # sp-pnogc (round 209, check 8): a real condition, not a timing guess — bash prints
+    # "Terminated" and reports 128+signal when a foreground child dies by signal. Under a
+    # full-corpus sweep this `watchd notify` (which, for 3c/3d, really execs the health
+    # probe's own bash+pgrep) can be sent SIGTERM mid-run by testenv's own per-suite wall
+    # budget before it ever reaches the escalation it was asked to prove. Every caller here
+    # used to swallow that with `|| true`, indistinguishable from "ran fine, found nothing
+    # to escalate" — the exact false red this check flipped on. A signal-killed run proves
+    # nothing either way: bail, rather than let the next assertion misreport it.
+    if [ "$_rc" -gt 128 ]; then
+        bail "watchd notify was killed (signal $((_rc - 128))) mid-run — not a real assertion result"
+    fi
+    return "$_rc"
 }
 
 asks()     { find "$MAIL/operator/new" -type f 2>/dev/null | wc -l | tr -d ' '; }
