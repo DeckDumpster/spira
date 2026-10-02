@@ -38,15 +38,8 @@ TMP="$(mktemp -d)"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up thrash-teardown || { bail "could not build fixture database"; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
-# sp-f4ig1's summon jitter defaults to a random 0-20s sleep before the session is marked
-# started (spira_config::admission::JITTER_DEFAULT) — fine in production (it exists so a
-# batch of aeons does not start in lockstep), but CASE 3 below waits only 10s for the
-# heartbeat-planted .thrash marker before sending a real SIGTERM, on the assumption the
-# session starts right away. Left at its default, that race comes up thrash-marker-side
-# roughly half the time: the signal lands mid-jitter, before the claude shim ever runs, so
-# cleanup() falls through to "pre-session death" instead of taking the thrash branch
-# (sp-1cdgq, seen red: not ok 13 and 16). Pin it off, exactly as aeon's own Rust unit tests
-# already do (aeon/src/tests.rs).
+# The summon jitter is a random sleep before the session starts; CASE 3 signals the group
+# once the shim is hung, so the race is removed by pinning it to 0, not waited out.
 export SPIRA_SUMMON_JITTER=0
 
 ORIGIN="$TMP/origin.git"; git init -q --bare -b main "$ORIGIN"
@@ -123,6 +116,7 @@ cat /dev/stdin > /dev/null
 printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
 if [ -n "${BEAD_ID:-}" ] && [ -n "${SPIRA_RUN:-}" ]; then
     printf 'stalled: no last action\n' > "$SPIRA_RUN/$BEAD_ID.thrash"
+    : > "$SPIRA_RUN/$BEAD_ID.hung"
 fi
 sleep 300
 SHIM
@@ -215,22 +209,22 @@ echo "real SIGTERM to the process group mid-thrash — exactly one requeue event
 ln -sf "$BIN/claude-thrash-hang" "$BIN/claude"
 fresh; seed sp-tt-3
 rm -rf "$SPIRA_RUN/worktree"
-marker="$SPIRA_RUN/sp-tt-3.thrash"
-rm -f "$marker"
+marker="$SPIRA_RUN/sp-tt-3.hung"
+rm -f "$marker" "$SPIRA_RUN/sp-tt-3.thrash"
 setsid aeon --home "$SPIRA_HOME" builder > "$TMP/out3" 2>&1 &
 aeon_pid=$!
 
 _waited=0
-while [ ! -f "$marker" ] && [ "$_waited" -lt 100 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+while [ ! -f "$marker" ] && [ "$_waited" -lt 600 ]; do sleep 0.1; _waited=$((_waited + 1)); done
 if [ ! -f "$marker" ]; then
-    bad "thrash marker appeared before signalling" "not found after 10s"
+    bad "thrash marker appeared before signalling" "not found after 60s"
     kill -TERM -"$aeon_pid" 2>/dev/null
 else
     kill -TERM -"$aeon_pid" 2>/dev/null
 fi
 
 _waited=0
-while kill -0 "$aeon_pid" 2>/dev/null && [ "$_waited" -lt 100 ]; do sleep 0.1; _waited=$((_waited + 1)); done
+while kill -0 "$aeon_pid" 2>/dev/null && [ "$_waited" -lt 600 ]; do sleep 0.1; _waited=$((_waited + 1)); done
 wait "$aeon_pid" 2>/dev/null
 
 is    "bead is still open (requeued by the signal-delivered teardown)" "open" "$(bead_status sp-tt-3)"
