@@ -31,6 +31,9 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
         };
         for (idx, line) in text.lines().enumerate() {
             let line_no = idx + 1;
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
             for name in LANDSTATE_CALL_NAMES {
                 if is_call(line, name) {
                     findings.push(Finding {
