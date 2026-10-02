@@ -26,7 +26,8 @@ trap '[ "$_cc_init_done" = 0 ] && exit 3' EXIT
 _cc_init_done=1
 trap - EXIT
 
-BEAD_ID_RE='sp-[a-z0-9]+(\.[0-9]+)*'
+# A citation ends at a non-id character: sp-ow-mail is one hyphenated token, not the id sp-ow.
+BEAD_ID_RE='sp-[a-z0-9]+(\.[0-9]+)*(?![-a-z0-9])'
 
 # bead_ids_present <ids...> -> the subset that resolve in the store, one per line.
 # Empty stdin/output from `bd show` (a store that could not be reached at all) is
@@ -70,7 +71,7 @@ cmd_land() {
     while IFS= read -r -d '' rec; do
         hash="${rec%%$'\n'*}"
         body="${rec#*$'\n'}"
-        found="$(grep -oE "$BEAD_ID_RE" <<<"$body" | sort -u)"
+        found="$(grep -oP "$BEAD_ID_RE" <<<"$body" | sort -u)"
         [ -n "$found" ] || continue
         for id in $found; do
             cited["$id"]="${cited[$id]:-} $hash"
