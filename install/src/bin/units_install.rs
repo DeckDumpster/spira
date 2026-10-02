@@ -309,8 +309,16 @@ fn main() -> ExitCode {
     let mut candidates = systemctl.list_matching(&watch_glob);
     candidates.extend(glob_dir(&dir, &watch_glob));
     for u in install_units::prune_targets(candidates.iter().map(|s| s.as_str()), &expected, |_| false) {
+        // A mask is the operator's own answer; deleting it would unmask the unit.
+        if install_units::is_masked(&dir.join(&u)) {
+            continue;
+        }
         if systemctl.disable_now(&u).is_ok() {
             println!("disabled  {u} (no row in the manifest)");
+        }
+        // A unit file left behind is re-listed as a candidate each run and blocks `mask`.
+        if std::fs::remove_file(dir.join(&u)).is_ok() {
+            println!("removed   {u} (no row in the manifest)");
         }
     }
     for glob in [format!("spira-*-{instance}.service"), format!("spira-*-{instance}.timer")] {
