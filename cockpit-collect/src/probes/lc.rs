@@ -15,7 +15,7 @@ pub struct LcRow {
 fn epoch(v: &Value) -> Option<i64> {
     match v {
         Value::Number(n) => n.as_i64(),
-        Value::String(s) => parse_iso8601(&s.replace(' ', "T")),
+        Value::String(s) => s.trim().parse().ok().or_else(|| parse_iso8601(&s.replace(' ', "T"))),
         _ => None,
     }
 }
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn parses_rows_with_null_reason_and_string_or_numeric_time() {
-        let r = parse_rows(r#"[{"bead_id":"a","state":"REWORK","reason":null,"updated_at":"2026-09-30 00:00:00"},{"bead_id":"b","state":"X","reason":"gate","updated_at":5}]"#).unwrap();
+        let r = parse_rows(r#"[{"bead_id":"a","state":"REWORK","reason":null,"updated_at":"2026-09-30 00:00:00"},{"bead_id":"b","state":"X","reason":"gate","updated_at":"5"}]"#).unwrap();
         assert_eq!((r[0].reason.as_str(), r[0].updated_at), ("", Some(1790726400)));
         assert_eq!((r[1].reason.as_str(), r[1].updated_at), ("gate", Some(5)));
     }

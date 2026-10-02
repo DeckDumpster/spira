@@ -63,7 +63,7 @@ pub fn queue_keys() -> Kv {
             older(&mut certify_ep, r.updated_at);
         }
         for r in &rework {
-            if r.reason == "batch-ejected" {
+            if matches!(r.reason.as_str(), "batch-ejected" | "base-withdrawn") {
                 ejected += 1;
                 continue;
             }
@@ -72,7 +72,7 @@ pub fn queue_keys() -> Kv {
             match r.reason.as_str() {
                 "timeout" => red_to += 1,
                 r if r.starts_with("no-rebase") => red_rb += 1,
-                "gate" => red_gt += 1,
+                "gate" | "suites-failed" | "syntax" | "policy-violation" => red_gt += 1,
                 r if r == "confine" || r.starts_with("conflicts-with-base") => red_cf += 1,
                 _ => {}
             }
