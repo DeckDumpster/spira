@@ -177,6 +177,18 @@ _zw9="$(row_json sp-zw9ot)"
 want "sp-zw9ot fixture: row is untouched, still IN_DELIVERY" '"state":"IN_DELIVERY"' "$_zw9"
 want "sp-zw9ot fixture: version did not advance on a refusal" '"version":"0"' "$_zw9"
 
+# sp-zw9ot: the batch lands at 17:05 -> LANDED; a late submit at 17:16 is refused, row unchanged.
+lc_event_bead "sp-zw9ot" IN_DELIVERY 0 "batch" '{"Delivered":{"merge_sha":"abc123","proof":"batch-merge"}}'
+is "sp-zw9ot fixture: batch landing applies (exit 0)" "0" "$?"
+_zw9="$(row_json sp-zw9ot)"
+want "sp-zw9ot fixture: bead is LANDED" '"state":"LANDED"' "$_zw9"
+want "sp-zw9ot fixture: landing advanced the version" '"version":"1"' "$_zw9"
+lc_event_bead "sp-zw9ot" LANDED 1 "aeon-t1" '{"Submit":{"tip":"late-tip"}}'
+is "sp-zw9ot fixture: late submit on LANDED is refused (exit 3)" "3" "$?"
+_zw9="$(row_json sp-zw9ot)"
+want "sp-zw9ot fixture: late submit left the row LANDED" '"state":"LANDED"' "$_zw9"
+want "sp-zw9ot fixture: late submit did not advance the version" '"version":"1"' "$_zw9"
+
 # ===========================================================================
 echo
 echo "lc_claim_bead: a dead holder's stale WORKING row is cleared (HolderDead) then claimed:"

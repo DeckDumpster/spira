@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 394a0615650fb026e37aaf3eaa848944dff3927975851bafe7b107174648ea34 # shrinks to kinds = [Claim { holder: "h", lease_until: 1, stack: {}, stack_depth: 0, stack_max_depth: 4 }, Submit { tip: "t1" }, Claim { holder: "h", lease_until: 1, stack: {}, stack_depth: 0, stack_max_depth: 4 }], foreign = "aaaaaaaa"
