@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$HERE")"
 
 seam_closure_gaps() {  # seam_closure_gaps <suites-dir> -> suites covering the seam but not lib.sh
-    local f g covers seam lib
+    local f g covers seam lib; set -f
     for f in "$1"/test-*.sh; do
         covers="$(sed -n '/^set -/q;s/^# *covers: *//p' "$f" | head -1)"
         seam=0; lib=0
@@ -19,6 +19,7 @@ seam_closure_gaps() {  # seam_closure_gaps <suites-dir> -> suites covering the s
         done
         [ "$seam" = 1 ] && [ "$lib" = 0 ] && basename "$f"
     done
+    set +f
 }
 
 grep -q 'spira_git_push' "$ROOT/landing-pass/src/seam.rs" \
