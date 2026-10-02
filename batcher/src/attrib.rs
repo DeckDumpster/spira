@@ -501,5 +501,47 @@ pub fn suspect_order(suite: &str, covers: Option<&[String]>, members: &[Id], cha
     hit
 }
 
+/// Who a pre-suite install fault belongs to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum InstallFault {
+    Owner(Id),
+    /// Install fails with every member removed: the base's, charged to nobody.
+    Base,
+    /// No single member's removal restores install, or a probe kept faulting.
+    Unattributed,
+}
+
+/// Attribution with no red suite to follow: the same base / bisect / single ladder, with
+/// "does the container install succeed on this tree" as the predicate. `probe` gets the removal
+/// set and answers `Green` (installs), `Red` (install fails) or `Fault` (the probe itself
+/// failed — retried once, then never read as either).
+pub fn attribute_install_fault(shape: &Shape, mut probe: impl FnMut(&[Id]) -> JobResult) -> InstallFault {
+    let mut ask = |removal: &[Id]| match probe(removal) {
+        JobResult::Fault => probe(removal),
+        r => r,
+    };
+    let all = &shape.members;
+    match ask(all) {
+        JobResult::Green => {}
+        JobResult::Red => return InstallFault::Base,
+        JobResult::Fault => return InstallFault::Unattributed,
+    }
+    // Invariant: the first `lo` members install, the first `hi` do not.
+    let (mut lo, mut hi) = (0, all.len());
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        match ask(&all[mid..]) {
+            JobResult::Green => lo = mid,
+            JobResult::Red => hi = mid,
+            JobResult::Fault => return InstallFault::Unattributed,
+        }
+    }
+    let Some(culprit) = all.get(hi.wrapping_sub(1)) else { return InstallFault::Unattributed };
+    match ask(&shape.removal_of(culprit)) {
+        JobResult::Green => InstallFault::Owner(culprit.clone()),
+        _ => InstallFault::Unattributed,
+    }
+}
+
 #[cfg(test)]
 mod tests;

@@ -415,7 +415,12 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         first_red: None,
     };
     let budget = batcher::attrib::Budget::with_default(env_.maxpar, env_.round_slots);
+    let round_members = members.clone();
     let end = drive::attribute_round(&mut runner, &mut ops, &suites, members, budget);
+    if end.is_err() && runner.install_failed() {
+        let fault = attribute_install(&mut runner, &round_members, &suites);
+        install_fault_outcome(repo, &mut ops, &round_members, &fault);
+    }
     runner.close();
     match end? {
         drive::RoundEnd::Land { members, attribution_secs } => {
@@ -438,6 +443,41 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         drive::RoundEnd::Blocked(why) => {
             println!("batcher {}: round blocked — {why}", repo.name);
             Ok(None)
+        }
+    }
+}
+
+/// The round's corpus died in the container install, so no suite is red to follow: bisect
+/// the members on whether the install succeeds.
+fn attribute_install(runner: &mut vm::VmRunner, members: &[Member], suites: &[String]) -> batcher::attrib::InstallFault {
+    let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    let prereqs: BTreeMap<String, Vec<String>> =
+        members.iter().map(|m| (m.id.clone(), m.stack.keys().filter(|p| ids.contains(p)).cloned().collect())).collect();
+    drive::RoundRunner::set_members(runner, members);
+    let suite = suites.first().cloned().unwrap_or_default();
+    batcher::attrib::attribute_install_fault(&batcher::attrib::Shape::new(&ids, &prereqs), |removal| runner.probe_install(removal, &suite))
+}
+
+/// Ejects the member the install fault names; a base or unattributed fault is filed for Ops.
+/// Either way the round is not judged this pass — the error from the corpus run stands.
+fn install_fault_outcome(repo: &Repo, ops: &mut LiveOps, members: &[Member], fault: &batcher::attrib::InstallFault) {
+    use batcher::attrib::InstallFault;
+    use drive::RoundOps;
+    let install = vec!["install".to_string()];
+    match fault {
+        InstallFault::Owner(id) => {
+            println!("batcher {}: install fault → owner {id}", repo.name);
+            if let Some(m) = members.iter().find(|m| &m.id == id) {
+                ops.eject(m, &install);
+            }
+        }
+        InstallFault::Base => {
+            println!("batcher {}: install fault → base", repo.name);
+            ops.incident("base", &install);
+        }
+        InstallFault::Unattributed => {
+            println!("batcher {}: install fault → unattributed", repo.name);
+            ops.incident("unattributed", &install);
         }
     }
 }
