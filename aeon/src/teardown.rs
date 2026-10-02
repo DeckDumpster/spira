@@ -332,6 +332,9 @@ impl Run<'_> {
                         let backoff_min = decide::no_progress_backoff_minutes(streak);
                         let until = util::iso_utc(self.now() + backoff_min * 60);
                         let _ = self.d.bd.bd(&s(&["update", &id, "--defer", &until]));
+                        // --defer also sets status=deferred, which bd ready excludes even after
+                        // defer_until passes; open + a future defer_until is what auto-releases.
+                        let _ = self.d.bd.bd(&s(&["update", &id, "--status", "open"]));
                         self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
                         self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
                     }
