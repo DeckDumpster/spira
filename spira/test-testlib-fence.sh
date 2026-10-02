@@ -7,7 +7,7 @@
 #
 # FIXTURE CONTENT IS BUILT WITH printf, NOT A HEREDOC. A heredoc's body lands in THIS
 # file's own source as standalone lines, so a fixture literally containing `is() { :; }` at
-# column 0 would itself be caught by test-testlib-migrated.sh's whole-corpus scan of this
+# column 0 would itself be caught by spira-lint's testlib-migrated scan of this
 # very suite (sp-ogs4q's own first run did exactly that). One printf call keeps the
 # offending text on a line that starts with `printf`, never with the primitive name.
 #
