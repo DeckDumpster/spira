@@ -99,6 +99,7 @@ struct Fake {
     /// The real move deletes a pre-tmpfs `target/gate-tools` from the disk; set to model it.
     target_clears_tools: Cell<bool>,
     targets: RefCell<Vec<PathBuf>>,
+    released: RefCell<Vec<(PathBuf, bool)>>,
     // ---- the base-suite cache (sp-kqger)
     /// What `testenv container tag` answers; a real image tag by default so every test not
     /// about this cache specifically exercises it exactly as it would for real.
@@ -217,6 +218,7 @@ impl Fake {
             target_err: RefCell::new(None),
             target_clears_tools: Cell::new(false),
             targets: RefCell::new(Vec::new()),
+            released: RefCell::new(Vec::new()),
             image_tag: RefCell::new((0, "tag1".into())),
             base_tree_override: RefCell::new(None),
             certify_par_live: Cell::new(None),
@@ -441,6 +443,9 @@ impl World for Fake {
             Some(e) => Err(e),
             None => Ok(format!("gate: build on tmpfs at /tmp/t/{}", tree.file_name().unwrap().to_string_lossy())),
         }
+    }
+    fn release_target(&self, tree: &Path, keep_release: bool) {
+        self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
     fn install_tools(&self, _: &Path, pkgs: &[String], dir: &Path, id: &str) -> Result<(), String> {
         if let Some(e) = self.install_err.borrow().clone() {
@@ -2991,6 +2996,8 @@ fn the_gate_tree_builds_on_tmpfs_and_short_room_is_no_verdict() {
     assert_eq!(f.run(), PASS, "{}", f.stderr());
     assert_eq!(f.targets.borrow().as_slice(), &[PathBuf::from(GATE_TREE)]);
     assert!(f.stderr().contains("gate: build on tmpfs at"), "{}", f.stderr());
+
+    assert_eq!(f.released.borrow().as_slice(), &[(PathBuf::from(GATE_TREE), false)], "a finished gate drops its target");
 
     let f = tree_owned(Some(STEPS), Some(STEPS));
     *f.target_err.borrow_mut() = Some("gate: MemAvailable is 12 MiB, below the 4096 MiB".into());

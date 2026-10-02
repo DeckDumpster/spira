@@ -29,6 +29,7 @@ sha2 = "0.10"
 libc = "0.2"
 toml = "0.8"
 spira-config = { path = "../spira-config" }
+gate = { path = "../gate" }
 tsd = { path = "../tsd" }
 suite-select = { path = "../suite-select" }
 

@@ -1416,6 +1416,7 @@ dependencies = [
 name = "testenv"
 version = "1.0.0"
 dependencies = [
+ "gate",
  "libc",
  "regex",
  "serde",

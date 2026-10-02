@@ -754,6 +754,9 @@ impl World for Real {
         }
         Ok(line)
     }
+    fn release_target(&self, tree: &Path, keep_release: bool) {
+        crate::target::release_tree(tree, keep_release);
+    }
     fn remove_worktree(&self, repo: &Path, tree: &Path) {
         let _ = self
             .git(repo)
