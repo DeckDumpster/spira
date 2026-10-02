@@ -2186,7 +2186,7 @@ fn refuse_repeat(
             body.push_str(&format!("Prior override attempted: {p}\n"));
         }
         let env = [
-            ("SPIRA_INCIDENT_REF", format!("repeat-refused:{br}:{short}")),
+            ("SPIRA_INCIDENT_REF", format!("repeat-refused:{br}")),
             ("SPIRA_INCIDENT_REPO", repo.name.clone()),
             ("SPIRA_INCIDENT_TYPE", "task".into()),
             ("SPIRA_INCIDENT_CAUSE", "repeat-refused".into()),
