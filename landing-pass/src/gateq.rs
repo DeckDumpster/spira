@@ -101,7 +101,10 @@ impl GateQueue {
         if self.dir(Where::Done).join(&f).exists() {
             return Some(Where::Done);
         }
-        if self.claimed_dirs().iter().any(|d| d.join(&f).exists()) {
+        // A slot's own subdirectory, or — the pre-N-worker layout, until slot 0's recover
+        // sweeps it — a flat file straight under claimed/ (sp-kbjv6 "wave N concurrent
+        // drains", the deploy migration).
+        if self.dir(Where::Claimed).join(&f).exists() || self.claimed_dirs().iter().any(|d| d.join(&f).exists()) {
             return Some(Where::Claimed);
         }
         if self.dir(Where::Inbox).join(&f).exists() {
@@ -170,10 +173,24 @@ impl GateQueue {
     /// guarantees mutual exclusion on `claimed/<slot>/`, so anything sitting there now was
     /// left by a previous holder of *this same slot* that died before finishing — never by
     /// another slot's worker still live and gating (that worker owns its own subdirectory).
+    ///
+    /// Slot 0 additionally recovers any flat `claimed/<job>.json` — the pre-N-worker
+    /// layout's own claim directory, before `claimed/` held per-slot subdirectories. Slot
+    /// 0's lock is the pre-existing `worker.lock` name, the same one the single-worker
+    /// design used, so a flat claim is only ever live under that same flock: a deploy
+    /// cutover (or any claim an old release left behind) is recovered exactly once, by the
+    /// one slot mutually exclusive with whoever could have left it. Slots 1.. never touch
+    /// a flat claim — only slot 0 may, so two slots can never race to recover the same one.
     pub fn recover(&self, slot: usize) {
         for (p, j) in self.read_dir_jobs(&self.claimed_slot(slot)) {
             let _ = fs::create_dir_all(self.dir(Where::Inbox));
             let _ = fs::rename(&p, self.dir(Where::Inbox).join(j.file()));
+        }
+        if slot == 0 {
+            for (p, j) in self.read_dir_jobs(&self.dir(Where::Claimed)) {
+                let _ = fs::create_dir_all(self.dir(Where::Inbox));
+                let _ = fs::rename(&p, self.dir(Where::Inbox).join(j.file()));
+            }
         }
     }
 
@@ -287,5 +304,28 @@ mod tests {
         assert!(q.queued().is_empty());
         q.complete(1, &done(&job)).unwrap();
         assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Done));
+    }
+
+    #[test]
+    fn a_flat_legacy_claim_is_recovered_by_slot_0_and_not_by_slot_1() {
+        let d = tmpdir("gq6");
+        let q = GateQueue::new(&d);
+        // The pre-N-worker layout: a job claimed straight under claimed/, no slot
+        // subdirectory — left behind by the single-worker release, or still live in an
+        // old-release worker caught mid-deploy.
+        let job = Job::new("r", "spira/sp-1", "sp-1", "t1", false);
+        fs::create_dir_all(d.join("gate-worker/claimed")).unwrap();
+        fs::write(d.join("gate-worker/claimed").join(job.file()), serde_json::to_string(&job).unwrap()).unwrap();
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed));
+
+        // Slot 1 never touches a flat claim — only slot 0 (the pre-existing worker.lock
+        // name, mutually exclusive with whoever could have left it) may recover one.
+        q.recover(1);
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Claimed), "slot 1 must not recover a flat legacy claim");
+        assert!(q.queued().is_empty());
+
+        q.recover(0);
+        assert_eq!(q.find("r", "spira/sp-1", "t1"), Some(Where::Inbox), "slot 0 returns the flat legacy claim to the inbox");
+        assert_eq!(q.queued().len(), 1);
     }
 }
