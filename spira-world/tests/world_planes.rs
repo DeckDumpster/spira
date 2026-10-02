@@ -76,7 +76,7 @@ impl Fixture {
         )
         .unwrap();
         let stub = tmp.join("systemctl");
-        std::fs::write(
+        testkit::write_exe(
             &stub,
             r#"#!/bin/sh
 verb=""; arg=""
@@ -99,12 +99,7 @@ stop|start) echo "$verb $arg" >> "$CALLS" ;;
 esac
 exit 0
 "#,
-        )
-        .unwrap();
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
         Fixture { tmp }
     }
 
