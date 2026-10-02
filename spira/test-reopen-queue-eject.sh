@@ -91,7 +91,7 @@ _hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
     export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
            SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
     . "$HERE/lib.sh"
-    land_mark sp-ej1 RED deadbeef "ejected" >/dev/null 2>&1
+    landing-pass mark sp-ej1 RED deadbeef "ejected" >/dev/null 2>&1
     bead_reopen sp-ej1 eject-red "" test-other.sh >/dev/null 2>&1
 )
 is "writer: landstate reads RED after the eject" \
@@ -111,7 +111,7 @@ is "host concierge Maildir is untouched by the fixture's eject" \
 (
     export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
     . "$HERE/lib.sh"
-    land_mark sp-ej1 RED deadbeef gate
+    landing-pass mark sp-ej1 RED deadbeef gate
 )
 is "landstate shows RED after the failed re-cert" \
     "RED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"

@@ -155,7 +155,7 @@ RUN5="$T/run5"; DB5="$T/db5"; mkdir -p "$RUN5" "$DB5"
     export SPIRA_HOME="$T" SPIRA_RUN="$RUN5" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
     set -uo pipefail
     . "$HERE/lib.sh"
-    land_mark "sp-landtest" "LANDED" "deadbeef" ""
+    landing-pass mark "sp-landtest" "LANDED" "deadbeef" ""
     echo "land_mark_rc=$?"
 ) > "$T/land_mark.out" 2>&1
 land_out="$(cat "$T/land_mark.out")"
@@ -179,7 +179,7 @@ RUN6="$T/run6"; mkdir -p "$RUN6"
     export SPIRA_HOME="$T" SPIRA_RUN="$RUN6" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
     set -uo pipefail
     . "$HERE/lib.sh"
-    land_mark "sp-landtest2" "LANDED" "cafef00d" ""
+    landing-pass mark "sp-landtest2" "LANDED" "cafef00d" ""
     echo "land_mark_rc=$?"
 ) > "$T/land_mark2.out" 2>&1
 land_out2="$(cat "$T/land_mark2.out")"
