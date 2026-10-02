@@ -101,7 +101,7 @@ fn status(args: &[OsString]) -> ExitCode {
     let occ: Vec<admission::Occupancy> = Pool::ALL
         .into_iter()
         .map(|p| {
-            let size = admission::size_from_env(p);
+            let size = admission::size_configured(p);
             match p {
                 Pool::Gate => admission::gate_occupancy(&run, size),
                 _ => admission::occupancy(&run, p, size, &RealProcs),
@@ -122,6 +122,11 @@ fn status(args: &[OsString]) -> ExitCode {
                         "slot": l.slot, "pid": l.pid, "who": l.who,
                         "secs": if l.since > 0 { now.saturating_sub(l.since) } else { 0 },
                     })).collect::<Vec<_>>(),
+                    "waiters": o.waiters.iter().map(|w| serde_json::json!({
+                        "pid": w.pid, "who": w.who, "weight": w.weight,
+                        "secs": now.saturating_sub(w.since),
+                    })).collect::<Vec<_>>(),
+                    "head_blocked": o.head_blocked(),
                 })
             })
             .collect();
@@ -148,6 +153,13 @@ fn status(args: &[OsString]) -> ExitCode {
                 if names.is_empty() { "" } else { ": " },
                 names.join(", ")
             );
+            for w in &o.waiters {
+                let wt = if w.weight > 1 { format!(" ×{}", w.weight) } else { String::new() };
+                println!("           waiting: {}{wt} (pid {}, {}s)", w.who, w.pid, now.saturating_sub(w.since));
+            }
+            if let Some(line) = o.head_blocked() {
+                println!("           {line}");
+            }
         }
     }
     ExitCode::SUCCESS

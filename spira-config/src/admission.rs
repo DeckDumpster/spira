@@ -125,6 +125,25 @@ pub fn size_from_env(pool: Pool) -> u64 {
     size(pool, std::env::var(pool.size_env()).ok().as_deref(), Host::read())
 }
 
+/// The size the config document sets for `pool`, when it sets one.
+pub fn doc_size(pool: Pool, doc: &crate::SpiraToml) -> Option<u64> {
+    let s = doc.spira.as_ref()?;
+    match pool {
+        Pool::Compile => s.compile_par,
+        Pool::Test => s.test_par,
+        Pool::Gate => s.certify_par,
+    }
+    .map(u64::from)
+    .filter(|n| *n > 0)
+}
+
+/// The pool's size as the pools read it: the config document first (the gate re-reads it live),
+/// then this process's environment, then derived from the box.
+pub fn size_configured(pool: Pool) -> u64 {
+    let doc = crate::discover(None).and_then(|p| crate::load(&p).ok());
+    doc.as_ref().and_then(|d| doc_size(pool, d)).unwrap_or_else(|| size_from_env(pool))
+}
+
 /// Who holds (or waits for) a slot: a process, identified across pid reuse by its starttime.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Holder {
@@ -342,9 +361,11 @@ fn read_leases(dir: &Path) -> Vec<(u64, Option<Lease>)> {
 
 /// A live waiter: `wait.<pid>` holding `start= who= since= weight=`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Waiter {
-    pid: u32,
-    since: u64,
+pub struct Waiter {
+    pub pid: u32,
+    pub since: u64,
+    pub who: String,
+    pub weight: u64,
 }
 
 /// Remove dead leases and dead waiters; return the live leases, the ended ones (for
@@ -371,7 +392,7 @@ fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Ve
             if let Some(pid) = name.strip_prefix("wait.").and_then(|p| p.parse::<u32>().ok()) {
                 let text = fs::read_to_string(e.path()).unwrap_or_default();
                 match Lease::parse(0, &format!("pid={pid} {text}")) {
-                    Some(w) if alive(pid, w.start, procs) => waiters.push(Waiter { pid, since: w.since }),
+                    Some(w) if alive(pid, w.start, procs) => waiters.push(Waiter { pid, since: w.since, who: w.who, weight: w.weight.max(1) }),
                     _ => {
                         let _ = fs::remove_file(e.path());
                     }
@@ -749,23 +770,46 @@ pub struct Occupancy {
     pub size: u64,
     pub holders: Vec<Lease>,
     pub waiting: usize,
+    /// Live waiters, head of the queue first.
+    pub waiters: Vec<Waiter>,
 }
 
-/// Read a lease pool (reaping the dead as any scan does).
-pub fn occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Occupancy {
-    let dir = pool.dir(run);
-    let (holders, ended) = match Mutex::lock(&dir) {
-        Ok(_m) => {
-            let (h, e, _) = reap(&dir, pool, size, procs);
-            (h, e)
+impl Occupancy {
+    /// Units held (a release build counts its weight).
+    pub fn used(&self) -> u64 {
+        self.holders.iter().map(|l| l.weight.max(1)).sum()
+    }
+
+    /// The head waiter's line when it cannot be admitted yet though a slot is free: FIFO
+    /// holds everyone behind a head that needs more than the pool leaves.
+    pub fn head_blocked(&self) -> Option<String> {
+        let head = self.waiters.first()?;
+        let used = self.used();
+        let size = self.size.max(1);
+        let fits = used == 0 || used + head.weight <= size;
+        if fits || used >= size {
+            return None;
         }
-        Err(_) => (Vec::new(), Vec::new()),
-    };
+        Some(if head.weight >= size {
+            format!("head needs {} of {}: waits for an empty pool", head.weight, size)
+        } else {
+            format!("head needs {} of {} with {} held: waits until {} free", head.weight, size, used, head.weight)
+        })
+    }
+}
+
+/// Read a lease pool (reaping the dead as any scan does); `None` when its mutex cannot be taken.
+pub fn read_occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Option<Occupancy> {
+    let dir = pool.dir(run);
+    let _m = Mutex::lock(&dir).ok()?;
+    let (holders, ended, waiters) = reap(&dir, pool, size, procs);
     record(run, &ended);
-    let waiting = fs::read_dir(&dir)
-        .map(|rd| rd.flatten().filter(|e| e.file_name().to_string_lossy().starts_with("wait.")).count())
-        .unwrap_or(0);
-    Occupancy { pool, size, holders, waiting }
+    Some(Occupancy { pool, size, holders, waiting: waiters.len(), waiters })
+}
+
+/// [`read_occupancy`], an empty pool when unreadable.
+pub fn occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Occupancy {
+    read_occupancy(run, pool, size, procs).unwrap_or(Occupancy { pool, size, holders: Vec::new(), waiting: 0, waiters: Vec::new() })
 }
 
 /// The gate's flock pool: a slot is held when its lock cannot be taken; its holder is the
@@ -795,7 +839,7 @@ pub fn gate_occupancy(run: &Path, size: u64) -> Occupancy {
             weight: 1,
         }));
     }
-    Occupancy { pool: Pool::Gate, size, holders, waiting: 0 }
+    Occupancy { pool: Pool::Gate, size, holders, waiting: 0, waiters: Vec::new() }
 }
 
 fn highest_gate_slot(dir: &Path) -> u64 {

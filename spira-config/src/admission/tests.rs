@@ -559,3 +559,38 @@ fn a_gate_build_starts_at_once_on_a_full_pool_and_new_agent_builds_queue_behind_
     assert_eq!(n, Now::Took { slot: 1, held_before: 0, fresh: false });
     assert_eq!(take_now_line(Pool::Compile, 3, 1, 1, 0), "gate build took compile slot 1 (weight 1) without waiting; new agent builds queue behind it");
 }
+
+#[test]
+fn status_lists_each_waiter_and_says_when_the_head_cannot_fit() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (30, 3, 1), (40, 4, 1)]);
+    try_take(&d, Pool::Compile, 3, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    let (t, _) = try_take(&d, Pool::Compile, 3, &hw(30, 3, "sp-rel", 4), 0, 110, &p).unwrap();
+    assert!(matches!(t, Take::Busy { .. }));
+    let (t, _) = try_take(&d, Pool::Compile, 3, &h(40, 4, "sp-small"), 0, 120, &p).unwrap();
+    assert!(matches!(t, Take::Busy { .. }), "FIFO holds the small job behind the head");
+    let o = occupancy(&d, Pool::Compile, 3, &p);
+    assert_eq!(o.waiting, 2);
+    assert_eq!(
+        o.waiters.iter().map(|w| (w.who.as_str(), w.pid, w.weight, w.since)).collect::<Vec<_>>(),
+        [("sp-rel", 30, 4, 110), ("sp-small", 40, 1, 120)]
+    );
+    assert_eq!(o.head_blocked().as_deref(), Some("head needs 4 of 3: waits for an empty pool"));
+}
+
+#[test]
+fn a_full_pool_or_a_fitting_head_is_not_reported_as_blocked() {
+    let d = run_dir();
+    let p = FakeProcs::with(&[(10, 1, 1), (20, 2, 1)]);
+    try_take(&d, Pool::Test, 1, &h(10, 1, "sp-a"), 0, 100, &p).unwrap();
+    try_take(&d, Pool::Test, 1, &h(20, 2, "sp-b"), 0, 110, &p).unwrap();
+    assert_eq!(occupancy(&d, Pool::Test, 1, &p).head_blocked(), None);
+}
+
+#[test]
+fn a_config_document_certify_par_sets_the_gate_pool_size() {
+    let doc = crate::validate("[spira]\ncertify_par = 3\ncompile_par = 5\n").unwrap();
+    assert_eq!(doc_size(Pool::Gate, &doc), Some(3));
+    assert_eq!(doc_size(Pool::Compile, &doc), Some(5));
+    assert_eq!(doc_size(Pool::Test, &doc), None);
+}
