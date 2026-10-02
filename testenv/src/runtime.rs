@@ -464,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-test-infrastructure-30
     fn run_bounded_times_out_with_124() {
         let out = temp_output();
         let mut c = Command::new("sleep");

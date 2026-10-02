@@ -507,6 +507,7 @@ mod tests {
     }
 
     #[test]
+    // covers: UC-test-infrastructure-30
     fn exit_codes_map_to_statuses() {
         let m = |rc, q| {
             ResultRecord::from_exit(rc, 1, "", "s.sh", q, Mode::Serial, Producer::Explicit, 0)
