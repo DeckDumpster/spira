@@ -842,6 +842,11 @@ fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held
     // Exempt, not charged: the events fold's `unjudged-` prefix, same as every other
     // never-judged disposition, so CHECK 4 never counts this toward the attempts ask.
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-o", "unjudged-no-progress"]), "{:?}", w.seam_calls);
+    assert!(
+        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--status".to_string()) && c.contains(&"open".to_string())),
+        "a timed hold must leave status open so it releases itself: {:?}",
+        w.bd_calls
+    );
     // Held, not resumed: a real defer, not just release() (which alone put it right back
     // in front of the next summon — the whole bug).
     assert!(
