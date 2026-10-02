@@ -68,7 +68,7 @@ _report() {
     mail send concierge \
         --from "PR Notify <pr-notify@spira>" \
         --subject "pr-notify: $line" \
-        --kind event <<MAILEOF >/dev/null || printf 'pr-notify: mail send failed for: %s\n' "$line" >&2
+        --kind event <<MAILEOF >/dev/null || { _MAIL_FAILED=1; printf 'pr-notify: mail send failed for: %s\n' "$line" >&2; }
 ## Event
 $line
 MAILEOF
@@ -196,7 +196,7 @@ _branchless_prs() {
         case "$ahead" in ""|0) continue ;; esac
         pr_n="$(cd "$repo_dir" && gh pr list --head "$short" --state open \
             --json number --jq 'length' 2>/dev/null)" || pr_n=""
-        case "$pr_n" in ""|0) _emit "⚠ BRANCH $short: no PR [$repo_name]" ;; esac
+        case "$pr_n" in ""|0) _report "⚠ BRANCH $short: no PR [$repo_name]" ;; esac
     done < <(git -C "$repo_dir" branch -r 2>/dev/null)
 }
 
@@ -275,6 +275,17 @@ cmd_actionable() {
     done < "$file" | awk '!seen[$0]++'
 }
 
+# _mark_delivered — the log is history once every line in it was mailed, so nothing reads it
+# and watchd notify must not escalate it as unread. Runs at the start of a tick, a whole
+# interval after the previous tick's output was appended; a tick with a failed mail leaves
+# the cursor alone so those lines still escalate.
+_MAIL_FAILED=0
+_mark_delivered() {
+    [ "$_MAIL_FAILED" = 0 ] || return 0
+    [ -f "$LOG_FILE" ] || return 0
+    wc -l < "$LOG_FILE" > "${LOG_FILE%.log}.cursor"
+}
+
 # cmd_watch [--interval S] [--ticks N] — the watchd daemon body. Runs forever (or --ticks
 # times, for a test), scanning every repo and writing a health record each pass.
 cmd_watch() {
@@ -287,6 +298,7 @@ cmd_watch() {
         esac
     done
     while :; do
+        _mark_delivered
         _pr_notify_tick
         _pr_notify_write_health "$interval"
         tick=$((tick + 1))

@@ -269,6 +269,7 @@ pub mod fake {
         pub units: HashMap<(String, String), String>,
         pub orphans: HashMap<String, String>,
         pub asks: RefCell<Vec<(String, String, String, String)>>,
+        pub refuse_asks: bool,
         pub mail_health_rc: i32,
         pub watch_units: Vec<String>,
         pub disabled: RefCell<Vec<String>>,
@@ -295,6 +296,9 @@ pub mod fake {
             self.orphans.get(target).cloned()
         }
         fn mail_ask(&self, subject: &str, default: &str, why: &str, evidence: &str) -> Result<(), String> {
+            if self.refuse_asks {
+                return Err("refused".into());
+            }
             self.asks.borrow_mut().push((subject.into(), default.into(), why.into(), evidence.into()));
             Ok(())
         }
