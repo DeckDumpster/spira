@@ -978,6 +978,23 @@ fn an_agents_cargo_compiles_through_spira_admit_with_sccache_inside() {
     assert!(!o.log.contains("summon jitter"));
 }
 
+#[test]
+fn an_enforced_sessions_cargo_still_goes_through_spira_admit_and_sccache() {
+    let f = fx("admit-enforced");
+    seed(&f, "sp-admenf");
+    let admit = stub(&f, "spira-admit");
+    let sccache = stub(&f, "sccache");
+    let o = go(&f, "spira,plan", &[("SPIRA_SUMMON_JITTER", "0"), ("SPIRA_SCCACHE_DAV_ADDR", "192.168.1.56:9431")], true, Mode::Claim, BTreeMap::new(), commits_and_closes());
+    let env = &o.seen[0].env;
+    let get = |k: &str| env.get(k).map(String::as_str);
+    assert!(env.contains_key("SPIRA_WORK_BEAD_ID"), "the model must be restricted: {env:?}");
+    assert_eq!(get("RUSTC_WRAPPER"), Some(admit.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_INNER"), Some(sccache.to_str().unwrap()));
+    assert_eq!(get("SPIRA_ADMIT_WHO"), Some("sp-admenf"));
+    assert_eq!(get("SCCACHE_WEBDAV_ENDPOINT"), Some("http://192.168.1.56:9431"));
+    assert_eq!(get("SCCACHE_WEBDAV_KEY_PREFIX"), Some("/"));
+}
+
 /// THE POSITIVE CONTROL (sp-xtdqi): `SPIRA_SCCACHE_DAV_ADDR`, resolved in-process into
 /// `self.conf` exactly like every other config-file-only key (`merge_resolved_config`),
 /// reaches an agent's own build as the two `SCCACHE_WEBDAV_*` vars — the fix for "a server
