@@ -1912,7 +1912,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn set_path_repo_land_writes_the_mode_field() {
         let doc = validate("[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n").unwrap();
         let doc = set_path(&doc, "repo.home.land", "queue.local").unwrap();
@@ -1926,13 +1925,13 @@ mod tests {
         let gate = "echo \"hi\" && $(rm -rf /) # not really\nnext line\n\t'quoted'";
         let doc = set_path(
             &validate("[repo.home]\npath = \"/srv/home\"\nmode = \"push\"\n").unwrap(),
-            "repo.home.gate",
+            "repo.home.base",
             gate,
         )
         .unwrap();
         let out = toml::to_string_pretty(&doc).expect("serializes");
         let reparsed = validate(&out).expect("the serialized document must still validate");
-        assert_eq!(reparsed.repo["home"].gate.as_deref(), Some(gate));
+        assert_eq!(reparsed.repo["home"].base.as_deref(), Some(gate));
     }
 
     #[test]
@@ -2002,6 +2001,5 @@ mod tests {
         let backup = backup_existing(&dest).unwrap().expect("a backup path");
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
         std::fs::remove_dir_all(&dir).ok();
->>>>>>> theirs
     }
 }

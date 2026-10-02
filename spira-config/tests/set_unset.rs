@@ -54,14 +54,14 @@ fn set_gate_string_with_quotes_dollar_and_newlines_round_trips() {
     );
     let gate = "echo \"hi\" && $(rm -rf /)\nsecond line\n\t'single quoted'";
 
-    let result = spira_config(&["set", "repo.home.gate", gate, toml.to_str().unwrap()]);
+    let result = spira_config(&["set", "repo.home.base", gate, toml.to_str().unwrap()]);
     assert!(
         result.status.success(),
         "set failed: {}",
         String::from_utf8_lossy(&result.stderr)
     );
 
-    let got = spira_config(&["get", "repo.home.gate", toml.to_str().unwrap()]);
+    let got = spira_config(&["get", "repo.home.base", toml.to_str().unwrap()]);
     assert!(got.status.success());
     let got_val = String::from_utf8_lossy(&got.stdout);
     assert_eq!(got_val.trim_end_matches('\n'), gate);
