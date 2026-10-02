@@ -24,6 +24,9 @@ pub const DEFAULT_NAME: &str = "spira-testenv";
 /// Every container `up` starts carries it, so admission counts every caller's containers.
 pub const TESTENV_LABEL: &str = "spira.testenv=1";
 
+/// `up --no-build` found no image: the trial ends NO_VERDICT image-not-ready.
+pub const RC_IMAGE_NOT_READY: i32 = 66;
+
 fn user_runtime() -> String {
     format!("/run/user/{SPIRA_UID}")
 }
@@ -326,6 +329,11 @@ impl Driver<'_> {
     }
 
     pub fn ensure_image(&self) -> Option<String> {
+        self.acquire_image(true)
+    }
+
+    /// `build = false` never builds: a cold build inside a bounded trial spends the budget.
+    fn acquire_image(&self, build: bool) -> Option<String> {
         let tag = self.image_tag()?;
         let img = self.image_ref(&tag);
         if self.pq(&["image", "exists", &img]) {
@@ -337,9 +345,17 @@ impl Driver<'_> {
                 self.err(&format!("testenv: pulled {remote}"));
                 return Some(img);
             }
+            if build {
+                self.err(&format!(
+                    "testenv: {remote} is not in the registry — building it"
+                ));
+            }
+        }
+        if !build {
             self.err(&format!(
-                "testenv: {remote} is not in the registry — building it"
+                "testenv: image {img} is not built — a bounded trial does not build it"
             ));
+            return None;
         }
         self.build_image(&img).then_some(img)
     }
@@ -741,8 +757,14 @@ impl Driver<'_> {
         let mut name = s(DEFAULT_NAME);
         let mut checkout: Option<String> = None;
         let mut queue_bound = self.conf.queue_timeout;
+        let mut build = true;
         let mut i = 0;
         while i < args.len() {
+            if args[i] == "--no-build" {
+                build = false;
+                i += 1;
+                continue;
+            }
             match (args[i].as_str(), args.get(i + 1)) {
                 ("--queue-timeout", Some(v)) => match v.parse() {
                     Ok(n) => queue_bound = n,
@@ -773,8 +795,8 @@ impl Driver<'_> {
             self.err(&format!("testenv: {name} already exists; nothing to do"));
             return 0;
         }
-        let Some(img) = self.ensure_image() else {
-            return 1;
+        let Some(img) = self.acquire_image(build) else {
+            return if build { 1 } else { RC_IMAGE_NOT_READY };
         };
         if !self.admit(queue_bound) {
             return RC_QUEUE;

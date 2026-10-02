@@ -1285,3 +1285,28 @@ fn real_copy_file_follows_a_symlinked_source_and_refuses_a_dangling_one() {
     std::os::unix::fs::symlink("../store/absent", root.join("bin/dangling")).unwrap();
     assert!(RealHost.copy_file(&root.join("bin/dangling"), &dest).is_err());
 }
+
+#[test]
+fn up_no_build_with_an_absent_image_is_image_not_ready_and_never_builds() {
+    let f = Fake::new();
+    booting(&f);
+    f.when(&["image", "exists"], 1, "");
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "/wt", "--no-build"])),
+        RC_IMAGE_NOT_READY
+    );
+    assert!(f.calls_with("build").is_empty(), "a bounded trial never builds");
+    assert!(f.calls_with("run").is_empty());
+}
+
+#[test]
+fn up_no_build_with_the_image_present_boots() {
+    let f = Fake::new();
+    booting(&f);
+    let c = conf("/h");
+    assert_eq!(
+        Driver { host: &f, conf: &c }.cmd_up(&args(&["--name", "n", "--checkout", "/wt", "--no-build"])),
+        0
+    );
+}
