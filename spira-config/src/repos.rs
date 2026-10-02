@@ -1136,4 +1136,30 @@ oldshape | /h/old | pr | fmt-tool | gate --flag
         let reg = registry_for("q | /nope\n", "q");
         assert_eq!(publish_forge(&reg, "q", &env(&[])), None);
     }
+
+    #[test]
+    fn landref_resolves_a_declared_local_main_from_a_linked_worktree() {
+        let t = testkit::TempDir::new("landref-linked-worktree");
+        let main = t.path().join("main");
+        let wt = t.path().join("wt");
+        let git = |dir: &Path, args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        };
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "-q", "-b", "local/main"]);
+        git(&main, &["commit", "-q", "--allow-empty", "-m", "c"]);
+        git(&main, &["worktree", "add", "-q", "-b", "spira/x", wt.to_str().unwrap()]);
+        assert!(wt.join(".git").is_file(), "fixture must be a linked worktree");
+        let map = format!("q | {} | local | local/main | | true\n", wt.display());
+        let reg = registry_for(&map, "q");
+        assert_eq!(landref(&reg, wt.to_str().unwrap()), Some("local/main".to_string()));
+        assert_eq!(landref(&reg, "q"), Some("local/main".to_string()));
+    }
 }
