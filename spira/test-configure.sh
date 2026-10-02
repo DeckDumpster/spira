@@ -12,7 +12,7 @@
 #    SPIRA_LOOM_ADDR, SPIRA_DOLT_DATA appear as active (uncommented) lines.
 # 4. DERIVABLE KEYS COMMENTED: at least one non-trap key appears as a comment.
 # 5. NO OVERWRITE: an existing config file is not touched; the script reports it.
-# 6. ROUND-TRIP: the generated file is accepted by conf.sh (no unknown-key warnings).
+# 6. ROUND-TRIP: the generated file is accepted by conf.sh (spira-config validates, conf.sh resolves).
 # 7. REPO-MAP SEEDED: a repo-map file is written in the config directory.
 # 8. REPO-MAP PRESERVED: an existing repo-map is not overwritten.
 #
@@ -73,7 +73,7 @@ echo "non-interactive run — all trap keys supplied via env vars:"
 # CONFIGURE_* vars set so no prompt is ever needed. SPIRA_CONF=/nonexistent
 # keeps conf.sh from reading any real config on this box during the run.
 FAKE_HOME="$TMP/home"
-OUT="$FAKE_HOME/.config/spira/spira.conf"
+OUT="$FAKE_HOME/.config/spira/spira.toml"
 FAKE_PROD="$TMP/fake-prod/spira"
 
 mkdir -p "$FAKE_HOME"
@@ -89,7 +89,7 @@ run_configure() {
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        configure.sh --no-repo-map "$@" 2>&1
+        "$HERE/configure.sh" --no-repo-map "$@" 2>&1
 }
 
 _out="$(run_configure)"; _rc=$?
@@ -107,29 +107,29 @@ _content="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | grep -v '^[[:space:]]*
 _active_key() {
     # Returns the value of KEY if it appears as an active line in the generated config
     grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-        grep -i "^[[:space:]]*$1[[:space:]]*=" | head -1 | sed 's/.*=[[:space:]]*//'
+        grep -i "^[[:space:]]*$1[[:space:]]*=" | head -1 | sed 's/.*=[[:space:]]*//; s/^"//; s/"$//'
 }
 
-_prod_val="$(_active_key SPIRA_PROD)"
+_prod_val="$(_active_key prod)"
 [ -n "$_prod_val" ] && ok "SPIRA_PROD is an active line" \
                     || bad "SPIRA_PROD missing as active line" "in: $OUT"
 is "SPIRA_PROD value matches CONFIGURE_PROD" "$FAKE_PROD" "$_prod_val"
 
-_max_aeons_val="$(_active_key SPIRA_MAX_AEONS)"
+_max_aeons_val="$(_active_key max_aeons)"
 is "SPIRA_MAX_AEONS value is 2 (what we passed)" "2" "$_max_aeons_val"
 
-# SPIRA_MAX_LIVE_AEONS was set to "" — it should appear active (explicit empty)
+# SPIRA_MAX_LIVE_AEONS was set to "" — empty means no ceiling, so it is omitted
 _max_live_line="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "SPIRA_MAX_LIVE_AEONS" | head -1 || true)"
-[ -n "$_max_live_line" ] && ok "SPIRA_MAX_LIVE_AEONS is an active line (explicit empty)" \
-                          || bad "SPIRA_MAX_LIVE_AEONS missing as active line" "in: $OUT"
+    grep -i "max_live_aeons" | head -1 || true)"
+[ -z "$_max_live_line" ] && ok "SPIRA_MAX_LIVE_AEONS empty is omitted (no ceiling)" \
+                          || bad "SPIRA_MAX_LIVE_AEONS written despite empty" "$_max_live_line"
 
-_loom_val="$(_active_key SPIRA_LOOM_ADDR)"
+_loom_val="$(_active_key loom_addr)"
 is "SPIRA_LOOM_ADDR value is 127.0.0.1:8788" "127.0.0.1:8788" "$_loom_val"
 
 # SPIRA_DOLT_DATA was set to "" — it should appear active (explicit empty)
 _dolt_line="$(grep -v '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "SPIRA_DOLT_DATA" | head -1 || true)"
+    grep -i "dolt_data" | head -1 || true)"
 [ -n "$_dolt_line" ] && ok "SPIRA_DOLT_DATA is an active line (explicit empty)" \
                        || bad "SPIRA_DOLT_DATA missing as active line" "in: $OUT"
 
@@ -138,23 +138,27 @@ echo
 echo "derivable keys commented — at least one non-trap key appears as a comment:"
 # ==========================================================================
 _commented="$(grep '^[[:space:]]*#' "$OUT" 2>/dev/null | \
-    grep -i "SPIRA_DB\b\|SPIRA_RUN\b\|SPIRA_WORKSPACES\b" | head -1 || true)"
+    grep -i "spira.db\b\|spira.run\b\|spira.workspaces\b" | head -1 || true)"
 [ -n "$_commented" ] && ok "at least one derivable key (SPIRA_DB/RUN/WORKSPACES) appears as a comment" \
                       || bad "no derivable keys found as comments" "in: $OUT"
 
 # ==========================================================================
 echo
-echo "round-trip — conf.sh accepts the generated file (no unknown-key warnings):"
+echo "round-trip — conf.sh accepts the generated file (spira-config validates, conf.sh resolves):"
 # ==========================================================================
 # Source conf.sh with the generated file as the config and capture stderr.
 # Any "unknown key" warning means configure.sh wrote a key conf.sh doesn't recognise.
-_rt_warn="$(SPIRA_CONF="$OUT" SPIRA_DB="/tmp/configure-test-nodb-$$" \
-    bash -c ". '$HERE/conf.sh'" 2>&1 1>/dev/null || true)"
-if printf '%s\n' "$_rt_warn" | grep -q 'unknown key'; then
-    bad "round-trip" "conf.sh rejected a key: $_rt_warn"
+_rt_warn="$(spira-config validate "$OUT" 2>&1)"; _rt_rc=$?
+if [ "$_rt_rc" -ne 0 ]; then
+    bad "round-trip" "spira-config rejected the file: $_rt_warn"
 else
-    ok "conf.sh accepted every key in the generated file"
+    ok "spira-config validate accepts the generated file"
 fi
+
+# Resolution through conf.sh reads the values back.
+_rt_prod="$(env -i PATH="$PATH" HOME="$FAKE_HOME" SPIRA_TOML="$OUT" SPIRA_CONF=/nonexistent \
+    bash -c ". '$HERE/conf.sh' 2>/dev/null; printf %s \"\$SPIRA_PROD\"")"
+is "conf.sh resolves SPIRA_PROD from the generated toml" "$FAKE_PROD" "$_rt_prod"
 
 # ==========================================================================
 echo
@@ -184,7 +188,7 @@ echo
 echo "repo-map seeded — configure.sh seeds a repo-map from the example:"
 # ==========================================================================
 FAKE_HOME2="$TMP/home2"
-OUT2="$FAKE_HOME2/.config/spira/spira.conf"
+OUT2="$FAKE_HOME2/.config/spira/spira.toml"
 mkdir -p "$FAKE_HOME2"
 
 run_configure2() {
@@ -198,7 +202,7 @@ run_configure2() {
         CONFIGURE_MAX_LIVE_AEONS="" \
         CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
         CONFIGURE_DOLT_DATA="" \
-        configure.sh "$@" 2>&1
+        "$HERE/configure.sh" "$@" 2>&1
 }
 
 _seed_out="$(run_configure2)"; _seed_rc=$?
@@ -215,7 +219,7 @@ EXISTING_MAP_MARKER="# existing-repo-map-sentinel-$$"
 printf '%s\n' "$EXISTING_MAP_MARKER" >> "$_repo_map_path"
 
 FAKE_HOME3="$TMP/home3"
-OUT3="$FAKE_HOME3/.config/spira/spira.conf"
+OUT3="$FAKE_HOME3/.config/spira/spira.toml"
 mkdir -p "$FAKE_HOME3"/.config/spira
 cp "$_repo_map_path" "$FAKE_HOME3/.config/spira/repo-map"
 
@@ -229,7 +233,7 @@ _preserve_out="$(env -i \
     CONFIGURE_MAX_LIVE_AEONS="" \
     CONFIGURE_LOOM_ADDR="127.0.0.1:8788" \
     CONFIGURE_DOLT_DATA="" \
-    configure.sh 2>&1)"
+    "$HERE/configure.sh" 2>&1)"
 
 if grep -qF "$EXISTING_MAP_MARKER" "$FAKE_HOME3/.config/spira/repo-map" 2>/dev/null; then
     ok "existing repo-map was not overwritten"
