@@ -109,7 +109,12 @@ fn print_report(r: &logic::Report) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let spira_home = harness_home().to_string_lossy().into_owned();
+    let home = harness_home();
+    if home.as_os_str().is_empty() {
+        eprintln!("sop: SPIRA_HOME is unset and lib.sh not found beside the binary; export SPIRA_HOME=<checkout>/spira");
+        return ExitCode::from(2);
+    }
+    let spira_home = home.to_string_lossy().into_owned();
     let bd = RealBd { spira_home };
     let proc = RealProc;
     let clock = RealClock;
