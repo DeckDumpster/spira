@@ -242,6 +242,7 @@ impl<'a> Sentinel<'a> {
                 .env("SPIRA_INCIDENT_REPO", scope.clone())
                 .env("SPIRA_INCIDENT_REF", format!("closed-not-landed:{}", r.id))
                 .env("SPIRA_INCIDENT_CAUSE", "closed-not-landed")
+                .env("SPIRA_INCIDENT_PATH", format!("closed-not-landed:{}", r.id))
                 .stdin(body.into_bytes())
                 .out(Io::Null)
                 .err(Io::Null),
