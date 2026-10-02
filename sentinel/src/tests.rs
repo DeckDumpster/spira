@@ -1610,7 +1610,7 @@ fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
         }
     });
     r.on(|s| {
-        if s.prog.ends_with("/lc") && s.args[0] == "list" {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
             ok(r#"[
                 {"bead_id":"a","state":"LANDED","holds":[],"version":"1"},
                 {"bead_id":"b","state":"WORKING","holds":[],"version":"1"},
