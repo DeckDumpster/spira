@@ -5,7 +5,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::cfg::Lifecycle;
 use crate::host::{Io, Spec};
 use crate::lifecycle::{hold_event, unhold_event};
 use crate::model::{Bead, LandState};
@@ -94,9 +93,6 @@ pub fn mark(dir: &Path, id: &str, n: u32) {
     let _ = std::fs::create_dir_all(dir);
     crate::pass::append_line(&dir.join(id), &n.to_string());
 }
-
-/// The bd label the legacy poison valve writes and every partition excludes.
-pub const POISON_LABEL: &str = "spira-poison";
 
 pub const POISON_NOTE: &str = "Triaged by the groomer, not a human: it reads the charged sessions' final results and either credits the harness-caused attempts and lifts the poison (groomer unpoison) or splits/re-scopes the work. Any live holder keeps its claim and releases on its own exit path; no persona can claim it again while the ";
 
@@ -202,7 +198,11 @@ impl<'a> Sentinel<'a> {
     /// One lifecycle read serves the main loop and the stale clear. A hold this pass applies
     /// is on a bead at or over the threshold, which the clear would never release anyway.
     pub fn check4(&self, snap: &Snapshot) {
-        let poisoned = self.poisoned_set(snap);
+        if self.lc == crate::cfg::Lifecycle::Off {
+            self.log("CHECK4 lifecycle_enforce is off — no lifecycle machine to read, no poison decision");
+            return;
+        }
+        let poisoned = self.poisoned_set();
         self.check4_main(snap, poisoned.as_ref());
         self.check4_closed(snap);
         if let Some(p) = &poisoned {
@@ -210,55 +210,28 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// Which beads are poisoned. OFF: the `spira-poison` bd label (pre-sp-ki12s). ON: the
-    /// lifecycle poison hold; None when the machine cannot answer (decide nothing).
-    fn poisoned_set(&self, snap: &Snapshot) -> Option<HashSet<String>> {
-        match self.lc {
-            Lifecycle::Off => Some(
-                snap.list
-                    .iter()
-                    .filter(|b| b.has(POISON_LABEL))
-                    .map(|b| b.id.clone())
-                    .collect(),
-            ),
-            Lifecycle::On => self.lc_rows().map(|rows| {
-                rows.into_iter()
-                    .filter(|r| r.holds.iter().any(|h| h == "poison"))
-                    .map(|r| r.bead_id)
-                    .collect()
-            }),
-        }
+    /// Which beads are poisoned: the lifecycle poison hold. None when the machine cannot
+    /// answer (decide nothing).
+    fn poisoned_set(&self) -> Option<HashSet<String>> {
+        self.lc_rows().map(|rows| {
+            rows.into_iter()
+                .filter(|r| r.holds.iter().any(|h| h == "poison"))
+                .map(|r| r.bead_id)
+                .collect()
+        })
     }
 
-    /// Apply the poison. OFF: the label. ON: the lifecycle hold.
     fn poison_write(&self, id: &str, n: u32) {
-        match self.lc {
-            Lifecycle::Off => {
-                self.bd()
-                    .quiet(self.h, &["label", "add", id, POISON_LABEL], None);
-            }
-            Lifecycle::On => {
-                let ev = hold_event(
-                    "poison",
-                    &format!("poisoned after {n} in_progress transition(s) without landing"),
-                )
-                .unwrap_or_default();
-                self.lc_apply(id, &ev);
-            }
-        }
+        let ev = hold_event(
+            "poison",
+            &format!("poisoned after {n} in_progress transition(s) without landing"),
+        )
+        .unwrap_or_default();
+        self.lc_apply(id, &ev);
     }
 
-    /// Lift a stale poison. OFF: remove the label. ON: the lifecycle unhold.
     fn poison_lift(&self, id: &str) {
-        match self.lc {
-            Lifecycle::Off => {
-                self.bd()
-                    .quiet(self.h, &["label", "remove", id, POISON_LABEL], None);
-            }
-            Lifecycle::On => {
-                self.lc_apply(id, &unhold_event("poison").unwrap_or_default());
-            }
-        }
+        self.lc_apply(id, &unhold_event("poison").unwrap_or_default());
     }
 
     fn check4_main(&self, snap: &Snapshot, poisoned: Option<&HashSet<String>>) {
@@ -376,8 +349,7 @@ impl<'a> Sentinel<'a> {
                 if tok.contains("poison") {
                     self.poison_write(id, n);
                     let note = format!(
-                        "Poisoned after {n} in_progress transition(s) without landing. {POISON_NOTE}{}",
-                        if self.lc == Lifecycle::On { "hold stands." } else { "label stands." }
+                        "Poisoned after {n} in_progress transition(s) without landing. {POISON_NOTE}hold stands.",
                     );
                     self.bd()
                         .quiet(self.h, &["note", id, "--stdin"], Some(&note));
@@ -585,7 +557,7 @@ impl<'a> Sentinel<'a> {
             .map(String::as_str)
             .filter(|id| match snap.get(id) {
                 Some(b) => b.status != "closed" && !matches!(b.typ(), "epic" | "event"),
-                None => self.lc == Lifecycle::On,
+                None => true,
             })
             .collect();
         held.sort_unstable();
@@ -606,13 +578,6 @@ impl<'a> Sentinel<'a> {
             };
             if !tok.contains("clear") {
                 continue;
-            }
-            if self.lc == Lifecycle::Off {
-                let was = snap.get(id).map(|b| b.status.clone()).unwrap_or_default();
-                let live = self.reread(&[id]);
-                if self.still("CHECK4", id, &was, live.as_ref()).is_none() {
-                    continue;
-                }
             }
             self.poison_lift(id);
             self.progress(&format!(

@@ -28,7 +28,6 @@ mod detect;
 mod dispatch;
 mod fresh;
 mod host;
-mod legacy;
 mod lifecycle;
 mod model;
 mod open_children;
