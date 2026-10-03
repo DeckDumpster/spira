@@ -157,6 +157,7 @@ impl Config {
         // bootstrap an activation by exporting the variable, exactly as every other
         // not-yet-in-the-schema key here has always let them.
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), pick(crate::units::SCCACHE_DAV_ADDR_KEY, s.sccache_dav_addr.as_ref(), None));
+        m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| spira_config::resolve::lc_credential_default(&self.env)));
         m.insert("SPIRA_REPO_MAP".into(), pick("SPIRA_REPO_MAP", s.repo_map.as_ref(), None));
         // sp-9c2o5: the same-user lifecycle credential every unit carries. Env first, else the
         // operator's credential file when it exists, else empty (spira-lc then falls back to
