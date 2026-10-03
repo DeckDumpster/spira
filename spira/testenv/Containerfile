@@ -274,6 +274,8 @@ RUN printf '#!/bin/sh\n# testenv stub: satisfies command -v claude and spira_req
 # (this one and SPIRA_RELEASES's, further down).
 COPY . /tmp/doctor-check-spira
 RUN install -m 0755 /tmp/doctor-check-spira/testenv/.doctor-check-spira-config /usr/local/bin/spira-config && \
+    { spira-config --help >/dev/null 2>&1 || [ $? -ne 126 -a $? -ne 127 ] || \
+      { echo "doctor-check: the staged spira-config does not execute on ${TARGETARCH:-this arch} — it is the host's build; a cross-arch --platform build needs a spira-config built for the target" >&2; exit 1; }; } && \
     bash /tmp/doctor-check-spira/testenv/doctor-check.sh \
         /tmp/doctor-check-spira/conf.sh \
         /tmp/doctor-check-spira/testenv/doctor-waivers
