@@ -8,7 +8,8 @@ log_level: warning
 
 listener:
   port: 3307
-  max_connections: 1000
+  # Past this the server refuses new connections with an error instead of stalling the listener.
+  max_connections: 200
   # 30 minutes. `bd init` opens one connection and holds it across all schema migrations;
   # a timeout shorter than the migration run kills the connection mid-run and bd reports
   # "no root value found in session". Measured 2026-09-07: six concurrent fixture builds
