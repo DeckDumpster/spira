@@ -8,11 +8,13 @@
 use std::path::Path;
 
 use crate::bd;
+use crate::decide::{self, Eviction};
 use crate::ports::{s, Bd, Exec, Git};
 use crate::run::Run;
 use crate::trace;
 use crate::util;
 
+pub const EVICTION_RACE: &str = "eviction-race";
 pub const PROD_DIRTY: &str = "prod-dirty";
 pub const DESC_CHANGED_SINCE_CLAIM: &str = "desc-changed-since-claim";
 pub const UNFINISHED_REASON: &str = "unfinished-reason";
@@ -23,6 +25,15 @@ pub const WORKFLOW_RUN_WRONG_BRANCH: &str = "workflow-run-wrong-branch";
 pub const WORKFLOW_RUN_STALE_SHA: &str = "workflow-run-stale-sha";
 pub const WORKFLOW_RUN_WRONG_FILE: &str = "workflow-run-wrong-file";
 pub const WORKFLOW_RUN_UNVERIFIABLE: &str = "workflow-run-unverifiable";
+
+/// Prior eviction-race reopens, from spira-claim's ledger of this bead's returns.
+pub fn eviction_race_count(ledger_json: &str) -> i64 {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(ledger_json.trim()) else { return 0 };
+    v.get("returns")
+        .and_then(|r| r.as_array())
+        .map(|a| a.iter().filter(|r| r.get("cause").and_then(|c| c.as_str()) == Some(EVICTION_RACE)).count() as i64)
+        .unwrap_or(0)
+}
 
 /// `verdict_committed <repo> <branch> <id> [window]` -> is a commit naming `id` already on
 /// the branch, or (failing that) on the landing refs? Walks the branch first (this session's
@@ -222,6 +233,54 @@ impl Run<'_> {
         let cy = if committed { "yes" } else { "no" };
         let sup = if superseded { "1" } else { "0" };
         self.log(&format!("{f}: {id} status={st} committed={cy} superseded={sup} delivers={}", if delivers.is_empty() { "none" } else { &delivers }));
+
+        // ---- eviction race ----
+        if !restricted && st == "closed" && committed && !superseded {
+            let lc = self.d.exec.exec("spira-lc", &s(&["show", &id]), None, None);
+            let row: serde_json::Value = if lc.success() { serde_json::from_str(lc.stdout.trim()).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null };
+            let fld = |k: &str| row.get("bead").and_then(|b| b.get(k)).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let (state, reason, tip) = (fld("state"), fld("reason"), fld("tip"));
+            let cap_at = self.conf.n("SPIRA_EVICTION_ESCALATE_AT", 3);
+            if decide::eviction_reopen(&state, &reason, &tip, "", 0, cap_at) != Eviction::None {
+                let seen_f = self.run_dir().join(format!("{id}.evict-seen"));
+                let seen = std::fs::read_to_string(&seen_f).unwrap_or_default();
+                let key = format!("{tip} {reason}");
+                if !seen.is_empty() && seen == key {
+                    self.log(&format!("{f}: {id} closed with lifecycle state={state} ({reason}) — tip+reason unchanged since the last eviction-race reopen, duplicate skipped"));
+                } else {
+                    let cur = self.d.git.git(&self.s.repo, &["rev-parse", &branch]);
+                    let cur = if cur.success() { cur.text() } else { String::new() };
+                    let count = {
+                        let o = self.d.exec.exec(&self.claim_bin, &s(&["requeues", &id, "--json"]), None, None);
+                        if o.success() {
+                            eviction_race_count(&o.stdout)
+                        } else {
+                            self.log(&format!("{f}: {id} spira-claim could not count prior eviction-race reopens (rc={}) — reading it as 0", o.code));
+                            0
+                        }
+                    };
+                    match decide::eviction_reopen(&state, &reason, &tip, &cur, count, cap_at) {
+                        Eviction::Stale => self.log(&format!("{f}: {id} closed with lifecycle state={state} — row tip {tip} ≠ branch tip {cur}, stale record, close stands")),
+                        Eviction::Cap => {
+                            let ask = self.conf.ask_label();
+                            let _ = self.d.bd.bd(&s(&["label", "add", &id, &ask]));
+                            let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "ask", &format!("eviction-race guard capped: reopened {count} time(s) already"), &f]), None, None);
+                            self.note(&format!("Eviction-race guard capped: reopened {count} time(s) already. Recertify the branch by hand and clear the {ask} label; the guard will not reopen it again on its own."));
+                            self.log(&format!("{f}: {id} eviction-race escalated — {count} prior requeue(s) ≥ {cap_at}, labeled {ask} instead of reopening"));
+                            let _ = std::fs::write(&seen_f, &key);
+                        }
+                        Eviction::Reopen => {
+                            self.bead_reopen(EVICTION_RACE, &format!("Reopened by aeon.sh: bead closed while its lifecycle state is {state} ({reason}) — the branch was evicted from the batch while this session was in flight. The close is valid but the work cannot re-enter the queue while the bead is closed. Recertify the branch to re-enter the merge queue."));
+                            self.log(&format!("{f}: {id} REOPENED — closed with lifecycle state={state} (eviction race)"));
+                            st = "open".into();
+                            self.requeue(EVICTION_RACE, "Batch evicted the branch while this aeon was in flight; the bead was re-closed on a stale pass. Recertify the branch.".into());
+                            let _ = std::fs::write(&seen_f, &key);
+                        }
+                        Eviction::None => {}
+                    }
+                }
+            }
+        }
 
         // ---- close_verdict: the same decision sentinel CHECK 5 makes, natively in each crate ----
         let delivers_timeout = self.conf.n("SPIRA_DELIVERS_CHECK_TIMEOUT", 60).max(1) as u64;
@@ -483,6 +542,14 @@ mod tests {
     use crate::util::Out;
     use std::collections::BTreeMap;
     use std::sync::Mutex;
+
+    #[test]
+    fn eviction_count_reads_only_eviction_race_returns() {
+        let j = r#"{"bead":"sp-a","returns":[{"at":"t","cause":"eviction-race","class":"harness-return"},{"at":"t","cause":"cert-gate-red","class":"judged"},{"at":"t","cause":"eviction-race","class":"harness-return"}]}"#;
+        assert_eq!(eviction_race_count(j), 2);
+        assert_eq!(eviction_race_count("not json"), 0);
+        assert_eq!(eviction_race_count("{}"), 0);
+    }
 
     // ---- verdict_committed -----------------------------------------------------------
 
