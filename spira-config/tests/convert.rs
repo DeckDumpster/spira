@@ -570,3 +570,18 @@ fn a_conf_without_an_id_prefix_converts_and_strict_validation_refuses_it() {
     let (doc, _) = convert("SPIRA_HOME_REPO = home\nSPIRA_ID_PREFIX = sp\n", "/opt/fixture-home", "", &[]).expect("converts");
     spira_config::validate_strict(&toml::to_string_pretty(&doc).unwrap()).expect("valid");
 }
+
+// sp-op2c2: a spira.conf still setting the retired quarantine-reactivation key converts with a
+// warning naming the bead, never refused, and the key does not reach the converted document.
+#[test]
+fn retired_quarantine_clean_runs_converts_with_a_warning() {
+    let (doc, warnings) = convert("SPIRA_QUARANTINE_CLEAN_RUNS=10\n", "/opt/fixture-home", "", &[])
+        .expect("a retired key must not refuse the whole convert");
+    assert!(
+        warnings.0.iter().any(|w| w.contains("SPIRA_QUARANTINE_CLEAN_RUNS") && w.contains("sp-op2c2")),
+        "no warning: {:?}",
+        warnings.0
+    );
+    let sh = spira_config::export_sh(&doc);
+    assert!(!sh.contains("CLEAN_RUNS"), "a retired key leaked into export --sh: {sh}");
+}
