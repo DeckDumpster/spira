@@ -88,9 +88,8 @@ pub fn check(fayth_file: &Path, home: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    fn tree(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("fayth-keys-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&d);
+    fn tree(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(&format!("fayth-keys-{tag}"));
         fs::create_dir_all(d.join("spira/chamber")).unwrap();
         d
     }
@@ -107,7 +106,6 @@ mod tests {
         assert_eq!(dead, vec!["FAYTH_DEAD", "FAYTH_NAME"]);
         fs::write(d.join("spira/ok.rs"), "\"FAYTH_DEAD\" \"FAYTH_NAME\"").unwrap();
         assert!(unconsumed(FAYTH, &d, &d.join("spira/chamber")).unwrap().is_empty());
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
@@ -120,7 +118,6 @@ mod tests {
         fs::write(d.join("spira/lib.sh"), "true\n").unwrap();
         let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
         assert!(e.contains("FAYTH_DEAD"), "{e}");
-        let _ = fs::remove_dir_all(&d);
     }
 
     #[test]
