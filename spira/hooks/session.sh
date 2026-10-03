@@ -141,7 +141,23 @@ fi
 # them is a context window that has just opened with no Monitor attached — which is the only
 # condition the output below is about. Branching on it could only ever print less on some of
 # them. The archivist fire above is a separate concern from what this hook prints.
-status="$("$WATCHD" status 2>/dev/null)" || status=""
+# A FAILED READ IS RETRIED, THEN SAID OUT LOUD. A manifest fault is deterministic and watchd
+# names it as such, so it stays silent; any other failure (a box under load) is transient and
+# must not drop the watchers block without a trace.
+status=""; _wrc=1
+_werr="$(mktemp 2>/dev/null || echo /dev/null)"
+for _try in 1 2 3; do
+    status="$("$WATCHD" status 2>"$_werr")"; _wrc=$?
+    [ "$_wrc" -eq 0 ] && break
+    grep -q 'manifest' "$_werr" 2>/dev/null && break
+    sleep 0.3
+done
+_manifest_fault=0; grep -q 'manifest' "$_werr" 2>/dev/null && _manifest_fault=1
+[ "$_werr" != /dev/null ] && rm -f "$_werr"
+if [ "$_wrc" -ne 0 ] && [ "$_manifest_fault" -eq 0 ]; then
+    echo "## Spira watchers — status unavailable (watchd status failed); re-run: $WATCHD status"
+    exit 0
+fi
 
 # `status` PRINTS SEVERAL THINGS AND ONLY THE FIRST IS A TABLE: one line per watcher under a
 # header, then a blank line and any further block it has to add — DEGRADED when a probe
