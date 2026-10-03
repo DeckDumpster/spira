@@ -279,7 +279,7 @@ fn run_bead_event(conn: &Conn, key: &str, expect: &str, version: u64, actor: &st
         Ok(None) => return (CANNOT_TELL, format!("event: no bead row for {key}")),
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e:?}")),
     };
-    let ev = bead::BeadEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string() };
+    let ev = bead::BeadEvent { expect: expect_state, version, kind: kind.clone(), actor: actor.to_string(), at: Some(crate::db::now_epoch()) };
     // The tip invariant, extended (design stacked-dependents-2026-09-28 §1): a claim whose
     // proposed stack names a prerequisite tip that is no longer that prerequisite's current
     // certified tip is refused the same way a stale-tip submit is — checked here, against
