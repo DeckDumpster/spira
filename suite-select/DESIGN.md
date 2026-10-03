@@ -126,14 +126,17 @@ that no suite's `# covers:` claims.
 
 Environment (the gate command's own, `gate/DESIGN.md`): `SPIRA_GATE_REPO` (default `.`),
 `SPIRA_GATE_FILES`, `SPIRA_GATE_TIERS` (default `T0,T1`), `SPIRA_GATE_ALL`,
-`SPIRA_GATE_SUITES`, `SPIRA_CERTIFY_ALWAYS_COVERS` (default `spira/lib.sh`),
+`SPIRA_GATE_SUITES`, `SPIRA_GATE_COVERED`, `SPIRA_CERTIFY_ALWAYS_COVERS` (default `spira/lib.sh`),
 `SPIRA_GATE_EJECTED_SUITES`, `SPIRA_GATE_BUDGET` (default 300), `SPIRA_TESTENV_SETUP_SHARE` (default 50), `SPIRA_BATCH_MAXPAR`, else
 the cgroup-aware core count (the width), `SPIRA_RUN` (timings), `SPIRA_BATCH_SUITE_DIR`
 (default `spira`, relative to the working directory — the gate tree, or the CI checkout).
 
 1. `SPIRA_GATE_SUITES=off`: only the suites whose `# covers:` glob (file part) matches a
    changed file that matches `SPIRA_CERTIFY_ALWAYS_COVERS`; nothing else, no budget, no
-   ejected suites; empty when the diff touches no such file.
+   ejected suites; empty when the diff touches no such file. With `SPIRA_GATE_COVERED=1` (the
+   gate sets it for a bead's certification) it is instead the ordinary selection, tiers and
+   budget cut included, minus the always-run suites: what covers what the bead touched, however
+   the branch composes, so a covered-suite red is caught at certification and not in the round.
 2. `SPIRA_GATE_ALL=1`: every suite in the corpus.
 3. Otherwise the selection above with `--no-all-fallback` and the tiers. With
    `SPIRA_GATE_FILES` the corpus is the suites the **base** tree has (`git ls-tree`) that the

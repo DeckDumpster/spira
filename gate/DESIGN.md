@@ -353,6 +353,17 @@ spira-config set repo.spira.gate_mode suites <spira.toml>   # off (or: unset rep
 plan matrix, lockfile lint) and selects nothing: its always-covers default, `spira/lib.sh`, is
 a script, and a script never composes as unit or fences.
 
+### A bead's certification still runs its covered suites (sp-9jo06)
+
+A unit or fences composition (and any composition under `SPIRA_GATE_SUITES=off`) runs the
+gate string's fences, which include `spira-lint` and `boundary.sh check` over the merged
+tree. When the gate has a bead (`SPIRA_GATE_BEAD`) and suites are off, it also sets
+`SPIRA_GATE_COVERED=1`: `suite-select gate` then selects the budgeted suites whose `# covers:`
+match the bead's diff (not the always-run suites), instead of only the always-covers carve-out.
+A gate with no bead (the batcher's fences cut) stays fences-only. The trial takes an admission
+slot, and the verdict key carries `off+covered`, so a fences-only PASS is never reused for it.
+The added wall is the selected suites' own, bounded by `SPIRA_GATE_BUDGET`.
+
 ### A unit gate builds once (sp-aprxm)
 
 **Intent.** A Rust-only branch's gate compiles the tree once, in the profile its tests run in.

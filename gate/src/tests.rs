@@ -2164,6 +2164,35 @@ fn a_fences_only_branch_still_reruns_the_named_suites() {
 }
 
 #[test]
+fn a_beads_suites_off_certification_still_selects_its_covered_suites() {
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, String::new()));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "", "no bead: fences only, as the batcher's cut");
+
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.runs
+        .borrow_mut()
+        .insert(MERGE_SHA.into(), (0, String::new()));
+    assert_eq!(f.run(), PASS);
+    assert_eq!(f.env_of(0, "SPIRA_GATE_SUITES"), "off");
+    assert_eq!(f.env_of(0, "SPIRA_GATE_COVERED"), "1");
+
+    let f = unit_fake(&["spira-config/src/lib.rs"]);
+    f.set_var("SPIRA_GATE_SUITES", "off");
+    f.set_var("SPIRA_GATE_BEAD", "sp-a");
+    f.admission_free.set(false);
+    f.set_var("SPIRA_GATE_LOCK_WAIT", "5");
+    assert_eq!(f.run(), NOVERDICT, "covered suites run under the admission pool");
+    assert!(f.verdict_line().contains("reason=admission-timeout"));
+}
+
+#[test]
 fn a_script_branch_in_unit_mode_with_certify_suites_off_still_reruns_them() {
     // Production today: certify_suites = "off". The selector then exits before it ever
     // unions SPIRA_GATE_EJECTED_SUITES in, so the promise "recertification will force these
