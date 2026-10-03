@@ -8,7 +8,6 @@
 1 batcher-cut/src/main.rs
 5 batcher-cut/src/vm.rs
 1 bead/src/bin/bdq.rs
-1 bead/src/claimdesc.rs
 5 bead/src/main.rs
 4 broker/src/execute.rs
 2 broker/src/read.rs
