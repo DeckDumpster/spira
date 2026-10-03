@@ -9,6 +9,7 @@
 //!
 //! usage: spira-install [<instance>] [--dry-run] [--ephemeral] [--laptop] [--skip-build]
 //!                       [--no-session-hook] [--system-user]
+//!   --system-user is standalone: root, phase 6.5 only.
 
 use install::bootstrap::{self, nonempty_env};
 use install::checks;
@@ -96,6 +97,10 @@ fn main() -> ExitCode {
     }
     let instance = nonempty_env("SPIRA_INSTANCE").unwrap_or_else(|| "prod".into());
 
+    if opts.system_user {
+        return standalone_system_user(&instance, opts.dry);
+    }
+
     // ---- phase 0: preflight -------------------------------------------------------------
     phase("phase 0: preflight");
     // doctor is a compiled binary now (sp-yyk47, merged on top of this crate's own
@@ -145,6 +150,27 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
         changes += 1;
+    }
+
+    // ---- phase 1.5: same-user spira_lc credential ---------------------------------------
+    phase("phase 1.5: spira-lc same-user credential");
+    {
+        let cred = nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
+            let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+            spira_config::resolve::lc_credential_default(&env_map)
+        });
+        for path in [cred.clone(), format!("{cred}-ro")] {
+            if Path::new(&path).is_file() {
+                skip(&format!("{path} already exists"));
+            } else if opts.dry {
+                would(&format!("would create {path} (0600)"));
+            } else if let Err(e) = create_same_user_credential(&path) {
+                eprintln!("install: phase credential failed — {e}");
+                return ExitCode::from(2);
+            } else {
+                info(&format!("create {path}"));
+            }
+        }
     }
 
     // ---- phase 2: build -----------------------------------------------------------------
@@ -552,19 +578,6 @@ fn main() -> ExitCode {
         info("  layout up");
     }
 
-    // ---- phase 6.5: spira-lc system user --------------------------------------------------
-    phase("phase 6.5: spira-lc system user");
-    if !opts.system_user {
-        info("not requested (--system-user) — spira-lc runs in same-user fallback");
-    } else if !is_root() {
-        info("--system-user requires root — spira-lc runs in same-user fallback");
-    } else if opts.dry {
-        would("would create the spira-lc system user, group and install spira-lc.service/.socket");
-    } else if let Err(e) = system_user_phase(&home, &repo) {
-        eprintln!("install: phase spira-lc failed — {e}");
-        return ExitCode::from(2);
-    }
-
     // ---- phase 7: verify --------------------------------------------------------------------
     phase("phase 7: verify");
     if opts.dry {
@@ -840,9 +853,19 @@ fn dolt_servers() -> Vec<(String, String)> {
 
 /// Phase 6.5 (design §3.6.4): the one root-requiring step — a Unix user of its own for the
 /// spira_lifecycle credential. Refuses rather than half-installing.
-fn system_user_phase(home: &str, repo: &str) -> Result<(), String> {
+fn system_user_phase(host: &install::values::HostValues) -> Result<(), String> {
     let user = nonempty_env("SPIRA_LC_UNIX_USER").unwrap_or_else(|| "spira-lc".into());
     let group = nonempty_env("SPIRA_LC_UNIX_GROUP").unwrap_or_else(|| "spira".into());
+    let home = host.home.as_str();
+
+    let bin = format!("{}/bin/spira-lc", host.to_map()["SPIRA_PROD_ROOT"]);
+    let group_gid = group_gid(&group);
+    if let Some(dir) = install::guards::untraversable_ancestor(Path::new(&bin), group_gid) {
+        return Err(format!(
+            "{bin} sits under {}, which the service user {user} cannot traverse — install a release outside any home directory (or grant group {group} execute on it) before --system-user",
+            dir.display()
+        ));
+    }
 
     if Command::new("getent").arg("group").arg(&group).status().map(|s| !s.success()).unwrap_or(true) {
         info(&format!("create group {group}"));
@@ -858,20 +881,20 @@ fn system_user_phase(home: &str, repo: &str) -> Result<(), String> {
     if !Path::new(&cred_file).is_file() {
         info(&format!("create {cred_dir}"));
         run_ok("install", &["-d", "-m", "0750", "-o", &user, "-g", &group, cred_dir])?;
-        write_random_credential(&cred_file, 0o600, &user, &group)?;
+        write_random_credential(&cred_file, 0o600, Some((&user, &group)))?;
     } else {
         skip(&format!("{cred_file} already exists"));
     }
     let ro_file = format!("{cred_dir}/credential-ro");
     if !Path::new(&ro_file).is_file() {
-        write_random_credential(&ro_file, 0o644, &user, &group)?;
+        write_random_credential(&ro_file, 0o644, Some((&user, &group)))?;
     } else {
         skip(&format!("{ro_file} already exists"));
     }
 
-    let host_values = install::values::HostValues { home: home.to_string(), repo: repo.to_string(), run: nonempty_env("SPIRA_RUN").unwrap_or_default(), ..Default::default() };
+    let host_values = host;
     for unit in ["spira-lc.service", "spira-lc.socket"] {
-        let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), &host_values, None)?;
+        let text = install::values::render_file(&Path::new(home).join("systemd").join(unit), host_values, None)?;
         let dest = format!("/etc/systemd/system/{unit}");
         std::fs::write(format!("{dest}.tmp"), text).map_err(|e| e.to_string())?;
         run_ok("install", &["-m", "0644", &format!("{dest}.tmp"), &dest])?;
@@ -889,13 +912,53 @@ fn run_ok(prog: &str, args: &[&str]) -> Result<(), String> {
     Command::new(prog).args(args).status().map_err(|e| format!("cannot run {prog}: {e}")).and_then(|s| if s.success() { Ok(()) } else { Err(format!("{prog} {} failed ({s})", args.join(" "))) })
 }
 
-fn write_random_credential(path: &str, mode: u32, user: &str, group: &str) -> Result<(), String> {
+fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
+    phase("phase 6.5: spira-lc system user");
+    let host = match bootstrap::host_from_env(instance) {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("install: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if dry {
+        would("would create the spira-lc system user, group and install spira-lc.service/.socket");
+        return ExitCode::SUCCESS;
+    }
+    if !is_root() {
+        eprintln!("install: --system-user requires root and runs only the system-user phase");
+        return ExitCode::from(1);
+    }
+    match system_user_phase(&host) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("install: phase spira-lc failed — {e}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn group_gid(group: &str) -> Option<u32> {
+    let out = Command::new("getent").args(["group", group]).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
+}
+
+fn create_same_user_credential(path: &str) -> Result<(), String> {
+    if let Some(dir) = Path::new(path).parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    }
+    write_random_credential(path, 0o600, None)
+}
+
+fn write_random_credential(path: &str, mode: u32, owner: Option<(&str, &str)>) -> Result<(), String> {
     let mut buf = [0u8; 32];
     std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut buf)).map_err(|e| e.to_string())?;
     let encoded = base64_no_pad(&buf);
     let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(mode).open(path).map_err(|e| e.to_string())?;
     f.write_all(encoded.as_bytes()).map_err(|e| e.to_string())?;
-    run_ok("chown", &[&format!("{user}:{group}"), path])?;
+    if let Some((user, group)) = owner {
+        run_ok("chown", &[&format!("{user}:{group}"), path])?;
+    }
     let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
     Ok(())
 }

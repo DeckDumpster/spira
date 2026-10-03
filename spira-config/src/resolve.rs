@@ -422,6 +422,7 @@ pub const EXPORT_KEYS: &[&str] = &[
     "SPIRA_INSTANCE",
     "SPIRA_LAND_GATE_RESERVE",
     "SPIRA_LAND_MAXSEC",
+    "SPIRA_LC_PASSWORD_FILE",
     "SPIRA_LC_SOCKET",
     "SPIRA_LC_TESTDB_DATA",
     "SPIRA_LC_TESTDB_PORT",
@@ -550,6 +551,12 @@ fn xdg_config_home(env: &BTreeMap<String, String>) -> String {
         Some(v) if !v.is_empty() => v.clone(),
         _ => format!("{}/.config", env.get("HOME").cloned().unwrap_or_default()),
     }
+}
+
+/// Where the same-user `spira_lc` credential lives when the config does not say; its
+/// read-only sibling is this path with `-ro` appended.
+pub fn lc_credential_default(env: &BTreeMap<String, String>) -> String {
+    format!("{}/spira/spira-lc.credential", xdg_config_home(env))
 }
 
 fn xdg_data_home(env: &BTreeMap<String, String>) -> String {
@@ -804,6 +811,14 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
         "SPIRA_LC_UNIX_GROUP",
         resolve_colon("SPIRA_LC_UNIX_GROUP", env, &toml_map, ok_str!("spira"))
             .map_err(ResolveError::Registry)?
+    );
+    set!(
+        "SPIRA_LC_PASSWORD_FILE",
+        resolve_colon("SPIRA_LC_PASSWORD_FILE", env, &toml_map, || {
+            let path = lc_credential_default(env);
+            Ok(if Path::new(&path).is_file() { path } else { String::new() })
+        })
+        .map_err(ResolveError::Registry)?
     );
     set!(
         "SPIRA_LC_SOCKET",

@@ -39,6 +39,7 @@ pub struct HostValues {
     /// directly (`--render`) without going through the manifest's own gate.
     pub sccache_dav_addr: String,
     pub repo_map: String,
+    pub lc_password_file: String,
 }
 
 impl HostValues {
@@ -53,6 +54,7 @@ impl HostValues {
         m.insert("SPIRA_RUN".into(), self.run.clone());
         m.insert("SPIRA_DB".into(), self.db.clone());
         m.insert("SPIRA_REPO_MAP".into(), self.repo_map.clone());
+        m.insert("SPIRA_LC_PASSWORD_FILE".into(), self.lc_password_file.clone());
         m.insert("SPIRA_COCKPIT".into(), self.cockpit.clone());
         m.insert("SPIRA_DOLT_DATA".into(), self.dolt_data.clone());
         m.insert("SPIRA_SCCACHE_DAV_ADDR".into(), self.sccache_dav_addr.clone());
@@ -146,6 +148,7 @@ mod tests {
             snap_stale_s: "600".into(),
             watchtower_start_timeout_s: "360".into(),
             path_tail: "".into(),
+            lc_password_file: "/h/lc.credential".into(),
             sccache_dav_addr: "".into(),
             repo_map: "".into(),
         }

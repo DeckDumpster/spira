@@ -27,7 +27,7 @@
 #
 # defect: sp-sa8pn
 # tier: T2
-# covers: spira/cutover-deploy.sh lifecycle/grants.sql lifecycle/schema.sql
+# covers: spira/cutover-deploy.sh lifecycle/grants.sql lifecycle/schema.sql systemd/*.service install/src/**
 # timeout: 300
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -117,7 +117,7 @@ CONF="$FIX/spira.conf"
 TOML="$FIX/spira.toml"   # deliberately does not exist yet — this run must create it
 
 CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
-RO_CRED="$TMP/credential-ro"; printf 'ropw-not-real' > "$RO_CRED"
+RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
 
 run_deploy() {
     env -i HOME="$HOME" \
@@ -127,8 +127,7 @@ run_deploy() {
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" \
         SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="" \
-        SPIRA_LC_PASSWORD="adminpw-not-real" SPIRA_LC_RO_PASSWORD="ropw-not-real" \
-        SPIRA_LC_CRED_FILE="$CRED" SPIRA_LC_RO_CRED_FILE="$RO_CRED" \
+        SPIRA_LC_PASSWORD_FILE="$CRED" \
         bash "$HERE/cutover-deploy.sh" --repo demo "$@"
 }
 
@@ -178,5 +177,37 @@ echo "a second run is idempotent:"
 out2="$(run_deploy --remove-dropin "$DROPIN" 2>&1)"; rc2=$?
 [ "$rc2" = 0 ] || printf '%s\n' "$out2" >&2
 wantrc "cutover-deploy.sh exits 0 again" 0 "$rc2"
+
+echo
+echo "a unit-rendered environment alone authenticates as spira_lc:"
+INSTALL_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug"
+CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
+    "$CARGO_BIN" build --manifest-path "$REPO/install/Cargo.toml" --bin render-unit --bin spira-install --quiet 2>"$TMP/build-install.log" \
+    || bail "render-unit failed to build: $(cat "$TMP/build-install.log")"
+rendered="$("$INSTALL_BIN/render-unit" "$REPO/systemd/spira-sentinel.service" --home "$FIX" --repo "$REPO" --run "$FIX/run" \
+    --db "$SPIRA_DB" --cockpit "$FIX/cockpit" --dolt /bin/true --prod "$FIX/spira" --instance prod \
+    --testdb-port 3308 --snap-stale-s 60 --lc-password-file "$CRED")"
+unit_env="$(printf '%s\n' "$rendered" | sed -n 's/^Environment=\(SPIRA_LC_PASSWORD_FILE=.*\)$/\1/p')"
+is "the rendered unit carries the configured credential path" "SPIRA_LC_PASSWORD_FILE=$CRED" "$unit_env"
+lc_caller() {
+    env -i HOME="$HOME" PATH="$PATH" "$@" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" \
+        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" "$LC_BIN" history sp-manual
+}
+lc_caller "$unit_env" >/dev/null 2>&1
+wantrc "a caller with only the rendered variable authenticates" 0 $?
+lc_caller >/dev/null 2>&1
+wantrc "positive control: the same call without the variable fails closed" 1 $?
+
+echo
+echo "cutover-deploy --dry-run resolves the credential from config alone:"
+dry_out="$(run_deploy --dry-run 2>&1)"; wantrc "dry run exits 0 with only the config key set" 0 $?
+want "dry run reaches the classify step" "would classify demo" "$dry_out"
+
+echo
+echo "--system-user runs no phase but its own:"
+su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
+wantrc "spira-install --system-user --dry-run exits 0" 0 $?
+want "it reports the system-user phase" "phase 6.5" "$su_out"
+case "$su_out" in *"phase 0:"*|*"phase 1:"*|*"phase 4:"*|*"phase 6:"*) fail "another phase ran under --system-user" ;; *) pass "no other phase ran" ;; esac
 
 tl_summary

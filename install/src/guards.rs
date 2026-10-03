@@ -5,7 +5,7 @@
 //! docs/test-plan/instance-lifecycle.md's own extraction plan for these checks.
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// A conflict guard's refusal: an exit code (always 5, kept explicit because
 /// `_conflict_report` in the bash always used one), a one-line reason and a remedy.
@@ -362,5 +362,59 @@ mod tests {
         assert_eq!(seed_when(false, false, false), SeedWhen::Now); // embedded mode
         assert_eq!(seed_when(false, true, true), SeedWhen::Now); // server already up
         assert_eq!(seed_when(false, true, false), SeedWhen::Defer);
+    }
+}
+
+/// The first ancestor directory of `path` a service user outside its owner cannot traverse:
+/// neither world-executable, nor group-executable with the directory's group being `gid`.
+pub fn untraversable_ancestor(path: &Path, gid: Option<u32>) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    path.ancestors().skip(1).filter(|a| !a.as_os_str().is_empty()).find_map(|dir| {
+        let md = std::fs::metadata(dir).ok()?;
+        let mode = md.mode();
+        let ok = mode & 0o001 != 0 || (mode & 0o010 != 0 && Some(md.gid()) == gid);
+        (!ok).then(|| dir.to_path_buf())
+    })
+}
+
+#[cfg(test)]
+mod traverse_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    fn dir_with(mode: u32) -> tempdir_lite::Dir {
+        let d = tempdir_lite::Dir::new();
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap();
+        d
+    }
+
+    #[test]
+    fn a_closed_ancestor_is_named_and_an_open_one_is_not() {
+        let closed = dir_with(0o750);
+        let bin = closed.path().join("bin/spira-lc");
+        assert_eq!(untraversable_ancestor(&bin, None), Some(closed.path().to_path_buf()));
+        let open = dir_with(0o755);
+        assert_eq!(untraversable_ancestor(&open.path().join("bin/spira-lc"), None), None);
+    }
+
+    mod tempdir_lite {
+        use std::path::{Path, PathBuf};
+        pub struct Dir(PathBuf);
+        impl Dir {
+            pub fn new() -> Self {
+                let p = std::env::temp_dir().join(format!("trav-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
+                let _ = std::fs::remove_dir_all(&p);
+                std::fs::create_dir_all(&p).unwrap();
+                Dir(p)
+            }
+            pub fn path(&self) -> &Path {
+                &self.0
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
     }
 }

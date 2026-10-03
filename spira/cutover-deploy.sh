@@ -15,8 +15,7 @@
 #
 # DRAIN IS THE CALLER'S JOB, NOT THIS SCRIPT'S: whatever stopped spira-lc.socket and the
 # queue/sentinel/batch timers before calling this also resumes them afterwards — the same
-# split install.sh keeps between --system-user (creates the credential) and this script
-# (spends it). This script only refuses to run while spira-lc.socket still looks active,
+# split spira-install keeps between creating the credential and this script (spending it). This script only refuses to run while spira-lc.socket still looks active,
 # because a live socket means a writer could still reach the store while it is reclassified
 # and re-granted underneath it.
 #
@@ -25,8 +24,8 @@
 #      default root/empty, this harness's own throwaway-server convention) — spira_lc's own
 #      grant does not yet exist to do this with
 #   2. apply lifecycle/grants.sql, same admin connection, with @SPIRA_LC_PASSWORD@/
-#      @SPIRA_LC_RO_PASSWORD@ substituted from the credentials install.sh's --system-user
-#      phase generated
+#      @SPIRA_LC_RO_PASSWORD@ substituted from the credentials spira-install
+#      generated (the spira_lc_password_file config key, and its -ro sibling)
 #   3. run `spira-lc classify` once per --repo given, AS spira_lc (SPIRA_LC_PASSWORD_FILE) —
 #      the same restricted user everything else now writes through, so a grants.sql mistake
 #      fails this step instead of production's first real write
@@ -54,8 +53,9 @@ if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet spira-lc.
     exit 1
 fi
 
-SPIRA_LC_CRED_FILE="${SPIRA_LC_CRED_FILE:-/etc/spira-lc/credential}"
-SPIRA_LC_RO_CRED_FILE="${SPIRA_LC_RO_CRED_FILE:-/etc/spira-lc/credential-ro}"
+SPIRA_LC_CRED_FILE="${SPIRA_LC_CRED_FILE:-${SPIRA_LC_PASSWORD_FILE:-}}"
+[ -n "$SPIRA_LC_CRED_FILE" ] || { printf 'cutover-deploy: no spira_lc credential file configured (spira_lc_password_file) and none at the default path — run spira-install first\n' >&2; exit 1; }
+SPIRA_LC_RO_CRED_FILE="${SPIRA_LC_RO_CRED_FILE:-$SPIRA_LC_CRED_FILE-ro}"
 if [ -z "${SPIRA_LC_PASSWORD:-}" ] && [ -r "$SPIRA_LC_CRED_FILE" ]; then
     SPIRA_LC_PASSWORD="$(cat "$SPIRA_LC_CRED_FILE")"
 fi
@@ -72,7 +72,7 @@ say() { printf 'cutover-deploy: %s\n' "$1"; }
 
 : "${SPIRA_LC_ADMIN_USER:=root}"
 : "${SPIRA_LC_ADMIN_PASSWORD:=}"
-admin_lc() { SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
+admin_lc() { env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="$SPIRA_LC_ADMIN_USER" SPIRA_LC_PASSWORD="$SPIRA_LC_ADMIN_PASSWORD" spira-lc "$@"; }
 
 say "applying schema.sql (as $SPIRA_LC_ADMIN_USER)"
 if [ "$DRY_RUN" != 1 ]; then

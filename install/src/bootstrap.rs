@@ -73,8 +73,13 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     });
     let dav_addr = sccache_dav_addr(Path::new(&home));
     let dolt = nonempty_env("DOLT").or_else(|| which("dolt")).unwrap_or_default();
+    let lc_password_file = nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        spira_config::resolve::lc_credential_default(&env_map)
+    });
     Ok(HostValues {
         home,
+        lc_password_file,
         repo,
         run: env_var("SPIRA_RUN"),
         db: env_var("SPIRA_DB"),
