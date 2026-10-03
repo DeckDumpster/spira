@@ -1,8 +1,7 @@
 //! The DB layer: everything in this file is I/O, on purpose, so nothing in the `lifecycle`
-//! crate has to be. It shells out to the `dolt` binary rather than embedding a MySQL driver
-//! (`law-prefer-the-real-dependency`): Dolt is already the harness's SQL engine, its CLI
-//! already speaks the wire protocol to a remote `sql-server`, and there is no in-process
-//! driver anywhere else in this workspace to be consistent with.
+//! crate has to be. It speaks the MySQL protocol to Dolt's `sql-server` itself (`wire.rs`)
+//! over one reused connection; forking the `dolt` CLI per query cost a process start on
+//! every lifecycle call.
 //!
 //! CONCURRENCY, AS MEASURED (2026-09-26, against a throwaway `dolt sql-server` 2.2.3):
 //! two overlapping transactions racing an `UPDATE ... WHERE version = ?` do not both see
@@ -19,26 +18,22 @@
 //!
 //! Either way exactly one transition is ever recorded as applied for a given (key, version).
 
-use std::io::Write;
-use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::persistent::PersistentDolt;
+use serde_json::Value;
+
+use crate::wire::Wire;
 
 pub struct Conn {
-    pub dolt_bin: String,
     pub host: String,
     pub port: u16,
     pub user: String,
     pub password: String,
     pub database: String,
-    pub data_dir: String,
-    /// `Some` only for a `Conn` built with `persistent_session()` — the `serve` daemon's
-    /// own long-lived connection. `None` is the one-shot CLI path: correct, but paying a
-    /// fresh `dolt` process start and handshake on every call (measured 150-230ms each,
-    /// which is why the p99 < 50ms bench runs through the persistent path instead).
-    session: Option<Mutex<Option<PersistentDolt>>>,
+    /// The one live connection, opened on first use and dropped on any failure: after an
+    /// error a transaction may still be open, so the next call starts from a fresh session.
+    session: Mutex<Option<Wire>>,
 }
 
 // The String is surfaced only through the derived `Debug` impl (every caller prints the
@@ -57,7 +52,6 @@ pub fn now_epoch() -> i64 {
 
 impl Conn {
     pub fn from_env() -> Result<Self, DbError> {
-        let dolt_bin = std::env::var("SPIRA_LC_DOLT_BIN").unwrap_or_else(|_| "dolt".to_string());
         let host = std::env::var("SPIRA_LC_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
         let port: u16 = std::env::var("SPIRA_LC_PORT")
             .unwrap_or_else(|_| "3307".to_string())
@@ -68,115 +62,44 @@ impl Conn {
         let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        // dolt's remote client mode still resolves a local data-dir for bookkeeping even
-        // when --host/--port point elsewhere; an unset or vanished cwd makes it fail with
-        // "failed to load database names" before it ever opens the connection.
-        let data_dir = data_dir_from(std::env::var("SPIRA_LC_DATA_DIR").ok(), &std::env::temp_dir());
-        Ok(Conn { dolt_bin, host, port, user, password, database, data_dir, session: None })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None) })
     }
 
-    /// The same connection parameters, but backed by one persistent `dolt` session reused
-    /// across every call instead of a fresh process per call. Only `serve` should hold one
-    /// of these — a one-shot CLI invocation gets no benefit from a connection that dies
-    /// with the process anyway.
-    pub fn persistent_session() -> Result<Self, DbError> {
-        let mut conn = Self::from_env()?;
-        conn.session = Some(Mutex::new(None));
-        Ok(conn)
+    fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
+        Wire::connect(&self.host, self.port, &self.user, &self.password, database)
     }
 
-    fn command(&self) -> Command {
-        let mut cmd = self.command_without_db();
-        cmd.args(["--use-db", &self.database]);
-        cmd
-    }
-
-    /// Without `--use-db`: DDL that creates the database itself (schema.sql opens with
-    /// `CREATE DATABASE IF NOT EXISTS`) must connect before that database exists.
-    fn command_without_db(&self) -> Command {
-        let mut cmd = Command::new(&self.dolt_bin);
-        cmd.args([
-            "--data-dir",
-            &self.data_dir,
-            "--host",
-            &self.host,
-            "--port",
-            &self.port.to_string(),
-            "-u",
-            &self.user,
-            "--no-tls",
-        ]);
-        cmd.env("DOLT_CLI_PASSWORD", &self.password);
-        cmd
-    }
-
-    /// A single read-only query. Returns the parsed `rows` array from `-r json`.
-    pub fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, DbError> {
-        let sql = if sql.trim_end().ends_with(';') { sql.to_string() } else { format!("{sql};") };
-        let text = match self.run_script(&sql) {
-            Ok(text) => text,
+    /// A single read-only query: the rows of its last result set.
+    pub fn query(&self, sql: &str) -> Result<Vec<Value>, DbError> {
+        match self.run_script(sql) {
+            Ok(sets) => Ok(sets.into_iter().last().unwrap_or_default()),
             Err(ScriptFailure::LostRace) => unreachable!("a plain SELECT never conflicts"),
-            Err(ScriptFailure::CannotTell(e)) => return Err(DbError::CannotTell(e)),
-        };
-        parse_last_json_rows(&text).ok_or_else(|| DbError::CannotTell(format!("could not parse query output: {text}")))
+            Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
+        }
     }
 
-    /// Run a script (piped to stdin) with `-r json`, returning stdout on success. The
-    /// caller inspects the JSON blocks it needs (e.g. the trailing SELECT) itself. Goes
-    /// through the persistent session when this `Conn` has one; otherwise a fresh process.
-    fn run_script(&self, script: &str) -> Result<String, ScriptFailure> {
+    /// Run a script, returning each result set's rows in script order (statements that
+    /// return no rows contribute none). Reuses this `Conn`'s session, pinging first when it
+    /// has sat idle so a connection the server closed is replaced instead of failing a write.
+    fn run_script(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
         let started = std::time::Instant::now();
         let result = self.run_script_timed(script);
         crate::slow::record(started.elapsed(), script);
         result
     }
 
-    fn run_script_timed(&self, script: &str) -> Result<String, ScriptFailure> {
-        let Some(session) = &self.session else {
-            return self.run_script_on(self.command(), script);
+    fn run_script_timed(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
+        let mut wire = match reusable {
+            Some(w) => w,
+            None => self.connect(Some(&self.database))?,
         };
-        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
-        if guard.is_none() {
-            let dolt = PersistentDolt::spawn(self.command()).map_err(|e| match e {
-                DbError::CannotTell(m) => ScriptFailure::CannotTell(m),
-            })?;
-            *guard = Some(dolt);
+        let out = wire.exec(script);
+        if out.is_ok() {
+            *guard = Some(wire);
         }
-        match guard.as_mut().unwrap().send(script) {
-            Ok(text) => Ok(text),
-            Err(ScriptFailure::LostRace) => Err(ScriptFailure::LostRace),
-            Err(e @ ScriptFailure::CannotTell(_)) => {
-                // The session's state is unknown after an unexpected failure; drop it so
-                // the next call spawns a fresh one instead of reusing something broken.
-                *guard = None;
-                Err(e)
-            }
-        }
-    }
-
-    fn run_script_on(&self, mut command: Command, script: &str) -> Result<String, ScriptFailure> {
-        let mut child = command
-            .args(["sql", "-r", "json"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| ScriptFailure::CannotTell(format!("spawning {}: {e}", self.dolt_bin)))?;
-        child
-            .stdin
-            .take()
-            .expect("piped stdin")
-            .write_all(script.as_bytes())
-            .map_err(|e| ScriptFailure::CannotTell(format!("writing script: {e}")))?;
-        let out = child.wait_with_output().map_err(|e| ScriptFailure::CannotTell(format!("waiting on {}: {e}", self.dolt_bin)))?;
-        let combined = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).to_string())
-        } else if combined.contains("40001") || combined.contains("serialization failure") {
-            Err(ScriptFailure::LostRace)
-        } else {
-            Err(ScriptFailure::CannotTell(combined))
-        }
+        out
     }
 
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
@@ -247,9 +170,8 @@ impl Conn {
         );
 
         match self.run_script(&script) {
-            Ok(stdout) => {
-                let rows = parse_last_json_rows(&stdout)
-                    .ok_or_else(|| DbError::CannotTell(format!("could not parse transition output: {stdout}")))?;
+            Ok(sets) => {
+                let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
                 Ok(applied)
             }
@@ -305,9 +227,8 @@ impl Conn {
         );
 
         match self.run_script(&script) {
-            Ok(stdout) => {
-                let rows = parse_last_json_rows(&stdout)
-                    .ok_or_else(|| DbError::CannotTell(format!("could not parse classification output: {stdout}")))?;
+            Ok(sets) => {
+                let rows = sets.last().cloned().unwrap_or_default();
                 let applied = rows.first().and_then(|r| r.get("applied")).and_then(|v| v.as_str()).map(|s| s != "0").unwrap_or(false);
                 Ok(applied)
             }
@@ -319,11 +240,12 @@ impl Conn {
         }
     }
 
-    /// DDL runs without `--use-db`, because `schema.sql` itself opens with `CREATE DATABASE
+    /// DDL runs on a connection with no default database, because `schema.sql` itself opens with `CREATE DATABASE
     /// IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;` — the database need not exist
     /// yet when this is called, which is exactly the state it's called in on a fresh server.
     pub fn apply_ddl(&self, sql_text: &str) -> Result<(), DbError> {
-        match self.run_script_on(self.command_without_db(), sql_text) {
+        let result = self.connect(None).and_then(|mut wire| wire.exec(sql_text));
+        match result {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("DDL reported a serialization conflict".into())),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
@@ -389,8 +311,7 @@ impl Conn {
         script.push_str("COMMIT;\n");
 
         match self.run_script(&script) {
-            Ok(stdout) => {
-                let blocks = parse_all_json_rows(&stdout);
+            Ok(blocks) => {
                 Ok(steps
                     .iter()
                     .enumerate()
@@ -456,31 +377,6 @@ fn sql_json(v: &serde_json::Value) -> String {
     sql_str(&v.to_string())
 }
 
-/// `dolt sql -r json` prints one `{...}` block per statement, separated by blank lines.
-/// The block this crate ever needs is the last non-empty one that carries a `rows` array.
-fn parse_last_json_rows(text: &str) -> Option<Vec<serde_json::Value>> {
-    let blocks = parse_all_json_rows(text);
-    blocks.into_iter().last().or_else(|| if text.trim().is_empty() { None } else { Some(Vec::new()) })
-}
-
-/// Every block in script order that carries a `rows` array — a `cascade` script has one
-/// per step's trailing `SELECT applied ...`, and callers zip them back to steps by position.
-///
-/// NOT `text.split("\n\n")`: `dolt sql -r json` does not reliably put a blank line between
-/// every pair of blocks — a `{"rows": [...]}` block is sometimes followed immediately, with
-/// no blank line, by the next statement's bare `{}`. Splitting on blank lines then glues the
-/// two into one unparseable chunk and silently drops it — SEEN RED as a `cascade` script's
-/// first step's result vanishing while a later one's survived. A streaming deserializer
-/// reads exactly one JSON value at a time regardless of the whitespace between them, which
-/// is the actual grammar of this output, not "one block per blank-separated paragraph."
-fn parse_all_json_rows(text: &str) -> Vec<Vec<serde_json::Value>> {
-    serde_json::Deserializer::from_str(text)
-        .into_iter::<serde_json::Value>()
-        .flatten()
-        .filter_map(|v| v.get("rows").and_then(|r| r.as_array()).cloned())
-        .collect()
-}
-
 /// The password a connection uses: the file named by SPIRA_LC_PASSWORD_FILE when that is set
 /// AND non-empty, else SPIRA_LC_PASSWORD. conf.sh exports SPIRA_LC_PASSWORD_FILE empty when no
 /// credential file exists (sp-9c2o5), and reading a file named "" must not shadow the password.
@@ -492,33 +388,6 @@ pub(crate) fn password_from(
     match file.filter(|p| !p.is_empty()) {
         Some(path) => Ok(read(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string()),
         None => Ok(password.unwrap_or_default()),
-    }
-}
-
-#[cfg(test)]
-mod argv_secret_tests {
-    use super::Conn;
-
-    #[test]
-    fn the_password_is_never_an_argument_to_dolt() {
-        let conn = Conn {
-            dolt_bin: "dolt".into(),
-            host: "h".into(),
-            port: 1,
-            user: "u".into(),
-            password: "s3cret-pw".into(),
-            database: "d".into(),
-            data_dir: "/x".into(),
-            session: None,
-        };
-        for cmd in [conn.command(), conn.command_without_db()] {
-            let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
-            assert!(!args.iter().any(|a| a.contains("s3cret-pw")), "{args:?}");
-            assert!(!args.iter().any(|a| a == "-p" || a == "--password"), "{args:?}");
-            let env: Vec<_> = cmd.get_envs().filter(|(k, _)| *k == "DOLT_CLI_PASSWORD").collect();
-            assert_eq!(env.len(), 1);
-            assert_eq!(env[0].1.unwrap(), "s3cret-pw");
-        }
     }
 }
 
@@ -543,35 +412,5 @@ mod password_tests {
     #[test]
     fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
         assert!(password_from(Some("/missing".into()), None, no_read).is_err());
-    }
-}
-
-/// The local data dir dolt's client mode scans for database names: SPIRA_LC_DATA_DIR when set
-/// and non-empty, else a dedicated empty `<tmp>/spira-lc-data` (created on demand). Never /tmp
-/// itself: dolt lstat()s every entry there, and entries that vanish mid-scan made 27 of 40
-/// production calls fail with no message (2026-10-03), which enforcement turns
-/// into refused lifecycle decisions.
-pub(crate) fn data_dir_from(explicit: Option<String>, tmp: &std::path::Path) -> String {
-    if let Some(d) = explicit.filter(|d| !d.is_empty()) {
-        return d;
-    }
-    let d = tmp.join("spira-lc-data");
-    let _ = std::fs::create_dir_all(&d);
-    d.display().to_string()
-}
-
-#[cfg(test)]
-mod data_dir_tests {
-    use super::data_dir_from;
-
-    #[test]
-    fn unset_uses_a_dedicated_subdir_never_tmp_itself_and_explicit_wins() {
-        let t = testkit::TempDir::new("lc-data-dir");
-        let d = data_dir_from(None, t.path());
-        assert_eq!(d, t.path().join("spira-lc-data").display().to_string());
-        assert!(std::path::Path::new(&d).is_dir(), "created on demand");
-        assert_ne!(d, t.path().display().to_string());
-        assert_eq!(data_dir_from(Some(String::new()), t.path()), d);
-        assert_eq!(data_dir_from(Some("/x".into()), t.path()), "/x");
     }
 }
