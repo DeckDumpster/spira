@@ -192,6 +192,16 @@ tier = "T1"
 statement = "`ctx-meter.sh` limits: burn rate is measured over the span not pairwise; a projection appears only if the window fills before it resets; flat/single-sample/short/1-point histories project nothing; a reset is a boundary; an absent or malformed window renders nothing (never 0%); the sample file is pruned to 6h and deduplicated; env mode prints `-`/`?`; the line is ≤110 columns"
 
 [[use_case]]
+id = "UC-cockpit-observability-38"
+tier = "T1"
+statement = "`statusline-check.py` classifies settings as ours, other, absent, unreadable, stale (including through a /tmp wrapper) or fragile"
+
+[use_case.uncovered]
+reason = "statusline-check.py and test-statusline.sh retired together: no caller once doctor.sh dropped its status-line section"
+date = "2026-10-03"
+bead = "sp-nd9nj"
+
+[[use_case]]
 id = "UC-cockpit-observability-39"
 tier = "T1"
 statement = "`tokens.sh` attributes turns to aeon/archivist/session deduplicated by message id; `model-switch-report.sh` gives $/bead as `$?` (never `$0`) with no cost data; `released-defects.sh` counts only introductions that reached base before the fix and gives `?` for an unresolvable repo"
