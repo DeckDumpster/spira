@@ -52,24 +52,27 @@ JSONL
 for n in 1 2 3 4 5 6; do
     _insert_event_at "sp-b$n" requeued unjudged-slain "2026-09-29 03:58:$((40 + n))"
     _insert_event_at "sp-b$n" requeued unjudged-killed "2026-09-29 03:58:$((10 + n))"
+    _insert_event_at "sp-b$n" requeued unjudged-unlanded "2026-09-29 03:58:$((10 + n))"
+    _insert_event_at "sp-b$n" requeued unjudged-unlanded "2026-09-29 03:58:$((40 + n))"
 done
-_insert_event_at sp-b1 requeued unjudged-slain "2026-09-29 09:18:11"
-_insert_event_at sp-b2 requeued unjudged-slain "2026-09-29 09:18:16"
+_insert_event_at sp-b1 requeued unjudged-unlanded "2026-09-29 09:18:11"
+_insert_event_at sp-b2 requeued unjudged-unlanded "2026-09-29 09:18:16"
 # Genuinely independent: five beads, ten minutes apart.
 for n in 1 2 3 4 5; do
     _insert_event_at "sp-b$n" recurred spaced "2026-09-29 12:$((n * 10)):00"
 done
 
 out="$(census_events_run_sql 2>/dev/null | python3 "$HERE/census/count.py")"
-want "killed/slain folded to one class, two sweeps = 2 occurrences, 6 beads, 14 detections" \
-    "2 14 sp-requeue-unjudged-killed 6" "$out"
-nowant "no separate unjudged-slain class" "sp-requeue-unjudged-slain" "$out"
+want "charging unjudged cause: two sweeps = 2 occurrences, 6 beads, 14 detections" \
+    "2 14 sp-requeue-unjudged-unlanded 6" "$out"
+nowant "free killed/slain causes are not ranked at all" "sp-requeue-unjudged-slain" "$out"
+nowant "unjudged-killed is not ranked" "sp-requeue-unjudged-killed" "$out"
 want "independent events ten minutes apart still rank one each" "5 5 sp-recur-spaced" "$out"
 
 fold="$(_census_class_fold_map)"
 want "fold map aliases slain onto killed" "sp-requeue-unjudged-slain sp-requeue-unjudged-killed" "$fold"
 
 since="$(census_events_run_sql 1790649952 2>/dev/null | python3 "$HERE/census/count.py")"
-want "windowed query collapses the same way" "2 14 sp-requeue-unjudged-killed 6" "$since"
+want "windowed query collapses the same way" "2 14 sp-requeue-unjudged-unlanded 6" "$since"
 
 tl_summary
