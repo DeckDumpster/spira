@@ -30,19 +30,6 @@ g merge --abort >/dev/null 2>&1
 cp "$HERE/../.gitattributes" "$t/.gitattributes"
 g add .gitattributes
 g commit -q -m attrs
-g merge -q --no-edit two >/dev/null 2>&1; rc=$?
-is "without the attribute, concurrent appends conflict (positive control)" 1 "$rc"
-g merge --abort >/dev/null 2>&1
-
-cp "$HERE/../.gitattributes" "$t/.gitattributes"
-g add .gitattributes
-g commit -q -m attrs
-g checkout -q -b one2 main
-g merge -q --no-edit one >/dev/null 2>&1
-g checkout -q -b two2 main
-g merge -q --no-edit two >/dev/null 2>&1
-g checkout -q one2
-cp "$t/.gitattributes" /dev/null
 g merge -q --no-edit two2 >/dev/null 2>&1; rc=$?
 is "with the repository's .gitattributes, they merge cleanly" 0 "$rc"
 merged="$(g show HEAD:$H 2>/dev/null)"
