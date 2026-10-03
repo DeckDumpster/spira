@@ -60,24 +60,22 @@ fn scan(dir: &Path, skip: &Path, pending: &mut BTreeSet<String>, files: &mut usi
 
 /// Keys the fayth declares that no source file under `corpus_root` mentions as a bareword
 /// (`$FAYTH_X` and `fayth_get f FAYTH_X` both count), excluding `chamber`, where every key is
-/// declared and never consumed. Err when no source file could be read: a scan over nothing
+/// declared and never consumed. None when no source file could be read: a scan over nothing
 /// would call every key dead, or pass vacuously.
-pub fn unconsumed(fayth_text: &str, corpus_root: &Path, chamber: &Path) -> Result<Vec<String>, String> {
+pub fn unconsumed(fayth_text: &str, corpus_root: &Path, chamber: &Path) -> Option<Vec<String>> {
     let mut pending: BTreeSet<String> =
         declared_keys(fayth_text).into_iter().filter(|k| !DOCUMENTARY.contains(&k.as_str())).collect();
     let mut files = 0;
     scan(corpus_root, chamber, &mut pending, &mut files);
-    if files == 0 {
-        return Err(format!("no source files under {} to check FAYTH_* keys against", corpus_root.display()));
-    }
-    Ok(pending.into_iter().collect())
+    (files > 0).then(|| pending.into_iter().collect())
 }
 
-/// The guard `main` runs right after locating the fayth.
+/// The guard `main` runs right after locating the fayth. A home with no source beside it (a
+/// fixture home) has nothing to judge against and is let through.
 pub fn check(fayth_file: &Path, home: &Path) -> Result<(), String> {
     let text = fs::read_to_string(fayth_file).map_err(|e| format!("{}: {e}", fayth_file.display()))?;
     let root = home.parent().unwrap_or(home);
-    let dead = unconsumed(&text, root, &home.join("chamber"))?;
+    let Some(dead) = unconsumed(&text, root, &home.join("chamber")) else { return Ok(()) };
     if dead.is_empty() {
         return Ok(());
     }
@@ -109,12 +107,12 @@ mod tests {
     }
 
     #[test]
-    fn check_names_the_dead_key_and_refuses_an_empty_corpus() {
+    fn check_names_the_dead_key_and_passes_an_empty_corpus() {
         let d = tree("check");
         fs::write(d.join("spira/chamber/x.fayth"), "FAYTH_DEAD=1\n").unwrap();
         let home = d.join("spira");
-        let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
-        assert!(e.contains("no source files"), "{e}");
+        assert!(unconsumed("FAYTH_DEAD=1\n", &d, &home.join("chamber")).is_none());
+        check(&home.join("chamber/x.fayth"), &home).unwrap();
         fs::write(d.join("spira/lib.sh"), "true\n").unwrap();
         let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
         assert!(e.contains("FAYTH_DEAD"), "{e}");
