@@ -109,6 +109,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-groom.timer", true));
     m.units.push(t("spira-maechen.service", false));
     m.units.push(t("spira-maechen.timer", true));
+    m.units.push(t("spira-warden.service", false));
+    m.units.push(t("spira-warden.timer", true));
     m.units.push(t("spira-moot-sweep.service", false));
     m.units.push(t("spira-moot-sweep.timer", true));
     m.units.push(t("spira-verify-asks.service", false));

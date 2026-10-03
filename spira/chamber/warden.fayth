@@ -1,0 +1,27 @@
+# warden.fayth — the Warden: owns whether landed work is in force, and explains the anomalies
+# no probe could attribute. Woken by a scheduled sweep bead, never by plan work.
+
+FAYTH_NAME=warden
+FAYTH_DESC="Warden — judges whether landed work is in force and attributes unexplained anomalies"
+
+# The partition is the sweep label alone: a warden that matched the plan label would be a
+# second builder.
+FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_WARDEN_LABEL"
+FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
+
+FAYTH_MEMORY_PREFIXES="law-"
+FAYTH_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-a-concierge-duty-is-a-missing-mechanism,law-anomalies-are-not-coincidences,law-absence-needs-a-positive-control,law-escalate-decisions-not-problems"
+
+FAYTH_MODEL=claude-sonnet-5-5
+FAYTH_MAX_CONCURRENT=1
+FAYTH_LANE=warden
+
+FAYTH_TIMEOUT_SECONDS=1800
+FAYTH_LEASE_MINUTES=35
+FAYTH_HEARTBEAT_SECONDS=30
+
+# Reads the machine and writes findings into the graph; no Edit or Write, no git writes.
+FAYTH_TOOLS="Bash(systemctl status*),Bash(systemctl show*),Bash(systemctl list-*),Bash(systemctl is-*),Bash(journalctl*),Bash(*incident.sh*),Bash(*testenv *),Bash(*mail *),Bash(*bead.sh*),Bash(bd *),Bash(git log*),Bash(git show*),Bash(git status*),Bash(git diff*),Bash(git for-each-ref*),Bash(git rev-parse*),Bash(git -C * log*),Bash(git -C * show*),Bash(git -C * status*),Bash(git -C * diff*),Bash(git -C * for-each-ref*),Bash(git -C * rev-parse*),Bash(cat *),Bash(head *),Bash(tail *),Bash(ls*),Bash(grep *),Bash(awk *),Bash(find *),Bash(wc *),Bash(sort *),Bash(printf *),Bash(echo *),Bash(date*),Read,Glob,Grep,TodoWrite"
+FAYTH_PROJECT_INSTRUCTIONS=none
+
+FAYTH_SYSTEM_PROMPT=replace

@@ -1,0 +1,20 @@
+[Unit]
+Description=Spira Warden trigger — file the scheduled warden sweep bead
+Documentation=file://@SPIRA_HOME@/chamber/warden.fayth
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecCondition=/usr/bin/test -f @SPIRA_PROD@/chamber/warden.fayth
+ExecStart=@SPIRA_PROD@/warden-trigger.sh
+TimeoutStartSec=60
+StandardOutput=append:@SPIRA_RUN@/warden.log
+StandardError=append:@SPIRA_RUN@/warden.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work
