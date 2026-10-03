@@ -1035,6 +1035,37 @@ fn prune_keeps_the_newest_n_and_everything_rollback_or_a_hotfix_needs() {
     assert!(w.cfg.releases.join(format!(".stage-x-{}", std::process::id())).exists(), "a live builder's stage is left alone");
 }
 
+#[test]
+fn prune_keeps_a_release_a_worktree_git_hook_still_names() {
+    let w = World::new(); // keep = 2
+    let shas: Vec<String> = (0..4).map(|i| format!("{i}").repeat(40)).collect();
+    for s in &shas {
+        w.build(s).unwrap();
+    }
+    for (i, s) in shas.iter().enumerate() {
+        let rel = w.rel(s);
+        fsutil::make_writable(&rel);
+        let mut m = Manifest::load(&rel).unwrap();
+        m.built = Some(format!("2026-09-2{i}T00:00:00Z"));
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+        fsutil::set_readonly(&rel).unwrap();
+    }
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    activate::activate(&c, &shas[3], None).unwrap();
+    let run = w.cfg.run.clone().unwrap();
+    let wt = run.join("worktree/a");
+    let gitdir = run.join("gitdirs/a");
+    fs::create_dir_all(gitdir.join("hooks")).unwrap();
+    fs::create_dir_all(&wt).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+    fs::write(gitdir.join("hooks/pre-commit"), format!("bash \"{}/{}/spira/hooks/pre-commit\"\n", w.cfg.releases.display(), shas[0])).unwrap();
+
+    let p = crate::prune::prune(&w.cfg).unwrap();
+    assert!(p.kept.contains(&shas[0]) && w.rel(&shas[0]).exists(), "{p:?}");
+    assert!(p.removed.contains(&shas[1]), "{p:?}");
+}
+
 // ---------------------------------------------------------------- config
 
 #[test]

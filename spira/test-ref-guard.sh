@@ -231,4 +231,21 @@ echo "SEEN TO FAIL before this fix: case 16 above (pack-refs --all --prune exits
 git branch -D spira/sp-packme >/dev/null 2>&1
 is "case 17: unsanctioned delete of a now-packed bead branch is still refused" "yes" "$(alive spira/sp-packme)"
 
+echo
+echo "CASE 18: a worktree armed under release A still commits after A is deleted and B is current:"
+REL="$TR/rels"
+mkdir -p "$REL/aaaa" "$REL/bbbb"
+cp -r "$HERE/." "$REL/aaaa/spira/" 2>/dev/null || { mkdir -p "$REL/aaaa/spira"; cp -r "$HERE/." "$REL/aaaa/spira/"; }
+mkdir -p "$REL/bbbb/spira" && cp -r "$HERE/." "$REL/bbbb/spira/"
+ln -s aaaa "$REL/current"
+git worktree add -q "$TR/wt18" -b spira/sp-wt18 2>/dev/null
+cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$TR/wt18/"
+SPIRA_HOME="$REL/aaaa/spira" worktree-hooks.sh install "$TR/wt18" >/dev/null 2>&1
+rm -rf "$REL/aaaa"
+ln -sfn bbbb "$REL/current"
+echo x > "$TR/wt18/f18"
+git -C "$TR/wt18" add f18 >/dev/null 2>&1
+git -C "$TR/wt18" commit -qm "sp-test: after release A is gone" >/dev/null 2>&1
+is "case 18: commit succeeds after the release it was armed under is deleted" "0" "$?"
+
 tl_summary
