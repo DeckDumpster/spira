@@ -123,6 +123,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-gh-intake.timer", true));
     m.units.push(t("spira-verdict.service", false));
     m.units.push(t("spira-verdict.timer", true));
+    m.units.push(t("spira-publish.service", false));
+    m.units.push(t("spira-publish.timer", true));
     m.units.push(t("spira-straggler-sweep.service", false));
     m.units.push(t("spira-straggler-sweep.timer", true));
     m.units.push(t("spira-sop-lint.service", false));

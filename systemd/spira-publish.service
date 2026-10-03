@@ -1,0 +1,21 @@
+[Unit]
+Description=Spira publish — settle a stale publish PR and open the next
+Documentation=file://@SPIRA_PROD_ROOT@/queue/DESIGN.md
+After=default.target
+
+[Service]
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Type=oneshot
+ExecStart=@SPIRA_PROD_ROOT@/bin/queue publish-settle
+Environment=SPIRA_HOME=@SPIRA_PROD@
+TimeoutStartSec=300
+StandardOutput=append:@SPIRA_RUN@/publish.log
+StandardError=append:@SPIRA_RUN@/publish.log
+
+[Install]
+WantedBy=default.target
+
+[X-Spira]
+Plane=work
