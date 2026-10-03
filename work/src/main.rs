@@ -72,7 +72,7 @@ fn main() {
 /// wrong directory recorded local/main as the tip and the bead could never certify.
 fn read_tip(bead: &str) -> Option<String> {
     let branch = format!("refs/heads/spira/{bead}");
-    if let Ok(out) = Command::new("git").args(["rev-parse", "--verify", "-q", &branch]).output() {
+    if let Ok(out) = Command::new("timeout").args(["5", "git", "rev-parse", "--verify", "-q", &branch]).output() {
         if out.status.success() {
             return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
         }
