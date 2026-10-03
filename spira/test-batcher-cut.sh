@@ -242,11 +242,22 @@ chmod +x "$SH/forge-fixture.sh"
 cat > "$SH/spira-lc-stub.sh" <<'LCSTUB'
 #!/usr/bin/env bash
 log="${SPIRA_LC_STUB_LOG:?}"
+certified_rows() {
+    local f id st tip ep sep=''
+    printf '['
+    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+        [ -f "$f" ] || continue
+        read -r st tip ep < "$f"
+        [ "$st" = CERTIFIED ] || continue
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+    done
+    printf ']\n'
+}
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
     cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
-    list) printf '[]\n'; exit 0 ;;   # lc_probe: the machine answers with an (empty) array
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
 esac

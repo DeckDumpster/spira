@@ -121,8 +121,19 @@ printf 'CERTIFIED %s %s\n' "$B_TIP" "$(date +%s)" > "$B_LANDSTATE/sp-mbase"
 mkdir -p "$B_SH/lc-bin"
 cat > "$B_SH/lc-bin/spira-lc" <<'LCEOF'
 #!/usr/bin/env bash
+certified_rows() {
+    local f id st tip ep sep=''
+    printf '['
+    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+        [ -f "$f" ] || continue
+        read -r st tip ep < "$f"
+        [ "$st" = CERTIFIED ] || continue
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+    done
+    printf ']\n'
+}
 case "${1:-}" in
-    list) printf '[]\n' ;;
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi ;;
     show) printf '{"bead":{}}\n' ;;
 esac
 exit 0
