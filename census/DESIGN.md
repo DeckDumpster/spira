@@ -26,7 +26,7 @@ deliberate-cause event silently** (they are real state, shown separately, never 
   Re-deriving 400-character generated SQL strings in Rust would be exactly the duplication
   that comment exists to prevent, and it buys nothing: this bead's scope is `spira/census.sh`,
   not `spira/lib.sh`.
-- **The six `census/*.py` scripts** (`cluster.py`, `cluster_cluster_merge.py`, `covers.py`, `covers_closed.py`,
+- **The six `census/*.py` scripts** (`cluster.py`, `cluster_merge.py`, `covers.py`, `covers_closed.py`,
   `handwritten.py`, `deliberate.py`) keep doing the actual class-name mapping, ranking and
   JSON parsing, run as subprocesses exactly as bash ran them (same argv shapes: file-path
   arguments for `cluster_merge.py`/`covers.py`/`covers_closed.py`, stdin for the rest). This mirrors
