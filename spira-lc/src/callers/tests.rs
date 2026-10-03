@@ -374,10 +374,12 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
     let r = f.bead("sp-s", BeadState::Certified);
     r.tip = Some("aaa111".into());
     r.gate_key = Some("keyA".into());
-    // Same tip: no Submit, the pass is not a SUBMITTED transition — skipped, rc 3.
+    // Same tip: the same pass again is idempotent — applied as "already", no event. A red
+    // verdict on it is still not a SUBMITTED transition — skipped, rc 3.
     let a = go(&mut f, "certify", &["sp-s", "aaa111", "pass", "keyA"]);
-    assert_eq!(a.code, REFUSED);
-    assert_eq!(a.cert_log.unwrap().0, "skip");
+    assert_eq!((a.code, a.cert_log.unwrap().0), (APPLIED, "already".into()));
+    let a = go(&mut f, "certify", &["sp-s", "aaa111", "red", "branch-red"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
     assert!(f.events.is_empty());
     // Moved tip: Submit voids it, then the verdict lands on SUBMITTED.
     assert_eq!(go(&mut f, "certify", &["sp-s", "bbb222", "pass", "keyA"]).code, APPLIED);

@@ -524,6 +524,12 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     let Some((state, version)) = reach_submitted(m, id, tip, actor) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
+    // A pass on a row already CERTIFIED at this tip (reach_submitted resubmits any other
+    // tip) is the same verdict again: idempotent success, no event. Answering "skip" made a
+    // fail-closed caller treat a certified bead as uncertified (sp-e9o2y's CHECK6).
+    if state == "CERTIFIED" && outcome == "pass" {
+        return Answer::cert(APPLIED, "already", format!("pass tip={tip} — already CERTIFIED"));
+    }
     if state != "SUBMITTED" {
         return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
     }
