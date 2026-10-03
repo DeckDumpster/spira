@@ -229,7 +229,7 @@ JSONL2
         SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
         SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
         SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
-        cockpit-collect once 2>/dev/null)"
+        cockpit-collect once 2>"$TMP/cc.err")"; cat "$TMP/cc.err" >&2
 
     cval() { printf '%s' "$cout" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
