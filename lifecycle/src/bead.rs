@@ -186,7 +186,16 @@ pub enum BeadEventKind {
     Reply { message_id: String },
     /// The ask was withdrawn with no answer. Lifts the ask hold by its own event, never by a reply.
     AskWithdrawn,
+    /// The classifier's own correction of a row it wrote from a rule that has since changed.
+    /// Only actor `classifier` may send it, never to a WORKING row, and a terminal row accepts
+    /// it only while its reason is [`RESIDUE_RULE`] — the default the classifier writes when
+    /// it saw no evidence at all, not a conclusion anything else acted on.
+    Reclassify { state: BeadState, rule: String },
 }
+
+/// The classifier's no-evidence default for a closed bead; the one terminal reason a
+/// [`BeadEventKind::Reclassify`] may overwrite.
+pub const RESIDUE_RULE: &str = "residue-closed-no-landing-evidence";
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BeadEvent {
@@ -314,6 +323,22 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             new.version += 1;
             Outcome::applied(new)
         }
+        BeadEventKind::Reclassify { state, rule } => {
+            if ev.actor != "classifier" || row.state == BeadState::Working {
+                return illegal(row, &ev.kind);
+            }
+            if row.state.is_terminal() && row.reason.as_deref() != Some(RESIDUE_RULE) {
+                return terminal(row);
+            }
+            if row.state == *state && row.reason.as_deref() == Some(rule.as_str()) {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.state = *state;
+            new.reason = Some(rule.clone());
+            new.version += 1;
+            Outcome::applied(new)
+        }
         BeadEventKind::Hold { kind, cause, detail } => {
             if row.state.is_terminal() {
                 return terminal(row);
@@ -424,7 +449,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
 
         BeadState::Working => match kind {
@@ -477,7 +502,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -530,7 +555,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -573,7 +598,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => {
                 illegal(row, kind)
             }
         },
@@ -621,7 +646,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -655,7 +680,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -668,7 +693,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => terminal(row),
         },
     }
 }
@@ -843,6 +868,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn reclassify(state: BeadState, rule: &str) -> BeadEventKind {
+        BeadEventKind::Reclassify { state, rule: rule.into() }
+    }
+
+    fn classifier_ev(expect: BeadState, kind: BeadEventKind) -> BeadEvent {
+        BeadEvent { actor: "classifier".into(), ..ev(expect, 0, kind) }
+    }
+
+    #[test]
+    fn reclassify_overwrites_only_the_residue_default_on_a_terminal_row() {
+        let mut r = row(BeadState::Dropped);
+        r.reason = Some(RESIDUE_RULE.into());
+        let out = apply(&r, &classifier_ev(BeadState::Dropped, reclassify(BeadState::Landed, "terminal-landing-line")));
+        assert!(out.applied);
+        assert_eq!(out.row.state, BeadState::Landed);
+        assert_eq!(out.row.reason.as_deref(), Some("terminal-landing-line"));
+        assert_eq!(out.row.version, 1);
+
+        let mut decided = row(BeadState::Dropped);
+        decided.reason = Some("unwanted".into());
+        assert!(!apply(&decided, &classifier_ev(BeadState::Dropped, reclassify(BeadState::Landed, "x"))).applied);
+        assert!(!apply(&row(BeadState::Landed), &classifier_ev(BeadState::Landed, reclassify(BeadState::Dropped, "x"))).applied);
+    }
+
+    #[test]
+    fn reclassify_is_the_classifiers_alone_and_never_touches_a_holder() {
+        let r = row(BeadState::Submitted);
+        assert!(!apply(&r, &ev(BeadState::Submitted, 0, reclassify(BeadState::Dropped, "x"))).applied);
+        assert!(apply(&r, &classifier_ev(BeadState::Submitted, reclassify(BeadState::Dropped, "x"))).applied);
+        let w = row(BeadState::Working);
+        assert!(!apply(&w, &classifier_ev(BeadState::Working, reclassify(BeadState::Dropped, "x"))).applied);
+    }
+
+    #[test]
+    fn reclassify_to_the_same_state_and_rule_is_refused() {
+        let mut r = row(BeadState::Dropped);
+        r.reason = Some(RESIDUE_RULE.into());
+        assert!(!apply(&r, &classifier_ev(BeadState::Dropped, reclassify(BeadState::Dropped, RESIDUE_RULE))).applied);
     }
 
     #[test]
