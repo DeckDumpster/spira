@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{czar_ok, idents, lock_held_by_caller, read_text, repo_path, resolve, take_lock, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, idents, lifecycle_on, require_lc, lock_held_by_caller, read_text, repo_path, resolve, take_lock, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::model::{LandMode, Member};
 use crate::records::{self, write_atomic};
@@ -132,6 +132,10 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
             Err(rc) => return rc,
         }
     };
+    let lc_on = lifecycle_on(w);
+    if lc_on && require_lc(w, "land-local").is_err() {
+        return FAIL;
+    }
     let Some(base_sha) = w.git.rev_parse(&path, &base) else {
         w.err(format!("queue.sh land-local: cannot resolve {base}"));
         return FAIL;
@@ -236,6 +240,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         }
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
+    let lc_faults = if lc_on { ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count() } else { 0 };
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
     let outcome = plan.as_ref().map(|p| super::deploy::run(w, p, &head));
@@ -272,7 +277,45 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     if matches!(outcome, Some(super::deploy::Outcome::Fault(_))) {
         return super::DEPLOY_FAULT;
     }
+    if lc_faults > 0 {
+        return FAIL;
+    }
     OK
+}
+
+/// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered
+/// (-> LANDED), from the row's own state and version. The landing is already recorded, so a
+/// refusal is reported, never undone; false when the member did not reach LANDED.
+fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
+    let fail = |why: String| {
+        w.err(format!("queue.sh land-local: spira-lc: {}: {why} — landed on the ref but not LANDED on spira-lc", m.id));
+        false
+    };
+    if !w.git.is_ancestor(path, &m.tip, head) {
+        return fail(format!("tip {} is not an ancestor of {head}", m.tip));
+    }
+    let Some((mut state, version)) = w.lc.bead_state(&m.id) else {
+        return fail("no lifecycle row".into());
+    };
+    let Ok(mut v) = version.trim().parse::<u64>() else {
+        return fail(format!("unreadable version {version:?}"));
+    };
+    let who = actor(w);
+    if state == "CERTIFIED" {
+        if let Err((rc, e)) = w.lc.bead_event(&m.id, &state, &v.to_string(), &who, "\"Deliver\"") {
+            return fail(format!("Deliver refused (rc={rc}): {e}"));
+        }
+        state = "IN_DELIVERY".into();
+        v += 1;
+    }
+    if state != "IN_DELIVERY" {
+        return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
+    }
+    let kind = format!("{{\"Delivered\":{{\"merge_sha\":\"{}\",\"proof\":\"ancestry\"}}}}", m.tip);
+    match w.lc.bead_event(&m.id, &state, &v.to_string(), &who, &kind) {
+        Ok(()) => true,
+        Err((rc, e)) => fail(format!("Delivered refused (rc={rc}): {e}")),
+    }
 }
 
 /// §8 D13's precondition for a landing of the harness while a release is in force: the

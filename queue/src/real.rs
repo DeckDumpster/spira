@@ -724,6 +724,20 @@ impl Lc for RealLc {
             Err((rc, out.trim().to_string()))
         }
     }
+    fn bead_state(&self, bead: &str) -> Option<(String, String)> {
+        let out = self.stdout(&["show", bead]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        let row = v.get("bead")?;
+        Some((json_str(row, "state")?, json_str(row, "version")?))
+    }
+    fn bead_event(&self, bead: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["event", "bead", bead, "--expect", state, "--version", version, "--actor", actor, "--kind", kind]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
+    }
     fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)> {
         let (rc, out) = self.run(&["land", batch_id, "--expect", "GREEN", "--version", version, "--actor", actor, "--sha", sha]);
         if rc == 0 {

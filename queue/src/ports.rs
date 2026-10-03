@@ -234,6 +234,10 @@ pub trait Lc {
     fn eject_member(&self, batch_id: &str, bead: &str, state: &str, version: &str, actor: &str, reason: &str) -> Result<(), (i32, String)>;
     /// `event batch <id> --expect S --version V --actor A --kind K` (one CAS'd event).
     fn batch_event(&self, batch_id: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)>;
+    /// `show <bead>` → the bead row's (state, version); None when it has no row.
+    fn bead_state(&self, bead: &str) -> Option<(String, String)>;
+    /// `event bead <id> --expect S --version V --actor A --kind K` (one CAS'd event).
+    fn bead_event(&self, bead: &str, state: &str, version: &str, actor: &str, kind: &str) -> Result<(), (i32, String)>;
     /// `land <id> --expect GREEN --version V --actor A --sha S`.
     fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)>;
     /// A reachability probe (one read against the lifecycle database). Err names why.

@@ -375,13 +375,14 @@ impl Forge for FForge {
 
 struct FLc {
     available: Cell<bool>,
+    bead_rows: RefCell<std::collections::HashMap<String, (String, String)>>,
     in_delivery: RefCell<Result<Vec<LcBeadRow>, String>>,
     calls: RefCell<Vec<String>>,
 }
 
 impl Default for FLc {
     fn default() -> Self {
-        FLc { available: Cell::new(false), in_delivery: RefCell::new(Ok(Vec::new())), calls: RefCell::default() }
+        FLc { available: Cell::new(false), bead_rows: RefCell::default(), in_delivery: RefCell::new(Ok(Vec::new())), calls: RefCell::default() }
     }
 }
 
@@ -415,6 +416,14 @@ impl Lc for FLc {
     }
     fn batch_event(&self, id: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
         self.calls.borrow_mut().push(format!("event batch {id} {s} {v} {kind}"));
+        Ok(())
+    }
+    fn bead_state(&self, bead: &str) -> Option<(String, String)> {
+        self.calls.borrow_mut().push(format!("show {bead}"));
+        Some(self.bead_rows.borrow().get(bead).cloned().unwrap_or(("CERTIFIED".into(), "3".into())))
+    }
+    fn bead_event(&self, bead: &str, s: &str, v: &str, _: &str, kind: &str) -> Result<(), (i32, String)> {
+        self.calls.borrow_mut().push(format!("event bead {bead} {s} {v} {kind}"));
         Ok(())
     }
     fn land_batch(&self, id: &str, v: &str, _: &str, sha: &str) -> Result<(), (i32, String)> {
@@ -1466,6 +1475,66 @@ fn land_local_lands_marks_and_archives() {
     assert!(t.lib.has("land_mark sp-b LANDED h1"), "a bare id landed at the head");
     assert!(t.lib.has("close_on_land sp-b h1"));
     assert!(t.out().contains("queue.sh land-local: local/main fast-forwarded to h1 (round 1, archived at refs/archive/rounds/1)"));
+    t.assert_lc_untouched();
+}
+
+#[test]
+fn land_local_with_lifecycle_on_delivers_and_delivers_each_member_at_its_version() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.lifecycle_on();
+    t.git.ancestor("ta", "h1");
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta,sp-b"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    let ev = |c: &str| calls.iter().position(|x| x == c).unwrap_or_else(|| panic!("missing {c}: {calls:?}"));
+    let a = (
+        ev("event bead sp-a CERTIFIED 3 \"Deliver\""),
+        ev("event bead sp-a IN_DELIVERY 4 {\"Delivered\":{\"merge_sha\":\"ta\",\"proof\":\"ancestry\"}}"),
+    );
+    assert!(a.0 < a.1);
+    ev("event bead sp-b CERTIFIED 3 \"Deliver\"");
+    ev("event bead sp-b IN_DELIVERY 4 {\"Delivered\":{\"merge_sha\":\"h1\",\"proof\":\"ancestry\"}}");
+}
+
+#[test]
+fn land_local_with_lifecycle_on_resumes_a_member_already_in_delivery() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.lifecycle_on();
+    t.git.ancestor("ta", "h1");
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(!calls.contains("\"Deliver\""), "{calls}");
+    assert!(calls.contains("event bead sp-a IN_DELIVERY 7 {\"Delivered\""), "{calls}");
+}
+
+#[test]
+fn land_local_with_lifecycle_on_does_not_deliver_a_tip_that_is_not_in_the_head() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.lifecycle_on();
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:tz"]), 1);
+    assert!(t.err().contains("sp-a: tip tz is not an ancestor of h1"), "{}", t.err());
+    assert!(!t.lc.calls.borrow().iter().any(|c| c.starts_with("event bead")));
+}
+
+#[test]
+fn land_local_with_lifecycle_on_and_spira_lc_unreachable_lands_nothing() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    t.config.lifecycle.set(true);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 1);
+    assert!(t.err().contains("lifecycle_enforce is on and spira-lc is unreachable (no spira-lc program) — refused, nothing changed"), "{}", t.err());
+    assert_eq!(t.landed_ref().as_deref(), Some("b0"));
+    assert!(!t.lib.has("land_mark"));
+}
+
+#[test]
+fn land_local_with_lifecycle_off_emits_no_lifecycle_event() {
+    let t = T::new(LandMode::QueueLocal);
+    local_repo(&t);
+    assert_eq!(t.run(&["land-local", "--head", "h1", "--members", "sp-a:ta"]), 0, "{}", t.err());
     t.assert_lc_untouched();
 }
 
