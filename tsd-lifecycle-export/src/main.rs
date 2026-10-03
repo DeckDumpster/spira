@@ -226,7 +226,12 @@ impl LcRoConn {
             None => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
         };
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        let data_dir = std::env::var("SPIRA_LC_DATA_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let data_dir = std::env::var("SPIRA_LC_DATA_DIR").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| {
+            // Never /tmp itself: dolt lstat()s every entry and vanishing ones fail the call.
+            let d = std::env::temp_dir().join("spira-lc-data");
+            let _ = std::fs::create_dir_all(&d);
+            d.display().to_string()
+        });
         Ok(LcRoConn { dolt_bin, host, port, user, password, database, data_dir })
     }
 

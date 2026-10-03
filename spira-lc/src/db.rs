@@ -70,7 +70,7 @@ impl Conn {
         // dolt's remote client mode still resolves a local data-dir for bookkeeping even
         // when --host/--port point elsewhere; an unset or vanished cwd makes it fail with
         // "failed to load database names" before it ever opens the connection.
-        let data_dir = std::env::var("SPIRA_LC_DATA_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let data_dir = data_dir_from(std::env::var("SPIRA_LC_DATA_DIR").ok(), &std::env::temp_dir());
         Ok(Conn { dolt_bin, host, port, user, password, database, data_dir, session: None })
     }
 
@@ -509,5 +509,35 @@ mod password_tests {
     #[test]
     fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
         assert!(password_from(Some("/missing".into()), None, no_read).is_err());
+    }
+}
+
+/// The local data dir dolt's client mode scans for database names: SPIRA_LC_DATA_DIR when set
+/// and non-empty, else a dedicated empty `<tmp>/spira-lc-data` (created on demand). Never /tmp
+/// itself: dolt lstat()s every entry there, and entries that vanish mid-scan made 27 of 40
+/// production calls fail with no message (2026-10-03), which enforcement turns
+/// into refused lifecycle decisions.
+pub(crate) fn data_dir_from(explicit: Option<String>, tmp: &std::path::Path) -> String {
+    if let Some(d) = explicit.filter(|d| !d.is_empty()) {
+        return d;
+    }
+    let d = tmp.join("spira-lc-data");
+    let _ = std::fs::create_dir_all(&d);
+    d.display().to_string()
+}
+
+#[cfg(test)]
+mod data_dir_tests {
+    use super::data_dir_from;
+
+    #[test]
+    fn unset_uses_a_dedicated_subdir_never_tmp_itself_and_explicit_wins() {
+        let t = testkit::TempDir::new("lc-data-dir");
+        let d = data_dir_from(None, t.path());
+        assert_eq!(d, t.path().join("spira-lc-data").display().to_string());
+        assert!(std::path::Path::new(&d).is_dir(), "created on demand");
+        assert_ne!(d, t.path().display().to_string());
+        assert_eq!(data_dir_from(Some(String::new()), t.path()), d);
+        assert_eq!(data_dir_from(Some("/x".into()), t.path()), "/x");
     }
 }
