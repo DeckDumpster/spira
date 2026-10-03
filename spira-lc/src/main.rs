@@ -152,7 +152,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
         ),
     }
 }
@@ -203,6 +203,9 @@ fn cmd_show(args: &[String], conn: &Conn) -> (i32, String) {
 }
 
 fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
+    if args.iter().any(|a| a == "--delivery") {
+        return cmd_list_delivery(args, conn);
+    }
     let mut clauses = Vec::new();
     if let Some(state) = flag(args, "--state") {
         clauses.push(format!("state = '{}'", rows::escape(&state)));
@@ -217,8 +220,32 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
+    let since = entered_at_sql("bead", "bead.bead_id", "bead.state");
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, {since} AS since FROM bead{where_clause} ORDER BY bead_id"
+    );
+    match conn.query(&sql) {
+        Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
+        Err(e) => (CANNOT_TELL, format!("cannot tell: {e:?}")),
+    }
+}
+
+/// When the row entered its current state: the `at` of the latest applied event that
+/// landed the machine there, read from the append-only event log.
+fn entered_at_sql(machine: &str, key_col: &str, state_col: &str) -> String {
+    format!(
+        "(SELECT MAX(e.at) FROM event e WHERE e.machine = '{machine}' AND e.lc_key = {key_col} AND e.applied = 1 AND e.to_state = {state_col})"
+    )
+}
+
+fn cmd_list_delivery(args: &[String], conn: &Conn) -> (i32, String) {
+    let where_clause = match flag(args, "--state") {
+        Some(state) => format!(" WHERE delivery.state = '{}'", rows::escape(&state)),
+        None => String::new(),
+    };
+    let entered = entered_at_sql("delivery", "delivery.bead_id", "delivery.state");
+    let sql = format!(
+        "SELECT bead_id, mode, state, batch_id, pr, merge_sha, version, {entered} AS entered_at FROM delivery{where_clause} ORDER BY bead_id"
     );
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
@@ -456,5 +483,19 @@ fn refusal_name(r: &lifecycle::Refusal) -> String {
         lifecycle::Refusal::NotInStack { .. } => "NotInStack".to_string(),
         lifecycle::Refusal::StackStale { .. } => "StackStale".to_string(),
         lifecycle::Refusal::AwaitingReply { .. } => "AwaitingReply".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entered_at_reads_the_latest_applied_event_into_the_current_state() {
+        let sql = entered_at_sql("delivery", "delivery.bead_id", "delivery.state");
+        assert!(sql.contains("MAX(e.at)"));
+        assert!(sql.contains("e.machine = 'delivery'"));
+        assert!(sql.contains("e.applied = 1"));
+        assert!(sql.contains("e.to_state = delivery.state"));
     }
 }
