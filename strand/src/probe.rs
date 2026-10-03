@@ -259,7 +259,7 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
 }
 
 fn unit_count(cfg: &Config, pattern: &str, exclude: Option<&str>) -> u32 {
-    let o = run(&cfg.systemctl, &["--user", "list-units", pattern, "--no-legend"], None, &[]);
+    let o = run("timeout", &["5", &cfg.systemctl, "--user", "list-units", pattern, "--no-legend"], None, &[]);
     o.stdout
         .lines()
         .filter(|l| !l.trim().is_empty())

@@ -320,9 +320,15 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
                 handled += 1;
             }
             Step::Escalate { detail } => {
-                if r.row.kind == "starved" && !starved_confirmed(cfg, &r.part) {
-                    log(&format!("check: [{}] starved cleared or unverifiable at raise time — no ask written", r.part));
-                    continue;
+                if r.row.kind == "starved" {
+                    let live = lane_live_now(cfg, probe::roster(cfg, Some(&r.part)));
+                    if !starved_stands(live) {
+                        log(&format!("check: [{}] starved cleared at raise time — no ask written", r.part));
+                        continue;
+                    }
+                    if live.is_none() {
+                        warn(&format!("check: [{}] lane liveness unreadable at raise time — escalating on the classification", r.part));
+                    }
                 }
                 escalate(cfg, &r.part, &r.row.kind, &r.row.id, &detail, &r.row.action);
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Escalated);
@@ -338,15 +344,15 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
 }
 
 /// Live aeons of the partition's personas, read now rather than from the classification's
-/// snapshot. None when the roster cannot be read: unknown is not starved, and the row stays
-/// unescalated so the next pass asks again.
+/// snapshot. None when the roster cannot be read.
 fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
     let specs = specs.ok()?;
     Some(specs.iter().flat_map(|s| s.fayths.iter()).map(|f| probe::aeon_count(cfg, f, None)).sum())
 }
 
-fn starved_confirmed(cfg: &Config, part: &str) -> bool {
-    lane_live_now(cfg, probe::roster(cfg, Some(part))) == Some(0)
+/// Only a lane read as live withholds the ask; a failed probe must not suppress it silently.
+fn starved_stands(live: Option<u32>) -> bool {
+    !matches!(live, Some(n) if n > 0)
 }
 
 /// Marks are written as they happen, so a pass that dies half-way cannot re-escalate what it
@@ -814,7 +820,10 @@ mod tests {
         assert_eq!(lane_live_now(&live, spec()), Some(1));
         let none = mk("true");
         assert_eq!(lane_live_now(&none, spec()), Some(0), "positive control: an empty lane reads as starved");
-        assert_eq!(lane_live_now(&none, Err("roster".into())), None, "unreadable is not starved");
+        assert_eq!(lane_live_now(&none, Err("roster".into())), None);
+        assert!(starved_stands(None), "an unreadable lane still escalates");
+        assert!(starved_stands(Some(0)));
+        assert!(!starved_stands(Some(1)));
     }
 
     #[test]
