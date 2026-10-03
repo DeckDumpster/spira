@@ -24,10 +24,12 @@ pub struct Repo {
 #[derive(Clone, Debug)]
 pub struct Env {
     pub queue_dir: PathBuf,
-    pub landstate: PathBuf,
     pub db: Option<PathBuf>,
     pub bd: String,
     pub express_label: String,
+    /// `spira-lc` — the one binary allowed to touch `spira_lifecycle` (see `read_certified`).
+    pub lc_bin: Option<PathBuf>,
+    pub lc_timeout: u64,
 }
 
 /// `key=value` lines, as the queue writes its open-batch file. Ok(None) when absent.
@@ -106,28 +108,21 @@ pub fn read_bisect(dir: &Path) -> Result<Option<(Vec<String>, u64)>, String> {
     Ok(Some((members(members_field).into_iter().map(|m| m.id).collect(), mtime)))
 }
 
-/// Every bead whose landstate record reads CERTIFIED. Records are shared across repos; the
-/// caller narrows by the bead's `repo:` label.
-pub fn read_certified(landstate: &Path) -> Result<Vec<String>, String> {
-    let rd = fs::read_dir(landstate).map_err(|e| format!("{}: {e}", landstate.display()))?;
-    let mut out = Vec::new();
-    for ent in rd.flatten() {
-        let name = ent.file_name().to_string_lossy().to_string();
-        if !name.starts_with("sp-") || name.contains(".gate-key") || name.contains(".tmp") {
-            continue;
-        }
-        // A bead id may itself contain a dot (sp-s088v.5); a sidecar is `<id>.<word>`.
-        if let Some((_, ext)) = name.rsplit_once('.') {
-            if ext.chars().any(|c| c.is_ascii_alphabetic()) && ext.len() > 2 {
-                continue;
-            }
-        }
-        if let Ok(t) = fs::read_to_string(ent.path()) {
-            if t.split_whitespace().next() == Some("CERTIFIED") {
-                out.push(name);
-            }
-        }
-    }
+/// Every bead `spira-lc` reports CERTIFIED — `spira_lifecycle` is the one place this state
+/// lives now, and `spira-lc` is the one binary allowed to query it (design intent #6), so
+/// this shells out rather than reading a directory or re-deriving the query in SQL here.
+/// Records are shared across repos; the caller narrows by the bead's `repo:` label.
+pub fn read_certified(env: &Env) -> Result<Vec<String>, String> {
+    let bin = env.lc_bin.as_ref().ok_or_else(|| "SPIRA_LC_BIN unset".to_string())?;
+    let mut cmd = Command::new("timeout");
+    cmd.arg(env.lc_timeout.to_string()).arg(bin).args(["list", "--state", "CERTIFIED"]);
+    let text = run(&mut cmd, "spira-lc list --state CERTIFIED")?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("spira-lc list: unparsed output: {e}"))?;
+    let items = match v {
+        serde_json::Value::Array(a) => a,
+        o => vec![o],
+    };
+    let mut out: Vec<String> = items.into_iter().filter_map(|it| it.get("bead_id").and_then(|x| x.as_str()).map(str::to_string)).collect();
     out.sort();
     Ok(out)
 }
@@ -339,7 +334,7 @@ pub fn snapshot(env: &Env, repo: &Repo, prev: &RepoState, now: u64) -> Snapshot 
         Ok(p) => s.publish = p,
         Err(e) => s.errors.push(e),
     }
-    let certified = match read_certified(&env.landstate) {
+    let certified = match read_certified(env) {
         Ok(c) => c,
         Err(e) => {
             s.errors.push(e);
@@ -474,6 +469,47 @@ echo ok"#,
         let (out, n) = run_stub(r#"echo "Error: something else went wrong" >&2; exit 1"#);
         assert!(out.is_err());
         assert_eq!(n, 1);
+    }
+
+    fn make_stub(body: &str) -> (testkit::TempDir, PathBuf) {
+        let dir = scratch_path("stub");
+        let path = dir.join("spira-lc");
+        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        (dir, path)
+    }
+
+    fn env_with_lc(bin: PathBuf) -> Env {
+        Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), express_label: "express".into(), lc_bin: Some(bin), lc_timeout: 5 }
+    }
+
+    // POSITIVE CONTROL: a stub that answers with something other than the JSON array
+    // `spira-lc list` produces is how this test was seen to fail first — read_certified must
+    // surface an error rather than silently reporting zero certified beads.
+    #[test]
+    fn read_certified_errors_on_unparseable_output() {
+        let (_dir, stub) = make_stub("echo not-json");
+        let err = read_certified(&env_with_lc(stub.clone())).unwrap_err();
+        assert!(err.contains("unparsed output"), "{err}");
+    }
+
+    #[test]
+    fn read_certified_calls_spira_lc_list_state_certified() {
+        let (_dir, stub) = make_stub(
+            r#"[ "$1" = list ] && [ "$2" = --state ] && [ "$3" = CERTIFIED ] || { echo "unexpected args: $*" >&2; exit 2; }
+echo '[{"bead_id":"sp-b","state":"CERTIFIED"},{"bead_id":"sp-a","state":"CERTIFIED"}]'"#,
+        );
+        let out = read_certified(&env_with_lc(stub.clone())).unwrap();
+        assert_eq!(out, vec!["sp-a".to_string(), "sp-b".to_string()]);
+    }
+
+    #[test]
+    fn read_certified_needs_spira_lc_bin() {
+        let env = Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), express_label: "express".into(), lc_bin: None, lc_timeout: 5 };
+        let err = read_certified(&env).unwrap_err();
+        assert!(err.contains("SPIRA_LC_BIN unset"), "{err}");
     }
 
     // POSITIVE CONTROL: a connection that never recovers is retried exactly once, not forever.

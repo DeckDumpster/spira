@@ -1,6 +1,6 @@
 //! queue-watch — streams merge-queue transitions for every `queue`/`queue.forge`/
-//! `queue.local` repository in spira.toml, derived from queue state and the forge, never
-//! from log lines.
+//! `queue.local` repository in spira.toml, derived from queue state, spira-lc and the
+//! forge, never from log lines.
 //!
 //!   queue-watch watch  [--interval S] [--ticks N] [--json]   loop; one line per event
 //!   queue-watch health                                      exit non-zero when the last
@@ -10,8 +10,8 @@
 //!
 //! Common flags: --run DIR (SPIRA_RUN), --db DIR (SPIRA_DB), --home DIR (SPIRA_HOME, where
 //! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML,
-//! $XDG_CONFIG_HOME/spira, /etc/spira — no $SPIRA_REPO tier; matches conf.sh's bash search
-//! as of sp-9hwim, sp-hconl).
+//! $XDG_CONFIG_HOME/spira, /etc/spira — no $SPIRA_REPO tier). The certified pool is read
+//! via SPIRA_LC_BIN (spira-lc), never a landstate directory scan.
 //!
 //! Runs as a watchd `daemon` row, so a reader latches on with `watchd tail queue-watch`
 //! instead of hand-rolling a pipeline over the queue's log.
@@ -214,10 +214,11 @@ fn watch(o: &Opts) -> Result<(), String> {
     let home = o.home.clone().ok_or("SPIRA_HOME unset (pass --home)")?;
     let env_ = Env {
         queue_dir: env::var_os("SPIRA_QUEUE_DIR").map(PathBuf::from).unwrap_or_else(|| run.join("queue")),
-        landstate: run.join("landstate"),
         db: o.db.clone(),
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
+        lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
+        lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
     };
     let lim = Limits {
         idle_stall_secs: env::var("QUEUE_WATCH_IDLE_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(600),
