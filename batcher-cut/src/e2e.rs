@@ -120,6 +120,9 @@ impl RoundOps for ProofOps {
     fn rebuild(&mut self, survivors: &[Member]) -> Result<Vec<Member>, String> {
         crate::merge_round(&self.env, &self.repo, &self.wt, &self.start, survivors.to_vec())
     }
+    fn fix_integration(&mut self, members: &[Member], _: &[String]) -> bool {
+        crate::io::integration_fix(&self.env, &self.wt, &self.start, members).map(|f| !f.is_empty()).unwrap_or(false)
+    }
     fn incident(&mut self, kind: &str, suites: &[String]) {
         panic!("no incident expected: {kind} {suites:?}");
     }

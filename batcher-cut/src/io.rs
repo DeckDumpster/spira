@@ -1093,6 +1093,78 @@ pub fn file_deploy_fault_incident(env: &Env, repo: &Repo, head: &str) -> Result<
     out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).ok_or_else(|| format!("incident.sh file: no id returned: {out}"))
 }
 
+fn hold_file(env: &Env, repo: &str) -> PathBuf {
+    env.queue_dir.join(repo).join("integration-hold")
+}
+
+pub fn write_hold(env: &Env, repo: &str, key: &str, bead: &str) -> Result<(), String> {
+    let p = hold_file(env, repo);
+    if let Some(dir) = p.parent() {
+        fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let tmp = p.with_extension("tmp");
+    fs::write(&tmp, format!("key={key}\nbead={bead}\n")).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
+}
+
+/// The bead holding this exact round (same members, same tips), while it is not closed. A
+/// bead that cannot be read keeps the hold: a refusal that cannot check must refuse.
+pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
+    let kv = parse_kv(&fs::read_to_string(hold_file(env, repo)).ok()?);
+    if kv.get("key").map(String::as_str) != Some(key) {
+        return None;
+    }
+    let bead = kv.get("bead").filter(|b| !b.is_empty())?.clone();
+    let closed = bd_show(env, std::slice::from_ref(&bead))
+        .ok()
+        .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
+        .and_then(|b| b.get("status").and_then(|s| s.as_str()).map(|s| s == "closed"))
+        .unwrap_or(false);
+    (!closed).then_some(bead)
+}
+
+/// Repairs the integration breaks that are mechanical, on the round tree, as one commit
+/// naming every member: a stale test-plan matrix is regenerated and a newly added spira
+/// script is made executable. Returns what it fixed; empty means the tree was left untouched.
+pub fn integration_fix(env: &Env, wt: &Path, base_sha: &str, members: &[Member]) -> Result<Vec<&'static str>, String> {
+    let git = |args: &[&str]| run(Command::new("git").arg("-C").arg(wt).args(args), "git");
+    let mut fixes = Vec::new();
+
+    let added = git(&["diff", "--name-only", "--diff-filter=A", base_sha, "HEAD"])?;
+    for path in added.lines().filter(|p| p.starts_with("spira/") && p.ends_with(".sh")) {
+        let staged = git(&["ls-files", "-s", "--", path])?;
+        if staged.starts_with("100644") {
+            git(&["update-index", "--chmod=+x", "--", path])?;
+            if !fixes.contains(&"chmod +x new scripts") {
+                fixes.push("chmod +x new scripts");
+            }
+        }
+    }
+
+    if wt.join("spira/plan-matrix.sh").is_file() {
+        run(Command::new("bash").arg(wt.join("spira/plan-matrix.sh")).current_dir(wt), "plan-matrix.sh")?;
+        if !git(&["status", "--porcelain", "--", "docs/test-plan"])?.trim().is_empty() {
+            git(&["add", "--", "docs/test-plan"])?;
+            fixes.push("regenerate the test-plan matrix");
+        }
+    }
+
+    if fixes.is_empty() {
+        return Ok(fixes);
+    }
+    let ids: Vec<String> = members.iter().map(|m| m.id.clone()).collect();
+    let msg = batcher::core::integration_fix_message(&fixes, &ids);
+    let mut c = Command::new("git");
+    c.arg("-C").arg(wt).args(["-c", &format!("user.name={}", env.git_name), "-c", &format!("user.email={}", env.git_email)]);
+    c.args(["commit", "-q", "-F", "-"]).stdin(std::process::Stdio::piped());
+    let mut child = c.spawn().map_err(|e| format!("git commit: {e}"))?;
+    std::io::Write::write_all(&mut child.stdin.take().ok_or("git commit: no stdin")?, msg.as_bytes()).map_err(|e| e.to_string())?;
+    if !child.wait().map_err(|e| e.to_string())?.success() {
+        return Err("git commit of the integration fix failed".into());
+    }
+    Ok(fixes)
+}
+
 /// The last local corpus verdict for this repo's round — read by queue's own open-batch so
 /// a hand-invoked cut never sends a round CI would only reject (law-a-round-takes-certified-
 /// tips). Best-effort like every other queue-dir write here: a failure to record it leaves
@@ -1894,6 +1966,66 @@ mod wait_lock_tests {
         });
         assert!(wait_lock(&e, "r", 10).unwrap().is_some(), "must acquire once the holder releases");
         t.join().unwrap();
+    }
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let o = Command::new("git").arg("-C").arg(dir).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+        assert!(o.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        String::from_utf8_lossy(&o.stdout).to_string()
+    }
+
+    fn member(id: &str) -> Member {
+        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new() }
+    }
+
+    // Two members that are each fine alone: the merged tree carries a stale matrix and a
+    // non-executable new script. One commit repairs both and names both ids.
+    #[test]
+    fn the_fix_is_one_round_commit_naming_every_member() {
+        let dir = testkit::TempDir::new("batcher-integration-fix");
+        let wt = dir.join("wt");
+        fs::create_dir_all(wt.join("spira")).unwrap();
+        fs::create_dir_all(wt.join("docs/test-plan")).unwrap();
+        git(&wt, &["init", "-q"]);
+        fs::write(wt.join("docs/test-plan/coverage.json"), "old\n").unwrap();
+        fs::write(wt.join("spira/plan-matrix.sh"), "#!/usr/bin/env bash\necho new > docs/test-plan/coverage.json\n").unwrap();
+        git(&wt, &["add", "-A"]);
+        git(&wt, &["commit", "-q", "-m", "base"]);
+        let base = git(&wt, &["rev-parse", "HEAD"]).trim().to_string();
+        fs::write(wt.join("spira/test-new.sh"), "#!/usr/bin/env bash\n").unwrap();
+        git(&wt, &["add", "-A"]);
+        git(&wt, &["commit", "-q", "-m", "members"]);
+
+        let env = lifecycle_tests_env(dir.path());
+        let fixes = integration_fix(&env, &wt, &base, &[member("sp-a1"), member("sp-b2")]).unwrap();
+        assert_eq!(fixes, vec!["chmod +x new scripts", "regenerate the test-plan matrix"]);
+        let msg = git(&wt, &["log", "-1", "--format=%B"]);
+        assert!(msg.contains("sp-a1") && msg.contains("sp-b2"), "{msg}");
+        assert!(git(&wt, &["ls-tree", "HEAD", "spira/test-new.sh"]).starts_with("100755"));
+        assert_eq!(fs::read_to_string(wt.join("docs/test-plan/coverage.json")).unwrap(), "new\n");
+        assert_eq!(integration_fix(&env, &wt, &base, &[member("sp-a1")]).unwrap(), Vec::<&str>::new(), "a second pass finds nothing and commits nothing");
+    }
+
+    #[test]
+    fn a_hold_blocks_only_the_same_round_and_only_while_its_bead_is_not_closed() {
+        let dir = testkit::TempDir::new("batcher-hold");
+        let mut env = lifecycle_tests_env(dir.path());
+        let bd = dir.join("bd");
+        testkit::write_exe(&bd, "#!/usr/bin/env bash\necho '[{\"id\":\"'$3'\",\"status\":\"'$(cat \"$(dirname \"$0\")/status\")'\"}]'\n");
+        env.bd = bd.display().to_string();
+        let key = batcher::core::round_key(&[("sp-b".into(), "2".into()), ("sp-a".into(), "1".into())]);
+        write_hold(&env, "r", &key, "sp-hold1").unwrap();
+        fs::write(dir.join("status"), "open").unwrap();
+        assert_eq!(hold_blocking(&env, "r", &key).as_deref(), Some("sp-hold1"));
+        let moved = batcher::core::round_key(&[("sp-a".into(), "1".into()), ("sp-b".into(), "3".into())]);
+        assert_eq!(hold_blocking(&env, "r", &moved), None, "a moved tip is a different round");
+        fs::write(dir.join("status"), "closed").unwrap();
+        assert_eq!(hold_blocking(&env, "r", &key), None);
     }
 }
 

@@ -589,6 +589,25 @@ pub fn judgement_for_ci(red_suites: &[Id]) -> Option<Judgement> {
     }
 }
 
+/// Identity of a round for hold purposes: the same members at the same tips, whatever order
+/// the pool listed them in.
+pub fn round_key(members: &[(Id, String)]) -> String {
+    let mut v: Vec<String> = members.iter().map(|(id, tip)| format!("{id}:{tip}")).collect();
+    v.sort();
+    v.join(" ")
+}
+
+/// The round-level commit for a mechanical integration fix: names every member so the landing
+/// record carries each one's id.
+pub fn integration_fix_message(fixes: &[&str], members: &[Id]) -> String {
+    format!(
+        "round: {} (integration fix for {})\n\nThe merged tree was red where no member was alone; fixed in the round, not in any member's branch.\nMembers: {}\n",
+        fixes.join(", "),
+        members.join(" "),
+        members.join(" ")
+    )
+}
+
 pub fn judgement_event(j: &Judgement, repo: &str) -> Event {
     let where_ = match j.source {
         RedSource::Local => "local corpus",

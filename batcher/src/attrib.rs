@@ -185,6 +185,18 @@ impl Decision {
         let s: BTreeSet<&String> = self.owners.values().flatten().collect();
         s.into_iter().cloned().collect()
     }
+
+    /// Suites red only in the merged tree: nothing removable alone clears them
+    /// (unattributed), or no one member does (two or more each clear them).
+    pub fn integration_suites(&self) -> Vec<String> {
+        let mut count: BTreeMap<&String, usize> = BTreeMap::new();
+        for s in self.owners.values().flatten() {
+            *count.entry(s).or_default() += 1;
+        }
+        let mut out: BTreeSet<String> = self.unattributed.iter().cloned().collect();
+        out.extend(count.into_iter().filter(|(_, n)| *n >= 2).map(|(s, _)| s.clone()));
+        out.into_iter().collect()
+    }
 }
 
 pub struct Attributor {

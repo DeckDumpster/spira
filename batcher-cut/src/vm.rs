@@ -145,6 +145,12 @@ impl<'a> VmRunner<'a> {
         })
     }
 
+    /// Job ids restart with every main run, so the name carries the run: a later run's job
+    /// must never read an earlier run's `.done`.
+    fn job_name(&self, job: &Job) -> String {
+        format!("v{}j{}", self.verify_n, job.id)
+    }
+
     fn branch(&self, tag: &str) -> String {
         format!("spira/batcher-attr/{}-{}-{tag}", self.repo.name, self.round)
     }
@@ -176,7 +182,7 @@ impl<'a> VmRunner<'a> {
     /// A tree of the round's base plus every member not in `removal`, on a branch. The plain
     /// rerun (nothing removed) is the round tree itself.
     fn tree_for(&self, job: &Job) -> Result<String, String> {
-        let branch = self.branch(&format!("j{}", job.id));
+        let branch = self.branch(&self.job_name(job));
         if job.removal.is_empty() {
             let head = io::head_of(&self.wt)?;
             io::set_branch(self.repo, &branch, &head);
@@ -398,7 +404,7 @@ impl RoundRunner for VmRunner<'_> {
     fn launch(&mut self, job: &Job) -> Result<(), String> {
         let branch = self.tree_for(job)?;
         let build = if job.removal.is_empty() { "artifacts" } else { build_for(&job.removal, &self.changed) };
-        let name = format!("j{}", job.id);
+        let name = self.job_name(job);
         self.request(&name, &branch, std::slice::from_ref(&job.suite), build)?;
         self.jobs.insert(job.id, (name, job.suite.clone()));
         Ok(())
