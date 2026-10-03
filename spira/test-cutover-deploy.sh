@@ -111,10 +111,11 @@ git -C "$GITREPO" config user.email test@example.invalid
 git -C "$GITREPO" config user.name test
 git -C "$GITREPO" commit -q --allow-empty -m base
 
-printf 'SPIRA_HOME_REPO=demo\n' > "$FIX/spira.conf"
-printf 'demo|%s|queue|main|\n' "$GITREPO" > "$FIX/repo-map"
-CONF="$FIX/spira.conf"
-TOML="$FIX/spira.toml"   # deliberately does not exist yet — this run must create it
+CFGHOME="$TMP/operator-config"; mkdir -p "$CFGHOME"
+printf 'SPIRA_HOME_REPO=demo\n' > "$CFGHOME/spira.conf"
+printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
+CONF="$CFGHOME/spira.conf"
+TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
 CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
 RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
@@ -123,7 +124,7 @@ run_deploy() {
     env -i HOME="$HOME" \
         PATH="$CARGO_TARGET_DIR_FOR_BUILD/debug:$PATH" SPIRA_REPO="$REPO" \
         SPIRA_HOME="$FIX" SPIRA_RUN="$FIX/run" SPIRA_QUEUE_DIR="$FIX/run/queue" \
-        SPIRA_CONF="$CONF" \
+        SPIRA_CONF="$CONF" SPIRA_CONFIG_HOME="${CFGHOME_OVERRIDE:-$CFGHOME}" \
         SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
         SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP" \
         SPIRA_LC_ADMIN_USER=root SPIRA_LC_ADMIN_PASSWORD="" \
@@ -132,6 +133,13 @@ run_deploy() {
 }
 
 DROPIN="$TMP/skip-check.conf"; : > "$DROPIN"
+
+echo
+echo "classify reads the operator config home, not the release tree (SPIRA_HOME=$FIX holds no config):"
+mkdir -p "$TMP/empty-config"
+neg="$(CFGHOME_OVERRIDE="$TMP/empty-config" run_deploy 2>&1)"; negrc=$?
+[ "$negrc" != 0 ]; wantrc "positive control: an empty config home makes classify refuse" 0 $?
+want "the refusal names the --home it read" "$TMP/empty-config" "$neg"
 
 echo
 echo "the deploy step runs end to end on an aged install:"
