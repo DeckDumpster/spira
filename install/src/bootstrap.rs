@@ -29,16 +29,6 @@ pub fn which(prog: &str) -> Option<String> {
     None
 }
 
-fn require_git_checkout(d: &Path) -> Result<(), String> {
-    if d.join(".git").exists() {
-        return Ok(());
-    }
-    Err(format!(
-        "derived repo {} is not a git checkout (no .git); export SPIRA_REPO to the real checkout",
-        d.display()
-    ))
-}
-
 /// Resolve host values from the environment (conf.sh's own precedence: explicit environment
 /// wins). Derives nothing beyond what conf.sh itself derives with a plain, no-side-effect
 /// default for a render-relevant key: `SPIRA_HOME = SPIRA_REPO/spira` (conf.sh: no-colon
@@ -64,15 +54,10 @@ fn require_git_checkout(d: &Path) -> Result<(), String> {
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
-    let repo = match repo_env {
-        Some(r) => r,
-        None => {
-            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-            let d = spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map);
-            require_git_checkout(&d)?;
-            d.to_string_lossy().into_owned()
-        }
-    };
+    let repo = repo_env.unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned()
+    });
     let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         format!("{parent}/cockpit")
@@ -368,18 +353,5 @@ mod stale_release_tests {
         assert!(msg.contains("REFUSING") && msg.contains("/new"), "{msg}");
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("new/bin/unit-ensure")), None);
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
-    }
-}
-
-#[cfg(test)]
-mod sp_i0rvd_tests {
-    use super::require_git_checkout;
-    #[test]
-    fn refuses_exported_tree_without_git() {
-        let t = testkit::TempDir::new("i0rvd");
-        let d = t.path().to_path_buf();
-        assert!(require_git_checkout(&d).is_err());
-        std::fs::create_dir_all(d.join(".git")).unwrap();
-        assert!(require_git_checkout(&d).is_ok());
     }
 }
