@@ -1062,6 +1062,7 @@ pub fn drift_keys() -> Kv {
     let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
     let run_one = |args: &[&str]| {
         std::process::Command::new("bash")
+            .envs(spira_config::release_env::child_path_env_for_process())
             .arg(&drift_sh)
             .args(args)
             .stdin(std::process::Stdio::null())

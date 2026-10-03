@@ -22,7 +22,7 @@ pub fn classify(code: Option<i32>, out: &str) -> Probe {
 }
 
 fn drift(drift_sh: &str, args: &[&str]) -> Probe {
-    match Command::new("bash").arg(drift_sh).args(args).output() {
+    match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process()).arg(drift_sh).args(args).output() {
         Ok(o) => classify(o.status.code(), &String::from_utf8_lossy(&o.stdout)),
         Err(_) => Probe::Unreadable,
     }
