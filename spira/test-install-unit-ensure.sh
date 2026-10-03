@@ -133,7 +133,7 @@ while IFS= read -r line; do
 done <<< "$rendered"
 n="$(ls "$DEST" | wc -l)"
 [ "$n" -gt 0 ] && ok "installed $n unit(s) for fixture" \
-    || bad "fixture install" "no files in $DEST"
+    || bad "fixture install" "no files in $DEST: ${rendered:0:600}"
 [ -f "$DEST/spira-czar-pass-prod.timer" ] \
     && ok "fixture: czar-pass timer present" \
     || bad "fixture: czar-pass timer present" "spira-czar-pass-prod.timer missing"
