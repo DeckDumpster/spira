@@ -10,16 +10,13 @@ cannot land on their own, merging duplicates, closing premise-gone litter, corre
 mislabelled lanes, and triaging `spira-poison` — and this crate is its tool, not its
 judgement. Every subcommand is a **mechanical** operation: it either does exactly what it
 is told (with required evidence, so a lift or a close is never indistinguishable from an
-ungrounded amnesty) or it refuses outright. The one judgement call this crate makes itself
-is `sweep`'s mechanical remedies, and those are computable, not discretionary — the STATE
-and LIVELOCK detectors that back them already draw the line between "fully computable"
-and "needs a human or a model reading the bead" (see `lib.sh`'s own comments on
-`detect_livelocked` and its STATE-scan siblings).
+ungrounded amnesty) or it refuses outright. The STATE and LIVELOCK sweeps that once
+applied mechanical remedies here are gone: the lifecycle machine's rows carry those facts,
+and sentinel's CHECK5-LC surfaces any drift.
 
 ## Contract
 
 ```
-groomer sweep          [--dry-run]
 groomer split-piece    <original-id> [bd create args...]
 groomer supersede      <id> --with <successor>
 groomer close          <id> --evidence <text>
@@ -46,38 +43,25 @@ refuses to run without it.
 
 ## What stays in lib.sh, and how this crate reaches it
 
-The detectors `sweep` drives — `detect_livelocked`, `detect_incident_needs_builder`
-— and the write-side helpers `bead_reopen`, `bump_poison_cleared`, `poison_asked_clear`
-all live in `spira/lib.sh` and stay there: lib.sh is the rewrite programme's own group 4,
+The write-side helpers `bump_poison_cleared` and `poison_asked_clear`
+live in `spira/lib.sh` and stay there: lib.sh is the rewrite programme's own group 4,
 proposed last, and Ryan's standing instruction during the cutover was "leave lib.sh
 alone." They are also shared with callers this crate does not own —
-`cockpit.sh livelock` calls `detect_livelocked` directly, `attempts.sh` calls
-`bump_poison_cleared`/`poison_asked_clear`, `incident.sh` and `auron.sh` call
-`bead_reopen` — so re-deriving their logic here would be a second copy of behaviour
+`attempts.sh` calls `bump_poison_cleared`/`poison_asked_clear` — so re-deriving their logic here would be a second copy of behaviour
 several other scripts depend on staying exactly as it is.
 
 `groomer` reaches them the way `sentinel` reaches its own lib.sh seams and the way
 `rebase-stale::seam::Seam` reaches `lib.sh`'s bead-store helpers: `bash -c '. "$LIB";
 "$@"' lib.sh <func> <args…>` (`src/seam.rs`, the `Seam` trait). Production shells out for
 real; every test in this crate runs against a recording `FakeSeam` instead, so the
-sweep's dispatch logic is unit-tested without a live bead store or a real lib.sh load.
+each subcommand's logic is unit-tested without a live bead store or a real lib.sh load.
 
 `unpoison` similarly delegates entirely to `spira-claim unpoison --credit <cause>`
 (`spira-claim/DESIGN.md` §8) — the unjudged credit, the `poison.cleared` floor, the
 lifecycle hold, the note and the ask are spira-claim's; this crate only builds the
 invocation and judges the `OK   <id>:` prefix `groomer.sh` always checked.
 
-`groomer sweep`'s `ci-stuck` and `incident-is-code` remedies call `spira-lc unhold` — an
-already-Rust binary, invoked by bare name on the release PATH, same as `spira-claim`.
-
 ## Schema
-
-`sweep`'s detectors speak two textual line formats, parsed by `src/sweep.rs::parse_*`
-(pure, table-tested):
-
-- `LIVELOCK <id> <category> — <reason>` — categories `ask-no-overseer`, `ci-stuck`,
-  `unmapped-repo`, `unclaimable`.
-- `STATE <id> <kind> [<extra>] — <evidence>` — kind `incident-is-code`.
 
 Everything else in this crate is a direct 1:1 argument mapping onto `bd` verbs
 (`src/bd.rs::Bd`), kept behind a trait for the same reason as the lib.sh seam: every
@@ -128,11 +112,9 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
 
 ## Test strategy
 
-Every subcommand's argument validation, every `sweep` remedy, and the litter predicate's
+Every subcommand's argument validation and the litter predicate's
 full fail-open table are unit tests (`cargo test -p groomer`) against `FakeBd`/`FakeSeam`
 — CPU-bound, no container, no Dolt server. What genuinely needs a live bead store and real
-git ancestry (branch inheritance on `split-piece`, the retired STATE scan staying retired against a seeded fixture
-database) stays in the repointed bash suites (`test-groomer-split-piece.sh`,
-`test-groomer-state.sh`, `test-groomer-sweep.sh`, `test-groomer-incident-reroute.sh`,
-`test-groomer-poison-triage.sh`) run through `testenv`, now invoking the `groomer` binary
+git ancestry (branch inheritance on `split-piece`) stays in the repointed bash suites
+(`test-groomer-split-piece.sh`, `test-groomer-poison-triage.sh`) run through `testenv`, now invoking the `groomer` binary
 by bare name instead of `groomer.sh`.

@@ -2,7 +2,7 @@
 name = "groomer"
 version = "1.0.0"
 edition = "2021"
-description = "groomer — graph hygiene operations for the Spira DAG: the sweep's mechanical LIVELOCK/STATE remedies, split-piece, supersede, close, correct-lane, depends-on-fix, unpoison (delegates to spira-claim), triage-poison, and the hard unwanted refusal. Replaces spira/groomer.sh and spira/groomer-litter-predicate.py; the detectors themselves (detect_livelocked and friends) now live in the strand crate (wave 4.29, sp-8ofmt) and are reached in-process instead of through the lib.sh seam sentinel still uses for the detectors not yet ported."
+description = "groomer — graph hygiene operations for the Spira DAG: split-piece, supersede, close, correct-lane, depends-on-fix, unpoison (delegates to spira-claim), triage-poison, deadlocked, and the hard unwanted refusal. Replaces spira/groomer.sh and spira/groomer-litter-predicate.py."
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

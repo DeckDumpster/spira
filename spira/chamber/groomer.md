@@ -140,27 +140,11 @@ base, so a repository-tracked findings file is a conflict waiting for the next p
 first. The bead notes below and `$SPIRA_RUN/groom.log` are outside the tree for exactly this
 reason — use them, not a file you `git add`.
 
-## Before you scan: mechanical sweep
-
-Run the sweep first so beads with mechanical remedies are resolved before you read the graph:
-
-    {{GROOM}} sweep
-
-The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
-
-The sweep no longer closes, drops or reopens beads by landing state: since the lifecycle
-cutover a bead's state — landed, handed on, still being worked — is its `spira-lc` row
-alone, and the bead's open/closed says nothing about it, so there is no "landed but open" or
-"closed but never landed" drift left to report. Read `$SPIRA_RUN/groom.log` for what the
-sweep acted on before you start your own reading — poison triage and split/merge/premise
-judgement are yours.
-
 ## How to scan the graph
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — its
 `spira-lc` state and holds (poisoned, waiting, asked) — does not depend on which partition it
-carries. Read every open bead in every partition (`work list --json`). For each
-open bead:
+carries. Read every open bead in every partition (`work list --json`). For each open bead:
 
 1. Read the title, description, and labels
 2. Check for duplicates (`work search "<the title's key terms>"`)

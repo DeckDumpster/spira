@@ -1,7 +1,6 @@
 //! groomer — graph hygiene operations for the Spira DAG. Replaces spira/groomer.sh and
 //! spira/groomer-litter-predicate.py (DESIGN.md).
 //!
-//!   groomer sweep          [--dry-run]                                     apply mechanical livelock remedies
 //!   groomer split-piece    <original-id> [bd create args...]              file one piece of a split, on its own branch
 //!   groomer supersede      <id> --with <successor>                        mark a bead superseded by another
 //!   groomer close          <id> --evidence <text>                         close a bead whose premise is gone
@@ -16,10 +15,10 @@
 
 use groomer::bd::RealBd;
 use groomer::seam::{locate_home, LibSeam};
-use groomer::{cmds, deadlocked, litter, sweep, unpoison};
+use groomer::{cmds, deadlocked, litter, unpoison};
 
 fn usage() -> ! {
-    eprintln!("usage: groomer sweep|split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|unwanted ...");
+    eprintln!("usage: groomer split-piece|supersede|close|correct-lane|depends-on-fix|unpoison|triage-poison|deadlocked|unwanted ...");
     std::process::exit(1);
 }
 
@@ -73,39 +72,6 @@ fn main() {
     let home = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe);
 
     match cmd.as_str() {
-        "sweep" => {
-            let dry_run = rest.iter().any(|a| a == "--dry-run");
-            for a in &rest {
-                if a != "--dry-run" {
-                    eprintln!("groomer: sweep: unknown option: {a}");
-                    std::process::exit(1);
-                }
-            }
-            let Some(home) = home else {
-                die("cannot find lib.sh (set SPIRA_HOME)");
-            };
-            let seam = LibSeam::new(home.join("lib.sh"));
-            // Optional: the groom.log side-write is skipped, not defaulted, when SPIRA_RUN
-            // does not resolve — sweep's own stdout output does not depend on it.
-            let run_log = spira_config::process::cfg("SPIRA_RUN").ok();
-            match sweep::sweep(&bd, &seam, dry_run) {
-                Ok(out) => {
-                    for line in &out.log {
-                        let ts = chrono_now();
-                        let msg = format!("{ts} groom: sweep: {line}");
-                        println!("{msg}");
-                        if let Some(run) = &run_log {
-                            let path = std::path::Path::new(run).join("groom.log");
-                            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-                                use std::io::Write;
-                                let _ = writeln!(f, "{msg}");
-                            }
-                        }
-                    }
-                }
-                Err(e) => die(&format!("sweep: {e}")),
-            }
-        }
         "split-piece" => {
             let Some((id, extra)) = rest.split_first() else {
                 die("split-piece: original bead id required");
@@ -230,29 +196,4 @@ fn run_cmd(r: cmds::CmdResult) {
             std::process::exit(code);
         }
     }
-}
-
-/// `date -u +%Y-%m-%dT%H:%M:%SZ`, without pulling in a date library — the same
-/// days-since-epoch civil calendar `sentinel::host::utc` uses (Howard Hinnant's
-/// `civil_from_days`), duplicated rather than shared for the reason `groomer::seam`'s
-/// `locate_home` gives: every Rust seam onto this kind of thing so far has its own copy.
-fn chrono_now() -> String {
-    let epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
-    let days = epoch.div_euclid(86_400);
-    let s = epoch.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", s / 3600, (s % 3600) / 60, s % 60)
-}
-
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
 }
