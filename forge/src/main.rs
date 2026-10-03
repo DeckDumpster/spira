@@ -54,6 +54,19 @@ fn dispatch(gh: &dyn Gh, proc: &dyn Proc, cmd: &str, repo: &Path, args: &[String
         "batch-ci-status" => batch_ci_status(gh, proc, repo, arg(args, 0)),
         "queued-since" => queued_since(gh, repo, arg(args, 0)),
         "runs-active" => runs_active(gh, repo),
+        "stranded-runners" => {
+            let mut min_age = forge::real::env("SPIRA_STRANDED_RUNNER_MIN_AGE").and_then(|v| v.parse().ok()).unwrap_or(300u64);
+            let mut it = args.iter();
+            while let Some(a) = it.next() {
+                if a == "--min-age" {
+                    if let Some(v) = it.next().and_then(|v| v.parse().ok()) {
+                        min_age = v;
+                    }
+                }
+            }
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+            stranded_runners(gh, repo, now, min_age)
+        }
         "run-metadata" => run_metadata(gh, repo, arg(args, 0)),
         "run-cancel" => run_cancel(gh, repo, arg(args, 0)),
         "force-cancel" => force_cancel(gh, repo, arg(args, 0)),

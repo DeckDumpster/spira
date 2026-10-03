@@ -520,6 +520,96 @@ pub fn runs_active(gh: &dyn Gh, repo: &Path) -> Out {
     ok(vec![n.to_string()])
 }
 
+// ── stranded-runners ─────────────────────────────────────────────────────────────────────
+
+const GENERIC_LABELS: [&str; 9] = ["self-hosted", "linux", "macos", "windows", "x64", "arm64", "x86_64", "arm", "ubuntu-latest"];
+
+fn vmid_of(name: &str) -> String {
+    let mut best = String::new();
+    let mut cur = String::new();
+    for c in name.chars().chain(std::iter::once(' ')) {
+        if c.is_ascii_digit() {
+            cur.push(c);
+        } else {
+            if cur.len() >= 2 && best.is_empty() {
+                best = cur.clone();
+            }
+            cur.clear();
+        }
+    }
+    if !best.is_empty() {
+        best
+    } else if name.is_empty() {
+        "?".into()
+    } else {
+        name.into()
+    }
+}
+
+/// One `STRANDED` line per queued job older than `min_age` whose per-run label (any label
+/// outside the generic set) is carried by no online runner. A runner that registered and
+/// vanished is never replaced under that label, so the job would otherwise wait out GitHub's
+/// own 24h ceiling.
+pub fn stranded_runners(gh: &dyn Gh, repo: &Path, now: u64, min_age: u64) -> Out {
+    let runs = gh.call(Some(repo), &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"]);
+    let Some(d) = (if runs.ok() { parse(&runs.stdout) } else { None }) else { return ok(vec![]) };
+    let ids: Vec<String> = d
+        .get("workflow_runs")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter(|r| jstr(r, "status").as_deref() != Some("completed")).filter_map(|r| r.get("id").map(|i| i.to_string())).collect())
+        .unwrap_or_default();
+    if ids.is_empty() {
+        return ok(vec![]);
+    }
+    let rr = gh.call(Some(repo), &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"]);
+    let runners: Vec<Value> = if rr.ok() { parse(&rr.stdout).and_then(|v| v.get("runners").and_then(Value::as_array).cloned()).unwrap_or_default() } else { vec![] };
+
+    let mut lines = Vec::new();
+    for id in ids {
+        let jr = gh.call(Some(repo), &["api", &format!("repos/{{owner}}/{{repo}}/actions/runs/{id}/jobs")]);
+        let Some(jv) = (if jr.ok() { parse(&jr.stdout) } else { None }) else { continue };
+        for j in jv.get("jobs").and_then(Value::as_array).cloned().unwrap_or_default() {
+            if jstr(&j, "status").as_deref() != Some("queued") {
+                continue;
+            }
+            let created = epoch(&jstr(&j, "created_at").unwrap_or_default());
+            let age = now.saturating_sub(created);
+            if created == 0 || age < min_age {
+                continue;
+            }
+            let labels: Vec<String> = j
+                .get("labels")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|l| l.as_str().map(str::to_string)).filter(|l| !GENERIC_LABELS.contains(&l.to_lowercase().as_str())).collect())
+                .unwrap_or_default();
+            if labels.is_empty() {
+                continue;
+            }
+            let considered: Vec<&Value> = runners
+                .iter()
+                .filter(|r| r.get("labels").and_then(Value::as_array).map(|ls| ls.iter().any(|l| l.get("name").and_then(Value::as_str).map(|n| labels.iter().any(|x| x == n)).unwrap_or(false))).unwrap_or(false))
+                .collect();
+            if considered.iter().any(|r| jstr(r, "status").as_deref() == Some("online")) {
+                continue;
+            }
+            let (runner, vmid) = match considered.first() {
+                Some(r) => {
+                    let n = jstr(r, "name").unwrap_or_default();
+                    let v = vmid_of(&n);
+                    (n, v)
+                }
+                None => ("none".to_string(), "?".to_string()),
+            };
+            lines.push(format!(
+                "STRANDED run={id} job=\"{}\" label={} queued={age}s runner={runner} vmid={vmid}",
+                jstr(&j, "name").unwrap_or_default(),
+                labels.join(",")
+            ));
+        }
+    }
+    ok(lines)
+}
+
 // ── run-metadata ─────────────────────────────────────────────────────────────────────────
 
 pub fn run_metadata(gh: &dyn Gh, repo: &Path, run_id: &str) -> Out {
