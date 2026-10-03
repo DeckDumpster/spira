@@ -5,7 +5,6 @@ Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
 Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_PROD@/sop-lint-watch.sh
-CPUQuota=20%
 TimeoutStartSec=300
 StandardOutput=append:@SPIRA_RUN@/sop-lint.log
 StandardError=append:@SPIRA_RUN@/sop-lint.log
