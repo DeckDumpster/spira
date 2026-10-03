@@ -244,6 +244,11 @@ spira-config validate "$BAD" >/dev/null 2>&1; rc=$?
 is "9: the broken fixture really fails to parse (positive control)" "1" "$rc"
 out="$(SPIRA_TOML="$BAD" pb --show)"
 want "9: a toml that does not parse alarms BLIND" "BLIND _config" "$out"
-is   "9: and is mailed" "1" "$(mail_grep "BLIND _config")"
+SPIRA_TOML="$BAD" pb watch --ticks 1 >/dev/null
+pb health >/dev/null; rc=$?
+is   "9: the health probe fails while blind (the mailer reads the same broken toml)" "1" "$rc"
+pb watch --ticks 1 >/dev/null
+pb health >/dev/null; rc=$?
+is   "9: and recovers once the toml parses" "0" "$rc"
 
 tl_summary

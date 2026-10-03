@@ -105,6 +105,7 @@ _pb_backlog() {
 # (law-absence-needs-a-positive-control). Mailed on the crossing into blindness only.
 _pb_blind() {
     local key="$1" why="$2" statefile prev=ok
+    PB_BLIND=1
     statefile="$(_pb_state_file "$key")"
     [ -r "$statefile" ] && read -r prev < "$statefile" 2>/dev/null
     if [ "$prev" != blind ]; then
@@ -159,6 +160,7 @@ _pb_tick_repo() {
 # _pb_tick — one pass over every repo in the repo-map.
 _pb_tick() {
     local name names err
+    PB_BLIND=0
     [ -z "${SPIRA_TOML_FILE:-}" ] || err="$(spira-config validate "$SPIRA_TOML_FILE" 2>&1 >/dev/null)" \
         || { _pb_blind _config "spira.toml does not parse: $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-300)"; return 0; }
     _pb_unblind _config
@@ -174,7 +176,7 @@ _pb_tick() {
 _pb_write_health() {
     local interval="$1"
     mkdir -p "$(dirname "$HEALTH_FILE")"
-    printf 'ok %s %s\n' "$(date +%s)" "$interval" > "$HEALTH_FILE.tmp" \
+    printf '%s %s %s\n' "$([ "${PB_BLIND:-0}" -eq 1 ] && echo blind || echo ok)" "$(date +%s)" "$interval" > "$HEALTH_FILE.tmp" \
         && mv "$HEALTH_FILE.tmp" "$HEALTH_FILE"
 }
 
@@ -187,6 +189,10 @@ cmd_health() {
     }
     local st t iv now age
     read -r st t iv < "$HEALTH_FILE"
+    if [ "$st" = blind ]; then
+        echo "publish-backlog: the last poll could not measure (config or repo-map unreadable, or a repo's range uncomputable) — see the watchd log" >&2
+        return 1
+    fi
     case "$t" in ''|*[!0-9]*) t=0 ;; esac
     case "$iv" in ''|*[!0-9]*) iv=900 ;; esac
     now="$(date +%s)"
