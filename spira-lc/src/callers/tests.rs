@@ -153,12 +153,17 @@ fn off_answers_are_the_shell_librarys_and_read_nothing() {
 fn hold_suspends_without_moving_state_and_unhold_restores_it() {
     let mut f = Fake::default();
     f.bead("sp-h", BeadState::Working);
-    for kind in ["poison", "ask", "wait", "operator"] {
+    for kind in ["poison", "wait", "operator", "ask"] {
         assert_eq!(go(&mut f, "hold", &["sp-h", kind, "held for it", "t"]).code, APPLIED, "{kind}");
         assert_eq!(f.state("sp-h"), "WORKING");
         assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, kind);
         assert_eq!(go(&mut f, "held", &["sp-h", kind]).code, 0);
         assert_eq!(go(&mut f, "held", &["sp-h", "other"]).code, 1);
+        if kind == "ask" {
+            assert_ne!(go(&mut f, "unhold", &["sp-h", kind, "t"]).code, APPLIED, "an ask lifts only on a reply event");
+            assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, kind);
+            continue;
+        }
         assert_eq!(go(&mut f, "unhold", &["sp-h", kind, "t"]).code, APPLIED);
         assert_eq!(go(&mut f, "holds", &["sp-h"]).stdout, "");
     }
