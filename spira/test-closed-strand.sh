@@ -231,6 +231,7 @@ JSONL2
         SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
         cockpit-collect once 2>"$TMP/cc.err")"; cat "$TMP/cc.err" >&2
 
+    { echo "DBG bd:"; env PATH="$BD_PATH:$BASE_PATH" SPIRA_DB="$SPIRA_DB" "${TESTDB_BD_PATH:-$REAL_BD}" -C "$SPIRA_DB" list --status closed --limit 0 --label "$SCOPE,plan" --json 2>&1 | head -c 600; echo; echo "$cout" | head -30; } >&2
     cval() { printf '%s' "$cout" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
     is "SP_UNLANDED_N is 2 (both have branch, no landstate)" "2" "$(cval SP_UNLANDED_N)"
