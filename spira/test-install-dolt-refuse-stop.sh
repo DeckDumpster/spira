@@ -136,6 +136,10 @@ exit 0
 MOCK
 chmod +x "$MOCK_BIN/systemctl"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/bd"; chmod +x "$MOCK_BIN/bd"
+# units-install shells out to `ctrl suspended` and `tmux` through PATH; left ambient, the real
+# suspension state decides whether dolt-beads is restarted at all, so both are pinned here.
+printf '#!/usr/bin/env bash\nprintf "ctrl %%s\\n" "$*" >> "$CALL_LOG"\nexit 0\n' > "$MOCK_BIN/ctrl"; chmod +x "$MOCK_BIN/ctrl"
+printf '#!/usr/bin/env bash\nexit 1\n' > "$MOCK_BIN/tmux"; chmod +x "$MOCK_BIN/tmux"
 for b in loginctl spira-supervise; do printf '#!/usr/bin/env bash\nexit 0\n' > "$MOCK_BIN/$b"; chmod +x "$MOCK_BIN/$b"; done
 
 : > "$LOG"
@@ -156,6 +160,9 @@ want "dispatch: install.sh kills dolt-beads.service instead" \
     "systemctl --user kill dolt-beads.service" "$(cat "$LOG")"
 want "dispatch: install.sh reports the kill-based restart" \
     "restarted dolt-beads.service (kill" "$out"
+
+want "positive control: the pinned ctrl stub is the one consulted for suspension" \
+    "ctrl suspended" "$(cat "$LOG")"
 
 want "positive control: an ordinary changed+active unit is still applied with restart" \
     "systemctl --user restart spira-sentinel-prod.timer" "$(cat "$LOG")"
