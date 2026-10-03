@@ -771,6 +771,22 @@ pub fn ci_section(snap: &Snapshot, cols: i64) -> Vec<String> {
 
 /// `standing_lines` — the fixed-height figures: ATTN, SEND, BEADS, LAND, LOCK, GATE, SUITES,
 /// BOX, MAIL, OPS. Always emitted in full; never part of the elastic share.
+fn pools_row(snap: &Snapshot) -> String {
+    let seg = |pool: &str| {
+        let p = pool.to_uppercase();
+        let g = |k: &str| snap.q(&format!("SP_ADM_{p}_{k}")).to_string();
+        let (held, size, waiting, oldest) = (g("HELD"), g("SIZE"), g("WAITING"), g("OLDEST"));
+        let col = match waiting.as_str() {
+            "0" => DIM,
+            "?" => BAD,
+            _ => WARN,
+        };
+        let wait = if waiting == "0" { String::new() } else { format!(" {col}{waiting} waiting {oldest}s{RST}") };
+        format!("{pool} {B}{held}/{size}{RST}{wait}")
+    };
+    format!(" {DIM}POOLS{RST}  {}", ["compile", "test", "gate"].map(seg).join(" \u{b7} "))
+}
+
 pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     let mut out = Vec::new();
 
@@ -816,6 +832,8 @@ pub fn standing_lines(snap: &Snapshot, cols: i64) -> Vec<String> {
     out.push(format!(
         "        {fail_col}{fail} fiends{RST} {DIM}\u{2014} unsent work that came back{RST}{fiend_age_sfx}"
     ));
+
+    out.push(pools_row(snap));
 
     out.push(format!(
          " {DIM}BEADS{RST}  {DIM}24h{RST}  closed {} \u{b7} {DIM}opened{RST} {}",
@@ -1094,6 +1112,17 @@ mod tests {
         assert!(stale.contains("5h ") && stale.contains("(120m ago)"));
         let unknown = tokens_section(&vals("?"), 80, &extra).join("\n");
         assert!(!unknown.contains("23%") && !unknown.contains("96%"));
+    }
+
+    #[test]
+    fn pools_row_shows_held_of_size_waiting_and_question_marks() {
+        let s = snap(&[
+            ("SP_ADM_COMPILE_HELD", "1"), ("SP_ADM_COMPILE_SIZE", "3"), ("SP_ADM_COMPILE_WAITING", "4"), ("SP_ADM_COMPILE_OLDEST", "90"),
+            ("SP_ADM_TEST_HELD", "?"), ("SP_ADM_TEST_SIZE", "2"), ("SP_ADM_TEST_WAITING", "?"),
+        ]);
+        let row = pools_row(&s);
+        assert!(row.contains("1/3") && row.contains("4 waiting 90s"), "{row}");
+        assert!(row.contains("test") && row.contains("?/2"), "{row}");
     }
 
     #[test]

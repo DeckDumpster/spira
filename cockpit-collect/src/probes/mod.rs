@@ -5,6 +5,7 @@
 //! functions this bead does not own); the sanitizing/dating/sorting that used to be inline
 //! `python3 -c` is native Rust here, unit tested against literal fixtures.
 
+mod admission;
 mod core_detail;
 mod queue;
 mod ratelim;
@@ -53,6 +54,7 @@ pub fn full_pass() -> Kv {
     out.extend(core_detail::core_detail_keys());
     out.extend(core_counts_keys());
     out.extend(slots_keys());
+    out.extend(admission::admission_keys());
     out.extend(unsent::unsent_keys());
     out.extend(queue::queue_keys());
     out.extend(reachable::reachable_keys());
@@ -88,6 +90,7 @@ pub fn run(subcommand: &str) -> Option<Kv> {
         }
         "core_detail" => Some(core_detail::core_detail_keys()),
         "slots" => Some(slots_keys()),
+        "admission" => Some(admission::admission_keys()),
         "unsent" => Some(unsent::unsent_keys()),
         "queue" => Some(queue::queue_keys()),
         "reachable" => Some(reachable::reachable_keys()),
