@@ -181,3 +181,32 @@ fn bd_in_docs_and_disabled_personas_and_rust_comments_is_not_reported() {
     let findings = run("scoped", None);
     assert!(findings.is_empty(), "{findings:#?}");
 }
+
+const SPIRA_LC_ONLY_CRATES: &[&str] = &["gate", "batcher-cut", "czar-pass", "gh-intake", "auron", "cockpit/ops"];
+
+#[test]
+fn spira_lc_only_crates_never_read_the_landstate_ledger() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut scanned = 0;
+    for krate in SPIRA_LC_ONLY_CRATES {
+        let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
+            .arg("--json")
+            .arg(root.join(krate).join("src"))
+            .output()
+            .expect("run lifecycle-guard");
+        let findings: Vec<Value> = serde_json::from_slice(&out.stdout).expect("valid JSON findings");
+        let reads: Vec<&Value> = findings
+            .iter()
+            .filter(|f| f["class"] == "landstate-path" || (f["class"] == "landstate-call" && f["callee"] != "land_mark"))
+            .collect();
+        assert!(reads.is_empty(), "{krate} reads the landstate ledger: {reads:#?}");
+        scanned += 1;
+    }
+    assert_eq!(scanned, SPIRA_LC_ONLY_CRATES.len());
+}
+
+#[test]
+fn the_reader_fence_sees_a_landstate_read_in_a_scoped_shape() {
+    let findings = run("landstate_rust_path", None);
+    assert!(findings.iter().any(|f| f["class"] == "landstate-path"), "{findings:#?}");
+}

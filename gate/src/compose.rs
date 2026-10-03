@@ -423,8 +423,7 @@ pub struct Reentry {
 /// read by the same rule.
 pub use suite_select::names::is_suite_name;
 
-/// The ejected-suites list (comma or whitespace separated, as the `.ejected` sidecar and the
-/// EJECTED landstate row write it) against the tree under test. `exists(name)` answers
+/// The ejected-suites list (comma or whitespace separated, as the `.ejected` sidecar writes it) against the tree under test. `exists(name)` answers
 /// whether `spira/<name>` is on that tree.
 pub fn reentry(ejected: &str, exists: impl Fn(&str) -> bool) -> Reentry {
     let mut r = Reentry::default();

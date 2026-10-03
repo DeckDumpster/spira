@@ -42,7 +42,6 @@ pub struct Env {
     pub home: PathBuf,
     pub run: PathBuf,
     pub queue_dir: PathBuf,
-    pub landstate: PathBuf,
     pub db: Option<PathBuf>,
     pub bd: String,
     pub express_label: String,
@@ -77,9 +76,6 @@ pub struct Env {
     pub git_email: String,
     pub lc_bin: Option<PathBuf>,
     pub lc_timeout: u64,
-    /// THE lifecycle switch (DESIGN.md "Lifecycle switch"): off, nothing in this crate runs
-    /// spira-lc — not even a probe; `lc_bin` is never consulted to decide it.
-    pub lc_enforce: bool,
     /// `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}` — where the round's tree certificate goes
     /// (gate::cert, queue/DESIGN.md §8 D12), resolved exactly as the gate resolves it.
     pub verdicts: PathBuf,
@@ -180,33 +176,21 @@ pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
     }
 }
 
-// ---------------------------------------------------------------------------------------
-// spira-lc: the cutover round's own OPEN-batch lifecycle (sp-o7nbr.4, same contract as
-// sp-o7nbr.2's batch.sh _lc_cut_batch/lcq), behind THE switch, `lifecycle_enforce`
-// (DESIGN.md "Lifecycle switch"). Off: every function below returns without running
-// anything, so the open-batch record carries no batch_id/version — the pre-sp-o7nbr.4
-// record. On: `lc_probe` has already refused the cut if the machine is unreachable; after
-// that the cut/stack calls stay best-effort and additive (a CAS refusal is reported loudly
-// on stderr and leaves batch_id/version unset, never blocking the PR or land_mark).
-// ---------------------------------------------------------------------------------------
+// spira-lc: the lifecycle machine, the only source of bead and delivery state here.
+// `lc_probe` refuses the cut if the machine is unreachable; the cut/stack calls after it stay
+// best-effort and additive (a CAS refusal is reported on stderr and leaves batch_id/version
+// unset, never blocking the PR or land_mark).
 
 fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
-    if !env.lc_enforce {
-        // Structural, not advisory: off can never reach the binary even if a caller forgets.
-        return Err("lifecycle_enforce is off".to_string());
-    }
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
     let mut cmd = Command::new("timeout");
     cmd.arg(env.lc_timeout.to_string()).arg(bin).args(args);
     run(&mut cmd, "spira-lc")
 }
 
-/// On only: is the machine there to answer? `spira-lc list --state IN_DELIVERY`, parsed —
-/// the same probe the queue crate makes. Off: `Ok(())` without running anything.
+/// Is the machine there to answer? `spira-lc list --state IN_DELIVERY`, parsed — the same
+/// probe the queue crate makes.
 pub fn lc_probe(env: &Env) -> Result<(), String> {
-    if !env.lc_enforce {
-        return Ok(());
-    }
     let out = lcq(env, &["list", "--state", "IN_DELIVERY"])?;
     serde_json::from_str::<serde_json::Value>(&out).map(|_| ()).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))
 }
@@ -217,9 +201,6 @@ pub fn lc_probe(env: &Env) -> Result<(), String> {
 /// the only thing that advances it from 0) — returned so the caller can record it on the
 /// open-batch file the same way sp-o7nbr.2's `_lc_cut_batch` does.
 pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &str, members: &[(String, String)]) -> Option<String> {
-    if !env.lc_enforce {
-        return None;
-    }
     for (id, _) in members {
         let _ = lcq(env, &["create-bead", id]);
     }
@@ -227,32 +208,27 @@ pub fn lc_cut_batch(env: &Env, repo: &str, batch_id: &str, head: &str, base: &st
     match lcq(env, &["cut", batch_id, "--repo", repo, "--head", head, "--base", base, "--members", &members_s, "--actor", "batcher"]) {
         Ok(_) => Some(members.len().to_string()),
         Err(e) => {
-            eprintln!("batcher {repo}: LIFECYCLE: spira-lc cut refused for {batch_id} (lifecycle_enforce is on; the round proceeds without batch_id/version): {e}");
+            eprintln!("batcher {repo}: LIFECYCLE: spira-lc cut refused for {batch_id} (the round proceeds without batch_id/version): {e}");
             None
         }
     }
 }
 
 /// `id`'s stack (design stacked-dependents-2026-09-28 §1: `{prereq_bead_id: certified_tip}`)
-/// off the lifecycle machine's own bead row — `spira-lc show`. Off: unstacked, without
-/// running anything (stacking is a lifecycle-machine concept; there is no legacy record of
-/// it). On: a row with no `stack` column (a bead the machine has never seen) is unstacked;
-/// a failed read or an unparseable reply is also read as unstacked — never a hard error a
-/// round must refuse over, since `lc_probe` already proved the machine reachable — but is
-/// said loudly on stderr.
+/// off the lifecycle machine's own bead row — `spira-lc show`. A row with no `stack` column
+/// (a bead the machine has never seen) is unstacked; a failed read or an unparseable reply is
+/// also read as unstacked — never a hard error a round must refuse over, since `lc_probe`
+/// already proved the machine reachable — but is said loudly on stderr.
 fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
-    if !env.lc_enforce {
-        return BTreeMap::new();
-    }
     let out = match lcq(env, &["show", id]) {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("batcher: LIFECYCLE: spira-lc show {id} failed (lifecycle_enforce is on; read as unstacked): {e}");
+            eprintln!("batcher: LIFECYCLE: spira-lc show {id} failed (read as unstacked): {e}");
             return BTreeMap::new();
         }
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&out) else {
-        eprintln!("batcher: LIFECYCLE: spira-lc show {id}: unparsed reply (lifecycle_enforce is on; read as unstacked)");
+        eprintln!("batcher: LIFECYCLE: spira-lc show {id}: unparsed reply (read as unstacked)");
         return BTreeMap::new();
     };
     let stack = match v.get("bead").and_then(|b| b.get("stack")) {
@@ -267,35 +243,29 @@ fn read_stack(env: &Env, id: &str) -> BTreeMap<String, String> {
 }
 
 // ---------------------------------------------------------------------------------------
-// The certified pool: landstate CERTIFIED records, narrowed to this repo, with title/
-// priority/express filled in from the bead store. Same construction as queue-watch's
+// The certified pool: the lifecycle machine's CERTIFIED beads, narrowed to this repo, with
+// title/priority/express filled in from the bead store. Same construction as queue-watch's
 // snapshot(), which this borrows from directly.
 // ---------------------------------------------------------------------------------------
 
-fn read_certified(landstate: &Path) -> Result<Vec<(String, String, u64)>, String> {
-    let rd = fs::read_dir(landstate).map_err(|e| format!("{}: {e}", landstate.display()))?;
-    let mut out = Vec::new();
-    for ent in rd.flatten() {
-        let name = ent.file_name().to_string_lossy().to_string();
-        if !name.starts_with("sp-") || name.contains(".gate-key") || name.contains(".tmp") {
-            continue;
-        }
-        if let Some((_, ext)) = name.rsplit_once('.') {
-            if ext.chars().any(|c| c.is_ascii_alphabetic()) && ext.len() > 2 {
-                continue;
-            }
-        }
-        if let Ok(t) = fs::read_to_string(ent.path()) {
-            let mut f = t.split_whitespace();
-            if f.next() == Some("CERTIFIED") {
-                let tip = f.next().unwrap_or("none").to_string();
-                let epoch = f.next().and_then(|e| e.parse().ok()).unwrap_or(0);
-                out.push((name, tip, epoch));
-            }
-        }
-    }
-    out.sort();
-    Ok(out)
+fn read_certified(env: &Env) -> Result<Vec<(String, String, u64)>, String> {
+    let out = lcq(env, &["list", "--state", "CERTIFIED"])?;
+    let rows: Vec<serde_json::Value> = serde_json::from_str(&out).map_err(|e| format!("spira-lc list: unparsed reply: {e}"))?;
+    let mut certified: Vec<(String, String, u64)> = rows
+        .iter()
+        .filter_map(|r| {
+            let id = r.get("bead_id")?.as_str()?.to_string();
+            let tip = r.get("tip").and_then(|t| t.as_str()).unwrap_or("none").to_string();
+            let epoch = match r.get("updated_at") {
+                Some(serde_json::Value::Number(n)) => n.as_u64().unwrap_or(0),
+                Some(serde_json::Value::String(t)) => t.parse().unwrap_or(0),
+                _ => 0,
+            };
+            Some((id, tip, epoch))
+        })
+        .collect();
+    certified.sort();
+    Ok(certified)
 }
 
 fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
@@ -312,7 +282,7 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
 }
 
 /// `repo`'s own `refs/heads/spira/*` tips, keyed by bead id — the same authority
-/// `queue_certified_list` (lib.sh) uses to scope a shared landstate directory to one
+/// `queue_certified_list` (lib.sh) uses to scope the machine's beads to one
 /// repository, and (law-batcher-earns-the-round-by-parity) the batcher's own check that a
 /// CERTIFIED record's tip is still the branch's live tip: a branch that moved since
 /// certification is not this bead's member until it is re-certified at the new tip, whatever
@@ -349,11 +319,11 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
     branches.get(id).map(String::as_str) == Some(tip)
 }
 
-/// The certified pool for `repo`: every CERTIFIED landstate record whose tip is still the
+/// The certified pool for `repo`: every CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
 /// express filled in from one bulk `bd show`.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
-    let certified = read_certified(&env.landstate)?;
+    let certified = read_certified(env)?;
     let branches = repo_branch_tips(repo)?;
     let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _)| tip_current(tip, id, &branches)).collect();
     let ids: Vec<String> = certified.iter().map(|(id, _, _)| id.clone()).collect();
@@ -2035,8 +2005,8 @@ mod lifecycle_tests {
         p
     }
 
-    fn env(dir: &Path, lc_bin: Option<PathBuf>, lc_enforce: bool) -> Env {
-        Env { lc_bin, lc_enforce, ..super::lifecycle_tests_env(dir) }
+    fn env(dir: &Path, lc_bin: Option<PathBuf>) -> Env {
+        Env { lc_bin, ..super::lifecycle_tests_env(dir) }
     }
 
     fn members() -> Vec<(String, String)> {
@@ -2044,18 +2014,9 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn off_never_runs_spira_lc_and_records_no_batch_id() {
-        let d = scratch("off");
-        // A working, executable spira-lc: presence alone must not turn anything on.
-        let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)), false);
-        assert_eq!(lc_probe(&e), Ok(()));
-        assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), None);
-        assert!(read_stack(&e, "sp-a").is_empty());
-        assert!(lcq(&e, &["list"]).is_err(), "lcq itself refuses when off");
-        assert!(!d.join("lc.log").exists(), "spira-lc must never run with lifecycle_enforce off");
-
-        // The record the cut writes when lc_cut_batch returned None: batch_id/version empty,
-        // so neither key is written.
+    fn a_cut_that_recorded_no_batch_id_writes_neither_key() {
+        let d = scratch("no-batch-id");
+        let e = env(&d, None);
         let ob = OpenBatch { pr: "7".into(), members: members(), owner: "batcher".into(), ..OpenBatch::default() };
         write_open_batch(&e, "r", &ob).unwrap();
         let text = fs::read_to_string(d.join("queue/r/open")).unwrap();
@@ -2063,9 +2024,32 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn on_runs_spira_lc_and_records_the_batch() {
-        let d = scratch("on");
-        let e = env(&d, Some(fake_lc(&d, r#"[]"#)), true);
+    fn the_certified_pool_is_the_machines_certified_beads() {
+        let d = scratch("certified");
+        let reply = r#"[{"bead_id":"sp-b","tip":"bbbb","updated_at":1790000002},{"bead_id":"sp-a","tip":"aaaa","updated_at":"1790000001"},{"bead_id":"sp-n","tip":null,"updated_at":null}]"#;
+        let e = env(&d, Some(fake_lc(&d, reply)));
+        assert_eq!(
+            read_certified(&e).unwrap(),
+            vec![("sp-a".to_string(), "aaaa".to_string(), 1790000001), ("sp-b".into(), "bbbb".into(), 1790000002), ("sp-n".into(), "none".into(), 0)]
+        );
+        let log = fs::read_to_string(d.join("lc.log")).unwrap();
+        assert!(log.contains("list --state CERTIFIED"), "{log}");
+        assert!(read_certified(&env(&d, Some(fake_lc(&d, "not json")))).unwrap_err().contains("unparsed"));
+        assert!(read_certified(&env(&d, None)).is_err());
+    }
+
+    #[test]
+    fn a_landstate_row_is_not_a_certified_bead() {
+        let d = scratch("landstate-inert");
+        fs::create_dir_all(d.join("landstate")).unwrap();
+        fs::write(d.join("landstate/sp-x"), "CERTIFIED xxxx 1790000000\n").unwrap();
+        assert!(read_certified(&env(&d, Some(fake_lc(&d, "[]")))).unwrap().is_empty());
+    }
+
+    #[test]
+    fn runs_spira_lc_and_records_the_batch() {
+        let d = scratch("cut");
+        let e = env(&d, Some(fake_lc(&d, r#"[]"#)));
         assert_eq!(lc_probe(&e), Ok(()));
         assert_eq!(lc_cut_batch(&e, "r", "spira/queue/1", "h", "b", &members()), Some("2".into()));
         let log = fs::read_to_string(d.join("lc.log")).unwrap();
@@ -2074,21 +2058,21 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn on_reads_the_stack_off_the_machine() {
-        let d = scratch("on-stack");
-        let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)), true);
+    fn reads_the_stack_off_the_machine() {
+        let d = scratch("stack");
+        let e = env(&d, Some(fake_lc(&d, r#"{"bead":{"stack":{"sp-z":"zzzz"}}}"#)));
         assert_eq!(read_stack(&e, "sp-a").get("sp-z").map(String::as_str), Some("zzzz"));
     }
 
     #[test]
-    fn on_unreachable_machine_fails_the_probe() {
-        let d = scratch("on-gone");
-        let e = env(&d, Some(d.join("nonexistent-spira-lc")), true);
+    fn an_unreachable_machine_fails_the_probe() {
+        let d = scratch("gone");
+        let e = env(&d, Some(d.join("nonexistent-spira-lc")));
         assert!(lc_probe(&e).is_err());
-        let e = env(&d, None, true);
+        let e = env(&d, None);
         assert_eq!(lc_probe(&e), Err("no spira-lc program".to_string()));
         // A reachable binary with a non-JSON reply is not an answer either.
-        let e = env(&d, Some(fake_lc(&d, "not json")), true);
+        let e = env(&d, Some(fake_lc(&d, "not json")));
         assert!(lc_probe(&e).unwrap_err().contains("unparsed"));
     }
 }
@@ -2482,7 +2466,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         home: dir.to_path_buf(),
         run: dir.to_path_buf(),
         queue_dir: dir.join("queue"),
-        landstate: dir.join("landstate"),
         db: None,
         bd: "bd".into(),
         express_label: "express".into(),
@@ -2500,7 +2483,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         git_email: "t@t".into(),
         lc_bin: None,
         lc_timeout: 5,
-        lc_enforce: false,
         verdicts: dir.join("verdicts"),
         land_lock_attempts: 3,
         land_lock_wait: Duration::from_millis(1),

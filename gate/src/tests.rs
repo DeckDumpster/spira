@@ -1564,7 +1564,7 @@ fn only_a_pass_is_cached() {
 // ---------------------------------------------------------------------------- ejected suites
 
 #[test]
-fn ejected_suites_come_from_the_ejected_file_first() {
+fn ejected_suites_come_from_the_ejected_file() {
     let f = Fake::new();
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
@@ -1590,7 +1590,7 @@ fn ejected_suites_come_from_the_ejected_file_first() {
 }
 
 #[test]
-fn ejected_suites_fall_back_to_an_ejected_landstate_row() {
+fn an_ejected_landstate_row_names_no_suites() {
     let f = Fake::new();
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
@@ -1598,20 +1598,7 @@ fn ejected_suites_fall_back_to_an_ejected_landstate_row() {
         "EJECTED tip 1 test-z.sh unattr\n".into(),
     );
     f.run();
-    assert_eq!(f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"), "test-z.sh");
-
-    let f = Fake::new();
-    f.set_var("SPIRA_GATE_BEAD", "sp-a");
-    f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a"),
-        "RED tip 1 test-z.sh\n".into(),
-    );
-    f.run();
-    assert_eq!(
-        f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"),
-        "",
-        "only an EJECTED row names suites"
-    );
+    assert_eq!(f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"), "");
 }
 
 // ---------------------------------------------------------------------------- admission & lock
@@ -2275,17 +2262,15 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
 }
 
 #[test]
-fn an_ejected_landstate_row_from_the_batcher_drives_the_rerun() {
-    // batcher-cut's concurrent attribution (sp-hvtgs) records `EJECTED <tip> <reason>` via
-    // land_mark with the suites as the reason field.
+fn the_batchers_ejected_sidecar_drives_the_rerun() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.runs
         .borrow_mut()
         .insert(MERGE_SHA.into(), (0, "fences ok".into()));
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a"),
-        "EJECTED abc123 1790000000 test-b.sh\n".into(),
+        PathBuf::from("/run/landstate/sp-a.ejected"),
+        "test-b.sh\n".into(),
     );
     f.files.borrow_mut().insert(
         PathBuf::from(format!("{GATE_TREE}/spira/test-b.sh")),

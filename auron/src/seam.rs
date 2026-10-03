@@ -1,9 +1,9 @@
 //! The lib.sh seam, for exactly the two functions auron needs that still carry real
 //! graph semantics: `bdq` (the guarded `bd` wrapper — repo-label and destructive-vocabulary
 //! refusals, the connection retry, `SPIRA_BDJSON_FIXTURE`) and `bead_reopen` (the
-//! landstate-withdrawal and submitted-label interaction a bare `bd reopen` does not have).
+//! claim and submitted-label interaction a bare `bd reopen` does not have).
 //! Reimplementing either in Rust would mean keeping a second copy of `bdq`'s guards and
-//! `bead_reopen`'s landstate rules in step with lib.sh by hand; this is the same design
+//! `bead_reopen`'s rules in step with lib.sh by hand; this is the same design
 //! aeon's own seam uses for the same reason (aeon/src/seam.rs).
 //!
 //! Unlike aeon's seam, this one does not source a fayth file or set `FAYTH` — auron has
@@ -26,7 +26,7 @@
 //! in-process (the repository map's fields, `SPIRA_ASK_LABEL`, `SPIRA_DB`). What is left on
 //! this seam is narrower than before: only `_auron_bdq` (the actual `bd` mutation —
 //! `bdops::create`/`update`/`close`/`label_*`) and `_auron_bead_reopen` (not yet ported,
-//! landstate withdrawal rules live in `lib.sh` only). Switching `bdops::create` et al. onto
+//! its rules live in `lib.sh` only). Switching `bdops::create` et al. onto
 //! a direct `bdq`-binary call fed from `main.rs`'s already-resolved config is now a small,
 //! well-scoped follow-on rather than the exec-boundary hazard it would have been before
 //! sp-mz7dn — left to its own bead (`law-decompose-by-deliverable`) rather than folded into

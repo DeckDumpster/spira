@@ -9,7 +9,7 @@
 
 use gh_intake::closeout::{self, Ctx, Deps};
 use gh_intake::logic::{self, Config};
-use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealMail, RealRepo};
+use gh_intake::real::{RealBd, RealGh, RealGit, RealHttp, RealLifecycle, RealMail, RealRepo};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -57,7 +57,8 @@ fn closeout_cmd(args: &[String]) -> ExitCode {
         }
     };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+    let lc = RealLifecycle::default();
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let log = closeout::gh_issue_closeout(&d, &closeout_ctx(run), &args[0], &args[1], Path::new(&args[2]));
     for l in log {
         println!("{l}");
@@ -78,7 +79,8 @@ fn unlanded_scan_cmd(args: &[String]) -> ExitCode {
         }
     };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+    let lc = RealLifecycle::default();
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     let log = closeout::gh_unlanded_scan(&d, &closeout_ctx(run), now);
     for l in log {
@@ -110,7 +112,8 @@ fn backfill_cmd(args: &[String]) -> ExitCode {
         }
     };
     let (bd, gh, git, repo, mail) = ports(db, bd_bin, home);
-    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+    let lc = RealLifecycle::default();
+    let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
     let (log, _found, _closed, _skipped, _dry) = closeout::backfill(&d, &closeout_ctx(run), dry_run);
     for l in log {
         println!("{l}");

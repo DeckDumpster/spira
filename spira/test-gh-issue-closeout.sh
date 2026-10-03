@@ -82,6 +82,15 @@ MAILSTUB
 chmod +x "$TMP/bin/mail"
 export PATH="$TMP/bin:$PATH"
 
+# The lifecycle machine answers "no row" for every bead: exit 1 with `{}`, the shape
+# `spira-lc show` gives for an id it does not hold. An absent binary would read as no answer.
+cat > "$TMP/bin/spira-lc" <<'LCSTUB'
+#!/usr/bin/env bash
+[ "${1:-}" = show ] && { echo '{}'; exit 1; }
+exit 2
+LCSTUB
+chmod +x "$TMP/bin/spira-lc"
+
 # --- spira environment: every var gh-intake resolves config from, set explicitly so no
 # in-process resolve ever needs a real conf.d (none exists in this fixture). ---
 RUN="$TMP/run"
