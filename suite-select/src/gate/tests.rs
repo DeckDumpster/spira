@@ -180,6 +180,17 @@ fn suites_off_runs_only_what_covers_the_critical_file() {
 }
 
 #[test]
+fn covered_certification_with_suites_off_selects_what_covers_any_changed_file() {
+    let d = crit_fixture("covered");
+    let off = [("SPIRA_GATE_SUITES", "off")];
+    let o = run(&genv(&d.0, &off), &git_changing("spira/other.sh"), "main", "br").unwrap();
+    assert!(o.suites.is_empty(), "positive control: uncovered, suites off selects nothing: {o:?}");
+    let covered = [("SPIRA_GATE_SUITES", "off"), ("SPIRA_GATE_COVERED", "1")];
+    let o = run(&genv(&d.0, &covered), &git_changing("spira/other.sh"), "main", "br").unwrap();
+    assert_eq!(o.suites, ["test-other.sh"], "{o:?}");
+}
+
+#[test]
 fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     // 5 suites at 1s each (T1 caps, no timings); budget 6, half reserved for setup (no
     // setup measured), keeps the 3 most specific.

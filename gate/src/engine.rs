@@ -428,6 +428,10 @@ impl<'w, W: World> Trial<'w, W> {
 
         // THE VERDICT CACHE.
         let suites_mode = ctx.var_or("SPIRA_GATE_SUITES", "on").to_string();
+        // A bead's certification never runs suites-blind: with suites off it still runs the
+        // budgeted suites covering what the bead touched, whatever the composition.
+        let covered = suites_mode == "off" && !self.s.bead.is_empty();
+        let key_suites = if covered { "off+covered" } else { &suites_mode };
         let verdict_dir = self.s.verdict_dir.clone();
         if let Some(h) = w.harness_hash() {
             self.s.harness_h = h.clone();
@@ -437,7 +441,7 @@ impl<'w, W: World> Trial<'w, W> {
                 files: &files,
                 cmd: &key_cmd,
                 harness_h: &h,
-                suites: &suites_mode,
+                suites: key_suites,
                 bead: if self.s.bead.is_empty() {
                     "none"
                 } else {
@@ -477,7 +481,7 @@ impl<'w, W: World> Trial<'w, W> {
         // are fixed below: a first message on blocking (and one on being admitted, if the
         // wait was not instant), and the wait accumulated into `self.s.waited` so the
         // tree-lock section's own wait adds to it instead of overwriting it.
-        if suites_mode != "off" || !ejected.trim().is_empty() || cached.is_some() {
+        if suites_mode != "off" || covered || !ejected.trim().is_empty() || cached.is_some() {
             let dir = PathBuf::from(format!("{}/gate-admission", self.s.run));
             w.mkdir_p(&dir);
             let t0 = w.now();
@@ -667,14 +671,16 @@ impl<'w, W: World> Trial<'w, W> {
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
-                // fences (a unit composition without the build fence, sp-aprxm) and
-                // selects nothing (the selector, `suite-select gate`). The always-
-                // covers carve-out is cleared with it; its default, spira/lib.sh, is a
+                // fences (a unit composition without the build fence, sp-aprxm) and the
+                // selector (`suite-select gate`) picks only what covers the diff when the
+                // caller is a bead's certification (SPIRA_GATE_COVERED), else nothing. The
+                // always-covers carve-out is cleared with it; its default, spira/lib.sh, is a
                 // script, and a script composes as suites, so no carve-out can apply here.
                 e(
                     "SPIRA_GATE_SUITES",
                     if c.suites_off() { "off" } else { &suites_mode },
                 ),
+                e("SPIRA_GATE_COVERED", if covered { "1" } else { "" }),
                 e(
                     "SPIRA_CERTIFY_ALWAYS_COVERS",
                     if c.suites_off() {

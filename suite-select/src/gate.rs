@@ -20,6 +20,9 @@ pub struct GateEnv {
     pub tiers: Option<Vec<String>>,
     pub all: bool,
     pub suites_off: bool,
+    /// `SPIRA_GATE_COVERED=1`: a bead's certification — suites off still selects, budgeted, what
+    /// covers the diff, instead of only the always-covers carve-out.
+    pub covered: bool,
     pub always_covers: Vec<String>,
     pub ejected: String,
     pub budget_secs: f64,
@@ -69,6 +72,7 @@ impl GateEnv {
             tiers: select::parse_tiers(&or("SPIRA_GATE_TIERS", "T0,T1")),
             all: get("SPIRA_GATE_ALL").as_deref() == Some("1"),
             suites_off: get("SPIRA_GATE_SUITES").as_deref() == Some("off"),
+            covered: get("SPIRA_GATE_COVERED").as_deref() == Some("1"),
             always_covers: or("SPIRA_CERTIFY_ALWAYS_COVERS", "spira/lib.sh")
                 .split_whitespace()
                 .map(str::to_string)
@@ -164,12 +168,12 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         let n = c.names();
         log.push(format!("suite-select gate: SPIRA_GATE_ALL=1 — the whole corpus ({} suites)", n.len()));
         (c, n)
-    } else if env.suites_off {
+    } else if env.suites_off && !env.covered {
         return carve_out(env, g, base, head);
     } else {
         let opts = Options {
             no_all_fallback: true,
-            no_nocov: false,
+            no_nocov: env.suites_off,
             tiers: env.tiers.clone(),
             reach: Reach::load(&env.repo)?,
         };
