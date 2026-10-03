@@ -1118,6 +1118,8 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             }
             return fin;
         }
+        // A cold build is not the container's share: the clock for boot and tests starts after it.
+        shift(build_wall_secs);
     }
     if cancelled() {
         return Finish::fault(2, "interrupted", 0);
