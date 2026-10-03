@@ -157,6 +157,11 @@ tier = "T1"
 # literal-ok: use-case prose naming the label the groomer removes, not a comparison against it
 statement = "The groomer sweep applies its remedies idempotently — adds `overseer` to asks, removes `awaiting-ci` on push repos, closes description-less unmapped litter naming the predicate, and reports only described or unclaimable beads — logging each action; a dry run writes nothing; after a sweep the detector reports only what the sweep cannot fix."
 
+[use_case.uncovered]
+reason = "groomer sweep deleted: the lifecycle machine's enforced transitions replace its STATE remedies, and its three suites went with it; no remedy remains to cover"
+date = "2026-10-03"
+bead = "sp-ey9x8.6"
+
 [[use_case]]
 id = "UC-ops-detection-remediation-32"
 tier = "T1"
