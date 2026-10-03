@@ -157,11 +157,11 @@ echo
 echo "T5: an incident whose open remedy is linked relates-to only (law-a-bug-with-a-fix-in-flight-depends-on-it)"
 # ===========================================================================================
 testdb_seed <<'JSONL'
-{"id":"sp-lint-rem-bad","title":"incident, remedy only related","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-bad","depends_on_id":"sp-lint-rem-fix1","type":"relates-to"}]}
+{"id":"sp-lint-rem-bad","title":"incident, remedy only related","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-bad","depends_on_id":"sp-lint-rem-fix1","type":"relates-to"}]}
 {"id":"sp-lint-rem-fix1","title":"remedy one","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
-{"id":"sp-lint-rem-good","title":"incident, remedy blocks","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"relates-to"},{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"blocks"}]}
+{"id":"sp-lint-rem-good","title":"incident, remedy blocks","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"relates-to"},{"issue_id":"sp-lint-rem-good","depends_on_id":"sp-lint-rem-fix2","type":"blocks"}]}
 {"id":"sp-lint-rem-fix2","title":"remedy two","status":"open","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
-{"id":"sp-lint-rem-done","title":"incident, remedy landed","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-done","depends_on_id":"sp-lint-rem-fix3","type":"relates-to"}]}
+{"id":"sp-lint-rem-done","title":"incident, remedy landed","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z","dependencies":[{"issue_id":"sp-lint-rem-done","depends_on_id":"sp-lint-rem-fix3","type":"relates-to"}]}
 {"id":"sp-lint-rem-fix3","title":"remedy three, closed","status":"closed","issue_type":"task","labels":["repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
 JSONL
 
@@ -179,7 +179,7 @@ wantrc "a relates-to remedy that already closed passes" "0" "$LINT_RC"
 echo
 echo "T5b: filing a remedy under an incident adds the blocks edge in the same step"
 testdb_seed <<'JSONL'
-{"id":"sp-lint-fil-inc","title":"incident to remedy","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira"],"updated_at":"2026-10-01T00:00:00Z"}
+{"id":"sp-lint-fil-inc","title":"incident to remedy","status":"open","issue_type":"task","labels":["incident-test","spira","repo:spira","no-loop"],"updated_at":"2026-10-01T00:00:00Z"}
 {"id":"sp-lint-fil-work","title":"ordinary parent","status":"open","issue_type":"task","labels":["spira","repo:spira","plan"],"updated_at":"2026-10-01T00:00:00Z"}
 JSONL
 
@@ -187,7 +187,7 @@ file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
     FILE_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
         SPIRA_ALARM_LABEL="incident-test" \
-        bead.sh file "remedy for $1" --for builder --repo spira --parent "$1" 2>/dev/null)"
+        bead.sh file "remedy for $1" --for builder --repo spira --parent "$1" 2>&1)"
     FILE_RC=$?
 }
 blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
@@ -196,8 +196,8 @@ blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depe
 }
 
 file_under sp-lint-fil-inc
-wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"
-want   "the incident now blocks on the new remedy" "$FILE_OUT" "$(blocks_of sp-lint-fil-inc)"
+wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"; echo "# $FILE_OUT"
+want   "the incident now blocks on the new remedy ($FILE_OUT)" "$FILE_OUT" "$(blocks_of sp-lint-fil-inc)"
 
 file_under sp-lint-fil-work
 wantrc "filing under an ordinary bead exits 0 (positive control)" "0" "$FILE_RC"
