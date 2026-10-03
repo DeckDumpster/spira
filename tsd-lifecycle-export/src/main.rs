@@ -235,10 +235,9 @@ impl LcRoConn {
         Ok(LcRoConn { dolt_bin, host, port, user, password, database, data_dir })
     }
 
-    fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, String> {
-        let stmt = if sql.trim_end().ends_with(';') { sql.to_string() } else { format!("{sql};") };
-        let mut child = Command::new(&self.dolt_bin)
-            .arg("--data-dir")
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.dolt_bin);
+        cmd.arg("--data-dir")
             .arg(&self.data_dir)
             .arg("--host")
             .arg(&self.host)
@@ -246,12 +245,18 @@ impl LcRoConn {
             .arg(self.port.to_string())
             .arg("-u")
             .arg(&self.user)
-            .arg("-p")
-            .arg(&self.password)
             .arg("--no-tls")
             .arg("--use-db")
             .arg(&self.database)
             .args(["sql", "-r", "json"])
+            .env("DOLT_CLI_PASSWORD", &self.password);
+        cmd
+    }
+
+    fn query(&self, sql: &str) -> Result<Vec<serde_json::Value>, String> {
+        let stmt = if sql.trim_end().ends_with(';') { sql.to_string() } else { format!("{sql};") };
+        let mut child = self
+            .command()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -303,4 +308,26 @@ fn write_rows(run: &Path, rows: &[StageRow]) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod argv_secret_tests {
+    use super::LcRoConn;
+
+    #[test]
+    fn the_password_is_never_an_argument_to_dolt() {
+        let conn = LcRoConn {
+            dolt_bin: "dolt".into(),
+            host: "h".into(),
+            port: 1,
+            user: "u".into(),
+            password: "s3cret-pw".into(),
+            database: "d".into(),
+            data_dir: "/x".into(),
+        };
+        let cmd = conn.command();
+        let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+        assert!(!args.iter().any(|a| a.contains("s3cret-pw") || a == "-p" || a == "--password"), "{args:?}");
+        assert!(cmd.get_envs().any(|(k, v)| k == "DOLT_CLI_PASSWORD" && v.is_some_and(|v| v == "s3cret-pw")));
+    }
 }
