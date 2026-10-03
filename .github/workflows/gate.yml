@@ -796,7 +796,7 @@ jobs:
 
       - name: Assert gate check
         # Assert a green gate check on this SHA, and that it belongs to a queue
-        # batch PR (spira/queue/*) whose OWN gate run tested a non-empty suite
+        # batch PR (spira/queue/*) or publish PR (spira/publish/*) whose OWN gate run tested a non-empty suite
         # list. A cut dispatch selects no suites of its own (above), so the
         # positive control has to come from the run that actually tested this
         # SHA — the queue PR's pull_request run, not this dispatch's. A gate
@@ -810,7 +810,9 @@ jobs:
             "repos/$GITHUB_REPOSITORY/commits/${{ github.sha }}/pulls" \
             --jq '.[0].head.ref // ""' 2>/dev/null || true)"
           case "${_pr_ref:-}" in
-            spira/queue/*) ;;
+            # spira/publish/*: since queue.local, every merge to main arrives as a
+            # publish PR; spira/queue/* is the GitHub merge-queue batch it replaced.
+            spira/queue/*|spira/publish/*) ;;
             *)
               printf 'cut: SHA %s is not the head of a queue batch PR (head ref: %s)\n' \
                 "${{ github.sha }}" "${_pr_ref:-<none>}" >&2
