@@ -694,16 +694,35 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
     }
 }
 
+/// The earliest of `winners` (id, tip) that touched one of `files` since `base_sha`: the
+/// sibling a base-clean member lost its merge to, with the files they clashed on.
+pub fn sibling_conflict(repo: &Repo, base_sha: &str, files: &[String], winners: &[(String, String)]) -> Option<(String, Vec<String>)> {
+    for (id, tip) in winners {
+        let o = Command::new("git").arg("-C").arg(&repo.path).args(["diff", "--name-only", &format!("{base_sha}...{tip}")]).output().ok()?;
+        let touched = String::from_utf8_lossy(&o.stdout).to_string();
+        let shared: Vec<String> = files.iter().filter(|f| touched.lines().any(|l| l == f.as_str())).cloned().collect();
+        if !shared.is_empty() {
+            return Some((id.clone(), shared));
+        }
+    }
+    None
+}
+
 /// The paths `tip` conflicts on with `base_sha` alone (a real rebase need), or None when it
 /// merges cleanly or conflicts only with the batch this round is accumulating.
 /// `merge-tree --write-tree` touches no worktree. A conflict is exit 1 with a result tree id
 /// on the first line; an unresolvable rev also exits 1 but prints none, and no other failure
 /// is evidence of a conflict, so those answer None.
 pub fn base_conflict(repo: &Repo, base_sha: &str, tip: &str) -> Option<Vec<String>> {
+    conflict_files(&repo.path, base_sha, tip)
+}
+
+/// The paths `tip` conflicts on with `side`, per `merge-tree --write-tree`; None when clean.
+pub fn conflict_files(dir: &Path, side: &str, tip: &str) -> Option<Vec<String>> {
     let o = Command::new("git")
         .arg("-C")
-        .arg(&repo.path)
-        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", base_sha, tip])
+        .arg(dir)
+        .args(["merge-tree", "--write-tree", "--name-only", "--no-messages", side, tip])
         .output()
         .ok()?;
     let out = String::from_utf8_lossy(&o.stdout).to_string();
