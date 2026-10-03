@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{czar_ok, Ctx, idents, landing_log, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
+use super::{czar_ok, Acquire, Ctx, idents, landing_log, lock, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
 use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
@@ -257,9 +257,16 @@ fn settle_repo(w: &World, c: &Ctx) -> i32 {
     if idents(w, "publish-settle", &[("repo", &name)]).is_err() {
         return FAIL;
     }
-    let _g = match take_lock(w, "publish-settle", c, "") {
-        Ok(g) => g,
-        Err(rc) => return rc,
+    let _g = match lock::try_lock(&c.s.queue_dir, &name) {
+        Acquire::Held(g) => g,
+        Acquire::Busy => {
+            w.out(format!("{} publish-settle {name}: another queue operation holds the lock; retry on the next tick", w.clock.now()));
+            return OK;
+        }
+        Acquire::Unopenable => {
+            w.err(format!("queue.sh publish-settle: cannot open lock file for {name}"));
+            return FAIL;
+        }
     };
     let pfile = c.queue_file("publish");
     let kv = records::read_kv(&pfile).ok().flatten();
