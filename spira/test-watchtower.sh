@@ -225,7 +225,7 @@ echo "the strand ledger is reported by class, not by size:"
 ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
-    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
         cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
@@ -282,7 +282,7 @@ is   "while the ledger size is still known" "2" "$(key "$k" SP_STRANDS)"
 k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
-k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" \
         cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 

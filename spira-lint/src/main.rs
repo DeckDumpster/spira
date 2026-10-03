@@ -21,7 +21,7 @@ use std::process::{Command, ExitCode};
 
 use spira_lint::{all_rules, run, Tree};
 
-const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev>]\n       spira-lint --only inventory --scan <file>";
+const USAGE: &str = "usage: spira-lint [--root <dir>] [--only <rule>] [--base <rev>] [--emit-allow]\n       spira-lint --only inventory --scan <file>";
 
 fn default_root() -> Option<PathBuf> {
     let out = Command::new("git").args(["rev-parse", "--show-toplevel"]).output().ok()?;
@@ -33,12 +33,14 @@ fn main() -> ExitCode {
     let mut only: Option<String> = None;
     let mut base: Option<String> = std::env::var("SPIRA_GATE_BASE").ok();
     let mut scan: Option<PathBuf> = None;
+    let mut emit_allow = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--root" => root = args.next().map(PathBuf::from),
             "--only" => only = args.next(),
             "--base" => base = args.next(),
+            "--emit-allow" => emit_allow = true,
             "--scan" => scan = args.next().map(PathBuf::from),
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -97,6 +99,22 @@ fn main() -> ExitCode {
             return ExitCode::from(3);
         }
     };
+    if emit_allow {
+        if only.as_deref() != Some("call-deadline") {
+            eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline\n{USAGE}");
+            return ExitCode::from(2);
+        }
+        return match spira_lint::rules::call_deadline::render_allow(&tree) {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("call-deadline: error: {e}");
+                ExitCode::from(3)
+            }
+        };
+    }
     let (mut findings, mut refused) = (0usize, false);
     let mut controls = Vec::new();
     for r in run(&tree, &rules) {

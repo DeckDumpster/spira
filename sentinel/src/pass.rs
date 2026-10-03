@@ -526,34 +526,14 @@ impl<'a> Sentinel<'a> {
             (false, Lifecycle::On) => self.lc_rows(),
             _ => None,
         };
-        if !self.cfg.skip_reclaim {
-            match self.lc {
-                Lifecycle::On => {
-                    if let Some(rows) = &lc_rows {
-                        self.check2(&snap, rows);
-                    }
-                }
-                Lifecycle::Off => self.check2_legacy(&snap),
-            }
+        if let Some(rows) = &lc_rows {
+            self.check2(&snap, rows);
         }
         self.phase("CHECK2b");
         self.check2b();
         self.phase("CHECK2c");
-        let mut plan_ready = plan_ready;
-        if !self.cfg.skip_reclaim {
-            match self.lc {
-                Lifecycle::On => {
-                    if let Some(rows) = &lc_rows {
-                        self.check2c(rows);
-                    }
-                }
-                Lifecycle::Off => {
-                    if self.check2c_legacy(&snap) > 0 {
-                        // Every freed bead is claimable now; CHECK 3 and 8 reason about it.
-                        plan_ready = self.plan_ready_live();
-                    }
-                }
-            }
+        if let Some(rows) = &lc_rows {
+            self.check2c(rows);
         }
         self.phase("CHECK3");
         let plan_ready = self.check3(plan_ready, plan_inprog, n_open);
