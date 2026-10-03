@@ -126,6 +126,7 @@ is "different-branch gates both held the barrier at once" 2 "${met:-0}"
 SBAR="$TMP/serial-barrier"
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$(barrier_cmd "$SBAR" 1)" > "$MAP"
 rungate "spira/sp-t1" > "$TMP/s1.out" 2>&1
+rm -f "$SBAR"/arrive.*
 rungate "spira/sp-t2" > "$TMP/s2.out" 2>&1
 is "the barrier reports TIMEOUT when gates run serially" "spira/sp-t1 TIMEOUT
 spira/sp-t2 TIMEOUT" "$(cat "$SBAR/result" 2>/dev/null)"
