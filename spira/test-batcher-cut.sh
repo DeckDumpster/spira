@@ -264,7 +264,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -281,7 +281,7 @@ cut_repo() {
     SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
     SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
     SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
-    SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
+    SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
         batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
