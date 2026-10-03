@@ -680,6 +680,7 @@ fn cut_new_round(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReaso
 
 fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &TriggerReason) -> Result<(), String> {
     let round_start = now();
+    io::fetch_base(repo)?;
     let base_sha = io::resolve_base_sha(repo)?;
     let base_moved_at = io::base_moved_at(env_, &repo.name, &base_sha);
 
@@ -761,7 +762,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
     }
     let batch_head = io::head_of(&wt)?;
-    open_round_pr(env_, repo, &stable.members, &batch_head, &base_sha, round_start, stable.attribution_seconds, stable.regreen_seconds)
+    open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -770,11 +771,12 @@ fn open_round_pr(
     repo: &Repo,
     merged: &[Member],
     batch_head: &str,
-    base_sha: &str,
     round_start: u64,
     attribution_seconds: Option<u64>,
     regreen_seconds: Option<u64>,
 ) -> Result<(), String> {
+    let base_sha = io::confirm_base(repo, batch_head)?;
+    let base_sha = base_sha.as_str();
     let stamp = io::utc_stamp(round_start);
     let batch_br = format!("spira/queue/{stamp}");
     io::set_branch(repo, &batch_br, batch_head);
@@ -906,7 +908,7 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
         return Ok(false);
     }
     let merged: Vec<Member> = p.members.iter().filter_map(|(id, _)| current.get(id.as_str()).map(|m| (*m).clone())).collect();
-    open_round_pr(env_, repo, &merged, &p.head, &base_sha, now() - p.seconds, None, None)?;
+    open_round_pr(env_, repo, &merged, &p.head, now() - p.seconds, None, None)?;
     Ok(true)
 }
 
