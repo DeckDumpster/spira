@@ -32,6 +32,10 @@ pub const JITTER_ENV: &str = "SPIRA_SUMMON_JITTER";
 pub const JITTER_DEFAULT: u64 = 20;
 /// The telemetry family: `<run>/tsd/admission.jsonl`.
 pub const FAMILY: &str = "admission";
+/// Minutes a compile lease may be held while no compiler in its process subtree advances
+/// (0 disables). Set well above the sccache wedge bound.
+pub const STALL_ENV: &str = "SPIRA_COMPILE_STALL_MINS";
+pub const STALL_DEFAULT_MINS: u64 = 30;
 /// How often a waiter repeats its waiting line.
 pub const SAY_EVERY: u64 = 30;
 
@@ -254,6 +258,11 @@ pub trait Procs {
     /// Field 22 of `/proc/<pid>/stat`; None when the process does not exist.
     fn start_of(&self, pid: u32) -> Option<u64>;
     fn ppid_of(&self, pid: u32) -> Option<u32>;
+    /// Cumulative CPU ticks (utime+stime) of the compiler processes (rustc, cc, linker) in
+    /// `pid`'s subtree; None when unknown, which never counts as a stall.
+    fn compiler_ticks(&self, _pid: u32) -> Option<u64> {
+        None
+    }
 }
 
 pub struct RealProcs;
@@ -273,6 +282,36 @@ impl Procs for RealProcs {
     fn ppid_of(&self, pid: u32) -> Option<u32> {
         stat_fields(pid)?.get(1)?.parse().ok()
     }
+    fn compiler_ticks(&self, pid: u32) -> Option<u64> {
+        stat_fields(pid)?;
+        let mut kids: std::collections::HashMap<u32, Vec<u32>> = std::collections::HashMap::new();
+        let mut info: std::collections::HashMap<u32, (String, u64)> = std::collections::HashMap::new();
+        for e in fs::read_dir("/proc").ok()?.flatten() {
+            let Some(p) = e.file_name().to_str().and_then(|n| n.parse::<u32>().ok()) else { continue };
+            let Ok(s) = fs::read_to_string(format!("/proc/{p}/stat")) else { continue };
+            let (Some(open), Some(close)) = (s.find('('), s.rfind(')')) else { continue };
+            let f: Vec<&str> = s[close + 1..].split_whitespace().collect();
+            let (Some(pp), Some(u), Some(k)) = (f.get(1).and_then(|v| v.parse::<u32>().ok()), f.get(11).and_then(|v| v.parse::<u64>().ok()), f.get(12).and_then(|v| v.parse::<u64>().ok())) else { continue };
+            kids.entry(pp).or_default().push(p);
+            info.insert(p, (s[open + 1..close].to_string(), u + k));
+        }
+        let (mut total, mut stack) = (0u64, vec![pid]);
+        while let Some(p) = stack.pop() {
+            for c in kids.get(&p).into_iter().flatten() {
+                stack.push(*c);
+                if let Some((comm, t)) = info.get(c) {
+                    if is_compiler_comm(comm) {
+                        total += t;
+                    }
+                }
+            }
+        }
+        Some(total)
+    }
+}
+
+fn is_compiler_comm(comm: &str) -> bool {
+    matches!(comm, "rustc" | "cc" | "c++" | "gcc" | "g++" | "clang" | "clang++" | "cc1" | "cc1plus" | "ld" | "lld" | "ld.lld" | "mold" | "collect2" | "as")
 }
 
 /// A holder for a live process: its pid and starttime.
@@ -368,16 +407,52 @@ pub struct Waiter {
     pub weight: u64,
 }
 
+/// Whether `l` has held its slot `stall` seconds with no change in its subtree's compiler CPU.
+/// The last change is kept in `progress.<slot>` (`pid start ticks moved`); a first sight, or a
+/// sidecar for another holder, starts the clock at `now`.
+fn stalled(dir: &Path, l: &Lease, procs: &dyn Procs, now: u64, stall: u64) -> bool {
+    let Some(ticks) = procs.compiler_ticks(l.pid) else { return false };
+    let path = dir.join(format!("progress.{}", l.slot));
+    let prev: Option<(u64, u64)> = fs::read_to_string(&path).ok().and_then(|t| {
+        let f: Vec<u64> = t.split_whitespace().filter_map(|v| v.parse().ok()).collect();
+        (f.len() == 4 && f[0] == u64::from(l.pid) && f[1] == l.start).then(|| (f[2], f[3]))
+    });
+    let moved = match prev {
+        Some((t, m)) if t == ticks => m,
+        _ => now,
+    };
+    if prev.map(|p| p.1) != Some(moved) || prev.map(|p| p.0) != Some(ticks) {
+        let _ = write_atomic(&path, &format!("{} {} {ticks} {moved}\n", l.pid, l.start));
+    }
+    now.saturating_sub(moved) >= stall
+}
+
+/// [`STALL_ENV`] from the environment, in seconds.
+fn stall_secs() -> u64 {
+    let mins = std::env::var(STALL_ENV).ok().and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(STALL_DEFAULT_MINS);
+    mins.saturating_mul(60)
+}
+
 /// Remove dead leases and dead waiters; return the live leases, the ended ones (for
 /// telemetry) and the live waiters, oldest first.
-fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
+fn reap(dir: &Path, pool: Pool, size: u64, procs: &dyn Procs, now: u64, stall: u64) -> (Vec<Lease>, Vec<Ended>, Vec<Waiter>) {
     let mut live = Vec::new();
     let mut ended = Vec::new();
     for (n, l) in read_leases(dir) {
         match l {
-            Some(l) if alive(l.pid, l.start, procs) => live.push(l),
+            Some(l) if alive(l.pid, l.start, procs) => {
+                if pool == Pool::Compile && stall > 0 && stalled(dir, &l, procs, now, stall) {
+                    let _ = fs::remove_file(dir.join(format!("slot.{n}")));
+                    let _ = fs::remove_file(dir.join(format!("progress.{n}")));
+                    let held = now.saturating_sub(l.since);
+                    ended.push(Ended { pool, lease: l, size, held, end: "stalled" });
+                } else {
+                    live.push(l);
+                }
+            }
             other => {
                 let _ = fs::remove_file(dir.join(format!("slot.{n}")));
+                let _ = fs::remove_file(dir.join(format!("progress.{n}")));
                 if let Some(l) = other {
                     let held = l.last.max(l.since).saturating_sub(l.since);
                     ended.push(Ended { pool, lease: l, size, held, end: "reclaimed" });
@@ -436,7 +511,7 @@ pub fn try_take(
 ) -> std::io::Result<(Take, Vec<Ended>)> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir)?;
-    let (live, ended, waiters) = reap(&dir, pool, size, procs);
+    let (live, ended, waiters) = reap(&dir, pool, size, procs, now, stall_secs());
     if let Some(l) = live.iter().find(|l| l.is(me)) {
         if l.last < now {
             let mut l2 = l.clone();
@@ -488,7 +563,7 @@ pub enum Now {
 pub fn take_now(run: &Path, pool: Pool, size: u64, me: &Holder, now: u64, procs: &dyn Procs) -> std::io::Result<(Now, Vec<Ended>)> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir)?;
-    let (live, ended, _) = reap(&dir, pool, size, procs);
+    let (live, ended, _) = reap(&dir, pool, size, procs, now, stall_secs());
     let held_before: u64 = live.iter().filter(|l| !l.is(me)).map(|l| l.weight.max(1)).sum();
     if let Some(l) = live.iter().find(|l| l.is(me)) {
         return Ok((Now::Took { slot: l.slot, held_before, fresh: false }, ended));
@@ -722,6 +797,9 @@ pub fn acquire(q: &Request, s: &Seams, say: &mut dyn FnMut(&str)) -> Guard {
         match try_take(run, pool, size, &me, waited, now, procs) {
             Ok((take, ended)) => {
                 record(run, &ended);
+                for e in ended.iter().filter(|e| e.end == "stalled") {
+                    say(&format!("admission: reclaimed {} slot {} from {} — no compiler in its subtree advanced for {}s", pool.name(), e.lease.slot, e.lease.who, e.held));
+                }
                 match take {
                     Take::Admitted { slot, .. } => {
                         if said_at.is_some() {
@@ -802,7 +880,7 @@ impl Occupancy {
 pub fn read_occupancy(run: &Path, pool: Pool, size: u64, procs: &dyn Procs) -> Option<Occupancy> {
     let dir = pool.dir(run);
     let _m = Mutex::lock(&dir).ok()?;
-    let (holders, ended, waiters) = reap(&dir, pool, size, procs);
+    let (holders, ended, waiters) = reap(&dir, pool, size, procs, now_epoch(), stall_secs());
     record(run, &ended);
     Some(Occupancy { pool, size, holders, waiting: waiters.len(), waiters })
 }

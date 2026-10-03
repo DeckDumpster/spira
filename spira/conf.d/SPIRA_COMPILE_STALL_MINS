@@ -1,0 +1,11 @@
+TYPE=u64
+GROUP=summon
+DOC=MINUTES A COMPILE-POOL SLOT MAY BE HELD WHILE NO RUSTC/CC PROCESS IN THE HOLDER'S SUBTREE
+SCHEMA=Minutes a compile slot may be held with no compiler CPU advancing before it is reclaimed (0 disables; unset: 30).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # HOW LONG A COMPILE SLOT MAY SIT WITH NO COMPILER MAKING PROGRESS. A holder whose
+    # subtree has no rustc/cc/linker with advancing CPU for this many minutes loses its slot
+    # (recorded end="stalled"). Keep it well above SPIRA_SCCACHE_WEDGE_MINS; 0 disables.
+    # Matches admission.rs's STALL_DEFAULT_MINS — change both together.
+    : "${SPIRA_COMPILE_STALL_MINS:=30}"
+SPIRA_CONF_DEFAULT_EOF
