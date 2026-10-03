@@ -376,12 +376,10 @@ mod tests {
 
     #[test]
     fn pressure_flags_tmp_and_root_through_a_fake_df() {
-        use std::os::unix::fs::PermissionsExt;
         let d = testkit::TempDir::new("wt-df");
         let mut c = cfg(&d);
         let df = d.join("df");
-        std::fs::write(&df, "#!/bin/bash\necho 'Avail Use%'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92%'; else echo '50M  10%'; fi\n").unwrap();
-        std::fs::set_permissions(&df, std::fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&df, "#!/bin/bash\necho 'Avail Use%'\nif [ \"${@: -1}\" = / ]; then echo '90000M  92%'; else echo '50M  10%'; fi\n");
         c.df_bin = df.to_string_lossy().into_owned();
         let keys: Vec<String> = standing(pressure(&c)).into_iter().map(|c| c.key).collect();
         assert_eq!(keys, vec!["tmp-free", "root-disk"]);

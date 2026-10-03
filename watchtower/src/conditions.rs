@@ -130,7 +130,6 @@ pub fn reconcile(now: i64, ctx: &Ctx, probe: &str, reading: Reading) {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     pub struct Fixture {
         pub dir: testkit::TempDir,
@@ -144,8 +143,7 @@ pub mod tests {
             let inc = "#!/bin/bash\nD=\"$(dirname \"$0\")\"\ncat > /dev/null\nn=$(wc -l < \"$D/store\"); echo \"b$((n+1)) $SPIRA_INCIDENT_REF\" >> \"$D/store\"; echo \"$2\" >> \"$D/filed\"\n";
             for (n, body) in [("bd", bd), ("inc.sh", inc)] {
                 let p = dir.join(n);
-                std::fs::write(&p, body).unwrap();
-                std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+                testkit::write_exe(&p, body);
             }
             std::fs::write(dir.join("store"), "").unwrap();
             Fixture { dir }
