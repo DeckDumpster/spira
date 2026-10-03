@@ -59,6 +59,15 @@ const CONDITIONAL: &[&str] = &[
     "SCCACHE_WEBDAV_KEY_PREFIX",
 ];
 
+/// The cargo toolchain directory: `$CARGO_HOME/bin`, else `$HOME/.cargo/bin`, from the aeon's
+/// own environment. None when neither is set.
+fn cargo_bin(base: &BTreeMap<String, String>) -> Option<String> {
+    if let Some(c) = base.get("CARGO_HOME").filter(|v| !v.is_empty()) {
+        return Some(format!("{c}/bin"));
+    }
+    base.get("HOME").filter(|v| !v.is_empty()).map(|h| format!("{h}/.cargo/bin"))
+}
+
 /// The child environment the model runs under, given the bead it is bound to, the
 /// aeon's own (unrestricted) child environment, and the resolved directory holding `work`.
 pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: &str) -> BTreeMap<String, String> {
@@ -66,7 +75,14 @@ pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: 
     for k in UNCONDITIONAL {
         env.insert(k.to_string(), base.get(*k).cloned().unwrap_or_default());
     }
-    env.insert("PATH".to_string(), format!("/usr/bin:/bin:{work_dir}"));
+    // The cargo toolchain (cargo, rustc, sccache) and nothing else from the operator's tail
+    // (sp-tx6ot): without it the model cannot build with the cache or run testenv/gate
+    // (no-build-cache), and submits unverified work. ~/.local/bin stays out: it holds bd.
+    let path = match cargo_bin(base) {
+        Some(c) => format!("/usr/bin:/bin:{work_dir}:{c}"),
+        None => format!("/usr/bin:/bin:{work_dir}"),
+    };
+    env.insert("PATH".to_string(), path);
     env.insert("SPIRA_WORK_BEAD_ID".to_string(), bead_id.to_string());
     env.insert(
         "SPIRA_LIFECYCLE_ENFORCE".to_string(),
@@ -117,6 +133,16 @@ mod tests {
     fn path_is_exactly_the_two_system_dirs_plus_work() {
         let e = restricted_env("sp-x", &BTreeMap::new(), "/rel/bin");
         assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin");
+    }
+
+    #[test]
+    fn path_adds_the_cargo_toolchain_and_never_the_inherited_path() {
+        let b = base(&[("HOME", "/home/aeon"), ("PATH", "/home/aeon/.local/bin:/elsewhere")]);
+        let e = restricted_env("sp-x", &b, "/rel/bin");
+        assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/home/aeon/.cargo/bin");
+        let c = base(&[("HOME", "/home/aeon"), ("CARGO_HOME", "/opt/cargo")]);
+        assert_eq!(restricted_env("sp-x", &c, "/rel/bin").get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/opt/cargo/bin");
+        assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
     }
 
     #[test]
