@@ -125,6 +125,7 @@ import sys, os
 
 manifest, repo = sys.argv[1], sys.argv[2]
 rc = 0
+n = 0
 for line in open(manifest):
     line = line.strip()
     if not line or line.startswith("#") or "|" not in line:
@@ -143,6 +144,8 @@ for line in open(manifest):
         if not os.path.exists(full):
             print(f"boundary: {p!r} is in the manifest but does not exist in the repository", file=sys.stderr)
             rc = 1
+        n += 1
+print(n)
 sys.exit(rc)
 PY
 }
@@ -173,7 +176,7 @@ write)
 check)
     render > "$BODY" || exit 1
     rc=0
-    fscheck || rc=1
+    N="$(fscheck)" || rc=1
     for f in "$README" "$WIKI"; do
         [ -f "$f" ] || continue
         cp "$f" "$TMP/copy"
@@ -183,6 +186,7 @@ check)
         fi
     done
     [ -f "$README" ] || { echo "boundary: no README at $README" >&2; rc=1; }
+    [ "$rc" = 0 ] && echo "fence: boundary checked $N shipped paths and every target"
     exit $rc
     ;;
 
