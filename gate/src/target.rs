@@ -232,6 +232,18 @@ pub fn prepare(
         std::os::unix::fs::symlink(&dest, &link)
             .map_err(|e| format!("gate: cannot link {} to {}: {e}", link.display(), dest.display()))?;
     }
+    // 5. The tree's `spira` beside the build dirs (sp-o05mz). A binary run from the tmpfs
+    //    resolves its own path there (current_exe follows the link), and groomer, archivist and
+    //    mail find the harness home by walking up from it (`<exe>/../spira/lib.sh`). Without
+    //    this link they die "cannot find lib.sh" in the gate alone, where suites run them
+    //    under `env -i` with no SPIRA_HOME.
+    let home_link = out.dir.join("spira");
+    let home = tree.join("spira");
+    if fs::read_link(&home_link).ok().as_deref() != Some(home.as_path()) {
+        let _ = fs::remove_file(&home_link);
+        std::os::unix::fs::symlink(&home, &home_link)
+            .map_err(|e| format!("gate: cannot link {} to {}: {e}", home_link.display(), home.display()))?;
+    }
     // Recently used: the eviction order of the next trial.
     let _ = fs::File::open(&out.dir).and_then(|d| d.set_modified(std::time::SystemTime::now()));
     Ok(out)
@@ -259,6 +271,9 @@ pub fn release_tree(tree: &Path, keep_release: bool) -> u64 {
     homes.sort();
     homes.dedup();
     for h in homes {
+        if !keep_release {
+            let _ = fs::remove_file(h.join("spira")); // the home link (sp-o05mz), never its target
+        }
         let _ = fs::remove_dir(&h); // only when empty
     }
     bytes / (1024 * 1024)
@@ -362,6 +377,23 @@ mod tests {
         assert!(root.join(".gate.harness.b/aeon/deps/liby.rlib").is_file());
         // `target` itself stays a real directory: git ignores `target/` in every revision.
         assert!(fs::symlink_metadata(tree.join("target")).unwrap().is_dir());
+    }
+
+    #[test]
+    fn a_binary_built_on_the_tmpfs_finds_the_tree_home_by_walking_up_from_itself() {
+        let s = Scratch::new("home");
+        let (root, trees) = (s.1.join("root"), s.1.join("worktree"));
+        let tree = trees.join(".gate.harness.h");
+        fs::create_dir_all(tree.join("spira")).unwrap();
+        fs::write(tree.join("spira/lib.sh"), "").unwrap();
+        let p = prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        // Where current_exe() lands for a binary run through target/release: the tmpfs side.
+        let exe = p.dir.join("release").join("groomer");
+        assert!(exe.parent().unwrap().join("../spira/lib.sh").is_file(), "<exe>/../spira/lib.sh must resolve");
+        assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
+        // Idempotent: a second prepare leaves the link as it is.
+        prepare(&root, &trees, &tree, &lim(100), &roomy, &mem).unwrap();
+        assert_eq!(fs::read_link(p.dir.join("spira")).unwrap(), tree.join("spira"));
     }
 
     #[test]
