@@ -240,17 +240,9 @@ fn wiki_worktree_root(spira_wiki: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn stub_home(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("sop-seam-{tag}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("lib.sh"), "bdq() { echo 'dolt timeout: stub detail' >&2; return 1; }\n").unwrap();
-        dir
-    }
-
     #[test]
     fn a_failing_forget_and_recall_surface_bdq_stderr() {
-        let dir = std::env::temp_dir().join(format!("sop-seam-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("sop-seam");
         std::fs::write(dir.join("lib.sh"), "bdq() { echo 'dolt timeout: stub detail' >&2; return 1; }\n").unwrap();
         for body in [FORGET_SCRIPT, RECALL_SCRIPT] {
             let out = Command::new("bash")
@@ -263,7 +255,6 @@ mod tests {
             assert!(!out.status.success());
             assert!(String::from_utf8_lossy(&out.stderr).contains("dolt timeout: stub detail"), "{body}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
