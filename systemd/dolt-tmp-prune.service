@@ -13,6 +13,9 @@ Documentation=file://@SPIRA_HOME@/dolt-tmp-prune.sh
 After=default.target
 
 [Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu), as every shipped service carries it (sp-tofsd).
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Type=oneshot
 ExecStart=@SPIRA_HOME@/dolt-tmp-prune.sh
 TimeoutStartSec=300
