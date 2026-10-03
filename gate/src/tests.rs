@@ -2301,14 +2301,41 @@ fn a_red_unit_test_on_a_green_base_is_the_branchs() {
 }
 
 #[test]
-fn a_red_the_base_shares_in_unit_tests_is_the_bases() {
+fn a_red_the_base_shares_in_unit_tests_is_the_bases_and_names_the_test() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    for at in [MERGE_SHA, BASE] {
+        f.unit_runs.borrow_mut().insert(
+            (at.into(), "test"),
+            (101, "test tests::x ... FAILED\ntest tests::y ... ok".into()),
+        );
+    }
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-red"));
+    assert!(f.verdict_line().contains("suite=tests::x"), "{}", f.verdict_line());
+}
+
+#[test]
+fn an_unnamed_unit_base_red_is_a_gate_defect_not_the_bases_fault() {
+    let f = unit_fake(&["gate/src/x.rs"]);
+    for at in [MERGE_SHA, BASE] {
+        f.unit_runs
+            .borrow_mut()
+            .insert((at.into(), "test"), (101, "killed by signal".into()));
+    }
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=gate-defect"), "{}", f.verdict_line());
+}
+
+#[test]
+fn a_base_whose_build_fails_before_any_test_is_untestable_never_red() {
     let f = unit_fake(&["gate/src/x.rs"]);
     for at in [MERGE_SHA, BASE] {
         f.unit_runs
             .borrow_mut()
             .insert((at.into(), "build"), (101, "error[E0425]".into()));
     }
-    assert_eq!(f.run(), BASEFAIL);
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=base-untestable"), "{}", f.verdict_line());
     assert_eq!(
         f.cmds.borrow().len(),
         4,
