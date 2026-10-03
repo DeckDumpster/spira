@@ -275,7 +275,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH:$PATH:$SH/lc-stub-bin" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -710,7 +710,7 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -910,7 +910,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH:$PATH:$SH/lc-stub-bin" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -1070,7 +1070,7 @@ certify sp-cmbb2 "$tip_mb" 300
 
 # Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
 # this case runs ON.
-out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 PATH="$SH/lc-stack-stub-bin:$PATH" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 LC_STUB_DIR="$SH/lc-stack-stub-bin" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \
