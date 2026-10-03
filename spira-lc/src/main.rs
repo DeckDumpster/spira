@@ -8,10 +8,9 @@
 //!
 //! Every verb below is `dispatch(args, conn) -> (exit_code, stdout_text)`, not a function
 //! that prints and exits directly: `main` runs it once against a fresh, one-shot `Conn`,
-//! and `serve` runs the identical code in-process against its own persistent `Conn` for
+//! and `serve` runs the identical code in-process against its own long-lived `Conn` for
 //! every request the socket receives, printing nothing of its own. One implementation, two
-//! callers, and the fast path (persistent connection) and the correct-but-slow path
-//! (same-user fallback, a fresh `dolt` process per call) can never drift apart.
+//! callers, and the service path and the same-user fallback can never drift apart.
 
 mod bd;
 mod bd_facts;
@@ -22,7 +21,7 @@ mod cutover;
 mod db;
 mod git_evidence;
 mod legacy_files;
-mod persistent;
+mod wire;
 mod repo_config;
 mod rows;
 mod serve;
