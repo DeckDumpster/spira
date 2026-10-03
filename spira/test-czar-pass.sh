@@ -868,9 +868,21 @@ export SPIRA_QUEUE_ROUND_MIN_N=3
 export SPIRA_QUEUE_ROUND_STALL_SECS=120
 
 mkdir -p "$SPIRA_RUN/landstate"
+LC_BIN="$T/lc-bin"; LC_ROWS="$T/lc-certified-rows"
+mkdir -p "$LC_BIN"; : > "$LC_ROWS"
+cat > "$LC_BIN/spira-lc" <<LCEOF
+#!/usr/bin/env bash
+[ "\${1:-}" = list ] || exit 0
+printf '['; sep=''
+while read -r id; do printf '%s{"bead_id":"%s","state":"CERTIFIED"}' "\$sep" "\$id"; sep=','; done < "$LC_ROWS"
+printf ']\n'
+LCEOF
+chmod +x "$LC_BIN/spira-lc"
+export PATH="$LC_BIN:$PATH"
 certify_pool_member() {
     git -C "$POOL_REPO" branch "spira/$1"
     printf 'CERTIFIED deadbeef %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/$1"
+    printf '%s\n' "$1" >> "$LC_ROWS"
 }
 
 # POSITIVE CONTROL: two certified members is below the floor of 3 — must stay quiet.
