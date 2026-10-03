@@ -45,6 +45,9 @@
 #      20+ times against one dead run, with no code change in between).
 #   9. gate status 5 through aeon.sh's own routing (the stub): defers exactly as status 3
 #      does, and the note never claims a recorded FAIL verdict.
+#  10. gate status 3 with a branch whose own spira/build-fence.sh is red — the in-session fast
+#      tier refuses the handoff: the bead is reopened plain (not submitted) with the failure
+#      text. The same branch with a green fence is still handed off (positive control).
 #
 # SUBMITTED, NOT CLOSED (sp-qsona). Every case whose close is not undone by a reopen ends
 # open carrying spira-submitted — the conversion runs AFTER the gate/defer branch, so a
@@ -143,6 +146,7 @@ STUB
 chmod +x "$SPIRA_HOME/queue.sh"
 ln -sf queue.sh "$SPIRA_HOME/queue"   # the queue binary replaced queue.sh; this stub stands in for both, by name
 # The aeon runs with the fixture home FIRST on PATH, so these stubs shadow the tree's tools.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/spira-lint"; chmod +x "$SPIRA_HOME/spira-lint"
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -179,6 +183,17 @@ case "$BEAD_ID" in
     *)
         printf 'work\n' >> f
         git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — done" >/dev/null 2>&1
+        ;;
+esac
+case "$BEAD_ID" in
+    sp-cert-fence-red|sp-cert-fence-ok)
+        mkdir -p spira
+        if [ "$BEAD_ID" = sp-cert-fence-red ]; then
+            printf '#!/usr/bin/env bash\necho "build-fence: make build FAILED (fixture)" >&2\nexit 1\n' > spira/build-fence.sh
+        else
+            printf '#!/usr/bin/env bash\nexit 0\n' > spira/build-fence.sh
+        fi
+        git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — fence" >/dev/null 2>&1
         ;;
 esac
 if [ "$BEAD_ID" = sp-cert-already ]; then
@@ -440,6 +455,24 @@ out4="$(gate-run.sh --status "$BR4" fixture 2>&1)"; rc4=$?
 is   "died without a verdict answers 5, never 1" "5" "$rc4"
 want "st=5: message says the run died without recording a verdict" "died" "$out4"
 nowant "st=5: message must never claim FAILED" "FAILED" "$out4"
+
+# ======================================================================================
+echo
+echo "st=3 with a red build fence — the handoff is refused in-session; a green fence is"
+echo "still handed off (positive control):"
+# ======================================================================================
+fresh; seed sp-cert-fence-ok
+run_aeon 3 0
+want "fence green: still handed to the landing pass" "handed to the landing pass" "$(bead_notes sp-cert-fence-ok)"
+want "fence green: carrying the submitted label" "spira-submitted" "$(bead_labels sp-cert-fence-ok)"
+
+fresh; seed sp-cert-fence-red
+run_aeon 3 0
+want "fence red: log says the handoff was refused" "fast tier red, handoff refused" "$(cat "$TMP/out" 2>/dev/null)"
+want "fence red: the bead carries the failure text" "make build FAILED (fixture)" "$(bead_notes sp-cert-fence-red)"
+nowant "fence red: never handed to the landing pass" "handed to the landing pass" "$(bead_notes sp-cert-fence-red)"
+is   "fence red: bead is open, claimable" "open" "$(bead_status sp-cert-fence-red)"
+nowant "fence red: NOT marked submitted" "spira-submitted" "$(bead_labels sp-cert-fence-red)"
 
 echo
 tl_summary
