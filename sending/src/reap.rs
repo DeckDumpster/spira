@@ -161,7 +161,7 @@ fn is_queued_state(state: &str) -> bool {
 /// on exit 0, `None` otherwise (lifecycle off, no binary, DB down, not yet classified —
 /// every one of those must be able to make this call LESS restrictive, never more, so a
 /// failure here falls through to bd's own signal, exactly as lib.sh's `|| true` chain does).
-fn lc_state(id: &str) -> Option<String> {
+pub fn lc_state(id: &str) -> Option<String> {
     let o = spira_config::bounded::bounded("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     if !o.status.success() {
         return None;

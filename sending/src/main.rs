@@ -21,6 +21,7 @@
 //!   sending destroy-branch      [--status-from <f>] [--base <ref>] <id> <branch> <repo> <why> [<caller>]
 //!   sending reap-landed-branch  [--status-from <f>] <id> <branch> <repo> <why> [<caller>]
 //!   sending prune               <repo>
+//!   sending reap-stale          [--dry-run] [--idle-hours <n>]
 //!   sending salvage             <id> <worktree-path>
 //!   sending witness             [--status-from <f>] <id>
 //!
@@ -164,6 +165,37 @@ fn cmd_prune(args: Vec<String>) -> ExitCodeLike {
     i32::from(!reap::prune_worktrees(&reaplog_path, Path::new(&args[0])))
 }
 
+fn cmd_reap_stale(mut args: Vec<String>) -> ExitCodeLike {
+    let dry = match args.iter().position(|a| a == "--dry-run") {
+        Some(i) => {
+            args.remove(i);
+            true
+        }
+        None => false,
+    };
+    let idle_secs = match take_flag(&mut args, "--idle-hours") {
+        None => sending::stale::DEFAULT_IDLE_SECS,
+        Some(h) => match h.parse::<u64>() {
+            Ok(h) => h * 3600,
+            Err(_) => return die("reap-stale [--dry-run] [--idle-hours <n>]"),
+        },
+    };
+    if !args.is_empty() {
+        return die("reap-stale [--dry-run] [--idle-hours <n>]");
+    }
+    let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("sending"));
+    let Some(home) = locate_home(std::env::var("SPIRA_HOME").ok().as_deref(), &exe) else {
+        return die("cannot find lib.sh (set SPIRA_HOME)");
+    };
+    let (w, repos) = match Real::new(home, None) {
+        Ok(x) => x,
+        Err(e) => return die(&format!("cannot read the harness context: {e}")),
+    };
+    let t = sending::stale::run(&w, &repos, sending::stale::Opts { dry, idle_secs });
+    println!("reap-stale: {} {}, {} kept, {} failed", t.removed, if dry { "would be removed" } else { "removed" }, t.kept, t.failed);
+    i32::from(t.failed > 0)
+}
+
 fn cmd_salvage(args: Vec<String>) -> ExitCodeLike {
     if args.len() != 2 {
         return die("salvage <id> <worktree-path>");
@@ -293,6 +325,7 @@ fn main() {
             "reap-landed-branch" => Some(cmd_reap_landed_branch(rest())),
             "reap-terminal" => Some(cmd_reap_terminal(rest())),
             "prune" => Some(cmd_prune(rest())),
+            "reap-stale" => Some(cmd_reap_stale(rest())),
             "salvage" => Some(cmd_salvage(rest())),
             "witness" => Some(cmd_witness(rest())),
             "hold-alive" => Some(cmd_hold_alive(rest())),

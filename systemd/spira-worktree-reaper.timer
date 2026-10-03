@@ -1,0 +1,14 @@
+[Unit]
+Description=Reap stale worktrees every hour
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+AccuracySec=5min
+Unit=spira-worktree-reaper.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

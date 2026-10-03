@@ -132,6 +132,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-verdict.timer", true));
     m.units.push(t("spira-publish.service", false));
     m.units.push(t("spira-publish.timer", true));
+    m.units.push(t("spira-worktree-reaper.service", false));
+    m.units.push(t("spira-worktree-reaper.timer", true));
     m.units.push(t("spira-straggler-sweep.service", false));
     m.units.push(t("spira-straggler-sweep.timer", true));
     m.units.push(t("spira-reap-terminal.service", false));
@@ -435,6 +437,19 @@ mod tests {
         let mut i = inputs();
         i.watch_names = Err("the watcher manifest is malformed".into());
         assert!(build(&i).is_err());
+    }
+
+    #[test]
+    fn the_worktree_reaper_is_shipped_with_its_unit_files_and_enabled() {
+        let m = build(&inputs()).unwrap();
+        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.timer" && u.enable));
+        assert!(m.units.iter().any(|u| u.name == "spira-worktree-reaper.service" && !u.enable));
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("systemd");
+        for f in ["spira-worktree-reaper.service", "spira-worktree-reaper.timer"] {
+            assert!(root.join(f).is_file(), "{f} is in the manifest but not on disk");
+        }
+        let svc = std::fs::read_to_string(root.join("spira-worktree-reaper.service")).unwrap();
+        assert!(svc.contains("sending reap-stale"));
     }
 
     #[test]
