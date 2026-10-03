@@ -183,6 +183,25 @@ impl<T: Transport> Pve<T> {
         format!("{}/qemu/{vmid}", self.node())
     }
 
+    /// Lists VMs for the sweep-yield decision (sp-55ni6). `registered` is
+    /// approximated by "running": PVE cannot see runner registration.
+    pub fn list_vms(&self) -> Result<Vec<crate::ci_yield::VmInfo>, String> {
+        let d = self.t.call(Method::Get, &format!("{}/qemu", self.node()), &[])?;
+        let list = d.as_array().ok_or_else(|| format!("VM list is not a list: {d}"))?;
+        Ok(list
+            .iter()
+            .map(|v| {
+                let status = v.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+                crate::ci_yield::VmInfo {
+                    name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+                    registered: status == "running",
+                    lock: v.get("lock").and_then(Value::as_str).map(String::from),
+                    status,
+                }
+            })
+            .collect())
+    }
+
     /// POSTs/DELETEs something that returns a task, and waits for the task to finish OK.
     fn task(&self, method: Method, path: &str, params: &[(&str, String)]) -> Result<(), String> {
         let data = self.t.call(method, path, params)?;
