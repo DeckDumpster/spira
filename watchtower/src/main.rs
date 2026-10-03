@@ -20,6 +20,7 @@ mod lock_holders;
 mod log;
 mod pr_stall;
 mod release_skew;
+mod sccache_wedge;
 mod seams;
 mod sweep;
 mod throttle;
@@ -337,6 +338,25 @@ fn main() {
                 n,
                 &queue_dir,
                 &run,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+                &cfg,
+            );
+        }
+        Some("--sccache-wedge-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: sccache-wedge-check skipped \u{2014} world is halted");
+                return;
+            }
+            let cfg = sccache_wedge::Cfg {
+                sccache: getenv("SPIRA_SCCACHE_BIN").unwrap_or_else(|| "sccache".to_string()),
+                stale_secs: getenv_i64("SPIRA_SCCACHE_WEDGE_MINS", 10) * 60,
+                cmd_timeout_secs: getenv_i64("SPIRA_SCCACHE_CMD_TIMEOUT", 30).max(1) as u64,
+            };
+            sccache_wedge::run(
+                n,
+                std::path::Path::new("/proc"),
                 &getenv("SPIRA_DB").unwrap_or_default(),
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
                 &resolved_incident_sh(),
