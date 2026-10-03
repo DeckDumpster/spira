@@ -157,7 +157,6 @@ pub trait Lib {
     /// R15: `queue_sort_rows` over `<id> <tip> <epoch>` rows; returns `<id> <tip>` rows.
     fn sort_rows(&self, path: &Path, base: &str, prio_json: &str, rows: &str) -> Vec<(String, String)>;
     fn cancel_runs(&self, forge: &Path, path: &Path, branch: &str);
-    fn lc_returned(&self, id: &str, reason: &str);
     fn format_batch(&self, wt: &Path, base: &str, name: &str);
     /// `_base_conflict`: true when the tip conflicts with the base.
     fn base_conflict(&self, path: &Path, base: &str, tip: &str) -> bool;
