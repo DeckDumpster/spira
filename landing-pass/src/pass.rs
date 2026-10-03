@@ -107,9 +107,51 @@ impl<'a> Pass<'a> {
         self.lc_state.get_or_init(|| self.lc.probe()).clone()
     }
 
-    fn status_closed(&self, id: &str) -> (bool, String) {
+    pub(crate) fn land_status(&self, id: &str) -> String {
         let st = self.beads.land_status(id);
+        if st != "closed" && self.s.lifecycle_enforce && self.lc.submitted().is_ok_and(|m| m.contains_key(id)) {
+            return "closed".into();
+        }
+        st
+    }
+
+    fn status_closed(&self, id: &str) -> (bool, String) {
+        let st = self.land_status(id);
         (st == "closed", st)
+    }
+
+    /// `bd show` rows, with the lifecycle machine's SUBMITTED-at-the-branch-tip rows read as
+    /// closed: under `lifecycle_enforce` the label is a projection, never the source.
+    pub(crate) fn show_rows(&self, repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
+        let mut rows = self.beads.show(ids)?;
+        if !self.s.lifecycle_enforce {
+            return Ok(rows);
+        }
+        let submitted = match self.lc.submitted() {
+            Ok(m) => m,
+            Err(why) => {
+                self.log(&crate::lifecycle::unreachable_line(&why, "no bead reads as submitted this pass"));
+                return Ok(rows);
+            }
+        };
+        for r in rows.iter_mut().filter(|r| r.status != "closed") {
+            let Some(tip) = submitted.get(&r.id) else { continue };
+            if self.git.rev_parse(repo, &format!("spira/{}", r.id)).as_deref() == Some(tip.as_str()) {
+                r.status = "closed".into();
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Record a gate outcome as a lifecycle event (enforce only); a refusal is loud, not fatal.
+    fn lc_certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) {
+        if !self.s.lifecycle_enforce {
+            return;
+        }
+        match self.lc.certify(id, tip, outcome, detail) {
+            Ok(a) => self.log(&format!("CHECK6 {id}: lifecycle certify {outcome} at {tip}: {a}")),
+            Err(why) => self.log(&format!("CHECK6 {id}: LIFECYCLE: certify {outcome} at {tip} did not happen ({why})")),
+        }
     }
 
     /// The whole pass after the lock and the run record (DESIGN.md §4 steps 3–10). Returns
@@ -238,7 +280,7 @@ impl<'a> Pass<'a> {
         }
 
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
-        let beads: HashMap<String, BeadRow> = match self.beads.show(&ids) {
+        let beads: HashMap<String, BeadRow> = match self.show_rows(&repo.path, &ids) {
             Ok(rows) => rows.into_iter().map(|b| (b.id.clone(), b)).collect(),
             Err(e) => {
                 self.log(&format!("CHECK6 {name}: the bead store could not be read ({e}) — every branch reads as not closed this pass"));
@@ -490,6 +532,11 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
             self.lib.land_mark(id, "GATED", &tip, &format!("{}:{reason}", g.outcome.word()));
             match g.outcome {
+                GateOutcome::Fail => self.lc_certify(id, &tip, "red", &reason),
+                GateOutcome::NoVerdict => self.lc_certify(id, &tip, "infra", ""),
+                _ => {}
+            }
+            match g.outcome {
                 GateOutcome::BaseFail => {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
@@ -543,6 +590,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
             return Flow::Next;
         }
+        self.lc_certify(id, &tip, "pass", "gate");
         self.lib.land_mark(id, "CERTIFIED", &tip, "");
         self.files.mark_submitted(id, &tip, "certified", self.clock.now());
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
@@ -680,7 +728,7 @@ impl<'a> Pass<'a> {
         }
         let ids: Vec<String> =
             fresh.iter().map(|(b, _)| b).chain(retry.iter()).map(|b| b.trim_start_matches("spira/").to_string()).collect();
-        let Ok(rows) = self.beads.show(&ids) else { return };
+        let Ok(rows) = self.show_rows(&repo.path, &ids) else { return };
         for r in rows {
             w.beads.insert(r.id.clone(), r);
         }
