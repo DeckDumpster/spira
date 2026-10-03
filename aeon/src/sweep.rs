@@ -59,7 +59,14 @@ impl Run<'_> {
         let logf = run.join(format!("sweep-{f}-{}.log", self.pid));
         self.log(&format!("{f}: sweeping (log: {})", logf.display()));
 
-        let statutes = self.statutes();
+        let statutes = match self.statutes() {
+            Ok(s) => s,
+            Err(m) => {
+                self.log(&m);
+                self.ledger.awake(self.now(), &f, "statute-core-missing");
+                return 1;
+            }
+        };
         let prompt = match prompt.filter(|p| !p.is_empty()) {
             Some(p) => p,
             None => std::fs::read_to_string(self.home().join("chamber").join(format!("{f}.md"))).unwrap_or_default().trim_end_matches('\n').to_string(),
