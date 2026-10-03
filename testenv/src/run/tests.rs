@@ -622,6 +622,23 @@ fn a_cached_red_is_refused_until_a_reason_is_given() {
     assert!(v.contains("override_reason=the runner VM was destroyed mid-run"));
 }
 
+fn map_repo(w: &mut World) {
+    let mut c = super::RunConfig::default();
+    c.repo.insert(
+        "mapped-name".into(),
+        spira_config::RepoSection {
+            path: w.repo.display().to_string(),
+            mode: spira_config::LandMode::Queue,
+            base: None,
+            format: None,
+            lanes: vec![],
+            forge: None,
+            gate_mode: None,
+        },
+    );
+    w.config = Some(c);
+}
+
 fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
     let log = w.root.join("incident.log");
     let cmd = w.root.join("incident-fake.sh");
@@ -630,20 +647,7 @@ fn repeat_incident_filings(w: &mut World, in_map: bool) -> String {
     w.env.insert("SPIRA_BATCH_INCIDENT_CMD".into(), cmd.display().to_string());
     w.env.insert("SPIRA_DB".into(), "fixture.db".into());
     if in_map {
-        let mut c = super::RunConfig::default();
-        c.repo.insert(
-            "mapped-name".into(),
-            spira_config::RepoSection {
-                path: w.repo.display().to_string(),
-                mode: spira_config::LandMode::Queue,
-                base: None,
-                format: None,
-                lanes: vec![],
-                forge: None,
-                gate_mode: None,
-            },
-        );
-        w.config = Some(c);
+        map_repo(w);
     }
     let rt = runtime();
     let b = FakeBuilder::new(None);
@@ -665,7 +669,41 @@ fn a_repeat_refused_incident_is_not_filed_for_a_repo_that_is_not_registered() {
 fn a_repeat_refused_incident_names_the_repo_that_was_tested() {
     let mut w = World::new("repeat-mapped");
     let filed = repeat_incident_filings(&mut w, true);
-    assert!(filed.starts_with("mapped-name repeat-refused:topic:"), "{filed}");
+    assert!(filed.starts_with("mapped-name repeat-refused:topic\n"), "{filed}");
+}
+
+#[test]
+fn repeat_refusals_of_one_branch_share_one_incident_ref() {
+    let mut w = World::new("repeat-ref");
+    let rt = runtime();
+    let b = FakeBuilder::new(None);
+    let log = w.root.join("incident-refs");
+    let stub = w.root.join("incident-stub");
+    fs::write(
+        &stub,
+        format!(
+            "#!/usr/bin/env bash\ncat >/dev/null\necho \"$SPIRA_INCIDENT_REF\" >> {}\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    sh(&w.root, &format!("chmod +x {}", stub.display()));
+    w.env.insert(
+        "SPIRA_BATCH_INCIDENT_CMD".into(),
+        stub.display().to_string(),
+    );
+    w.env.insert("SPIRA_DB".into(), "fixture.db".into());
+    map_repo(&mut w);
+    let args = ["--suites", "test-b.sh", "topic"];
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 1);
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 2);
+    sh(&w.repo, "git checkout -q topic && echo y > g && git add g && git commit -qm second && git checkout -q main");
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 1);
+    assert_eq!(w.run(&rt, &b, &args, "", &w.root), 2);
+    let refs = fs::read_to_string(&log).unwrap();
+    let refs: Vec<&str> = refs.lines().collect();
+    assert_eq!(refs.len(), 2, "{refs:?}");
+    assert_eq!(refs[0], refs[1], "two trees, one branch, one incident ref");
 }
 
 /// sp-tj8k3: a *given* SPIRA_BATCH_MAXPAR of 0 or garbage refuses by name before any
