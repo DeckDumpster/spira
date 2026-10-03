@@ -274,11 +274,9 @@ mod tests {
 
     #[test]
     fn the_agent_process_receives_the_configured_wiki_in_its_environment() {
-        let dir = std::env::temp_dir().join(format!("archivist-wiki-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = testkit::TempDir::new("archivist-wiki");
         let bin = dir.join("agent.sh");
-        std::fs::write(&bin, "#!/bin/sh\nprintf '%s' \"${SPIRA_WIKI-unset}\" > \"$PWD/seen\"\n").unwrap();
-        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        testkit::write_exe(&bin, "#!/bin/sh\nprintf '%s' \"${SPIRA_WIKI-unset}\" > \"$PWD/seen\"\n");
         let log = dir.join("log");
         let run = |wiki: Option<&str>| {
             let spec = AgentSpec {
@@ -288,7 +286,7 @@ mod tests {
                 model: "m",
                 timeout_secs: 10,
                 wiki_dir: wiki,
-                cwd: &dir,
+                cwd: dir.path(),
                 logfile: &log,
                 mail_from: "f",
                 task_stdin: "",
@@ -298,7 +296,6 @@ mod tests {
         };
         assert_eq!(run(Some("/the/wiki")), "/the/wiki");
         assert_eq!(run(None), "unset");
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
