@@ -1180,6 +1180,10 @@ mod tests {
     /// "ryan" the live database happens to hold — so the tests ask for it the same way the
     /// filter does. Writing the name in by hand made the owed-a-reply case fail against a
     /// correct filter, which is the test asserting about one box rather than about the rule.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::test_support::LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn op() -> String {
         crate::model::operator_actor()
     }
@@ -1200,6 +1204,7 @@ mod tests {
     /// comments — and the last word on every one of them was mine, so nothing was owed.
     #[test]
     fn a_dismissed_insight_i_answered_last_stays_dismissed() {
+        let _env = env_lock();
         let s = threaded(
             vec![fyi("sp-nm7", 2, true)],
             "sp-nm7",
@@ -1214,6 +1219,7 @@ mod tests {
     /// and archiving it must not hide the conversation from the only surface they read.
     #[test]
     fn a_dismissed_insight_the_operator_spoke_last_on_comes_back() {
+        let _env = env_lock();
         let s = threaded(
             vec![fyi("sp-owed", 3, true)],
             "sp-owed",
@@ -1230,6 +1236,7 @@ mod tests {
     /// `bd comments` ordering is somebody else's `ORDER BY`.
     #[test]
     fn whose_turn_it_is_does_not_depend_on_the_rows_arriving_in_order() {
+        let _env = env_lock();
         let s = threaded(
             vec![fyi("sp-shuf", 2, true)],
             "sp-shuf",
@@ -1242,6 +1249,7 @@ mod tests {
     /// two above: without it, a filter that hid everything archived would pass them both.
     #[test]
     fn a_dismissed_insight_with_no_thread_leaves_the_tab() {
+        let _env = env_lock();
         let s = snap(vec![fyi("sp-quiet", 0, true)]);
         assert!(ids(view_items(&s, View::Insights, false, NOW)).is_empty());
         assert_eq!(ids(view_items(&s, View::Insights, true, NOW)), ["sp-quiet"]);
@@ -1250,6 +1258,7 @@ mod tests {
     /// An insight nobody has dismissed is on the tab whatever its thread says.
     #[test]
     fn an_undismissed_insight_is_on_the_tab_regardless_of_whose_turn_it_is() {
+        let _env = env_lock();
         let s = threaded(
             vec![fyi("sp-live", 2, false)],
             "sp-live",
