@@ -173,16 +173,43 @@ else
 
     kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null
 
-    # A live holder that is itself a `cockpit-remote watch` satisfies the unit: exit 0, named.
-    rm -f "$LOCKD/held"
-    printf '%s\n' 'exec 9>"$2/cockpit-watch.lock"; flock 9; touch "$2/held"; sleep 10' >"$LOCKD/cockpit-remote"
-    bash "$LOCKD/cockpit-remote" watch "$LOCKD" &
-    _holder=$!
-    for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
-    out="$(TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
-    is "a live cockpit-remote watch holder satisfies the unit (exit 0)" "0" "$rc"
+    # A live holder that is itself a `cockpit-remote watch` with a client attached satisfies
+    # the unit: exit 0, named. A tmux stub reports the client.
+    mkdir "$LOCKD/bin"
+    printf '%s\n' '#!/bin/sh' '[ "$1" = list-clients ] && echo "/dev/pts/9: cockpit"' 'exit 0' >"$LOCKD/bin/tmux"
+    chmod +x "$LOCKD/bin/tmux"
+    _fake_holder() {
+        rm -f "$LOCKD/held"
+        printf '%s\n' 'exec 9>"$2/cockpit-watch.lock"; flock 9; touch "$2/held"; exec -a "cockpit-remote watch" sleep 10' >"$LOCKD/cockpit-remote"
+        bash "$LOCKD/cockpit-remote" watch "$LOCKD" &
+        _holder=$!
+        for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
+    }
+    _fake_holder
+    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 10 bash "$CR" watch 2>&1)"; rc=$?
+    is "a live holder with a client attached satisfies the unit (exit 0)" "0" "$rc"
     want "and the holder is named" "pid $_holder" "$out"
+    is "and the holder is left alone" "0" "$(kill -0 "$_holder" 2>/dev/null; echo $?)"
     kill "$_holder" 2>/dev/null; wait "$_holder" 2>/dev/null
+
+    # A live holder with no client attached has no session: the unit takes it over and runs.
+    printf '%s\n' '#!/bin/sh' 'exit 0' >"$LOCKD/bin/tmux"
+    _fake_holder
+    out="$(env -u INVOCATION_ID PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" COCKPIT_DETACH_SECS=1 COCKPIT_POLL=1 timeout 15 bash "$CR" watch 2>&1)"; rc=$?
+    is "an orphaned holder does not stop the unit (exit 0)" "0" "$rc"
+    want "and the takeover names the holder" "pid $_holder" "$out"
+    wait "$_holder" 2>/dev/null
+    is "and the orphan was terminated" "1" "$(kill -0 "$_holder" 2>/dev/null; echo $?)"
+
+    # A stale lock file with no holder does not stop the unit.
+    out="$(env -u INVOCATION_ID PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" COCKPIT_DETACH_SECS=1 COCKPIT_POLL=1 timeout 15 bash "$CR" watch 2>&1)"; rc=$?
+    is "a stale lock file does not stop the unit" "0" "$rc"
+
+    # The watcher exits when no client has been attached for the bound.
+    printf '%s\n' '#!/bin/sh' 'case "$1" in has-session) exit 0;; esac' 'exit 0' >"$LOCKD/bin/tmux"
+    out="$(env -u INVOCATION_ID PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" COCKPIT_DETACH_SECS=1 COCKPIT_POLL=1 timeout 15 bash "$CR" watch 2>&1)"; rc=$?
+    is "an unattached watcher exits on its own (not by timeout)" "0" "$rc"
+    want "and says why" "no client attached" "$out"
     rm -rf "$LOCKD"
 fi
 

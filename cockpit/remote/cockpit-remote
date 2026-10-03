@@ -62,6 +62,7 @@ STATE_DIR="${COCKPIT_STATE:-$HOME/.local/state/cockpit}"
 DISMISS="$STATE_DIR/dismissed"                  # hunk session-ids dismissed from the view
 DONE_KEY="${COCKPIT_DONE_KEY:-E}"               # <prefix> KEY signals "review phase ended"
 HEAL_EVERY="${COCKPIT_HEAL_EVERY:-5}"           # poll iterations between layout checks
+DETACH_MAX="${COCKPIT_DETACH_SECS:-1800}"       # unmanaged watcher exits after this long with no client
 
 # Locate layout.sh from the harness configuration rather than the wiki checkout, so a
 # host with no wiki can still run layout.sh ensure from the watcher loop. Priority:
@@ -222,9 +223,23 @@ heal_layout() {
   "$LAYOUT" ensure 2>&1 | sed "s/^/cockpit-heal: /"
 }
 
+_client_attached() { [ -n "$(tmux list-clients -t "=$COCKPIT" 2>/dev/null)" ]; }
+
+# A systemd-managed process has its lifetime governed by the unit; any other watcher lives
+# only as long as someone is attached to the cockpit.
+_unit_managed() { [ -n "${INVOCATION_ID:-}" ]; }
+_pid_unit_managed() { tr '\0' '\n' <"/proc/$1/environ" 2>/dev/null | grep -q '^INVOCATION_ID='; }
+
 watch_loop() {
-  local last="" cur n=0
+  local last="" cur n=0 idle_since=""
   while has "$COCKPIT"; do
+    if _unit_managed || _client_attached; then idle_since=""
+    else
+      [ -n "$idle_since" ] || idle_since=$SECONDS
+      if [ $(( SECONDS - idle_since )) -ge "$DETACH_MAX" ]; then
+        echo "cockpit watcher: no client attached for ${DETACH_MAX}s; exiting" >&2; return 0
+      fi
+    fi
     cur=$(want_session)
     if [ "$cur" != "$last" ]; then
       # First pass only seeds `last` (attach already synced the view); flip on real
@@ -290,14 +305,13 @@ _lock_pid() {
 # fds, not /proc/locks, whose pids are wrong across pid namespaces.
 _watch_holder() {
     local fd pid
-    for fd in /proc/[0-9]*/fd/*; do
-        [ "$(readlink "$fd" 2>/dev/null)" = "$LOCK" ] || continue
+    while IFS= read -r fd; do
         pid="${fd#/proc/}"; pid="${pid%%/*}"
         [ "$pid" != "$$" ] && [ "$pid" != "$BASHPID" ] || continue
-        case "$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null)" in
+        case "$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ')" in
             *"cockpit-remote watch"*) printf '%s' "$pid"; return 0 ;;
         esac
-    done
+    done < <(find /proc -maxdepth 3 -path '/proc/[0-9]*/fd/*' -lname "$LOCK" 2>/dev/null)
     return 1
 }
 
@@ -390,11 +404,18 @@ case "${1:-attach}" in
     # finish; only a live `cockpit-remote watch` holder counts as the watcher being satisfied.
     if ! flock -n 9; then
         holder="$(_watch_holder)" || holder=""
-        if [ -n "$holder" ]; then
+        if [ -n "$holder" ] && { _pid_unit_managed "$holder" || _client_attached; }; then
             echo "cockpit watcher already running (pid $holder holds $LOCK); satisfied elsewhere" >&2
             exit 0
         fi
-        echo "cockpit watcher already running" >&2; exit 75
+        if [ -n "$holder" ]; then
+            echo "cockpit watcher: pid $holder holds $LOCK with no session; taking over" >&2
+            kill "$holder" 2>/dev/null
+            for _ in 1 2 3 4 5 6 7 8 9 10; do flock -n 9 && break; sleep 0.3; done
+            flock -n 9 || { echo "cockpit watcher already running (pid $holder would not release $LOCK)" >&2; exit 75; }
+        else
+            echo "cockpit watcher already running" >&2; exit 75
+        fi
     fi
     watch_loop
     ;;
