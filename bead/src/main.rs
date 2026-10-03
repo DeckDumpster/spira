@@ -125,10 +125,18 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
     }
 }
 
-/// `bdq_status` for a create: stdout is passed through unchanged, and when the new bead
-/// has an incident-labelled `parent`, that incident is wired to block on it in the same step
+/// Whether `id` carries the incident label. A bd parent cannot be blocked on its own child,
+/// so a remedy filed under an incident is wired as a plain blocks edge instead of a child.
+fn is_incident(home: &str, id: &str) -> bool {
+    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+    let (_, out) = bdq_capture(home, &s(&["show", id, "--json"]));
+    parse_show_row(&out).map(|r| r.labels.contains(&incident_label)).unwrap_or(false)
+}
+
+/// `bdq_status` for a create: stdout is passed through unchanged, and when `incident` is
+/// set that incident is wired to block on the new bead in the same step
 /// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
-fn bdq_create(home: &str, args: &[String], parent: Option<&str>) -> i32 {
+fn bdq_create(home: &str, args: &[String], incident: Option<&str>) -> i32 {
     let out = Command::new("bash")
         .arg("-c")
         .arg(BDQ_SCRIPT)
@@ -142,24 +150,20 @@ fn bdq_create(home: &str, args: &[String], parent: Option<&str>) -> i32 {
         Ok(o) => o,
         Err(_) => return 127,
     };
-    print!("{}", String::from_utf8_lossy(&out.stdout));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    print!("{stdout}");
     let code = out.status.code().unwrap_or(1);
-    let Some(parent) = parent else { return code };
+    let Some(incident) = incident else { return code };
     if code != 0 {
         return code;
     }
-    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
-    let (_, pout) = bdq_capture(home, &s(&["show", parent, "--json"]));
-    if !parse_show_row(&pout).map(|r| r.labels.contains(&incident_label)).unwrap_or(false) {
-        return 0;
-    }
-    let Some(new_id) = parse_created_id(&String::from_utf8_lossy(&out.stdout)) else {
-        eprintln!("bead: file: created a remedy for incident {parent} but could not read its id; add the edge: bd dep add {parent} <id>");
+    let Some(new_id) = parse_created_id(&stdout) else {
+        eprintln!("bead: file: created a remedy for incident {incident} but could not read its id; add the edge: bd dep add {incident} <id>");
         return 1;
     };
-    let rc = bdq_status(home, &s(&["dep", "add", parent, &new_id, "--type", "blocks"]));
+    let rc = bdq_status(home, &s(&["dep", "add", incident, &new_id, "--type", "blocks"]));
     if rc != 0 {
-        eprintln!("bead: file: {new_id} filed but the blocks edge {parent} -> {new_id} failed; add it: bd dep add {parent} {new_id}");
+        eprintln!("bead: file: {new_id} filed but the blocks edge {incident} -> {new_id} failed; add it: bd dep add {incident} {new_id}");
     }
     rc
 }
@@ -369,6 +373,11 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
         i += 1;
     }
 
+    let incident_parent = match &parent {
+        Some(p) if is_incident(home, p) => parent.take(),
+        _ => None,
+    };
+
     let repos = load_repos();
     if let Some(r) = &repo {
         if !repos.contains_key(r) {
@@ -475,7 +484,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, parent.as_deref())
+        bdq_create(home, &bd_args, incident_parent.as_deref())
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -523,7 +532,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_create(home, &bd_args, parent.as_deref())
+        bdq_create(home, &bd_args, incident_parent.as_deref())
     }
 }
 
