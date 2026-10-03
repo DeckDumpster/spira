@@ -401,8 +401,17 @@ impl Procs for FakeProcs {
 struct FakeLc {
     probes: Cell<u32>,
     down: RefCell<Option<String>>,
+    submitted: RefCell<HashMap<String, String>>,
+    certified: RefCell<Vec<String>>,
 }
 impl crate::lifecycle::Lc for FakeLc {
+    fn submitted(&self) -> Result<HashMap<String, String>, String> {
+        Ok(self.submitted.borrow().clone())
+    }
+    fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
+        self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
+        Ok("applied".into())
+    }
     fn probe(&self) -> Result<(), String> {
         self.probes.set(self.probes.get() + 1);
         match self.down.borrow().clone() {
@@ -2072,6 +2081,49 @@ fn on_with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
     h.run();
     assert!(!h.lib.has("land_mark sp-a LANDED") && !h.lib.has("push "));
     assert!(h.logged("landing: lifecycle_enforce is on and spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
+}
+
+#[test]
+fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.lifecycle_enforce = true;
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(h.lib.has("land_mark sp-a CERTIFIED"), "{:?}", h.out.lines());
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
+fn on_a_lifecycle_row_at_another_tip_is_not_certified() {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.lifecycle_enforce = true;
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t2");
+    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
+    assert!(h.lc.certified.borrow().is_empty());
+}
+
+#[test]
+fn off_an_unlabelled_open_bead_stays_uncertified_whatever_lifecycle_says() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
+    assert!(h.lc.certified.borrow().is_empty());
+}
+
+#[test]
+fn submitted_parse_keeps_only_submitted_rows_with_a_tip() {
+    let j = br#"[{"bead_id":"a","state":"SUBMITTED","tip":"t"},{"bead_id":"b","state":"WORKING","tip":"u"},{"bead_id":"c","state":"SUBMITTED","tip":""}]"#;
+    let m = crate::lifecycle::parse_submitted(j).unwrap();
+    assert_eq!(m.len(), 1);
+    assert_eq!(m["a"], "t");
 }
 
 #[test]
