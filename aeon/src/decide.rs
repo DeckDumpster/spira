@@ -199,36 +199,6 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
 }
 
-/// `eviction_reopen` (the pure half; the caller reads land_state and the prior count).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Eviction {
-    None,
-    Stale,
-    Cap,
-    Reopen,
-}
-
-/// `ls` is land_state's line: "<state> <tip> <at> [reason]". `eviction_reasons` is
-/// LAND_EVICTION_REASONS (space-separated).
-pub fn eviction_reopen(ls: &str, cur_tip: &str, recent: i64, eviction_reasons: &str, escalate_at: i64) -> Eviction {
-    let mut it = ls.split_whitespace();
-    let state = it.next().unwrap_or("");
-    let tip = it.next().unwrap_or("");
-    let _at = it.next();
-    let reason = it.collect::<Vec<_>>().join(" ");
-    let is_eviction = state == "EJECTED" || (state == "RED" && eviction_reasons.split_whitespace().any(|r| r == reason));
-    if !is_eviction {
-        return Eviction::None;
-    }
-    if !tip.is_empty() && tip != "none" && !cur_tip.is_empty() && tip != cur_tip {
-        return Eviction::Stale;
-    }
-    if recent >= escalate_at {
-        return Eviction::Cap;
-    }
-    Eviction::Reopen
-}
-
 /// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
 /// ask-labelled `blocks` dependency? (the teardown's decision_blocked input). Unparseable or
 /// empty JSON fails closed — not blocked, proceeds (sp-eq8a4.2.1).
@@ -523,19 +493,6 @@ mod tests {
         assert_eq!(disposition(&i).ledger_status, "?");
         let r = DispositionIn { requeue_cause: Some("-".into()), tip_moved: true, ..base() };
         assert_eq!(disposition(&r).note, NoteKey::Unlanded, "`-` is no cause");
-    }
-
-    #[test]
-    fn eviction_table() {
-        let r = "gate-red base_withdrawn";
-        assert_eq!(eviction_reopen("CERTIFIED abc 1", "abc", 0, r, 3), Eviction::None);
-        assert_eq!(eviction_reopen("EJECTED abc 1 x", "abc", 0, r, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("RED abc 1 base_withdrawn", "abc", 0, r, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("RED abc 1 no-rebase@x", "abc", 0, r, 3), Eviction::None);
-        assert_eq!(eviction_reopen("EJECTED abc 1", "def", 0, r, 3), Eviction::Stale);
-        assert_eq!(eviction_reopen("EJECTED none 1", "def", 0, r, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("EJECTED abc 1", "", 0, r, 3), Eviction::Reopen, "unknown current tip is not stale");
-        assert_eq!(eviction_reopen("EJECTED abc 1", "abc", 3, r, 3), Eviction::Cap);
     }
 
     // test-aeon-disposition.sh's open_ask_blocker table.

@@ -19,10 +19,8 @@
 //! `fayth_free` stay on the seam — their owning crate is `strand`, not this one, so the
 //! unchanged bash names (now one-line shims) are still the right way to reach them.
 //!
-//! `land_state` and `land_mark` are dropped the same way (sp-cnnt6, "wave 4.16" — family S,
-//! the landstate ledger, now owned by landing-pass): `verdict.rs`/`teardown.rs` read the
-//! ledger file directly in-process, and the one write (`verdict.rs`'s cited-on-main mark)
-//! goes through `self.d.exec`'s `landing-pass mark`, never this seam.
+//! Bead and delivery state is read through `spira-lc` via `self.d.exec`, never this seam;
+//! the cited-on-main mark goes through `landing-pass mark`.
 //!
 //! `_aeon_capacity_paused`, `capacity_reset_at` and `capacity_pause_set` are dropped the
 //! same way (wave 4.26, family K → `capacity.rs`): `run.rs`/`sweep.rs`/`escape.rs`/
@@ -101,8 +99,7 @@ _aeon_thrash_meta() {
 "#;
 
 /// The shell variables captured once at startup (exported or not), still read through the
-/// bash seam. FAYTH_* come from the sourced fayth file; LANDSTATE/LAND_EVICTION_REASONS are
-/// lib.sh's own derived values (family S, a later wave4 bead); SPIRA_HOME/SPIRA_REPO/
+/// bash seam. FAYTH_* come from the sourced fayth file; SPIRA_HOME/SPIRA_REPO/
 /// SPIRA_REPO_DERIVED are per-copy facts `spira_config::resolve()` never produces (see that
 /// module's `ResolveInput` doc); the rest here (SPIRA_WORLD_STOP_SKIP, SPIRA_TOML_FILE,
 /// SPIRA_MEMORIES_CMD, SPIRA_ALLOW_PROD_DIRTY, SPIRA_CLOSE_REASON_OVERRIDE,
@@ -118,13 +115,13 @@ _aeon_thrash_meta() {
 /// function's own doc for the list and for why SPIRA_HOME/SPIRA_REPO/SPIRA_REPO_DERIVED are
 /// still inserted explicitly.
 pub const SNAPSHOT_VARS: &[&str] = &[
-    "SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED", "LANDSTATE",
+    "SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVED",
     "SPIRA_WORLD_STOP_SKIP",
     "SPIRA_MEMORIES_CMD",
     "SPIRA_TOML_FILE",
     "SPIRA_ALLOW_PROD_DIRTY", "SPIRA_CLOSE_REASON_OVERRIDE", "SPIRA_WORKFLOW_RUN_CONSIDERED",
     "BD_TIMEOUT", "SPIRA_BDQ_CONN_RETRIES", "SPIRA_BDJSON_FIXTURE",
-    "SPIRA_TRACE_MARK", "LAND_EVICTION_REASONS", "SPIRA_SUMMON", "PATH", "HOME", "DB",
+    "SPIRA_TRACE_MARK", "SPIRA_SUMMON", "PATH", "HOME", "DB",
     "FAYTH_NAME", "FAYTH_LABELS", "FAYTH_EXCLUDE_LABELS", "FAYTH_MAX_CONCURRENT",
     "FAYTH_ELASTIC", "FAYTH_LEASE_MINUTES", "FAYTH_HEARTBEAT_SECONDS", "FAYTH_TIMEOUT_SECONDS",
     "FAYTH_MEMORY_PREFIXES", "FAYTH_STATUTE_CORE", "FAYTH_TOOLS", "FAYTH_PROJECT_INSTRUCTIONS",
