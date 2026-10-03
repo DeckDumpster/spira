@@ -93,10 +93,10 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-cockpit.service", true));
     // spira-watch@.service is the template, not an installed unit — never enabled directly.
     m.units.push(t("spira-watch@.service", false));
-    m.units.push(t("spira-watch-notify.service", false));
-    m.units.push(t("spira-watch-notify.timer", true));
-    m.units.push(t("spira-watch-refresh.service", false));
-    m.units.push(t("spira-watch-refresh.timer", true));
+    m.units.push(t("spira-notify.service", false));
+    m.units.push(t("spira-notify.timer", true));
+    m.units.push(t("spira-refresh.service", false));
+    m.units.push(t("spira-refresh.timer", true));
     m.units.push(t("cockpit-ensure.service", false));
     m.units.push(t("cockpit-ensure.timer", true));
     m.units.push(t("concierge.service", false));
@@ -341,6 +341,17 @@ mod tests {
         i.broker_enable = true;
         let m2 = build(&i).unwrap();
         assert!(m2.units.iter().find(|u| u.name == "spira-broker.timer").unwrap().enable);
+    }
+
+    #[test]
+    fn only_watchers_live_in_the_watcher_namespace() {
+        let mut i = inputs();
+        i.watch_names = Ok(vec![]);
+        let m = build(&i).unwrap();
+        let strays: Vec<&str> = m.template_names().into_iter().filter(|n| n.starts_with("spira-watch-")).collect();
+        assert!(strays.is_empty(), "manifest units the watcher glob would match: {strays:?}");
+        assert!(m.template_names().contains(&"spira-refresh.timer"));
+        assert!(m.template_names().contains(&"spira-notify.timer"));
     }
 
     #[test]

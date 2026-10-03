@@ -10,7 +10,7 @@ OnBootSec=90
 OnActiveSec=90
 OnUnitActiveSec=1min
 AccuracySec=15s
-Unit=spira-watch-refresh.service
+Unit=spira-refresh.service
 
 [Install]
 WantedBy=timers.target

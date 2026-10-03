@@ -72,7 +72,7 @@ printf 'test-units-lint.sh\n'
 # these four to the conf file alone rendered every @SPIRA_HOME@/@SPIRA_RUN@/@SPIRA_PROD@
 # path empty or wrong (e.g. "/spira/watchd.sh", "append:/watch-notify.log") without units-
 # install ever saying so — paths_are_configured caught it as a stray path on
-# spira-watch-notify-prod.service, the one unit here whose [Service] block leans on all
+# spira-notify-prod.service, the one unit here whose [Service] block leans on all
 # three. SPIRA_HOME = $CLONE/spira (this suite's own clone, never the real checkout, per
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
@@ -113,7 +113,7 @@ is "positive control: the render holds at least 20 units' ExecStart= lines" "yes
 is "no rendered unit carries CPUQuota=, Nice= or IOSchedulingClass=" "" \
     "$(grep -E "$_fence_re" <<< "$rendered")"
 
-for svc in spira-watch-notify-prod.service spira-watch-refresh-prod.service \
+for svc in spira-notify-prod.service spira-refresh-prod.service \
            spira-mail-tidy-prod.service; do
     unit="$(block "$svc")"
     has   "$svc: it rendered"                     "$unit" "ExecStart="
@@ -121,7 +121,7 @@ for svc in spira-watch-notify-prod.service spira-watch-refresh-prod.service \
     paths_are_configured "$svc" "$unit"
 done
 
-for tmr in spira-watch-notify-prod.timer spira-watch-refresh-prod.timer \
+for tmr in spira-notify-prod.timer spira-refresh-prod.timer \
            spira-mail-tidy-prod.timer; do
     unit="$(block "$tmr")"
     hasnt "$tmr: no placeholder survives into it" "$unit" "@"
@@ -138,7 +138,7 @@ paths_are_configured "spira-watch@ (alpha)" "$watch_unit"
 
 # THE NOTIFY PERIOD MUST BE WELL UNDER THE THRESHOLD, or the granularity with which
 # staleness is noticed doubles the wait the threshold was set to allow (UC-operator-channel-28).
-notify_tmr="$(block spira-watch-notify-prod.timer)"
+notify_tmr="$(block spira-notify-prod.timer)"
 period="$(sed -n 's/^OnUnitActiveSec=\([0-9]*\)min$/\1/p' <<< "$notify_tmr")"
 default_age="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$TMP/nonexistent" \
     bash -c ". '$CLONE/spira/conf.sh'; printf '%s' \"\$SPIRA_NOTIFY_AGE\"")"
@@ -185,7 +185,7 @@ env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WAT
 ilog="$(cat "$TMP/systemctl.log")"
 has "the install ran" "$ilog" "daemon-reload"
 case "$ilog" in *daemon-reload*) ;; *) tail -20 "$TMP/install.out" | sed 's/^/# install: /' ;; esac
-for pair in "spira-watch-notify-prod" "spira-watch-refresh-prod" \
+for pair in "spira-notify-prod" "spira-refresh-prod" \
             "spira-mail-tidy-prod"; do
     has   "$pair: install enabled its timer"        "$ilog" "enable --now $pair.timer"
     hasnt "$pair: but not the service behind it"    "$ilog" "enable --now $pair.service"

@@ -4,7 +4,7 @@
 #   before the database answers, and never stops a manifest unit as if it were a watcher.
 #
 # THE DEFECTS (acceptance phase B, 2026-09-26: deploy's pre-health check refused on
-# "spira-sentinel-prod.service is a failed systemd unit" and "spira-watch-refresh-prod.service
+# "spira-sentinel-prod.service is a failed systemd unit" and "spira-refresh-prod.service
 # is a failed systemd unit", both left by the install that had just run):
 #
 #   1. ORDER. units.sh lists dolt-beads.service near the END of ENABLE, after every timer.
@@ -13,16 +13,17 @@
 #      re-install after uninstall.sh) the sentinel ran before dolt-beads started, logged
 #      DATABASE UNREADABLE, exited 1 and stayed failed.
 #   2. PRUNE. The watcher prune removed every spira-watch-*-<instance>.service that is not
-#      a watcher row — including spira-watch-refresh and spira-watch-notify, ordinary
-#      manifest units whose names fit the pattern — with `disable --now`, killing a refresh
-#      pass mid-run (TERM, left failed).
+#      a watcher row, including ordinary manifest units whose names fit the pattern. Those
+#      units now live outside the watcher namespace (spira-refresh, spira-notify); a box
+#      still carrying the old names has them migrated away, and the new names are never
+#      disabled.
 #
 # CASES (law-absence-needs-a-positive-control):
 #   - dolt-beads.service is applied before the first timer, and bd is asked whether the
 #     database answers BETWEEN the two (the wait) — positive control: the log does contain
 #     both the dolt-beads apply and the sentinel timer apply, so "before" is not vacuous.
 #   - a bd that answers only on its third try holds the timers until it does.
-#   - no manifest unit is disabled by the watcher prune (spira-watch-refresh/-notify).
+#   - old-named spira-watch-refresh/-notify units are disabled; spira-refresh/-notify never are.
 #
 # tier: T2
 # covers: install/src/bin/units_install.rs install/src/manifest.rs
@@ -139,10 +140,11 @@ want "the wait is said out loud" "waiting for the beads database" "$out"
 
 # ==========================================================================
 echo
-echo "3. the watcher prune never stops a manifest unit whose name fits its pattern:"
+echo "3. a box carrying the old watcher-namespaced names is migrated; the new names are left alone:"
 # ==========================================================================
-nowant "spira-watch-refresh is not disabled as a watcher" "disable --now spira-watch-refresh-prod.service" "$(cat "$LOG")"
-nowant "spira-watch-notify is not disabled as a watcher"  "disable --now spira-watch-notify-prod.service"  "$(cat "$LOG")"
-nowant "and the install does not claim to have"           "disabled  spira-watch-refresh-prod.service" "$out"
+want   "old spira-watch-refresh is disabled"  "disable --now spira-watch-refresh-prod.service" "$(cat "$LOG")"
+want   "old spira-watch-notify is disabled"   "disable --now spira-watch-notify-prod.service"  "$(cat "$LOG")"
+nowant "spira-refresh is not disabled"        "disable --now spira-refresh-prod.service" "$(cat "$LOG")"
+nowant "spira-notify is not disabled"         "disable --now spira-notify-prod.service"  "$(cat "$LOG")"
 
 tl_summary

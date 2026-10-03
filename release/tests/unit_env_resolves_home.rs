@@ -296,8 +296,8 @@ fn spira_summon_service_gets_past_config_resolution_with_no_spira_home_set() {
 #[test]
 fn spira_watch_notify_service_gets_past_config_resolution_with_no_spira_home_set() {
     let fx = build_fixture("watch-notify-svc", false);
-    let (_code, out) = run_unit(&fx, "spira-watch-notify.service", &[], &[]);
-    assert_past_resolution("spira-watch-notify.service", &out);
+    let (_code, out) = run_unit(&fx, "spira-notify.service", &[], &[]);
+    assert_past_resolution("spira-notify.service", &out);
 }
 
 /// The templated `spira-watch@.service` (one per watcher, `%i` the watcher name) — same

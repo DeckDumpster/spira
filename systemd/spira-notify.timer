@@ -16,7 +16,7 @@ AccuracySec=1min
 # A box that was asleep or off still has the backlog when it comes back, and the event in it
 # is older rather than less interesting.
 Persistent=true
-Unit=spira-watch-notify.service
+Unit=spira-notify.service
 
 [Install]
 WantedBy=timers.target
