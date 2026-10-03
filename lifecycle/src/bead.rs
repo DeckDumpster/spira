@@ -268,6 +268,10 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     if out.applied && entered {
         out.row.since = ev.at;
     }
+    if out.applied && out.row.state.is_terminal() {
+        out.row.holder = None;
+        out.row.lease_until = None;
+    }
     out
 }
 
