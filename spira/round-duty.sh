@@ -28,7 +28,8 @@ declare -A _rd_lines _rd_asks_seen
 
 _rd_say() {
     printf '%s %s\n' "$(date -u +%FT%TZ)" "$1"
-    "$HERE/inbox-append.sh" "[watch:round-duty] $1" >/dev/null 2>&1
+    { mkdir -p "$(dirname "$SPIRA_CONCIERGE_INBOX")" \
+        && printf '%s [watch:round-duty] %s\n' "$(date -u +%FT%TZ)" "$1" >> "$SPIRA_CONCIERGE_INBOX"; } 2>/dev/null
     return 0
 }
 
