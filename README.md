@@ -580,7 +580,7 @@ Generic mechanism. A colleague clones this and it carries none of the operator's
 | `spira/owned.sh` | single declaration of what one installation owns outside the checkout — the load-bearing contract walked by both installer and uninstaller |
 | `spira/ready.sh` | postflight: seven readiness checks after install; exit 3 when installed-but-not-ready |
 | `spira/build.sh` | builds Loom and the cockpit panel; a clone that skips this gets a service that exits 2 and an empty panel |
-| `spira/configure.sh` | bootstraps ~/.config/spira/spira.toml on first install; never overwrites an existing file |
+| `spira/configure.sh` | bootstraps ~/.config/spira/ on first install; never overwrites an existing file |
 | `testenv/src/container.rs` | rootless podman container with user systemd for the install-rehearsal suite tier |
 | `docs/` | spike investigations and evidence files from the harness's own development |
 | `concierge.sh` | one named Remote Control session, so a phone can reach the harness |
