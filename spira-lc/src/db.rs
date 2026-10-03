@@ -104,10 +104,9 @@ impl Conn {
             &self.port.to_string(),
             "-u",
             &self.user,
-            "-p",
-            &self.password,
             "--no-tls",
         ]);
+        cmd.env("DOLT_CLI_PASSWORD", &self.password);
         cmd
     }
 
@@ -486,6 +485,33 @@ pub(crate) fn password_from(
     match file.filter(|p| !p.is_empty()) {
         Some(path) => Ok(read(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string()),
         None => Ok(password.unwrap_or_default()),
+    }
+}
+
+#[cfg(test)]
+mod argv_secret_tests {
+    use super::Conn;
+
+    #[test]
+    fn the_password_is_never_an_argument_to_dolt() {
+        let conn = Conn {
+            dolt_bin: "dolt".into(),
+            host: "h".into(),
+            port: 1,
+            user: "u".into(),
+            password: "s3cret-pw".into(),
+            database: "d".into(),
+            data_dir: "/x".into(),
+            session: None,
+        };
+        for cmd in [conn.command(), conn.command_without_db()] {
+            let args: Vec<_> = cmd.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
+            assert!(!args.iter().any(|a| a.contains("s3cret-pw")), "{args:?}");
+            assert!(!args.iter().any(|a| a == "-p" || a == "--password"), "{args:?}");
+            let env: Vec<_> = cmd.get_envs().filter(|(k, _)| *k == "DOLT_CLI_PASSWORD").collect();
+            assert_eq!(env.len(), 1);
+            assert_eq!(env[0].1.unwrap(), "s3cret-pw");
+        }
     }
 }
 
