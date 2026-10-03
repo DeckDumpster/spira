@@ -909,11 +909,23 @@ fn stacked_dependents_in_batch(conn: &Conn, batch_id: &str, roots: &[String]) ->
         }
     }
 
+    Ok(stacked_dependents_from(&member_stacks, &tips, roots))
+}
+
+/// The pure BFS/frontier walk `stacked_dependents_in_batch` runs once it has the batch's
+/// members and their bead rows in hand, split out so the transitive closure itself is
+/// unit-testable without a live `dolt` connection — this file's own I/O is unavoidable, the
+/// graph walk on top of it is not.
+fn stacked_dependents_from(
+    member_stacks: &[(String, bead::BeadRow)],
+    tips: &std::collections::BTreeMap<String, String>,
+    roots: &[String],
+) -> Vec<String> {
     let mut visited: std::collections::BTreeSet<String> = roots.iter().cloned().collect();
     let mut frontier: Vec<String> = roots.to_vec();
     let mut dependents = Vec::new();
     while let Some(prereq) = frontier.pop() {
-        for (id, row) in &member_stacks {
+        for (id, row) in member_stacks {
             if visited.contains(id) {
                 continue;
             }
@@ -924,7 +936,67 @@ fn stacked_dependents_in_batch(conn: &Conn, batch_id: &str, roots: &[String]) ->
             }
         }
     }
-    Ok(dependents)
+    dependents
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn stacked(id: &str, prereq: &str, prereq_tip: &str) -> (String, bead::BeadRow) {
+        let mut row = bead::BeadRow::filed(id);
+        row.stack.insert(prereq.to_string(), prereq_tip.to_string());
+        (id.to_string(), row)
+    }
+
+    fn unstacked(id: &str) -> (String, bead::BeadRow) {
+        (id.to_string(), bead::BeadRow::filed(id))
+    }
+
+    /// sp-f3af9 item 4: a 3-deep stack A -> B -> C, plus an unrelated member X, ejecting the
+    /// root A must cascade both B and C, never X — the BFS must revisit the frontier past
+    /// B to find C rather than stopping at the first hop.
+    #[test]
+    fn a_three_deep_stack_cascades_root_to_tip() {
+        let tips: BTreeMap<String, String> = [("a", "tipA"), ("b", "tipB"), ("c", "tipC"), ("x", "tipX")]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let member_stacks = vec![unstacked("a"), stacked("b", "a", "tipA"), stacked("c", "b", "tipB"), unstacked("x")];
+
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+
+        assert_eq!(dependents.len(), 2, "expected exactly B and C: {dependents:?}");
+        assert!(dependents.contains(&"b".to_string()));
+        assert!(dependents.contains(&"c".to_string()));
+        assert!(!dependents.contains(&"x".to_string()), "an unrelated member must not cascade");
+    }
+
+    /// A root is never returned even if some other member happens to name it as a
+    /// prerequisite — cascade reports collateral, not the caller's own attribution.
+    #[test]
+    fn a_root_is_never_returned_as_its_own_dependent() {
+        let tips: BTreeMap<String, String> = [("a".to_string(), "tipA".to_string())].into_iter().collect();
+        let member_stacks = vec![unstacked("a"), stacked("b", "a", "tipA")];
+
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+
+        assert_eq!(dependents, vec!["b".to_string()]);
+    }
+
+    /// The tip invariant re-check: a member whose recorded stack names a prerequisite tip
+    /// that no longer matches this batch's own recorded tip for it must not cascade — that
+    /// stack is already stale, not this round's own dependency.
+    #[test]
+    fn a_stack_naming_a_stale_tip_does_not_cascade() {
+        let tips: BTreeMap<String, String> = [("a".to_string(), "tipA".to_string())].into_iter().collect();
+        let member_stacks = vec![unstacked("a"), stacked("b", "a", "some-other-tip")];
+
+        let dependents = stacked_dependents_from(&member_stacks, &tips, &["a".to_string()]);
+
+        assert!(dependents.is_empty());
+    }
 }
 
 /// The delivery exit + matching bead exit for one member, appended to `steps`. `Delivered`
