@@ -30,7 +30,7 @@ g merge --abort >/dev/null 2>&1
 cp "$HERE/../.gitattributes" "$t/.gitattributes"
 g add .gitattributes
 g commit -q -m attrs
-g merge -q --no-edit two2 >/dev/null 2>&1; rc=$?
+g merge -q --no-edit two >/dev/null 2>&1; rc=$?
 is "with the repository's .gitattributes, they merge cleanly" 0 "$rc"
 merged="$(g show HEAD:$H 2>/dev/null)"
 want "the merge keeps one's line" key_one "$merged"
