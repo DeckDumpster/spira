@@ -1,5 +1,5 @@
 //! gate — the certification gate (DESIGN.md). The branch is judged merged onto its landing
-//! ref; a branch that does not merge is stale (NO_VERDICT reason=conflict), not red.
+//! ref; a branch that does not merge is red (FAIL reason=no-rebase), never NO_VERDICT.
 
 pub mod basecache;
 pub mod cert;

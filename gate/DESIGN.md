@@ -19,9 +19,9 @@ since deleted, and the fences flagged those files. All seven branch-reds of that
 (sp-7xnpv, sp-falao, sp-x1c6k), and content that was stale on the base was charged to the
 branch. The merge is the tree that would actually land, so it is the tree to judge.
 
-A branch that **does not merge** is not red. Its work may be correct; it is stale. The gate
-says `reason=conflict` and the landing pass hands it to `rebase-stale`, which rebases it
-mechanically or returns it to an aeon with the conflicting hunks quoted.
+A branch that **does not merge** is red with `reason=no-rebase`, naming the conflicting paths:
+the conflict is the branch's own defect, never a harness fault, so the landing pass returns
+the bead for a rebase instead of reporting NO_VERDICT.
 
 ## Non-goals
 

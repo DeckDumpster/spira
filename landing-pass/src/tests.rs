@@ -714,27 +714,16 @@ fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
 }
 
 #[test]
-fn a_branch_that_no_longer_merges_goes_to_rebase_stale_not_red() {
+fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     let h = H::new(LandMode::Queue);
     h.closed("sp-a", "t1");
-    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=conflict branch=spira/sp-a repo=spira suite=-\n".into()));
+    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, "gate:   spira/lib.sh\ngate: VERDICT=FAIL reason=no-rebase branch=spira/sp-a repo=spira suite=-\n".into()));
     h.run();
-    assert_eq!(h.tools.rebased.borrow()[..], ["sp-a spira".to_string()]);
-    assert!(h.lib.has("land_mark sp-a GATED t1 NO_VERDICT:conflict"));
-    assert!(!h.lib.has("noverdict"), "rebase-stale did the bookkeeping");
-    assert!(!h.lib.has("reopen"), "a stale branch is never charged");
+    assert!(h.lib.has("land_mark sp-a GATED t1 FAIL:no-rebase"));
+    assert!(h.lib.has("reopen sp-a cert-gate-red"), "the bead is returned for a rebase");
+    assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("reopen sp-a") && c.contains("gate:   spira/lib.sh")), "the note names the conflicting paths");
+    assert!(!h.lib.has("noverdict"), "a conflict is never NO_VERDICT");
     assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
-}
-
-#[test]
-fn a_conflict_rebase_stale_could_not_attempt_is_an_ordinary_no_verdict() {
-    let h = H::new(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.tools.rebase_rc.set(3);
-    h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=conflict branch=spira/sp-a repo=spira suite=-\n".into()));
-    h.run();
-    assert!(h.lib.has("noverdict sp-a spira conflict NO_VERDICT"));
-    assert!(!h.lib.has("reopen"));
 }
 
 #[test]
