@@ -78,7 +78,7 @@ printf 'test-units-lint.sh\n'
 # SPIRA_HOME is exactly what the comment below this block is testing).
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
     SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
-    units-install --render 2>"$TMP/render.err")"
+    SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
 # Rust binary elsewhere in UNITS, not rendered here) — informational, not a render failure.
