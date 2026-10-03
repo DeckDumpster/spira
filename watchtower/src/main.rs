@@ -10,6 +10,7 @@ mod deadline;
 mod deploy_fault;
 mod disk_mem;
 mod disabled_timer;
+mod drift;
 mod env;
 mod failed_units;
 mod gate_wait;
@@ -404,6 +405,19 @@ fn main() {
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+        }
+        Some("--drift-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: drift-check skipped — world is halted");
+                return;
+            }
+            drift::run(
+                &spira_home(),
+                &getenv("SPIRA_REPO").unwrap_or_default(),
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+            );
         }
         Some(other) => {
             eprintln!("watchtower: unknown argument: {other}");
