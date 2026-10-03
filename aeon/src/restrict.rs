@@ -137,10 +137,10 @@ mod tests {
 
     #[test]
     fn path_adds_the_cargo_toolchain_and_never_the_inherited_path() {
-        let b = base(&[("HOME", "/home/aeon"), ("PATH", "/home/aeon/.local/bin:/elsewhere")]);
+        let b = base(&[("HOME", "/h"), ("PATH", "/h/.local/bin:/elsewhere")]);
         let e = restricted_env("sp-x", &b, "/rel/bin");
-        assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/home/aeon/.cargo/bin");
-        let c = base(&[("HOME", "/home/aeon"), ("CARGO_HOME", "/opt/cargo")]);
+        assert_eq!(e.get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/h/.cargo/bin");
+        let c = base(&[("HOME", "/h"), ("CARGO_HOME", "/opt/cargo")]);
         assert_eq!(restricted_env("sp-x", &c, "/rel/bin").get("PATH").unwrap(), "/usr/bin:/bin:/rel/bin:/opt/cargo/bin");
         assert!(!e.get("PATH").unwrap().contains(".local/bin"), "bd lives in ~/.local/bin; it must stay out");
     }
