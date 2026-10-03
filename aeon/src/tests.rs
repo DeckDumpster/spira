@@ -43,6 +43,8 @@ struct World {
     /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
     /// every other test's "every exec succeeds" assumption unchanged.
     fail_landing_pass_mark: bool,
+    /// What `landing-pass cited-commit` prints; empty means the notes cite nothing on base.
+    cited_commit: String,
 }
 
 type W = Arc<Mutex<World>>;
@@ -177,6 +179,10 @@ impl Exec for FakeExec {
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
+        }
+        if prog == "landing-pass" && args.first().map(String::as_str) == Some("cited-commit") {
+            let c = self.0.lock().unwrap().cited_commit.clone();
+            return if c.is_empty() { Out::fail(1, "") } else { Out::ok(&c) };
         }
         if prog == "env"
             && args.iter().any(|a| a == "landing-pass")
@@ -1098,14 +1104,15 @@ fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
     let repo = f.repo.clone();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
         std::fs::write(repo.join("f"), "theirs\n").unwrap();
         git(&repo, &["commit", "-qam", "someone else"]);
-        w.lock().unwrap().status.insert("sp-m".into(), "closed".into());
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-m".into(), "closed".into());
+        w.cited_commit = "deadbeef".into();
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
@@ -1131,7 +1138,6 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
-    a.insert("bead_cited_commit_on_base", Out::ok("deadbeef"));
     let repo = f.repo.clone();
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
@@ -1140,6 +1146,7 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
         git(&repo, &["commit", "-qam", "someone else"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
+        w.cited_commit = "deadbeef".into();
         w.fail_landing_pass_mark = true;
         0
     });
