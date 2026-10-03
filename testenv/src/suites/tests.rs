@@ -162,7 +162,6 @@ impl T {
         let env = |_: &str| None;
         let mut s = Settings::load(&crate::settings::Source { env: &env, config: None }, &dir.join("root"));
         s.state = dir.join("state");
-        s.landstate = dir.join("landstate");
         s.gate_list = dir.join("root/spira/gate-suites");
         let git = FGit::default();
         // the home repository at its landing ref: the suites and the lifecycle file
@@ -579,52 +578,6 @@ fn transition_failures_are_exit_one_and_named() {
 // ------------------------------------------------------------------------------- hygiene
 
 #[test]
-fn hygiene_reactivates_through_the_queue_when_landed_and_clean_enough() {
-    let t = T::new("hyg");
-    t.suite("test-bar.sh", "");
-    t.lifecycle(&format!("test-bar.sh | quarantined | {} | sp-bar | flaky\n", crate::util::iso_utc(NOW - 86_400)));
-    fs::create_dir_all(&t.s.landstate).unwrap();
-    fs::write(t.s.landstate.join("sp-bar"), "LANDED abc 1790 ").unwrap();
-    t.state("test-bar.sh.clean-runs", "10\n");
-    t.state("test-bar.sh.maxage-mailed", "");
-    assert_eq!(t.run(&["hygiene"]), 0);
-    assert_eq!(
-        t.out(),
-        vec![
-            "hygiene: test-bar.sh reactivated (bead sp-bar LANDED, 10 clean runs)".to_string(),
-            "hygiene: test-bar.sh activation submitted on spira-suite-state/test-bar-20260921T141320Z".to_string(),
-            "hygiene: 1 reactivated, 0 max-age mailed".to_string(),
-        ]
-    );
-    assert_eq!(*t.queue.submitted.borrow(), vec!["spira-suite-state/test-bar-20260921T141320Z".to_string()]);
-    assert_eq!(t.read_state("test-bar.sh.clean-runs"), None);
-    assert_eq!(t.read_state("test-bar.sh.maxage-mailed"), None);
-    let sent = t.mail.sent.borrow();
-    assert_eq!(sent[0].1, "test-bar.sh reactivated");
-    assert_eq!(sent[0].2.as_deref(), Some("sp-bar"));
-    assert_eq!(sent[0].3, "## Note\ntest-bar.sh was reactivated after LANDING with 10 consecutive clean runs.\n");
-    // the checkout's lifecycle file is never edited (D3)
-    assert!(fs::read_to_string(t.s.lifecycle_file()).unwrap().contains("quarantined"));
-}
-
-#[test]
-fn hygiene_holds_a_quarantine_that_is_not_landed_or_not_clean_enough() {
-    for (land, clean) in [("GATED abc 1 BASE_FAIL", "10"), ("LANDED abc 1", "9"), ("", "10")] {
-        let t = T::new("hyg-hold");
-        t.suite("test-bar.sh", "");
-        t.lifecycle(&format!("test-bar.sh | quarantined | {} | sp-bar | flaky\n", crate::util::iso_utc(NOW - 60)));
-        if !land.is_empty() {
-            fs::create_dir_all(&t.s.landstate).unwrap();
-            fs::write(t.s.landstate.join("sp-bar"), land).unwrap();
-        }
-        t.state("test-bar.sh.clean-runs", clean);
-        assert_eq!(t.run(&["hygiene"]), 0);
-        assert_eq!(t.out(), vec!["hygiene: 0 reactivated, 0 max-age mailed"], "{land} / {clean}");
-        assert!(t.queue.submitted.borrow().is_empty());
-    }
-}
-
-#[test]
 fn hygiene_mails_once_per_quarantine_past_its_max_age() {
     let t = T::new("hyg-age");
     t.suite("test-old.sh", "");
@@ -635,7 +588,7 @@ fn hygiene_mails_once_per_quarantine_past_its_max_age() {
         crate::util::iso_utc(NOW - 10)
     ));
     assert_eq!(t.run(&["hygiene"]), 0);
-    assert_eq!(t.out(), vec!["hygiene: mailed operator about test-old.sh (age 604800s)".to_string(), "hygiene: 0 reactivated, 1 max-age mailed".to_string()]);
+    assert_eq!(t.out(), vec!["hygiene: mailed operator about test-old.sh (age 604800s)".to_string(), "hygiene: 1 max-age mailed".to_string()]);
     {
         let sent = t.mail.sent.borrow();
         assert_eq!(sent.len(), 1);
@@ -645,7 +598,7 @@ fn hygiene_mails_once_per_quarantine_past_its_max_age() {
     assert!(t.read_state("test-old.sh.maxage-mailed").is_some());
     t.clear();
     assert_eq!(t.run(&["hygiene"]), 0);
-    assert_eq!(t.out(), vec!["hygiene: 0 reactivated, 0 max-age mailed"], "a second pass sends no second mail");
+    assert_eq!(t.out(), vec!["hygiene: 0 max-age mailed"], "a second pass sends no second mail");
     assert_eq!(t.mail.sent.borrow().len(), 1);
 }
 
@@ -656,7 +609,7 @@ fn hygiene_leaves_no_flag_when_the_mail_fails() {
     t.lifecycle(&format!("test-old.sh | quarantined | {} | | slow\n", crate::util::iso_utc(NOW - 700_000)));
     t.mail.fail.set(true);
     assert_eq!(t.run(&["hygiene"]), 0);
-    assert_eq!(t.out(), vec!["hygiene: 0 reactivated, 0 max-age mailed"]);
+    assert_eq!(t.out(), vec!["hygiene: 0 max-age mailed"]);
     assert_eq!(t.mail.sent.borrow()[0].2, None, "no --bead without a bead");
     assert!(t.read_state("test-old.sh.maxage-mailed").is_none());
 }
@@ -785,13 +738,4 @@ fn suites_never_touches_spira_lc_in_either_lifecycle_mode() {
         Settings::load(&crate::settings::Source { env: &env, config: None }, root)
     };
     assert_eq!(load("0"), load("1"));
-    // and hygiene's LANDED decision is the landstate file's (land_mark writes it in both modes)
-    let t = T::new("lc-mode");
-    t.suite("test-bar.sh", "");
-    t.lifecycle(&format!("test-bar.sh | quarantined | {} | sp-bar | flaky\n", crate::util::iso_utc(NOW)));
-    fs::create_dir_all(&t.s.landstate).unwrap();
-    fs::write(t.s.landstate.join("sp-bar"), "LANDED abc 1").unwrap();
-    t.state("test-bar.sh.clean-runs", "10");
-    assert_eq!(t.run(&["hygiene"]), 0);
-    assert_eq!(t.out().last().unwrap(), "hygiene: 1 reactivated, 0 max-age mailed");
 }
