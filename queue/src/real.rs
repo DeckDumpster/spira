@@ -663,11 +663,19 @@ impl RealLc {
     fn stdout(&self, args: &[&str]) -> Result<String, String> {
         let bin = self.bin.as_ref().ok_or("no spira-lc program")?;
         let timeout = std::env::var("SPIRA_LC_TIMEOUT").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "30".into());
-        let o = Command::new("timeout").arg(timeout).arg(bin).args(args).stdin(Stdio::null()).stderr(Stdio::null()).output().map_err(|e| e.to_string())?;
-        if !o.status.success() {
-            return Err(format!("spira-lc {} exited {:?}", args.first().unwrap_or(&""), o.status.code()));
+        let mut last = String::new();
+        for attempt in 0..2 {
+            if attempt > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            let o = Command::new("timeout").arg(&timeout).arg(bin).args(args).stdin(Stdio::null()).output().map_err(|e| e.to_string())?;
+            if o.status.success() {
+                return Ok(String::from_utf8_lossy(&o.stdout).to_string());
+            }
+            let err = String::from_utf8_lossy(&o.stderr);
+            last = format!("spira-lc {} exited {:?}: {}", args.first().unwrap_or(&""), o.status.code(), err.trim());
         }
-        Ok(String::from_utf8_lossy(&o.stdout).to_string())
+        Err(last)
     }
 }
 
