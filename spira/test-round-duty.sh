@@ -43,5 +43,31 @@ run health >/dev/null; is "health passes after a fresh poll" "0" "$?"
 echo "ok 1 100 7" > "$TMP/run/watchd/round-duty.health"
 run health >/dev/null; is "health fails once the last poll is stale" "1" "$?"
 
+INBOX="$TMP/inbox.log"; ASKS="$TMP/asks.json"
+printf '#!/usr/bin/env bash\ncat "$FAKE_ASKS"\n' > "$TMP/fakebd"; chmod +x "$TMP/fakebd"
+echo '[{"id":"sp-old","title":"already open"}]' > "$ASKS"
+rm -f "$TMP/run/rounds/"*; : > "$TMP/run/rounds/100.running"
+wrun() {
+    env -i PATH="$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_REPO="$TMP/repo" \
+        SPIRA_ROUND_MIN=1 SPIRA_ROUND_MARKER_MAX_AGE=3600 SPIRA_BD="$TMPBD" FAKE_ASKS="$ASKS" \
+        SPIRA_DB="$TMP/db" SPIRA_ASK_LABEL=ask-x SPIRA_CONCIERGE_INBOX="${WINBOX:-$INBOX}" \
+        bash "$HERE/round-duty.sh" "$@" 2>&1
+}
+TMPBD="$TMP/fakebd"
+wrun watch --interval 1 --ticks 1 >/dev/null
+[ ! -s "$INBOX" ]; is "a pass with nothing due writes nothing to the inbox" "0" "$?"
+rm -f "$TMP/run/watchd/round-duty.health"
+wrun watch --interval 1 --ticks 8 > "$TMP/watch.out" &
+wpid=$!
+for _ in $(seq 100); do [ -e "$TMP/run/watchd/round-duty.health" ] && break; sleep 0.1; done
+echo '[{"id":"sp-old","title":"already open"},{"id":"sp-new","title":"decide X"}]' > "$ASKS"
+wait "$wpid"; out="$(cat "$TMP/watch.out")"
+want "a new ask is forwarded to the log" "NEW ASK sp-new: decide X" "$out"
+nowant "a baseline ask is not announced" "NEW ASK sp-old" "$out"
+want "the ask is woken into the inbox" "[watch:round-duty] NEW ASK sp-new: decide X" "$(cat "$INBOX")"
+rm -f "$TMP/run/rounds/100.running"
+out="$(WINBOX="$TMP" wrun watch --interval 1 --ticks 1)"
+want "a failed wake does not lose ROUND DUE from the log" "ROUND DUE" "$out"
+
 grep -q '^round-duty|daemon|' "$HERE/watchers"; is "watchers manifest carries the round-duty row" "0" "$?"
 tl_summary
