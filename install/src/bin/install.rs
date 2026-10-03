@@ -336,6 +336,18 @@ fn main() -> ExitCode {
         }
     }
 
+    let metrics_off = Command::new("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
+    if metrics_off {
+        skip("dolt metrics.disabled already true");
+    } else if opts.dry {
+        would("run: dolt config --global --add metrics.disabled true");
+    } else if Command::new("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+        info("set dolt metrics.disabled true (dolt config --global)");
+        changes += 1;
+    } else {
+        eprintln!("install: could not set metrics.disabled — run: dolt config --global --add metrics.disabled true");
+    }
+
     if Path::new(&db).join(".beads").is_dir() || !opts.dry {
         let server_mode = dolt_data.is_some();
         let server_up = server_mode && tcp_up(dolt_port);

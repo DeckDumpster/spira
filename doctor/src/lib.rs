@@ -68,7 +68,14 @@ pub fn run(w: &dyn World) -> i32 {
         Section { title: "chamber overlays", lines: check_chamber_overlays(w) },
         Section { title: "operator overrides", lines: check_overrides(w) },
         Section { title: "gate compile check", lines: check_gate_compile_check(w) },
-        Section { title: "store", lines: check_store(w) },
+        Section {
+            title: "store",
+            lines: {
+                let mut v = check_store(w);
+                v.extend(check_dolt_telemetry(w));
+                v
+            },
+        },
         Section { title: "time series query layer", lines: check_duckdb(w) },
         Section { title: "compilation cache", lines: check_sccache(w) },
         Section { title: "compilation cache backend", lines: check_sccache_backend(w) },
@@ -405,6 +412,30 @@ pub fn check_store(w: &dyn World) -> Vec<Line> {
         }
     }
 
+    out
+}
+
+const DOLT_EVENTS_MAX: usize = 100;
+
+pub fn check_dolt_telemetry(w: &dyn World) -> Vec<Line> {
+    let mut out = Vec::new();
+    if w.dolt_metrics_disabled() {
+        out.push(ok("dolt metrics.disabled is true"));
+    } else {
+        out.push(fail(
+            "dolt metrics.disabled is not true — every dolt CLI start scans the telemetry backlog",
+            "Fix: dolt config --global --add metrics.disabled true",
+        ));
+    }
+    let n = w.dolt_events_count();
+    if n > DOLT_EVENTS_MAX {
+        out.push(fail(
+            format!("~/.dolt/eventsData holds {n} files (max {DOLT_EVENTS_MAX}) — each dolt start scans them"),
+            "Fix: set metrics.disabled, then move ~/.dolt/eventsData aside.",
+        ));
+    } else {
+        out.push(ok(format!("~/.dolt/eventsData holds {n} files")));
+    }
     out
 }
 

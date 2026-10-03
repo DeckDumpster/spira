@@ -291,6 +291,19 @@ impl World for Real {
         }
     }
 
+    fn dolt_metrics_disabled(&self) -> bool {
+        Command::new(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+            .args(["config", "--global", "--get", "metrics.disabled"])
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+            .unwrap_or(false)
+    }
+    fn dolt_events_count(&self) -> usize {
+        let dir = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".dolt").join("eventsData");
+        std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
+    }
+
     fn bd_first_id(&self, db: &Path) -> Option<String> {
         let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
