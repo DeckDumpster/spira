@@ -452,13 +452,15 @@ fn find_sibling_script(name: &str) -> Option<PathBuf> {
 
 /// Build a `Rebuild` from the process environment, matching `rebuild.sh`'s own resolution of
 /// `VIEW`, `LAYOUT`, `CWD`, `SESSIONS`, `CONC`.
+const USER_VIEW_REL: &str = ".local/bin/cockpit-remote";
+
 pub fn from_env(tmux: Tmux, force: bool) -> Rebuild {
     let home = std::env::var("HOME").unwrap_or_default();
     let mut view = std::env::var("SPIRA_VIEW")
         .ok()
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(format!("{home}/.local/bin/cockpit-remote")));
+        .unwrap_or_else(|| PathBuf::from(&home).join(USER_VIEW_REL));
     if !view.is_file() {
         if let Some(cock) = LayoutConf::from_env().ok().map(|c| c.cock) {
             view = cock.join("remote/cockpit-remote");

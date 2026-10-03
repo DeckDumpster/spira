@@ -567,3 +567,34 @@ fn landing_worker_env_resolves_spira_to_its_configured_checkout_not_the_release_
     let seen = String::from_utf8_lossy(&refs.stdout);
     assert!(seen.lines().any(|l| l == "spira/sp-x"), "the fixture branch must be visible in the resolved checkout: {seen:?}");
 }
+
+/// Config refusals a unit's own binary printed in production when it read a registry key
+/// from the bare environment (law-a-binary-resolves-the-config-it-reads): none may appear
+/// when the binary runs under its rendered `Environment=`.
+const UNRESOLVED_CONFIG_REFUSALS: &[&str] = &[
+    "SPIRA_RELEASES is not set",
+    "SPIRA_DB is not set",
+    "SPIRA_RUN is not set",
+    "bead store not configured",
+    "cannot resolve",
+];
+
+/// (template, package, bin) — each unit whose binary reads a registry key the unit itself
+/// does not carry.
+const CONFIG_READING_UNITS: &[(&str, &str, &str)] = &[
+    ("spira-skew.service", "skew", "skew"),
+    ("spira-gh-intake.service", "gh-intake", "gh-intake"),
+    ("spira-mail-tidy.service", "mail", "mail"),
+];
+
+#[test]
+fn config_reading_units_resolve_their_keys_under_the_rendered_unit_env() {
+    for (template, package, bin) in CONFIG_READING_UNITS {
+        let fx = build_fixture(&format!("cfg-{bin}"), false);
+        std::fs::copy(build_bin(package, bin), fx.root.join("bin").join(bin)).unwrap_or_else(|e| panic!("copy {bin}: {e}"));
+        let (_code, out) = run_unit(&fx, template, &[], &[]);
+        for marker in UNRESOLVED_CONFIG_REFUSALS {
+            assert!(!out.contains(marker), "{template}: unit env left a key unresolved — saw {marker:?} in:\n{out}");
+        }
+    }
+}

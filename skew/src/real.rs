@@ -29,6 +29,8 @@ pub fn lib_sh_sources(home: &Path) -> bool {
         .unwrap_or(false)
 }
 
+const RESOLVED_KEYS: &[&str] = &["SPIRA_RELEASES", "SPIRA_RELEASE_REPO", "SPIRA_GH_INTAKE_REPO"];
+
 pub struct Real {
     pub home: PathBuf,
     registry: OnceCell<spira_config::repos::Registry>,
@@ -327,10 +329,15 @@ impl World for Real {
         out.ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
     }
     fn env(&self, k: &str) -> Option<String> {
-        if k == "SPIRA_RELEASES" && std::env::var(k).map_or(true, |v| v.is_empty()) {
+        let set = std::env::var(k).ok().filter(|v| !v.is_empty() || k == "SPIRA_ALLOW_FOREIGN_HARNESS");
+        if set.is_some() || !RESOLVED_KEYS.contains(&k) {
+            return set;
+        }
+        if k == "SPIRA_RELEASES" {
             return self.releases.get_or_init(|| self.resolved_releases()).clone();
         }
-        std::env::var(k).ok().filter(|v| !v.is_empty() || k == "SPIRA_ALLOW_FOREIGN_HARNESS")
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        spira_config::resolve::resolve_key(&env, &self.home, k).ok()
     }
     fn is_symlink(&self, p: &Path) -> bool {
         std::fs::symlink_metadata(p).map(|m| m.file_type().is_symlink()).unwrap_or(false)

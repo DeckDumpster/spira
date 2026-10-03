@@ -24,12 +24,12 @@ use std::process::ExitCode;
 /// always missed silently (empty stdout, exit 3 — indistinguishable from a real
 /// CANNOT-VERIFY until someone reads the exit code). `argv[0]` is exactly the path PATH
 /// search resolved to, unresolved further — bash's own `$0` never re-resolves it either.
-fn resolve_home() -> PathBuf {
+fn resolve_home() -> Result<PathBuf, String> {
     if let Ok(h) = std::env::var("SPIRA_HOME") {
         if !h.is_empty() {
             let p = PathBuf::from(&h);
             if p.join("lib.sh").is_file() {
-                return p;
+                return Ok(p);
             }
         }
     }
@@ -38,12 +38,15 @@ fn resolve_home() -> PathBuf {
             if let Some(release_dir) = bin_dir.parent() {
                 let candidate = release_dir.join("spira");
                 if candidate.join("lib.sh").is_file() {
-                    return candidate;
+                    return Ok(candidate);
                 }
             }
         }
     }
-    std::env::var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
+    match std::env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
+        _ => Err("skew: SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string()),
+    }
 }
 
 /// `argv[0]`, resolved to where it actually sits, but with every symlink component left
@@ -83,7 +86,13 @@ fn is_exec(p: &std::path::Path) -> bool {
 }
 
 fn main() -> ExitCode {
-    let home = resolve_home();
+    let home = match resolve_home() {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(3);
+        }
+    };
 
     // THE SHARED INIT GUARD (skew.sh's own `trap ... EXIT` around sourcing lib.sh, which
     // itself sources conf.sh): a conf.sh that cannot even source — e.g. `bd migrate schema`

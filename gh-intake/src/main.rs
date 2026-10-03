@@ -29,11 +29,12 @@ fn env_nonempty(key: &str) -> Option<String> {
 
 /// SPIRA_DB/SPIRA_BD/SPIRA_HOME/SPIRA_RUN — every closeout-side verb needs all four.
 fn closeout_env() -> Result<(String, String, String, PathBuf), String> {
-    let db = env_nonempty("SPIRA_DB").ok_or("SPIRA_DB is not set")?;
+    let home = spira_config::resolve::locate_home_for_process()?;
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let db = spira_config::resolve::resolve_key(&env, &home, "SPIRA_DB")?;
     let bd_bin = env_nonempty("SPIRA_BD").unwrap_or_else(|| "bd".to_string());
-    let home = env_nonempty("SPIRA_HOME").unwrap_or_else(|| ".".to_string());
-    let run = env_nonempty("SPIRA_RUN").ok_or("SPIRA_RUN is not set")?;
-    Ok((db, bd_bin, home, PathBuf::from(run)))
+    let run = spira_config::resolve::resolve_run_dir(&env, &home)?;
+    Ok((db, bd_bin, home.to_string_lossy().into_owned(), run))
 }
 
 fn closeout_ctx(run: PathBuf) -> Ctx {
@@ -154,29 +155,31 @@ fn main() -> ExitCode {
         }
     }
 
-    let db = match std::env::var("SPIRA_DB") {
-        Ok(v) if !v.is_empty() => v,
-        _ => {
-            eprintln!("gh-intake: SPIRA_DB is not set");
+    let (db, spira_home) = match spira_config::resolve::locate_home_for_process().and_then(|home| {
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let db = spira_config::resolve::resolve_key(&env, &home, "SPIRA_DB")?;
+        Ok((db, home.to_string_lossy().into_owned()))
+    }) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("gh-intake: {e}");
             return ExitCode::from(1);
         }
     };
     let bd_bin = std::env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
     let mail_bin = std::env::var("SPIRA_MAIL_BIN").unwrap_or_else(|_| "mail".to_string());
-    let spira_home = std::env::var("SPIRA_HOME").unwrap_or_else(|_| ".".to_string());
 
-    let repo = std::env::var("SPIRA_GH_INTAKE_REPO").unwrap_or_default();
+    let repo = spira_config::resolve::key_for_process("SPIRA_GH_INTAKE_REPO").unwrap_or_default();
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_else(|_| "spira".to_string());
     let lane = std::env::var("SPIRA_PLAN_LABEL").unwrap_or_else(|_| "plan".to_string());
-    let bead_repo = std::env::var("SPIRA_GH_INTAKE_BEAD_REPO").unwrap_or_else(|_| {
-        repo.rsplit('/').next().unwrap_or("").to_string()
-    });
+    let bead_repo = spira_config::resolve::key_for_process("SPIRA_GH_INTAKE_BEAD_REPO")
+        .unwrap_or_else(|_| repo.rsplit('/').next().unwrap_or("").to_string());
     let priority = std::env::var("SPIRA_GH_INTAKE_PRIORITY").unwrap_or_else(|_| "1".to_string());
     if !logic::valid_priority(&priority) {
         eprintln!("gh-intake: SPIRA_GH_INTAKE_PRIORITY is {priority} — it must be 0-4");
         return ExitCode::from(2);
     }
-    let api = std::env::var("SPIRA_GH_INTAKE_API").unwrap_or_else(|_| "https://api.github.com".to_string());
+    let api = std::env::var("SPIRA_GH_INTAKE_API").unwrap_or_else(|_| logic::GITHUB_API.to_string());
 
     let cfg = Config {
         repo,

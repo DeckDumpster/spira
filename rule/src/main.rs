@@ -95,12 +95,16 @@ fn memories_json(db: &str) -> Result<BTreeMap<String, serde_json::Value>, String
 /// child" category `SPIRA_REPO_MAP`/`SPIRA_FAYTHS` carry — so a caller that no longer
 /// re-exports it must resolve it itself instead.
 fn memories_cache_path(home: &str) -> Option<String> {
+    resolved_key(home, "SPIRA_MEMORIES_CACHE")
+}
+
+fn resolved_key(home: &str, key: &str) -> Option<String> {
     let home_path = std::path::Path::new(home);
     let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home_path, &env);
     spira_config::resolve::resolve_for_process(home_path, &repo, &env)
         .ok()
-        .and_then(|r| r.values.get("SPIRA_MEMORIES_CACHE").cloned())
+        .and_then(|r| r.values.get(key).cloned())
         .filter(|p| !p.is_empty())
 }
 
@@ -113,11 +117,13 @@ fn rm_memories_cache(home: &str) {
 /// The wiki regeneration hook: `$SPIRA_WIKI_HOOK`, else `<home>/law-synth.sh`. Prints its
 /// own refusal (to stderr) and returns false when the hook is missing or not executable —
 /// SYNTHESIS IS REQUIRED, NOT OPTIONAL (DESIGN.md), exactly as `rule.sh`'s own `synth()`.
+const SYNTH_HOOK_NAME: &str = "law-synth.sh";
+
 fn synth(home: &str) -> bool {
     let hook = std::env::var("SPIRA_WIKI_HOOK")
         .ok()
         .filter(|h| !h.is_empty())
-        .unwrap_or_else(|| format!("{home}/law-synth.sh"));
+        .unwrap_or_else(|| std::path::Path::new(home).join(SYNTH_HOOK_NAME).to_string_lossy().into_owned());
     let executable = std::fs::metadata(&hook)
         .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
         .unwrap_or(false);
@@ -139,6 +145,13 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         Ok(w) if !w.is_empty() && Path::new(&w).join(".git").is_dir() => w,
         _ => return CommitOutcome::Skipped,
     };
+    let page = match std::env::var("SPIRA_STATUTE_PAGE").ok().filter(|p| !p.is_empty()).or_else(|| resolved_key(home, "SPIRA_STATUTE_PAGE")) {
+        Some(p) => p,
+        None => {
+            eprintln!("rule: SPIRA_STATUTE_PAGE is not resolvable from spira_config — wiki page NOT committed.");
+            return CommitOutcome::Failed;
+        }
+    };
     let script = format!("{home}/wiki-commit.sh");
     let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
         .arg(&script)
@@ -153,10 +166,6 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         Err(_) => return CommitOutcome::Failed,
     };
     if let Some(mut stdin) = child.stdin.take() {
-        let page = std::env::var("SPIRA_STATUTE_PAGE")
-            .ok()
-            .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "wiki/notes/common-law.md".to_string());
         let _ = writeln!(stdin, "{page}");
     }
     match child.wait() {
@@ -350,7 +359,14 @@ fn cmd_render_memories(home: &str, rest: &[String]) -> i32 {
         Some(s) if !s.is_empty() => s.to_string(),
         _ => std::env::var("SPIRA_STATUTE_CORE").unwrap_or_default(),
     };
-    let harness = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "<harness>".to_string());
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    let harness = match spira_config::resolve::resolve_key(&env, std::path::Path::new(home), "SPIRA_REPO") {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("rule: {e}");
+            return 1;
+        }
+    };
 
     let mem_json = memories_json_cached(home);
     println!("{}", rule::memories::render(&mem_json, &prefixes, budget, &core_csv, &harness));

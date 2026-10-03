@@ -932,9 +932,11 @@ pub fn czar_triggers_keys() -> Kv {
 // sop_keys
 // ---------------------------------------------------------------------------------------
 
+const SOP_LEDGER_REL: &str = "sop/applied.jsonl";
+
 pub fn sop_keys() -> Kv {
     let mut out = Kv::new();
-    let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join("sop/applied.jsonl").to_string_lossy().into_owned());
+    let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join(SOP_LEDGER_REL).to_string_lossy().into_owned());
     let raw = io::bdjson(&["memories"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         push(&mut out, "SP_SOP_NEVER_FIRED", "?");

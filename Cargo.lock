@@ -715,6 +715,7 @@ version = "1.0.0"
 dependencies = [
  "axum",
  "serde_json",
+ "spira-config",
  "testkit",
  "tokio",
 ]
@@ -968,6 +969,7 @@ dependencies = [
  "reconciler-engine",
  "serde",
  "serde_json",
+ "spira-config",
 ]
 
 [[package]]

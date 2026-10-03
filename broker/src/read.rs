@@ -62,7 +62,10 @@ pub fn run(raw: &[String]) -> Result<(), String> {
             let dir = match output_dir {
                 Some(d) => d,
                 None => {
-                    let run = std::env::var("SPIRA_RUN").unwrap_or_else(|_| "/tmp".to_string());
+                    let run = spira_config::resolve::run_dir_for_process()
+                        .map_err(|e| format!("broker read artifact-download: {e}"))?
+                        .to_string_lossy()
+                        .into_owned();
                     format!("{}/broker/artifacts/{}", run, number)
                 }
             };

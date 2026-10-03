@@ -185,7 +185,7 @@ fn main() {
         .map(|(out, _)| out.trim().to_string())
         .unwrap_or_default();
     if found != *id {
-        let db = env::var("SPIRA_DB").unwrap_or_else(|_| "?".to_string());
+        let db = spira_config::resolve::key_for_process("SPIRA_DB").unwrap_or_else(|e| format!("(unresolved: {e})"));
         eprintln!("slay.sh: no bead {id} in {db} — refusing to act");
         if !found.is_empty() {
             eprintln!("slay.sh: the store answered with {found} instead (prefix match)");

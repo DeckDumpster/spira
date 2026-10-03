@@ -46,7 +46,11 @@ fn default_home() -> PathBuf {
 }
 
 fn default_run(home: &Path) -> PathBuf {
-    std::env::var_os("SPIRA_RUN").filter(|v| !v.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("../run").to_path_buf())
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    spira_config::resolve::resolve_run_dir(&env, home).unwrap_or_else(|e| {
+        eprintln!("gate-run: {e}");
+        std::process::exit(1)
+    })
 }
 
 /// `spira_home_repo` via the same `lib.sh` seam `Real` uses for the repository map, only reached

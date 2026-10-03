@@ -122,7 +122,7 @@ pub fn load(home: &Path) -> Result<Context, String> {
         db: take("SPIRA_DB"),
         placeholders,
         systemctl: std::env::var("SPIRA_SYSTEMCTL").unwrap_or_else(|_| "systemctl".to_string()),
-        instance: std::env::var("SPIRA_INSTANCE").unwrap_or_else(|_| "prod".to_string()),
+        instance: spira_config::resolve::resolve_instance(&std::env::vars().collect(), home)?,
         now: read_now(),
     })
 }
@@ -271,7 +271,9 @@ mod tests {
             "SPIRA_RUN=/fixture/run\nSPIRA_DB=/fixture/db\nSPIRA_WATCHERS=/fixture/watchers\n",
         )
         .unwrap();
+        let _env = testkit::env(&[("SPIRA_INSTANCE", Some("fixture"))]);
         let ctx = load(&d).expect("the seam to source this trivial conf.sh");
+        assert_eq!(ctx.instance, "fixture");
         assert_eq!(ctx.run, "/fixture/run", "SPIRA_RUN is also a WATCHD_KEYS placeholder");
         assert_eq!(ctx.db, "/fixture/db", "SPIRA_DB is also a WATCHD_KEYS placeholder");
         assert_eq!(ctx.watchers, "/fixture/watchers");
