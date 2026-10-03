@@ -115,7 +115,7 @@ CFGHOME="$TMP/operator-config"; mkdir -p "$CFGHOME"
 printf 'SPIRA_HOME_REPO=demo\n' > "$CFGHOME/spira.conf"
 printf 'demo|%s|queue|main|\n' "$GITREPO" > "$CFGHOME/repo-map"
 CONF="$CFGHOME/spira.conf"
-TOML="$FIX/spira.toml"   # deliberately does not exist yet — this run must create it
+TOML="$CFGHOME/spira.toml"   # deliberately does not exist yet — this run must create it
 
 CRED="$TMP/credential"; printf 'adminpw-not-real' > "$CRED"
 RO_CRED="$CRED-ro"; printf 'ropw-not-real' > "$RO_CRED"
