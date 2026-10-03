@@ -112,6 +112,8 @@ pub struct SuiteStateRow {
     pub since: String,
     pub bead: String,
     pub reason: String,
+    /// `until=<iso>` after the bead id: the quarantine stops counting at this instant.
+    pub until: Option<u64>,
 }
 
 /// The parsed suite-state file. Absent file, malformed lines and unknown states all read as
@@ -142,13 +144,15 @@ impl SuiteStates {
             if parts[0].is_empty() {
                 continue;
             }
+            let (bead, until) = split_bead(parts[3]);
             // First row for a suite wins, as suite_state_of's first-match read does.
             rows.entry(parts[0].to_string()).or_insert(SuiteStateRow {
                 suite: parts[0].to_string(),
                 state,
                 since: parts[2].to_string(),
-                bead: parts[3].to_string(),
+                bead,
                 reason: parts[4].to_string(),
+                until,
             });
         }
         SuiteStates { rows }
@@ -165,6 +169,39 @@ impl SuiteStates {
             .map(|r| r.state)
             .unwrap_or(SuiteState::Active)
     }
+
+    /// `state_of` at `now`: a quarantine past its `until`, or past `max_age` from `since`
+    /// when it names no `until`, reads as active — a forgotten quarantine blocks again.
+    pub fn state_at(&self, suite: &str, now: u64, max_age: u64) -> SuiteState {
+        let Some(r) = self.rows.get(suite) else { return SuiteState::Active };
+        if r.state == SuiteState::Quarantined && r.expired(now, max_age) {
+            return SuiteState::Active;
+        }
+        r.state
+    }
+}
+
+impl SuiteStateRow {
+    pub fn expired(&self, now: u64, max_age: u64) -> bool {
+        let end = self.until.or_else(|| {
+            crate::suites::model::parse_iso_utc(&self.since).map(|s| s.saturating_add(max_age))
+        });
+        end.is_some_and(|e| now >= e)
+    }
+}
+
+/// `sp-x until=2026-10-10T00:00:00Z` -> (`sp-x`, Some(epoch)). An `until` that does not
+/// parse is dropped, so the max age governs instead of the row never expiring.
+fn split_bead(field: &str) -> (String, Option<u64>) {
+    let mut bead = Vec::new();
+    let mut until = None;
+    for tok in field.split_whitespace() {
+        match tok.strip_prefix("until=") {
+            Some(t) => until = crate::suites::model::parse_iso_utc(t),
+            None => bead.push(tok),
+        }
+    }
+    (bead.join(" "), until)
 }
 
 #[cfg(test)]
@@ -226,5 +263,21 @@ mod tests {
         assert_eq!(s.state_of("test-odd.sh"), SuiteState::Active);
         assert_eq!(s.state_of("test-none.sh"), SuiteState::Active);
         assert_eq!(SuiteStates::parse("").state_of("x"), SuiteState::Active);
+    }
+
+    #[test]
+    fn a_quarantine_expires_at_its_until_or_its_max_age() {
+        let t = "test-u.sh | quarantined | 2026-10-01T00:00:00Z | sp-1 until=2026-10-02T00:00:00Z | flaky\n\
+                 test-m.sh | quarantined | 2026-10-01T00:00:00Z | sp-2 | flaky\n\
+                 test-d.sh | disabled | 2026-01-01T00:00:00Z | | off\n";
+        let s = SuiteStates::parse(t);
+        let at = |iso: &str| crate::suites::model::parse_iso_utc(iso).unwrap();
+        assert_eq!(s.rows().find(|r| r.suite == "test-u.sh").unwrap().bead, "sp-1");
+        let day = 86_400;
+        assert_eq!(s.state_at("test-u.sh", at("2026-10-01T23:59:59Z"), 7 * day), SuiteState::Quarantined);
+        assert_eq!(s.state_at("test-u.sh", at("2026-10-02T00:00:00Z"), 7 * day), SuiteState::Active);
+        assert_eq!(s.state_at("test-m.sh", at("2026-10-07T23:59:59Z"), 7 * day), SuiteState::Quarantined);
+        assert_eq!(s.state_at("test-m.sh", at("2026-10-08T00:00:00Z"), 7 * day), SuiteState::Active);
+        assert_eq!(s.state_at("test-d.sh", at("2030-01-01T00:00:00Z"), 7 * day), SuiteState::Disabled);
     }
 }

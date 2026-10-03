@@ -294,7 +294,7 @@ fn file_flake(w: &World, suite: &str, count: u64) -> Option<String> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transition {
-    Quarantine { bead: String, reason: String },
+    Quarantine { bead: String, reason: String, until: Option<String> },
     Disable { reason: String },
     Activate,
 }
@@ -338,6 +338,19 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
     if !model::valid_suite_name(suite) {
         w.err(format!("suites {label}: no such suite: {suite}"));
         return Err(USAGE);
+    }
+    if let Transition::Quarantine { until: Some(u), .. } = t {
+        match model::parse_iso_utc(u) {
+            None => {
+                w.err(format!("suites {label}: --until wants UTC like 2026-10-10T00:00:00Z, not {u}"));
+                return Err(USAGE);
+            }
+            Some(at) if at <= w.clock.now() => {
+                w.err(format!("suites {label}: --until {u} is already past; it would expire at once"));
+                return Err(USAGE);
+            }
+            Some(_) => {}
+        }
     }
     if matches!(t, Transition::Quarantine { .. }) && t.bead().is_empty() {
         w.err("suites quarantine: bead id required");
@@ -384,6 +397,10 @@ pub fn transition(w: &World, t: &Transition, suite: &str, base: Option<&str>) ->
         since: crate::util::iso_utc(now),
         bead: t.bead().to_string(),
         reason: t.reason().to_string(),
+        until: match t {
+            Transition::Quarantine { until, .. } => until.clone(),
+            _ => None,
+        },
     };
     let new = model::rewrite_state(&current, suite, Some(&entry));
     let msg = format!("suite-state: {suite} -> {label}  sp-emvlk\n");

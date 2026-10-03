@@ -1001,7 +1001,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
     let mut quarantined: BTreeSet<String> = BTreeSet::new();
     let mut preempted: BTreeMap<String, ResultRecord> = BTreeMap::new();
     for n in &selected {
-        match states.state_of(n) {
+        match states.state_at(n, now_epoch(), s.quarantine_max_age) {
             SuiteState::Disabled => {
                 let rec = ResultRecord {
                     status: Status::Disabled,
