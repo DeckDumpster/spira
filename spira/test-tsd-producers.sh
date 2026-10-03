@@ -151,7 +151,7 @@ esac
 STRANDSTUB
 chmod +x "$SP_STUBS/strand"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
-for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
+for _s in lib.sh conf.sh suite-covers.sh conf.d; do ln -s "$HERE/$_s" "$SP_STUBS/$_s"; done
 printf '#!/bin/sh\necho inactive\n' > "$SP_STUBS/mock-systemctl"; chmod +x "$SP_STUBS/mock-systemctl"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-launch";    chmod +x "$SP_STUBS/mock-launch"
 printf '#!/bin/sh\nexit 0\n'        > "$SP_STUBS/mock-notify";    chmod +x "$SP_STUBS/mock-notify"
