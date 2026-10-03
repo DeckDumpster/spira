@@ -1273,7 +1273,7 @@ impl<'w, W: World> Trial<'w, W> {
         self.w.checkout(repo, tree, rev, want)
     }
 
-    /// EJECTED SUITES: `<bead>.ejected`, else an EJECTED landstate row's fourth field.
+    /// EJECTED SUITES: the first line of `<bead>.ejected`.
     fn ejected(&self, ctx: &Ctx) -> String {
         if self.s.bead.is_empty() {
             return String::new();
@@ -1281,21 +1281,10 @@ impl<'w, W: World> Trial<'w, W> {
         let ls = ctx.var("LANDSTATE");
         let ls = if ls.is_empty() { "/nonexistent" } else { ls };
         let ej = PathBuf::from(format!("{ls}/{}.ejected", self.s.bead));
-        if self.w.exists(&ej) {
-            return self
-                .w
-                .read(&ej)
-                .and_then(|c| c.lines().next().map(str::to_string))
-                .unwrap_or_default();
-        }
-        let row = PathBuf::from(format!("{ls}/{}", self.s.bead));
-        if let Some(c) = self.w.read(&row) {
-            let f: Vec<&str> = c.lines().next().unwrap_or("").split_whitespace().collect();
-            if f.first() == Some(&"EJECTED") {
-                return f.get(3).map(|s| s.to_string()).unwrap_or_default();
-            }
-        }
-        String::new()
+        self.w
+            .read(&ej)
+            .and_then(|c| c.lines().next().map(str::to_string))
+            .unwrap_or_default()
     }
 
     /// The config document's own `certify_par`, read fresh; else `SPIRA_CERTIFY_PAR` as this

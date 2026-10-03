@@ -53,6 +53,21 @@ pub trait Bd {
     fn dep_relate(&self, from: &str, to: &str) -> bool;
 }
 
+/// A bead as the lifecycle machine holds it: its state and the commit that state names (the
+/// delivery's merge sha once landed, else the bead's tip).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LcBead {
+    pub state: String,
+    pub sha: String,
+}
+
+/// The lifecycle machine (`spira-lc show`), the one source of bead state.
+pub trait Lifecycle {
+    /// `Ok(None)` when the machine has no row for `id`; `Err` when it could not answer —
+    /// never confused with no row (law-absence-needs-a-positive-control).
+    fn bead(&self, id: &str) -> Result<Option<LcBead>, String>;
+}
+
 /// `repo_root <name>` (family U) and the base-ref families (U/W), resolved in-process
 /// through `spira_config::repos` (sp-k6lku, "wave 4.13"; sp-j3fim extends this with the
 /// landref/landrefs/all-names calls the closeout family needs).
@@ -71,7 +86,7 @@ pub trait Repo {
     fn landref(&self, repo_path: &str) -> Option<String>;
 
     /// `spira_landrefs <repo-path>` (family W): the land ref plus its local counterpart
-    /// when one exists, both as refs `Git::landed_sha` greps. Empty when unresolvable.
+    /// when one exists, both as refs `Git::landing_commit` greps. Empty when unresolvable.
     fn landrefs(&self, repo_path: &str) -> Vec<String>;
 }
 
@@ -113,17 +128,17 @@ pub trait Git {
     fn rev_parse_short(&self, repo: &Path, sha: &str) -> Option<String>;
     /// `git -C <repo> log --format=%s -1 <sha>`.
     fn subject_of(&self, repo: &Path, sha: &str) -> Option<String>;
-    /// lib.sh `landed_sha`: the newest commit on any of `refs` whose subject names `id`
+    /// lib.sh's newest-landing-commit lookup: the newest commit on any of `refs` whose subject names `id`
     /// (`spira: land <id>`, optionally ` <title>`, or `<id>:...`) — `-F` (fixed-string)
     /// `--grep`, subject-shape checked after. `None` when nothing matches.
-    fn landed_sha(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String>;
+    fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String>;
     /// `gh-issue-backfill.sh`'s OWN looser ancestry search, kept as its own reader rather
-    /// than unified with `landed_sha` (test-land-commit-contract.sh, "gap G4": the two are
+    /// than unified with `landing_commit` (test-land-commit-contract.sh, "gap G4": the two are
     /// allowed to disagree in general and are only proven to agree on one fixture): the
     /// first commit on `land_ref` whose message contains `id` anywhere (`git log --grep`,
     /// no `-F`, no subject-shape check).
     fn grep_ancestor(&self, repo: &Path, id: &str, land_ref: &str) -> Option<String>;
     /// `git -C <repo> cat-file -e <sha>` AND `git -C <repo> merge-base --is-ancestor <sha>
-    /// <land_ref>` — the backfill script's landstate-sha fallback.
+    /// <land_ref>` — the backfill script's fallback to the machine's recorded sha.
     fn sha_is_ancestor(&self, repo: &Path, sha: &str, land_ref: &str) -> bool;
 }

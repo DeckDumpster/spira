@@ -18,7 +18,7 @@
 //! the public tracker (law-beads-is-never-public): every string sent to GitHub below is
 //! built from a commit sha/subject (already public) or a fixed sentence.
 
-use crate::ports::{Bd, Gh, Git, Mail, Repo};
+use crate::ports::{Bd, Gh, Git, LcBead, Lifecycle, Mail, Repo};
 use std::path::{Path, PathBuf};
 
 // ────────────────────────────────────────────────────────────────────────────────────────
@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 // ────────────────────────────────────────────────────────────────────────────────────────
 
 pub struct Ctx {
-    /// `$SPIRA_RUN` — `gh-closed/<id>` markers, the `landstate/<id>` read, and the
-    /// `gh-wait-log/<id>` in-flight throttle all live under this.
+    /// `$SPIRA_RUN` — `gh-closed/<id>` markers and the `gh-wait-log/<id>`
+    /// in-flight throttle live under this.
     pub run: PathBuf,
     /// `$SPIRA_ASK_LABEL` — the label an operator ask carries.
     pub ask_label: String,
@@ -42,11 +42,12 @@ pub struct Deps<'a> {
     pub git: &'a dyn Git,
     pub repo: &'a dyn Repo,
     pub mail: &'a dyn Mail,
+    pub lc: &'a dyn Lifecycle,
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────
 // $SPIRA_RUN state — plain fs, not behind a port (single-process file I/O; see
-// landing-pass/src/landstate.rs for the same choice).
+// landing-pass for the same choice).
 // ────────────────────────────────────────────────────────────────────────────────────────
 
 mod run_state {
@@ -61,16 +62,6 @@ mod run_state {
         let dir = run.join("gh-closed");
         let _ = fs::create_dir_all(&dir);
         let _ = fs::write(dir.join(id), b"");
-    }
-
-    /// `$SPIRA_RUN/landstate/<id>`'s first line, split on whitespace: (state, sha).
-    pub fn landstate(run: &Path, id: &str) -> Option<(String, String)> {
-        let text = fs::read_to_string(run.join("landstate").join(id)).ok()?;
-        let line = text.lines().next()?;
-        let mut it = line.split_whitespace();
-        let state = it.next()?.to_string();
-        let sha = it.next().unwrap_or("").to_string();
-        Some((state, sha))
     }
 
     /// The in-flight wait-log throttle (`$SPIRA_RUN/gh-wait-log/<id>`): true — and the
@@ -387,25 +378,30 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
         if let Some(rp) = d.repo.root_with_git(&row.repo_label) {
             let refs = d.repo.landrefs(&rp);
-            if let Some(sha) = d.git.landed_sha(Path::new(&rp), &row.id, &refs) {
+            if let Some(sha) = d.git.landing_commit(Path::new(&rp), &row.id, &refs) {
                 log.extend(gh_issue_closeout(d, ctx, &row.id, &sha, Path::new(&rp)));
                 continue;
             }
             if let Some(sup) = row.superseder.as_deref().filter(|s| !s.is_empty()) {
-                if let Some(sha) = d.git.landed_sha(Path::new(&rp), sup, &refs) {
+                if let Some(sha) = d.git.landing_commit(Path::new(&rp), sup, &refs) {
                     log.extend(gh_issue_closeout(d, ctx, &row.id, &sha, Path::new(&rp)));
                     continue;
                 }
             }
         }
 
-        let ls = run_state::landstate(&ctx.run, &row.id);
-        if ls.as_ref().map(|(s, _)| s.as_str()) == Some("LANDED") {
+        let ls = match d.lc.bead(&row.id) {
+            Ok(b) => b,
+            Err(e) => {
+                log.push(format!("gh-closeout {}: lifecycle machine unreachable ({e}) — skipped", row.id));
+                continue;
+            }
+        };
+        if ls.as_ref().map(|b| b.state.as_str()) == Some("LANDED") {
             continue;
         }
 
-        if matches!(ls.as_ref().map(|(s, _)| s.as_str()), Some("CERTIFIED") | Some("BATCHED") | Some("GATED") | Some("REBASED") | Some("CONTENT")) {
-            let (state, _) = ls.unwrap();
+        if let Some(state) = ls.as_ref().map(|b| b.state.as_str()).filter(|s| matches!(*s, "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY")) {
             if run_state::wait_due(&ctx.run, &row.id, now, 3600) {
                 log.push(format!("gh-closeout {}: {} in flight ({state}) — waiting on landing", row.id, row.ext));
             }
@@ -414,9 +410,9 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
         let mut draft = String::new();
         if let Some(sup) = row.superseder.as_deref().filter(|s| !s.is_empty()) {
-            if let Some((sup_st, sup_sha)) = run_state::landstate(&ctx.run, sup) {
-                if sup_st == "LANDED" {
-                    draft = format!("This issue was fixed by {sup} ({})", short8(&sup_sha));
+            if let Ok(Some(b)) = d.lc.bead(sup) {
+                if b.state == "LANDED" {
+                    draft = format!("This issue was fixed by {sup} ({})", short8(&b.sha));
                 }
             }
         }
@@ -436,7 +432,7 @@ pub fn gh_unlanded_scan(d: &Deps, ctx: &Ctx, now: i64) -> Vec<String> {
 
 /// `gh-issue-backfill.sh` (sp-j3fim): apply `gh_issue_closeout` to existing closed+landed
 /// beads, with its OWN looser ancestry search — see `Git::grep_ancestor`'s doc comment for
-/// why this is deliberately not `gh_unlanded_scan`'s `landed_sha`. Returns the report lines
+/// why this is deliberately not `gh_unlanded_scan`'s `landing_commit`. Returns the report lines
 /// plus (found, closed, skipped, would-close) for the summary line's counts.
 pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u32, u32) {
     let mut out = Vec::new();
@@ -456,7 +452,7 @@ pub fn backfill(d: &Deps, ctx: &Ctx, dry_run: bool) -> (Vec<String>, u32, u32, u
             continue;
         }
 
-        let ls_sha = run_state::landstate(&ctx.run, &row.id).map(|(_, sha)| sha).unwrap_or_default();
+        let ls_sha = d.lc.bead(&row.id).ok().flatten().map(|b| b.sha).unwrap_or_default();
 
         let mut found: Option<(String, String)> = None; // (sha, repo_path)
         for name in d.repo.all_names() {
@@ -692,8 +688,31 @@ mod tests {
     }
 
     #[derive(Default)]
+    struct FakeLc {
+        beads: BTreeMap<String, LcBead>,
+        down: bool,
+    }
+
+    impl FakeLc {
+        fn with(id: &str, state: &str, sha: &str) -> FakeLc {
+            let mut lc = FakeLc::default();
+            lc.beads.insert(id.to_string(), LcBead { state: state.to_string(), sha: sha.to_string() });
+            lc
+        }
+    }
+
+    impl Lifecycle for FakeLc {
+        fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
+            if self.down {
+                return Err("down".to_string());
+            }
+            Ok(self.beads.get(id).cloned())
+        }
+    }
+
+    #[derive(Default)]
     struct FakeGit {
-        /// repo-path -> id -> sha, for `landed_sha`/`grep_ancestor`.
+        /// repo-path -> id -> sha, for `landing_commit`/`grep_ancestor`.
         landed: RefCell<BTreeMap<String, BTreeMap<String, String>>>,
         subjects: RefCell<BTreeMap<String, String>>,
     }
@@ -711,7 +730,7 @@ mod tests {
         fn subject_of(&self, _repo: &Path, sha: &str) -> Option<String> {
             self.subjects.borrow().get(sha).cloned()
         }
-        fn landed_sha(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
+        fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
             if refs.is_empty() {
                 return None;
             }
@@ -800,7 +819,8 @@ mod tests {
         git.subjects.borrow_mut().insert("deadbeef".into(), "the fix".into());
         let repo = FakeRepo::default();
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let c = ctx(&run);
 
         let log = gh_issue_closeout(&d, &c, "sp-a", "deadbeef", Path::new("/r"));
@@ -822,7 +842,8 @@ mod tests {
         let bd = FakeBd::default();
         bd.show.borrow_mut().insert("sp-b".into(), serde_json::json!({"external_ref": ""}));
         let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_issue_closeout(&d, &ctx(&run), "sp-b", "deadbeef", Path::new("/r"));
         assert!(log.is_empty());
         assert!(gh.comments.borrow().is_empty());
@@ -838,7 +859,8 @@ mod tests {
         let gh = FakeGh::default();
         gh.set_state("fixture/testrepo", "9", "CLOSED");
         let (git, repo, mail) = (FakeGit::default(), FakeRepo::default(), FakeMail::default());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         gh_issue_closeout(&d, &ctx(&run), "sp-c", "deadbeef", Path::new("/r"));
         assert!(gh.comments.borrow().is_empty());
         assert!(run_state::mark_exists(&run, "sp-c"));
@@ -856,7 +878,8 @@ mod tests {
         gh.set_state("fixture/testrepo", "2", "OPEN");
         let (git, repo) = (FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let c = ctx(&run);
 
         let log = gh_issue_ask_unlanded(&d, &c, "sp-scan2", "github:fixture/testrepo#2", None);
@@ -882,7 +905,8 @@ mod tests {
         gh.set_state("fixture/testrepo", "92", "OPEN");
         let (git, repo) = (FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let c = ctx(&run);
 
         let log = gh_issue_ask_unlanded(&d, &c, "sp-scan2", "github:fixture/testrepo#92", None);
@@ -900,7 +924,8 @@ mod tests {
         let tmp = testkit::TempDir::new("gh-intake-ask-malformed");
         let run = tmp.path().join("run");
         let (bd, gh, git, repo, mail) = (FakeBd::default(), FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_issue_ask_unlanded(&d, &ctx(&run), "sp-x", "github:fixture/testrepo#", None);
         assert!(log.is_empty());
     }
@@ -914,7 +939,8 @@ mod tests {
         let (git, repo) = (FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
         *mail.fail.borrow_mut() = Some("repeat refused — stub".to_string());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_issue_ask_unlanded(&d, &ctx(&run), "sp-y", "github:fixture/testrepo#3", None);
         assert!(log.iter().any(|l| l.contains("ask refused") && l.contains("repeat refused")), "{log:?}");
         assert!(!log.iter().any(|l| l.contains("asked operator")));
@@ -929,7 +955,8 @@ mod tests {
         let (git, repo) = (FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
         *mail.fail.borrow_mut() = Some(String::new());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_issue_ask_unlanded(&d, &ctx(&run), "sp-y", "github:fixture/testrepo#3", None);
         assert!(log.iter().any(|l| l.contains("probe fault")), "{log:?}");
     }
@@ -945,7 +972,8 @@ mod tests {
         bd.open.borrow_mut().push(("sp-ask1".to_string(), subj.clone()));
         bd.show.borrow_mut().insert("sp-ct1".into(), serde_json::json!({"dependencies": [{"dependency_type": "blocks", "id": "sp-ask1"}]}));
         let (gh, git, repo, mail) = (FakeGh::default(), FakeGit::default(), FakeRepo::default(), FakeMail::default());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_close_ask_unblock(&d, &ctx(&run), &subj, "sp-ct1");
         assert!(log.iter().any(|l| l.contains("converted blocking ask sp-ask1")), "{log:?}");
         assert_eq!(bd.dep_removes.borrow().as_slice(), &[("sp-ct1".to_string(), "sp-ask1".to_string())]);
@@ -972,7 +1000,8 @@ mod tests {
         let gh = FakeGh::default();
         gh.set_state("fixture/testrepo", "95", "CLOSED");
         let (git, repo, mail) = (FakeGit::default(), FakeRepo::default(), FakeMail::default());
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let log = gh_resolve_stale_asks(&d, &ctx(&run));
         assert!(log.iter().any(|l| l.contains("resolved stale ask sp-ask5")), "{log:?}");
         assert_eq!(bd.closes.borrow().len(), 1);
@@ -1007,7 +1036,8 @@ mod tests {
         let repo = FakeRepo::default();
         repo.add("fixture", "/r", "origin/main");
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let now = 2_000_000_000; // long after both fixture timestamps
 
         let log = gh_unlanded_scan(&d, &ctx(&run), now);
@@ -1018,16 +1048,15 @@ mod tests {
     }
 
     #[test]
-    fn unlanded_scan_waits_silently_on_a_certified_landstate_and_throttles_the_wait_log() {
+    fn unlanded_scan_waits_silently_on_a_certified_bead_and_throttles_the_wait_log() {
         let tmp = testkit::TempDir::new("gh-intake-scan-certified");
         let run = tmp.path().join("run");
-        std::fs::create_dir_all(run.join("landstate")).unwrap();
-        std::fs::write(run.join("landstate").join("sp-scan1"), "CERTIFIED abc1234 1700000000\n").unwrap();
+        let lc = FakeLc::with("sp-scan1", "CERTIFIED", "abc1234");
         let bd = FakeBd::default();
         seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-scan1","status":"closed","external_ref":"github:fixture/testrepo#91","labels":[],"closed_at":"2026-09-05T00:00:00Z"})]);
         let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let now = 2_000_000_000;
 
         let log = gh_unlanded_scan(&d, &ctx(&run), now);
@@ -1037,6 +1066,44 @@ mod tests {
         // Immediately again: throttled, no second "waiting" line.
         let log2 = gh_unlanded_scan(&d, &ctx(&run), now + 10);
         assert!(log2.is_empty(), "{log2:?}");
+    }
+
+    #[test]
+    fn unlanded_scan_skips_a_bead_the_machine_could_not_answer_for() {
+        let tmp = testkit::TempDir::new("gh-intake-scan-down");
+        let run = tmp.path().join("run");
+        let bd = FakeBd::default();
+        seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-scan2","status":"closed","external_ref":"github:fixture/testrepo#92","labels":[],"closed_at":"2026-09-05T00:00:00Z"})]);
+        let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
+        let mail = FakeMail::default();
+        let mut lc = FakeLc::default();
+        lc.down = true;
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert!(log.iter().any(|l| l.contains("lifecycle machine unreachable")), "{log:?}");
+        assert!(mail.sent.borrow().is_empty(), "no ask sent on no answer");
+
+        // POSITIVE CONTROL: the same bead with the machine up and no row is asked about.
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert!(!log.iter().any(|l| l.contains("unreachable")), "{log:?}");
+    }
+
+    #[test]
+    fn a_landstate_row_alone_is_not_state() {
+        let tmp = testkit::TempDir::new("gh-intake-scan-inert");
+        let run = tmp.path().join("run");
+        std::fs::create_dir_all(run.join("landstate")).unwrap();
+        std::fs::write(run.join("landstate").join("sp-scan3"), "CERTIFIED abc1234 1700000000\n").unwrap();
+        let bd = FakeBd::default();
+        seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-scan3","status":"closed","external_ref":"github:fixture/testrepo#93","labels":[],"closed_at":"2026-09-05T00:00:00Z"})]);
+        let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
+        let mail = FakeMail::default();
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
+        let log = gh_unlanded_scan(&d, &ctx(&run), 2_000_000_000);
+        assert!(!log.iter().any(|l| l.contains("in flight")), "{log:?}");
     }
 
     #[test]
@@ -1051,7 +1118,8 @@ mod tests {
         seed_closed_github(&bd, vec![serde_json::json!({"id":"sp-fresh","status":"closed","external_ref":"github:fixture/testrepo#99","labels":[],"closed_at":closed_at})]);
         let (gh, git, repo) = (FakeGh::default(), FakeGit::default(), FakeRepo::default());
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let mut c = ctx(&run);
         c.grace_secs = age + 10_000; // still inside the grace window
 
@@ -1074,7 +1142,8 @@ mod tests {
         let repo = FakeRepo::default();
         repo.add("fixture", "/r", "origin/main");
         let mail = FakeMail::default();
-        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail };
+        let lc = FakeLc::default();
+        let d = Deps { bd: &bd, gh: &gh, git: &git, repo: &repo, mail: &mail, lc: &lc };
         let c = ctx(&run);
 
         let (dry_out, found, _closed, _skipped, would) = backfill(&d, &c, true);

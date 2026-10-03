@@ -1,4 +1,4 @@
-use crate::ports::{Bd, Gh, Git, Http, Mail, Repo};
+use crate::ports::{Bd, Gh, Git, Http, LcBead, Lifecycle, Mail, Repo};
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -31,6 +31,44 @@ impl Http for RealHttp {
 }
 
 use std::io::Read;
+
+pub struct RealLifecycle {
+    pub bin: String,
+}
+
+impl Default for RealLifecycle {
+    fn default() -> Self {
+        RealLifecycle { bin: "spira-lc".to_string() }
+    }
+}
+
+impl Lifecycle for RealLifecycle {
+    fn bead(&self, id: &str) -> Result<Option<LcBead>, String> {
+        let o = Command::new(&self.bin)
+            .args(["show", id])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("{}: {e}", self.bin))?;
+        parse_show(o.status.code(), &o.stdout)
+    }
+}
+
+/// `spira-lc show`: exit 0 with the row, exit 1 with `{}` when the machine has no such bead,
+/// anything else is no answer.
+pub fn parse_show(code: Option<i32>, stdout: &[u8]) -> Result<Option<LcBead>, String> {
+    match code {
+        Some(1) => return Ok(None),
+        Some(0) => {}
+        other => return Err(format!("spira-lc show exited {other:?}")),
+    }
+    let v: serde_json::Value = serde_json::from_slice(stdout).map_err(|e| format!("spira-lc show: unparsed reply: {e}"))?;
+    let Some(bead) = v.get("bead") else { return Ok(None) };
+    let text = |x: Option<&serde_json::Value>| x.and_then(|t| t.as_str()).unwrap_or("").to_string();
+    let merge = text(v.get("delivery").and_then(|d| d.get("merge_sha")));
+    let sha = if merge.is_empty() { text(bead.get("tip")) } else { merge };
+    Ok(Some(LcBead { state: text(bead.get("state")), sha }))
+}
 
 pub struct RealBd {
     pub bd_bin: String,
@@ -189,7 +227,7 @@ impl Repo for RealRepo {
 
     /// `spira_landrefs <repo-path>` (family W, sp-j3fim) — in-process; flattens the
     /// (base, local-counterpart) pair `spira_config::repos::landrefs` returns into the
-    /// list of refs `Git::landed_sha` greps.
+    /// list of refs `Git::landing_commit` greps.
     fn landrefs(&self, repo_path: &str) -> Vec<String> {
         let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), std::path::Path::new(&self.spira_home));
         match spira_config::repos::landrefs(&reg, repo_path) {
@@ -322,7 +360,7 @@ impl Git for RealGit {
         o.status.success().then(|| String::from_utf8_lossy(&o.stdout).trim().to_string())
     }
 
-    fn landed_sha(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
+    fn landing_commit(&self, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
         if refs.is_empty() {
             return None;
         }
@@ -372,5 +410,27 @@ impl Git for RealGit {
             .status()
             .map(|s| s.success())
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn show_reads_state_and_the_deliverys_merge_sha_else_the_tip() {
+        let landed = br#"{"bead":{"state":"LANDED","tip":"tt"},"delivery":{"merge_sha":"mm"}}"#;
+        let b = parse_show(Some(0), landed).unwrap().unwrap();
+        assert_eq!((b.state.as_str(), b.sha.as_str()), ("LANDED", "mm"));
+        let certified = br#"{"bead":{"state":"CERTIFIED","tip":"tt"},"delivery":null}"#;
+        assert_eq!(parse_show(Some(0), certified).unwrap().unwrap().sha, "tt");
+    }
+
+    #[test]
+    fn no_row_is_none_and_no_answer_is_an_error() {
+        assert_eq!(parse_show(Some(1), b"{}"), Ok(None));
+        assert!(parse_show(Some(2), b"").is_err());
+        assert!(parse_show(None, b"").is_err());
+        assert!(parse_show(Some(0), b"not json").is_err());
     }
 }

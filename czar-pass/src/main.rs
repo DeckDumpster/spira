@@ -4,7 +4,7 @@
 // czar-pass --pass
 //
 // Reads only cheap sources: the landing.log tail since the last pass, the open batch
-// record, landstate, and at most 2 gh API calls (forge.sh batch-ci-status) for the
+// record, the lifecycle machine (spira-lc), and at most 2 gh API calls (forge.sh batch-ci-status) for the
 // open batch's run.
 
 use reconciler_engine::core::{last_remedy, record_remedy, step, HysteresisState, RawStatus, Verdict};
@@ -66,6 +66,7 @@ struct Config {
     express_label: String,
     land_unit: String,
     systemctl: String,
+    spira_lc: String,
     repo_map: Option<PathBuf>,
     now_secs: u64,
     now_iso: String,
@@ -204,6 +205,7 @@ impl Config {
                 .unwrap_or_else(|_| "spira-landing".to_string()),
             systemctl: env::var("SPIRA_SYSTEMCTL")
                 .unwrap_or_else(|_| "systemctl".to_string()),
+            spira_lc: "spira-lc".to_string(),
             repo_map: env::var("SPIRA_REPO_MAP").ok().map(PathBuf::from),
             now_secs: now,
             now_iso: iso,
@@ -1222,8 +1224,8 @@ fn detect_base_red(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static str
 }
 
 /// Which of `repo_path`'s own `refs/heads/spira/*` branches exist — the same authority
-/// `certified_pool` (batcher-cut) and `queue_certified_list` (lib.sh) use to scope a shared
-/// landstate directory to one repository.
+/// `certified_pool` (batcher-cut) and `queue_certified_list` (lib.sh) use to scope the machine's
+/// beads to one repository.
 fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
     let Ok(out) = Command::new("git")
         .arg("-C")
@@ -1244,16 +1246,27 @@ fn repo_branch_ids(repo_path: &Path) -> Vec<String> {
 
 /// This repo's own CERTIFIED depth — czar-pass's read of the same count
 /// `watchtower.sh --throttle-check` computes, without the title/priority/express enrichment
-/// `certified_pool` (batcher-cut) does: a stall detector needs only the number.
-fn certified_depth(repo_path: &Path, landstate_dir: &Path) -> u32 {
-    let mut n = 0u32;
-    for id in repo_branch_ids(repo_path) {
-        let Ok(content) = fs::read_to_string(landstate_dir.join(&id)) else { continue };
-        if content.split_whitespace().next() == Some("CERTIFIED") {
-            n += 1;
+/// `certified_pool` (batcher-cut) does: a stall detector needs only the number. An unreachable
+/// or unparseable machine reads as depth 0, said on stderr: a stall detector must not invent a
+/// pool it could not see.
+fn certified_depth(cfg: &Config, repo_path: &Path) -> u32 {
+    let out = match Command::new(&cfg.spira_lc).args(["list", "--state", "CERTIFIED"]).output() {
+        Ok(o) if o.status.success() => o.stdout,
+        Ok(o) => {
+            eprintln!("czar-pass: spira-lc list --state CERTIFIED exited {}", o.status);
+            return 0;
         }
-    }
-    n
+        Err(e) => {
+            eprintln!("czar-pass: spira-lc list --state CERTIFIED: {e}");
+            return 0;
+        }
+    };
+    let Ok(serde_json::Value::Array(rows)) = serde_json::from_slice(&out) else {
+        eprintln!("czar-pass: spira-lc list --state CERTIFIED: unparsed reply");
+        return 0;
+    };
+    let certified: Vec<&str> = rows.iter().filter_map(|r| r.get("bead_id").and_then(|b| b.as_str())).collect();
+    repo_branch_ids(repo_path).iter().filter(|id| certified.contains(&id.as_str())).count() as u32
 }
 
 /// The queue-mode rows of the repo-map (`land` column `queue` or `queue.forge`, the same
@@ -1301,7 +1314,7 @@ fn detect_pool_idle(cfg: &Config, state: &mut StateMap) -> (Verdict, &'static st
         let repo_safe = repo_name.replace(',', "-");
         let key = format!("pool-idle:{}", repo_safe);
         let batch_open = cfg.queue_dir.join(&repo_name).join("open").is_file();
-        let depth = certified_depth(&repo_path, &cfg.spira_run.join("landstate"));
+        let depth = certified_depth(cfg, &repo_path);
 
         let raw = if !batch_open && depth >= cfg.round_min_n {
             RawStatus::Gap {
@@ -1634,6 +1647,7 @@ mod tests {
             // A path that cannot exist, so `systemctl is-failed` always fails to spawn
             // (is_failed = false) instead of depending on the test host's real systemd.
             systemctl: dir.join("no-such-systemctl").to_string_lossy().to_string(),
+            spira_lc: dir.join("spira-lc").to_string_lossy().to_string(),
             repo_map: None,
             now_secs: now,
             now_iso: "2026-01-01T00:00:00Z".to_string(),
@@ -1953,11 +1967,8 @@ mod tests {
         for id in ids {
             git(&["branch", &format!("spira/{}", id)]);
         }
-        let landstate = dir.join("landstate");
-        fs::create_dir_all(&landstate).unwrap();
-        for id in ids {
-            fs::write(landstate.join(id), "CERTIFIED deadbeef 1700000000\n").unwrap();
-        }
+        let rows: Vec<String> = ids.iter().map(|id| format!(r#"{{"bead_id":"{id}","state":"CERTIFIED"}}"#)).collect();
+        testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\nprintf '%s' '[{}]'\n", rows.join(",")));
         repo
     }
 
