@@ -43,7 +43,9 @@ _rd_asks() {
         [ -n "${_rd_asks_seen[$id]:-}" ] && continue
         _rd_asks_seen[$id]=1
         [ "$_rd_asks_seeded" -eq 1 ] && _rd_say "NEW ASK $id: $title"
-    done < <(printf '%s' "$json" | jq -r '.[] | "\(.id)\t\(.title[0:150])"' 2>/dev/null)
+    done < <(printf '%s' "$json" | tr -d '\n' \
+        | grep -oE '"id": *"[^"]+", *"title": *"([^"\\]|\\.)*"' \
+        | sed -E 's/^"id": *"([^"]+)", *"title": *"(.*)"$/\1\t\2/' | cut -c1-170)
     _rd_asks_seeded=1
 }
 
