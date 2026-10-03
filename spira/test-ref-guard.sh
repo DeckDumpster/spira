@@ -139,7 +139,8 @@ is "worktree still has a pre-commit hook" \
 # never inspects anything staged.
 # ---------------------------------------------------------------------------------------
 cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$TR/wt/"
-git -C "$TR/wt" add boundary gate.sh lib.sh >/dev/null 2>&1
+echo 'fn main() {}' > "$TR/wt/seed.rs"
+git -C "$TR/wt" add boundary gate.sh lib.sh seed.rs >/dev/null 2>&1
 git -C "$TR/wt" commit -qm "test: seed the harness signature" >/dev/null 2>&1
 
 commit_in_wt() {   # commit_in_wt <message> -> combined stdout+stderr; sets rc via $?
@@ -240,11 +241,12 @@ mkdir -p "$REL/bbbb/spira" && cp -r "$HERE/." "$REL/bbbb/spira/"
 ln -s aaaa "$REL/current"
 git worktree add -q "$TR/wt18" -b spira/sp-wt18 2>/dev/null
 cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$TR/wt18/"
+echo 'fn main() {}' > "$TR/wt18/seed.rs"
 SPIRA_HOME="$REL/aaaa/spira" worktree-hooks.sh install "$TR/wt18" >/dev/null 2>&1
 rm -rf "$REL/aaaa"
 ln -sfn bbbb "$REL/current"
 echo x > "$TR/wt18/f18"
-git -C "$TR/wt18" add f18 >/dev/null 2>&1
+git -C "$TR/wt18" add f18 seed.rs >/dev/null 2>&1
 git -C "$TR/wt18" commit -qm "sp-test: after release A is gone" >/dev/null 2>&1
 is "case 18: commit succeeds after the release it was armed under is deleted" "0" "$?"
 
