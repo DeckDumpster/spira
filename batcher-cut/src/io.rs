@@ -1678,7 +1678,7 @@ case \"$1\" in pr-create) cat >/dev/null; echo 42 ;; *) exit 1 ;; esac
         let tip = g(d, &["rev-parse", "HEAD"]);
         g(d, &["checkout", "-q", "main"]);
         let r = Repo { name: "r".into(), path: d.to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
-        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, certified_at: 0, stack: Default::default() };
+        let m = Member { id: "m1".into(), tip, title: String::new(), priority: None, express: false, base_fix: false, certified_at: 0, stack: Default::default() };
         (r, base, m)
     }
 
