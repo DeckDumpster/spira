@@ -186,6 +186,7 @@ fn file_stall_incident(incident_sh: &Path, db: Option<&Path>, repo: &str, pr: &s
     let (ref_, subject) = stall_incident(repo, pr, text);
     let mut cmd = Command::new("bash");
     cmd.arg(incident_sh)
+        .envs(spira_config::release_env::child_path_env_for_process())
         .arg("file")
         .arg(&subject)
         .arg("-")

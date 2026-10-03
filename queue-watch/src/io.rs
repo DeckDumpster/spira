@@ -199,6 +199,7 @@ fn forge(
         Command::new(&repo.forge)
     } else {
         let mut c = Command::new("bash");
+c.envs(spira_config::release_env::child_path_env_for_process());
         c.arg(&repo.forge);
         c
     };

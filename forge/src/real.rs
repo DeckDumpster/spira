@@ -108,6 +108,7 @@ pub struct RealProc;
 impl Proc for RealProc {
     fn run(&self, program: &str, args: &[&str], input: Option<&[u8]>) -> (i32, Vec<u8>) {
         let mut c = Command::new(program);
+        c.envs(spira_config::release_env::child_path_env_for_process());
         c.args(args);
         c.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() });
         c.stdout(Stdio::piped());

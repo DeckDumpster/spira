@@ -139,6 +139,7 @@ fn file_bead(title: &str, body: &str, priority: u64, run: &Path) -> Result<Strin
     let tmp = dir.join(format!("cert-sweep-{}-{}.txt", std::process::id(), now()));
     fs::write(&tmp, body).map_err(|e| format!("{}: {e}", tmp.display()))?;
     let out = Command::new("bead.sh")
+        .envs(spira_config::release_env::child_path_env_for_process())
         .args(["file", title, "--for", "builder", "--repo", "spira", "--priority", &priority.to_string(), "--json", "--body-file"])
         .arg(&tmp)
         .output();

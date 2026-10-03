@@ -140,7 +140,7 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         _ => return CommitOutcome::Skipped,
     };
     let script = format!("{home}/wiki-commit.sh");
-    let mut child = match Command::new("bash")
+    let mut child = match Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
         .arg(&script)
         .arg(&wiki)
         .arg(format!("law: {verb} {key}"))
@@ -401,7 +401,7 @@ fn memories_json_cached(home: &str) -> String {
 fn fetch_memories_json() -> String {
     if let Ok(cmd) = std::env::var("SPIRA_MEMORIES_CMD") {
         if !cmd.is_empty() {
-            return Command::new("bash")
+            return Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
                 .arg("-c")
                 .arg(&cmd)
                 .stdin(Stdio::null())

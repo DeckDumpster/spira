@@ -363,6 +363,7 @@ fn helper(
         return None;
     }
     let mut cmd = Command::new("bash");
+cmd.envs(spira_config::release_env::child_path_env_for_process());
     cmd.arg(script).args(args).stderr(Stdio::inherit());
     for (k, v) in extra_env {
         cmd.env(k, v);
@@ -2125,7 +2126,7 @@ fn build(
     // closed guard it is meant to be.
     let conf_gen = wt.join("spira/conf-gen.sh");
     if conf_gen.exists() {
-        match std::process::Command::new("bash")
+        match std::process::Command::new("bash").envs(spira_config::release_env::child_path_env_for_process())
             .arg(&conf_gen)
             .current_dir(wt)
             .output()

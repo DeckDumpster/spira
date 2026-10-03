@@ -179,7 +179,7 @@ pub fn regenerate_config(stage: &Path) -> Result<(), String> {
     if !gen.is_file() {
         return Ok(());
     }
-    let out = Command::new("bash").arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
+    let out = Command::new("bash").envs(spira_config::release_env::child_path_env_for_process()).arg(&gen).current_dir(stage).output().map_err(|e| format!("cannot run {}: {e}", gen.display()))?;
     if !out.status.success() {
         return Err(format!(
             "conf-gen.sh failed against the staged tree ({}) — refusing to build a release with no generated config: {}",
