@@ -331,8 +331,9 @@ fn db_server_wait(ctx: &Ctx) {
                 }
                 return;
             }
-            Err(_) if !printed_waiting && waited == 0 => {
-                // bd cannot even be run (command -v would have failed) — nothing to wait for.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !printed_waiting && waited == 0 => {
+                // No bd on the path: nothing to wait for. Any other spawn failure (ETXTBSY on a
+                // just-written script, EAGAIN under load) is transient and is retried as a miss.
                 return;
             }
             _ => {}
