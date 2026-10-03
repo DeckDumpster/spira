@@ -36,6 +36,7 @@ pub struct Settings {
     pub results_root: PathBuf,
     pub verdicts: PathBuf,
     pub verdict_ttl: u64,
+    pub quarantine_max_age: u64,
     pub repeat_reason: Option<String>,
     /// 0 disables.
     pub suite_timeout: u64,
@@ -167,6 +168,9 @@ impl Settings {
             verdict_ttl: src
                 .num("SPIRA_VERDICT_TTL", Some("spira.verdict_ttl"))
                 .unwrap_or(86_400),
+            quarantine_max_age: src
+                .num("SPIRA_QUARANTINE_MAX_AGE", Some("spira.quarantine_max_age"))
+                .unwrap_or(604_800),
             repeat_reason: src.get("SPIRA_VERDICT_REPEAT_CONSIDERED", None),
             suite_timeout: src
                 .num("SPIRA_SUITE_TIMEOUT", Some("spira.suite_timeout"))

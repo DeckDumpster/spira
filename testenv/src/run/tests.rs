@@ -141,7 +141,7 @@ impl World {
         suite("test-e.sh", "# requires: reallymissing\n");
         suite("test-f.sh", "");
         suite("test-g.sh", "");
-        fs::write(repo.join("spira/suite-state"), "# state\ntest-d.sh | disabled | 2026-01-01 | sp-1 | gone\ntest-q.sh | quarantined | 2026-01-01 | sp-2 | flaky\n").unwrap();
+        fs::write(repo.join("spira/suite-state"), "# state\ntest-d.sh | disabled | 2026-01-01 | sp-1 | gone\ntest-q.sh | quarantined | 2026-01-01T00:00:00Z | sp-2 until=2999-01-01T00:00:00Z | flaky\n").unwrap();
         // test-c.sh's requirement is declared so the general mixed-batch test below stays
         // green on it; e/f are deliberately left undeclared, g deliberately declared.
         fs::write(

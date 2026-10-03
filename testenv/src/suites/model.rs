@@ -197,6 +197,8 @@ pub struct Entry {
     pub since: String,
     pub bead: String,
     pub reason: String,
+    /// `until=<iso>` appended to the bead column.
+    pub until: Option<String>,
 }
 
 /// suite-state.sh's `suite_state_write`: every line kept except those whose first
@@ -217,10 +219,11 @@ pub fn rewrite_state(text: &str, suite: &str, entry: Option<&Entry>) -> String {
     }
     if let Some(e) = entry.filter(|e| e.state != SuiteState::Active) {
         out.push_str(&format!(
-            "{suite} | {} | {} | {} | {}\n",
+            "{suite} | {} | {} | {}{} | {}\n",
             e.state.as_str(),
             e.since,
             e.bead,
+            e.until.as_ref().map(|u| format!(" until={u}")).unwrap_or_default(),
             e.reason
         ));
     }
@@ -367,19 +370,19 @@ mod tests {
     #[test]
     fn rewrite_replaces_the_suites_row_and_keeps_everything_else() {
         let before = "# header\n\ntest-a.sh | disabled | 2026 | | old  # note\ntest-b.sh | quarantined | 2026 | sp-b | slow\ntest-a.sh # stray";
-        let e = Entry { state: SuiteState::Quarantined, since: "2026-09-29T01:02:03Z".into(), bead: "sp-x".into(), reason: "flaky".into() };
+        let e = Entry { state: SuiteState::Quarantined, since: "2026-09-29T01:02:03Z".into(), bead: "sp-x".into(), reason: "flaky".into(), until: None };
         assert_eq!(
             rewrite_state(before, "test-a.sh", Some(&e)),
             "# header\n\ntest-b.sh | quarantined | 2026 | sp-b | slow\ntest-a.sh | quarantined | 2026-09-29T01:02:03Z | sp-x | flaky\n"
         );
-        let active = Entry { state: SuiteState::Active, since: String::new(), bead: String::new(), reason: String::new() };
+        let active = Entry { state: SuiteState::Active, since: String::new(), bead: String::new(), reason: String::new(), until: None };
         assert_eq!(rewrite_state(before, "test-b.sh", Some(&active)), "# header\n\ntest-a.sh | disabled | 2026 | | old  # note\ntest-a.sh # stray\n");
         assert_eq!(rewrite_state("", "test-a.sh", None), "");
     }
 
     #[test]
     fn a_rewritten_file_reads_back_through_the_runners_parser() {
-        let e = Entry { state: SuiteState::Disabled, since: "s".into(), bead: String::new(), reason: "a | b".into() };
+        let e = Entry { state: SuiteState::Disabled, since: "s".into(), bead: String::new(), reason: "a | b".into(), until: None };
         let t = rewrite_state("test-x.sh | quarantined | s | sp-1 | r\n", "test-y.sh", Some(&e));
         let st = crate::suite::SuiteStates::parse(&t);
         assert_eq!(st.state_of("test-y.sh"), SuiteState::Disabled);

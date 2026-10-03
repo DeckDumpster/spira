@@ -256,7 +256,7 @@ fn parse_every_subcommand_and_refuse_the_retired_run() {
     assert_eq!(p(&["observe-flake", "test-a.sh", "r1"]), Ok(Cmd::ObserveFlake { suite: "test-a.sh".into(), run_id: "r1".into() }));
     assert_eq!(
         p(&["quarantine", "test-a.sh", "sp-1", "slow", "--base=main"]),
-        Ok(Cmd::Quarantine { suite: "test-a.sh".into(), bead: "sp-1".into(), reason: Some(Reason::Arg("slow".into())), base: Some("main".into()) })
+        Ok(Cmd::Quarantine { suite: "test-a.sh".into(), bead: "sp-1".into(), reason: Some(Reason::Arg("slow".into())), base: Some("main".into()), until: None })
     );
     assert_eq!(
         p(&["disable", "test-a.sh", "--reason-file", "-"]),
@@ -478,6 +478,30 @@ fn quarantine_commits_on_the_landing_ref_creates_the_branch_and_submits_it() {
     );
     let (msg, who, parent) = t.git.messages.borrow().get(&c).cloned().unwrap();
     assert_eq!((msg.as_str(), who.as_str(), parent.as_str()), ("suite-state: test-q.sh -> quarantined  sp-emvlk\n", "spira", "base0"));
+}
+
+#[test]
+fn quarantine_until_is_written_and_a_past_or_malformed_until_is_refused() {
+    let t = T::new("quarantine-until");
+    t.suite("test-q.sh", "");
+    assert_eq!(t.run(&["quarantine", "test-q.sh", "sp-xyz", "flaky", "--until", "2026-10-01T00:00:00Z"]), 0);
+    let c = t.git.refs.borrow().get("spira-suite-state/test-q-20260921T141320Z").cloned().unwrap();
+    assert_eq!(
+        t.git.show(Path::new("/repo"), &c, "spira/suite-state").unwrap(),
+        "# lifecycle\ntest-q.sh | quarantined | 2026-09-21T14:13:20Z | sp-xyz until=2026-10-01T00:00:00Z | flaky\n"
+    );
+    assert_eq!(t.run(&["quarantine", "test-q.sh", "sp-xyz", "flaky", "--until", "2026-09-01T00:00:00Z"]), 2);
+    assert_eq!(t.run(&["quarantine", "test-q.sh", "sp-xyz", "flaky", "--until", "tomorrow"]), 2);
+}
+
+#[test]
+fn unquarantine_removes_the_row() {
+    let t = T::new("unquarantine");
+    t.suite("test-q.sh", "");
+    t.git.trees.borrow_mut().get_mut("base0").unwrap().insert("spira/suite-state".into(), "# h\ntest-q.sh | quarantined | old | sp-1 | slow\n".into());
+    assert_eq!(t.run(&["unquarantine", "test-q.sh"]), 0);
+    let c = t.git.refs.borrow().get("spira-suite-state/test-q-20260921T141320Z").cloned().unwrap();
+    assert_eq!(t.git.show(Path::new("/repo"), &c, "spira/suite-state").unwrap(), "# h\n");
 }
 
 #[test]

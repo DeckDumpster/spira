@@ -11,7 +11,7 @@ use cmd::Transition;
 use ports::World;
 
 pub const USAGE: &str =
-    "usage: testenv suites [list|names|corpus|status|hygiene|lint|observe-flake|quarantine|disable|activate]";
+    "usage: testenv suites [list|names|corpus|status|hygiene|lint|observe-flake|quarantine|unquarantine|disable|activate]";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reason {
@@ -29,7 +29,7 @@ pub enum Cmd {
     Hygiene,
     Lint,
     ObserveFlake { suite: String, run_id: String },
-    Quarantine { suite: String, bead: String, reason: Option<Reason>, base: Option<String> },
+    Quarantine { suite: String, bead: String, reason: Option<Reason>, base: Option<String>, until: Option<String> },
     Disable { suite: String, reason: Option<Reason>, base: Option<String> },
     Activate { suite: String, base: Option<String> },
 }
@@ -38,12 +38,12 @@ pub enum Cmd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Usage(pub String);
 
-/// (positionals, `--reason-file`, `--base`).
-type TransitionArgs = (Vec<String>, Option<String>, Option<String>);
+/// (positionals, `--reason-file`, `--base`, `--until`).
+type TransitionArgs = (Vec<String>, Option<String>, Option<String>, Option<String>);
 
 /// Positionals plus `--reason-file` / `--base` (`--k v` or `--k=v`).
 fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> {
-    let (mut pos, mut rfile, mut base) = (Vec::new(), None, None);
+    let (mut pos, mut rfile, mut base, mut until) = (Vec::new(), None, None, None);
     let mut i = 0;
     while i < args.len() {
         let a = &args[i];
@@ -52,7 +52,7 @@ fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> 
             _ => (a.as_str(), None),
         };
         match k {
-            "--reason-file" | "--base" => {
+            "--reason-file" | "--base" | "--until" => {
                 let v = match inline {
                     Some(v) => v,
                     None => {
@@ -62,10 +62,10 @@ fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> 
                             .ok_or_else(|| Usage(format!("suites {cmd}: {k} requires an argument")))?
                     }
                 };
-                if k == "--base" {
-                    base = Some(v);
-                } else {
-                    rfile = Some(v);
+                match k {
+                    "--base" => base = Some(v),
+                    "--until" => until = Some(v),
+                    _ => rfile = Some(v),
                 }
             }
             "--" => {
@@ -77,7 +77,7 @@ fn transition_args(cmd: &str, args: &[String]) -> Result<TransitionArgs, Usage> 
         }
         i += 1;
     }
-    Ok((pos, rfile, base))
+    Ok((pos, rfile, base, until))
 }
 
 pub fn parse(args: &[String]) -> Result<Cmd, Usage> {
@@ -100,20 +100,21 @@ pub fn parse(args: &[String]) -> Result<Cmd, Usage> {
         "lint" => Cmd::Lint,
         "observe-flake" => Cmd::ObserveFlake { suite: pos(0), run_id: pos(1) },
         "quarantine" => {
-            let (p, f, base) = transition_args("quarantine", rest)?;
+            let (p, f, base, until) = transition_args("quarantine", rest)?;
             Cmd::Quarantine {
                 suite: p.first().cloned().unwrap_or_default(),
                 bead: p.get(1).cloned().unwrap_or_default(),
                 reason: reason(&p, 2, f),
                 base,
+                until,
             }
         }
         "disable" => {
-            let (p, f, base) = transition_args("disable", rest)?;
+            let (p, f, base, _) = transition_args("disable", rest)?;
             Cmd::Disable { suite: p.first().cloned().unwrap_or_default(), reason: reason(&p, 1, f), base }
         }
-        "activate" => {
-            let (p, _, base) = transition_args("activate", rest)?;
+        "activate" | "unquarantine" => {
+            let (p, _, base, _) = transition_args(sub, rest)?;
             Cmd::Activate { suite: p.first().cloned().unwrap_or_default(), base }
         }
         _ => return Err(Usage(USAGE.into())),
@@ -145,8 +146,8 @@ pub fn dispatch(w: &World, c: &Cmd) -> i32 {
         Cmd::Hygiene => cmd::hygiene(w),
         Cmd::Lint => cmd::lint(w),
         Cmd::ObserveFlake { suite, run_id } => cmd::observe_flake(w, suite, run_id),
-        Cmd::Quarantine { suite, bead, reason, base } => with_reason("quarantined", reason, &|r| {
-            let t = Transition::Quarantine { bead: bead.clone(), reason: r };
+        Cmd::Quarantine { suite, bead, reason, base, until } => with_reason("quarantined", reason, &|r| {
+            let t = Transition::Quarantine { bead: bead.clone(), reason: r, until: until.clone() };
             cmd::run_transition(w, &t, suite, base.as_deref())
         }),
         Cmd::Disable { suite, reason, base } => with_reason("disabled", reason, &|r| {
