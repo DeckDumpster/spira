@@ -285,6 +285,7 @@ cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-
    "$HERE/exclude.sh" "$HERE/branch-guard.sh" "$HREPO/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
+mkdir -p "$HREPO/seedcrate/src"; printf "pub fn ok() {}\n" > "$HREPO/seedcrate/src/lib.rs"
 chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
@@ -331,6 +332,15 @@ is   "hook run: scratch-fence refuses a root-level sp-* file" "1" "$rc"
 want "hook run: refusal names scratch-fence" "scratch-fence" "$out"
 want "hook run: refusal names the offending file" "sp-xxxx-notes.md" "$out"
 git -C "$HREPO" restore --staged sp-xxxx-notes.md 2>/dev/null; rm -f "$HREPO/sp-xxxx-notes.md"
+
+echo "SEEN RED: tmp-leak, through the real hook, refuses temp_dir() in test code:"
+mkdir -p "$HREPO/leakcrate/src"
+printf '#[cfg(test)]\nmod t {\n    fn d() { let _d = std::env::temp_dir(); }\n}\n' > "$HREPO/leakcrate/src/lib.rs"
+git -C "$HREPO" add leakcrate/src/lib.rs
+out="$(commit_through_hook op@example.com op "sp-test: stage a temp_dir test")"; rc=$?
+is   "hook run: tmp-leak refuses temp_dir() in test code" "1" "$rc"
+want "hook run: refusal names tmp-leak" "tmp-leak" "$out"
+git -C "$HREPO" restore --staged leakcrate/src/lib.rs 2>/dev/null; rm -rf "$HREPO/leakcrate"
 
 echo "SEEN RED: with spira-lint missing from PATH the hook refuses, naming it (no silent skip):"
 NOLINT="$TMP/nolint-bin"; mkdir -p "$NOLINT"

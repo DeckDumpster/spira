@@ -3,7 +3,9 @@
 # pre-commit — three fences, in order:
 #
 #   1. exclude.sh staged        — refuses beads data in staged files
-#   2. spira-lint scratch-fence — refuses aeon scratch files at the harness root
+#   2. spira-lint, the cheap deterministic rules — scratch-fence, tmp-leak, chmod-exec-leak,
+#      env-set-var-leak, fence-scripts, config-fence: the refusal surfaces in the session
+#      that wrote the defect, not at certification
 #   3. branch-guard.sh staged   — refuses aeon-identity commits on the base branch
 #
 # Armed by `exclude.sh install`, which sets core.hooksPath to this directory. That is why
@@ -30,5 +32,7 @@ for _t in exclude.sh spira-lint branch-guard.sh; do
     }
 done
 exclude.sh staged || exit 1
-spira-lint --only scratch-fence || exit 1
+for _r in scratch-fence tmp-leak chmod-exec-leak env-set-var-leak fence-scripts config-fence; do
+    spira-lint --only "$_r" || exit 1
+done
 exec branch-guard.sh staged
