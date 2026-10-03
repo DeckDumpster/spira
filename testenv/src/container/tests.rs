@@ -1391,3 +1391,15 @@ fn make_context_of_a_read_only_tree_is_writable() {
 fn nix_root() -> bool {
     std::fs::read_to_string("/proc/self/status").map(|s| s.lines().any(|l| l.starts_with("Uid:\t0\t"))).unwrap_or(false)
 }
+
+#[test]
+fn an_absent_image_in_a_bounded_trial_names_itself_and_the_build_command() {
+    let f = Fake::new();
+    harness(&f, "/h");
+    f.when(&["image", "exists"], 1, "");
+    let c = conf("/h");
+    assert_eq!(Driver { host: &f, conf: &c }.acquire_image(false), None);
+    let e = f.errs();
+    assert!(e.contains("IMAGE-ABSENT localhost/spira-testenv:"), "{e}");
+    assert!(e.contains("`testenv image`"), "{e}");
+}

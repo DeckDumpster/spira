@@ -350,7 +350,7 @@ impl Driver<'_> {
         }
         if !build {
             self.err(&format!(
-                "testenv: image {img} is not built — a bounded trial does not build it"
+                "testenv: IMAGE-ABSENT {img} — a bounded trial does not build it; build it once with `testenv image` from this tree (about twenty minutes cold)"
             ));
             return None;
         }

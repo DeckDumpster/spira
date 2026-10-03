@@ -143,7 +143,7 @@ impl Fault {
             Fault::Up(m) | Fault::Install(m) => m,
             Fault::Deadline(p) => p,
             Fault::Queue => "queue",
-            Fault::ImageNotReady => "container image not built",
+            Fault::ImageNotReady => "container image absent (IMAGE-ABSENT): build it with `testenv image` from the tree under test",
         }
     }
 }
