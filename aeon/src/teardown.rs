@@ -54,6 +54,42 @@ impl Run<'_> {
         self.log(&format!("{}: {} closed — certification of {br} handed to the landing pass", self.f(), self.s.bead));
     }
 
+    /// The checks the gate runs that need no host-wide admission: a rebase conflict against
+    /// the base, then (where the tree carries it) spira-lint and the build fence. Returns the
+    /// first red with its text; a tool that is absent (127) is skipped, never a red.
+    fn fast_tier_red(&self) -> Option<String> {
+        let work = self.s.work.as_deref()?;
+        let br = &self.s.branch;
+        let mt = self.d.git.git(&self.s.repo, &["merge-tree", "--write-tree", &self.s.base_fq, br]);
+        if mt.code == 1 {
+            return Some(format!("{br} does not rebase onto {} cleanly:\n{}", self.s.base_fq, mt.text()));
+        }
+        if !work.join("spira/build-fence.sh").is_file() {
+            return None;
+        }
+        let base = format!("SPIRA_GATE_BASE={}", self.s.base_fq);
+        let steps: [(&str, Vec<String>); 2] = [
+            ("spira-lint", Vec::new()),
+            ("env", s(&[&base, "bash", "spira/build-fence.sh"])),
+        ];
+        for (prog, args) in steps {
+            let o = self.d.exec.exec(prog, &args, None, Some(work));
+            if o.code != 0 && o.code != 127 {
+                let name = if prog == "env" { "spira/build-fence.sh" } else { prog };
+                return Some(format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr));
+            }
+        }
+        None
+    }
+
+    /// Refuses the handoff when the fast tier is red: the bead goes back to the graph with the
+    /// failure text instead of waiting a certification cycle to learn it.
+    fn refuse_handoff(&self, red: &str) {
+        let br = &self.s.branch;
+        self.bead_reopen("fast-tier-red", &format!("Reopened by aeon.sh: {br} failed the in-session fast tier (lint, build fence, rebase check) and was not handed to certification.\n\n{red}"));
+        self.log(&format!("{}: {} REOPENED — fast tier red, handoff refused", self.f(), self.s.bead));
+    }
+
     /// Commits naming this bead between the base and the branch.
     fn has_own_commit(&self) -> bool {
         let o = self.d.git.git(&self.s.repo, &["log", "--format=%s%n%b", &format!("{}..{}", self.s.base_fq, self.s.branch)]);
@@ -268,6 +304,12 @@ impl Run<'_> {
                     return self.finish(rc, &status);
                 }
                 NoteKey::Submitted => {
+                    if self.has_own_commit() {
+                        if let Some(red) = self.fast_tier_red() {
+                            self.refuse_handoff(&red);
+                            return self.finish(rc, "open");
+                        }
+                    }
                     self.note("Submitted: work committed on branch and marked submitted; the landing pass closes this bead when it lands, citing the merge commit. No attempt charged.");
                     self.log(&format!("{f}: {id} submitted — no attempt charged"));
                     self.release();
@@ -414,6 +456,9 @@ impl Run<'_> {
                         self.log(&format!("{f}: {id} {cert_log}, but {tip} is already CERTIFIED — the session submitted it itself"));
                     } else if superseded {
                         self.log(&format!("{f}: {id} {cert_log}, but the bead is superseded — not handing {br} to certification, leaving it for the Sending to reap"));
+                    } else if let Some(red) = self.fast_tier_red() {
+                        self.refuse_handoff(&red);
+                        st = "open".into();
                     } else {
                         self.defer_self_cert(&defer_why);
                     }
