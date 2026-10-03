@@ -171,6 +171,8 @@ struct Fake {
     rollback: (i32, &'static str),
     never_lands: bool,
     history_gap: bool,
+    no_cutover_script: bool,
+    cutover_rc: i32,
     land_modes: Vec<(&'static str, &'static str)>,
 }
 
@@ -189,6 +191,8 @@ impl Fake {
             rollback: (0, ""),
             never_lands: false,
             history_gap: false,
+            no_cutover_script: false,
+            cutover_rc: 0,
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
         }
     }
@@ -204,6 +208,9 @@ impl Fake {
             testkit::write_exe(&p, "#!/bin/sh\n");
         }
         fs::write(d.join("spira/conf.sh"), "").unwrap();
+        if !self.no_cutover_script {
+            testkit::write_exe(&d.join("spira/cutover-deploy.sh"), "#!/bin/sh\n");
+        }
         let cur = self.releases.join("current");
         let _ = fs::remove_file(&cur);
         std::os::unix::fs::symlink(name, &cur).unwrap();
@@ -262,6 +269,7 @@ impl Fake {
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
                 ok(&format!("[{}]", ev.join(",")))
             }
+            ("cutover-deploy.sh", _) => Out { rc: self.cutover_rc, text: if self.cutover_rc == 0 { "cutover-deploy: done\n".into() } else { "cutover-deploy: refusing\n".into() }, out: String::new() },
             ("world.sh", ["status"]) => ok("world: RUNNING\n"),
             ("uninstall.sh" | "world.sh" | "doctor", _) => ok(""),
             ("bd", ["-C", _, "create", "--title", _, "--description", _, "--label", l, ..]) if l.starts_with("acceptance,") => {
@@ -522,6 +530,37 @@ fn a_failed_unit_after_the_aged_upgrade_is_a_fail() {
     f.failed_unit = true;
     assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
     assert_eq!(b.fails(), vec!["phase D: no failed spira units 2 min after aged upgrade: spira-ops-t.service".to_string()]);
+}
+
+#[test]
+fn phase_d_runs_cutover_deploy_dry_run_with_the_scratch_repo_on_the_launcher_path() {
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 0);
+    let log = f.log.borrow();
+    let c = log.iter().find(|c| c.prog == "cutover-deploy.sh").expect("cutover-deploy.sh was never run");
+    assert_eq!(c.args, s(&["--repo", "scratch-repo", "--dry-run"]));
+    assert!(c.env_of("PATH").unwrap().contains("current/spira"));
+    assert!(b.checks().iter().any(|c| c["check"] == "phase D: cutover-deploy.sh --dry-run runs on the aged install"));
+}
+
+#[test]
+fn a_failing_cutover_deploy_is_a_phase_d_fail() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.cutover_rc = 1;
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
+    assert!(b.fails().iter().any(|x| x.starts_with("phase D: cutover-deploy.sh --dry-run runs on the aged install: exit 1")), "{:#?}", b.fails());
+}
+
+#[test]
+fn an_upgraded_release_without_cutover_deploy_is_a_phase_d_fail() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.no_cutover_script = true;
+    assert_eq!(phases::run(&f, with_prev(&b, &[])), 1);
+    assert!(b.fails().iter().any(|x| x.starts_with("phase D: upgraded release carries cutover-deploy.sh: missing")), "{:#?}", b.fails());
+    assert!(!f.log.borrow().iter().any(|c| c.prog == "cutover-deploy.sh"));
 }
 
 #[test]
