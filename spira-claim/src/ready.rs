@@ -159,9 +159,13 @@ pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitte
             continue;
         }
         let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
+        let has_pref = labels.iter().any(|l| l.starts_with("fayth:"));
         for (i, p) in parts.iter().enumerate() {
             if bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name) {
                 counts[i].1 += 1;
+                if !has_pref {
+                    break; // unlabeled bead counts in exactly one (first) bucket
+                }
             }
         }
     }
@@ -222,6 +226,14 @@ mod tests {
         let parts = vec![part("builder", &["spira", "plan"], &[]), part("ops", &["spira", "ops-trigger"], &[])];
         let counts = bucket(&rows, &parts, "spira-queue-waiting", "spira-submitted");
         assert_eq!(counts, vec![("builder".to_string(), 1), ("ops".to_string(), 1)]);
+    }
+
+    #[test]
+    fn bucket_counts_an_unlabeled_bead_in_exactly_one_bucket() {
+        let rows = vec![row("a", &[])];
+        let parts = vec![part("builder", &[], &[]), part("ops", &[], &[])];
+        let counts = bucket(&rows, &parts, "q", "s");
+        assert_eq!(counts.iter().map(|c| c.1).sum::<u64>(), 1);
     }
 
     #[test]
