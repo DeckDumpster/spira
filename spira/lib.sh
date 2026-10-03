@@ -407,13 +407,15 @@ ready_count() {
 # `_spira_config_fayth`/`_spira_config_repo` use. `SPIRA_QUEUE_WAIT_LABEL`/
 # `SPIRA_OPEN_CHILDREN_LABEL` are threaded explicitly because conf.sh never exports them
 # (the exec-boundary trap); `SPIRA_NO_LOOP_LABEL` is exported but threaded anyway for
-# defence in depth. `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/`SPIRA_SCOPE_LABEL`/
+# defence in depth. `SPIRA_SCOPE_LABEL` is threaded too: it is an unexported shell var for callers that source
+# conf without export (sp-jr2fm). `SPIRA_CLAIM_RETRIES`/`SPIRA_CLAIM_RETRY_DELAY_S`/
 # `SPIRA_SUBMITTED_LABEL` need no entry here: the first two are resolved by spira-claim
-# itself from spira.toml, and the last two ARE exported.
+# itself from spira.toml, and the last is exported.
 _spira_claim() {
     SPIRA_HOME="${SPIRA_HOME:-}" SPIRA_FAYTHS="${SPIRA_FAYTHS:-}" \
     SPIRA_NO_LOOP_LABEL="${SPIRA_NO_LOOP_LABEL:-}" SPIRA_QUEUE_WAIT_LABEL="${SPIRA_QUEUE_WAIT_LABEL:-}" \
     SPIRA_OPEN_CHILDREN_LABEL="${SPIRA_OPEN_CHILDREN_LABEL:-}" \
+    SPIRA_SCOPE_LABEL="${SPIRA_SCOPE_LABEL:-}" \
         spira-claim "$@"
 }
 
