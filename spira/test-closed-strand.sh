@@ -223,7 +223,45 @@ JSONL2
     printf '{"type":"system","subtype":"init"}\n' > "$RUN2/sp-old.log"
     printf '{"type":"system","subtype":"init"}\n' > "$RUN2/sp-new.log"
 
-    cout="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    # The collector's funnel reads spira-lc; with no store it prints ? (CANNOT TELL). An empty
+    # throwaway store is a real zero, so the beads here are all the done stage.
+    CARGO_BIN="$(PATH="$HOME/.cargo/bin:$PATH" command -v cargo 2>/dev/null || true)"
+    DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+    if [ -z "$CARGO_BIN" ] || [ -z "$DOLT_BIN" ]; then
+        echo "SKIP strand-anomaly-split: cargo or dolt missing (needed for spira_lifecycle)" >&2
+        tl_summary
+        exit 0
+    fi
+    LC_PORT=$((3309 + (RANDOM % 500)))
+    mkdir -p "$TMP/lc-data"
+    cat > "$TMP/lc-server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $LC_PORT
+  max_connections: 50
+data_dir: "$TMP/lc-data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+    "$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
+    LC_SERVER_PID=$!
+    trap 'kill "$LC_SERVER_PID" >/dev/null 2>&1; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+    for _ in $(seq 1 50); do
+        "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1 && break
+        sleep 0.2
+    done
+    LC_TARGET="$TMP/lc-cargo-target"
+    CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$LC_TARGET" \
+        "$CARGO_BIN" build --manifest-path "$HERE/../spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
+        || { echo "spira-lc failed to build: $(cat "$TMP/lc-build.log")" >&2; exit 1; }
+    LC_ENV=(SPIRA_LC_BIN="$LC_TARGET/debug/spira-lc" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
+            SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
+            SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
+    env "${LC_ENV[@]}" "$LC_TARGET/debug/spira-lc" admin-apply-ddl "$HERE/../lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1 \
+        || { echo "spira_lifecycle schema failed: $(cat "$TMP/lc-schema.log")" >&2; exit 1; }
+
+    cout="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 "${LC_ENV[@]}" \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" \
         SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
