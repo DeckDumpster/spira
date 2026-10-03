@@ -287,5 +287,121 @@ pub fn bead_body(e: &Event) -> String {
     format!("{}\n{tail}", e.render())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Judgement {
+    /// A rerun of the red went green: green and red on one commit.
+    Flaky,
+    Reproducible,
+    /// No rerun produced a verdict: neither claim is supported.
+    Inconclusive,
+}
+
+pub fn judge(reruns: &[Verdict]) -> Judgement {
+    if reruns.contains(&Verdict::Ok) {
+        Judgement::Flaky
+    } else if reruns.contains(&Verdict::Red) {
+        Judgement::Reproducible
+    } else {
+        Judgement::Inconclusive
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Member {
+    pub commit: String,
+    pub bead: Option<String>,
+}
+
+/// `git log --reverse --format='%H%x09%s'` lines. A round's member commit says
+/// `merge <bead> (<sha>)`; any other commit is a member with no bead.
+pub fn parse_members(text: &str) -> Vec<Member> {
+    text.lines()
+        .filter_map(|l| {
+            let (commit, subject) = l.split_once('\t')?;
+            let bead = subject
+                .split_once("merge ")
+                .and_then(|(_, r)| r.split_whitespace().next())
+                .filter(|w| w.starts_with("sp-"))
+                .map(str::to_string);
+            Some(Member { commit: commit.trim().to_string(), bead })
+        })
+        .collect()
+}
+
+/// The first index in `0..n` at which `is_red` holds, given that index `n-1` is red and
+/// everything before the window was green. `None` when a probe has no verdict.
+pub fn bisect<F: FnMut(usize) -> Option<bool>>(n: usize, mut is_red: F) -> Option<usize> {
+    if n == 0 {
+        return None;
+    }
+    let (mut lo, mut hi) = (0, n - 1);
+    while lo < hi {
+        let mid = (lo + hi) / 2;
+        if is_red(mid)? {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    Some(lo)
+}
+
+pub fn first_fail_line(text: &str) -> Option<String> {
+    text.lines().map(str::trim).find(|l| l.contains("FAIL")).map(str::to_string)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilingKind {
+    Flip,
+    Red,
+}
+
+pub fn filing_kind(e: &Event) -> Option<FilingKind> {
+    match e {
+        Event::Flip { .. } => Some(FilingKind::Flip),
+        Event::NewRed { .. } | Event::RedUnbounded { .. } => Some(FilingKind::Red),
+        _ => None,
+    }
+}
+
+/// The id of an open bead already filed for this suite and kind, matched on the title.
+pub fn open_duplicate<'a>(open: &'a [(String, String)], suite: &str, kind: FilingKind) -> Option<&'a str> {
+    let words: &[&str] = match kind {
+        FilingKind::Flip => &["flip"],
+        FilingKind::Red => &["regress", "basefail", "went red", "is red"],
+    };
+    open.iter().find(|(_, t)| t.contains(suite) && words.iter().any(|w| t.to_lowercase().contains(w))).map(|(id, _)| id.as_str())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Culprit {
+    pub suite: String,
+    pub round: String,
+    pub member: Member,
+    pub first_fail: Option<String>,
+}
+
+pub fn culprit_title(c: &Culprit) -> String {
+    match &c.member.bead {
+        Some(b) => format!("cert-sweep: {} regressed at round {} (member {b})", c.suite, c.round),
+        None => format!("cert-sweep: {} regressed at round {} (commit {})", c.suite, c.round, short(&c.member.commit)),
+    }
+}
+
+pub fn culprit_body(c: &Culprit, e: &Event) -> String {
+    format!(
+        "{}\n\nReproducible red, bisected: green at the previous green round, first red at commit {} (round {}, member {}).\nFirst FAIL line: {}\n",
+        e.render(),
+        short(&c.member.commit),
+        c.round,
+        c.member.bead.as_deref().unwrap_or("none: not a bead merge"),
+        c.first_fail.as_deref().unwrap_or("(none captured)")
+    )
+}
+
+pub fn red_body(e: &Event, first_fail: Option<&str>, note: &str) -> String {
+    format!("{}\n\n{note}\nFirst FAIL line: {}\n", e.render(), first_fail.unwrap_or("(none captured)"))
+}
+
 #[cfg(test)]
 mod tests;

@@ -2,7 +2,7 @@
 //!
 //!   cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR]
 //!                   [--subset-div N] [--maxpar N] [--priority N] [--max-beads N]
-//!                   [--branch REF] [--repo-name NAME]
+//!                   [--branch REF] [--repo-name NAME] [--reruns N]
 //!   cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]
 //!
 //! `pass` runs the suites on the tip, records every verdict, and raises at most one event
@@ -17,7 +17,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use cert_sweep::{bead_body, bead_title, parse_result_file, parse_testenv_stdout, pick_subset, record, Event, Outcome, Row, EVENT_FAMILY, FAMILY};
+use cert_sweep::{
+    bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, parse_members, parse_result_file,
+    parse_testenv_stdout, pick_subset, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
+};
 use serde_json::Value;
 
 extern "C" {
@@ -204,8 +207,9 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         .collect();
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
     let start = now();
+    let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };
 
-    let outcomes = if mode == "full" { run_on_vm(f, &run, &tip, &picks, start)? } else { run_on_host(f, &repo, &tip, &picks)? };
+    let outcomes = rt.run(&tip, &picks, start)?.0;
     if outcomes.is_empty() {
         let e = Event::SweepFault { mode: mode.into(), round, why: "the runner returned no results".into() };
         emit(&run, &e);
@@ -217,20 +221,19 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     let (rows, events) = record(&history, &outcomes, &tip, &round, mode);
 
     let mut held: Vec<&str> = Vec::new();
+    let mut extra: Vec<Row> = Vec::new();
     let mut filed = 0u64;
     let (max_beads, priority) = (num(f, "max-beads", 5)?, num(f, "priority", 1)?);
     for e in &events {
-        if let Some(title) = bead_title(e) {
-            let suite = e.suite().unwrap_or_default();
-            if filed >= max_beads {
-                eprintln!("cert-sweep: {suite}: over the {max_beads}-bead bound; held for the next pass");
-                held.push(suite);
-                continue;
-            }
-            match file_bead(&title, &bead_body(e), priority, &run) {
-                Ok(id) => {
-                    filed += 1;
-                    println!("filed {id} for {suite}");
+        let suite = e.suite().unwrap_or_default();
+        let mut e = e.clone();
+        let mut filing = bead_title(&e).map(|t| (t, bead_body(&e)));
+        if matches!(e, Event::NewRed { .. } | Event::RedUnbounded { .. }) {
+            match rt.attribute(&e, &tip, &round) {
+                Ok(a) => {
+                    extra.extend(a.rows);
+                    e = a.event;
+                    filing = a.filing;
                 }
                 Err(err) => {
                     eprintln!("cert-sweep: {suite}: {err}; held for the next pass");
@@ -239,11 +242,38 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
                 }
             }
         }
-        emit(&run, e);
+        if let (Some((title, body)), Some(kind)) = (&filing, filing_kind(&e)) {
+            if filed >= max_beads {
+                eprintln!("cert-sweep: {suite}: over the {max_beads}-bead bound; held for the next pass");
+                held.push(suite);
+                continue;
+            }
+            let dup = rt.open_beads().map(|open| open_duplicate(&open, suite, kind).map(str::to_string));
+            match dup {
+                Err(err) => {
+                    eprintln!("cert-sweep: {suite}: {err}; held for the next pass");
+                    held.push(suite);
+                    continue;
+                }
+                Ok(Some(id)) => println!("{suite}: {id} is already open; not filed again"),
+                Ok(None) => match file_bead(title, body, priority, &run) {
+                    Ok(id) => {
+                        filed += 1;
+                        println!("filed {id} for {suite}");
+                    }
+                    Err(err) => {
+                        eprintln!("cert-sweep: {suite}: {err}; held for the next pass");
+                        held.push(suite);
+                        continue;
+                    }
+                },
+            }
+        }
+        emit(&run, &e);
     }
     // A suite whose bead was not filed is left out of the history, so the next pass sees the
     // same transition and tries again.
-    for r in rows.iter().filter(|r| !held.contains(&r.suite.as_str())) {
+    for r in rows.iter().chain(&extra).filter(|r| !held.contains(&r.suite.as_str())) {
         append(&run, FAMILY, &r.fields())?;
     }
     let count = |v| outcomes.iter().filter(|o| o.verdict == v).count();
@@ -251,28 +281,129 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_on_vm(f: &Flags, run: &Path, tip: &str, picks: &[String], start: u64) -> Result<Vec<Outcome>, String> {
+struct Attribution {
+    event: Event,
+    filing: Option<(String, String)>,
+    rows: Vec<Row>,
+}
+
+struct Rt<'a> {
+    f: &'a Flags,
+    run: &'a Path,
+    repo: &'a str,
+    mode: &'a str,
+    seq: std::cell::Cell<u64>,
+}
+
+impl Rt<'_> {
+    /// The pass's own runner, so a rerun sees the environment the red was seen in.
+    fn run(&self, commit: &str, picks: &[String], start: u64) -> Result<(Vec<Outcome>, String), String> {
+        if self.mode == "full" {
+            run_on_vm(self.f, self.run, self.repo, commit, picks, start, self.seq.replace(self.seq.get() + 1))
+        } else {
+            run_on_host(self.f, self.repo, commit, picks)
+        }
+    }
+
+    fn probe(&self, commit: &str, suite: &str) -> Option<(Verdict, String)> {
+        let (out, text) = self.run(commit, &[suite.to_string()], now()).ok()?;
+        let v = out.iter().find(|o| o.suite == suite)?.verdict;
+        matches!(v, Verdict::Ok | Verdict::Red).then_some((v, text))
+    }
+
+    fn open_beads(&self) -> Result<Vec<(String, String)>, String> {
+        let db = std::env::var("SPIRA_DB").ok().filter(|s| !s.is_empty()).ok_or("SPIRA_DB is required to look for an open duplicate")?;
+        let bd = std::env::var("SPIRA_BD").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "bd".into());
+        let out = Command::new(&bd)
+            .args(["-C", &db, "list", "--status", "open,in_progress,blocked,deferred", "--limit", "0", "--brief", "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| format!("{bd}: {e}"))?;
+        if !out.status.success() {
+            return Err(format!("{bd} list: {}", String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("{bd} list: {e}"))?;
+        let rows = v.as_array().ok_or_else(|| format!("{bd} list: not a JSON array"))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| Some((r.get("id")?.as_str()?.to_string(), r.get("title")?.as_str()?.to_string())))
+            .collect())
+    }
+
+    /// A red is rerun on its own commit: a green among the reruns is a flip. A red that
+    /// reproduces is run at the last green commit and bisected through the window's members.
+    fn attribute(&self, e: &Event, tip: &str, round: &str) -> Result<Attribution, String> {
+        let (suite, bound) = match e {
+            Event::NewRed { suite, last_green_commit, .. } => (suite.as_str(), Some(last_green_commit.as_str())),
+            Event::RedUnbounded { suite, .. } => (suite.as_str(), None),
+            _ => return Err("not a red".into()),
+        };
+        let mk = |verdict, mode: &str| Row { commit: tip.into(), round: round.into(), suite: suite.into(), verdict, secs: None, mode: mode.into() };
+        let mut verdicts = Vec::new();
+        let mut text = String::new();
+        for _ in 0..num(self.f, "reruns", 3)? {
+            if let Some((v, t)) = self.probe(tip, suite) {
+                if v == Verdict::Red && text.is_empty() {
+                    text = t;
+                }
+                verdicts.push(v);
+            }
+        }
+        let rows: Vec<Row> = verdicts.iter().map(|&v| mk(v, "rerun")).collect();
+        match judge(&verdicts) {
+            Judgement::Inconclusive => Err("no rerun produced a verdict".into()),
+            Judgement::Flaky => {
+                let ev = Event::Flip { suite: suite.into(), round: round.into(), commit: tip.into() };
+                Ok(Attribution { filing: bead_title(&ev).map(|t| (t, bead_body(&ev))), event: ev, rows })
+            }
+            Judgement::Reproducible => {
+                let fail = first_fail_line(&text);
+                let plain = |note: &str| Attribution { filing: bead_title(e).map(|t| (t, red_body(e, fail.as_deref(), note))), event: e.clone(), rows: rows.clone() };
+                let Some(green) = bound else { return Ok(plain("Reproducible, and no green round is known to bisect from.")) };
+                match self.probe(green, suite) {
+                    Some((Verdict::Ok, _)) => {}
+                    Some(_) => return Ok(plain("Also red at the last green round when rerun: the history's green does not hold here, so no window can be named.")),
+                    None => return Err("the last green round gave no verdict".into()),
+                }
+                let log = git(self.repo, &["log", "--reverse", "--format=%H%x09%s", &format!("{green}..{tip}")])?;
+                let members = parse_members(&log);
+                let Some(i) = bisect(members.len(), |i| self.probe(&members[i].commit, suite).map(|(v, _)| v == Verdict::Red)) else {
+                    return Ok(plain("Reproducible; the bisect over the window's members could not finish."));
+                };
+                let member: Member = members[i].clone();
+                let culprit_round = git(self.repo, &["for-each-ref", "--contains", &member.commit, "--sort=committerdate", "--format=%(refname)", "refs/archive/rounds"])
+                    .ok()
+                    .and_then(|r| r.lines().next().and_then(|l| l.rsplit('/').next().map(str::to_string)))
+                    .unwrap_or_else(|| round.to_string());
+                let c = Culprit { suite: suite.into(), round: culprit_round, member, first_fail: fail };
+                Ok(Attribution { filing: Some((culprit_title(&c), culprit_body(&c, e))), event: e.clone(), rows })
+            }
+        }
+    }
+}
+
+fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], start: u64, seq: u64) -> Result<(Vec<Outcome>, String), String> {
     let tree = need(f, "tree")?;
     if Path::new(tree).join(".git").exists() {
         git(tree, &["checkout", "-q", "--detach", tip])?;
     } else {
-        let repo = flag(f, "repo").map(str::to_string).or_else(|| std::env::var("SPIRA_REPO").ok()).ok_or("--repo or SPIRA_REPO is required")?;
-        git(&repo, &["worktree", "add", "-q", "--detach", tree, tip])?;
+        git(repo, &["worktree", "add", "-q", "--detach", tree, tip])?;
     }
-    let rd = run.join("cert-sweep").join(format!("{start}-full"));
+    let rd = run.join("cert-sweep").join(format!("{start}-full-{seq}"));
     fs::create_dir_all(&rd).map_err(|e| format!("{}: {e}", rd.display()))?;
+    let log = rd.with_extension("log");
     let st = Command::new("round-vm")
         .args(["run", tree, "--maxpar", &num(f, "maxpar", 16)?.to_string(), "--suites", &picks.join(","), "--results-dir"])
         .arg(&rd)
-        .stdout(fs::File::create(rd.with_extension("log")).map_err(|e| e.to_string())?)
+        .stdout(fs::File::create(&log).map_err(|e| e.to_string())?)
         .stderr(Stdio::inherit())
         .status()
         .map_err(|e| format!("round-vm: {e}"))?;
     eprintln!("cert-sweep: round-vm run exited {:?}", st.code());
-    Ok(results_in(&rd))
+    Ok((results_in(&rd), fs::read_to_string(&log).unwrap_or_default()))
 }
 
-fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<Vec<Outcome>, String> {
+fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Vec<Outcome>, String), String> {
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
     let mut child = Command::new("testenv")
@@ -287,5 +418,5 @@ fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<Vec
     child.stdout.take().unwrap().read_to_string(&mut out).map_err(|e| e.to_string())?;
     let st = child.wait().map_err(|e| e.to_string())?;
     eprintln!("cert-sweep: testenv exited {:?}", st.code());
-    Ok(parse_testenv_stdout(&out))
+    Ok((parse_testenv_stdout(&out), out))
 }

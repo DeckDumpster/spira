@@ -27,6 +27,11 @@ impl Fx {
         fs::create_dir_all(p.join("bin")).unwrap();
         fs::create_dir_all(p.join("run")).unwrap();
         write_exe(p.join("bin/bead.sh"), "#!/bin/sh\necho \"$@\" >> \"$FX/beads\"\n[ -e \"$FX/bead-fail\" ] && { echo no >&2; exit 1; }\necho '{\"id\":\"sp-fake1\"}'\n");
+        write_exe(p.join("bin/bd"), "#!/bin/sh\ncat \"$FX/open.json\" 2>/dev/null || echo '[]'\n");
+        write_exe(
+            p.join("bin/bead.sh"),
+            "#!/bin/sh\necho \"$@\" >> \"$FX/beads\"\nwhile [ $# -gt 0 ]; do [ \"$1\" = --body-file ] && cat \"$2\" >> \"$FX/beads\"; shift; done\n[ -e \"$FX/bead-fail\" ] && { echo no >&2; exit 1; }\necho '{\"id\":\"sp-fake1\"}'\n",
+        );
         Fx { d }
     }
 
@@ -53,6 +58,7 @@ impl Fx {
             .env("PATH", format!("{}:/usr/bin:/bin", p.join("bin").display()))
             .env("FX", p)
             .env("SPIRA_RUN", p.join("run"))
+            .env("SPIRA_DB", p.join("db"))
             .env("SPIRA_REPO", p.join("repo"))
             .output()
             .unwrap();
@@ -99,7 +105,7 @@ fn a_planted_red_is_reported_with_its_window_and_a_raised_priority_bead() {
     assert!(fx.beads().contains("went red at round 185"), "{}", fx.beads());
     let (_, out, _) = fx.sample();
     assert!(!out.contains("NEW RED"), "a suite already red is not reported again: {out}");
-    assert_eq!(fx.beads().lines().count(), 1);
+    assert_eq!(fx.beads().matches("--priority").count(), 1);
 }
 
 #[test]
@@ -170,4 +176,64 @@ fn shipped_units_satisfy_usage() {
         assert!(l.contains(" --mode "), "{u}: missing --mode");
         assert!(l.contains(" --tree "), "{u}: missing --tree");
     }
+}
+
+fn history_with_one_flip_and_one_regression() -> Fx {
+    let fx = Fx::new();
+    fx.commit("1");
+    fx.seed("1");
+    let repo = fx.d.path().join("repo");
+    let g = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).status().unwrap().success());
+    for (m, bead) in [("m1", "sp-aaa"), ("m2", "sp-bad"), ("m3", "sp-ccc")] {
+        fs::write(repo.join(m), m).unwrap();
+        g(&["add", "."]);
+        g(&["commit", "-q", "-m", &format!("round-q: merge {bead} ({m})")]);
+    }
+    g(&["update-ref", "refs/archive/rounds/2", "HEAD"]);
+    g(&["branch", "-f", "local/main", "HEAD"]);
+    write_exe(
+        fx.d.path().join("bin/testenv"),
+        "#!/bin/sh
+suites=$(cat)
+b=$(git -C \"$FX/repo\" rev-parse \"$3\")
+for s in $suites; do
+  case $s in
+  test-a.sh) n=$(cat \"$FX/n\" 2>/dev/null || echo 0); echo $((n+1)) > \"$FX/n\"
+    if [ \"$n\" = 0 ]; then echo '  test-a.sh   RED   rc=1 after 3s'; echo 'FAIL: a flaked'; else echo '  test-a.sh   ok   2s'; fi ;;
+  test-b.sh) if git -C \"$FX/repo\" merge-base --is-ancestor \"$(git -C \"$FX/repo\" log --format=%H --grep='merge sp-bad' -1 local/main)\" \"$b\"; then echo '  test-b.sh   RED   rc=1 after 3s'; echo 'FAIL: b broke'; else echo '  test-b.sh   ok   2s'; fi ;;
+  esac
+done
+",
+    );
+    fx
+}
+
+#[test]
+fn a_flip_and_a_regression_file_exactly_two_beads_each_attributed() {
+    let fx = history_with_one_flip_and_one_regression();
+    let (rc, out, err) = fx.sample();
+    assert_eq!(rc, 0, "{err}");
+    let beads = fx.beads();
+    assert_eq!(beads.matches("--priority").count(), 2, "{beads}\n{out}\n{err}");
+    assert!(beads.contains("test-a.sh flips on one commit"), "{beads}");
+    assert!(beads.contains("test-b.sh regressed at round 2 (member sp-bad)"), "{beads}");
+    assert!(beads.contains("First FAIL line: FAIL: b broke"), "{beads}");
+    assert!(out.contains("FLIP test-a.sh"), "{out}");
+    let (_, out, _) = fx.sample();
+    assert!(!out.contains("RED") && !out.contains("FLIP"), "nothing is reported twice: {out}");
+    assert_eq!(fx.beads().matches("--priority").count(), 2);
+}
+
+#[test]
+fn an_open_bead_for_the_suite_is_not_filed_again() {
+    let fx = history_with_one_flip_and_one_regression();
+    fs::write(
+        fx.d.path().join("open.json"),
+        r#"[{"id":"sp-old1","title":"test-a.sh flips"},{"id":"sp-old2","title":"basefail: test-b.sh is red"}]"#,
+    )
+    .unwrap();
+    let (rc, out, err) = fx.sample();
+    assert_eq!(rc, 0, "{err}");
+    assert_eq!(fx.beads(), "", "{out}");
+    assert!(out.contains("sp-old1 is already open") && out.contains("sp-old2 is already open"), "{out}");
 }
