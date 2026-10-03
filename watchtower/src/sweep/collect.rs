@@ -1,5 +1,5 @@
 use super::Cfg;
-use crate::{cpu_throttle, disk_mem, env::Env, failed_units, gate_wait, incident, landstate, lapsed, log::fmt_compact, seams};
+use crate::{cpu_throttle, disk_mem, env::Env, failed_units, gate_wait, incident, lapsed, lc, log::fmt_compact, seams};
 use std::process::Command;
 
 pub struct Halt {
@@ -215,8 +215,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     };
 
     // LANDING FIELD ------------------------------------------------------------------
-    let landstate_dir = cfg.landstate_dir();
-    let last_landed = landstate::last_landed(&landstate_dir);
+    let last_landed = lc::last_landed();
     let since_land_disp = last_landed
         .as_ref()
         .map(|(_, at)| ((now - at) / 60).to_string())
@@ -227,7 +226,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
     let gw = gate_wait::compute(&gate_log_text, now, cfg.gate_window_s);
     let gate_win_label = gate_wait::window_label(cfg.gate_window_s);
-    let gate_silence = gate_wait::silence(&gate_log_text, &landstate::read_dir(&landstate_dir), now, cfg.gate_silence_window_s);
+    let gate_silence = gate_wait::silence(&gate_log_text, &lc::beads_in("SUBMITTED").unwrap_or_default(), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------
     let yield_sh = cfg.yield_sh.clone().or_else(|| incident::which("yield.sh"));

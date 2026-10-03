@@ -6,13 +6,13 @@
 #
 # WHAT THIS SUITE TESTS
 # ---------------------
-# sp-790sv adds watchtower --pr-stall-check, which scans landstate files for
-# REBASED pr-open:<repo> entries older than SPIRA_PR_STALL_MINS and acts:
+# sp-790sv adds watchtower --pr-stall-check, which scans spira-lc deliveries
+# stuck in PR_OPEN longer than SPIRA_PR_STALL_MINS and acts:
 #   checks red        → escalate, deduped per bead (sp-45rmp: tested first — a red
 #                        request is the likeliest reason a PR sits past the threshold,
 #                        and arming auto-merge on it is a no-op that never fires).
 #   allow_auto_merge=false → escalate once per repo via incident.sh (deduped).
-#   CONFLICTING       → clear the landstate so landing.sh rebases on the next pass.
+#   CONFLICTING       → requeue the delivery so landing rebases on the next pass.
 #   otherwise         → arm auto-merge on the PR.
 #
 # doctor.sh's own allow_auto_merge FAIL (for any land=pr repo with it false) was part
@@ -20,7 +20,7 @@
 # config-store-preflight area's job now (sp-n071y), not doctor's.
 #
 # THE POSITIVE CONTROL IS THE ENTIRE FIRST BLOCK. Before asserting that nothing is
-# filed for a recent PR, this suite plants a stale REBASED pr-open:<repo> entry and
+# filed for a recent PR, this suite plants a stale PR_OPEN delivery:<repo> entry and
 # requires the incident to fire. A detector that silently passes the "no new incidents"
 # test without ever filing one proves nothing (law-absence-needs-a-positive-control).
 #
@@ -39,7 +39,8 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 echo "test-pr-stall.sh"
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
-mkdir -p "$TMP/run/landstate" "$TMP/home"
+mkdir -p "$TMP/run" "$TMP/home"
+lc_fix_init "$TMP/lc"
 
 # ---- Fixture: a fake git repo used as the pr-mode repo --------------------------------
 FAKE_REPO="$TMP/fake-repo"
@@ -56,22 +57,21 @@ git -C "$FAKE_REPO" commit -q -m "base"
 REPO_MAP="$TMP/repo-map"
 printf 'testrepo|%s|pr|origin/main||\n' "$FAKE_REPO" > "$REPO_MAP"
 
-# ---- Fixture: stale landstate (REBASED pr-open:testrepo, 90 minutes old) ---------------
+# ---- Fixture: PR_OPEN delivery rows (entered 90 minutes ago = stale, 10 = fresh) -----------
 STALE_EPOCH="$(( $(date +%s) - 5400 ))"
 FRESH_EPOCH="$(( $(date +%s) - 600 ))"
 
-plant_stale() {   # plant_stale <id> [repo]
-    printf 'REBASED abc123def456 %s pr-open:%s' "$STALE_EPOCH" "${2:-testrepo}" \
-        > "$TMP/run/landstate/$1"
+branch_in_repo() { git -C "$FAKE_REPO" branch -f "spira/$1" HEAD 2>/dev/null; }
+plant_stale() {   # plant_stale <id>
+    branch_in_repo "$1"; lc_delivery PR_OPEN "$1" pr "$STALE_EPOCH" 3
 }
 plant_fresh() {   # plant_fresh <id>
-    printf 'REBASED abc123def456 %s pr-open:testrepo' "$FRESH_EPOCH" \
-        > "$TMP/run/landstate/$1"
+    branch_in_repo "$1"; lc_delivery PR_OPEN "$1" pr "$FRESH_EPOCH" 3
 }
-plant_certified() {  # plant_certified <id>
-    printf 'CERTIFIED abc123def456 %s' "$STALE_EPOCH" \
-        > "$TMP/run/landstate/$1"
+plant_certified() {  # plant_certified <id>: a bead in another delivery state
+    branch_in_repo "$1"; lc_delivery QUEUED "$1" queue "$STALE_EPOCH" 3
 }
+requeued() { grep -c "event delivery $1 --expect PR_OPEN --version 3 --actor harness" "$LC_FIX/events.log"; }
 
 # ---- Stub: gh --------------------------------------------------------------------------
 # SPIRA_GH is set to a stub binary so no real GitHub calls happen.
@@ -120,6 +120,7 @@ psc() {  # psc [VAR=val...]
     env -i PATH="$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_REPO_MAP="$REPO_MAP" \
         SPIRA_GH="$GH_BIN" \
         GH_LOG="$TMP/gh.log" \
@@ -137,14 +138,16 @@ psc() {  # psc [VAR=val...]
 
 fresh() {
     rm -rf "$TMP/run"
-    mkdir -p "$TMP/run/landstate"
+    mkdir -p "$TMP/run"
+    lc_fix_init "$TMP/lc"
+    git -C "$FAKE_REPO" for-each-ref --format='%(refname:short)' 'refs/heads/spira/*' | while read -r _b; do git -C "$FAKE_REPO" branch -D "$_b" >/dev/null 2>&1; done
     > "$INC_SUBJECTS"; > "$INC_CAUSES"; > "$INC_REFS"
     > "$TMP/gh.log"; > "$GH_PR_MERGE_LOG"
 }
 
 # ====================================================================================
 echo
-echo "positive control: stale REBASED pr-open with a failing check → incident filed, not armed"
+echo "positive control: stale PR_OPEN delivery with a failing check → incident filed, not armed"
 # THE POSITIVE CONTROL for the red-checks path (sp-45rmp). allow_auto_merge=true and the
 # PR is not CONFLICTING — the two branches that existed before this fix — but a check has
 # failed, so arming auto-merge would be a no-op that can never fire.
@@ -185,12 +188,11 @@ GH_ALLOW_AUTO_MERGE=false GH_MERGEABLE=CONFLICTING GH_CONCLUSIONS=CANCELLED psc
 causes="$(cat "$INC_CAUSES" 2>/dev/null)"
 want   "cause is pr-stall-checks-red, not auto-merge-off" "pr-stall-checks-red" "$causes"
 nowant "auto-merge-off cause not filed"                   "pr-stall-auto-merge-off" "$causes"
-is     "landstate NOT cleared (red wins over CONFLICTING)" "exists" \
-    "$([ -f "$TMP/run/landstate/sp-testR2" ] && echo exists)"
+is     "NOT requeued (red wins over CONFLICTING)" "0" "$(requeued sp-testR2)"
 
 # ====================================================================================
 echo
-echo "positive control: stale REBASED pr-open with allow_auto_merge=false → incident filed"
+echo "positive control: stale PR_OPEN delivery with allow_auto_merge=false → incident filed"
 # THE POSITIVE CONTROL. Before any absence assertion can be trusted, this block plants a
 # stale pr-open entry and requires the incident to fire. A check that never fires is
 # indistinguishable from one that fires correctly when nothing triggers it.
@@ -237,15 +239,15 @@ nowant "no incident filed when arming"    "PR STALL"       "$(cat "$INC_SUBJECTS
 
 # ====================================================================================
 echo
-echo "allow_auto_merge=true + CONFLICTING: landstate cleared, arm not called"
+echo "allow_auto_merge=true + CONFLICTING: delivery requeued, arm not called"
 # POSITIVE CONTROL for the conflicting-PR path. A CONFLICTING PR will never merge
-# until rebased; arming auto-merge does not help. Clearing the landstate lets
+# until rebased; arming auto-merge does not help. Requeueing the delivery lets
 # landing.sh's needs_refresh trigger a rebase on the next pass.
 # ====================================================================================
 fresh
 plant_stale sp-testC
 GH_ALLOW_AUTO_MERGE=true GH_MERGEABLE=CONFLICTING psc
-is "landstate cleared for CONFLICTING"  "" "$([ -f "$TMP/run/landstate/sp-testC" ] && echo exists)"
+is "requeued for CONFLICTING (PrOpen Requeued as the harness)"  "1" "$(requeued sp-testC)"
 nowant "no arm call for CONFLICTING"    "pr merge" "$(cat "$GH_PR_MERGE_LOG")"
 nowant "no incident for CONFLICTING"    "PR STALL" "$(cat "$INC_SUBJECTS")"
 
@@ -262,7 +264,7 @@ is "no arm call for fresh entry"     "" "$(cat "$GH_PR_MERGE_LOG" | tr -d '\n')"
 
 # ====================================================================================
 echo
-echo "non-pr-open landstate: CERTIFIED entry is not flagged"
+echo "a delivery not in PR_OPEN is not flagged"
 # ====================================================================================
 fresh
 plant_certified sp-test4
@@ -271,13 +273,11 @@ is "CERTIFIED entry not flagged"   "" "$(cat "$INC_SUBJECTS" | tr -d '\n')"
 
 # ====================================================================================
 echo
-echo "unknown repo in landstate: skipped without error"
-# A REBASED pr-open:<repo> where repo is not in the repo-map is silently skipped —
-# the repo_root call fails and the entry is ignored rather than erroring.
+echo "no registered repo carries the branch: skipped without error"
+# A PR_OPEN row whose branch no registered checkout carries is skipped, not an error.
 # ====================================================================================
 fresh
-printf 'REBASED abc123 %s pr-open:unknownrepo' "$STALE_EPOCH" \
-    > "$TMP/run/landstate/sp-test5"
+lc_delivery PR_OPEN sp-test5 pr "$STALE_EPOCH" 3   # no checkout carries its branch
 GH_ALLOW_AUTO_MERGE=false psc; rc=$?
 is "exits 0 for unknown repo"    "0" "$rc"
 is "no incident for unknown repo" "" "$(cat "$INC_SUBJECTS" | tr -d '\n')"
@@ -294,6 +294,17 @@ GH_ALLOW_AUTO_MERGE=false psc
 refs_count="$(cat "$INC_REFS" | grep -c 'pr-stall-auto-merge-off:testrepo' || true)"
 want "two stale entries in same repo still use the same ref" \
     "pr-stall-auto-merge-off:testrepo" "$(cat "$INC_REFS")"
+
+# ====================================================================================
+echo
+echo "spira-lc unreachable: nothing is filed, armed or requeued"
+# ====================================================================================
+fresh
+plant_stale sp-testU
+SPIRA_LC_BIN="$TMP/absent" GH_ALLOW_AUTO_MERGE=false GH_MERGEABLE=CONFLICTING psc; rc=$?
+is "exits 0 when spira-lc is unreachable" "0" "$rc"
+is "no incident when spira-lc is unreachable" "" "$(cat "$INC_SUBJECTS" | tr -d '\n')"
+is "no requeue when spira-lc is unreachable" "0" "$(requeued sp-testU)"
 
 # ====================================================================================
 echo
