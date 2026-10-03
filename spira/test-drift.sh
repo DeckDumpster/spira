@@ -132,6 +132,71 @@ rm -rf "$UNITDIR/spira-groom-prod.service.d" "$UNITDIR/spira-groom-prod.timer.d"
 
 # ==========================================================================
 echo
+echo "units — declared operator-local overrides: accepted, undeclared reported, landed retired:"
+# ==========================================================================
+LREPO="$TMP/local-repo"
+git init -q -b main "$LREPO"
+git -C "$LREPO" config user.email t@t; git -C "$LREPO" config user.name t
+git -C "$LREPO" remote add origin "$TMP/unused.git"
+git -C "$LREPO" commit -q --allow-empty -m base
+land_base() {
+    git -C "$LREPO" update-ref refs/remotes/origin/main HEAD
+    git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+}
+land_base
+
+LMANIFEST="$TMP/declared/local-units.toml"
+mkdir -p "$TMP/declared" "$UNITDIR/dolt-beads.service.d"
+printf '[Unit]\n' > "$UNITDIR/dolt-beads.service.d/refuse-manual-stop.conf"
+touch "$UNITDIR/spira-bins-prune.timer"
+cat > "$LMANIFEST" <<'TOML'
+[[unit]]
+path = "dolt-beads.service.d/refuse-manual-stop.conf"
+reason = "interim guard"
+bead = "sp-local-guard"
+
+[[unit]]
+path = "spira-bins-prune.timer"   # trailing comment
+reason = "interim prune"
+bead = "sp-local-prune"
+TOML
+ldrift() {
+    env -i PATH="$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+        SPIRA_LOCAL_UNITS="$LMANIFEST" SPIRA_REPO="$LREPO" \
+        bash "$HERE/drift.sh" units "$UNITDIR"
+}
+
+out="$(ldrift)"; rc=$?
+is "declared overrides, bead not landed: exits 0" "0" "$rc"
+nowant "declared overrides: not reported" "UNSHIPPED" "$out"
+nowant "declared overrides: not retired yet" "RETIRE-NOW" "$out"
+
+touch "$UNITDIR/test-stray.service"
+out="$(ldrift)"; rc=$?
+is "undeclared file beside declared ones: exits 1" "1" "$rc"
+want "undeclared file: named" "test-stray.service" "$out"
+want "undeclared file: marked UNSHIPPED" "UNSHIPPED" "$out"
+nowant "undeclared file: declared ones still accepted" "refuse-manual-stop" "$out"
+rm -f "$UNITDIR/test-stray.service"
+
+git -C "$LREPO" commit -q --allow-empty -m "spira: land sp-local-guard"
+land_base
+out="$(ldrift)"; rc=$?
+is "declared override whose bead landed: exits 1" "1" "$rc"
+want "landed bead: marked RETIRE-NOW" "RETIRE-NOW" "$out"
+want "landed bead: names the file" "refuse-manual-stop.conf" "$out"
+want "landed bead: names the bead" "sp-local-guard" "$out"
+nowant "other declared override still accepted" "spira-bins-prune.timer" "$out"
+
+printf '[[unit]]\npath = "spira-bins-prune.timer"\nreason = "no bead"\n' > "$LMANIFEST"
+out="$(ldrift)"; rc=$?
+is "entry without a retiring bead is no declaration: exits 1" "1" "$rc"
+want "entry without a bead: reported" "spira-bins-prune.timer" "$out"
+
+rm -rf "$UNITDIR/dolt-beads.service.d" "$UNITDIR/spira-bins-prune.timer"
+
+# ==========================================================================
+echo
 echo "units — a missing unit directory is 'could not check', not clean:"
 # ==========================================================================
 out="$(drift units "$TMP/no-such-unitdir")"; rc=$?

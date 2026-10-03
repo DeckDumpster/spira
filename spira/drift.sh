@@ -7,6 +7,9 @@
 #   drift.sh units    [<unitdir>]  installed unit files and drop-ins this install does not ship
 #   drift.sh check    [<repo>] [<unitdir>]   both, combined
 #
+# Operator-local overrides declared in $SPIRA_LOCAL_UNITS ([[unit]] path/reason/bead) are
+# accepted by `units`; one whose retiring bead has landed is reported RETIRE-NOW.
+#
 # WHY THIS EXISTS
 # ----------------
 # git, and this install's own unit manifest, are not what the running system reads: a suite
@@ -48,6 +51,37 @@ checkout() {
     return 1
 }
 
+# local_units <manifest> -> "<path>\t<bead>" per complete [[unit]] table. An entry without a
+# retiring bead is not a declaration: an interim must name what ends it.
+local_units() {
+    local file="$1"
+    [ -n "$file" ] && [ -r "$file" ] || return 0
+    awk '
+        function flush() { if (path != "" && bead != "") printf "%s\t%s\n", path, bead; path = ""; bead = "" }
+        /^[[:space:]]*\[\[unit\]\]/ { flush(); next }
+        /^[[:space:]]*path[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); path = v }
+        /^[[:space:]]*bead[[:space:]]*=/ { v = $0; sub(/^[^=]*=[[:space:]]*"/, "", v); sub(/"[[:space:]]*(#.*)?$/, "", v); bead = v }
+        END { flush() }
+    ' "$file"
+}
+
+# declared_verdict <unitdir> <file> <why> -> prints a finding unless <file> is a declared
+# local override whose retiring bead has not landed. Returns 1 when it printed one.
+declared_verdict() {
+    local unitdir="$1" f="$2" why="$3" rel bead
+    rel="${f#"$unitdir"/}"
+    bead="${declared[$rel]:-}"
+    if [ -z "$bead" ]; then
+        printf 'UNSHIPPED %s (%s)\n' "$f" "$why"
+        return 1
+    fi
+    if landing-pass landed "$bead" "${SPIRA_REPO:-}" >/dev/null 2>&1; then
+        printf 'RETIRE-NOW %s (declared local override; retiring bead %s has landed)\n' "$f" "$bead"
+        return 1
+    fi
+    return 0
+}
+
 # units <unitdir> -> every installed unit file or drop-in this install's own manifest
 # (owned.sh) does not declare, one UNSHIPPED line each.
 #
@@ -85,13 +119,18 @@ units() {
 
     local -A known_dropins=([50-spira-intake.conf]=1 [cadence.conf]=1)
 
+    local -A declared=()
+    local dpath dbead
+    while IFS=$'\t' read -r dpath dbead; do
+        [ -n "$dpath" ] && declared["$dpath"]="$dbead"
+    done < <(local_units "${SPIRA_LOCAL_UNITS:-}")
+
     local rc=0 f base
     while IFS= read -r f; do
         [ -n "$f" ] || continue
         base="$(basename "$f")"
         if [ -z "${expected_units[$base]:-}" ]; then
-            printf 'UNSHIPPED %s (unit file this install does not ship)\n' "$f"
-            rc=1
+            declared_verdict "$unitdir" "$f" "unit file this install does not ship" || rc=1
         fi
     done < <(find "$unitdir" -maxdepth 1 \( -name '*.service' -o -name '*.timer' -o -name '*.socket' \) -type f 2>/dev/null | sort)
 
@@ -99,8 +138,7 @@ units() {
         [ -n "$f" ] || continue
         base="$(basename "$f")"
         if [ -z "${known_dropins[$base]:-}" ]; then
-            printf 'UNSHIPPED %s (drop-in no repo mechanism installs)\n' "$f"
-            rc=1
+            declared_verdict "$unitdir" "$f" "drop-in no repo mechanism installs" || rc=1
         fi
     done < <(find "$unitdir" -mindepth 2 -maxdepth 2 -path '*.d/*.conf' -type f 2>/dev/null | sort)
 
