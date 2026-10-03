@@ -50,6 +50,7 @@ for t in unit-ensure units-install; do
     cp -L "$src" "$PIN/bin/$t"
 done
 ln -s "$HERE/../systemd" "$PIN/systemd"
+ln -s "$HERE" "$PIN/spira"
 touch "$TMP/watchers-empty"
 
 # Fake bd: conf.sh calls "bd migrate schema" on source; answer without a real db.
