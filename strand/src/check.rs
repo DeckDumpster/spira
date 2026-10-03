@@ -320,6 +320,10 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
                 handled += 1;
             }
             Step::Escalate { detail } => {
+                if r.row.kind == "starved" && !starved_confirmed(cfg, &r.part) {
+                    log(&format!("check: [{}] starved cleared or unverifiable at raise time — no ask written", r.part));
+                    continue;
+                }
                 escalate(cfg, &r.part, &r.row.kind, &r.row.id, &detail, &r.row.action);
                 mark(&state_path, &mut keep, &r.part, &r.row, Mark::Escalated);
                 println!("STRANDED {} {} — {}", r.row.kind, r.row.id, detail);
@@ -331,6 +335,18 @@ pub fn check(cfg: &Config, c: Classified, dry: bool) -> i32 {
         log(&format!("check: {handled} stranded item(s) handled"));
     }
     0
+}
+
+/// Live aeons of the partition's personas, read now rather than from the classification's
+/// snapshot. None when the roster cannot be read: unknown is not starved, and the row stays
+/// unescalated so the next pass asks again.
+fn lane_live_now(cfg: &Config, specs: Result<Vec<probe::PartitionSpec>, String>) -> Option<u32> {
+    let specs = specs.ok()?;
+    Some(specs.iter().flat_map(|s| s.fayths.iter()).map(|f| probe::aeon_count(cfg, f, None)).sum())
+}
+
+fn starved_confirmed(cfg: &Config, part: &str) -> bool {
+    lane_live_now(cfg, probe::roster(cfg, Some(part))) == Some(0)
 }
 
 /// Marks are written as they happen, so a pass that dies half-way cannot re-escalate what it
@@ -781,6 +797,24 @@ mod tests {
             ("SPIRA_DB", "/fake/db".into()),
         ]))
         .with_lc(lc)
+    }
+
+    #[test]
+    fn a_starved_ask_is_withheld_while_the_lane_has_a_live_aeon() {
+        let d = scratch("starved-live");
+        let spec = || {
+            Ok(vec![probe::PartitionSpec { labels: "spira,plan".into(), exclude: String::new(), fayths: vec!["maechen".into()] }])
+        };
+        let mk = |lines: &str| {
+            let p = d.join("systemctl");
+            testkit::write_exe(&p, &format!("#!/bin/sh\n{lines}\n"));
+            Config::resolve(&Env(vec![("SPIRA_SYSTEMCTL", p.to_string_lossy().into_owned())]))
+        };
+        let live = mk("echo 'spira-aeon-maechen-1.service loaded active running x'");
+        assert_eq!(lane_live_now(&live, spec()), Some(1));
+        let none = mk("true");
+        assert_eq!(lane_live_now(&none, spec()), Some(0), "positive control: an empty lane reads as starved");
+        assert_eq!(lane_live_now(&none, Err("roster".into())), None, "unreadable is not starved");
     }
 
     #[test]
