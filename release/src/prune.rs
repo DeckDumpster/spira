@@ -16,6 +16,8 @@ pub struct Pruned {
     pub failed: Vec<String>,
 }
 
+const STALE_WORKTREE_SECS: u64 = 3 * 24 * 3600;
+
 fn pid_alive(pid: &str) -> bool {
     Path::new("/proc").join(pid).exists()
 }
@@ -28,6 +30,17 @@ fn hook_referenced(cfg: &Config) -> BTreeSet<String> {
     let prefix = format!("{}/", cfg.releases.display());
     let Ok(rd) = fs::read_dir(run.join("worktree")) else { return out };
     for e in rd.flatten() {
+        // Stale worktrees (untouched for STALE_WORKTREE_SECS) no longer pin releases (sp-doweq).
+        let fresh = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.elapsed().ok())
+            .map(|d| d.as_secs() < STALE_WORKTREE_SECS)
+            .unwrap_or(true);
+        if !fresh {
+            continue;
+        }
         let Ok(dotgit) = fs::read_to_string(e.path().join(".git")) else { continue };
         let Some(gitdir) = dotgit.trim().strip_prefix("gitdir:") else { continue };
         let Ok(hooks) = fs::read_dir(Path::new(gitdir.trim()).join("hooks")) else { continue };
