@@ -266,18 +266,18 @@ fn handle_base_conflicts(
 ) -> BTreeMap<String, Vec<String>> {
     let mut deleted = BTreeMap::new();
     for m in sorted {
-        if merges.get(&m.id) != Some(&MergeResult::Conflict) {
-            continue;
-        }
-        if !io::base_conflict(repo, &env_.run, base_sha, &m.tip) {
+        let base_files = if merges.get(&m.id) == Some(&MergeResult::Conflict) { io::base_conflict(repo, &env_.run, base_sha, &m.tip) } else { None };
+        let Some(base_files) = base_files else {
+            io::conflict_streak_clear(env_, &m.id);
             continue; // conflicts only with this round's own accumulation — left CERTIFIED, retried next pass
-        }
+        };
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
             // 0/1/2: rebase-stale ran and already did everything this branch would —
             // certified a mechanical/clean rebase, or reopened the bead itself with the
             // conflicting hunk or gate output quoted. Only 3 (it could not even attempt
             // the branch) falls through to this call's own, coarser bookkeeping.
+            io::conflict_streak_clear(env_, &m.id);
             if io::rebase_stale(env_, &repo.name, &m.id) != 3 {
                 continue;
             }
@@ -289,6 +289,11 @@ fn handle_base_conflicts(
                 &format!("spira/{} conflicts with {} — reopened by the batcher for rebase.", m.id, repo.base),
             );
             io::land_mark(env_, &m.id, "RED", &m.tip, "conflicts-with-base");
+        } else {
+            let rounds = io::conflict_streak_bump(env_, &m.id, &m.tip);
+            if rounds >= batcher::core::CONFLICT_EJECT_ROUNDS {
+                io::withdraw_for_conflict(env_, repo, &m.id, &m.tip, rounds, &base_files);
+            }
         }
     }
     deleted

@@ -266,6 +266,18 @@ pub fn combine(input: &CombineInput) -> Combined {
 /// time never looks newer than a member certified moments before. Compare instead against
 /// the fetch that observed the ref move, so a retry fires the moment the base actually
 /// changed underneath the member.
+/// Consecutive base-conflict set-asides at which a certified member is withdrawn.
+pub const CONFLICT_EJECT_ROUNDS: u32 = 2;
+
+/// The consecutive-round count after another base-conflict set-aside of `tip`, given the
+/// recorded `(tip, count)` — a different tip is a different member and starts over.
+pub fn conflict_streak(prev: Option<(&str, u32)>, tip: &str) -> u32 {
+    match prev {
+        Some((t, n)) if t == tip => n + 1,
+        _ => 1,
+    }
+}
+
 pub fn stale_retry_due(member_certified_at: u64, base_ref_moved_at: u64) -> bool {
     base_ref_moved_at > member_certified_at
 }

@@ -640,18 +640,58 @@ pub fn merge_member(env: &Env, wt: &Path, id: &str, tip: &str) -> MergeResult {
     }
 }
 
-/// Does `tip` conflict with `base_sha` alone (a real rebase need), or only with the batch
-/// this round is accumulating? A throwaway detached worktree, never the batch worktree
-/// itself, so a base-only conflict leaves the round's own merge state untouched.
-pub fn base_conflict(repo: &Repo, run_dir: &Path, base_sha: &str, tip: &str) -> bool {
+/// The paths `tip` conflicts on with `base_sha` alone (a real rebase need), or None when it
+/// merges cleanly or conflicts only with the batch this round is accumulating. A throwaway
+/// detached worktree, never the batch worktree itself, so a base-only conflict leaves the
+/// round's own merge state untouched.
+pub fn base_conflict(repo: &Repo, run_dir: &Path, base_sha: &str, tip: &str) -> Option<Vec<String>> {
     let wt = run_dir.join("worktree").join(format!(".batcher-bc-{}", std::process::id()));
     if !run_status(Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "add", "-q", "--detach"]).arg(&wt).arg(base_sha)) {
-        return false;
+        return None;
     }
     let conflicts = !run_status(Command::new("git").arg("-C").arg(&wt).args(["merge", "--no-commit", "--no-ff"]).arg(tip));
+    let files = if conflicts {
+        run(Command::new("git").arg("-C").arg(&wt).args(["diff", "--name-only", "--diff-filter=U"]), "git diff unmerged").unwrap_or_default()
+    } else {
+        String::new()
+    };
     let _ = Command::new("git").arg("-C").arg(&wt).args(["merge", "--abort"]).status();
     let _ = Command::new("git").arg("-C").arg(&repo.path).args(["worktree", "remove", "-f"]).arg(&wt).status();
-    conflicts
+    conflicts.then(|| files.lines().filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
+fn conflict_streak_file(env: &Env, id: &str) -> PathBuf {
+    env.run.join("conflict-setaside").join(id)
+}
+
+/// Records one more round in which `id` at `tip` was set aside for a base conflict and
+/// returns how many consecutive rounds that now is. A changed tip starts the count over.
+pub fn conflict_streak_bump(env: &Env, id: &str, tip: &str) -> u32 {
+    let path = conflict_streak_file(env, id);
+    let prev = fs::read_to_string(&path).ok().and_then(|t| {
+        let (t, n) = t.trim().split_once(' ')?;
+        Some((t.to_string(), n.parse::<u32>().ok()?))
+    });
+    let n = batcher::core::conflict_streak(prev.as_ref().map(|(t, n)| (t.as_str(), *n)), tip);
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = fs::write(&path, format!("{tip} {n}\n"));
+    n
+}
+
+pub fn conflict_streak_clear(env: &Env, id: &str) {
+    let _ = fs::remove_file(conflict_streak_file(env, id));
+}
+
+/// Ejects a certified member set aside for a base conflict in consecutive rounds: reopened
+/// for rebase and its landstate written WITHDRAWN, so it can only rejoin by recertifying.
+pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, tip: &str, rounds: u32, files: &[String]) {
+    let listed = if files.is_empty() { "unknown".to_string() } else { files.join(", ") };
+    let reason = format!("set aside for conflict with {} in {rounds} consecutive rounds; conflicting files: {listed}", repo.base);
+    bead_reopen(env, id, "rebase-conflict", &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."));
+    land_mark(env, id, "WITHDRAWN", tip, &reason);
+    conflict_streak_clear(env, id);
 }
 
 /// Suites present at `member_tip` but gone from `base_sha` — reported only for a member set
@@ -1786,6 +1826,40 @@ mod eject_tests {
         assert_eq!(lines[0][..3], ["bead_reopen", "sp-m2", "queue-eject-local"]);
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
         assert_eq!(lines[1], ["land_mark", "mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod conflict_streak_tests {
+    use super::*;
+
+    #[test]
+    fn the_second_consecutive_set_aside_withdraws_the_member() {
+        let d = testkit::TempDir::new("batcher-cut-streak");
+        let log = d.join("calls");
+        fs::write(d.join("lib.sh"), format!("bead_reopen() {{ (IFS=$'\\t'; printf 'bead_reopen\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display())).unwrap();
+        let mut e = super::lifecycle_tests_env(&d);
+        let landing_pass = d.join("landing-pass");
+        testkit::write_exe(
+            &landing_pass,
+            &format!("#!/bin/sh\n{{ printf 'land_mark'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> '{}'\n", log.display()),
+        );
+        e.landing_pass_bin = landing_pass;
+        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+
+        assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 1, "the first cut only sets it aside");
+        assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 2);
+        withdraw_for_conflict(&e, &repo, "sp-a", "t1", 2, &["x.rs".into(), "y.sh".into()]);
+        let calls = fs::read_to_string(&log).unwrap();
+        let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
+        assert_eq!(lines.len(), 2, "{calls}");
+        assert_eq!(lines[1][..5], ["land_mark", "mark", "sp-a", "WITHDRAWN", "t1"]);
+        assert!(lines[1][5].contains("2 consecutive rounds") && lines[1][5].contains("x.rs, y.sh"), "{calls}");
+        assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 1, "withdrawal clears the count");
+        assert_eq!(conflict_streak_bump(&e, "sp-a", "t2"), 1, "a new tip starts over");
+        conflict_streak_clear(&e, "sp-a");
+        assert_eq!(conflict_streak_bump(&e, "sp-a", "t2"), 1, "a round without the conflict starts over");
         let _ = fs::remove_dir_all(&d);
     }
 }
