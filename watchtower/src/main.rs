@@ -395,6 +395,15 @@ fn main() {
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
+            let rowless_cfg = probes::RowlessCfg {
+                enforce: spira_config::lifecycle_enforce(None),
+                bd: "bd".to_string(),
+                db: db.clone(),
+                lc_bin: spira_config::lifecycle_row::lc_bin(),
+                cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
+                sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
+            };
+            conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
         }
         Some(other) => {
             eprintln!("watchtower: unknown argument: {other}");

@@ -75,8 +75,9 @@ impl Bd for RealBd {
             .arg(priority)
             .arg("--body-file")
             .arg("-")
+            .arg("--silent")
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
         {
@@ -86,7 +87,12 @@ impl Bd for RealBd {
         if let Some(mut stdin) = child.stdin.take() {
             let _ = stdin.write_all(body);
         }
-        matches!(child.wait(), Ok(status) if status.success())
+        let Ok(out) = child.wait_with_output() else { return false };
+        if !out.status.success() {
+            return false;
+        }
+        let _ = spira_config::lifecycle_row::after_create("gh-intake", &String::from_utf8_lossy(&out.stdout));
+        true
     }
 
     fn note(&self, id: &str, text: &str) -> bool {

@@ -126,6 +126,7 @@ impl Bd for RealBd {
         if id.is_empty() {
             return Err("bd create returned no id".into());
         }
+        let _ = spira_config::lifecycle_row::after_create("groomer", &id);
         Ok(id)
     }
 

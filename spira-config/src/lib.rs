@@ -27,6 +27,7 @@ pub mod deps;
 pub mod env_bootstrap;
 pub mod eval;
 pub mod legacy_map;
+pub mod lifecycle_row;
 pub mod locate;
 pub mod registry;
 pub mod release_env;

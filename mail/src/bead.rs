@@ -217,6 +217,7 @@ pub fn create_tracking_bead(bd: &dyn Bd, db_configured: bool, subject: &str, bod
     let out = bd.run(&a(&["create", subject, "-l", &labels, "--type", "decision", "--body-file", "-", "--silent"]), Some(body));
     let id = out.stdout.trim();
     if out.code == 0 && !id.is_empty() {
+        let _ = spira_config::lifecycle_row::after_create("mail", &out.stdout);
         Some(id.to_string())
     } else {
         None
