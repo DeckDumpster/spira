@@ -763,6 +763,7 @@ fn a_red_the_base_shares_is_the_bases() {
     f.runs
         .borrow_mut()
         .insert(BASE.into(), (1, "test-b.sh RED\ntest-c.sh RED".into()));
+    f.reruns.borrow_mut().insert((BASE.into(), "test-b.sh,test-c.sh".into()), (1, "test-b.sh RED\ntest-c.sh RED".into()));
     assert_eq!(f.run(), BASEFAIL);
     assert_eq!(
         f.verdict_line(),
@@ -822,6 +823,7 @@ fn the_base_trial_judges_the_base_the_merge_was_cut_from() {
         "new-base".into(),
         (0, format!("  test-a.sh ok\n  {SUITE} ok")),
     );
+    f.reruns.borrow_mut().insert(("old-base".into(), SUITE.into()), (1, red(SUITE)));
     assert_eq!(f.run(), BASEFAIL);
     assert_eq!(
         f.verdict_line(),
@@ -850,6 +852,7 @@ fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
     f.runs
         .borrow_mut()
         .insert(BASE.into(), (1, format!("  test-a.sh ok\n{}", red(SUITE))));
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
     assert_eq!(f.run(), BASEFAIL);
     assert!(
         f.verdict_line().contains("reason=base-red"),
@@ -857,7 +860,7 @@ fn the_same_suite_red_on_the_branch_and_the_base_is_base_red() {
         f.verdict_line()
     );
     assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
-    assert_eq!(f.ran.borrow().len(), 2, "the base ran it: no re-run");
+    assert_eq!(f.ran.borrow().len(), 3, "the base ran it: only the confirming retry follows");
 }
 
 /// Acceptance 2: the base trial did not select the branch's red suite. It is run on the
@@ -884,8 +887,8 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
     let cmds = f.cmds.borrow();
     assert_eq!(
         cmds.len(),
-        4,
-        "branch trial, base trial, the cache's image tag, base re-run: {cmds:?}"
+        5,
+        "branch trial, base trial, the cache's image tag, base re-run, confirming retry: {cmds:?}"
     );
     assert_eq!(cmds[2], "\"${SPIRA_TESTENV_BIN:-testenv}\" container tag", "sp-kqger: the cache is consulted first");
     assert!(
@@ -905,6 +908,29 @@ fn a_red_the_base_trial_did_not_run_is_run_on_the_base_first() {
         .contains(&format!("gate: re-ran on local/main (local/main): {SUITE}")));
     assert!(meter_row(&f).contains(",base-rerun:7"), "{}", meter_row(&f));
     assert!(meter_row(&f).contains("base-image-tag:7"), "{}", meter_row(&f));
+}
+
+/// A base red that does not reproduce on a second run is a flake: re-gated, never held.
+#[test]
+fn a_base_red_that_does_not_reproduce_is_a_flake_not_a_hold() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs.borrow_mut().insert(BASE.into(), (1, red(SUITE)));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=base-flake"), "{}", f.verdict_line());
+    assert!(f.verdict_line().ends_with(&format!("suite={SUITE}")));
+    assert!(meter_row(&f).contains("base-retry:7"), "{}", meter_row(&f));
+}
+
+/// The same red, reproduced by the retry, is BASE_FAIL.
+#[test]
+fn a_base_red_that_reproduces_is_base_fail() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (1, red(SUITE)));
+    f.runs.borrow_mut().insert(BASE.into(), (1, red(SUITE)));
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
+    assert_eq!(f.run(), BASEFAIL);
+    assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
 }
 
 /// The re-run finds the suite green on the base: now, and only now, it is the branch's.
@@ -981,6 +1007,7 @@ fn a_cached_base_red_still_names_the_suite() {
         base_cache_path(SUITE),
         crate::basecache::render(false, "harness", "tag1", "2026-09-30T00:00:00Z", 100),
     );
+    f.reruns.borrow_mut().insert((BASE.into(), SUITE.into()), (1, red(SUITE)));
     assert_eq!(f.run(), BASEFAIL);
     assert!(f.verdict_line().contains("reason=base-red"), "{}", f.verdict_line());
     assert!(
@@ -988,9 +1015,10 @@ fn a_cached_base_red_still_names_the_suite() {
         "a cached red still names the suite: {}",
         f.verdict_line()
     );
-    assert!(
-        !f.cmds.borrow().iter().any(|c| c.contains("--suites")),
-        "a full cache hit re-runs nothing extra: {:?}",
+    assert_eq!(
+        f.cmds.borrow().iter().filter(|c| c.contains("--suites")).count(),
+        1,
+        "only the confirming retry runs: {:?}",
         f.cmds.borrow()
     );
 }
@@ -2098,6 +2126,7 @@ fn a_named_suite_red_on_the_base_too_is_the_bases() {
             .borrow_mut()
             .insert(at.into(), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
     }
+    f.reruns.borrow_mut().insert((BASE.into(), "test-b.sh".into()), (1, "  test-b.sh   RED     rc=1 after 4s".into()));
     assert_eq!(f.run(), BASEFAIL);
     assert!(f.verdict_line().contains("reason=base-red"));
 }
