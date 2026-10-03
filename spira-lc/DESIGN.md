@@ -79,3 +79,7 @@ primitives over the service socket and logging every request: 40 calls × both s
 positions — every verb, every refusal and absence, every delivery exit and wrong-state
 skip, every certify arm — identical exit code, stdout, primitive request sequence (so the
 exact event JSON, CAS and order), final state, and certification log: 80/80.
+
+## 5. Landstate semantics
+
+Where the landstate ledger's facts live once its readers are deleted: `DESIGN-landstate.md`.
