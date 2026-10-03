@@ -26,9 +26,7 @@ rule/src/main.rs
 sending/src/main.rs
 skew/src/main.rs
 spira-lc/src/client.rs
-spira-lc/src/db.rs
 spira-lc/src/main.rs
 spira-world/src/bin/slay.rs
-tsd-lifecycle-export/src/main.rs
 watchd/src/context.rs
 work/src/main.rs
