@@ -202,10 +202,12 @@ are the only mutable state, and both live in `$SPIRA_RUN`.
 ### prune
 
 Keep the newest `--keep` releases (else `$SPIRA_RELEASES_KEEP`, else
-`spira.releases_keep`, else 5; about 65 MB each) by the MANIFEST's `built` time. Never
+`spira.releases_keep`, else 5 (the shipped conf default is 10); about 120 MB each) by the MANIFEST's `built` time. Never
 removed, whatever their age: what `current` names, the rollback target, a standing hotfix.
 Stage directories whose builder process is gone are removed too. A release is made writable
 before removal; one that still cannot be removed is reported, and prune exits 1.
+`activate` runs the same prune after a successful switch; a prune failure warns and never
+fails the activation.
 
 ### install-tarball
 

@@ -1094,6 +1094,33 @@ fn prune_keeps_a_release_a_worktree_git_hook_still_names() {
     assert!(p.removed.contains(&shas[1]), "{p:?}");
 }
 
+#[test]
+fn prune_after_activate_keeps_current_and_previous_and_removes_the_rest() {
+    let w = World::new(); // keep = 2
+    let shas: Vec<String> = (0..6).map(|i| format!("{i}").repeat(40)).collect();
+    for (i, s) in shas.iter().enumerate() {
+        w.build(s).unwrap();
+        let rel = w.rel(s);
+        fsutil::make_writable(&rel);
+        let mut m = Manifest::load(&rel).unwrap();
+        m.built = Some(format!("2026-09-2{i}T00:00:00Z"));
+        fs::write(rel.join("MANIFEST"), m.render()).unwrap();
+        fsutil::set_readonly(&rel).unwrap();
+    }
+    let sc = FakeSystemctl::new(w.units());
+    let c = ctx(&w, &sc);
+    // current + previous are old, so only they survive besides the newest two.
+    crate::prune::activate_and_prune(&c, &shas[0], None).unwrap();
+    let (_, p) = crate::prune::activate_and_prune(&c, &shas[5], None).unwrap();
+    assert!(p.failed.is_empty(), "{:?}", p.failed);
+    for i in [0, 4, 5] {
+        assert!(w.rel(&shas[i]).exists(), "{i} kept");
+    }
+    for i in [1, 2, 3] {
+        assert!(!w.rel(&shas[i]).exists(), "{i} removed");
+    }
+}
+
 // ---------------------------------------------------------------- config
 
 #[test]
