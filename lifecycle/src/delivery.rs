@@ -21,6 +21,9 @@
 use crate::reason::ReturnedReason;
 use crate::{Outcome, Refusal, Version};
 
+/// The only actor whose `Requeued` a pr-mode row accepts.
+pub const HARNESS_ACTOR: &str = "harness";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Mode {
     Queue,
@@ -271,8 +274,8 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
             Cut { .. } | Published { .. } | PublishRed { .. } => illegal(row, &ev.kind),
         },
 
-        // pr mode is external custody: the machine observes merged/closed but never
-        // requeues a PR, because a human or the forge already decided its fate.
+        // pr mode is external custody: merged/closed are observed, and a requeue is accepted
+        // only from the harness itself, never from a human's or the forge's decision.
         DeliveryState::PrOpen => match &ev.kind {
             Delivered { merge_sha, proof: _ } => {
                 let mut new = row.clone();
@@ -286,6 +289,13 @@ pub fn apply(row: &DeliveryRow, ev: &DeliveryEvent) -> Outcome<DeliveryRow> {
                 let mut new = row.clone();
                 new.state = DeliveryState::Exited;
                 new.exit = Some(Exit::Returned);
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            Requeued { .. } if ev.actor == HARNESS_ACTOR => {
+                let mut new = row.clone();
+                new.state = DeliveryState::Exited;
+                new.exit = Some(Exit::Requeued);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -456,11 +466,17 @@ mod tests {
     }
 
     #[test]
-    fn pr_mode_never_requeues() {
+    fn pr_mode_requeues_only_for_the_harness() {
         let row = DeliveryRow::start_pr("sp-x", 42);
-        let out = apply(&row, &ev(DeliveryState::PrOpen, 0, DeliveryEventKind::Requeued { tip: "t".into() }));
+        let mut e = ev(DeliveryState::PrOpen, 0, DeliveryEventKind::Requeued { tip: "t".into() });
+        let out = apply(&row, &e);
         assert!(!out.applied);
         assert!(matches!(out.refusal, Some(Refusal::IllegalTransition { .. })));
+        e.actor = HARNESS_ACTOR.into();
+        let out = apply(&row, &e);
+        assert!(out.applied);
+        assert_eq!(out.row.state, DeliveryState::Exited);
+        assert_eq!(out.row.exit, Some(Exit::Requeued));
     }
 
     #[test]
@@ -613,6 +629,7 @@ mod tests {
                 version: bead_row.version,
                 kind: BeadEventKind::Delivered { merge_sha: "localsha1".into(), proof: "local-fast-forward".into() },
                 actor: "queue.sh land-local".into(),
+                at: None,
             },
         );
         assert!(b_out.applied);

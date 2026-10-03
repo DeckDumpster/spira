@@ -44,7 +44,7 @@ mod tests {
     use crate::reason::GateRedReason;
 
     fn bead_ev(expect: BeadState, version: u64, kind: BeadEventKind) -> BeadEvent {
-        BeadEvent { expect, version, kind, actor: "test".into() }
+        BeadEvent { expect, version, kind, actor: "test".into(), at: None }
     }
 
     /// Byte-for-byte, per the acceptance criteria: replaying the whole log from scratch

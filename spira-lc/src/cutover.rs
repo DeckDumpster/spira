@@ -322,6 +322,7 @@ fn member_added_steps(
             version: bead_row.version,
             kind: bead::BeadEventKind::Deliver,
             actor: actor.to_string(),
+            at: Some(crate::db::now_epoch()),
         };
         let bead_outcome = bead::apply(bead_row, &deliver_ev);
         if !bead_outcome.applied {
@@ -496,6 +497,7 @@ pub fn cmd_land(args: &[String], conn: &Conn) -> (i32, String) {
             version: bead_row.version,
             kind: bead::BeadEventKind::Delivered { merge_sha: sha.clone(), proof: format!("queue-fast-forward:{tip}") },
             actor: actor.clone(),
+            at: Some(crate::db::now_epoch()),
         };
         let b_outcome = bead::apply(&bead_row, &bead_delivered_ev);
         if b_outcome.applied {
@@ -972,7 +974,7 @@ fn add_exit_steps(
     }
 
     let Some(bead_row) = rows::fetch_bead(conn, id)? else { return Ok(()) };
-    let bead_ev = bead::BeadEvent { expect: bead_row.state, version: bead_row.version, kind: bead_kind.clone(), actor: actor.to_string() };
+    let bead_ev = bead::BeadEvent { expect: bead_row.state, version: bead_row.version, kind: bead_kind.clone(), actor: actor.to_string(), at: Some(crate::db::now_epoch()) };
     let bead_outcome = bead::apply(&bead_row, &bead_ev);
     if bead_outcome.applied {
         steps.push(cascade_step(
