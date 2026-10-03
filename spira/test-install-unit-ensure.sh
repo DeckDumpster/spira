@@ -39,6 +39,17 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 DEST="$TMP/home/.config/systemd/user"
 BIN="$TMP/bin"
 mkdir -p "$DEST" "$BIN" "$TMP/db/.beads" "$TMP/run"
+
+# Pin the binaries under test to a private release root. Resolved through PATH they sit
+# beside the host's live `current` symlink, and unit-ensure refuses (exit 1) whenever that
+# symlink names another release — a verdict the host decides, not the code.
+PIN="$TMP/pinned-release"
+mkdir -p "$PIN/bin"
+for t in unit-ensure units-install; do
+    src="$(command -v "$t")" || { echo "test-install-unit-ensure.sh: $t not on PATH" >&2; exit 1; }
+    cp -L "$src" "$PIN/bin/$t"
+done
+ln -s "$HERE/../systemd" "$PIN/systemd"
 touch "$TMP/watchers-empty"
 
 # Fake bd: conf.sh calls "bd migrate schema" on source; answer without a real db.
@@ -82,7 +93,7 @@ rm -f "$TMP/badprod/bin/spira-supervise"
 # ensure <args> — run unit-ensure.sh in a controlled environment. The mocks go first on
 # the caller's PATH (conf.sh keeps it first and only appends SPIRA_PATH).
 ensure() {
-    env -i PATH="$BIN:$PATH" HOME="$TMP/home" \
+    env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$BIN" \
         SPIRA_WATCHERS="$TMP/watchers-empty" \
@@ -101,7 +112,7 @@ ensure() {
 echo
 echo "positive control — render produces valid output before testing:"
 # ==========================================================================
-rendered="$(env -i PATH="$BIN:$PATH" HOME="$TMP/home" \
+rendered="$(env -i PATH="$PIN/bin:$BIN:$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_PATH="$BIN" \
     SPIRA_WATCHERS="$TMP/watchers-empty" \
@@ -126,6 +137,21 @@ n="$(ls "$DEST" | wc -l)"
 [ -f "$DEST/spira-czar-pass-prod.timer" ] \
     && ok "fixture: czar-pass timer present" \
     || bad "fixture: czar-pass timer present" "spira-czar-pass-prod.timer missing"
+
+# ==========================================================================
+echo
+echo "pinned release — host release state cannot decide the verdict:"
+# ==========================================================================
+[ ! -e "$PIN/current" ] && ok "pinned release has no sibling 'current' symlink" \
+    || bad "pinned release has no sibling 'current' symlink" "$PIN/current exists"
+# POSITIVE CONTROL: the hazard is real — a copy beside a current naming another release refuses.
+SK="$TMP/skew"; mkdir -p "$SK/aaa/bin" "$SK/bbb"
+cp "$PIN/bin/unit-ensure" "$SK/aaa/bin/unit-ensure"; ln -s bbb "$SK/current"
+skew_out="$(env -i PATH="$SK/aaa/bin:$BIN:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
+    SPIRA_DB="$TMP/db" SPIRA_RUN="$TMP/run" SPIRA_INSTANCE=prod SPIRA_SYSTEMCTL="$TMP/sc" \
+    unit-ensure 2>&1)"
+want "skewed release copy is refused" "REFUSING to write units" "$skew_out"
+nowant "pinned run is not refused" "REFUSING" "$(ensure)"
 
 # ==========================================================================
 echo
