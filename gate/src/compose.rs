@@ -38,7 +38,9 @@ pub enum Class {
     /// A bash (or other script) component: `*.sh`, `*.bash`, `*.py`, or any executable file
     /// outside a crate. Touching one keeps today's full sequence.
     Script,
-    /// Anything else (units, data files, examples): nothing to build.
+    /// `systemd/` outside a crate: unit templates that crate tests read from `../systemd`.
+    Units,
+    /// Anything else (data files, examples): nothing to build.
     Config,
 }
 
@@ -112,8 +114,14 @@ pub fn classify(c: &Changed, members: &[Member]) -> Class {
     if p.ends_with(".sh") || p.ends_with(".bash") || p.ends_with(".py") || c.exec {
         return Class::Script;
     }
+    if under(p, "systemd") {
+        return Class::Units;
+    }
     Class::Config
 }
+
+/// Crates whose tests read `../systemd`.
+const UNIT_READERS: &[&str] = &["release", "spira-world", "cert-sweep"];
 
 /// `seed` plus every member that depends on one of them, transitively; sorted.
 pub fn with_dependents(seed: &BTreeSet<String>, members: &[Member]) -> Vec<String> {
@@ -173,6 +181,12 @@ pub fn compose(
                 touched.insert(n);
             }
             Class::Workspace => workspace = true,
+            Class::Units => touched.extend(
+                UNIT_READERS
+                    .iter()
+                    .filter(|r| members.iter().any(|m| m.name == **r))
+                    .map(|r| r.to_string()),
+            ),
             Class::Doc | Class::Suite | Class::Config => {}
         }
     }
@@ -507,6 +521,7 @@ mod tests {
             m("aeon", "aeon", &["spira-config"]),
             m("gate", "gate", &[]),
             m("panel", "cockpit/panel", &[]),
+            m("release", "release", &[]),
         ]
     }
 
@@ -585,7 +600,20 @@ mod tests {
                 &["spira/test-foo.sh", "spira/testlib/gate-fixture.sh"],
                 Fences,
             ),
-            (&["systemd/spira-gate.service", "spira/deps.toml"], Fences),
+            (
+                &["systemd/spira-gate.service", "spira/deps.toml"],
+                Unit {
+                    touched: vec!["release".into()],
+                    crates: vec!["release".into()],
+                },
+            ),
+            (
+                &["systemd/dolt-tmp-prune.service"],
+                Unit {
+                    touched: vec!["release".into()],
+                    crates: vec!["release".into()],
+                },
+            ),
             (&[], Fences),
         ];
         for (paths, want) in rows {
@@ -632,6 +660,7 @@ mod tests {
                     "landing-pass",
                     "panel",
                     "queue",
+                    "release",
                     "spira-config"
                 ],
                 "{p}"
