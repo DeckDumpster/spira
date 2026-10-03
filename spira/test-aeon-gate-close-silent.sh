@@ -165,6 +165,20 @@ seed_closed() {
         "$1" "$_lbl" | testdb_seed
 }
 
+# spira-lc stub: `show <id>` answers from the landstate record the shim writes (aeon reads
+# certification only through spira-lc); every other verb goes to the real binary.
+REAL_LC="$(command -v spira-lc 2>/dev/null)"; export REAL_LC
+cat > "$SPIRA_HOME/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ] && [ -f "$SPIRA_RUN/landstate/${2:-}" ]; then
+    read -r st tip _ < "$SPIRA_RUN/landstate/$2"
+    printf '{"bead":{"state":"%s","tip":"%s"}}\n' "$st" "$tip"
+    exit 0
+fi
+exec "$REAL_LC" "$@"
+STUB
+chmod +x "$SPIRA_HOME/spira-lc"
+
 # The shim commits work and closes the bead, simulating a session that did the work and
 # closed without ever running its own gate. sp-cert-nocommit closes with nothing committed
 # (delivers:action carries the evidence). sp-cert-already also writes a CERTIFIED landstate
