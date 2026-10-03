@@ -30,6 +30,7 @@
 # isolation was the fix (sp-dah).
 #
 # tier: T1
+# bare-host: builds its own podman containers; the corpus container has no podman
 # covers: spira/cadence.sh UC-instance-lifecycle-32
 # priority: 2
 # timeout: 180

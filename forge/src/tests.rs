@@ -326,3 +326,58 @@ fn force_cancel_still_cancels_when_the_jobs_are_unreadable_and_refuses_without_a
     assert_eq!(force_cancel(&gh, repo(), "").code, 1);
     assert!(gh.calls.borrow().is_empty());
 }
+
+// ── stranded-runners ─────────────────────────────────────────────────────────────────────
+
+const NOW: u64 = 1_790_640_000 + 3600;
+const RUNS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs?per_page=50"];
+const RUNNERS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runners?per_page=100"];
+const JOBS: &[&str] = &["api", "repos/{owner}/{repo}/actions/runs/9001/jobs"];
+
+fn stranded_fixture(age: u64, labels: &str, runners: &str) -> FakeGh {
+    let gh = FakeGh::default();
+    gh.on(RUNS, 0, r#"{"workflow_runs":[{"id":9001,"status":"in_progress"}]}"#);
+    let created = crate::time::epoch("2026-09-29T00:00:00Z") + 3600 - age;
+    let ts = {
+        let d = created - 1_790_640_000;
+        format!("2026-09-29T{:02}:{:02}:{:02}Z", d / 3600, d % 3600 / 60, d % 60)
+    };
+    gh.on(JOBS, 0, &format!(r#"{{"jobs":[{{"name":"suites","status":"queued","created_at":"{ts}","labels":{labels}}}]}}"#));
+    gh.on(RUNNERS, 0, runners);
+    gh
+}
+
+#[test]
+fn stranded_unregistered_runner_fires_without_waiting_for_the_clock() {
+    let gh = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, r#"{"runners":[]}"#);
+    let out = stranded_runners(&gh, repo(), NOW, 300);
+    assert_eq!(out.lines, vec![r#"STRANDED run=9001 job="suites" label=spira-run-9001 queued=360s runner=none vmid=?"#]);
+}
+
+#[test]
+fn stranded_offline_runner_names_runner_and_vmid() {
+    let gh = stranded_fixture(
+        360,
+        r#"["self-hosted","spira-run-9001"]"#,
+        r#"{"runners":[{"name":"eph-133742","status":"offline","labels":[{"name":"self-hosted"},{"name":"spira-run-9001"}]}]}"#,
+    );
+    let out = stranded_runners(&gh, repo(), NOW, 300);
+    assert_eq!(out.lines.len(), 1);
+    assert!(out.lines[0].contains("runner=eph-133742 vmid=133742"), "{:?}", out.lines);
+}
+
+#[test]
+fn stranded_is_silent_for_online_young_or_hosted_jobs() {
+    let online = r#"{"runners":[{"name":"eph-1337","status":"online","labels":[{"name":"spira-run-9001"}]}]}"#;
+    let g = stranded_fixture(360, r#"["self-hosted","spira-run-9001"]"#, online);
+    assert!(stranded_runners(&g, repo(), NOW, 300).lines.is_empty());
+    let g = stranded_fixture(30, r#"["self-hosted","spira-run-9001"]"#, r#"{"runners":[]}"#);
+    assert!(stranded_runners(&g, repo(), NOW, 300).lines.is_empty());
+    let g = stranded_fixture(360, r#"["ubuntu-latest"]"#, r#"{"runners":[]}"#);
+    assert!(stranded_runners(&g, repo(), NOW, 300).lines.is_empty());
+}
+
+#[test]
+fn stranded_unreadable_runs_is_silent_not_a_guess() {
+    assert!(stranded_runners(&FakeGh::default(), repo(), NOW, 300).lines.is_empty());
+}

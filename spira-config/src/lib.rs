@@ -468,6 +468,7 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "goal", bead: "sp-k6m1m" },
     RetiredKey { key: "queue_local_gate", bead: "sp-vsob2" },
     RetiredKey { key: "queue_batch_idle_cut", bead: "sp-vsob2" },
+    RetiredKey { key: "cert_idle_skip", bead: "sp-6d9th" },
     RetiredKey { key: "hook_lines", bead: "sp-o9nkc" },
     RetiredKey { key: "answer_state", bead: "sp-xsl8i" },
     RetiredKey { key: "answer_mark", bead: "sp-xsl8i" },
@@ -983,7 +984,7 @@ fn set_path_leaf(
 ///
 /// TRIES THE VALUE AS A STRING FIRST, because most fields here are paths and names, and a
 /// literal like `"3"` must stay the string `"3"` when the field is one of those — only a
-/// field the schema itself types as a number or bool (`max_live_aeons`, `cert_idle_skip`, ...)
+/// field the schema itself types as a number or bool (`max_live_aeons`, `queue_batch_max`, ...)
 /// ever takes the second attempt, which parses the same text as JSON and retries. Reports the
 /// first (string) attempt's error when both fail, since "expected u32" names the fix; the
 /// generic JSON-parse failure on a bare word does not.
@@ -1325,8 +1326,8 @@ mod tests {
 
     #[test]
     fn set_path_coerces_a_bool_field() {
-        let doc = set_path(&SpiraToml::default(), "spira.cert_idle_skip", "true").unwrap();
-        assert_eq!(doc.spira.unwrap().cert_idle_skip, Some(true));
+        let doc = set_path(&SpiraToml::default(), "spira.lifecycle_enforce", "true").unwrap();
+        assert_eq!(doc.spira.unwrap().lifecycle_enforce, Some(true));
     }
 
     #[test]

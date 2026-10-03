@@ -119,6 +119,13 @@ inbox-keeper|daemon|inbox-keeper.sh
 # same as pr-notify), so a backlog stuck over threshold does not become a siren.
 publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.sh health
 
+# STRANDED-RUNNER catches the gap GitHub itself does not: an ephemeral self-hosted job whose
+# runner registered, then vanished before taking it. Nothing re-assigns that job's per-run
+# label to a second runner, so without this it sits queued until GitHub's own 24h ceiling
+# closes it (`stranded-runner.sh`, `forge stranded-runners`). Latch on with
+# `watchd.sh tail stranded-runner`.
+stranded-runner|daemon|@SPIRA_HOME@/stranded-runner.sh watch --interval 120|@SPIRA_HOME@/stranded-runner.sh health
+
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
 # priority inversions and stalls. Derived from queue state and the forge, never from the

@@ -36,6 +36,9 @@ bin SPIRA_TESTENV_BIN testenv
 # and the property it scanned for is structural in the gh-intake crate that replaced it.
 step "$SPIRA_LINT_BIN"
 step bash spira/build-fence.sh
+# README is rendered from spira/boundary; the suite selector runs test-boundary.sh only when a
+# boundary file is touched, so a change to what ships would otherwise land with a stale README.
+step bash spira/boundary.sh check
 
 # The suite selector (suite-select, sp-wx2tw) and the budgeted suite run. The selector's exit 1
 # is an unclaimed source file (the branch's fault: FAIL); any other failure is a refusal

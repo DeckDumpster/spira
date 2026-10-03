@@ -32,6 +32,7 @@
 #
 # runtime: ~3m
 # tier: T3
+# bare-host: builds its own podman containers; the corpus container has no podman
 # covers: install/src/bin/install.rs spira/uninstall.sh spira/configure.sh testenv/src/container.rs spira/testenv/Containerfile UC-instance-lifecycle-40
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
