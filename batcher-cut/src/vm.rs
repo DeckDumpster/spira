@@ -300,6 +300,11 @@ fn epoch() -> u64 {
 }
 
 impl RoundRunner for VmRunner<'_> {
+    fn set_base(&mut self, sha: &str) {
+        self.base_sha = sha.to_string();
+        self.changed.clear();
+    }
+
     fn set_members(&mut self, members: &[Member]) {
         self.members = members.to_vec();
         for m in members {

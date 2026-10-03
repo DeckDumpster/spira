@@ -958,11 +958,12 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
 /// sidecar, as the retired verdict.sh's own ejection did (sp-p3srm): the gate's re-entry check reads it
 /// first, and unlike the EJECTED landstate row it survives the row being overwritten
 /// (REBASED, WITHDRAWN) before the bead's next gate.
-pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String]) {
+pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String], first_fails: &[(String, String)]) {
     let suites_csv = suites.join(",");
     let note = format!(
-        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.",
-        suites.join(", ")
+        "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.{}",
+        suites.join(", "),
+        first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
     land_mark(env, id, "EJECTED", tip, &suites_csv);
@@ -1023,6 +1024,17 @@ pub fn record_escape(
         Ok(_) => format!("{} escaped {suite}: {class}", member.id),
         Err(e) => format!("escape not recorded: {e}"),
     }
+}
+
+/// The first line of a suite's output that reports a failure, trimmed and bounded.
+pub fn first_fail_line(out: &str) -> Option<String> {
+    let l = out.lines().map(str::trim).find(|l| l.starts_with("FAIL") || l.contains("FAIL:") || l.starts_with("not ok"))?;
+    Some(l.chars().take(300).collect())
+}
+
+/// The first FAIL line of `suite`'s output in the round's results, for an ejection's reason.
+pub fn suite_first_fail(results_dir: &Path, suite: &str) -> Option<String> {
+    first_fail_line(&fs::read_to_string(locate(results_dir, suite, "out")?).ok()?)
 }
 
 /// File an Ops incident for a local red the round could not resolve mechanically: a suite red
@@ -1945,6 +1957,23 @@ mod certify_tests {
 }
 
 #[cfg(test)]
+mod fail_line_tests {
+    use super::*;
+
+    #[test]
+    fn the_first_fail_line_is_found_and_absence_is_none() {
+        assert_eq!(first_fail_line("ok 1\n  FAIL widget broke\nFAIL later\n").as_deref(), Some("FAIL widget broke"));
+        assert_eq!(first_fail_line("not ok 3 - x\n").as_deref(), Some("not ok 3 - x"));
+        assert_eq!(first_fail_line("all fine\nPASS\n"), None);
+        let d = testkit::TempDir::new("batcher-cut-failline");
+        fs::write(d.join("test-a.sh.out"), "setup\nFAIL: boom\n").unwrap();
+        assert_eq!(suite_first_fail(&d, "test-a.sh").as_deref(), Some("FAIL: boom"));
+        assert_eq!(suite_first_fail(&d, "test-missing.sh"), None);
+        let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
 mod eject_tests {
     use super::*;
 
@@ -1967,12 +1996,13 @@ mod eject_tests {
             ),
         );
         e.landing_pass_bin = landing_pass;
-        eject_member(&e, "spira", "sp-m2", "abc", &["test-a.sh".into(), "test-b.sh".into()]);
+        eject_member(&e, "spira", "sp-m2", "abc", &["test-a.sh".into(), "test-b.sh".into()], &[("test-a.sh".into(), "FAIL widget".into())]);
         let calls = fs::read_to_string(&log).unwrap();
         let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
         assert_eq!(lines.len(), 2, "{calls}");
         assert_eq!(lines[0][..3], ["bead_reopen", "sp-m2", "queue-eject-local"]);
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
+        assert!(lines[0][3].contains("test-a.sh: FAIL widget"), "the reason names the suite's first FAIL line: {}", lines[0][3]);
         assert_eq!(lines[1], ["land_mark", "mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
         let _ = fs::remove_dir_all(&d);
     }

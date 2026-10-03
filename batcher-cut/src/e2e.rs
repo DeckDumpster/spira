@@ -123,6 +123,12 @@ impl RoundOps for ProofOps {
     fn fix_integration(&mut self, members: &[Member], _: &[String]) -> bool {
         crate::io::integration_fix(&self.env, &self.wt, &self.start, members).map(|f| !f.is_empty()).unwrap_or(false)
     }
+    fn base_moved(&mut self, _: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
+        Ok(None)
+    }
+    fn judge(&mut self, suites: &[String], _: &[String]) {
+        panic!("no judgement expected: {suites:?}");
+    }
     fn incident(&mut self, kind: &str, suites: &[String]) {
         panic!("no incident expected: {kind} {suites:?}");
     }
