@@ -180,6 +180,8 @@ pub enum BeadEventKind {
     /// The operator's answer to an `ask`, carrying the reply's message id. The only event
     /// that lifts the ask hold, and so the only way an escalation gate reaches a close.
     Reply { message_id: String },
+    /// The ask was withdrawn with no answer. Lifts the ask hold by its own event, never by a reply.
+    AskWithdrawn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -332,6 +334,20 @@ pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
             Outcome::applied(new)
         }
 
+        BeadEventKind::AskWithdrawn => {
+            if row.state.is_terminal() {
+                return terminal(row);
+            }
+            if !holds_ask(row) {
+                return illegal(row, &ev.kind);
+            }
+            let mut new = row.clone();
+            new.holds.remove(&HoldKind::Ask);
+            new.reason = Some("ask withdrawn".to_string());
+            new.version += 1;
+            Outcome::applied(new)
+        }
+
         // The primary, state-shaped transitions.
         BeadEventKind::Claim { .. }
         | BeadEventKind::Release
@@ -391,7 +407,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
         },
 
         BeadState::Working => match kind {
@@ -444,7 +460,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | GatePass { .. } | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
         },
 
         BeadState::Submitted => match kind {
@@ -497,7 +513,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -540,7 +556,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => {
                 illegal(row, kind)
             }
         },
@@ -588,7 +604,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -622,7 +638,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -635,7 +651,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn => terminal(row),
         },
     }
 }
@@ -950,6 +966,15 @@ mod tests {
         let closed = apply(&replied.row, &ev(BeadState::Working, replied.row.version, BeadEventKind::Done { delivers: "d".into() }));
         assert!(closed.applied);
         assert_eq!(closed.row.state, BeadState::Done);
+    }
+
+    #[test]
+    fn a_withdrawn_ask_lifts_by_its_own_event_and_needs_an_ask() {
+        let out = apply(&gate_row(), &ev(BeadState::Working, 0, BeadEventKind::AskWithdrawn));
+        assert!(out.applied);
+        assert!(!out.row.holds.contains(&HoldKind::Ask));
+        assert_eq!(out.row.reason.as_deref(), Some("ask withdrawn"));
+        assert!(!apply(&row(BeadState::Working), &ev(BeadState::Working, 0, BeadEventKind::AskWithdrawn)).applied);
     }
 
     #[test]
