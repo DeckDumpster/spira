@@ -122,10 +122,42 @@ fn bucket_match(labels: &[&str], inc: &[String], exc: &[String], shared: &[&str]
 /// exclusion — deliberately NOT `shared_exclude3`'s three (the python's own comment calls
 /// out "shared QUEUE_WAIT/SUBMITTED exclusion"; `SPIRA_OPEN_CHILDREN_LABEL` is not one of
 /// them, and this port keeps that exactly).
+/// RFC3339 `YYYY-MM-DDTHH:MM:SS[.f][Z|±hh:mm]` to epoch seconds; None if unparseable.
+fn rfc3339_epoch(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 19 {
+        return None;
+    }
+    let n = |a: usize, z: usize| s.get(a..z)?.parse::<i64>().ok();
+    let (y, mo, d, h, mi, se) = (n(0, 4)?, n(5, 7)?, n(8, 10)?, n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    let yy = if mo <= 2 { y - 1 } else { y };
+    let era = yy.div_euclid(400);
+    let yoe = yy - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    let mut t = days * 86400 + h * 3600 + mi * 60 + se;
+    let rest = s[19..].trim_start_matches(|c: char| c == '.' || c.is_ascii_digit());
+    if rest.len() >= 6 && (rest.starts_with('+') || rest.starts_with('-')) {
+        let off = rest[1..3].parse::<i64>().ok()? * 3600 + rest[4..6].parse::<i64>().ok()? * 60;
+        t -= if rest.starts_with('+') { off } else { -off };
+    }
+    Some(t)
+}
+
+/// A bead whose `defer_until` is still in the future is held, not ready, in every bucket.
+fn is_deferred(row: &ReadyRow, now: i64) -> bool {
+    row.defer_until.as_deref().and_then(rfc3339_epoch).is_some_and(|t| t > now)
+}
+
 pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitted: &str) -> Vec<(String, u64)> {
     let shared: Vec<&str> = [queue_wait, submitted].into_iter().filter(|s| !s.is_empty()).collect();
     let mut counts: Vec<(String, u64)> = parts.iter().map(|p| (p.name.clone(), 0)).collect();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
     for row in rows {
+        if is_deferred(row, now) {
+            continue;
+        }
         let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
         for (i, p) in parts.iter().enumerate() {
             if bucket_match(&labels, &p.inc, &p.exc, &shared, &p.name) {
@@ -207,5 +239,16 @@ mod tests {
         let rows = vec![row("a", &["spira", "plan", "fayth:qa"])];
         let parts = vec![part("builder", &["spira", "plan"], &[])];
         assert_eq!(bucket(&rows, &parts, "", ""), vec![("builder".to_string(), 0)]);
+    }
+
+    #[test]
+    fn bucket_excludes_a_future_deferred_bead_but_counts_a_past_one() {
+        let mut held = row("a", &["spira", "plan"]);
+        held.defer_until = Some("2999-01-01T00:00:00Z".into());
+        let mut past = row("b", &["spira", "plan"]);
+        past.defer_until = Some("2000-01-01T00:00:00-07:00".into());
+        let parts = vec![part("builder", &["spira", "plan"], &[])];
+        assert_eq!(bucket(&[held, past], &parts, "", ""), vec![("builder".to_string(), 1)]);
+        assert_eq!(rfc3339_epoch("1970-01-02T00:00:00Z"), Some(86400));
     }
 }

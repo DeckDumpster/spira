@@ -25,6 +25,8 @@ pub struct ReadyRow {
     pub issue_type: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub defer_until: Option<String>,
     #[serde(default, deserialize_with = "null_vec")]
     pub dependencies: Vec<Dependency>,
 }
