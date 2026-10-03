@@ -1,4 +1,4 @@
-use gate_worker::{acquire_slot, lock_wait, worker_count, Branches, Clock, Gate, Worker};
+use gate_worker::{acquire_slot, release_is_current, lock_wait, worker_count, Branches, Clock, Gate, Worker};
 use landing_pass::gateq::GateQueue;
 use landing_pass::model::RepoRow;
 use landing_pass::ports::{Git, Tools};
@@ -100,7 +100,13 @@ fn main() -> ExitCode {
                 log: &log,
                 slot,
             };
-            let filed = w.drain();
+            let filed = w.drain_while(&|| {
+                let current = release_is_current(&home);
+                if !current {
+                    println!("gate-worker: release {} is no longer current — exiting so the next tick runs the new one", home.display());
+                }
+                current
+            });
             println!("gate-worker: {filed} verdict(s) filed (slot {slot})");
             ExitCode::SUCCESS
         }
