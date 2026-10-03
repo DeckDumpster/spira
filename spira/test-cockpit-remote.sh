@@ -195,7 +195,7 @@ else
     # A live holder with no client attached has no session: the unit takes it over and runs.
     printf '%s\n' '#!/bin/sh' 'exit 0' >"$LOCKD/bin/tmux"
     _fake_holder
-    out="$(PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" timeout 15 bash "$CR" watch 2>&1)"; rc=$?
+    out="$(env -u INVOCATION_ID PATH="$LOCKD/bin:$PATH" TMPDIR="$LOCKD" COCKPIT_DETACH_SECS=1 COCKPIT_POLL=1 timeout 15 bash "$CR" watch 2>&1)"; rc=$?
     is "an orphaned holder does not stop the unit (exit 0)" "0" "$rc"
     want "and the takeover names the holder" "pid $_holder" "$out"
     wait "$_holder" 2>/dev/null
