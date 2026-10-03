@@ -282,7 +282,7 @@ impl World for Real {
     fn cluster_merge_py(&self, all_time: &str, since_wm: &str) -> String {
         let a = self.write_scratch("all_time.txt", all_time);
         let b = self.write_scratch("since_wm.txt", since_wm);
-        self.run_py("cluster_cluster_merge.py", &[&a, &b], None)
+        self.run_py("cluster_merge.py", &[&a, &b], None)
     }
     fn covers_py(&self, bdq_json: &str, fold_map: &str) -> String {
         let f = self.write_scratch("fold_map.txt", fold_map);

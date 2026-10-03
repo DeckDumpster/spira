@@ -258,7 +258,7 @@ STUB
 chmod +x "$FAKE_BD"
 
 CENSUS_SQL_FILE="$T/sql_one_class.txt"
-printf 'recurred | fallback-test | fallback-bead | 1700000000\n' > "$CENSUS_SQL_FILE"
+printf 'recurred | fallback-test | fallback-bead | 1000\n' > "$CENSUS_SQL_FILE"
 
 # The skew guard now compares the substrate's UTC_TIMESTAMP() against the HOST's own
 # UTC clock (sp-9b8py), not against the substrate's NOW(). census.sh reads that clock as
