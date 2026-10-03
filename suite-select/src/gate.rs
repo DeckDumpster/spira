@@ -7,6 +7,7 @@ use crate::glob::case_match;
 use crate::io::{self, Git};
 use crate::names::{is_suite_name, split_list};
 use crate::select::{self, Buckets, Change, Fail, Options};
+use crate::reach::Reach;
 use crate::timing;
 use crate::{refuse, Refusal};
 use std::path::PathBuf;
@@ -166,6 +167,7 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
             no_all_fallback: true,
             no_nocov: false,
             tiers: env.tiers.clone(),
+            reach: Reach::load(&env.repo)?,
         };
         let sel = match &env.files {
             Some(f) => {
@@ -211,6 +213,13 @@ pub fn run(env: &GateEnv, g: &dyn Git, base: &str, head: &str) -> Result<GateOut
         let cands: Vec<&corpus::Suite> = covered.iter().filter_map(|n| corpus.get(n)).collect();
         let cut = budget::fill(&budget::rank(&cands, &p90, &env.caps), suite_budget, env.width);
         log.extend(cut.log);
+        if !cut.dropped.is_empty() {
+            log.push(format!(
+                "suite-select gate: TRUNCATED — {} selected suite(s) did not fit the budget and were not run here: {}",
+                cut.dropped.len(),
+                cut.dropped.join(" ")
+            ));
+        }
         kept = cut.selected;
     }
 

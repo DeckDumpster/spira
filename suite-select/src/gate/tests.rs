@@ -192,6 +192,7 @@ fn the_budget_cuts_most_specific_first_and_never_cuts_an_ejected_suite() {
     let o = run(&genv(&d.0, &[("SPIRA_GATE_BUDGET", "6")]), &g, "main", "br").unwrap();
     assert_eq!(o.suites, ["test-s1.sh", "test-s2.sh", "test-s3.sh"]);
     assert!(o.log.iter().any(|l| l.contains("dropped test-s5.sh")));
+    assert!(o.log.iter().any(|l| l.contains("TRUNCATED") && l.contains("test-s5.sh")));
     let o = run(
         &genv(&d.0, &[("SPIRA_GATE_BUDGET", "6"), ("SPIRA_GATE_EJECTED_SUITES", "test-s5.sh")]),
         &g,

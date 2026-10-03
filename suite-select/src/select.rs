@@ -133,6 +133,8 @@ pub struct Options {
     pub no_nocov: bool,
     /// Keep only suites whose tier is listed (and every untiered suite). `None`: no filter.
     pub tiers: Option<Vec<String>>,
+    /// The workspace's reverse-dependency reach; `None`: only `# covers:` selects.
+    pub reach: Option<crate::reach::Reach>,
 }
 
 /// `--tiers a,b`: `None` when it names nothing.
@@ -304,6 +306,14 @@ pub fn select(
             if !any {
                 for (s, _) in &fn_pairs {
                     push_once(&mut selected, s);
+                }
+            }
+        }
+        if let Some(reach) = &opts.reach {
+            let bins = reach.bins_for(f);
+            for s in &corpus.suites {
+                if s.selects_on.is_empty() && s.words.iter().any(|w| bins.contains(w)) {
+                    push_once(&mut selected, &s.name);
                 }
             }
         }
