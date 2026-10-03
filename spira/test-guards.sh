@@ -602,11 +602,11 @@ echo
 echo "testenv suites quarantine refuses from an aeon session (not a UC in the catalogue; ported as-is):"
 # ===========================================================================
 command -v testenv >/dev/null 2>&1 || bad "suites-quarantine/testenv-on-path" "testenv is not on PATH"
-out_c0="$(SPIRA_AEON="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
+out_c0="$(SPIRA_AEON="" SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
     testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1 || true)"
 nowant "suites-quarantine/silent-without-SPIRA_AEON" "aeons may not" "$out_c0"
 
-out_c1="$(SPIRA_AEON=test-aeon SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" \
+out_c1="$(SPIRA_AEON=test-aeon SPIRA_CONF=/nonexistent SPIRA_RUN="$FAKE_RUN" SPIRA_TESTENV_HARNESS="$HERE/.." \
     testenv suites quarantine nonexistent-suite.sh bead-id "reason" 2>&1)"
 rc_c1=$?
 is   "suites-quarantine/exits-nonzero-in-aeon-session" 1               "$rc_c1"
