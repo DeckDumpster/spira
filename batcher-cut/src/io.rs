@@ -311,16 +311,26 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
     serde_json::from_str(&text).map_err(|e| format!("bd show: unparsed output: {e}"))
 }
 
-/// Which of `repo`'s own `refs/heads/spira/*` branches exist — the same authority
+/// `repo`'s own `refs/heads/spira/*` tips, keyed by bead id — the same authority
 /// `queue_certified_list` (lib.sh) uses to scope a shared landstate directory to one
-/// repository: a branch that exists here is this repo's, regardless of what any bead label
-/// says.
-fn repo_branch_ids(repo: &Repo) -> Result<std::collections::BTreeSet<String>, String> {
+/// repository, and (law-batcher-earns-the-round-by-parity) the batcher's own check that a
+/// CERTIFIED record's tip is still the branch's live tip: a branch that moved since
+/// certification is not this bead's member until it is re-certified at the new tip, whatever
+/// batch.sh did or did not do to landstate first.
+fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
     let out = run(
-        Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short)", "refs/heads/spira/*"]),
+        Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]),
         "git for-each-ref",
     )?;
-    Ok(out.lines().filter_map(|l| l.strip_prefix("spira/")).map(str::to_string).collect())
+    Ok(out
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split_whitespace();
+            let id = f.next()?.strip_prefix("spira/")?.to_string();
+            let sha = f.next()?.to_string();
+            Some((id, sha))
+        })
+        .collect())
 }
 
 /// A CERTIFIED record is batchable only while its bead is still waiting for a round: OPEN
@@ -331,12 +341,21 @@ pub fn eligible(status: &str, labels: &[&str], submitted_label: &str) -> bool {
     status == "open" && labels.contains(&submitted_label)
 }
 
-/// The certified pool for `repo`: every CERTIFIED landstate record whose branch exists in
-/// this repo's own checkout, with title/priority/express filled in from one bulk `bd show`.
+/// A CERTIFIED record is batchable only while its recorded tip is still the branch's live
+/// tip (law-batcher-earns-the-round-by-parity, sp-vafqi). This is the batcher's own second
+/// line of defence: whatever wrote or trusted a stale-but-CERTIFIED record upstream, a tip
+/// that moved since certification is excluded outright rather than batched at either tip.
+fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool {
+    branches.get(id).map(String::as_str) == Some(tip)
+}
+
+/// The certified pool for `repo`: every CERTIFIED landstate record whose tip is still the
+/// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
+/// express filled in from one bulk `bd show`.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_certified(&env.landstate)?;
-    let branches = repo_branch_ids(repo)?;
-    let certified: Vec<_> = certified.into_iter().filter(|(id, _, _)| branches.contains(id)).collect();
+    let branches = repo_branch_tips(repo)?;
+    let certified: Vec<_> = certified.into_iter().filter(|(id, tip, _)| tip_current(tip, id, &branches)).collect();
     let ids: Vec<String> = certified.iter().map(|(id, _, _)| id.clone()).collect();
     let v = bd_show(env, &ids)?;
     let items = match v {
@@ -1833,6 +1852,74 @@ mod pool_history_tests {
         let d = tmpdir("otherrepo");
         write_round(&d, "other", "20", "60000");
         assert_eq!(pool_history(&d, "spira", 5), PoolHistory::default());
+    }
+}
+
+#[cfg(test)]
+mod pool_parity_tests {
+    use super::*;
+
+    #[test]
+    fn tip_current_admits_the_live_tip_and_excludes_a_moved_one() {
+        let mut branches = BTreeMap::new();
+        branches.insert("sp-moved".to_string(), "newtip".to_string());
+        branches.insert("sp-stable".to_string(), "sametip".to_string());
+
+        assert!(!tip_current("oldtip", "sp-moved", &branches), "a certified tip that the branch has moved past must not be admitted");
+        // POSITIVE CONTROL: the same branch's own live tip is admitted — proves the check
+        // discriminates on the tip, not on the id being present at all.
+        assert!(tip_current("newtip", "sp-moved", &branches));
+        assert!(tip_current("sametip", "sp-stable", &branches));
+        assert!(!tip_current("sametip", "sp-unknown", &branches), "no branch at all is not current");
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        assert!(Command::new("git").arg("-C").arg(dir).args(args).status().unwrap().success(), "git {args:?}");
+    }
+
+    fn git_out(dir: &Path, args: &[&str]) -> String {
+        run(Command::new("git").arg("-C").arg(dir).args(args), "git").unwrap().trim().to_string()
+    }
+
+    fn tmp_repo(tag: &str) -> testkit::TempDir {
+        let d = testkit::TempDir::new(&format!("batcher-cut-pool-{tag}"));
+        git(&d, &["init", "-q", "-b", "main"]);
+        git(&d, &["config", "user.email", "t@t"]);
+        git(&d, &["config", "user.name", "t"]);
+        fs::write(d.join("base.txt"), "base").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-q", "-m", "base"]);
+        d
+    }
+
+    /// Branches a spira/<name> ref off main and commits `content` to it, returning the tip.
+    fn branch(dir: &Path, name: &str, content: &str) -> String {
+        git(dir, &["checkout", "-q", "-B", &format!("spira/{name}"), "main"]);
+        fs::write(dir.join(format!("{name}.txt")), content).unwrap();
+        git(dir, &["add", "-A"]);
+        git(dir, &["commit", "-q", "-m", name]);
+        git_out(dir, &["rev-parse", "HEAD"])
+    }
+
+    #[test]
+    fn repo_branch_tips_reads_the_live_tip_not_a_remembered_one() {
+        let d = tmp_repo("tips");
+        let tip1 = branch(&d, "sp-test1", "v1");
+        // THE MOVE: a further commit lands on the branch, un-gated — exactly the shape a
+        // batch.sh re-certification races against (law-batcher-earns-the-round-by-parity).
+        fs::write(d.join("sp-test1-more.txt"), "v2").unwrap();
+        git(&d, &["add", "-A"]);
+        git(&d, &["commit", "-q", "-m", "moved past certification"]);
+        let moved_tip = git_out(&d, &["rev-parse", "spira/sp-test1"]);
+        assert_ne!(tip1, moved_tip, "positive control: the branch really did move");
+
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
+        let branches = repo_branch_tips(&repo).unwrap();
+
+        assert!(!tip_current(&tip1, "sp-test1", &branches), "the OLD certified tip is no longer this branch's live tip");
+        assert!(tip_current(&moved_tip, "sp-test1", &branches), "the branch's actual live tip is current");
+
+        let _ = fs::remove_dir_all(&d);
     }
 }
 
