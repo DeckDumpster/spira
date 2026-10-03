@@ -111,7 +111,6 @@ pub fn run(now: i64, proc_root: &Path, db: &str, home_repo: &str, incident_sh: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
 
     fn fake(root: &Path, pid: u32, argv: &[&str]) {
         let d = root.join(pid.to_string());
@@ -150,8 +149,7 @@ mod tests {
         fake(&procr, 10, &["sccache", "rustc", "--crate-name", "a"]);
         let stub = dir.join("sccache");
         let log = dir.join("calls");
-        fs::write(&stub, format!("#!/bin/sh\necho \"$1\" >> {}\nif [ \"$1\" = --show-stats ]; then sleep 30; fi\n", log.display())).unwrap();
-        fs::set_permissions(&stub, fs::Permissions::from_mode(0o755)).unwrap();
+        testkit::write_exe(&stub, &format!("#!/bin/sh\necho \"$1\" >> {}\nif [ \"$1\" = --show-stats ]; then sleep 30; fi\n", log.display()));
         let cfg = Cfg { sccache: stub.display().to_string(), stale_secs: 0, cmd_timeout_secs: 1 };
 
         run(i64::MAX / 4, &procr, "", "spira", "/nonexistent", &Cfg { stale_secs: i64::MAX, ..cfg_clone(&cfg) });
