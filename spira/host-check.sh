@@ -28,6 +28,12 @@
 # ITS ESCAPE. Add `# host-reason: <why>` anywhere in the suite file. The reason
 # must be non-empty text. Do not leave the marker without a reason; that is refused
 # as well, because the reason is what makes the declaration meaningful.
+#
+# BARE-HOST SUITES. The corpus runs inside one container whose image has no podman, so a suite
+# that builds its own containers only ever SKIPs (77) there. Mark it `# bare-host: <why>`;
+# `host-check.sh --bare-suites` lists the marked suites and the gate's bare-host step runs
+# each directly on the runner after the corpus. A suite with the marker and no assertion that
+# can run bare is still a SKIP — the marker is how it gets a real pass, not a waiver.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null)"
@@ -188,8 +194,16 @@ WHY
     exit 0
     ;;
 
+--bare-suites)
+    shopt -s nullglob
+    for f in "$ROOT"/spira/test-*.sh; do
+        grep -qE '^# bare-host: *[^ ]' "$f" && printf '%s\n' "${f##*/}"
+    done
+    exit 0
+    ;;
+
 *)
-    printf 'usage: host-check.sh [--host-check [<file>]|--count-undeclared|--count-copying]\n' >&2
+    printf 'usage: host-check.sh [--host-check [<file>]|--count-undeclared|--count-copying|--bare-suites]\n' >&2
     exit 2
     ;;
 esac
