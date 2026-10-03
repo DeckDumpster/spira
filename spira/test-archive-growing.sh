@@ -37,7 +37,7 @@ done
 arch() {
     env -i PATH="$TMP/shim:$PATH" HOME="$TMP/h" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_DB="$TMP/db" SPIRA_ARCHIVE="$TMP/arch" SPIRA_TOKEN_PROJECTS="$TMP/projects" ${GROW:+GROW=1} \
-        archive.sh "$@" 2>&1
+        "$HERE/archive.sh" "$@" 2>&1
 }
 
 GROW=1 arch sweep >/dev/null; rc=$?
@@ -48,7 +48,7 @@ is "the body stored is the body hashed" 0 "$rc"
 out="$(arch sweep)"; rc=$?
 is   "the next pass exits 0" 0 "$rc"
 want "and archives the grown file" "1 stored" "$out"
-got="$(arch restore live | wc -l)"
+got="$(arch restore live.jsonl | wc -l)"
 is "the restored copy carries the appended line" "$(wc -l < "$LIVE" | tr -d ' ')" "$(echo $got)"
 
 body="$(ls "$TMP"/arch/bodies/-slug/live.jsonl.*)"
