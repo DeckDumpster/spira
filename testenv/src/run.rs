@@ -1446,8 +1446,6 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         mem_per_suite_mib: s.mem_per_suite_mib,
         requested: s.maxpar_requested,
     });
-    let timing_text =
-        fs::read_to_string(tsd::family_path(&s.run, timing::SUITE_TIMING)).unwrap_or_default();
     let jobs: Vec<Job> = runnable
         .iter()
         .map(|n| Job {
@@ -1455,9 +1453,29 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
             exclusive: headers[n].exclusive.clone(),
         })
         .collect();
-    let jobs = match args.mode {
-        Mode::Parallel => schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text)),
-        Mode::Serial => jobs,
+    // Order is never implicit (per Ryan 2026-10-03, sp-kitrt). An explicit --suites list is the
+    // caller's order and runs exactly as given (exclusive suites first, in their given order). A
+    // selector-produced selection is ordered longest-first by timing history, and a missing or
+    // unreadable history is a fault — it used to read as an empty map and quietly became input
+    // order, so the run order depended on whether a file happened to exist on the machine.
+    let jobs = match (args.mode, producer) {
+        (Mode::Serial, _) => jobs,
+        (Mode::Parallel, Producer::Explicit) => schedule::given(&jobs),
+        (Mode::Parallel, _) => {
+            let path = tsd::family_path(&s.run, timing::SUITE_TIMING);
+            let timing_text = match fs::read_to_string(&path) {
+                Ok(t) if !t.trim().is_empty() => t,
+                _ => {
+                    stderr(&format!(
+                        "batch: no suite timing history at {} — refusing to order {} suite(s) implicitly; pass an explicit --suites list in the order to run",
+                        path.display(),
+                        jobs.len()
+                    ));
+                    return Finish::fault(2, "no-timing-history", 0);
+                }
+            };
+            schedule::order(&jobs, &timing::mean_wall_by_suite(&timing_text))
+        }
     };
     match args.mode {
         // sp-tj8k3: maxpar is always a positive, bounded count now — "unlimited" is no
