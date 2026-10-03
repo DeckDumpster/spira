@@ -196,7 +196,7 @@ lc_caller() {
 lc_caller "$unit_env" >/dev/null 2>&1
 wantrc "a caller with only the rendered variable authenticates" 0 $?
 lc_caller >/dev/null 2>&1
-wantrc "positive control: the same call without the variable fails closed" 1 $?
+wantrc "positive control: the same call without the variable fails closed" 2 $?
 
 echo
 echo "cutover-deploy --dry-run resolves the credential from config alone:"
@@ -208,6 +208,6 @@ echo "--system-user runs no phase but its own:"
 su_out="$(env -i HOME="$HOME" PATH="$PATH" SPIRA_REPO="$REPO" SPIRA_HOME="$REPO/spira" "$INSTALL_BIN/spira-install" --system-user --dry-run 2>&1)"
 wantrc "spira-install --system-user --dry-run exits 0" 0 $?
 want "it reports the system-user phase" "phase 6.5" "$su_out"
-case "$su_out" in *"phase 0:"*|*"phase 1:"*|*"phase 4:"*|*"phase 6:"*) fail "another phase ran under --system-user" ;; *) pass "no other phase ran" ;; esac
+printf '%s\n' "$su_out" | grep -qE 'phase (0|0\.5|1|1\.5|2|3|4|5|6|7):'; wantrc "no other phase ran" 1 $?
 
 tl_summary
