@@ -55,6 +55,7 @@ pub fn file_child(title: &str, persona: &str, repo: &str, parent: &str) -> Resul
     let bead_sh = "bead.sh";
     let out = Command::new(bead_sh)
         .args(["file", title, "--for", persona, "--repo", repo, "--parent", parent])
+        .env(spira_config::LIFECYCLE_ENFORCE_ENV, "0")
         .output()
         .map_err(|e| format!("running {bead_sh}: {e}"))?;
     let stdout = String::from_utf8_lossy(&out.stdout).into_owned();

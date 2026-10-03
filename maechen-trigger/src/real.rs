@@ -155,14 +155,21 @@ impl World for Real {
             .arg("3")
             .arg("--description")
             .arg(description)
+            .arg("--silent")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("cannot spawn bd create: {e}"))?;
         let stderr = child.stderr.take();
+        let mut created = String::new();
+        if let Some(mut o) = child.stdout.take() {
+            use std::io::Read;
+            let _ = o.read_to_string(&mut created);
+        }
         let status = child.wait().map_err(|e| format!("bd create: {e}"))?;
         if status.success() {
+            let _ = spira_config::lifecycle_row::after_create("maechen-trigger", &created);
             Ok(())
         } else {
             let mut msg = String::new();
