@@ -217,7 +217,7 @@ fn watch(o: &Opts) -> Result<(), String> {
         db: o.db.clone(),
         bd: env::var("SPIRA_BD").unwrap_or_else(|_| "bd".into()),
         express_label: env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".into()),
-        lc_bin: env::var_os("SPIRA_LC_BIN").map(PathBuf::from),
+        lc_bin: lc_bin_from(env::var_os("SPIRA_LC_BIN"), &env::var_os("PATH").unwrap_or_default()),
         lc_timeout: env::var("SPIRA_LC_TIMEOUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30),
     };
     let lim = Limits {
@@ -484,5 +484,34 @@ mode = "push"
         assert!(!qf.local, "queue.forge is not local (regression)");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// The spira-lc binary: SPIRA_LC_BIN when set and non-empty, else `spira-lc` found on PATH
+/// (every unit's PATH leads with its release's bin/; nothing sets SPIRA_LC_BIN in production,
+/// which left the watcher blind after the lifecycle cutover). None only when neither resolves,
+/// so the watcher still reports itself blind rather than guessing.
+fn lc_bin_from(explicit: Option<std::ffi::OsString>, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    if let Some(b) = explicit.filter(|b| !b.is_empty()) {
+        return Some(PathBuf::from(b));
+    }
+    env::split_paths(path).map(|d| d.join("spira-lc")).find(|p| p.is_file())
+}
+
+#[cfg(test)]
+mod lc_bin_tests {
+    use super::lc_bin_from;
+    use std::ffi::OsString;
+
+    #[test]
+    fn unset_finds_spira_lc_on_path_and_an_explicit_value_wins() {
+        let t = testkit::TempDir::new("qw-lcbin");
+        let d = t.path().to_path_buf();
+        std::fs::write(d.join("spira-lc"), "").unwrap();
+        let path = OsString::from(format!("/nonexistent:{}", d.display()));
+        assert_eq!(lc_bin_from(None, &path), Some(d.join("spira-lc")));
+        assert_eq!(lc_bin_from(Some("".into()), &path), Some(d.join("spira-lc")));
+        assert_eq!(lc_bin_from(Some("/x/lc".into()), &path).unwrap().to_str(), Some("/x/lc"));
+        assert_eq!(lc_bin_from(None, &OsString::from("/nonexistent")), None);
     }
 }
