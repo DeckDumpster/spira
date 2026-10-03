@@ -698,7 +698,20 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
     }
     let deleted = handle_base_conflicts(env_, repo, &sorted, &merges, &base_sha, base_moved_at);
 
-    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let winners: Vec<(String, String)> =
+        sorted.iter().filter(|m| merges.get(&m.id) == Some(&MergeResult::Ok)).map(|m| (m.id.clone(), m.tip.clone())).collect();
+    let mut siblings = BTreeMap::new();
+    for m in &sorted {
+        if merges.get(&m.id) != Some(&MergeResult::Conflict) || deleted.contains_key(&m.id) {
+            continue;
+        }
+        let found = io::conflict_files(&wt, "HEAD", &m.tip).and_then(|f| io::sibling_conflict(repo, &base_sha, &f, &winners));
+        if let Some(found) = found {
+            siblings.insert(m.id.clone(), found);
+        }
+    }
+
+    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &siblings });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
     }
@@ -861,7 +874,7 @@ fn prepare_round(env_: &Env, repo: &Repo, pool: &[Member], ob: &io::OpenBatch) -
     for m in &sorted {
         merges.insert(m.id.clone(), io::merge_member(env_, &wt, &m.id, &m.tip));
     }
-    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &sequenced, siblings: &BTreeMap::new() });
     for sa in &combined.set_aside {
         println!("{}", batcher::core::evicted_event(sa).text);
     }
