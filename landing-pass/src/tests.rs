@@ -785,7 +785,7 @@ fn the_budget_cut_defers_the_rest_writes_the_cursor_and_escalates_at_the_thresho
     }
     let files = Files::new(&h.s.run);
     for _ in 0..4 {
-        files.bump_deferred("spira/sp-c");
+        files.bump_deferred("spira/sp-c", "spira", 1);
     }
     h.run();
     assert_eq!(h.tools.gate_calls.borrow().len(), 1);
@@ -1905,9 +1905,9 @@ fn a_budget_cut_waits_for_the_gates_in_flight_then_defers_the_rest() {
     }
     let files = Files::new(&h.s.run);
     for _ in 0..4 {
-        files.bump_deferred("spira/sp-d");
+        files.bump_deferred("spira/sp-d", "spira", 1);
     }
-    files.bump_deferred("spira/sp-a");
+    files.bump_deferred("spira/sp-a", "spira", 1);
     h.run();
     // a and b start together; a's completion leaves 2600s < 2700 — c is the cut; b is still
     // decided.
