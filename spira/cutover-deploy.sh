@@ -5,13 +5,11 @@
 # is CREATE USER IF NOT EXISTS, classify skips a bead that already has a row, and the config
 # flip is a plain set), so a retry after a partial failure picks up where it left off.
 #
-#   cutover-deploy.sh --repo NAME [--repo NAME]... [--remove-dropin PATH]... [--dry-run]
+#   cutover-deploy.sh --repo NAME [--repo NAME]... [--dry-run]
 #
 # --repo is repeatable and forwarded straight to `spira-lc classify`; this script never reads
 # the repository map itself (spira-config is the only reader/writer config-fence admits) —
-# the caller already has the repository list and passes it in. --remove-dropin names a
-# systemd drop-in that only held the legacy reconcile checks off until this flip; it is
-# deleted after the flip, since leaving it would keep a retired check silenced forever.
+# the caller already has the repository list and passes it in.
 #
 # DRAIN IS THE CALLER'S JOB, NOT THIS SCRIPT'S: whatever stopped spira-lc.socket and the
 # queue/sentinel/batch timers before calling this also resumes them afterwards — the same
@@ -37,11 +35,9 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 DRY_RUN=0
 REPOS=()
-DROPINS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY_RUN=1; shift ;;
-        --remove-dropin) DROPINS+=("${2:?--remove-dropin needs a path}"); shift 2 ;;
         --repo) REPOS+=("${2:?--repo needs a name}"); shift 2 ;;
         *) printf 'cutover-deploy: unknown argument %s\n' "$1" >&2; exit 2 ;;
     esac
@@ -105,18 +101,6 @@ if [ "$DRY_RUN" != 1 ]; then
     # spira-config invoked — never a direct write to the config document itself, which the
     # config-fence lint refuses (it is a multi-tenant store; spira-config is its only writer).
     spira_config_set SPIRA_LIFECYCLE_ENFORCE true || exit 1
-fi
-
-for d in "${DROPINS[@]}"; do
-    if [ "$DRY_RUN" = 1 ]; then
-        say "  would remove drop-in $d"
-    elif [ -e "$d" ]; then
-        rm -f "$d" || exit 1
-        say "removed drop-in $d"
-    fi
-done
-if [ "${#DROPINS[@]}" -gt 0 ] && [ "$DRY_RUN" != 1 ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl --user daemon-reload 2>/dev/null || true
 fi
 
 say "done — resume spira-lc.socket and the timers"
