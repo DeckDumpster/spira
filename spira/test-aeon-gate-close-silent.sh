@@ -128,8 +128,8 @@ case "${1:-}" in
         br="${2:-}"
         if [ "$code" = 0 ]; then
             tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)"
-            mkdir -p "$SPIRA_RUN/landstate"
-            printf 'CERTIFIED %s %s ' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/${br#spira/}"
+            mkdir -p "$SPIRA_RUN/lc-row"
+            printf 'CERTIFIED %s\n' "$tip" > "$SPIRA_RUN/lc-row/${br#spira/}"
             printf 'queue.sh submit: certified %s (stub)\n' "$br"
             exit 0
         else
@@ -145,6 +145,17 @@ esac
 STUB
 chmod +x "$SPIRA_HOME/queue.sh"
 ln -sf queue.sh "$SPIRA_HOME/queue"   # the queue binary replaced queue.sh; this stub stands in for both, by name
+# spira-lc stub: `show` answers the lifecycle row recorded in $SPIRA_RUN/lc-row/<id> ("<state> <tip>").
+cat > "$SPIRA_HOME/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    show) if [ -f "$SPIRA_RUN/lc-row/$2" ]; then read -r st tip < "$SPIRA_RUN/lc-row/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":"1"},"delivery":null}\n' "$2" "$st" "$tip"
+          else printf '{"bead":{"bead_id":"%s","state":"WORKING","version":"1"},"delivery":null}\n' "$2"; fi ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$SPIRA_HOME/spira-lc"
 # The aeon runs with the fixture home FIRST on PATH, so these stubs shadow the tree's tools.
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/spira-lint"; chmod +x "$SPIRA_HOME/spira-lint"
 
@@ -168,20 +179,6 @@ seed_closed() {
     printf '{"id":"%s","title":"t","status":"closed","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
         "$1" "$_lbl" | testdb_seed
 }
-
-# spira-lc stub: `show <id>` answers from the landstate record the shim writes (aeon reads
-# certification only through spira-lc); every other verb goes to the real binary.
-REAL_LC="$(command -v spira-lc 2>/dev/null)"; export REAL_LC
-cat > "$SPIRA_HOME/spira-lc" <<'STUB'
-#!/usr/bin/env bash
-if [ "${1:-}" = show ] && [ -f "$SPIRA_RUN/landstate/${2:-}" ]; then
-    read -r st tip _ < "$SPIRA_RUN/landstate/$2"
-    printf '{"bead":{"state":"%s","tip":"%s"}}\n' "$st" "$tip"
-    exit 0
-fi
-exec "$REAL_LC" "$@"
-STUB
-chmod +x "$SPIRA_HOME/spira-lc"
 
 # The shim commits work and closes the bead, simulating a session that did the work and
 # closed without ever running its own gate. sp-cert-nocommit closes with nothing committed
@@ -212,8 +209,8 @@ case "$BEAD_ID" in
 esac
 if [ "$BEAD_ID" = sp-cert-already ]; then
     tip="$(git rev-parse HEAD)"
-    mkdir -p "$SPIRA_RUN/landstate"
-    printf 'CERTIFIED %s %s ' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/$BEAD_ID"
+    mkdir -p "$SPIRA_RUN/lc-row"
+    printf 'CERTIFIED %s\n' "$tip" > "$SPIRA_RUN/lc-row/$BEAD_ID"
 fi
 if [ "$BEAD_ID" = sp-cert-super ]; then
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" supersede "$BEAD_ID" --with sp-cert-super-succ >/dev/null 2>&1
@@ -318,7 +315,7 @@ nowant "defer: queue.sh submit was never called — no blocking self-cert" "spir
     "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-ok 2>/dev/null)"
 nowant "defer: no landstate is written — certification is the landing pass's to run" "CERTIFIED $tip" \
-    "$(cat "$SPIRA_RUN/landstate/sp-cert-ok" 2>/dev/null)"
+    "$(cat "$SPIRA_RUN/lc-row/sp-cert-ok" 2>/dev/null)"
 
 # ======================================================================================
 echo
@@ -336,7 +333,7 @@ nowant "superseded: queue.sh submit was never called" "spira/sp-cert-super " \
     "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-super 2>/dev/null)"
 nowant "superseded: no landstate is written" "CERTIFIED $tip" \
-    "$(cat "$SPIRA_RUN/landstate/sp-cert-super" 2>/dev/null)"
+    "$(cat "$SPIRA_RUN/lc-row/sp-cert-super" 2>/dev/null)"
 
 # ======================================================================================
 echo

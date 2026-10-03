@@ -82,7 +82,20 @@ BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-eviction-race: aeon is not on PATH" >&2; exit 1; }
 
-# The shim commits, writes landstate=RED reason=ejected at the real (post-commit) tip, then
+# spira-lc stub: `show` answers the lifecycle row the shim recorded in $SPIRA_RUN/lc-row.
+cat > "$BIN/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    show) if [ -f "$SPIRA_RUN/lc-row/$2" ]; then read -r st rs tip < "$SPIRA_RUN/lc-row/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","reason":"%s","tip":"%s","version":"1"},"delivery":null}\n' "$2" "$st" "$rs" "$tip"
+          else printf '{"bead":{"bead_id":"%s","state":"WORKING","version":"1"},"delivery":null}\n' "$2"; fi ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$BIN/spira-lc"
+export PATH="$BIN:$PATH"
+
+# The shim commits, records a batch-ejected REWORK row at the real (post-commit) tip, then
 # closes — reproducing the original race: the eviction is recorded, then the in-flight aeon
 # closes the bead anyway.
 cat > "$BIN/claude" <<'SHIM'
@@ -92,7 +105,7 @@ id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
 printf 'my work\n' >> f
 git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
 tip="$(git rev-parse HEAD)"
-printf 'RED %s %s ejected\n' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/$id"
+mkdir -p "$SPIRA_RUN/lc-row"; printf 'REWORK batch-ejected %s\n' "$tip" > "$SPIRA_RUN/lc-row/$id"
 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
 exit 0
@@ -110,13 +123,11 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get(sys.argv[1]) or "")' "$2" 2>/dev/null; }
 notes() { bd -C "$SPIRA_DB" show "$1" 2>/dev/null | tr '\n' ' '; }
 
-mkdir -p "$SPIRA_RUN/landstate"
-
 testdb_reset; seed sp-er-1
 run_aeon
 is   "bead is open after eviction-race detection"     open "$(field sp-er-1 status)"
 is   "and the claim is released"                       ""   "$(field sp-er-1 assignee)"
-want "aeon log shows eviction-race reopen"             "REOPENED — closed with landstate=RED" "$(cat "$TMP/out")"
+want "aeon log shows eviction-race reopen"             "REOPENED — closed with lifecycle state=REWORK" "$(cat "$TMP/out")"
 want "and the reopen note names the cause"             "eviction-race" "$(notes sp-er-1)"
 
 tl_summary
