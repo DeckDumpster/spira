@@ -26,6 +26,7 @@ mod persistent;
 mod repo_config;
 mod rows;
 mod serve;
+mod slow;
 mod work;
 
 use db::Conn;
@@ -127,6 +128,7 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
 /// direct dispatch to this same function per request).
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
+    slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
     match args.first().map(|s| s.as_str()) {
         Some("show") => cmd_show(&args[1..], conn),
         Some("list") => cmd_list(&args[1..], conn),

@@ -125,6 +125,13 @@ impl Conn {
     /// caller inspects the JSON blocks it needs (e.g. the trailing SELECT) itself. Goes
     /// through the persistent session when this `Conn` has one; otherwise a fresh process.
     fn run_script(&self, script: &str) -> Result<String, ScriptFailure> {
+        let started = std::time::Instant::now();
+        let result = self.run_script_timed(script);
+        crate::slow::record(started.elapsed(), script);
+        result
+    }
+
+    fn run_script_timed(&self, script: &str) -> Result<String, ScriptFailure> {
         let Some(session) = &self.session else {
             return self.run_script_on(self.command(), script);
         };
