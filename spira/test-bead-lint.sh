@@ -197,6 +197,7 @@ blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depe
 
 file_under sp-lint-fil-inc
 wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"; cat "$TMP/file.err" | sed "s/^/# err: /"
+echo "# out=[$FILE_OUT] blocks=[$(blocks_of sp-lint-fil-inc)]"
 want   "the incident now blocks on the new remedy" "$(printf %s "$FILE_OUT" | tail -n1)" "$(blocks_of sp-lint-fil-inc)"
 
 file_under sp-lint-fil-work
