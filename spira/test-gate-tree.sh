@@ -10,13 +10,11 @@
 # tree and one lock, so they serialise exactly as before. The defect sp-64v0 (wrong-
 # branch verdicts from a shared tree) is impossible with per-branch trees.
 #
-# CONCURRENCY IS PROVEN BY START/END MARKERS, NOT ELAPSED WALL-CLOCK TIME. Each gate
-# command timestamps its own run window (ns resolution) to a shared events file; "ran
-# concurrently" and "serialised" are then read off whether those windows overlap, not off
-# a "faster/slower than N seconds" threshold. The prior version compared elapsed time
-# against GATE_SECS*2 and flipped under load from unrelated batches — a busy host slows
-# every run by the same amount and a threshold built for an idle host reads that as
-# "serialised" (law-a-test-that-flips-is-deleted; this suite replaces it, sp-78xpb/sp-fxvgo).
+# CONCURRENCY IS PROVEN BY A BARRIER, NOT BY TIMING. In the different-branch case each
+# gate command drops an arrival file and waits (bounded) for the other's; it records MET
+# only if both were present at once, so the verdict cannot depend on how slowly either
+# gate started. Same-branch serialisation is read off START/END windows, where a slow
+# start can only add gap, never overlap (law-a-test-that-flips-is-deleted).
 #
 # defect: sp-64v0, sp-d8h0r
 # tier: T2
@@ -74,6 +72,14 @@ GATE_SECS=1
 CMD="printf 'START %s %s\\n' \"\$SPIRA_GATE_BRANCH\" \"\$(date +%s%N)\" >> $EVENTS; sleep $GATE_SECS; printf 'END %s %s\\n' \"\$SPIRA_GATE_BRANCH\" \"\$(date +%s%N)\" >> $EVENTS; printf '%s %s\\n' \"\$SPIRA_GATE_BRANCH\" \"\$(ls f*.txt 2>/dev/null | head -1)\" >> $JUDGED; true"
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"
 
+# barrier_cmd <dir> <secs> — CMD preceded by an arrival-file rendezvous for two gates.
+# Records "<branch> MET|TIMEOUT" in $dir/result.
+barrier_cmd() {
+    printf '%s' "k=\$(printf %s \"\$SPIRA_GATE_BRANCH\" | tr / -); mkdir -p $1; : > $1/arrive.\$k; n=0; r=TIMEOUT; while [ \$n -lt $(( $2 * 20 )) ]; do [ \$(ls $1/arrive.* | wc -l) -ge 2 ] && { r=MET; break; }; sleep 0.05; n=\$((n+1)); done; printf '%s %s\\n' \"\$SPIRA_GATE_BRANCH\" \$r >> $1/result; $CMD"
+}
+BARDIR="$TMP/barrier"
+BARSECS=30
+
 rungate() {              # rungate <branch> [VAR=VAL ...]
     local br="$1"; shift
     env -i SPIRA_RELEASE="$SPIRA_RELEASE" HOME="$HOMEDIR" PATH="$SH:$TOOLS:/usr/bin:/bin" \
@@ -82,16 +88,6 @@ rungate() {              # rungate <branch> [VAR=VAL ...]
         SPIRA_DB="$TMP/nonexistent-db" SPIRA_REPO_MAP="$MAP" SPIRA_GATE_LOG="$GATELOG" \
         SPIRA_VERDICTS="$VDIR" SPIRA_VERDICT_TTL=0 \
         "$@" bash "$SH/gate.sh" "$br" repo
-}
-
-# marker_start/marker_end <label> — ns timestamp gate_tree wrote for that run, from $EVENTS.
-marker_start() { awk -v l="$1" '$1=="START" && $2==l {print $3; exit}' "$EVENTS"; }
-marker_end()   { awk -v l="$1" '$1=="END"   && $2==l {print $3; exit}' "$EVENTS"; }
-
-# overlaps <s1> <e1> <s2> <e2> — 0 iff both windows are present and intersect.
-overlaps() {
-    [ -n "$1" ] && [ -n "$2" ] && [ -n "$3" ] && [ -n "$4" ] \
-        && [ "$1" -lt "$4" ] && [ "$3" -lt "$2" ]
 }
 
 # label_self_overlaps <label> <events-file> — 0 (true) iff two START/END windows recorded
@@ -114,6 +110,7 @@ T1_KEY="$(gate_tree_key "spira/sp-t1")"
 # each have their own tree and lock, so they run concurrently without crossing each
 # other's content, and their command windows actually overlap.
 # --------------------------------------------------------------------------------------
+printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$(barrier_cmd "$BARDIR" "$BARSECS")" > "$MAP"
 ( rungate "spira/sp-t1" > "$TMP/g1.out" 2>&1; echo $? > "$TMP/g1.rc" ) &
 ( rungate "spira/sp-t2" > "$TMP/g2.out" 2>&1; echo $? > "$TMP/g2.rc" ) &
 wait
@@ -122,13 +119,17 @@ rc1="$(cat "$TMP/g1.rc" 2>/dev/null)"; rc2="$(cat "$TMP/g2.rc" 2>/dev/null)"
 is  "gate 1 reached a verdict" 0 "$rc1"
 is  "gate 2 reached a verdict" 0 "$rc2"
 
-s1="$(marker_start "spira/sp-t1")"; e1="$(marker_end "spira/sp-t1")"
-s2="$(marker_start "spira/sp-t2")"; e2="$(marker_end "spira/sp-t2")"
-if overlaps "$s1" "$e1" "$s2" "$e2"; then
-    ok "different-branch gates ran concurrently (their command windows overlapped)"
-else
-    bad "different-branch gates ran concurrently" "g1=[$s1,$e1] g2=[$s2,$e2] did not overlap"
-fi
+met="$(grep -c ' MET$' "$BARDIR/result" 2>/dev/null)"
+is "different-branch gates both held the barrier at once" 2 "${met:-0}"
+
+# POSITIVE CONTROL: the same barrier, run one gate at a time, must report TIMEOUT.
+SBAR="$TMP/serial-barrier"
+printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$(barrier_cmd "$SBAR" 1)" > "$MAP"
+rungate "spira/sp-t1" > "$TMP/s1.out" 2>&1
+rungate "spira/sp-t2" > "$TMP/s2.out" 2>&1
+is "the barrier reports TIMEOUT when gates run serially" "spira/sp-t1 TIMEOUT
+spira/sp-t2 TIMEOUT" "$(cat "$SBAR/result" 2>/dev/null)"
+printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$CMD" > "$MAP"
 
 # CORRECTNESS: each gate judged its own branch's tree, never the other's.
 crossed="$(awk '{ split($1, a, "sp-t"); if ($2 != "f" a[2] ".txt") print }' "$JUDGED")"
