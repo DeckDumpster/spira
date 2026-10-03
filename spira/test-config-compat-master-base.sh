@@ -118,10 +118,21 @@ B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
 printf 'CERTIFIED %s %s\n' "$B_TIP" "$(date +%s)" > "$B_LANDSTATE/sp-mbase"
 
+mkdir -p "$B_SH/lc-bin"
+cat > "$B_SH/lc-bin/spira-lc" <<'LCEOF'
+#!/usr/bin/env bash
+case "${1:-}" in
+    list) printf '[]\n' ;;
+    show) printf '{"bead":{}}\n' ;;
+esac
+exit 0
+LCEOF
+chmod +x "$B_SH/lc-bin/spira-lc"
+
 out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
     SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH:$PATH" \
+    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH/lc-bin:$B_SH:$PATH" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
