@@ -40,6 +40,8 @@ fn main() -> ExitCode {
     // The timer fires this binary once per tick with plain `run`. `--worker` marks a copy
     // this same binary spawned to fill a second slot — it never spawns further copies, so
     // one tick fans out to at most N processes total, never a recursive storm.
+    // Certification is speculative work: its gates yield scratch room to a landing round.
+    std::env::set_var("SPIRA_GATE_CLASS", "certify");
     let spawned = args.get(2).map(String::as_str) == Some("--worker");
     let Some(home) = std::env::var_os("SPIRA_HOME").filter(|v| !v.is_empty()).map(PathBuf::from) else {
         eprintln!("gate-worker: SPIRA_HOME is unset");

@@ -455,7 +455,7 @@ impl World for Fake {
     fn release_target(&self, tree: &Path, keep_release: bool) {
         self.released.borrow_mut().push((tree.to_path_buf(), keep_release));
     }
-    fn reserve_scratch(&self, _: &Path, _: &str, _: &str, _: &crate::target::Limits) -> Result<Box<dyn std::any::Any>, String> {
+    fn reserve_scratch(&self, _: &Path, _: &str, _: &str, _: &crate::target::Limits, _: &str, _: u64) -> Result<Box<dyn std::any::Any>, String> {
         match self.reserve_err.borrow().clone() {
             Some(e) => Err(e),
             None => Ok(Box::new(())),

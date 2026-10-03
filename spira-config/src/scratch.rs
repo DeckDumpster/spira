@@ -6,6 +6,11 @@
 //! long as the holder lives: a crashed holder's lock dies with it, and its file is then
 //! garbage that the next reserver removes. Reservations are counted whole (never reduced by
 //! what the holder has already written), which over-counts and so errs toward refusing.
+//!
+//! Classes of service: a `Landing` reserver that finds no room posts a want marker (`w-…`,
+//! flocked like a reservation) and polls; a `Certify` reserver refuses while any live want
+//! marker exists. In-flight work is never preempted — certification drains, then the round
+//! is admitted. `Slot` (a testenv slot inside a gate that already holds its tree) never yields.
 
 use std::fs;
 use std::io::Write;
@@ -62,6 +67,87 @@ pub fn reserved_mib(dir: &Path) -> u64 {
         sum += fs::read_to_string(e.path()).ok().and_then(|s| s.trim().parse::<u64>().ok()).unwrap_or(0);
     }
     sum
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Class {
+    Landing,
+    Certify,
+    Slot,
+}
+
+impl Class {
+    /// Anything not named certification keeps its priority: an unmarked caller is a round.
+    pub fn parse(s: &str) -> Class {
+        if s.trim() == "certify" { Class::Certify } else { Class::Landing }
+    }
+}
+
+/// True when a live landing reserver is waiting for room; removes the markers of dead ones.
+pub fn landing_waiting(dir: &Path) -> bool {
+    let Ok(rd) = fs::read_dir(dir) else { return false };
+    let mut live = false;
+    for e in rd.flatten() {
+        if !e.file_name().to_string_lossy().starts_with("w-") {
+            continue;
+        }
+        let Ok(f) = fs::OpenOptions::new().read(true).open(e.path()) else { continue };
+        if try_flock(&f) {
+            let _ = fs::remove_file(e.path());
+        } else {
+            live = true;
+        }
+    }
+    live
+}
+
+fn post_want(dir: &Path) -> Option<Guard> {
+    let nanos = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let path = dir.join(format!("w-{}-{nanos}", std::process::id()));
+    let f = fs::OpenOptions::new().create_new(true).write(true).read(true).open(&path).ok()?;
+    if !try_flock(&f) {
+        let _ = fs::remove_file(&path);
+        return None;
+    }
+    Some(Guard { _file: f, path })
+}
+
+/// `reserve` by class. `Landing` waits up to `wait` for room, holding a want marker so
+/// certification stops starting new builds; `Certify` refuses while a marker is live.
+pub fn reserve_class(
+    dir: &Path,
+    owner: &str,
+    class: Class,
+    mib: u64,
+    floor_mib: u64,
+    wait: Duration,
+    free_mib: &dyn Fn() -> Option<u64>,
+) -> Result<Guard, String> {
+    match class {
+        Class::Slot => reserve(dir, owner, mib, floor_mib, free_mib),
+        Class::Certify => {
+            if landing_waiting(dir) {
+                return Err(format!("scratch: {owner} yields to a landing round waiting for room; certification resumes once it is admitted"));
+            }
+            reserve(dir, owner, mib, floor_mib, free_mib)
+        }
+        Class::Landing => {
+            let first = reserve(dir, owner, mib, floor_mib, free_mib);
+            if first.is_ok() || wait.is_zero() {
+                return first;
+            }
+            fs::create_dir_all(dir).map_err(|e| format!("scratch: cannot create {}: {e}", dir.display()))?;
+            let _want = post_want(dir);
+            let deadline = std::time::Instant::now() + wait;
+            loop {
+                match reserve(dir, owner, mib, floor_mib, free_mib) {
+                    Ok(g) => return Ok(g),
+                    Err(e) if std::time::Instant::now() >= deadline => return Err(e),
+                    Err(_) => std::thread::sleep(Duration::from_millis(500).min(wait)),
+                }
+            }
+        }
+    }
 }
 
 /// Reserve `mib` on the scratch filesystem for the life of the returned guard. Err (the
@@ -180,6 +266,47 @@ mod tests {
         drop(a);
         assert_eq!(reserved_mib(&d), 0);
         assert!(reserve(&d, "b", 600, 100, &free).is_ok());
+    }
+
+    #[test]
+    fn a_landing_round_is_admitted_once_certification_drains_and_holds_new_builds_off() {
+        let d = tmp("class");
+        let free = || Some(1000u64);
+        let cert = reserve_class(&d, "c1", Class::Certify, 600, 0, Duration::ZERO, &free).unwrap();
+        let dd = d.to_path_buf();
+        let h = std::thread::spawn(move || {
+            reserve_class(&dd, "round", Class::Landing, 600, 0, Duration::from_secs(20), &|| Some(1000u64)).map(|g| g)
+        });
+        let t = std::time::Instant::now();
+        while !landing_waiting(&d) {
+            assert!(t.elapsed() < Duration::from_secs(10), "the round never posted its want");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let c2 = reserve_class(&d, "c2", Class::Certify, 100, 0, Duration::ZERO, &free);
+        assert!(c2.is_err() && c2.as_ref().unwrap_err().contains("yields"), "{:?}", c2.as_ref().map(|_| ()));
+        assert!(reserve_class(&d, "slot", Class::Slot, 100, 0, Duration::ZERO, &free).is_ok(), "a slot never yields");
+        drop(cert);
+        let g = h.join().unwrap();
+        assert!(g.is_ok(), "{:?}", g.as_ref().map(|_| ()));
+        assert!(!landing_waiting(&d), "the want marker goes with the wait");
+        assert!(reserve_class(&d, "c3", Class::Certify, 100, 0, Duration::ZERO, &free).is_ok());
+    }
+
+    #[test]
+    fn a_landing_round_that_never_gets_room_refuses_after_its_wait() {
+        let d = tmp("giveup");
+        let free = || Some(1000u64);
+        let _a = reserve(&d, "a", 900, 0, &free).unwrap();
+        let r = reserve_class(&d, "round", Class::Landing, 600, 0, Duration::from_millis(300), &free);
+        assert!(r.is_err());
+        assert!(!landing_waiting(&d));
+    }
+
+    #[test]
+    fn only_the_word_certify_demotes() {
+        assert_eq!(Class::parse("certify"), Class::Certify);
+        assert_eq!(Class::parse(""), Class::Landing);
+        assert_eq!(Class::parse("round"), Class::Landing);
     }
 
     #[test]
