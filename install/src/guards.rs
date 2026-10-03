@@ -382,8 +382,8 @@ mod traverse_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    fn dir_with(mode: u32) -> tempdir_lite::Dir {
-        let d = tempdir_lite::Dir::new();
+    fn dir_with(mode: u32) -> testkit::TempDir {
+        let d = testkit::TempDir::new("trav");
         std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(mode)).unwrap();
         d
     }
@@ -395,26 +395,5 @@ mod traverse_tests {
         assert_eq!(untraversable_ancestor(&bin, None), Some(closed.path().to_path_buf()));
         let open = dir_with(0o755);
         assert_eq!(untraversable_ancestor(&open.path().join("bin/spira-lc"), None), None);
-    }
-
-    mod tempdir_lite {
-        use std::path::{Path, PathBuf};
-        pub struct Dir(PathBuf);
-        impl Dir {
-            pub fn new() -> Self {
-                let p = std::env::temp_dir().join(format!("trav-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
-                let _ = std::fs::remove_dir_all(&p);
-                std::fs::create_dir_all(&p).unwrap();
-                Dir(p)
-            }
-            pub fn path(&self) -> &Path {
-                &self.0
-            }
-        }
-        impl Drop for Dir {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
     }
 }
