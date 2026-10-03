@@ -33,6 +33,7 @@ struct Args {
     repos: Vec<String>,
     base_override: Option<String>,
     dry_run: bool,
+    reclassify: bool,
     /// The configured ask-hold label (`schema.sh name ask`) — read by the caller, which can
     /// reach the accessor, and handed in rather than hardcoded here (law-schema-over-code).
     /// `None` means no hold ever fires, rather than assuming either of schema.sh's two
@@ -63,6 +64,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
         repos: flag_all(args, "--repo"),
         base_override: flag(args, "--base"),
         dry_run: args.iter().any(|a| a == "--dry-run"),
+        reclassify: args.iter().any(|a| a == "--reclassify"),
         ask_label: flag(args, "--ask-label"),
     })
 }
@@ -85,6 +87,8 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
     let mut errors: Vec<String> = Vec::new();
     let mut contradictions: Vec<Value> = Vec::new();
     let mut batches_written = 0usize;
+    let mut reclassified: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut reclassify_refused = 0usize;
 
     for repo_name in &repo_names {
         let Some(section) = cfg.repos.get(repo_name) else {
@@ -106,6 +110,8 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
             }
         }
 
+        let landing_lines = git_evidence::landing_lines(repo_path, &base);
+
         let ids = match bd_facts::roster(&parsed.bd_bin, &parsed.bd_db, repo_name) {
             Ok(ids) => ids,
             Err(e) => {
@@ -115,17 +121,18 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         };
 
         for id in &ids {
-            match rows::fetch_bead(conn, id) {
+            let existing = match rows::fetch_bead(conn, id) {
+                Ok(Some(row)) if parsed.reclassify => Some(row),
                 Ok(Some(_)) => {
                     skipped += 1;
                     continue;
                 }
-                Ok(None) => {}
+                Ok(None) => None,
                 Err(e) => {
                     errors.push(format!("{id}: checking for an existing row: {e:?}"));
                     continue;
                 }
-            }
+            };
 
             let bd = match bd_facts::fetch(&parsed.bd_bin, &parsed.bd_db, id) {
                 Ok(b) => b,
@@ -161,9 +168,29 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
                 content_on_base,
                 batch_open_member: batch_members.contains(id),
                 branch_ahead,
+                landing_commit: landing_lines.get(id).cloned(),
             };
 
             let outcome = classify::classify(&facts);
+
+            if let Some(row) = existing {
+                if !correctable(&row, &outcome) {
+                    skipped += 1;
+                    continue;
+                }
+                let key = format!("{}->{} ({})", row.state.as_str(), outcome.state.as_str(), outcome.rule);
+                if !parsed.dry_run {
+                    let kind = lifecycle::bead::BeadEventKind::Reclassify { state: outcome.state, rule: outcome.rule.to_string() };
+                    let (code, msg) = crate::apply_bead_event(conn, id, "classifier", kind);
+                    if code != 0 {
+                        reclassify_refused += 1;
+                        errors.push(format!("{id}: reclassify refused: {msg}"));
+                        continue;
+                    }
+                }
+                *reclassified.entry(key).or_default() += 1;
+                continue;
+            }
 
             if !outcome.contradictions.is_empty() {
                 contradictions.push(json!({
@@ -189,11 +216,29 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         "classified": classified,
         "skipped_already_classified": skipped,
         "batches_written": batches_written,
+        "reclassified": reclassified,
+        "reclassify_refused": reclassify_refused,
         "contradictions": contradictions,
         "errors": errors,
     });
     let code = if errors.is_empty() { 0 } else { CANNOT_TELL };
     (code, serde_json::to_string_pretty(&report).unwrap())
+}
+
+/// A re-run corrects an existing row only by the rules that were missing when it was written,
+/// and only where the row is the classifier's own guess: the ledger files are no longer kept
+/// current, so recomputing every other rule would overwrite what the machine has since decided.
+fn correctable(row: &lifecycle::bead::BeadRow, outcome: &classify::Classification) -> bool {
+    use lifecycle::bead::BeadState::*;
+    if !matches!(outcome.rule, "terminal-landing-line" | "closed-branch-never-landed") {
+        return false;
+    }
+    match row.state {
+        Working | InDelivery => false,
+        Landed | Superseded | Done => false,
+        Dropped => row.reason.as_deref() == Some(lifecycle::bead::RESIDUE_RULE) && row.state != outcome.state,
+        Ready | Submitted | Certified | Rework => row.state != outcome.state,
+    }
 }
 
 fn git_output_exists(repo: &Path, rev: &str) -> bool {

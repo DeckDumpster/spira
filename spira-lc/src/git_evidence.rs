@@ -6,6 +6,7 @@
 //! form): a subject that never matched `"spira: land <id>"` or `"<id>:..."`, on work that
 //! was demonstrably on base by ancestry or by merge-tree content.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -55,6 +56,26 @@ pub fn content_on_base(repo: &Path, branch_or_tip: &str, base: &str) -> bool {
         return false;
     };
     merged_tree == base_tree.trim()
+}
+
+/// Every bead a commit on `base` lands by a `spira: land <id>` line in its message, mapped to
+/// the first such commit (the one nearest base's tip). One log walk for the whole repository,
+/// not one per bead. A batch landing names its members this way after their branches are gone.
+pub fn landing_lines(repo: &Path, base: &str) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(log) = git_output(repo, &["log", base, "--format=%x01%H%n%B"]) else { return out };
+    for chunk in log.split('\u{1}').skip(1) {
+        let mut lines = chunk.lines();
+        let Some(sha) = lines.next() else { continue };
+        for line in lines {
+            if let Some(rest) = line.strip_prefix("spira: land ") {
+                for id in rest.split(|c: char| c.is_whitespace() || c == ',').filter(|t| !t.is_empty()) {
+                    out.entry(id.to_string()).or_insert_with(|| sha.to_string());
+                }
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -133,5 +154,18 @@ mod tests {
         run(&repo.dir, &["checkout", "-q", "-b", "work"]);
         let tip = repo.commit("f.txt", "base\nplus new work\n", "real outstanding work");
         assert!(!content_on_base(&repo.dir, &tip, &base), "genuinely outstanding work must not be reported as landed");
+    }
+
+    #[test]
+    fn a_landing_line_in_a_batch_body_maps_each_named_bead_to_that_commit() {
+        let repo = ScratchRepo::new("landing-lines");
+        repo.commit("a.txt", "a\n", "unrelated: sp-zzz mentioned in a subject only");
+        let batch = repo.commit("b.txt", "b\n", "round-x: merge\n\nspira: land sp-one\nspira: land sp-two\nnot a spira: land sp-three line");
+        let lines = landing_lines(&repo.dir, "main");
+        assert_eq!(lines.get("sp-one"), Some(&batch));
+        assert_eq!(lines.get("sp-two"), Some(&batch));
+        assert_eq!(lines.get("sp-three"), None);
+        assert_eq!(lines.get("sp-zzz"), None);
+        assert!(landing_lines(&repo.dir, "no-such-ref").is_empty());
     }
 }

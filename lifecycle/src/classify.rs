@@ -117,6 +117,9 @@ pub struct BeadFacts {
     /// whose branch has since been reset or deleted (design §2.1: READY's own legal shapes
     /// include a stale RED/EJECTED ledger with nothing left to rework).
     pub branch_ahead: bool,
+    /// A commit on base whose message carries a `spira: land <id>` line naming this bead —
+    /// a batch landing, whose branch is gone. Found by the caller from base's own log.
+    pub landing_commit: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,6 +169,14 @@ pub fn classify(f: &BeadFacts) -> Classification {
         return finish(f, BeadState::Landed, None, None, "terminal-content-on-base", holds);
     }
 
+    if f.landing_commit.is_some() {
+        return finish(f, BeadState::Landed, None, None, "terminal-landing-line", holds);
+    }
+
+    if f.bd_status == BdStatus::Closed && f.branch_ahead && closed_unlanded_ledger(f.landstate.as_ref()) && !f.batch_open_member {
+        return finish(f, BeadState::Dropped, None, None, "closed-branch-never-landed", holds);
+    }
+
     if f.batch_open_member {
         return finish(f, BeadState::InDelivery, Some(DeliveryState::Batched), None, "batch-membership", holds);
     }
@@ -193,6 +204,23 @@ pub fn classify(f: &BeadFacts) -> Classification {
         BdStatus::InProgress => finish(f, BeadState::Ready, None, None, "holder-dead-ghost-reclaim", holds),
         BdStatus::Open => finish(f, BeadState::Ready, None, None, "open-status", holds),
     }
+}
+
+/// Ledger states a closed bead can sit in with nothing in flight toward base: a closed bead
+/// there was closed without landing. CERTIFIED, BATCHED and pr-open are still moving.
+fn closed_unlanded_ledger(ls: Option<&LandState>) -> bool {
+    matches!(
+        ls,
+        Some(
+            LandState::Gating
+                | LandState::Gated
+                | LandState::RebasedSwept
+                | LandState::RebasedRecutSwept
+                | LandState::Withdrawn
+                | LandState::Red
+                | LandState::Ejected
+        )
+    )
 }
 
 fn finish(
@@ -223,6 +251,9 @@ fn finish(
     }
     if f.labels.contains("content-landed") {
         signals.push(("content-landed-label", BeadState::Landed));
+    }
+    if f.landing_commit.is_some() {
+        signals.push(("landing-line-on-base", BeadState::Landed));
     }
     if f.batch_open_member {
         signals.push(("open-batch-membership", BeadState::InDelivery));
@@ -275,7 +306,7 @@ fn finish(
     // The closed/no-evidence residue rule never observed a genuine terminal fact — it is a
     // default, not a conclusion, and design §4 says exactly this gets corrected by an
     // explicit operator event after review.
-    if rule == "residue-closed-no-landing-evidence" {
+    if rule == crate::bead::RESIDUE_RULE {
         contradictions.push(
             "closed with no supersede, drop, landed-ancestry or content-on-base evidence at all — \
              DROPPED is a default for operator review, not a conclusion"
@@ -309,6 +340,7 @@ mod tests {
             content_on_base: false,
             batch_open_member: false,
             branch_ahead: false,
+            landing_commit: None,
         }
     }
 
@@ -428,6 +460,58 @@ mod tests {
         assert_eq!(c.state, BeadState::Dropped);
         assert_eq!(c.rule, "residue-closed-no-landing-evidence");
         assert_eq!(c.contradictions.len(), 1);
+    }
+
+    #[test]
+    fn a_landing_line_on_base_lands_a_closed_bead_whose_branch_is_gone() {
+        let mut f = base_facts();
+        f.bd_status = BdStatus::Closed;
+        f.landing_commit = Some("444bd3f3c".into());
+        let c = classify(&f);
+        assert_eq!(c.state, BeadState::Landed);
+        assert_eq!(c.rule, "terminal-landing-line");
+        assert!(c.contradictions.is_empty(), "{:?}", c.contradictions);
+    }
+
+    #[test]
+    fn a_landing_line_outranks_an_open_batch_and_the_ledger() {
+        let mut f = base_facts();
+        f.landstate = Some(LandState::Gated);
+        f.batch_open_member = true;
+        f.landing_commit = Some("abc".into());
+        assert_eq!(classify(&f).rule, "terminal-landing-line");
+    }
+
+    #[test]
+    fn a_closed_bead_whose_branch_never_landed_is_dropped_not_submitted() {
+        for ls in [LandState::Gating, LandState::Gated, LandState::RebasedSwept, LandState::Red] {
+            let mut f = base_facts();
+            f.bd_status = BdStatus::Closed;
+            f.landstate = Some(ls.clone());
+            f.branch_ahead = true;
+            let c = classify(&f);
+            assert_eq!(c.state, BeadState::Dropped, "{ls:?}");
+            assert_eq!(c.rule, "closed-branch-never-landed");
+        }
+    }
+
+    #[test]
+    fn a_closed_bead_still_moving_toward_base_is_not_dropped() {
+        for ls in [LandState::Certified, LandState::Batched] {
+            let mut f = base_facts();
+            f.bd_status = BdStatus::Closed;
+            f.landstate = Some(ls.clone());
+            f.branch_ahead = true;
+            assert_ne!(classify(&f).state, BeadState::Dropped, "{ls:?}");
+        }
+    }
+
+    #[test]
+    fn an_open_bead_with_an_unlanded_branch_keeps_its_ledger_state() {
+        let mut f = base_facts();
+        f.landstate = Some(LandState::Gated);
+        f.branch_ahead = true;
+        assert_eq!(classify(&f).state, BeadState::Submitted);
     }
 
     #[test]
