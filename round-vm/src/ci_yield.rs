@@ -40,6 +40,26 @@ pub fn decide(vms: &[VmInfo], waited_secs: u64) -> Yield {
     }
 }
 
+/// Block while CI provisions, polling `list` every `poll` via `sleep`,
+/// for at most MAX_WAIT_SECS. Returns seconds waited. A listing error
+/// proceeds (never block the sweep on a broken probe).
+pub fn wait_for_ci(
+    list: &dyn Fn() -> Result<Vec<VmInfo>, String>,
+    sleep: &dyn Fn(u64),
+    poll_secs: u64,
+) -> u64 {
+    let mut waited = 0;
+    loop {
+        match list() {
+            Ok(v) if decide(&v, waited) == Yield::Hold => {
+                sleep(poll_secs);
+                waited += poll_secs;
+            }
+            _ => return waited,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +85,17 @@ mod tests {
     #[test]
     fn bounded_wait() {
         assert_eq!(decide(&[vm("ci-1", "stopped", Some("clone"), false)], 600), Yield::Proceed);
+    }
+    #[test]
+    fn wait_is_bounded_and_returns_when_clear() {
+        let hold = || Ok(vec![vm("ci-1", "stopped", Some("clone"), false)]);
+        assert_eq!(wait_for_ci(&hold, &|_| {}, 60), 600);
+        let n = std::cell::Cell::new(0);
+        let l = || {
+            n.set(n.get() + 1);
+            Ok(if n.get() < 3 { vec![vm("ci-1", "running", None, false)] } else { vec![] })
+        };
+        assert_eq!(wait_for_ci(&l, &|_| {}, 30), 60);
+        assert_eq!(wait_for_ci(&|| Err("x".into()), &|_| {}, 30), 0);
     }
 }
