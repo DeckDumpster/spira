@@ -535,8 +535,16 @@ echo "orphan reaping — watchd exec outside any spira-watch unit is a target; t
 mkdir -p "$FAKEPROC/10004"
 printf '%s\0exec\0answers\0' "$CLONE/bin/watchd" > "$FAKEPROC/10004/cmdline"
 printf '0::/user.slice/user-1000.slice/user@1000.service/\n' > "$FAKEPROC/10004/cgroup"
+for v in notify health-view manifest; do
+    mkdir -p "$FAKEPROC/1100$v"
+    printf '%s\0%s\0' "$CLONE/bin/watchd" "$v" > "$FAKEPROC/1100$v/cmdline"
+    printf '0::/user.slice/user-1000.slice/user@1000.service/app.slice/spira-notify-prod.service\n' > "$FAKEPROC/1100$v/cgroup"
+done
 runreap
 has "watchd exec outside any spira-watch unit IS a reap target" "$(reap_acted)" "10004"
+for v in notify health-view manifest; do
+    hasnt "watchd $v outside any spira-watch unit is NOT a reap target" "$(reap_acted)" "1100$v"
+done
 
 echo
 echo "the entry point, run as systemd runs it"
