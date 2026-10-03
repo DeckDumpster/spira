@@ -14,5 +14,4 @@
 # A quarantine ends at its `until=<UTC>` (appended to the bead column), else SPIRA_QUARANTINE_MAX_AGE after since.
 test-poison.sh | quarantined | 2026-09-28T12:35:54Z | sp-ytbma | times out under corpus load (366-474 s against the 600 s cap; timed out in rounds 105 and 106); quarantined until sp-ytbma makes it fast
 test-watch-refresh.sh | quarantined | 2026-10-03T16:54:49Z | sp-kph00 until=2026-10-10T00:00:00Z | flips green/red on the same commit (rounds aw, az; round 275 sweeps); quarantined until sp-kph00 fixes the flake
-test-install-unit-ensure.sh | quarantined | 2026-10-03T16:54:49Z | sp-wbbkm until=2026-10-10T00:00:00Z | flipped green/red on 4e26b287d (round 275 sweep 16:24Z); quarantined pending a flake bead
 test-install-dolt-refuse-stop.sh | quarantined | 2026-10-03T16:54:49Z | sp-vyeol until=2026-10-10T00:00:00Z | flips green/red on the same commit; quarantined until sp-vyeol fixes the flake
