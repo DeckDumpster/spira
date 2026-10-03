@@ -724,9 +724,7 @@ Line numbers against this branch's base (4764d03ec).
    - :3 and :126 comment/echo: `unpoison.sh` → `spira-claim unpoison`.
 6. **spira/lib.sh:3264** comment ("a caller right after unpoison.sh") — deleted with
    `_attempts_sql_query` by §5 item 2.
-7. **sentinel/DESIGN.md (concierge/rw-sentinel) §2.2 row `CHECK5: …` and cutover row 18** —
-   both become moot (nothing parses `CHECK5:` any more); drop them when that branch lands.
-8. **Operator guidance** (not in this repository):
+7. **Operator guidance** (not in this repository):
    - `~/.claude/projects/-home-ryan-spira-brain/memory/feedback_unpoison_tool.md` — every
      `spira/unpoison.sh --bead <id> --cause "<evidence>" [--watch]` →
      `spira-claim unpoison --bead <id> --cause "<evidence>" [--watch]`; "If it prints FAIL"
@@ -735,9 +733,9 @@ Line numbers against this branch's base (4764d03ec).
      unpoison".
    - brain wiki pages that mention unpoison.sh are dated records (notes, log) and stay as
      written.
-9. **spira/chamber/groomer.md:184-187** — unchanged: it invokes `groomer.sh unpoison`,
+8. **spira/chamber/groomer.md:184-187** — unchanged: it invokes `groomer.sh unpoison`,
    whose interface does not change.
-10. Build/install: `spira-claim` is already on the workspace and §5 item 15's artifact list.
+9. Build/install: `spira-claim` is already on the workspace and §5 item 15's artifact list.
 
 ### 8.7 The switch: `lifecycle_enforce` (operator decision, 2026-09-28)
 
