@@ -539,7 +539,16 @@ fn cmd_repo_containment_check() -> ExitCode {
     let map_text = env::var("SPIRA_REPO_MAP")
         .ok()
         .filter(|p| !p.is_empty())
-        .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)));
+        .and_then(|p| spira_config::containment::read_repo_map(Path::new(&p)))
+        .or_else(|| {
+            let doc = spira_config::locate::locate(None).found().and_then(|p| spira_config::load(&p).ok())?;
+            Some(
+                spira_config::repos::rows_from_toml(&doc)
+                    .iter()
+                    .map(|r| format!("{} | {} | {} | {} | {} | {} | {}\n", r.name, r.path, r.land, r.base, r.format, r.gate, r.lanes))
+                    .collect::<String>(),
+            )
+        });
     match spira_config::containment::check(&instance, &workspaces, map_text.as_deref()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(violations) => {
