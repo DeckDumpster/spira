@@ -214,6 +214,7 @@ else
     AGO5="$(date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
             || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"
 
+    lc_fix_init "$TMP/lcfix"
     testdb_reset
     testdb_seed <<JSONL2
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["$SCOPE"],"updated_at":"$PAST"}
@@ -227,7 +228,7 @@ JSONL2
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
         SPIRA_REPO="$ALPHA" SPIRA_HOME_REPO=alpha SPIRA_SCOPE_LABEL="$SCOPE" \
         SPIRA_RUN="$RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD_PATH:-$REAL_BD}" \
-        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t \
+        SPIRA_REPO_MAP="$MAP" SPIRA_FAYTHS=t SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_PATH="$BD_PATH" SPIRA_CERT_WINDOW_MINS=90 \
         cockpit-collect once 2>/dev/null)"
 
