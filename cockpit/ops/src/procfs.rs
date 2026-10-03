@@ -119,7 +119,7 @@ mod tests {
         // Counted from a private subtree: this test process shares its pid with concurrent
         // tests that spawn children, so it cannot be the root.
         let mut child = std::process::Command::new("sh")
-            .args(["-c", "sleep 30 & wait"])
+            .args(["-c", "sleep 3 & wait"])
             .spawn()
             .unwrap();
         let root = child.id() as i32;
@@ -131,9 +131,6 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        let _ = std::process::Command::new("pkill")
-            .args(["-P", &root.to_string()])
-            .status();
         let _ = child.kill();
         let _ = child.wait();
         assert_eq!(n, 1, "root itself must not be counted, only the sleep");
