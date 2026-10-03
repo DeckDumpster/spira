@@ -138,6 +138,7 @@ version = "0.1.0"
 dependencies = [
  "regex",
  "serde_json",
+ "sha2",
  "spira-config",
  "strand",
  "testkit",

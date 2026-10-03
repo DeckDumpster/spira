@@ -4,10 +4,10 @@
 
 use std::collections::HashMap;
 use std::env;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
     lane_check, lint_judge, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
@@ -248,39 +248,6 @@ fn schema_name(home: &str, key: &str) -> String {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default()
-}
-
-/// `aeon_alive <pidfile>`: the one canonical implementation (`strand::probe::aeon_alive`,
-/// wave 4.23 sp-0ffox — "collapsing the bead/cockpit-collect copies") rather than this
-/// crate's own duplicate of the same /proc check.
-fn aeon_alive(pidfile: &str) -> bool {
-    strand::probe::aeon_alive(Path::new(pidfile))
-}
-
-fn mail_send(aeon_id: &str, body: &str) {
-    // mail, by name on the launcher's PATH (sp-gypjk) — never a constructed
-    // "$SPIRA_HOME/mail.sh" path: mail.sh is a compat symlink now (sp-ooh1k), not the
-    // tool, and "never construct a path to a Spira tool" is the rule this was breaking.
-    let mut child = match Command::new("mail")
-        .arg("send")
-        .arg(aeon_id)
-        .arg("--from")
-        .arg("amend <amend@spira>")
-        .arg("--subject")
-        .arg("Update while you work")
-        .env("SPIRA_MAIL_LINT_CONSIDERED", "1")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(body.as_bytes());
-    }
-    let _ = child.wait();
 }
 
 // =========================================================================================
@@ -588,6 +555,8 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
         argv.push(id.clone());
         argv.push("--body-file".into());
         argv.push(bf.clone());
+        argv.push(bead::claimdesc::FORCE_FLAG.into());
+        argv.push("bead.sh amend".into());
         rc |= bdq_status(home, &argv);
         if !changed.is_empty() {
             changed.push_str("\n\n");
@@ -597,40 +566,6 @@ fn cmd_amend(home: &str, args: &[String]) -> i32 {
 
     notify_live_aeon(&id, &changed);
     rc
-}
-
-/// The aeon-mail notify tail of `amend`: the first `$SPIRA_RUN/aeon-*-<id>.pid` that names a
-/// live aeon, provided its mailbox still exists (the aeon may have already exited between
-/// the glob and the check — `break`, not `continue`, on a missing mailbox, matching the bash).
-fn notify_live_aeon(id: &str, changed: &str) {
-    let run = match env::var("SPIRA_RUN") {
-        Ok(r) if !r.is_empty() => r,
-        _ => return,
-    };
-    let entries = match std::fs::read_dir(&run) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    let suffix = format!("-{id}.pid");
-    let mut candidates: Vec<String> = entries
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.file_name().into_string().ok())
-        .filter(|n| n.starts_with("aeon-") && n.ends_with(&suffix))
-        .collect();
-    candidates.sort();
-    for name in candidates {
-        let pidfile = format!("{run}/{name}");
-        if !aeon_alive(&pidfile) {
-            continue;
-        }
-        let mail = env::var("SPIRA_MAIL").unwrap_or_default();
-        let mailbox_new = format!("{mail}/aeon-{id}/new");
-        if !Path::new(&mailbox_new).is_dir() {
-            break;
-        }
-        mail_send(&format!("aeon-{id}"), changed);
-        break;
-    }
 }
 
 // =========================================================================================
@@ -932,37 +867,4 @@ fn cmd_dep_add(home: &str, args: &[String]) -> i32 {
     }
     call.extend(rest);
     bdq_status(home, &call)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::aeon_alive;
-    use std::io::Write;
-
-    #[test]
-    fn aeon_alive_false_on_missing_pidfile() {
-        assert!(!aeon_alive("/nonexistent/pidfile"));
-    }
-
-    #[test]
-    fn aeon_alive_false_on_dead_pid() {
-        let dir = testkit::TempDir::new("bead-aeon-alive");
-        let pf = dir.join("x.pid");
-        // pid 1 might be real (init) but its cmdline will never match "aeon"; use a pid
-        // that (almost certainly) does not exist instead, to exercise the /proc check.
-        std::fs::write(&pf, "999999999\n").unwrap();
-        assert!(!aeon_alive(pf.to_str().unwrap()));
-    }
-
-    #[test]
-    fn aeon_alive_true_on_self_if_argv0_matches() {
-        // This process's own cmdline is the test binary, not "aeon" — negative check that
-        // a live, unrelated process is correctly NOT reported as an aeon.
-        let dir = testkit::TempDir::new("bead-aeon-alive-self");
-        let pf = dir.join("self.pid");
-        let mut f = std::fs::File::create(&pf).unwrap();
-        write!(f, "{}", std::process::id()).unwrap();
-        drop(f);
-        assert!(!aeon_alive(pf.to_str().unwrap()));
-    }
 }

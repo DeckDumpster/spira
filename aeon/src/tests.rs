@@ -23,6 +23,8 @@ struct World {
     /// Beads whose row carries a `supersedes` dependency (the aeon recorded a successor).
     supersedes: BTreeSet<String>,
     states: BTreeMap<String, String>,
+    descriptions: BTreeMap<String, String>,
+    metadata: BTreeMap<String, BTreeMap<String, String>>,
     notes: Vec<(String, String)>,
     ready: Vec<String>,
     seam_calls: Vec<(String, Vec<String>)>,
@@ -58,6 +60,8 @@ fn row_json(w: &World, id: &str) -> String {
         "status": w.status.get(id).cloned().unwrap_or_else(|| "open".into()),
         "labels": labels,
         "issue_type": w.issue_type.get(id).cloned().unwrap_or_else(|| "task".into()),
+        "description": w.descriptions.get(id).cloned().unwrap_or_default(),
+        "metadata": w.metadata.get(id).cloned().unwrap_or_default(),
         "dependencies": if w.supersedes.contains(id) {
             serde_json::json!([{"depends_on_id": "sp-successor", "dependency_type": "supersedes"}])
         } else {
@@ -91,6 +95,11 @@ impl Bd for FakeBd {
                 w.claim_taken.insert(id.to_string());
                 w.status.insert(id.to_string(), "in_progress".into());
                 Out::ok(format!("warning: noise\n{}", row_json(&w, id)))
+            }
+            ["update", id, "--set-metadata", kv] => {
+                let (k, v) = kv.split_once('=').unwrap();
+                w.metadata.entry(id.to_string()).or_default().insert(k.to_string(), v.to_string());
+                Out::ok("")
             }
             ["show", id, "--json"] => Out::ok(row_json(&w, id)),
             ["show", id] => Out::ok(format!("{id} · the title\n💡 tip\nNOTES\nsome note\nLABELS: spira\n")),
@@ -1068,6 +1077,42 @@ fn the_verdict_reopens_a_close_behind_a_rebase_conflict_as_a_free_requeue() {
     let w = o.w.lock().unwrap();
     assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "rebase-conflict"));
     assert!(w.notes.iter().any(|(_, n)| n.starts_with("Requeue 1 (rebase-conflict):")));
+}
+
+fn close_after_editing_description(stamp: bool) -> Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> {
+    Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-e — the work"]);
+        let mut w = w.lock().unwrap();
+        w.descriptions.insert("sp-e".into(), "edited while claimed".into());
+        if stamp {
+            let h = bead::claimdesc::desc_hash(&row_json(&w, "sp-e")).unwrap();
+            w.metadata.entry("sp-e".into()).or_default().insert(bead::claimdesc::HASH_KEY.into(), h);
+        }
+        w.status.insert("sp-e".into(), "closed".into());
+        0
+    })
+}
+
+#[test]
+fn a_description_edited_since_claim_reopens_the_close_as_a_free_requeue() {
+    let f = fx("descedit");
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), close_after_editing_description(false));
+    let l = ledger_lines(&o);
+    assert!(l[2].starts_with("done builder sp-e rc=0 status=requeue-desc-changed-since-claim"), "{l:?}\n{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.metadata["sp-e"].contains_key(bead::claimdesc::HASH_KEY), "the claim stamps its baseline");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "desc-changed-since-claim"));
+}
+
+#[test]
+fn an_acknowledged_description_edit_does_not_reopen_the_close() {
+    let f = fx("descack");
+    seed(&f, "sp-e");
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), close_after_editing_description(true));
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[1] == "desc-changed-since-claim"), "{}", o.log);
 }
 
 #[test]

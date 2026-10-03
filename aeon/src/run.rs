@@ -426,6 +426,12 @@ impl<'a> Run<'a> {
         self.ledger.awake(self.now(), self.f(), &c.id);
         self.sdo("spira_event", &s(&["aeon.claimed", &c.id, &format!("{} claimed {}", self.s.aeon, c.id), &format!("summoned from the {} fayth", self.f())]));
 
+        // The baseline verdict compares the description against at close. A metadata write, so
+        // not a description edit as bdq's live-claim fence reads it.
+        if let Some(h) = bead::claimdesc::desc_hash(&bd::json(self.d.bd, &["show", &c.id])) {
+            let _ = self.d.bd.bd(&s(&["update", &c.id, "--set-metadata", &format!("{}={h}", bead::claimdesc::HASH_KEY)]));
+        }
+
         // Read-after-claim: the predicate and the claim are not atomic.
         if bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label("spira-poison")) {
             self.release();
