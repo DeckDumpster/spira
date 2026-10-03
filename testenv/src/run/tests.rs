@@ -1786,13 +1786,19 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     let w = World::new("linked-wt");
     let linked = w.root.join("deadbeef");
     sh(&w.repo, &format!("git worktree add -q {} topic", linked.display()));
-    let cfg_path = w.root.join("spira.toml");
-    fs::write(
-        &cfg_path,
-        format!("[repo.mapped]\npath = \"{}\"\nmode = \"queue.local\"\nbase = \"main\"\n", w.repo.display()),
-    )
-    .unwrap();
-    let cfg = spira_config::load(&cfg_path).unwrap();
+    let mut cfg = super::RunConfig::default();
+    cfg.repo.insert(
+        "mapped".into(),
+        spira_config::RepoSection {
+            path: w.repo.display().to_string(),
+            mode: spira_config::LandMode::Queue,
+            base: Some("main".into()),
+            format: None,
+            lanes: vec![],
+            forge: None,
+            gate_mode: None,
+        },
+    );
     let rt = runtime();
     let b = FakeBuilder::new(None);
     let env = |_: &str| None;
