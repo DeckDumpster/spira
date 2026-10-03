@@ -471,6 +471,16 @@ echo ok"#,
         assert_eq!(n, 1);
     }
 
+    fn make_stub(body: &str) -> (testkit::TempDir, PathBuf) {
+        let dir = scratch_path("stub");
+        let path = dir.join("spira-lc");
+        fs::write(&path, format!("#!/usr/bin/env bash\n{body}\n")).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+        fs::set_permissions(&path, perms).unwrap();
+        (dir, path)
+    }
+
     fn env_with_lc(bin: PathBuf) -> Env {
         Env { queue_dir: PathBuf::new(), db: None, bd: "bd".into(), express_label: "express".into(), lc_bin: Some(bin), lc_timeout: 5 }
     }
@@ -480,21 +490,19 @@ echo ok"#,
     // surface an error rather than silently reporting zero certified beads.
     #[test]
     fn read_certified_errors_on_unparseable_output() {
-        let stub = make_stub("echo not-json");
+        let (_dir, stub) = make_stub("echo not-json");
         let err = read_certified(&env_with_lc(stub.clone())).unwrap_err();
         assert!(err.contains("unparsed output"), "{err}");
-        let _ = fs::remove_file(&stub);
     }
 
     #[test]
     fn read_certified_calls_spira_lc_list_state_certified() {
-        let stub = make_stub(
+        let (_dir, stub) = make_stub(
             r#"[ "$1" = list ] && [ "$2" = --state ] && [ "$3" = CERTIFIED ] || { echo "unexpected args: $*" >&2; exit 2; }
 echo '[{"bead_id":"sp-b","state":"CERTIFIED"},{"bead_id":"sp-a","state":"CERTIFIED"}]'"#,
         );
         let out = read_certified(&env_with_lc(stub.clone())).unwrap();
         assert_eq!(out, vec!["sp-a".to_string(), "sp-b".to_string()]);
-        let _ = fs::remove_file(&stub);
     }
 
     #[test]
