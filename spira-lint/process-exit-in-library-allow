@@ -1,0 +1,28 @@
+# process-exit-in-library: files still allowed a process::exit outside fn main, one repo-relative
+# path per line. Blank lines and `#` comments are ignored.
+#
+# SHRINK-ONLY. A line leaves when its file returns a Result to main instead; nothing is
+# ever added for a NEW exit.
+aeon/src/main.rs
+archivist/src/main.rs
+beads-store/src/main.rs
+census/src/main.rs
+cockpit-collect/src/io.rs
+cockpit/ops/src/health_main.rs
+czar-pass/src/main.rs
+doctor/src/real.rs
+gate-run/src/main.rs
+groomer/src/main.rs
+landing-pass/src/signals.rs
+loom/src/lib.rs
+mail/src/env.rs
+reconciler-alert/src/main.rs
+reconciler/src/main.rs
+round-vm/src/cli.rs
+sop/src/main.rs
+spira-ctrl/src/main.rs
+spira-world/src/bin/aeons.rs
+spira-world/src/bin/slay.rs
+spira-world/src/bin/world.rs
+watchd/src/main.rs
+watchtower/src/main.rs

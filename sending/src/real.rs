@@ -17,6 +17,7 @@ use crate::seam::{self, Op};
 
 pub struct Real {
     home: PathBuf,
+    run: PathBuf,
     status: String,
     settings: BTreeMap<String, String>,
     pub submitted_label: String,
@@ -42,7 +43,7 @@ impl Real {
     /// they are handed a repo PATH directly, as the retired bash functions were, and must
     /// not be made to depend on the repo-name registry resolving at all.
     pub fn new(home: PathBuf, status: Option<String>) -> Result<(Real, Vec<Repo>), String> {
-        let mut r = Real::minimal(home, status);
+        let mut r = Real::minimal(home, run_dir()?, status);
         let a = r.seam(Op::Context, &[]);
         if a.rc != 0 {
             return Err(format!("the lib.sh context seam exited {}", a.rc));
@@ -74,9 +75,10 @@ impl Real {
 
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
     /// the Base/Bead seams (each self-contained) and never the repository registry.
-    pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
+    pub fn minimal(home: PathBuf, run: PathBuf, status: Option<String>) -> Real {
         Real {
             home,
+            run,
             status: status.unwrap_or_default(),
             settings: BTreeMap::new(),
             submitted_label: String::new(),
@@ -104,14 +106,14 @@ impl Real {
     /// `SPIRA_RUN`, through [`run_dir`] — not through the context seam, so this works
     /// whether or not that seam ran.
     pub fn run(&self) -> PathBuf {
-        run_dir()
+        self.run.clone()
     }
 
     /// `${SPIRA_REAPLOG:-$SPIRA_RUN/reap.log}` — the chokepoint's own log, as a real path
     /// (distinct from the `World::reaplog` trait method, which is display text for a "see
     /// …" message and keeps its existing placeholder default unchanged).
     pub fn reaplog_path(&self) -> PathBuf {
-        reaplog_path()
+        reaplog_path_in(&self.run)
     }
 
     /// `bdq label remove <id> <label>`, needed by
@@ -348,7 +350,7 @@ mod tests {
         std::fs::write(repo.join("f"), "x").unwrap();
         run_git(&repo, &["add", "f"]);
         run_git(&repo, &["commit", "-q", "-m", "x"]);
-        let r = Real::minimal(dir.path().to_path_buf(), None);
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
         let base = r.base(&repo).expect("a repo with no remote resolves through rung 4");
         assert_eq!(base.landref, "trunk");
         assert_eq!(base.landrefs, vec!["trunk".to_string()]);
@@ -358,29 +360,23 @@ mod tests {
     #[test]
     fn base_is_none_for_a_path_that_is_not_a_git_checkout() {
         let dir = testkit::TempDir::new("sending-real-base-not-a-repo");
-        let r = Real::minimal(dir.path().to_path_buf(), None);
+        let r = Real::minimal(dir.path().to_path_buf(), dir.join("run"), None);
         assert_eq!(r.base(dir.path()), None);
     }
 }
 
 /// `SPIRA_RUN`, a registered config key (spira/conf.d) — the one source of config, through
-/// `spira_config::process::cfg`; the process refuses, named, when it cannot resolve. An
-/// empty run directory would put the reap log at the filesystem root.
-pub fn run_dir() -> PathBuf {
-    match spira_config::process::cfg("SPIRA_RUN") {
-        Ok(v) => PathBuf::from(v),
-        Err(e) => {
-            eprintln!("sending: {e}");
-            std::process::exit(1)
-        }
-    }
+/// `spira_config::process::cfg`; an error, named, when it cannot resolve. An empty run
+/// directory would put the reap log at the filesystem root.
+pub fn run_dir() -> Result<PathBuf, String> {
+    spira_config::process::cfg("SPIRA_RUN").map(PathBuf::from).map_err(|e| e.to_string())
 }
 
-/// `$SPIRA_REAPLOG`, else `reap.log` under [`run_dir`].
-pub fn reaplog_path() -> PathBuf {
+/// `$SPIRA_REAPLOG`, else `reap.log` under `run`.
+pub fn reaplog_path_in(run: &Path) -> PathBuf {
     match std::env::var("SPIRA_REAPLOG") {
         Ok(rl) if !rl.is_empty() => PathBuf::from(rl),
-        _ => run_dir().join(REAPLOG_NAME),
+        _ => run.join(REAPLOG_NAME),
     }
 }
 

@@ -19,6 +19,7 @@ pub mod gate_workflow;
 pub mod hash_iter_output;
 pub mod payload_argv;
 pub mod plan_lint;
+pub mod process_exit_in_library;
 pub mod plan_matrix;
 pub mod release_spawn_env;
 pub mod script_callers;
