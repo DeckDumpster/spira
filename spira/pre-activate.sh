@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# pre-activate.sh <release-dir> — five checks a release must pass before
+# pre-activate.sh <release-dir> — six checks a release must pass before
 # releases/current moves onto it. `release verify` runs this against the
 # release it checks (a landing, skew refresh in release mode and rollback-local
 # all verify before `release activate`), before the symlink flips. Exit 0 only if every check passes; on any failure, print each failed
@@ -15,6 +15,8 @@
 #              PATH (deps' version_min already pins which bd that is)
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
+#   lifecycle  every pending lifecycle/migrations/*.sql is applied, as the database
+#              admin, before the release can go live against the schema it reads
 set -uo pipefail
 
 REL="${1:?usage: pre-activate.sh <release-dir>}"
@@ -183,10 +185,29 @@ check_self_test() {
     fi
 }
 
+# --- lifecycle: pending schema migrations, applied before the flip; failure refuses it ---
+check_lifecycle() {
+    local lc="$REL/bin/spira-lc" mig="$REL/lifecycle/migrations"
+    if [ ! -x "$lc" ] || [ ! -d "$mig" ]; then
+        ok "lifecycle (release carries no spira-lc or migrations)"
+        return
+    fi
+    local out rc
+    out="$(env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="${SPIRA_LC_ADMIN_USER:-root}" \
+        SPIRA_LC_PASSWORD="${SPIRA_LC_ADMIN_PASSWORD:-}" "$lc" admin-migrate --if-enforced "$mig" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        ok "lifecycle ($(printf '%s' "$out" | tail -1))"
+    else
+        fail lifecycle "$out"
+    fi
+}
+
 check_deps
 check_config
 check_store
 check_units
 check_self_test
+check_lifecycle
 
 exit "$FAIL"

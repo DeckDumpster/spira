@@ -207,6 +207,29 @@ want "one bad of five: names the failure"     "FAIL self-test" "$out"
 want "one bad of five: the other four still ok" "ok   deps" "$out"
 want "one bad of five: units unaffected"        "ok   units" "$out"
 
+# ── lifecycle: pending migrations apply before the flip; a failing one refuses it ────
+# The stub spira-lc records its argv and the admin identity pre-activate hands it.
+REL="$TMP/rel-lc-ok"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
+cat > "$REL/bin/spira-lc" <<EOF2
+#!/usr/bin/env bash
+echo "\$SPIRA_LC_USER \$*" > "$TMP/lc-argv"
+echo "admin-migrate: applied 0003-x.sql"
+exit 0
+EOF2
+chmod +x "$REL/bin/spira-lc"
+run "$REL"
+is   "lifecycle: migrations applied: exit 0" 0 "$rc"
+want "lifecycle: reports the check" "ok   lifecycle" "$out"
+want "lifecycle: runs admin-migrate against the release's own migrations, gated on enforce" "admin-migrate --if-enforced $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
+want "lifecycle: as the admin, not the service user" "root admin-migrate" "$(cat "$TMP/lc-argv")"
+
+REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
+printf '#!/usr/bin/env bash\necho "admin-migrate: 0003-x.sql FAILED" >&2\nexit 2\n' > "$REL/bin/spira-lc"
+chmod +x "$REL/bin/spira-lc"
+run "$REL"
+is   "lifecycle: failing migration refuses the release" 1 "$rc"
+want "lifecycle: names the failure" "FAIL lifecycle: admin-migrate: 0003-x.sql FAILED" "$out"
+
 # ── self-test.sh itself: MANIFEST integrity, not just an exit-code stub ──────────────
 REL="$TMP/rel-manifest-ok"
 mkdir -p "$REL/bin"

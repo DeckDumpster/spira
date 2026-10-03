@@ -13,7 +13,7 @@ const TIMEOUT: Duration = Duration::from_secs(10);
 /// socket configured, nothing listening, or a malformed reply are all treated the same way,
 /// because same-user fallback exists precisely to keep working when the service is absent.
 pub fn try_socket(args: &[String]) -> Option<(i32, String)> {
-    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl")) {
+    if matches!(args.first().map(|s| s.as_str()), Some("serve") | Some("admin-apply-ddl") | Some("admin-migrate")) {
         return None;
     }
     let socket_path = std::env::var("SPIRA_LC_SOCKET").unwrap_or_else(|_| "/run/spira-lc/sock".to_string());
