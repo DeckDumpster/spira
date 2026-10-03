@@ -753,7 +753,7 @@ fn cut_new_round_inner(env_: &Env, repo: &Repo, pool: &[Member], reason: &Trigge
         return finish_local_round(env_, repo, &wt, &base_sha, round_start, &stable);
     }
     let batch_head = io::head_of(&wt)?;
-    open_round_pr(env_, repo, &stable.members, &batch_head, &base_sha, round_start, stable.attribution_seconds, stable.regreen_seconds)
+    open_round_pr(env_, repo, &stable.members, &batch_head, round_start, stable.attribution_seconds, stable.regreen_seconds)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -762,7 +762,6 @@ fn open_round_pr(
     repo: &Repo,
     merged: &[Member],
     batch_head: &str,
-    base_sha: &str,
     round_start: u64,
     attribution_seconds: Option<u64>,
     regreen_seconds: Option<u64>,
@@ -900,7 +899,7 @@ fn open_prepared(env_: &Env, repo: &Repo, pool: &[Member]) -> Result<bool, Strin
         return Ok(false);
     }
     let merged: Vec<Member> = p.members.iter().filter_map(|(id, _)| current.get(id.as_str()).map(|m| (*m).clone())).collect();
-    open_round_pr(env_, repo, &merged, &p.head, &base_sha, now() - p.seconds, None, None)?;
+    open_round_pr(env_, repo, &merged, &p.head, now() - p.seconds, None, None)?;
     Ok(true)
 }
 

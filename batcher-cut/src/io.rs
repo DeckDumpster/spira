@@ -1612,11 +1612,9 @@ mod land_tests {
         String::from_utf8_lossy(&o.stdout).trim().to_string()
     }
 
-    fn fixture(tag: &str) -> (PathBuf, PathBuf, Repo) {
-        let root = std::env::temp_dir().join(format!("confirm-base-{tag}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
+    fn fixture(tag: &str) -> (testkit::TempDir, PathBuf, Repo) {
+        let root = testkit::TempDir::new(&format!("confirm-base-{tag}"));
         let (remote, work, other) = (root.join("remote.git"), root.join("work"), root.join("other"));
-        fs::create_dir_all(&root).unwrap();
         git(&root, &["init", "-q", "--bare", "-b", "main", remote.to_str().unwrap()]);
         git(&root, &["clone", "-q", remote.to_str().unwrap(), work.to_str().unwrap()]);
         git(&work, &["commit", "-q", "--allow-empty", "-m", "base"]);
@@ -1630,19 +1628,18 @@ mod land_tests {
     // fetch the stale origin/main would still be an ancestor and the PR would open.
     #[test]
     fn confirm_base_refuses_when_the_remote_base_moved() {
-        let (root, other, r) = fixture("moved");
+        let (_root, other, r) = fixture("moved");
         let head = git(&r.path, &["rev-parse", "HEAD"]);
         git(&other, &["commit", "-q", "--allow-empty", "-m", "landed meanwhile"]);
         git(&other, &["push", "-q", "origin", "HEAD:main"]);
         let err = confirm_base(&r, &head).unwrap_err();
         assert!(err.contains("does not descend"), "{err}");
-        let _ = fs::remove_dir_all(root);
     }
 
     // POSITIVE CONTROL: an unmoved base passes, and returns the fetched value.
     #[test]
     fn confirm_base_returns_the_fetched_base_when_head_descends() {
-        let (root, other, r) = fixture("fresh");
+        let (_root, other, r) = fixture("fresh");
         git(&other, &["commit", "-q", "--allow-empty", "-m", "landed before the round"]);
         git(&other, &["push", "-q", "origin", "HEAD:main"]);
         git(&r.path, &["pull", "-q", "origin", "main"]);
@@ -1650,7 +1647,6 @@ mod land_tests {
         let head = git(&r.path, &["rev-parse", "HEAD"]);
         let want = git(&other, &["rev-parse", "HEAD"]);
         assert_eq!(confirm_base(&r, &head).unwrap(), want);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
