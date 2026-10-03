@@ -32,6 +32,7 @@ path = "src/reply_main.rs"
 regex = "1"
 libc = "0.2"
 spira-config = { path = "../../spira-config" }
+bead = { path = "../../bead" }
 
 [dev-dependencies]
 testkit = { path = "../../testkit" }

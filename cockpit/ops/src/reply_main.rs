@@ -6,7 +6,7 @@ use std::path::Path;
 use std::process::{ExitCode, Stdio};
 
 use cockpit_ops::db;
-use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Outcome, USAGE};
+use cockpit_ops::reply::{run, usage_error, BdResult, Commenter, Follow, Outcome, USAGE};
 
 struct RealBd;
 
@@ -44,6 +44,26 @@ impl Commenter for RealBd {
     }
 }
 
+struct RealFollow;
+
+impl Follow for RealFollow {
+    fn lift_hold(&self, id: &str, message_id: &str) -> Result<(), String> {
+        let out = Command::new("spira-lc")
+            .args(["reply", id, message_id, "claude"])
+            .output()
+            .map_err(|e| format!("failed to run spira-lc: {e}"))?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    }
+
+    fn deliver(&self, id: &str, text: &str) {
+        bead::claimdesc::notify_live_aeon(id, text);
+    }
+}
+
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
     let id = args.next().unwrap_or_default();
@@ -70,7 +90,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match run(&id, &text, &cockpit_db, &RealBd) {
+    match run(&id, &text, &cockpit_db, &RealBd, &RealFollow) {
         Outcome::Replied(s) => {
             println!("{s}");
             ExitCode::SUCCESS

@@ -236,6 +236,7 @@ dependencies = [
 name = "cockpit-ops"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "libc",
  "regex",
  "spira-config",
