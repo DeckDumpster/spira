@@ -221,9 +221,9 @@ impl LcRoConn {
             .parse()
             .map_err(|e| format!("SPIRA_LC_PORT: {e}"))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc_ro".to_string());
-        let password = match std::env::var("SPIRA_LC_PASSWORD_FILE") {
-            Ok(path) => std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string(),
-            Err(_) => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
+        let password = match std::env::var("SPIRA_LC_PASSWORD_FILE").ok().filter(|p| !p.is_empty()) {
+            Some(path) => std::fs::read_to_string(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string(),
+            None => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
         };
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
         let data_dir = std::env::var("SPIRA_LC_DATA_DIR").unwrap_or_else(|_| "/tmp".to_string());

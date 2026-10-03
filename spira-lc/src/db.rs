@@ -64,13 +64,8 @@ impl Conn {
             .parse()
             .map_err(|e| DbError::CannotTell(format!("SPIRA_LC_PORT: {e}")))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc".to_string());
-        let password = match std::env::var("SPIRA_LC_PASSWORD_FILE") {
-            Ok(path) => std::fs::read_to_string(&path)
-                .map_err(|e| DbError::CannotTell(format!("reading {path}: {e}")))?
-                .trim()
-                .to_string(),
-            Err(_) => std::env::var("SPIRA_LC_PASSWORD").unwrap_or_default(),
-        };
+        let password = password_from(std::env::var("SPIRA_LC_PASSWORD_FILE").ok(), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
+            .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
         // dolt's remote client mode still resolves a local data-dir for bookkeeping even
         // when --host/--port point elsewhere; an unset or vanished cwd makes it fail with
@@ -477,4 +472,42 @@ fn parse_all_json_rows(text: &str) -> Vec<Vec<serde_json::Value>> {
         .flatten()
         .filter_map(|v| v.get("rows").and_then(|r| r.as_array()).cloned())
         .collect()
+}
+
+/// The password a connection uses: the file named by SPIRA_LC_PASSWORD_FILE when that is set
+/// AND non-empty, else SPIRA_LC_PASSWORD. conf.sh exports SPIRA_LC_PASSWORD_FILE empty when no
+/// credential file exists (sp-9c2o5), and reading a file named "" must not shadow the password.
+pub(crate) fn password_from(
+    file: Option<String>,
+    password: Option<String>,
+    read: impl Fn(&str) -> std::io::Result<String>,
+) -> Result<String, String> {
+    match file.filter(|p| !p.is_empty()) {
+        Some(path) => Ok(read(&path).map_err(|e| format!("reading {path}: {e}"))?.trim().to_string()),
+        None => Ok(password.unwrap_or_default()),
+    }
+}
+
+#[cfg(test)]
+mod password_tests {
+    use super::password_from;
+
+    fn no_read(_: &str) -> std::io::Result<String> {
+        Err(std::io::Error::new(std::io::ErrorKind::NotFound, "read must not be called"))
+    }
+
+    #[test]
+    fn an_empty_password_file_falls_back_to_the_password() {
+        assert_eq!(password_from(Some(String::new()), Some("pw".into()), no_read), Ok("pw".into()));
+    }
+
+    #[test]
+    fn a_named_password_file_wins_and_is_trimmed() {
+        assert_eq!(password_from(Some("/c".into()), Some("pw".into()), |_| Ok("secret\n".into())), Ok("secret".into()));
+    }
+
+    #[test]
+    fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
+        assert!(password_from(Some("/missing".into()), None, no_read).is_err());
+    }
 }
