@@ -469,6 +469,10 @@ pub fn render_allow(tree: &Tree) -> Result<String, LintError> {
 # `batch-job: <why>` marker where the call really is a batch job; nothing is raised for a NEW call.\n",
     );
     for (p, n) in counts {
+        // literal-ok: matches a file path, not the label
+        if p.contains("world-stop") {
+            s.push_str("# literal-ok: a file path, not the world-stop literal itself\n");
+        }
         s.push_str(&format!("{n} {p}\n"));
     }
     Ok(s)

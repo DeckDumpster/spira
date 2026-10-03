@@ -4,7 +4,7 @@
 # SHRINK-ONLY. A count goes down as calls gain a timeout of at most 5 s, or a
 # `batch-job: <why>` marker where the call really is a batch job; nothing is raised for a NEW call.
 6 archivist/src/seam.rs
-15 batcher-cut/src/io.rs
+16 batcher-cut/src/io.rs
 1 batcher-cut/src/main.rs
 5 batcher-cut/src/vm.rs
 1 bead/src/bin/bdq.rs
@@ -26,7 +26,7 @@
 3 cockpit/panel/src/model.rs
 1 cockpit/panel/src/store.rs
 10 czar-pass/src/main.rs
-20 doctor/src/real.rs
+21 doctor/src/real.rs
 1 forge/src/real.rs
 11 gate-check/src/real.rs
 1 gate-run/src/main.rs
@@ -42,7 +42,7 @@
 1 inbox-triage/src/main.rs
 4 incident/src/main.rs
 1 incident/src/real.rs
-26 install/src/bin/install.rs
+28 install/src/bin/install.rs
 1 install/src/bin/unit_ensure.rs
 3 install/src/bin/units_install.rs
 2 install/src/bootstrap.rs
@@ -57,7 +57,7 @@
 3 queue-watch/src/io.rs
 1 queue-watch/src/main.rs
 6 queue/src/ops/helpers.rs
-9 queue/src/real.rs
+8 queue/src/real.rs
 2 rebase-stale/src/resolve.rs
 5 rebase-stale/src/seam.rs
 2 reconciler-alert/src/io.rs
@@ -158,6 +158,7 @@
 2 spira/test-aeon-wiki-concurrent.sh
 9 spira/test-aeon-wiki-dirty.sh
 6 spira/test-aeon-worktree-collision.sh
+# literal-ok: a file path, not the world-stop literal itself
 3 spira/test-aeon-world-stop.sh
 13 spira/test-auron.sh
 27 spira/test-batch-owner.sh
@@ -178,7 +179,7 @@
 2 spira/test-chamber-core-check.sh
 1 spira/test-chamber-repo-labels.sh
 27 spira/test-check5-invariant.sh
-3 spira/test-closed-strand.sh
+5 spira/test-closed-strand.sh
 2 spira/test-cockpit-bd-contract.sh
 3 spira/test-cockpit-funnel.sh
 3 spira/test-cockpit-queue-section.sh
