@@ -145,3 +145,15 @@ proptest! {
         prop_assert!(out.row.gate_key.is_none());
     }
 }
+
+proptest! {
+    #[test]
+    fn a_terminal_row_never_carries_a_holder_or_lease(kinds in steps()) {
+        for (_, after, _) in run(kinds) {
+            if after.state.is_terminal() {
+                prop_assert!(after.holder.is_none());
+                prop_assert!(after.lease_until.is_none());
+            }
+        }
+    }
+}
