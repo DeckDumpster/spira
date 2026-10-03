@@ -877,7 +877,7 @@ certify_pool_member() {
 certify_pool_member sp-poola1
 certify_pool_member sp-poola2
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$SPIRA_RUN/reconciler-state.json"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "pool-idle: DETECTED=no below the floor (2 < 3)" "CLASS=pool-idle DETECTED=no" "$_log"
 
@@ -887,7 +887,7 @@ certify_pool_member sp-poola3
 mkdir -p "$SPIRA_RUN/queue/poolrepo"
 printf 'branch=spira/queue/x\n' > "$SPIRA_RUN/queue/poolrepo/open"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG" "$SPIRA_RUN/reconciler-state.json"
-bash "$CZAR" --pass >/dev/null 2>&1
+"$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 want "pool-idle: DETECTED=no with a batch already open, at the floor" "CLASS=pool-idle DETECTED=no" "$_log"
 rm -f "$SPIRA_RUN/queue/poolrepo/open"
@@ -904,7 +904,7 @@ st = {'pool-idle:poolrepo': {'since': $_old_since34, 'remedy_attempted_at': None
 print(json.dumps(st))
 " > "$SPIRA_RUN/reconciler-state.json"
 rm -f "$SPIRA_RUN/czar.log" "$SPIRA_RUN/czar-pass.swept" "$INC_LOG"
-SPIRA_CZAR_STAGE_POOL_IDLE=act bash "$CZAR" --pass >/dev/null 2>&1
+SPIRA_CZAR_STAGE_POOL_IDLE=act "$CZAR" --pass >/dev/null 2>&1
 _log="$(cat "$SPIRA_RUN/czar.log" 2>/dev/null || true)"
 _inc_log="$(cat "$INC_LOG" 2>/dev/null || true)"
 want "pool-idle: DETECTED=yes once the streak outlasts the window" "CLASS=pool-idle DETECTED=yes" "$_log"
