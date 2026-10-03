@@ -1,0 +1,14 @@
+[Unit]
+Description=Lint the production SOP shelf hourly
+[Timer]
+OnBootSec=10min
+OnActiveSec=10min
+OnUnitActiveSec=1h
+AccuracySec=1min
+Persistent=true
+Unit=spira-sop-lint.service
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work
