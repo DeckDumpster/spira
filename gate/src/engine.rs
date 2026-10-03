@@ -1076,7 +1076,53 @@ impl<'w, W: World> Trial<'w, W> {
                 parse::tail_bytes(&base_out, 4000)));
         }
         let spaced = |v: &[String]| v.join(" ");
-        match parse::attribute(&out, base_ran, base_rc, &base_out, &absent) {
+        let attribution = parse::attribute(&out, base_ran, base_rc, &base_out, &absent);
+        if matches!(attribution, Attribution::BaseRed(_)) {
+            let reds = parse::red_suites(&base_out);
+            let timeouts = parse::timed_out_suites(&base_out);
+            let retryable = !reds.is_empty()
+                && reds.iter().all(|s| {
+                    !timeouts.contains(s) && w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}"))
+                });
+            if retryable {
+                let t = w.now();
+                let (_, o) = w.run_gate(
+                    &tree,
+                    &with_bins(
+                        env(
+                            &base_rev,
+                            "base trial — a base red must reproduce before it holds a branch",
+                            &Composition::Suites {
+                                why: "base-rerun".into(),
+                            },
+                        ),
+                        base_bdef,
+                        base_tools_ref,
+                    ),
+                    &timeout,
+                    &base_rerun_cmd(&reds),
+                );
+                self.s
+                    .phases
+                    .push(("base-retry".into(), w.now().saturating_sub(t)));
+                if w.signalled() {
+                    return v(
+                        NOVERDICT,
+                        "died",
+                        format!("gate: signalled during the base trial for {br}"),
+                    );
+                }
+                let ran = parse::ran_suites(&o);
+                let again = parse::red_suites(&o);
+                if reds.iter().all(|s| ran.contains(s) && !again.contains(s)) {
+                    self.s.suite = reds[0].clone();
+                    return v(NOVERDICT, "base-flake", format!(
+                        "gate: {name}'s base trial was red on {} but did not reproduce on a second run of {base} — a flake, not a base red.\ngate: no verdict for {br}; it is re-gated, not held.\n--- {base}'s first output ---\n{}\n--- the retry ---\n{o}",
+                        spaced(&reds), parse::tail_bytes(&base_out, 4000)));
+                }
+            }
+        }
+        match attribution {
             Attribution::BranchRed(s) => {
                 self.s.suite = s;
                 if base_ran && base_rc != 0 {

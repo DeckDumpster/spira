@@ -172,7 +172,7 @@ Reasons: PASS `syntax-only | cached | pass`; FAIL `syntax | beads-data | foreign
 branch-red`; BASE_FAIL `base-red`; NO_VERDICT `no-repo-map-file | no-repo-map | no-base |
 no-diff | conflict | merge-failed | missing-exclude | missing-skew | skew-init-fault |
 cmd-missing-file | admission-timeout | no-lockfile | lock-timeout | tree-unidentified |
-harness-fault | timeout | base-timeout | base-untestable | lib-unavailable | died |
+harness-fault | timeout | base-timeout | base-flake | base-untestable | lib-unavailable | died |
 reentry-unproven | fence-silent`, and
 `no-evidence:<reason>` when a FAIL carried no message (downgraded to NO_VERDICT).
 
