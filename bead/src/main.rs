@@ -10,7 +10,7 @@ use std::process::{Command, Stdio};
 use bead::claimdesc::notify_live_aeon;
 use bead::{
     branch_candidate, branch_label, chamber_partitions, incident_blocks_refusal, is_blocks_type,
-    awaits_dispatch, lane_check, lint_judge, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
+    awaits_dispatch, lane_check, lint_judge, parse_created_id, PARTITION_CHECK_TYPES, non_work_labels, parse_blocks_targets, parse_list_ids, parse_show_row,
     persona_line, repos_by_name, repos_section, work_labels, LaneCheck,
 };
 
@@ -123,6 +123,45 @@ fn bdq_capture(home: &str, args: &[String]) -> (i32, String) {
         ),
         Err(_) => (127, String::new()),
     }
+}
+
+/// `bdq_status` for a create: stdout is passed through unchanged, and when the new bead
+/// has an incident-labelled `parent`, that incident is wired to block on it in the same step
+/// (law-a-bug-with-a-fix-in-flight-depends-on-it). Failing to wire it fails the filing.
+fn bdq_create(home: &str, args: &[String], parent: Option<&str>) -> i32 {
+    let out = Command::new("bash")
+        .arg("-c")
+        .arg(BDQ_SCRIPT)
+        .arg("bdq")
+        .arg(home)
+        .args(args)
+        .envs(spira_config::release_env::child_path_env_for_process())
+        .stdout(Stdio::piped())
+        .output();
+    let out = match out {
+        Ok(o) => o,
+        Err(_) => return 127,
+    };
+    print!("{}", String::from_utf8_lossy(&out.stdout));
+    let code = out.status.code().unwrap_or(1);
+    let Some(parent) = parent else { return code };
+    if code != 0 {
+        return code;
+    }
+    let incident_label = env_default("SPIRA_ALARM_LABEL", "alarm");
+    let (_, pout) = bdq_capture(home, &s(&["show", parent, "--json"]));
+    if !parse_show_row(&pout).map(|r| r.labels.contains(&incident_label)).unwrap_or(false) {
+        return 0;
+    }
+    let Some(new_id) = parse_created_id(&String::from_utf8_lossy(&out.stdout)) else {
+        eprintln!("bead: file: created a remedy for incident {parent} but could not read its id; add the edge: bd dep add {parent} <id>");
+        return 1;
+    };
+    let rc = bdq_status(home, &s(&["dep", "add", parent, &new_id, "--type", "blocks"]));
+    if rc != 0 {
+        eprintln!("bead: file: {new_id} filed but the blocks edge {parent} -> {new_id} failed; add it: bd dep add {parent} {new_id}");
+    }
+    rc
 }
 
 fn s(strs: &[&str]) -> Vec<String> {
@@ -436,7 +475,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        bdq_create(home, &bd_args, parent.as_deref())
     } else {
         let scope_label = schema_name(home, "scope");
         let insight_label = if kind == "insight" {
@@ -484,7 +523,7 @@ fn cmd_file(home: &str, args: &[String]) -> i32 {
             bd_args.push(p.clone());
             bd_args.push("--no-inherit-labels".into());
         }
-        bdq_status(home, &bd_args)
+        bdq_create(home, &bd_args, parent.as_deref())
     }
 }
 
@@ -674,6 +713,10 @@ fn cmd_judge_create(home: &str, args: &[String]) -> i32 {
     0
 }
 
+fn is_closed(status: &str) -> bool {
+    status == "closed"
+}
+
 fn cmd_lint(home: &str, args: &[String]) -> i32 {
     let ids: Vec<String> = if args.is_empty() || args[0] == "--all" {
         let (_, out) = bdq_capture(home, &s(&["list", "--all", "--limit", "0", "--json"]));
@@ -803,6 +846,26 @@ fn cmd_lint(home: &str, args: &[String]) -> i32 {
         } else {
             false
         };
+        if row.labels.iter().any(|l| l == &incident_label) && !is_closed(&row.status) {
+            let (_, rel_out) =
+                bdq_capture(home, &s(&["dep", "list", id, "--type", "relates-to", "--json"]));
+            for oid in parse_blocks_targets(&rel_out) {
+                if blocks_targets.contains(&oid) {
+                    continue;
+                }
+                let (_, oout) = bdq_capture(home, &s(&["show", &oid, "--json"]));
+                let Some(orow) = parse_show_row(&oout) else { continue };
+                if is_closed(&orow.status) || orow.labels.iter().any(|l| l == &incident_label) {
+                    continue;
+                }
+                eprintln!(
+                    "bead: {id}: open remedy {oid} is linked relates-to only (an incident with a fix in flight must block on it; use bd dep add {id} {oid})"
+                );
+                bad += 1;
+                rc = 1;
+            }
+        }
+
         let (_, lines) = lint_judge(
             &labels_joined,
             awaits,
