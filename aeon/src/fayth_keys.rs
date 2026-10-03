@@ -8,8 +8,6 @@ use std::path::Path;
 /// Keys that are documentation, read by no program.
 pub const DOCUMENTARY: &[&str] = &["FAYTH_DESC"];
 
-const ACCESSOR: &str = "fayth_get()";
-
 const SOURCE_EXTS: &[&str] = &["rs", "sh", "py", "toml"];
 
 pub fn declared_keys(fayth_text: &str) -> BTreeSet<String> {
@@ -38,7 +36,7 @@ fn has_bareword(hay: &str, key: &str) -> bool {
     })
 }
 
-fn scan(dir: &Path, skip: &Path, pending: &mut BTreeSet<String>, judged: &mut bool) {
+fn scan(dir: &Path, skip: &Path, pending: &mut BTreeSet<String>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         if pending.is_empty() {
@@ -51,10 +49,9 @@ fn scan(dir: &Path, skip: &Path, pending: &mut BTreeSet<String>, judged: &mut bo
             if p == skip || n == "target" || n == ".git" {
                 continue;
             }
-            scan(&p, skip, pending, judged);
+            scan(&p, skip, pending);
         } else if ft.is_file() && p.extension().and_then(|x| x.to_str()).is_some_and(|x| SOURCE_EXTS.contains(&x)) {
             let Ok(text) = fs::read_to_string(&p) else { continue };
-            *judged |= text.contains(ACCESSOR);
             pending.retain(|k| !has_bareword(&text, k));
         }
     }
@@ -62,17 +59,19 @@ fn scan(dir: &Path, skip: &Path, pending: &mut BTreeSet<String>, judged: &mut bo
 
 /// Keys the fayth declares that no source file under `corpus_root` mentions as a bareword
 /// (`$FAYTH_X` and `fayth_get f FAYTH_X` both count), excluding `chamber`, where every key is
-/// declared and never consumed. None when no scanned file defines the accessor `fayth_get()`: a corpus
-/// that is not the harness (a fixture home) would call every key dead.
+/// declared and never consumed. None when `corpus_root` is not a source workspace (no Cargo.toml): a
+/// fixture home would call every key dead.
 pub fn unconsumed(fayth_text: &str, corpus_root: &Path, chamber: &Path) -> Option<Vec<String>> {
+    if !corpus_root.join("Cargo.toml").is_file() {
+        return None;
+    }
     let mut pending: BTreeSet<String> =
         declared_keys(fayth_text).into_iter().filter(|k| !DOCUMENTARY.contains(&k.as_str())).collect();
-    let mut judged = false;
-    scan(corpus_root, chamber, &mut pending, &mut judged);
-    judged.then(|| pending.into_iter().collect())
+    scan(corpus_root, chamber, &mut pending);
+    Some(pending.into_iter().collect())
 }
 
-/// The guard `main` runs right after locating the fayth. A home whose corpus does not define the accessor
+/// The guard `main` runs right after locating the fayth. A home whose parent is not a source workspace
 /// (a fixture home) has nothing to judge against and is let through.
 pub fn check(fayth_file: &Path, home: &Path) -> Result<(), String> {
     let text = fs::read_to_string(fayth_file).map_err(|e| format!("{}: {e}", fayth_file.display()))?;
@@ -91,6 +90,7 @@ mod tests {
     fn tree(tag: &str) -> testkit::TempDir {
         let d = testkit::TempDir::new(&format!("fayth-keys-{tag}"));
         fs::create_dir_all(d.join("spira/chamber")).unwrap();
+        fs::write(d.join("Cargo.toml"), "[workspace]\n").unwrap();
         d
     }
 
@@ -100,7 +100,7 @@ mod tests {
     fn dead_key_found_and_live_keys_pass() {
         let d = tree("fixture");
         fs::write(d.join("spira/chamber/x.fayth"), FAYTH).unwrap();
-        fs::write(d.join("spira/lib.sh"), "fayth_get() { :; }\necho \"$FAYTH_LIVE_VAR\"\nfayth_get \"$f\" FAYTH_LIVE_GET 0\nFAYTH_NAME_X=1\n").unwrap();
+        fs::write(d.join("spira/lib.sh"), "echo \"$FAYTH_LIVE_VAR\"\nfayth_get \"$f\" FAYTH_LIVE_GET 0\nFAYTH_NAME_X=1\n").unwrap();
         fs::write(d.join("spira/other.sh"), "FAYTH_DEAD_SUFFIX=1\nXFAYTH_DEAD=1\n").unwrap();
         let dead = unconsumed(FAYTH, &d, &d.join("spira/chamber")).unwrap();
         assert_eq!(dead, vec!["FAYTH_DEAD", "FAYTH_NAME"]);
@@ -109,14 +109,14 @@ mod tests {
     }
 
     #[test]
-    fn check_names_the_dead_key_and_passes_an_empty_corpus() {
+    fn check_names_the_dead_key_and_passes_a_non_workspace_corpus() {
         let d = tree("check");
         fs::write(d.join("spira/chamber/x.fayth"), "FAYTH_DEAD=1\n").unwrap();
         let home = d.join("spira");
-        fs::write(d.join("spira/lib.sh"), ". other\n").unwrap();
+        fs::remove_file(d.join("Cargo.toml")).unwrap();
         assert!(unconsumed("FAYTH_DEAD=1\n", &d, &home.join("chamber")).is_none());
         check(&home.join("chamber/x.fayth"), &home).unwrap();
-        fs::write(d.join("spira/lib.sh"), "fayth_get() { :; }\n").unwrap();
+        fs::write(d.join("Cargo.toml"), "").unwrap();
         let e = check(&home.join("chamber/x.fayth"), &home).unwrap_err();
         assert!(e.contains("FAYTH_DEAD"), "{e}");
     }
