@@ -2,8 +2,15 @@
 //! its own executable, and a failure to source it must be loud, never an empty shelf.
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
+
+// Both tests copy the sop binary and exec the copy. On parallel threads a fork in one
+// inherits the other's open write descriptor and exec fails with ETXTBSY, so the copy
+// and the exec happen under one lock.
+static EXEC: Mutex<()> = Mutex::new(());
 
 fn run_list(root: &Path, with_lib: bool) -> (String, String) {
+    let _g = EXEC.lock().unwrap_or_else(|e| e.into_inner());
     let bin_dir = root.join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
     let exe = bin_dir.join("sop");
