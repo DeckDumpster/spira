@@ -5,8 +5,10 @@
 #
 # Reads tabular SQL output (the `bd sql` result format: a leading/trailing separator
 # line, a header row, and pipe-delimited data rows) from stdin and prints one
-# "<distinct-beads> <detections> <class>" line per class, ranked by distinct-bead count
-# then detection count, both descending.
+# "<occurrences> <detections> <class> [<distinct-beads>]" line per class, ranked by
+# occurrence count then detection count, both descending. An occurrence is a burst of
+# events (the SQL's 5th column); a row without one counts each distinct bead as its own.
+# The distinct-bead count trails only when it differs from the occurrence count.
 #
 # Maps event_type + new_value (already folded by the SQL — see lib.sh's
 # _census_events_sql) to the class name used throughout the census pipeline:
@@ -24,6 +26,7 @@
 import sys, collections
 from classmap import class_for
 
+oc = collections.Counter()
 bc = collections.Counter()
 ec = collections.Counter()
 for line in sys.stdin:
@@ -35,7 +38,10 @@ for line in sys.stdin:
         parts = parts[1:]
     while parts and parts[-1] == '':
         parts = parts[:-1]
-    if len(parts) == 4:
+    n_occ = None
+    if len(parts) == 5:
+        event_type, new_value, n_beads, n_events, n_occ = parts
+    elif len(parts) == 4:
         event_type, new_value, n_beads, n_events = parts[0], parts[1], parts[2], parts[3]
     elif len(parts) == 3:
         event_type, new_value, n_beads = parts[0], parts[1], parts[2]
@@ -47,6 +53,7 @@ for line in sys.stdin:
     try:
         n_beads = int(n_beads)
         n_events = int(n_events)
+        n_occ = n_beads if n_occ is None else int(n_occ)
     except ValueError:
         continue
     if n_beads == 0:
@@ -54,8 +61,9 @@ for line in sys.stdin:
     cls = class_for(event_type, new_value)
     if cls is None:
         continue
+    oc[cls] += n_occ
     bc[cls] += n_beads
     ec[cls] += n_events
 
-for cls, nb in sorted(bc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
-    print(nb, ec[cls], cls)
+for cls, no in sorted(oc.items(), key=lambda x: (-x[1], -ec.get(x[0], 0))):
+    print(no, ec[cls], cls, *([bc[cls]] if bc[cls] != no else []))

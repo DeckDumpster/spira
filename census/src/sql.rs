@@ -58,8 +58,39 @@ pub fn events_sql(since_formatted: Option<&str>, causes: &[String]) -> String {
     let actor_filter = "(actor = 'harness' OR actor LIKE 'aeon-%')";
     let sc = since_clause(since_formatted);
 
+    let main_cond = format!(
+        "event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {desc_hash_fold} AND NOT {unjudged_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND {actor_filter}{sc}"
+    );
+    let unrecorded_cond = format!(
+        "event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc})"
+    );
+    let main = ranked_part("event_type, COALESCE(new_value, '')", "event_type, new_value", &main_cond, "event_type, new_value", "");
+    let folded = [
+        ("'reopen', 'rebase-conflict'", format!("((event_type = 'reopen' AND new_value = 'rebase-conflict') OR {conflict_fold} OR {rebase_aeon_fold}) AND {actor_filter}{sc}")),
+        ("'reopen', 'eviction-race'", format!("{eviction_fold} AND {actor_filter}{sc}")),
+        ("'reopen', 'prod-dirty'", format!("{prod_dirty_fold} AND {actor_filter}{sc}")),
+        ("'reopen', 'unfinished-reason'", format!("{unfinished_fold} AND {actor_filter}{sc}")),
+        ("'reopen', 'desc-changed-since-claim'", format!("{desc_hash_fold} AND {actor_filter}{sc}")),
+        ("'reopened', 'unrecorded'", unrecorded_cond),
+    ];
+    let mut out = main;
+    for (label, cond) in &folded {
+        out.push_str(" UNION ALL ");
+        out.push_str(&ranked_part(label, "", cond, "", " HAVING COUNT(DISTINCT issue_id) > 0"));
+    }
+    out.push_str(" ORDER BY 3 DESC");
+    out
+}
+
+/// Events of one class closer together than this are one occurrence: a fleet-wide action
+/// touching many beads at once is one failure, not one per bead.
+const BURST_WINDOW_S: u32 = 60;
+
+fn ranked_part(select_head: &str, partition: &str, cond: &str, group_by: &str, having: &str) -> String {
+    let w = if partition.is_empty() { "ORDER BY created_at".to_string() } else { format!("PARTITION BY {partition} ORDER BY created_at") };
+    let group = if group_by.is_empty() { String::new() } else { format!(" GROUP BY {group_by}") };
     format!(
-        "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT {conflict_fold} AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT {rebase_aeon_fold} AND NOT {eviction_fold} AND NOT {prod_dirty_fold} AND NOT {unfinished_fold} AND NOT {desc_hash_fold} AND NOT {reopen_timing_exclude} AND NOT {deliberate_fold} AND NOT {unjudged_fold} AND {actor_filter}{sc} GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR {conflict_fold} OR {rebase_aeon_fold}) AND {actor_filter}{sc} HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE {eviction_fold} AND {actor_filter}{sc} HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE {prod_dirty_fold} AND {actor_filter}{sc} HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE {unfinished_fold} AND {actor_filter}{sc} HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'desc-changed-since-claim', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE {desc_hash_fold} AND {actor_filter}{sc} HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND {actor_filter}{sc} AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR {conflict_fold}){sc}) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC"
+        "SELECT {select_head}, COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events, SUM(burst_start) AS bursts FROM (SELECT event_type, new_value, issue_id, CASE WHEN LAG(created_at) OVER ({w}) IS NULL OR TIMESTAMPDIFF(SECOND, LAG(created_at) OVER ({w}), created_at) > {BURST_WINDOW_S} THEN 1 ELSE 0 END AS burst_start FROM events WHERE {cond}) b{group}{having}"
     )
 }
 
@@ -85,6 +116,7 @@ pub fn class_fold_map() -> String {
         ("sp-requeue-eviction-race", "sp-reopen-eviction-race"),
         ("sp-requeue-prod-dirty", "sp-reopen-prod-dirty"),
         ("sp-requeue-unfinished-reason", "sp-reopen-unfinished-reason"),
+        ("sp-requeue-unjudged-slain", "sp-requeue-unjudged-killed"),
         ("sp-requeue-workflow-run-missing", "sp-reopen-workflow-run-missing"),
         ("sp-requeue-workflow-run-wrong-branch", "sp-reopen-workflow-run-wrong-branch"),
         ("sp-requeue-workflow-run-stale-sha", "sp-reopen-workflow-run-stale-sha"),
@@ -145,19 +177,17 @@ mod tests {
     }
 
     #[test]
-    fn events_sql_with_no_watermark_matches_the_bash() {
-        assert_eq!(
-            events_sql(None, &causes()),
-            "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT (event_type = 'requeued' AND new_value = 'rebase-conflict') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'desc-changed-since-claim') AND NOT (event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence')) AND NOT (event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject')) AND NOT (event_type = 'requeued' AND new_value LIKE 'unjudged-%' AND new_value <> 'unjudged-unlanded') AND (actor = 'harness' OR actor LIKE 'aeon-%') GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict') OR (event_type = 'requeued' AND new_value = 'rebase-conflict')) AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'desc-changed-since-claim', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'desc-changed-since-claim') AND (actor = 'harness' OR actor LIKE 'aeon-%') HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND (actor = 'harness' OR actor LIKE 'aeon-%') AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR (event_type = 'requeued' AND new_value = 'merge-conflict'))) HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC"
-        );
+    fn events_sql_collapses_bursts() {
+        let sql = events_sql(None, &causes());
+        assert!(sql.contains("SUM(burst_start) AS bursts"));
+        assert!(sql.contains("> 60 THEN 1"));
+        assert!(!sql.contains("created_at >"));
     }
 
     #[test]
-    fn events_sql_with_a_watermark_matches_the_bash() {
-        assert_eq!(
-            events_sql(Some("2023-11-14 22:13:20"), &causes()),
-            "SELECT event_type, COALESCE(new_value, ''), COUNT(DISTINCT issue_id) AS beads, COUNT(*) AS events FROM events WHERE event_type IN ('requeued', 'reclaimed', 'recurred', 'lapsed', 'reopen') AND NOT (event_type = 'requeued' AND new_value = 'merge-conflict') AND NOT (event_type = 'reopen' AND new_value = 'rebase-conflict') AND NOT (event_type = 'requeued' AND new_value = 'rebase-conflict') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND NOT (event_type IN ('reopen', 'requeued') AND new_value = 'desc-changed-since-claim') AND NOT (event_type = 'reopen' AND new_value IN ('closed-while-live', 'recurrence')) AND NOT (event_type = 'reopen' AND new_value IN ('work-close-converted', 'eject')) AND NOT (event_type = 'requeued' AND new_value LIKE 'unjudged-%' AND new_value <> 'unjudged-unlanded') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' GROUP BY event_type, new_value UNION ALL SELECT 'reopen', 'rebase-conflict', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE ((event_type = 'reopen' AND new_value = 'rebase-conflict') OR (event_type = 'requeued' AND new_value = 'merge-conflict') OR (event_type = 'requeued' AND new_value = 'rebase-conflict')) AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'eviction-race', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'eviction-race') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'prod-dirty', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'prod-dirty') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'unfinished-reason', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'unfinished-reason') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopen', 'desc-changed-since-claim', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE (event_type IN ('reopen', 'requeued') AND new_value = 'desc-changed-since-claim') AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' HAVING COUNT(DISTINCT issue_id) > 0 UNION ALL SELECT 'reopened', 'unrecorded', COUNT(DISTINCT issue_id), COUNT(*) FROM events WHERE event_type = 'reopened' AND (actor = 'harness' OR actor LIKE 'aeon-%') AND created_at > '2023-11-14 22:13:20' AND issue_id NOT IN (SELECT issue_id FROM events WHERE (event_type = 'reopen' OR (event_type = 'requeued' AND new_value = 'merge-conflict')) AND created_at > '2023-11-14 22:13:20') HAVING COUNT(DISTINCT issue_id) > 0 ORDER BY 3 DESC"
-        );
+    fn events_sql_applies_the_watermark_to_every_part() {
+        let sql = events_sql(Some("2023-11-14 22:13:20"), &causes());
+        assert_eq!(sql.matches("AND created_at > '2023-11-14 22:13:20'").count(), 8);
     }
 
     #[test]
@@ -177,6 +207,7 @@ mod tests {
              sp-requeue-eviction-race sp-reopen-eviction-race\n\
              sp-requeue-prod-dirty sp-reopen-prod-dirty\n\
              sp-requeue-unfinished-reason sp-reopen-unfinished-reason\n\
+             sp-requeue-unjudged-slain sp-requeue-unjudged-killed\n\
              sp-requeue-workflow-run-missing sp-reopen-workflow-run-missing\n\
              sp-requeue-workflow-run-wrong-branch sp-reopen-workflow-run-wrong-branch\n\
              sp-requeue-workflow-run-stale-sha sp-reopen-workflow-run-stale-sha\n\
