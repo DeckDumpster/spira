@@ -32,7 +32,12 @@ for _t in exclude.sh spira-lint branch-guard.sh; do
     }
 done
 exclude.sh staged || exit 1
-for _r in scratch-fence tmp-leak chmod-exec-leak env-set-var-leak fence-scripts config-fence; do
-    spira-lint --only "$_r" || exit 1
-done
+spira-lint --only scratch-fence || exit 1
+# The other rules judge the harness's own sources; in a repository carrying none they would
+# refuse an empty scope and mask every later fence.
+if exclude.sh harness >/dev/null 2>&1; then
+    for _r in tmp-leak chmod-exec-leak env-set-var-leak fence-scripts config-fence; do
+        spira-lint --only "$_r" || exit 1
+    done
+fi
 exec branch-guard.sh staged
