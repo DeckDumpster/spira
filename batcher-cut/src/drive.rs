@@ -376,6 +376,7 @@ pub(crate) mod tests {
             title: String::new(),
             priority: None,
             express: false,
+            base_fix: false,
             certified_at: 0,
             stack: BTreeMap::new(),
         }

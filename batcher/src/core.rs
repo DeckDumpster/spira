@@ -16,6 +16,8 @@ pub struct Member {
     pub title: String,
     pub priority: Option<u8>,
     pub express: bool,
+    /// The fix for an open base-red bead: raised to P0 and landed alone (`base_fix_lane`).
+    pub base_fix: bool,
     pub certified_at: u64,
     /// Prerequisite bead id -> the tip this member's own work was built on (design
     /// stacked-dependents-2026-09-28 §1). Empty for an unstacked member — the pool's default,
@@ -31,6 +33,17 @@ pub struct Member {
 /// batch-accumulation conflict, and that has to be the same express/priority/arrival order.
 pub fn order_key(m: &Member) -> (u8, u8, u64) {
     (if m.express { 0 } else { 1 }, m.priority.unwrap_or(u8::MAX), m.certified_at)
+}
+
+/// The pool a round may cut from: while any certified member is a base-red fix, only the
+/// fixes — every other certification selecting the red suite is BASE_FAIL until the base is
+/// green, so riding along only delays the unblocker. Otherwise the pool unchanged.
+pub fn base_fix_lane(pool: Vec<Member>) -> Vec<Member> {
+    if pool.iter().any(|m| m.base_fix) {
+        pool.into_iter().filter(|m| m.base_fix).collect()
+    } else {
+        pool
+    }
 }
 
 /// Topological merge order (design §3, "Order"): a member merges only after every
@@ -137,6 +150,8 @@ pub enum TriggerReason {
     /// An express or main-red fix cuts a round of its own, at once.
     Express(Id),
     MainRed,
+    /// A base-red fix is certified: it lands alone, ahead of everything else in the pool.
+    BaseFix(Id),
     /// A batch PR is open: the next round is prepared on its head, never opened until it lands.
     Prepare(u32),
 }
@@ -160,6 +175,9 @@ pub struct TriggerInputs<'a> {
 pub fn should_cut(t: &TriggerInputs) -> Option<TriggerReason> {
     if t.main_red {
         return Some(TriggerReason::MainRed);
+    }
+    if let Some(fix) = t.pool.iter().find(|m| m.base_fix) {
+        return Some(TriggerReason::BaseFix(fix.id.clone()));
     }
     if let Some(express) = t.pool.iter().find(|m| m.express) {
         return Some(TriggerReason::Express(express.id.clone()));
@@ -472,6 +490,7 @@ pub fn cut_event(reason: &TriggerReason, combined: &Combined) -> Event {
         TriggerReason::Idle { waited_mins } => format!("idle {waited_mins}m with nothing new"),
         TriggerReason::Express(id) => format!("express {id}"),
         TriggerReason::MainRed => "main red".to_string(),
+        TriggerReason::BaseFix(id) => format!("base-red fix {id}, landing alone"),
         TriggerReason::Prepare(n) => format!("{n} certified while a batch is open"),
     };
     ev("cut", ids.clone(), format!("round cut ({why}): {} member(s)", ids.len()))

@@ -22,6 +22,7 @@ fn m(id: &str, rank: u8, express: bool, at: u64) -> Member {
         title: format!("{id}: does a thing"),
         priority: Some(rank),
         express,
+        base_fix: false,
         certified_at: at,
         stack: BTreeMap::new(),
     }
@@ -482,8 +483,8 @@ fn bisect_split_divides_evenly_rounding_up_the_first_half() {
 #[test]
 fn pr_record_lists_full_titles_with_foreign_prefixes_dropped_and_express_first() {
     let members = vec![
-        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, certified_at: 0, stack: BTreeMap::new() },
-        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, certified_at: 0, stack: BTreeMap::new() },
+        Member { id: "sp-a".into(), tip: "ta".into(), title: "sp-a: a fairly long descriptive title that must not be cut".into(), priority: Some(2), express: false, base_fix: false, certified_at: 0, stack: BTreeMap::new() },
+        Member { id: "sp-x".into(), tip: "tx".into(), title: "an express fix".into(), priority: Some(9), express: true, base_fix: false, certified_at: 0, stack: BTreeMap::new() },
     ];
     let pr = pr_record(&members);
     assert_eq!(pr.members, vec!["sp-a".to_string(), "sp-x".to_string()]);
@@ -758,4 +759,19 @@ fn terminal_ready_checks_membership_before_bins() {
     let members = vec![m("sp-a", 2, false, 0)];
     // Every input is wrong at once; the membership refusal must be the one reported.
     assert_eq!(terminal_ready(&members, &[], false), Err(Refusal::MemberNotNamed { id: "sp-a".into() }));
+}
+
+#[test]
+fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
+    let fix = Member { base_fix: true, priority: Some(0), ..m("sp-f", 0, false, 9) };
+    let pool = base_fix_lane(vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5), fix]);
+    assert_eq!(pool.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), vec!["sp-f"]);
+    let t = TriggerInputs { pool: &pool, now: 10, last_arrival: Some(9), n: 30, q_minutes: 60, main_red: false, batch_open: false };
+    assert_eq!(should_cut(&t), Some(TriggerReason::BaseFix("sp-f".into())));
+}
+
+#[test]
+fn base_fix_lane_leaves_a_pool_without_a_fix_untouched() {
+    let pool = vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5)];
+    assert_eq!(base_fix_lane(pool.clone()), pool);
 }
