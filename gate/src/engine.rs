@@ -611,7 +611,14 @@ impl<'w, W: World> Trial<'w, W> {
         // THE COMPOSITION: what the branch touches decides what runs.
         let comp = self.composition(mode, &ctx, &repo, &base_rev, &rev, &tree);
         // THE RE-ENTRY CHECK: the suites the round named, against the tree under test.
-        let re = compose::reentry(&ejected, |s| w.exists(&tree.join("spira").join(s)));
+        let mut named = ejected.clone();
+        if let Ok(changed) = w.diff_raw(&repo, &base_rev, &rev) {
+            for s in compose::touched_suites(&changed) {
+                named.push(' ');
+                named.push_str(&s);
+            }
+        }
+        let re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
         self.s.compose = comp.label();
         self.s.branch_type = crate::telemetry::branch_type(&crate::telemetry::shape(
             w, mode, &comp, &ctx, &repo, &base_rev, &rev, &tree,

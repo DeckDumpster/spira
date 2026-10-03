@@ -2168,7 +2168,7 @@ mod integration_tests {
     }
 
     fn member(id: &str) -> Member {
-        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new() }
+        Member { id: id.into(), tip: String::new(), title: String::new(), priority: None, express: false, certified_at: 0, stack: BTreeMap::new(), base_fix: false }
     }
 
     // Two members that are each fine alone: the merged tree carries a stale matrix and a

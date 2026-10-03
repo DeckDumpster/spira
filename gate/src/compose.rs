@@ -426,6 +426,20 @@ pub fn reentry(ejected: &str, exists: impl Fn(&str) -> bool) -> Reentry {
     r
 }
 
+/// The suites the branch itself changed, by name: a composition that defers `spira/test-*.sh`
+/// to the round would otherwise let a solo landing change a suite and run none of them.
+pub fn touched_suites(changed: &[Changed]) -> Vec<String> {
+    let mut v: Vec<String> = changed
+        .iter()
+        .filter_map(|c| c.path.strip_prefix("spira/"))
+        .filter(|n| is_suite_name(n))
+        .map(str::to_string)
+        .collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// The statuses that satisfy the re-entry check: the suite ran and passed, or the corpus
 /// itself says it does not block (disabled, quarantined — a round would not eject on it).
 /// SKIPPED, SKIP-REQ, UNREACHED, DEFERRED and silence prove nothing.
@@ -466,6 +480,13 @@ pub fn reentry_command(suites: &[String]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_changed_suite_is_named_and_a_helper_is_not() {
+        let c = |p: &str| Changed { path: p.into(), exec: false };
+        let got = touched_suites(&[c("spira/test-b.sh"), c("spira/testlib/x.sh"), c("spira/test-a.sh"), c("spira/test-b.sh"), c("gate/src/a.rs")]);
+        assert_eq!(got, vec!["test-a.sh", "test-b.sh"]);
+    }
+
     use super::*;
 
     fn m(name: &str, dir: &str, deps: &[&str]) -> Member {
