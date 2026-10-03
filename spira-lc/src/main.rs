@@ -220,9 +220,13 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
-    let since = entered_at_sql("bead", "bead.bead_id", "bead.state");
+    // `since` comes from one grouped pass over the event log joined on (key, state). A
+    // correlated per-row subquery is not resolved through event_lc_key_idx by Dolt and
+    // took 85 s on 3.7k rows, past every caller's timeout (sp-c3azm).
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, {since} AS since FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, s.since AS since FROM bead \
+         LEFT JOIN (SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 GROUP BY lc_key, to_state) s \
+         ON s.lc_key = bead.bead_id AND s.to_state = bead.state{where_clause} ORDER BY bead_id"
     );
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),
