@@ -318,12 +318,10 @@ wr_reap_orphans() {
         esac
         [ -n "$prog" ] || continue
 
-        # `tail` is a reader that a session opens via Monitor — killing it severs the channel
-        # the SessionStart hook just told the session to open (law-bind-the-actor). Only
-        # `exec` (the supervised daemon verb) should ever be a reap target; in practice exec
-        # processes are inside spira-watch@ anyway, so the cgroup guard below would protect
-        # them too — this is belt-and-braces.
-        [ "$prog" = watchd ] && [ "${parts[$verb_idx]:-}" = tail ] && continue
+        # Only the supervised daemon verb is a reap target. Every other `watchd` verb (tail,
+        # notify, health-view, manifest, ...) is a short-lived command run by a session or a
+        # timer unit that is not named spira-watch*.
+        [ "$prog" = watchd ] && [ "${parts[$verb_idx]:-}" != exec ] && continue
 
         argv="${parts[*]}"
 
