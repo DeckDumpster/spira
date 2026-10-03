@@ -31,8 +31,8 @@
 # test-lifecycle-container.sh (sp-uwv2s) — testenv-batch.sh already provides the container.
 #
 # defect: sp-ki12s, sp-mys5p
-# tier: T2
-# covers: spira-lc/src/callers.rs aeon/src/* spira/lib.sh spira/hold.sh spira/unhold.sh groomer/src/* spira-lc/* lifecycle/*
+# tier: T1
+# covers: lifecycle/src/bead.rs spira-lc/src/** spira-lc/src/callers.rs aeon/src/* spira/lib.sh spira/hold.sh spira/unhold.sh groomer/src/* spira-lc/* lifecycle/*
 # timeout: 180
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -124,8 +124,16 @@ for kind in poison ask wait operator; do
     held="$(spira-lc holds "$bead")"
     is "lc_holds reports exactly the one held kind ($kind)" "$kind" "$held"
 
-    spira-lc unhold "$bead" "$kind" test-suite
-    wantrc "lc_unhold($kind) applies" 0 $?
+    if [ "$kind" = ask ]; then
+        spira-lc unhold "$bead" ask test-suite
+        wantrc "lc_unhold(ask) without a reply is refused" 3 $?
+        is "the refused release left the ask held" ask "$(spira-lc holds "$bead")"
+        spira-lc reply "$bead" m-1 test-suite
+        wantrc "lc_reply applies and lifts the ask" 0 $?
+    else
+        spira-lc unhold "$bead" "$kind" test-suite
+        wantrc "lc_unhold($kind) applies" 0 $?
+    fi
 
     row2="$(row_json "$bead")"
     want "the state is exactly what it was before the $kind hold" '"state":"WORKING"' "$row2"
@@ -133,6 +141,17 @@ for kind in poison ask wait operator; do
     held2="$(spira-lc holds "$bead")"
     is "lc_holds reports nothing held after $kind release" "" "$held2"
 done
+
+# ── a withdrawn ask lifts by its own event; a reply or withdrawal with no ask held is refused ──
+seed_bead sp-ask-wd WORKING
+spira-lc hold sp-ask-wd ask "waiting" test-suite
+spira-lc withdraw-ask sp-ask-wd test-suite
+wantrc "lc_withdraw-ask lifts a held ask" 0 $?
+is "nothing held after the withdrawal" "" "$(spira-lc holds sp-ask-wd)"
+spira-lc reply sp-ask-wd m-2 test-suite
+wantrc "a reply with no ask held is refused" 3 $?
+spira-lc withdraw-ask sp-ask-wd test-suite
+wantrc "a withdrawal with no ask held is refused" 3 $?
 
 # ── POSITIVE CONTROL + refusal: a terminal bead cannot be held, for every kind ─────────
 for kind in poison ask wait operator; do

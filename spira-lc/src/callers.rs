@@ -58,6 +58,8 @@ impl Answer {
 pub const VERBS: &[&str] = &[
     "hold",
     "unhold",
+    "reply",
+    "withdraw-ask",
     "release",
     "holder-dead",
     "drop",
@@ -130,6 +132,19 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
                 Some(k) => Ok(BeadEventKind::Unhold { kind: k }),
                 None => Err(unknown_kind(&kind)),
             })
+        }
+        "reply" => {
+            if !need(2) {
+                return usage("reply <bead-id> <message-id> [actor]");
+            }
+            let message_id = a(1);
+            with_row(m, &a(0), &actor_or(args.get(2), "sentinel"), |_| Ok(BeadEventKind::Reply { message_id: message_id.clone() }))
+        }
+        "withdraw-ask" => {
+            if !need(1) {
+                return usage("withdraw-ask <bead-id> [actor]");
+            }
+            with_row(m, &a(0), &actor_or(args.get(1), "sentinel"), |_| Ok(BeadEventKind::AskWithdrawn))
         }
         "release" => {
             if !need(1) {
