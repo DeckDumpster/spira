@@ -19,7 +19,8 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::host::{Io, Spec};
-use crate::model::{parse_beads, Bead};
+use crate::cfg::Lifecycle;
+use crate::model::{parse_beads, Bead, LcRow};
 use crate::pass::Sentinel;
 use crate::store;
 
@@ -50,6 +51,15 @@ pub fn active_blockers(landstate_dir: &Path) -> HashSet<String> {
         }
     }
     out
+}
+
+/// ON mode's active blockers: spira-lc rows in CERTIFIED or IN_DELIVERY — the queue pipeline's
+/// states. A tipless design/diagnosis bead reaches a terminal state, never these.
+pub fn active_blockers_lc(rows: &[LcRow]) -> HashSet<String> {
+    rows.iter()
+        .filter(|r| matches!(r.state.as_str(), "CERTIFIED" | "IN_DELIVERY"))
+        .map(|r| r.bead_id.clone())
+        .collect()
 }
 
 /// One decision per ready bead (add when it blocks on an active blocker and is not yet
@@ -129,7 +139,13 @@ impl<'a> Sentinel<'a> {
         if label.is_empty() {
             return;
         }
-        let active = active_blockers(&self.cfg.run.join("landstate"));
+        let active = match self.lc {
+            Lifecycle::On => match self.lc_rows() {
+                Some(rows) => active_blockers_lc(&rows),
+                None => return,
+            },
+            Lifecycle::Off => active_blockers(&self.cfg.run.join("landstate")),
+        };
 
         let labeled: HashSet<String> = {
             let args = vec![
@@ -222,13 +238,21 @@ impl<'a> Sentinel<'a> {
         if ids.is_empty() {
             return;
         }
+        let lc_rows = match self.lc {
+            Lifecycle::On => match self.lc_rows() {
+                Some(r) => Some(r),
+                None => return,
+            },
+            Lifecycle::Off => None,
+        };
         for id in ids {
-            let p = self.cfg.run.join("landstate").join(&id);
-            let Ok(text) = std::fs::read_to_string(&p) else {
-                continue;
+            let landed = match &lc_rows {
+                Some(rows) => rows.iter().any(|r| r.bead_id == id && r.state == "LANDED"),
+                None => std::fs::read_to_string(self.cfg.run.join("landstate").join(&id))
+                    .ok()
+                    .is_some_and(|t| t.split_whitespace().next() == Some("LANDED")),
             };
-            let state = text.lines().next().unwrap_or("").split_whitespace().next().unwrap_or("");
-            if state == "LANDED" {
+            if landed {
                 self.bd().quiet(self.h, &["label", "remove", &id, &label], None);
                 self.lc_unhold(&id, "wait");
                 self.bd().quiet(
@@ -237,7 +261,7 @@ impl<'a> Sentinel<'a> {
                         "close",
                         &id,
                         "--reason",
-                        "Content already on main (landstate=LANDED); no branch remained to land.",
+                        "Content already on main (LANDED); no branch remained to land.",
                     ],
                     None,
                 );
@@ -272,6 +296,24 @@ mod tests {
         assert!(got.contains("a") && got.contains("b"));
         assert_eq!(got.len(), 2);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn lc_row(id: &str, state: &str) -> LcRow {
+        LcRow { bead_id: id.into(), state: state.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn active_blockers_lc_takes_only_the_queue_pipeline_states() {
+        let rows = vec![
+            lc_row("cert", "CERTIFIED"),
+            lc_row("deliv", "IN_DELIVERY"),
+            lc_row("landed", "LANDED"),
+            lc_row("sub", "SUBMITTED"),
+            lc_row("sup", "SUPERSEDED"),
+        ];
+        let got = active_blockers_lc(&rows);
+        assert_eq!(got, ["cert".to_string(), "deliv".to_string()].into());
+        assert!(active_blockers_lc(&[]).is_empty());
     }
 
     #[test]
