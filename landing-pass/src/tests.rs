@@ -403,6 +403,7 @@ struct FakeLc {
     down: RefCell<Option<String>>,
     submitted: RefCell<HashMap<String, String>>,
     certified: RefCell<Vec<String>>,
+    refuse_pass: Cell<bool>,
 }
 impl crate::lifecycle::Lc for FakeLc {
     fn submitted(&self) -> Result<HashMap<String, String>, String> {
@@ -410,6 +411,9 @@ impl crate::lifecycle::Lc for FakeLc {
     }
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
+        if outcome == "pass" && self.refuse_pass.get() {
+            return Err("spira-lc certify exited 3: refused".into());
+        }
         Ok("applied".into())
     }
     fn probe(&self) -> Result<(), String> {
@@ -2093,6 +2097,19 @@ fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
     h.run();
     assert!(h.lib.has("land_mark sp-a CERTIFIED"), "{:?}", h.out.lines());
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+#[test]
+fn a_refused_gatepass_leaves_the_bead_uncertified_in_landstate() {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.lifecycle_enforce = true;
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.lc.refuse_pass.set(true);
+    h.run();
+    assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+    assert!(!h.lib.has("land_mark sp-a CERTIFIED"), "{:?}", h.out.lines());
 }
 
 #[test]
