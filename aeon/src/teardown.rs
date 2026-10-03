@@ -359,16 +359,18 @@ impl Run<'_> {
                     if streak >= cap {
                         let subj = format!("aeon cannot progress: {reason}");
                         let body = format!(
-                            "## Note\n{id} has made no progress across {streak} consecutive no-progress exits, branch {} stuck at {tip}. Each exit was held for a backoff instead of resumed, and no attempt was charged for any of them. The aeon's own last word: {reason}\n\nChange the approach, split the bead, or drop it.\n",
+                            "## Note\n{id} has made no progress across {streak} consecutive no-progress exits, branch {} stuck at {tip}. Each exit was held for a backoff instead of resumed, and no attempt was charged for any of them. The aeon's own last word: {reason}\n\nChange the approach, split the bead, or drop it. This bead is blocked on this question until it is closed.\n",
                             self.s.branch
                         );
+                        // A question with a blocking edge: the bead is unclaimable until the
+                        // Concierge answers (law-a-retry-must-change-an-input).
                         let _ = self.d.exec.exec(
-                            "mail",
-                            &s(&["send", "concierge", "--from", "Aeon <aeon@spira>", "--subject", &subj, "--kind", "note", "--bead", &id]),
+                            "env",
+                            &s(&["SPIRA_MAIL_ALLOW_BLOCKING=1", "mail", "send", "concierge", "--from", "Aeon <aeon@spira>", "--subject", &subj, "--kind", "question", "--default", "split or drop the bead; it cannot progress with unchanged inputs", "--bead", &id]),
                             Some(body.into_bytes()),
                             None,
                         );
-                        self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge instead of held again. No attempt charged."));
+                        self.note(&format!("No progress ({o}): {reason}\n\nAfter {streak} consecutive no-progress exits at {tip}, routed to the Concierge as a blocking question: the bead is not claimable again until it is answered. No attempt charged."));
                         self.log(&format!("{f}: {id} no-progress streak {streak}/{cap} at {tip} — routed to the Concierge, no attempt charged"));
                     } else {
                         let backoff_min = decide::no_progress_backoff_minutes(streak);

@@ -950,9 +950,11 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
         "at the cap this routes to the Concierge instead of deferring again: {:?}",
         w.bd_calls
     );
-    let mail = w.exec_calls.iter().find(|c| c.0 == "mail").unwrap_or_else(|| panic!("no mail send concierge: {:?}", w.exec_calls));
-    assert_eq!(mail.1[0], "send");
-    assert_eq!(mail.1[1], "concierge", "never operator/ryan — the Concierge's own mailbox");
+    let mail = w.exec_calls.iter().find(|c| c.0 == "env" && c.1.iter().any(|a| a == "mail")).unwrap_or_else(|| panic!("no mail send concierge: {:?}", w.exec_calls));
+    assert_eq!(mail.1[0], "SPIRA_MAIL_ALLOW_BLOCKING=1", "the question must wire a blocking edge so the bead is unclaimable");
+    assert_eq!(mail.1[1..3], ["mail", "send"]);
+    assert_eq!(mail.1[3], "concierge", "never operator/ryan — the Concierge's own mailbox");
+    assert!(mail.1.windows(2).any(|p| p == ["--kind", "question"]), "{:?}", mail.1);
     let bead_at = mail.1.iter().position(|a| a == "--bead").expect("--bead flag");
     assert_eq!(mail.1[bead_at + 1], "sp-q");
     let subj_at = mail.1.iter().position(|a| a == "--subject").expect("--subject flag");
