@@ -596,13 +596,13 @@ impl World for Fake {
 // ---------------------------------------------------------------------------- the merge
 
 #[test]
-fn a_branch_that_does_not_merge_is_stale_not_red() {
+fn a_branch_that_does_not_merge_is_red_no_rebase_never_no_verdict() {
     let f = Fake::new();
     *f.merge.borrow_mut() = Merge::Conflict(vec!["spira/lib.sh".into(), "Cargo.lock".into()]);
-    assert_eq!(f.run(), NOVERDICT);
+    assert_eq!(f.run(), FAIL);
     assert_eq!(
         f.verdict_line(),
-        "gate: VERDICT=NO_VERDICT reason=conflict branch=spira/sp-a repo=spira suite=-"
+        "gate: VERDICT=FAIL reason=no-rebase branch=spira/sp-a repo=spira suite=-"
     );
     let e = f.stderr();
     assert!(
@@ -613,10 +613,10 @@ fn a_branch_that_does_not_merge_is_stale_not_red() {
     );
     assert!(f.ran.borrow().is_empty(), "no trial on a conflict");
     assert!(
-        f.appended.borrow()[0].contains("rc=75 conflict"),
+        f.appended.borrow()[0].contains("rc=1 no-rebase"),
         "the conflict is metered"
     );
-    assert_eq!(f.yields.borrow()[0][1..5], ["record", "spira", BR, "75"]);
+    assert_eq!(f.yields.borrow()[0][1..5], ["record", "spira", BR, "1"]);
 }
 
 #[test]

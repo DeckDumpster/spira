@@ -419,6 +419,9 @@ const DOLT_EVENTS_MAX: usize = 100;
 
 pub fn check_dolt_telemetry(w: &dyn World) -> Vec<Line> {
     let mut out = Vec::new();
+    if w.env("SPIRA_DOLT_DATA").filter(|v| !v.is_empty()).is_none() {
+        return out;
+    }
     if w.dolt_metrics_disabled() {
         out.push(ok("dolt metrics.disabled is true"));
     } else {

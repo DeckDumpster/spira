@@ -165,9 +165,24 @@ def relpath_of(src):
     path is the only key that is unique for every file the client writes."""
     return os.path.relpath(os.path.abspath(src), PROJECTS)
 
-def row_for(src, st):
+def snapshot(src, size, dest):
+    """The first `size` bytes of a transcript, copied aside. -> bytes copied.
+
+    A live transcript grows between being hashed and being compressed; hashing and storing one
+    frozen copy keeps the digest the digest of the stored body, and the compressor can never
+    see the file change under it."""
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    left = size
+    with open(src, "rb") as fi, open(dest, "wb") as fo:
+        while left > 0:
+            chunk = fi.read(min(left, 1 << 20))
+            if not chunk: break
+            fo.write(chunk); left -= len(chunk)
+    return size - left
+
+def row_for(src, st, snap):
     rel = relpath_of(src)
-    sha, first, last, turns, bridge, sess = scan(src)
+    sha, first, last, turns, bridge, sess = scan(snap)
     f, l = parse_ts(first), parse_ts(last)
     src_kind = "transcript"
     if f is None or l is None:
@@ -181,7 +196,7 @@ def row_for(src, st):
         "bridge_session_id": bridge,
         "cwd_slug": rel.split(os.sep)[0],
         "first_ts": fmt_ts(f), "last_ts": fmt_ts(l), "ts_source": src_kind,
-        "turns": turns, "bytes": st.st_size, "mtime": int(st.st_mtime),
+        "turns": turns, "bytes": os.path.getsize(snap), "mtime": int(st.st_mtime),
         "sha256": sha, "source": rel, "path": os.path.join("bodies", rel + EXT),
         "archived_at": fmt_ts(dt.datetime.now(dt.timezone.utc)),
     }
@@ -344,8 +359,14 @@ if MODE in ("sweep", "hook"):
                 and prev and prev.get("bytes") == st.st_size and prev.get("mtime") == int(st.st_mtime)
                 and os.path.exists(os.path.join(ARCHIVE, prev["path"]))):
             kept += 1; continue
-        row = row_for(src, st)
-        compress(src, os.path.join(ARCHIVE, row["path"]))
+        snap = os.path.join(ARCHIVE, "bodies", rel + ".snap")
+        try:
+            snapshot(src, st.st_size, snap)
+            row = row_for(src, st, snap)
+            compress(snap, os.path.join(ARCHIVE, row["path"]))
+        finally:
+            try: os.unlink(snap)
+            except OSError: pass
         by_rel[rel] = row
         stored += 1
     # ROWS WHOSE SOURCE IS GONE ARE KEPT. The client deleting a transcript is the loss this

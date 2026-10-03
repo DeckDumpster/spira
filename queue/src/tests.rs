@@ -2203,3 +2203,13 @@ fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
     assert_eq!(t.run(&["publish-settle"]), 0);
     assert!(t.forge.calls.borrow().is_empty());
 }
+
+#[test]
+fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    let _q = crate::lock::try_lock(&t.lib.s.queue_dir, "spira");
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("publish-settle spira: another queue operation holds the lock"), "{}", t.out());
+    assert!(t.forge.calls.borrow().is_empty());
+}
