@@ -714,6 +714,34 @@ fn every_shipped_service_renders_the_configured_path_tail_after_the_system_dirs(
     every_shipped_service_carries_path(":/h/.local/bin:/h/.cargo/bin", ":/h/.local/bin:/h/.cargo/bin");
 }
 
+/// Every shipped service renders against the REAL `host_values` (not a hand-listed key set), so
+/// a placeholder no host value fills is caught the moment a template adds one (sp-qf5x9).
+#[test]
+fn every_shipped_service_renders_against_real_host_values() {
+    let mut env = Env::new();
+    env.insert("HOME".into(), "/h".into());
+    env.insert("SPIRA_RELEASES".into(), "/e".into());
+    for k in ["SPIRA_RUN", "SPIRA_DB", "SPIRA_DOLT_DATA", "SPIRA_TESTDB_DATA", "DOLT", "SPIRA_INSTANCE", "SPIRA_REPO_MAP", "SPIRA_SCCACHE_DAV_ADDR"] {
+        env.insert(k.into(), format!("/host/{k}"));
+    }
+    let c = Config::resolve_with(&Flags::default(), &env, None).unwrap();
+    let host = c.host_values().unwrap();
+    let rel = Path::new("/r/spira-releases").join(A);
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd");
+    let mut n = 0;
+    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if !name.ends_with(".service") {
+            continue;
+        }
+        let text = std::fs::read_to_string(e.path()).unwrap();
+        let watcher = name.contains('@').then_some("w");
+        units::render(&name, &text, &rel, &host, watcher, "prod").unwrap_or_else(|e| panic!("{name}: {e}"));
+        n += 1;
+    }
+    assert!(n >= 30, "read the shipped templates ({n})");
+}
+
 // ---------------------------------------------------------------- activate
 
 #[test]
