@@ -77,7 +77,7 @@ printf 'test-units-lint.sh\n'
 # the comment above); SPIRA_PROD is left empty on purpose (render()'s own fallback to
 # SPIRA_HOME is exactly what the comment below this block is testing).
 rendered="$(env -i HOME="$TMP/home" PATH="$PATH" SPIRA_CONF="$CONF" SPIRA_WATCHERS="$MAN" \
-    SPIRA_HOME="$CLONE/spira" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
+    SPIRA_HOME="$CLONE/spira" SPIRA_REPO="$CLONE" SPIRA_RUN="$RUN" SPIRA_COCKPIT="$COCKPIT" SPIRA_PROD= \
     SPIRA_LC_PASSWORD_FILE="$RUN/lc.credential" units-install --render 2>"$TMP/render.err")"
 is "the render pass produced units" "yes" "$([ -n "$rendered" ] && echo yes || echo no)"
 # `note:` lines are install.sh commenting on units this suite does not touch (an unbuilt
@@ -179,7 +179,7 @@ printf 'SPIRA_RUN = %s\nSPIRA_COCKPIT = %s\nSPIRA_WATCHERS = %s\nSPIRA_PATH = %s
 # — this container's own real checkout root, not PRODROOT — so ExecStart pointed at this
 # box's /workspace/bin/sentinel (not yet built in this pass) instead of PRODROOT/bin's stub.
 env -i HOME="$IHOME" PATH="$STUB:$PATH" SPIRA_CONF="$TMP/install.conf" SPIRA_WATCHERS="$MAN" \
-    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" \
+    SPIRA_INSTALL_FORCE=1 SPIRA_HOME="$HERE" SPIRA_REPO="$ROOT" \
     SPIRA_RUN="$RUN" SPIRA_COCKPIT="$ROOT/cockpit" SPIRA_PROD="$PRODROOT/spira" \
     units-install > "$TMP/install.out" 2>&1
 ilog="$(cat "$TMP/systemctl.log")"
