@@ -10,6 +10,10 @@ pub struct RealBd {
     pub spira_home: String,
 }
 
+const FORGET_SCRIPT: &str = "bdq forget \"$1\" >/dev/null";
+const RECALL_SCRIPT: &str =
+    "e=$(mktemp) || exit 1; bdq recall \"$1\" 2>\"$e\"; rc=$?; [ $rc -eq 0 ] || cat \"$e\" >&2; rm -f \"$e\"; exit $rc";
+
 impl RealBd {
     /// `body` references its arguments as `"$1"`, `"$2"`, ... — passed as real argv
     /// entries, never interpolated into the script text, so a SOP's own text can never be
@@ -57,7 +61,11 @@ impl Bd for RealBd {
     }
 
     fn recall(&self, key: &str) -> Option<String> {
-        let (ok, out) = self.seam("bdq recall \"$1\" 2>/dev/null", &[key], None);
+        let (ok, out) = self.seam(
+            RECALL_SCRIPT,
+            &[key],
+            None,
+        );
         if !ok {
             return None;
         }
@@ -70,7 +78,7 @@ impl Bd for RealBd {
     }
 
     fn forget(&self, key: &str) -> bool {
-        self.seam("bdq forget \"$1\" >/dev/null 2>&1", &[key], None).0
+        self.seam(FORGET_SCRIPT, &[key], None).0
     }
 
     fn memories_json(&self) -> Option<String> {
@@ -231,6 +239,23 @@ fn wiki_worktree_root(spira_wiki: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failing_forget_and_recall_surface_bdq_stderr() {
+        let dir = testkit::TempDir::new("sop-seam");
+        std::fs::write(dir.join("lib.sh"), "bdq() { echo 'dolt timeout: stub detail' >&2; return 1; }\n").unwrap();
+        for body in [FORGET_SCRIPT, RECALL_SCRIPT] {
+            let out = Command::new("bash")
+                .arg("-c")
+                .arg(format!(". \"$0\"\n{body}"))
+                .arg(dir.join("lib.sh"))
+                .arg("k")
+                .output()
+                .unwrap();
+            assert!(!out.status.success());
+            assert!(String::from_utf8_lossy(&out.stderr).contains("dolt timeout: stub detail"), "{body}");
+        }
+    }
 
     #[test]
     fn iso_formatting_matches_a_known_instant() {
