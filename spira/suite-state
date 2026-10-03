@@ -15,3 +15,5 @@
 test-poison.sh | quarantined | 2026-09-28T12:35:54Z | sp-ytbma | times out under corpus load (366-474 s against the 600 s cap; timed out in rounds 105 and 106); quarantined until sp-ytbma makes it fast
 test-watch-refresh.sh | quarantined | 2026-10-03T16:54:49Z | sp-kph00 until=2026-10-10T00:00:00Z | flips green/red on the same commit (rounds aw, az; round 275 sweeps); quarantined until sp-kph00 fixes the flake
 test-install-dolt-refuse-stop.sh | quarantined | 2026-10-03T16:54:49Z | sp-vyeol until=2026-10-10T00:00:00Z | flips green/red on the same commit; quarantined until sp-vyeol fixes the flake
+test-reconciler-alert.sh | quarantined | 2026-10-03T21:37:26Z | sp-z6mz1 until=2026-10-10T00:00:00Z | red on local/main since round 284 (container-only cargo test failure); quarantined until sp-z6mz1 lands
+test-watchtower.sh | quarantined | 2026-10-03T21:37:26Z | sp-bqqt2 until=2026-10-10T00:00:00Z | ghost/empty-epic classification red on local/main and on publish PRs #481/#482; quarantined until sp-bqqt2 lands
