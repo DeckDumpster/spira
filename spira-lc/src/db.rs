@@ -64,7 +64,8 @@ impl Conn {
             .parse()
             .map_err(|e| DbError::CannotTell(format!("SPIRA_LC_PORT: {e}")))?;
         let user = std::env::var("SPIRA_LC_USER").unwrap_or_else(|_| "spira_lc".to_string());
-        let password = password_from(std::env::var("SPIRA_LC_PASSWORD_FILE").ok(), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
+        let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
         // dolt's remote client mode still resolves a local data-dir for bookkeeping even

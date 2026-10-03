@@ -568,6 +568,20 @@ pub fn lc_credential_default(env: &BTreeMap<String, String>) -> String {
     format!("{}/spira/spira-lc.credential", xdg_config_home(env))
 }
 
+/// The credential file a process authenticates to spira-lc with: a non-empty
+/// `SPIRA_LC_PASSWORD_FILE` in `env`, else the default path when a file is there, else empty.
+/// A caller resolves this itself rather than inheriting it from a unit template, which a
+/// transient `systemd-run` unit never gets.
+pub fn lc_password_file(env: &BTreeMap<String, String>) -> String {
+    match env.get("SPIRA_LC_PASSWORD_FILE") {
+        Some(v) if !v.is_empty() => v.clone(),
+        _ => {
+            let path = lc_credential_default(env);
+            if Path::new(&path).is_file() { path } else { String::new() }
+        }
+    }
+}
+
 fn xdg_data_home(env: &BTreeMap<String, String>) -> String {
     match env.get("XDG_DATA_HOME") {
         Some(v) if !v.is_empty() => v.clone(),
@@ -1608,5 +1622,33 @@ mod tests {
             !err.contains("at conf.d") && err != "no config registry at conf.d",
             "must never surface the bare relative path: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod lc_password_file_tests {
+    use super::lc_password_file;
+    use std::collections::BTreeMap;
+
+    fn env(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn an_absent_variable_resolves_to_the_default_credential_when_it_exists() {
+        let t = testkit::TempDir::new("lcpw");
+        let d = t.path().to_path_buf();
+        std::fs::create_dir_all(d.join("spira")).unwrap();
+        std::fs::write(d.join("spira/spira-lc.credential"), "pw").unwrap();
+        let got = lc_password_file(&env(&[("XDG_CONFIG_HOME", d.to_str().unwrap())]));
+        assert_eq!(got, format!("{}/spira/spira-lc.credential", d.display()));
+        let empty = lc_password_file(&env(&[("XDG_CONFIG_HOME", d.to_str().unwrap()), ("SPIRA_LC_PASSWORD_FILE", "")]));
+        assert_eq!(empty, got);
+    }
+
+    #[test]
+    fn with_no_credential_anywhere_it_is_empty_and_an_explicit_value_wins() {
+        assert_eq!(lc_password_file(&env(&[("XDG_CONFIG_HOME", "/nonexistent-lcpw")])), "");
+        assert_eq!(lc_password_file(&env(&[("SPIRA_LC_PASSWORD_FILE", "/x")])), "/x");
     }
 }
