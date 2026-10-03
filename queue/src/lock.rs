@@ -61,6 +61,7 @@ mod tests {
 
     #[test]
     fn the_step_lock_is_a_different_file_from_the_queue_lock() {
+        let _serial = crate::testutil::serial();
         let d = tmpdir("steplock");
         let s = try_step_lock(&d, "spira");
         assert!(matches!(s, Acquire::Held(_)));
