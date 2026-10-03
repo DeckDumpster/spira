@@ -196,6 +196,11 @@ id = "UC-cockpit-observability-38"
 tier = "T1"
 statement = "`statusline-check.py` classifies settings as ours, other, absent, unreadable, stale (including through a /tmp wrapper) or fragile"
 
+[use_case.uncovered]
+reason = "statusline-check.py and test-statusline.sh retired together: no caller once doctor.sh dropped its status-line section"
+date = "2026-10-03"
+bead = "sp-nd9nj"
+
 [[use_case]]
 id = "UC-cockpit-observability-39"
 tier = "T1"
