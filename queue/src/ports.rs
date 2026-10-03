@@ -166,6 +166,9 @@ pub trait Lib {
     /// R23: `BEADS_ACTOR=<actor> bdq create <title> --type bug --priority P --labels L
     /// --body-file <body> --silent` → the new id (None when bd created nothing).
     fn create_bug(&self, actor: &str, title: &str, priority: &str, labels: &str, body: &str) -> Option<String>;
+    /// Append `note` to bead `id` when it is still open; false when it is closed, unknown
+    /// or the note did not land — the caller then files a new bead.
+    fn amend_bug(&self, actor: &str, id: &str, note: &str) -> bool;
 }
 
 /// The harness scripts and binaries queue runs as whole programs.

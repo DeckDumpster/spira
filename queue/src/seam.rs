@@ -26,6 +26,7 @@ pub enum Op {
     BaseConflict,
     PfGate,
     CreateBug,
+    AmendBug,
 }
 
 /// The record separator that precedes a seam's machine-readable answer on stdout, so any
@@ -160,6 +161,7 @@ fn body(op: Op) -> &'static str {
         // The body travels as a value and lands in a temp file inside the script: bd reads
         // it with --body-file, never argv (law-payloads-go-on-stdin).
         Op::CreateBug => "__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$5\" > \"$__f\"\n__id=\"$(BEADS_ACTOR=\"$1\" bdq create \"$2\" --type bug --priority \"$3\" --labels \"$4\" --body-file \"$__f\" --silent 2>/dev/null | tr -d '[:space:]')\"\nrm -f \"$__f\"\nprintf '\\036%s' \"$__id\"\nexit 0\n",
+        Op::AmendBug => "__s=\"$(BEADS_ACTOR=\"$1\" bdq show \"$2\" --json 2>/dev/null)\"\ncase \"$__s\" in *'\"status\": \"open\"'*|*'\"status\": \"in_progress\"'*|*'\"status\": \"blocked\"'*) ;; *) printf '\\036'; exit 0 ;; esac\n__f=\"$(mktemp)\" || exit 1\nprintf '%s' \"$3\" > \"$__f\"\nif BEADS_ACTOR=\"$1\" bdq note \"$2\" --file \"$__f\" >/dev/null 2>&1; then printf '\\036amended'; else printf '\\036'; fi\nrm -f \"$__f\"\nexit 0\n",
     }
 }
 
@@ -207,7 +209,7 @@ mod tests {
             Op::Context, Op::TomlPath, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
             Op::CloseOnLand, Op::Comment, Op::Event, Op::Rebase,
             Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
-            Op::CreateBug,
+            Op::CreateBug, Op::AmendBug,
         ] {
             let s = script(op);
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");

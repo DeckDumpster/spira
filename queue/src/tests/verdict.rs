@@ -153,7 +153,7 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
     assert!(bug.contains("Publish PR 77 red for spira (http://r/9).\n\nPublished range: f0..m3\nRed suites: test-b.sh,test-a.sh\n\nMembers in this publish: sp-a,sp-b\n\n"));
     assert!(bug.ends_with("Fix forward on local/main — the next publish carries the fix. Production was never rolled back and no member bead was reopened."));
     assert!(!t.qfile("publish").exists());
-    assert_eq!(fs::read_to_string(t.qfile("publish-red")).unwrap(), "head=m3\nfix_forward=sp-fix1\n");
+    assert_eq!(fs::read_to_string(t.qfile("publish-red")).unwrap(), "head=m3\nfix_forward=sp-fix1\nsuites=test-b.sh,test-a.sh\n");
     assert!(t.landing_log().contains("QUEUE PUBLISH_RED 1000 repo=spira pr=77 suites=test-b.sh,test-a.sh fix_forward=sp-fix1"));
     assert!(t.lib.has("notify spira publish PR 77 red"));
     assert!(t.out().contains("verdict spira: publish PR 77 red — filed fix-forward sp-fix1"));
@@ -182,7 +182,7 @@ fn publish_red_with_no_bead_filed_is_a_fault_but_still_marks_the_head() {
     *t.lib.bug_id.borrow_mut() = None;
     t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 1);
-    assert_eq!(fs::read_to_string(t.qfile("publish-red")).unwrap(), "head=m3\nfix_forward=<create-failed>\n");
+    assert_eq!(fs::read_to_string(t.qfile("publish-red")).unwrap(), "head=m3\nfix_forward=<create-failed>\nsuites=test-a.sh\n");
     assert!(t.out().contains("filed fix-forward <create-failed>"));
 }
 
@@ -570,4 +570,30 @@ fn no_open_batch_never_calls_the_forge() {
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.forge.calls.borrow().is_empty());
     assert!(t.out().is_empty() && t.err().is_empty());
+}
+
+#[test]
+fn a_repeat_publish_red_for_the_same_suites_amends_the_open_bead_rather_than_filing() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    fs::write(t.qfile("publish-red"), "head=m2\nfix_forward=sp-old\nsuites=test-b.sh,test-a.sh\n").unwrap();
+    t.forge.status.borrow_mut().push(Some("red\nred-suite: test-b.sh\nred-suite: test-a.sh test-b.sh\nrun-url: http://r/9\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("amend_bug queue.sh sp-old"));
+    assert!(!t.lib.has("create_bug"));
+    assert!(fs::read_to_string(t.qfile("publish-red")).unwrap().starts_with("head=m3\nfix_forward=sp-old\n"));
+    assert!(t.out().contains("amended open fix-forward sp-old"));
+}
+
+#[test]
+fn a_repeat_publish_red_files_anew_when_the_prior_bead_is_closed_or_the_suites_differ() {
+    for (prior, ok) in [("sp-old\nsuites=test-b.sh,test-a.sh", false), ("sp-old\nsuites=test-z.sh", true)] {
+        let t = T::new(LandMode::QueueLocal);
+        publish_record(&t);
+        t.lib.amend_ok.set(ok);
+        fs::write(t.qfile("publish-red"), format!("head=m2\nfix_forward={prior}\n")).unwrap();
+        t.forge.status.borrow_mut().push(Some("red\nred-suite: test-b.sh\nred-suite: test-a.sh test-b.sh\n".into()));
+        assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+        assert!(t.lib.has("create_bug"), "{prior}");
+    }
 }
