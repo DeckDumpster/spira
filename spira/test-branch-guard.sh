@@ -285,6 +285,7 @@ cp "$HERE/boundary" "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/suite-
    "$HERE/exclude.sh" "$HERE/branch-guard.sh" "$HREPO/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$HREPO/"
 cp "$HERE/hooks/pre-commit" "$HREPO/hooks/pre-commit"
+mkdir -p "$HREPO/seedcrate/src"; printf "pub fn ok() {}\n" > "$HREPO/seedcrate/src/lib.rs"
 chmod +x "$HREPO/exclude.sh" "$HREPO/branch-guard.sh" "$HREPO/hooks/pre-commit"
 GIT_AUTHOR_NAME=op GIT_AUTHOR_EMAIL="op@example.com" \
 GIT_COMMITTER_NAME=op GIT_COMMITTER_EMAIL="op@example.com" \
