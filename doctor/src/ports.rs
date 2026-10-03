@@ -66,6 +66,10 @@ pub trait World {
     fn read_store_meta(&self, metadata_json: &Path) -> Option<StoreMeta>;
     fn systemd_user_is_active(&self, unit: &str) -> bool;
     fn tcp_connect(&self, host: &str, port: u16) -> bool;
+    /// `dolt config --global --get metrics.disabled` is `true`; false when unset or dolt cannot run.
+    fn dolt_metrics_disabled(&self) -> bool;
+    /// Files in `~/.dolt/eventsData` — every dolt CLI start scans them.
+    fn dolt_events_count(&self) -> usize;
 
     // ---- events probe ----
     /// The first bead id `bd -C <db> list --limit 1 --json` returns, or None.
