@@ -1,0 +1,26 @@
+[Unit]
+# Prunes dolt-beads.service's own temp spool (@SPIRA_DOLT_DATA@/.dolt/tmp): spill
+# files Dolt writes and never removes when the server process dies. Nothing did
+# this before dolt-beads.service crash-looped for four days and left 1,211 files /
+# 10GB behind, filling the root filesystem twice (sp-n1l7y). Tied to the same
+# SPIRA_DOLT_DATA gate as dolt-beads.service itself: no server, nothing to prune.
+#
+# NEVER DELETES A SPOOL THE LIVE SERVER HOLDS OPEN. dolt-tmp-prune.sh reads
+# dolt-beads.service's own MainPID and its /proc/<pid>/fd before removing anything
+# past the TTL — the same rule the 2026-09-27 incident used by hand.
+Description=Prune dolt-beads.service's temp spool
+Documentation=file://@SPIRA_HOME@/dolt-tmp-prune.sh
+After=default.target
+
+[Service]
+Type=oneshot
+ExecStart=@SPIRA_HOME@/dolt-tmp-prune.sh
+TimeoutStartSec=300
+CPUQuota=20%
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=append:@SPIRA_RUN@/dolt-tmp-prune.log
+StandardError=append:@SPIRA_RUN@/dolt-tmp-prune.log
+
+[Install]
+WantedBy=default.target

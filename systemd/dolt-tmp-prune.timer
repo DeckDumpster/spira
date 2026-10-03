@@ -1,0 +1,13 @@
+[Unit]
+Description=Prune dolt-beads.service's temp spool hourly
+
+[Timer]
+OnBootSec=10min
+OnActiveSec=10min
+OnUnitActiveSec=1h
+AccuracySec=5min
+Persistent=true
+Unit=dolt-tmp-prune.service
+
+[Install]
+WantedBy=timers.target
