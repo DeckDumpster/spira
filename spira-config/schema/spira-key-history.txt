@@ -249,6 +249,8 @@ spike_dir
 spike_label
 spike_paths
 statute_core
+statute_page
+statute_source
 submitted_label
 suites_budget
 suites_priority

@@ -136,4 +136,19 @@ case "$db_n" in ''|*[!0-9]*) bad "SP_STATUTE_DB_N is numeric" "got: $db_n" ;;
 case "$page_n" in ''|*[!0-9]*) bad "SP_STATUTE_PAGE_N is numeric" "got: $page_n" ;;
     *) ok "SP_STATUTE_PAGE_N is numeric ($page_n)" ;; esac
 
+echo "=== law-synth.sh: configured statute source ==="
+
+out_page=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="wiki/other/statutes.md" LAW_SYNTH_OVERRIDE=1 bash "$LAW_SYNTH_SH" 2>&1); rc_page=$?
+is "law-synth: custom SPIRA_STATUTE_PAGE exits 0" "0" "$rc_page"
+[ -f "$WIKI_TMP/wiki/other/statutes.md" ] \
+    && ok "law-synth: custom page written" || bad "law-synth: custom page written" "$out_page"
+
+out_kind=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_SOURCE="notion" bash "$LAW_SYNTH_SH" 2>&1); rc_kind=$?
+if [ "$rc_kind" -ne 0 ]; then ok "law-synth: unknown source kind refused"; else bad "law-synth: unknown source kind refused" "rc=0"; fi
+want "law-synth: unknown source kind named" "notion" "$out_kind"
+
+out_esc=$(SPIRA_DB="$SPIRA_DB" SPIRA_WIKI="$WIKI_TMP" SPIRA_STATUTE_PAGE="../escape.md" bash "$LAW_SYNTH_SH" 2>&1); rc_esc=$?
+if [ "$rc_esc" -ne 0 ] && [ ! -e "$TMP/escape.md" ]; then ok "law-synth: page outside the wiki refused"; else bad "law-synth: page outside the wiki refused" "rc=$rc_esc"; fi
+
+echo
 tl_summary

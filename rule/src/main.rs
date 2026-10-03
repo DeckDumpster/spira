@@ -131,7 +131,7 @@ fn synth(home: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Commits `wiki/notes/common-law.md` through `<home>/wiki-commit.sh`, immediately after
+/// Commits the `SPIRA_STATUTE_PAGE` page through `<home>/wiki-commit.sh`, immediately after
 /// `synth()` regenerates it, named only under `law: <verb> <key>` (sp-4fl2e). Best-effort:
 /// no `$SPIRA_WIKI` checkout, or nothing to stage, are not failures.
 fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
@@ -153,7 +153,11 @@ fn commit_common_law(home: &str, verb: &str, key: &str) -> CommitOutcome {
         Err(_) => return CommitOutcome::Failed,
     };
     if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"wiki/notes/common-law.md\n");
+        let page = std::env::var("SPIRA_STATUTE_PAGE")
+            .ok()
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "wiki/notes/common-law.md".to_string());
+        let _ = writeln!(stdin, "{page}");
     }
     match child.wait() {
         Ok(status) if status.success() => CommitOutcome::Committed,
