@@ -25,6 +25,7 @@ mod probes;
 mod release_skew;
 mod sccache_wedge;
 mod seams;
+mod slow_query;
 mod sweep;
 mod throttle;
 
@@ -406,6 +407,20 @@ fn main() {
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+        }
+        Some("--slow-query-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: slow-query-check skipped \u{2014} world is halted");
+                return;
+            }
+            let log_path = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
+            slow_query::run(
+                &run,
+                &log_path,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+            );
         }
         Some("--drift-check") => {
             if world_halted(&run) {
