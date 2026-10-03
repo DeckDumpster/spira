@@ -271,6 +271,18 @@ fn resolve_repo(arg: Option<&str>, deps: &Deps) -> Result<RepoRef, String> {
             .and_then(|c| c.spira.as_ref())
             .and_then(|s| s.home_repo.clone())
     };
+    if by_map.is_none() && home().is_none() && !path.join(".git").exists() {
+        let home_name = deps
+            .config
+            .and_then(|c| c.spira.as_ref())
+            .and_then(|s| s.home_repo.clone());
+        if let Some((n, r)) = home_name.and_then(|n| cfg_repos?.get(&n).map(|r| (n, r))) {
+            return Ok(RepoRef {
+                path: PathBuf::from(&r.path),
+                name: n,
+            });
+        }
+    }
     let name = by_map.or_else(home).unwrap_or_else(|| {
         canon
             .file_name()
@@ -319,6 +331,9 @@ fn landref(repo: &RepoRef, deps: &Deps) -> Option<String> {
         };
         git(&repo.path, &["remote", "set-head", &remote, "--auto"]).ok()?;
         return sym(&format!("refs/remotes/{remote}/HEAD"));
+    }
+    if verified(&repo.path, "local/main") {
+        return Some("local/main".to_string());
     }
     sym("HEAD")
 }

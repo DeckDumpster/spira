@@ -58,7 +58,7 @@ chmod +x "$STUB_CLAUDE"
 
 # Run archivist list in a clean environment.
 alist() {
-    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
         SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
         SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -68,7 +68,7 @@ alist() {
 
 # Run archivist sweep in a clean environment with the stub claude.
 asweep() {
-    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
         SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
         SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -264,7 +264,7 @@ mktranscript "$T/projects/-test-project/sess-viz.jsonl" 50 300000
 # Plant a sweep.state saying skipped for capacity.
 printf 'sweep_state=skipped\nreason=capacity\nat=%s\n' "$EPOCH" > "$T/run/archivist/sweep.state"
 # No per-session state exists, so arc_name will be "none" and sweep_skipped will be True.
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -345,7 +345,7 @@ exit 1
 STUB
 chmod +x "$REFUSE_CLAUDE"
 
-out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -410,7 +410,7 @@ rm -rf "$T/run" "$T/projects" "$T/home" "$T/chamber"
 mkdir -p "$T/home" "$T/run/archivist" "$T/projects/-test-project" "$T/chamber"
 cp "$HERE/chamber/archivist.md" "$T/chamber/" 2>/dev/null || printf 'test prompt {{TRANSCRIPT}}' > "$T/chamber/archivist.md"
 mktranscript "$T/projects/-test-project/sess-alias.jsonl" 50 300000
-alias_out="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+alias_out="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -444,7 +444,7 @@ exit 124
 STUB
 chmod +x "$TIMEOUT_CLAUDE"
 
-tout="$(env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+tout="$(env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -483,7 +483,7 @@ exit 1
 STUB
 chmod +x "$CRASH_CLAUDE"
 
-env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -512,7 +512,7 @@ mktranscript "$T/projects/-test-project/sess-exhaust.jsonl" 60 300000
 # Plant a timeout_count file at budget-1 so the next timeout crosses the threshold.
 printf '2\n' > "$T/run/archivist/sess-exhaust.timeout_count"
 
-env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
     SPIRA_RUN="$T/run" SPIRA_TOKEN_PROJECTS="$T/projects" \
     SPIRA_CTX_WARN="$CW" SPIRA_CTX_HIGH="$CH" SPIRA_CTX_LIMIT="$CL" \
     SPIRA_NOW="$EPOCH" SPIRA_ARCHIVIST_IDLE="$IDLE" \
@@ -530,7 +530,7 @@ elist="$(alist)"
 hasnt "an exhausted timeout is excluded from the next pass" "$elist" "archive"
 
 adigest() {  # adigest <archivist.sh args...>
-    env -i HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
+    env -i SPIRA_HOME="$HERE" HOME="$T/home" PATH="$PATH" SPIRA_CONF="$NONE" \
         SPIRA_RUN="$T/run" SPIRA_MAIL="$T/mail" SPIRA_MAIL_KINDS="$HERE/mail/kinds" \
         SPIRA_TOKEN_PROJECTS="$T/projects" SPIRA_TZ=UTC \
         "$ARC" "$@" 2>&1

@@ -1742,3 +1742,41 @@ fn resolve_repo_names_a_hash_named_dir_outside_the_map_by_its_basename() {
     assert_eq!(r.name, "ab12cd34ef56");
     assert!(resolve_repo(Some("nosuch"), &deps).is_err());
 }
+
+#[test]
+fn a_non_git_harness_root_resolves_to_the_home_repo_by_the_map() {
+    let t = testkit::TempDir::new("testenv-run-nongit");
+    let hash_dir = t.path().join("releases/abc123");
+    let home = t.path().join("checkout");
+    fs::create_dir_all(&hash_dir).unwrap();
+    fs::create_dir_all(&home).unwrap();
+    let toml = format!(
+        "[spira]\nhome_repo = \"homey\"\n[repo.homey]\npath = \"{}\"\nmode = \"queue.local\"\n",
+        home.display()
+    );
+    let cfg: spira_config::SpiraToml = toml::from_str(&toml).unwrap();
+    let env = |_: &str| None;
+    let rt = FakeRuntime::default();
+    let b = FakeBuilder::new(None);
+    let mk = |root: &Path| Deps {
+        rt: &rt,
+        builder: &b,
+        harness: Harness { root: root.to_path_buf() },
+        env: &env,
+        config: Some(&cfg),
+        stdin: &|| String::new(),
+        out: &|_| {},
+        owner_dir: t.path().join("owner"),
+        cwd: t.path().to_path_buf(),
+        runner_identity: vec![],
+        warm_refill: &|_, _| {},
+        spawn_sweep: &|_| {},
+        runner_exe: t.path().join("exe"),
+    };
+    let r = resolve_repo(None, &mk(&hash_dir)).unwrap();
+    assert_eq!((r.name.as_str(), r.path.as_path()), ("homey", home.as_path()));
+    // control: a git work tree keeps its own name
+    fs::create_dir_all(hash_dir.join(".git")).unwrap();
+    let r = resolve_repo(None, &mk(&hash_dir)).unwrap();
+    assert_eq!(r.name, "abc123");
+}
