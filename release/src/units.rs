@@ -180,8 +180,10 @@ pub fn gate_open(template_name: &str, host: &BTreeMap<String, String>) -> bool {
 
 /// Placeholders an empty value fills rather than refuses: `SPIRA_PATH_TAIL` ("nothing
 /// configured" is its ordinary case) and `SPIRA_REPO_MAP` (conf.sh falls back to its own
-/// candidate search on an empty value, and the pass refuses to run when that finds nothing).
-const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL", "SPIRA_REPO_MAP"];
+/// candidate search on an empty value, and the pass refuses to run when that finds nothing),
+/// and `SPIRA_LC_PASSWORD_FILE` (empty until a same-user credential exists; spira-lc then reads
+/// SPIRA_LC_PASSWORD).
+const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL", "SPIRA_REPO_MAP", "SPIRA_LC_PASSWORD_FILE"];
 
 /// Render one template against release `rel` (systemd/render.py's rules, in Rust).
 /// `host` supplies the host keys. A placeholder no key fills, or a key the template uses
@@ -211,7 +213,13 @@ pub fn render_from_values(template_name: &str, text: &str, values: &BTreeMap<Str
     render_from_lookup(template_name, text, |k| values.get(k).cloned(), watcher, instance)
 }
 
+/// Optional keys a host map may omit entirely; they render empty. `SPIRA_LC_PASSWORD_FILE`
+/// (sp-9c2o5) is new to every unit, and a host map written before it — a test fixture or a
+/// predecessor's activation — must not be refused for lacking a value that may be empty anyway.
+const ABSENT_IS_EMPTY: &[&str] = &["SPIRA_LC_PASSWORD_FILE"];
+
 fn render_from_lookup(template_name: &str, text: &str, lookup: impl Fn(&str) -> Option<String>, watcher: Option<&str>, instance: &str) -> Result<String, String> {
+    let lookup = |k: &str| lookup(k).or_else(|| ABSENT_IS_EMPTY.contains(&k).then(String::new));
     let mut unknown = Vec::new();
     let mut empty = Vec::new();
     for k in placeholders(text) {
@@ -292,4 +300,17 @@ pub fn check_binaries(rel: &Path) -> Result<Vec<String>, String> {
         }
     }
     Ok(problems)
+}
+
+#[cfg(test)]
+mod absent_is_empty_tests {
+    use super::render_from_lookup;
+
+    #[test]
+    fn an_omitted_lc_password_file_renders_empty_and_an_omitted_other_key_still_refuses() {
+        let ok = render_from_lookup("x.service", "Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@\n", |_| None, None, "prod").unwrap();
+        assert_eq!(ok, "Environment=SPIRA_LC_PASSWORD_FILE=\n");
+        let err = render_from_lookup("x.service", "Environment=SPIRA_DB=@SPIRA_DB@\n", |_| None, None, "prod").unwrap_err();
+        assert!(err.contains("SPIRA_DB"), "{err}");
+    }
 }

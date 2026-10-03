@@ -158,6 +158,11 @@ impl Config {
         // not-yet-in-the-schema key here has always let them.
         m.insert(crate::units::SCCACHE_DAV_ADDR_KEY.into(), pick(crate::units::SCCACHE_DAV_ADDR_KEY, s.sccache_dav_addr.as_ref(), None));
         m.insert("SPIRA_REPO_MAP".into(), pick("SPIRA_REPO_MAP", s.repo_map.as_ref(), None));
+        // sp-9c2o5: the same-user lifecycle credential every unit carries. Env first, else the
+        // operator's credential file when it exists, else empty (spira-lc then falls back to
+        // SPIRA_LC_PASSWORD) — the same default spira_config::resolve gives conf.sh.
+        let lc_default = self.env("HOME").map(|h| format!("{h}/.config/spira/spira-lc.credential")).filter(|p| std::path::Path::new(p).is_file());
+        m.insert("SPIRA_LC_PASSWORD_FILE".into(), pick("SPIRA_LC_PASSWORD_FILE", None, lc_default));
         let tail = self.path_tail()?;
         m.insert("SPIRA_PATH_TAIL".into(), if tail.is_empty() { String::new() } else { format!(":{tail}") });
         Ok(m)
