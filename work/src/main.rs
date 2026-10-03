@@ -42,7 +42,7 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
 
-    let tip = if verb == "submit" { read_tip() } else { None };
+    let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let req = match work::build_request(&bound, &verb, &verb_args, tip.as_deref(), &actor) {
         Ok(r) => r,
@@ -66,9 +66,17 @@ fn main() {
     }
 }
 
-/// `submit` never takes a tip argument (design §3.5): it is read from the aeon's own
-/// worktree, here, the only place this binary touches git.
-fn read_tip() -> Option<String> {
+/// `submit` never takes a tip argument (design §3.5): it is read here, the only place this
+/// binary touches git — from the bead's own branch `spira/<id>`, which every worktree of the
+/// repo shares, so the answer does not depend on the caller's cwd. `HEAD` read from the
+/// wrong directory recorded local/main as the tip and the bead could never certify.
+fn read_tip(bead: &str) -> Option<String> {
+    let branch = format!("refs/heads/spira/{bead}");
+    if let Ok(out) = Command::new("git").args(["rev-parse", "--verify", "-q", &branch]).output() {
+        if out.status.success() {
+            return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
+        }
+    }
     let out = Command::new("git").args(["rev-parse", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
