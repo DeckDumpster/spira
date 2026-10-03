@@ -275,8 +275,8 @@ impl<'w, W: World> Trial<'w, W> {
                 let list: String = paths
                     .iter()
                     .fold(String::new(), |acc, p| acc + "gate:   " + p + "\n");
-                return v(NOVERDICT, "conflict", format!(
-                    "gate: {br} does not merge onto {base} — it is stale, not red; nothing about the work is judged.\n{list}gate: rebase it onto {base} (the landing pass hands it to rebase-stale)."));
+                return v(FAIL, "no-rebase", format!(
+                    "gate: {br} does not merge onto {base} — the branch's own defect; nothing about the work is judged.\n{list}gate: rebase it onto {base}."));
             }
             Merge::Failed(e) => {
                 return v(NOVERDICT, "merge-failed", format!("gate: cannot merge {br} onto {base} in {name} to judge it — refusing to judge the branch alone.\n{e}"));

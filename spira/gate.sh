@@ -5,8 +5,8 @@
 #   gate.sh <branch> [repo-name]
 #
 # The gate is the Rust `gate` binary (gate/DESIGN.md, sp-0tpcs): it judges the branch MERGED
-# onto its landing ref, and a branch that no longer merges is NO_VERDICT reason=conflict, not
-# red. This file stays the one entry point every caller names (landing-pass, queue submit,
+# onto its landing ref, and a branch that no longer merges is FAIL reason=no-rebase, never
+# NO_VERDICT. This file stays the one entry point every caller names (landing-pass, queue submit,
 # batch.sh, gate-run.sh, the suites); it only hands over to the binary, by name on the launcher's PATH (sp-gypjk).
 #
 # `exec -a "$0"` keeps this script's path in the process's argv, so the scans that look for a
