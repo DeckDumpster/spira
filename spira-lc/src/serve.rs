@@ -54,15 +54,20 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     eprintln!("spira-lc serve: listening on {socket_path}");
-    // One connection at a time: the persistent dolt session is a single subprocess with a
-    // single stdin, so concurrent requests must serialize through it regardless — a
-    // dedicated thread per connection would only add contention, not throughput.
-    for conn_stream in listener.incoming() {
-        match conn_stream {
-            Ok(stream) => handle(stream, &conn),
-            Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+    // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
+    // socket; serving one connection at a time deadlocks on that. The session mutex still
+    // serializes the queries themselves.
+    std::thread::scope(|scope| {
+        for conn_stream in listener.incoming() {
+            match conn_stream {
+                Ok(stream) => {
+                    let conn = &conn;
+                    scope.spawn(move || handle(stream, conn));
+                }
+                Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+            }
         }
-    }
+    });
     0
 }
 
