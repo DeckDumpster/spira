@@ -54,10 +54,20 @@ pub fn which(prog: &str) -> Option<String> {
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
-    let repo = repo_env.unwrap_or_else(|| {
-        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned()
-    });
+    let repo = match repo_env {
+        Some(r) => r,
+        None => {
+            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+            let d = spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map);
+            if !d.join(".git").exists() {
+                return Err(format!(
+                    "derived repo {} is not a git checkout (no .git); export SPIRA_REPO to the real checkout",
+                    d.display()
+                ));
+            }
+            d.to_string_lossy().into_owned()
+        }
+    };
     let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
         format!("{parent}/cockpit")
