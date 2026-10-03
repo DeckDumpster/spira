@@ -619,6 +619,11 @@ impl<'w, W: World> Trial<'w, W> {
             }
         }
         let re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
+        // The base trial runs only the named suites the base has: a suite this branch adds
+        // cannot be red on the base, and naming it there faults the runner ("unknown suite"),
+        // which read as base-untestable and held every branch that adds a suite.
+        let base_required: Vec<String> =
+            re.required.iter().filter(|s| w.ls_tree_has(&repo, &base_rev, &format!("spira/{s}"))).cloned().collect();
         self.s.compose = comp.label();
         self.s.branch_type = crate::telemetry::branch_type(&crate::telemetry::shape(
             w, mode, &comp, &ctx, &repo, &base_rev, &rev, &tree,
@@ -911,7 +916,7 @@ impl<'w, W: World> Trial<'w, W> {
                 base_cmd,
                 base_tools.as_ref(),
                 jobs,
-                &re.required,
+                &base_required,
                 "base-",
             );
             let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");

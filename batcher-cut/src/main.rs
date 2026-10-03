@@ -1055,7 +1055,7 @@ mod base_conflict_handling {
     use std::fs;
 
     fn member(id: &str, tip: &str) -> Member {
-        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, certified_at: 100, stack: BTreeMap::new() }
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, base_fix: false, certified_at: 100, stack: BTreeMap::new() }
     }
 
     #[test]
