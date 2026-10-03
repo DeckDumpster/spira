@@ -275,7 +275,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH:$SH/lc-stub-bin" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -910,7 +910,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH:$SH/lc-stub-bin" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -1009,8 +1009,19 @@ echo "M. stacked dependents: closure, topological order, every member reaches LA
 LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
 cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
 #!/usr/bin/env bash
+certified_rows() {
+    local f id st tip ep sep=''
+    printf '['
+    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+        [ -f "$f" ] || continue
+        read -r st tip ep < "$f"
+        [ "$st" = CERTIFIED ] || continue
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+    done
+    printf ']\n'
+}
 case "${1:-}" in
-    list) printf '[]\n'; exit 0 ;;   # the reachability probe lifecycle_enforce=1 makes first
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
