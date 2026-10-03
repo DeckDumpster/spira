@@ -15,7 +15,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use batcher::core::{Member, MergeResult, PoolHistory};
 
@@ -83,6 +83,9 @@ pub struct Env {
     /// `${SPIRA_VERDICTS:-$SPIRA_RUN/verdicts}` — where the round's tree certificate goes
     /// (gate::cert, queue/DESIGN.md §8 D12), resolved exactly as the gate resolves it.
     pub verdicts: PathBuf,
+    /// How many times `land_local` tries while another queue operation holds the repo's lock.
+    pub land_lock_attempts: u32,
+    pub land_lock_wait: Duration,
 }
 
 fn now() -> u64 {
@@ -1285,7 +1288,42 @@ pub fn classify_land_exit(code: Option<i32>) -> LandOutcome {
     }
 }
 
-pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandOutcome, String> {
+/// What one `land_local` call came to: the outcome, and the line that explains a refusal.
+#[derive(Debug, PartialEq, Eq)]
+pub struct LandRun {
+    pub outcome: LandOutcome,
+    pub refusal: String,
+}
+
+pub const LOCK_BUSY: &str = "holds the lock";
+
+fn refusal_line(err: &str) -> String {
+    err.lines()
+        .find(|l| l.contains(LOCK_BUSY))
+        .or_else(|| err.lines().rev().find(|l| !l.trim().is_empty()))
+        .unwrap_or("(no stderr)")
+        .trim()
+        .to_string()
+}
+
+/// A refusal because another queue operation holds the lock is retried (bounded); every other
+/// outcome is final.
+pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandRun, String> {
+    let attempts = env.land_lock_attempts.max(1);
+    let mut last = LandRun { outcome: LandOutcome::Refused, refusal: String::new() };
+    for n in 1..=attempts {
+        last = land_local_once(env, repo, wt, head, members)?;
+        let busy = last.outcome == LandOutcome::Refused && last.refusal.contains(LOCK_BUSY);
+        if !busy || n == attempts {
+            break;
+        }
+        println!("batcher {}: queue land-local refused ({}) — retry {n}/{attempts}", repo.name, last.refusal);
+        std::thread::sleep(env.land_lock_wait);
+    }
+    Ok(last)
+}
+
+fn land_local_once(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(String, String)]) -> Result<LandRun, String> {
     use std::io::Write;
     let members_text = members.iter().fold(String::new(), |mut acc, (id, tip)| {
         use std::fmt::Write as _;
@@ -1312,7 +1350,48 @@ pub fn land_local(env: &Env, repo: &Repo, wt: &Path, head: &str, members: &[(Str
     if !err.is_empty() {
         eprint!("{err}");
     }
-    Ok(classify_land_exit(o.status.code()))
+    Ok(LandRun { outcome: classify_land_exit(o.status.code()), refusal: refusal_line(&err) })
+}
+
+/// True only when `head` is an ancestor of the repo's landing ref: the one fact that says the
+/// round landed, whatever land-local reported.
+pub fn head_on_base(repo: &Repo, head: &str) -> bool {
+    run_status(
+        Command::new("git").arg("-C").arg(&repo.path).args(["merge-base", "--is-ancestor", head, &repo.base]),
+    )
+}
+
+/// Alarm for a round that did not land: the incident names the refusal line.
+pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail: &str) -> Result<String, String> {
+    let title = format!("{}: round head {head} did not reach {}", repo.name, repo.base);
+    let body = format!(
+        "queue land-local did not land round head {head} on {}: {detail}\nNo member was landed by this round; the batcher reported the round as refused. Find why land-local refused (its stderr is in the batcher log) before the next round.",
+        repo.base
+    );
+    let tmp_dir = env.run.join("tmp");
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("{}: {e}", tmp_dir.display()))?;
+    let tmp = tmp_dir.join(format!("land-unverified-{}-{}.txt", repo.name, now()));
+    fs::write(&tmp, &body).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    let out = run(
+        Command::new("incident.sh")
+            .arg("file")
+            .arg(&title)
+            .arg(&tmp)
+            .env("SPIRA_INCIDENT_TYPE", "bug")
+            .env("SPIRA_INCIDENT_PRIORITY", "1")
+            .env("SPIRA_INCIDENT_ACTOR", "batcher")
+            .env("SPIRA_INCIDENT_REPO", &repo.name)
+            .env("SPIRA_INCIDENT_REF", format!("land-unverified:{}:{head}", repo.name))
+            .env("SPIRA_INCIDENT_CAUSE", "land-unverified"),
+        "incident.sh file",
+    );
+    let _ = fs::remove_file(&tmp);
+    let out = out?;
+    let id = out.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).unwrap_or_default();
+    if id.is_empty() {
+        return Err(format!("incident.sh file: no id returned: {out}"));
+    }
+    Ok(id)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1948,6 +2027,72 @@ mod land_exit_tests {
         assert_eq!(classify_land_exit(Some(3)), LandOutcome::DeployFault);
         assert_eq!(classify_land_exit(None), LandOutcome::Refused, "killed by a signal: nothing is known to have landed");
     }
+
+    fn stub_queue(d: &Path, busy_first: u32, then_exit: i32, then_msg: &str) -> Env {
+        let mut e = lifecycle_tests_env(d);
+        let n = d.join("n");
+        testkit::write_exe(
+            &d.join("queue"),
+            &format!(
+                "#!/bin/sh\ncat >/dev/null\nc=$(cat '{n}' 2>/dev/null || echo 0)\nc=$((c+1)); echo $c > '{n}'\nif [ $c -le {busy_first} ]; then echo 'queue.sh land-local: another queue operation holds the lock for spira' >&2; exit 1; fi\n[ -n '{then_msg}' ] && echo '{then_msg}' >&2\nexit {then_exit}\n",
+                n = n.display()
+            ),
+        );
+        e.queue_bin = d.join("queue");
+        e
+    }
+
+    fn repo_at(d: &Path) -> Repo {
+        Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: d.to_path_buf(), land: Land::Local }
+    }
+
+    #[test]
+    fn a_held_lock_retries_then_lands() {
+        let d = testkit::TempDir::new("batcher-cut-land-retry");
+        let e = stub_queue(&d, 2, 0, "");
+        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        assert_eq!(r.outcome, LandOutcome::Landed);
+        assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3");
+    }
+
+    #[test]
+    fn a_lock_held_past_the_bound_is_a_refusal_naming_the_line() {
+        let d = testkit::TempDir::new("batcher-cut-land-held");
+        let e = stub_queue(&d, 99, 0, "");
+        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        assert_eq!(r.outcome, LandOutcome::Refused);
+        assert!(r.refusal.contains("holds the lock"), "{}", r.refusal);
+        assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "3", "bounded by land_lock_attempts");
+    }
+
+    #[test]
+    fn a_refusal_without_the_lock_is_final_and_alarms_with_its_line() {
+        let d = testkit::TempDir::new("batcher-cut-land-refused");
+        let e = stub_queue(&d, 0, 1, "queue.sh land-local: not a fast-forward");
+        let r = land_local(&e, &repo_at(&d), &d, "abc", &[]).unwrap();
+        assert_eq!(r.outcome, LandOutcome::Refused);
+        assert_eq!(r.refusal, "queue.sh land-local: not a fast-forward");
+        assert_eq!(fs::read_to_string(d.join("n")).unwrap().trim(), "1", "no retry");
+    }
+
+    #[test]
+    fn head_on_base_is_ancestry_not_the_exit_code() {
+        let d = testkit::TempDir::new("batcher-cut-land-ancestry");
+        let g = |args: &[&str]| {
+            let o = Command::new("git").arg("-C").arg(&*d).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(args).output().unwrap();
+            assert!(o.status.success(), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        };
+        g(&["init", "-q", "-b", "main"]);
+        g(&["commit", "-q", "--allow-empty", "-m", "a"]);
+        let a = g(&["rev-parse", "HEAD"]);
+        g(&["commit", "-q", "--allow-empty", "-m", "b"]);
+        g(&["branch", "local/main", &a]);
+        let b = g(&["rev-parse", "HEAD"]);
+        let repo = repo_at(&d);
+        assert!(head_on_base(&repo, &a));
+        assert!(!head_on_base(&repo, &b), "a head past the landing ref has not landed");
+    }
 }
 
 #[cfg(test)]
@@ -2056,5 +2201,7 @@ fn lifecycle_tests_env(dir: &Path) -> Env {
         lc_timeout: 5,
         lc_enforce: false,
         verdicts: dir.join("verdicts"),
+        land_lock_attempts: 3,
+        land_lock_wait: Duration::from_millis(1),
     }
 }
