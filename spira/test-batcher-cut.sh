@@ -1026,7 +1026,7 @@ case "${1:-}" in
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
         [ -f "$f" ] && stack="$(cat "$f")"
-        printf '{"bead":{"stack":%s}}\n' "$stack"
+        printf '{"bead":{"state":"CERTIFIED","version":"3","stack":%s}}\n' "$stack"
         exit 0
         ;;
     *) exit 0 ;;
