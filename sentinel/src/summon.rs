@@ -8,7 +8,7 @@
 use crate::cfg::Fayth;
 use crate::cfg::Lifecycle;
 use crate::host::{Io, Spec};
-use crate::model::{Bead, LcRow};
+use crate::model::Bead;
 use crate::pass::{self, Sentinel};
 use crate::store::{self, has_all, has_none};
 
@@ -40,18 +40,13 @@ pub fn bucket(ready: &[Bead], fayths: &[Fayth], shared_exclude: &[String]) -> Ve
     counts
 }
 
-/// lifecycle_enforce ON: the ready beads a claim could actually take. A bead the lifecycle
-/// machine holds on anything but `wait` (a poison, ask or operator hold) is refused by
-/// spira-claim's own claim rule (rank.rs `claimable`: `Held`), so CHECK 7 must not count it
-/// as ready — else every pass summons an aeon for a poisoned bead that no claim can take.
-/// A bead with no lifecycle row is left in (unmigrated; the claim itself decides).
-pub fn unheld(ready: &[Bead], rows: &[LcRow]) -> Vec<Bead> {
-    let held: std::collections::HashSet<&str> = rows
-        .iter()
-        .filter(|r| r.holds.iter().any(|h| h != "wait"))
-        .map(|r| r.bead_id.as_str())
-        .collect();
-    ready.iter().filter(|b| !held.contains(b.id.as_str())).cloned().collect()
+pub fn parse_cache(text: &str) -> Vec<(String, usize)> {
+    text.lines()
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            Some((it.next()?.to_string(), it.next()?.parse().ok()?))
+        })
+        .collect()
 }
 
 pub fn render_cache(counts: &[(String, usize)]) -> String {
@@ -74,17 +69,22 @@ impl<'a> Sentinel<'a> {
     /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
     /// trusts the cache unconditionally once it exists.
     ///
-    /// ON: held beads are not ready (see [`unheld`]); a machine that cannot answer counts
-    /// nothing ready this pass — it is authoritative, and no claim can succeed without it.
+    /// ON: the counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
+    /// aeon's `select --blockers machine` applies — never the `bd ready` set, which counts a
+    /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
+    /// `fayth_ready` asks again and fails closed.
     pub fn export_ready_cache(&self, ready: &[Bead]) {
-        let ready: Vec<Bead> = match self.lc {
-            Lifecycle::Off => ready.to_vec(),
-            Lifecycle::On => match self.lc_rows() {
-                Some(rows) => unheld(ready, &rows),
-                None => Vec::new(),
-            },
+        let counts = match self.lc {
+            Lifecycle::Off => bucket(ready, &self.ctx.fayths, &self.shared_exclude()),
+            Lifecycle::On => {
+                let bin = self.cfg.claim_bin.clone();
+                let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
+                if !o.ok() {
+                    return;
+                }
+                parse_cache(&o.stdout)
+            }
         };
-        let counts = bucket(&ready, &self.ctx.fayths, &self.shared_exclude());
         if counts.is_empty() && !self.ctx.fayths.is_empty() {
             return;
         }
@@ -902,37 +902,12 @@ mod tests {
         assert_eq!(render_cache(&c), "builder 1\nops 1\nspike 3\n");
     }
 
-    fn row(id: &str, holds: &[&str]) -> LcRow {
-        LcRow {
-            bead_id: id.into(),
-            state: "READY".into(),
-            holds: holds.iter().map(|h| h.to_string()).collect(),
-            ..Default::default()
-        }
-    }
-
     #[test]
-    fn unheld_drops_poison_ask_and_operator_holds_but_keeps_wait_and_rowless() {
-        let ready = parse_beads(
-            r#"[{"id":"p","labels":["spira","plan"]},
-                {"id":"a","labels":["spira","plan"]},
-                {"id":"o","labels":["spira","plan"]},
-                {"id":"w","labels":["spira","plan"]},
-                {"id":"free","labels":["spira","plan"]},
-                {"id":"norow","labels":["spira","plan"]}]"#,
-        )
-        .unwrap();
-        let rows = vec![
-            row("p", &["poison"]),
-            row("a", &["ask"]),
-            row("o", &["operator", "wait"]),
-            row("w", &["wait"]),
-            row("free", &[]),
-        ];
-        let ids: Vec<String> = unheld(&ready, &rows).into_iter().map(|b| b.id).collect();
-        assert_eq!(ids, vec!["w", "free", "norow"]);
-        let c = bucket(&unheld(&ready, &rows), &[f("builder", "spira,plan", "")], &[]);
-        assert_eq!(c, vec![("builder".into(), 3)]);
+    fn parse_cache_reads_claims_own_bucket_lines_and_skips_noise() {
+        assert_eq!(
+            parse_cache("builder 0\nops 3\njunk\nx notanumber\n"),
+            vec![("builder".to_string(), 0), ("ops".to_string(), 3)]
+        );
     }
 
     // ---- check7_pool_decision, lane_rotate, ck7_pool, ck7_throttled, ck7_fill_cap -------

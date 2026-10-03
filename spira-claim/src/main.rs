@@ -862,6 +862,21 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
+/// lifecycle_enforce on: the open beads a claim could actually take, by the rule `select
+/// --blockers machine` applies — bd's own ready set misses a lifecycle-SUBMITTED bead and a
+/// bead blocked by one. `Err` when the machine cannot answer: a count must refuse, not read 0.
+fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
+    let st = store(a, &env.config)?;
+    let raw = st.ready_json(&ready::machine_ready_args(&scope_label(a, env), &no_loop_label(a, env)))?;
+    let rows = rank::parse_ready(&raw)?;
+    let lc = rank::parse_lifecycle(&st.lifecycle_snapshot()?)?;
+    let wanted = rank::all_blockers(&rows);
+    let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
+    let bd = rank::index_rows(recs);
+    let stack_max = env.config.stack_max_depth.unwrap_or(rank::STACK_CEILING).min(rank::STACK_CEILING);
+    Ok(rows.into_iter().filter(|r| matches!(rank::claimable(r, &lc, &bd, stack_max), Verdict::Claimable { .. })).collect())
+}
+
 /// `fayth-ready <fayth>`: `fayth_ready` (lib.sh:693). Exit code names which of FOUR things
 /// happened (sp-3ntca; widened by sp-hh599, then sp-xsnid): 2 = no such fayth file — the
 /// ONE outcome a resolved chamber was actually consulted and came back empty, the only rc
@@ -921,6 +936,15 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
         Err(e) => return Outcome { code: 3, out: "0".into(), err: format!("spira-claim: fayth_ready: {e}") },
     };
     let exclude = fayth_exclude_str(env, &home, &me, &predicate.exclude_labels);
+    if lifecycle_on() {
+        let rows = match machine_claimable(a, env) {
+            Ok(r) => r,
+            Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
+        };
+        let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
+        let n = ready::bucket(&rows, &[part], &queue_wait_label(env), &submitted_label_f(env)).first().map_or(0, |c| c.1);
+        return Outcome::ok(n.to_string());
+    }
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
@@ -972,8 +996,17 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
-    let raw = match std::env::var("SPIRA_READY_SNAPSHOT").ok().filter(|p| !p.is_empty()) {
+    let enforced = if lifecycle_on() {
+        match machine_claimable(a, env) {
+            Ok(r) => Some(r),
+            Err(e) => return Outcome::cannot_tell(format!("bulk-ready-by-fayth: {}", first_line(&e))),
+        }
+    } else {
+        None
+    };
+    let raw = match std::env::var("SPIRA_READY_SNAPSHOT").ok().filter(|p| !p.is_empty()).filter(|_| enforced.is_none()) {
         Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+        None if enforced.is_some() => "[]".to_string(),
         None => {
             let st = match store(a, &env.config) {
                 Ok(s) => s,
@@ -989,7 +1022,10 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
     }
     // ready-bucket.py: any parse exception is `d = []`, never a hard failure.
-    let rows = rank::parse_ready(&raw).unwrap_or_default();
+    let rows = match enforced {
+        Some(r) => r,
+        None => rank::parse_ready(&raw).unwrap_or_default(),
+    };
     let counts = ready::bucket(&rows, &parts, &queue_wait_label(env), &submitted_label_f(env));
     Outcome {
         code: 0,

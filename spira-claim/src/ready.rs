@@ -26,6 +26,22 @@ pub fn ready_raw_args(no_loop_label: &str) -> Vec<String> {
     v
 }
 
+/// `MACHINE_READY_ARGS` (lib.sh): `bd list` over open beads with no blocker judgment — the
+/// candidate set `select --blockers machine` filters when lifecycle_enforce is on.
+pub fn machine_ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
+    let mut v: Vec<String> =
+        ["list", "--status", "open", "--no-assignee", "--exclude-type", "epic,event", "--limit", "0"].iter().map(|s| s.to_string()).collect();
+    if !scope_label.is_empty() {
+        v.push("--label".into());
+        v.push(scope_label.to_string());
+    }
+    if !no_loop_label.is_empty() {
+        v.push("--exclude-label".into());
+        v.push(no_loop_label.to_string());
+    }
+    v
+}
+
 /// `READY_ARGS` itself (lib.sh:434): the base five tokens, `--label <scope>` when a scope
 /// restriction is set, then `--exclude-label <no-loop>` when the no-loop label is set — in
 /// that order, matching the bash array's own append sequence.

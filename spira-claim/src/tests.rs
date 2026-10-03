@@ -969,3 +969,61 @@ fn bulk_ready_by_fayth_cli_reads_the_snapshot_instead_of_calling_bd() {
     let o = run(&["bulk-ready-by-fayth"], "");
     assert_eq!((o.code, o.out.as_str()), (0, "builder 1\n"));
 }
+
+// ---- fayth-ready / bulk-ready-by-fayth under lifecycle_enforce -------------------------
+
+/// A PATH directory holding a `spira-lc` that prints `lc`.
+fn fake_lc_path(lc: &str) -> Tmp {
+    let dir = testkit::TempDir::new("spira-claim-lc");
+    testkit::write_exe(dir.join("spira-lc"), &format!("#!/bin/sh\ncat <<'EOF'\n{lc}\nEOF\n"));
+    let path = format!("{}:{}", dir.to_string_lossy(), std::env::var("PATH").unwrap_or_default());
+    Tmp { path, _dir: dir }
+}
+
+fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
+    enforce(true);
+    let home = chamber_home(&[("probe", "plan", "")]);
+    let bd = sh(&format!("case \"$*\" in *--id*) echo '{recs}';; *) echo '{ready}';; esac"));
+    let path = fake_lc_path(lc);
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_READY_SNAPSHOT", None),
+        ("SPIRA_FAYTHS", None),
+        ("PATH", Some(path.as_str())),
+    ]);
+    let o = run(verb, "");
+    enforce(false);
+    o
+}
+
+const ENFORCE_READY: &str = r#"[{"id":"S","priority":1,"labels":["plan"]},
+    {"id":"D","priority":1,"labels":["plan"],"dependencies":[{"issue_id":"D","depends_on_id":"S","type":"blocks"}]},
+    {"id":"R","priority":1,"labels":["plan"]}]"#;
+const ENFORCE_RECS: &str = r#"[{"id":"S","status":"open","issue_type":"task","labels":["plan"]}]"#;
+
+#[test]
+fn enforced_counts_exclude_submitted_and_blocked_beads_and_keep_one_ready() {
+    let lc = r#"[{"bead_id":"S","state":"SUBMITTED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"READY","holds":"[]"}]"#;
+    let one = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["fayth-ready", "probe"]);
+    assert_eq!((one.code, one.out.as_str()), (0, "1"), "{}", one.err);
+    let bulk = enforced_count(ENFORCE_READY, lc, ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    assert_eq!((bulk.code, bulk.out.as_str()), (0, "probe 1\n"), "{}", bulk.err);
+
+    let all_held = r#"[{"bead_id":"S","state":"SUBMITTED","holds":"[]"},{"bead_id":"D","state":"READY","holds":"[]"},{"bead_id":"R","state":"SUBMITTED","holds":"[]"}]"#;
+    let zero = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["fayth-ready", "probe"]);
+    assert_eq!((zero.code, zero.out.as_str()), (0, "0"), "{}", zero.err);
+    let bulk0 = enforced_count(ENFORCE_READY, all_held, ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    assert_eq!((bulk0.code, bulk0.out.as_str()), (0, "probe 0\n"), "{}", bulk0.err);
+}
+
+#[test]
+fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
+    let o = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["fayth-ready", "probe"]);
+    assert_eq!((o.code, o.out.as_str()), (1, "0"), "{}", o.err);
+    let b = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["bulk-ready-by-fayth"]);
+    assert_ne!(b.code, 0);
+    assert_eq!(b.out, "");
+}
