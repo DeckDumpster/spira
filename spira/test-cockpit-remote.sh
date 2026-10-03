@@ -180,7 +180,7 @@ else
     chmod +x "$LOCKD/bin/tmux"
     _fake_holder() {
         rm -f "$LOCKD/held"
-        printf '%s\n' 'exec 9>"$2/cockpit-watch.lock"; flock 9; touch "$2/held"; sleep 10' >"$LOCKD/cockpit-remote"
+        printf '%s\n' 'exec 9>"$2/cockpit-watch.lock"; flock 9; touch "$2/held"; exec -a "cockpit-remote watch" sleep 10' >"$LOCKD/cockpit-remote"
         bash "$LOCKD/cockpit-remote" watch "$LOCKD" &
         _holder=$!
         for _ in 1 2 3 4 5 6 7 8 9 10; do [ -e "$LOCKD/held" ] && break; sleep 0.2; done
