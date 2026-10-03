@@ -47,11 +47,11 @@ rungate_real() {
 # commit_citing <branch> <bead-id> — one commit off origin/main whose subject cites the id,
 # the way an aeon's own commit does (law-aeon-commits-name-their-bead).
 commit_citing() {
-    local br="$1" id="$2" w
+    local br="$1" id="$2" extra="${3:-}" w
     w="$(mktemp -d)"
     git -C "$REPO" worktree add -q -b "$br" "$w" origin/main
     printf 'x\n' > "$w/f.txt"
-    git -C "$w" add -A; git -C "$w" commit -q -m "feat: $id — a follow-up was filed as $id"
+    git -C "$w" add -A; git -C "$w" commit -q -m "feat: $id — a follow-up was filed as $id $extra"
     git -C "$REPO" worktree remove --force "$w"
 }
 
@@ -103,6 +103,15 @@ REASON
 commit_citing spira/sp-cc3 "$CLOSED_ID"
 out="$(rungate_real spira/sp-cc3)"; rc=$?
 is   "a citation naming a real CLOSED bead: passes too"  0 "$rc"
+
+# --------------------------------------------------------------------------------------
+# A hyphenated fixture token is not a citation: sp-ow-mail must not truncate to the phantom
+# sp-ow, and beside a real id only the real id is looked up.
+# --------------------------------------------------------------------------------------
+commit_citing spira/sp-cc4 "$OPEN_ID" "(fixture sp-ow-mail and sp-foo-bar)"
+out="$(rungate_real spira/sp-cc4)"; rc=$?
+is     "hyphenated fixture tokens beside a real id: passes"  0 "$rc"
+nowant "no truncated stem is reported"                       "sp-ow" "$out"
 
 # --------------------------------------------------------------------------------------
 # STORE UNREADABLE renders as a gate error, NEVER as "every id exists". gate_fixture_run's
