@@ -200,4 +200,12 @@ for _u in full sample; do
     fi
 done
 
+lone_pct() { grep -E '^Exec[A-Za-z]*=' "$1" | sed 's/%%//g' | grep -c '%[A-Za-z]'; }
+printf 'ExecCondition=/bin/bash -c %s\n' "'printf \"%s\"'" > "$TMP/planted.service"
+[ "$(lone_pct "$TMP/planted.service")" -gt 0 ] && ok "lone-% matcher flags a planted unescaped specifier" \
+    || bad "lone-% matcher flags a planted unescaped specifier" "matcher silent on planted offender"
+n="$(lone_pct "$ROOT/systemd/spira-ops.service")"
+[ "$n" -eq 0 ] && ok "spira-ops.service Exec lines carry no unescaped % specifier" \
+    || bad "spira-ops.service Exec lines carry no unescaped % specifier" "$n line(s) with a lone %"
+
 tl_summary
