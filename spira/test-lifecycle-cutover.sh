@@ -103,13 +103,8 @@ root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u ro
 command -v spira-lc >/dev/null 2>&1 || bail "spira-lc is not on PATH"
 export SPIRA_LIFECYCLE_ENFORCE=1
 
-# Also built for sp-s9675.5's own section below (the epic-blocker hold-release rule, design
-# stacked-dependents-2026-09-28 test-strategy item 5): the real spira-claim binary against
-# this suite's real spira-lc `list` output, not a reimplementation of either.
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_BUILD" \
-    "$CARGO_BIN" build --manifest-path "$REPO/spira-claim/Cargo.toml" --quiet 2>"$TMP/build-claim.log" \
-    || bail "spira-claim failed to build: $(cat "$TMP/build-claim.log")"
-CLAIM_BIN="$CARGO_TARGET_DIR_FOR_BUILD/debug/spira-claim"
+# The epic-blocker section runs the real spira-claim against this suite's real spira-lc `list`.
+CLAIM_BIN="$(command -v spira-claim)" || bail "spira-claim is not on PATH"
 
 export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
