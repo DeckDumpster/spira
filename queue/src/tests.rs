@@ -2126,3 +2126,80 @@ fn usage_errors_exit_two() {
     assert_eq!(t.run(&["abandon", "--nope"]), 2);
     assert!(matches!(cli::parse(&["stats".to_string()]), Ok(Cmd::Stats)));
 }
+
+// ------------------------------------------------------------------- publish-settle
+
+use crate::ops::publish::{ci_of, decide, Ci, Pr, Settle};
+
+#[test]
+fn settle_decision_table() {
+    let open = |ci, behind| Some(Pr::Open { ci, behind });
+    assert_eq!(decide(None), Settle::Open);
+    assert_eq!(decide(open(Ci::Green, true)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Green, false)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Pending, true)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Red, true)), Settle::Supersede);
+    assert_eq!(decide(open(Ci::Untested, true)), Settle::Supersede);
+    assert_eq!(decide(open(Ci::Red, false)), Settle::Wait);
+    assert_eq!(decide(Some(Pr::Gone)), Settle::Retire);
+    assert_eq!(decide(Some(Pr::Unknown)), Settle::Wait);
+    assert_eq!(ci_of("provision_fault\n"), Ci::Untested);
+    assert_eq!(ci_of("harness_fault"), Ci::Untested);
+    assert_eq!(ci_of("red\nred-suite: a"), Ci::Red);
+    assert_eq!(ci_of(""), Ci::Pending);
+}
+
+fn stale_publish(t: &T, status: &str) {
+    publishable(t);
+    t.git.set("refs/heads/local/main", "m4");
+    t.git.ancestor("f0", "m4");
+    t.git.ancestor("t1", "m4");
+    t.git.ancestor("t2", "m4");
+    fs::write(
+        t.qfile("publish"),
+        "pr=77\nhead=m3\nbase=f0\nmembers=sp-a:t1\nopened=900\nbranch=spira/publish/OLD\nremote=origin\nforge_branch=main\n",
+    )
+    .unwrap();
+    t.forge.status.borrow_mut().push(Some(status.into()));
+    *t.forge.pr.borrow_mut() = Some("78".into());
+}
+
+#[test]
+fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
+    for status in ["red\n", "provision_fault\n"] {
+        let t = T::new(LandMode::QueueLocal);
+        stale_publish(&t, status);
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+        let calls = t.forge.calls.borrow().clone();
+        assert!(calls.contains(&"pr-close 77".to_string()), "{calls:?}");
+        assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/20260929T010203Z main")), "{calls:?}");
+        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m4\n"));
+    }
+}
+
+#[test]
+fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
+    for (status, moved) in [("green\n", true), ("pending\n", true), ("red\n", false)] {
+        let t = T::new(LandMode::QueueLocal);
+        stale_publish(&t, status);
+        if !moved {
+            t.git.set("refs/heads/local/main", "m3");
+        }
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+        let calls = t.forge.calls.borrow().clone();
+        assert!(!calls.iter().any(|c| c.starts_with("pr-close") || c.starts_with("pr-create")), "{calls:?}");
+        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=77\n"));
+    }
+}
+
+#[test]
+fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m3\n"));
+    let t = T::new(LandMode::Queue);
+    assert_eq!(t.run(&["publish-settle"]), 0);
+    assert!(t.forge.calls.borrow().is_empty());
+}

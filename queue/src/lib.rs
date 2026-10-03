@@ -42,6 +42,7 @@ pub fn dispatch(w: &World, cmd: &Cmd) -> i32 {
         Cmd::Release { repo } => simple::release(w, repo.as_deref()),
         Cmd::LandLocal { repo, head, members, worktree } => land::land_local(w, repo.as_deref(), head, members, worktree.as_deref()),
         Cmd::Publish { repo } => publish::publish(w, repo.as_deref()),
+        Cmd::PublishSettle { repo } => publish::publish_settle(w, repo.as_deref()),
         Cmd::ToForge { repo } => transition::to_forge(w, repo.as_deref()),
         Cmd::ToLocal { repo } => transition::to_local(w, repo.as_deref()),
         Cmd::RollbackLocal { repo } => land::rollback_local(w, repo.as_deref()),
