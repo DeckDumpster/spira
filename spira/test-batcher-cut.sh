@@ -366,8 +366,8 @@ is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" 
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
-is   "A: no batch_id with the lifecycle switch off (legacy default, never blocks the PR)" "" "$(open_field batch_id)"
-is   "A: no version with the lifecycle switch off"                                  "" "$(open_field version)"
+is   "A: open-batch batch_id is the batch branch spira-lc cut" "$(open_field branch)" "$(open_field batch_id)"
+is   "A: open-batch version is 1 (one member)"                 "1"                    "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
     "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
@@ -710,7 +710,7 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -910,7 +910,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
