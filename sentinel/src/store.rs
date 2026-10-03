@@ -307,6 +307,8 @@ pub struct ClosedRow {
     pub subsumed: bool,
     pub nocommit: bool,
     pub branch: String,
+    /// Hex tokens (7-40 chars, with a digit) cited in the close reason, e.g. "landed at 444bd3f".
+    pub cited_shas: Vec<String>,
 }
 
 impl ClosedRow {
@@ -335,6 +337,14 @@ impl ClosedRow {
             .iter()
             .any(|p| reason.contains(p)),
             branch: b.label_value("branch:").unwrap_or("").to_string(),
+            cited_shas: b
+                .close_reason
+                .as_deref()
+                .unwrap_or("")
+                .split(|c: char| !c.is_ascii_hexdigit())
+                .filter(|t| (7..=40).contains(&t.len()) && t.bytes().any(|c| c.is_ascii_digit()))
+                .map(str::to_string)
+                .collect(),
         }
     }
     pub fn exempt(&self) -> bool {

@@ -172,6 +172,13 @@ impl<'a> Sentinel<'a> {
                 resolve(self, &r.id, &format!("{} is landed: its recorded branch ({}) tip is an ancestor of {}'s base ({base}), proven directly by the commit graph — no commit subject names it and no landstate record exists (law-closed-is-not-landed).", r.id, r.branch, r.repo), &mut budget);
                 continue;
             }
+            let cited = r.cited_shas.iter().find(|sha| {
+                self.git(&root, &["merge-base", "--is-ancestor", &format!("{sha}^{{commit}}"), &base]).ok()
+            });
+            if let Some(sha) = cited {
+                resolve(self, &r.id, &format!("{} is landed: its close reason cites {sha}, an ancestor of {}'s base ({base}), proven by the commit graph (law-closed-is-not-landed).", r.id, r.repo), &mut budget);
+                continue;
+            }
             let ls = std::fs::read_to_string(self.cfg.run.join("landstate").join(&r.id))
                 .map(|t| LandState::parse(&t))
                 .unwrap_or_default();
