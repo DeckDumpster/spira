@@ -3272,3 +3272,20 @@ fn the_gates_cargo_takes_compile_leases_through_spira_admit_with_the_gate_token(
         assert_eq!(get("SPIRA_ADMISSION"), Some("gate"), "command {i}");
     }
 }
+
+#[test]
+fn the_base_trial_never_names_a_suite_the_base_does_not_have() {
+    let f = returned(unit_fake(&["gate/src/x.rs"]), "test-b.sh,test-new.sh");
+    f.base_lacks.borrow_mut().insert("test-new.sh".into());
+    f.reentry_runs.borrow_mut().insert(
+        MERGE_SHA.into(),
+        (1, "  test-b.sh   RED     rc=1 after 4s\nVERDICT RED ran=2 red=1".into()),
+    );
+    f.run();
+    let cmds = f.cmds.borrow().clone();
+    let base_reentry: Vec<&String> = cmds.iter().filter(|c| c.contains("--suites") && !c.contains("test-new.sh") && c.contains("test-b.sh")).collect();
+    let named_new_on_base = cmds.iter().skip(4).any(|c| c.contains("--suites") && c.contains("test-new.sh"));
+    assert!(!named_new_on_base, "the base trial named a suite the base lacks: {cmds:?}");
+    assert!(!base_reentry.is_empty(), "the base trial still re-runs the suites the base has: {cmds:?}");
+    assert!(!f.verdict_line().contains("base-untestable"), "{}", f.verdict_line());
+}
