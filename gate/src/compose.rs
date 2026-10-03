@@ -402,6 +402,32 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
     ]
 }
 
+/// The environment of the unit test phase: the gate's own, minus the release's directories on
+/// PATH and the release locator. A test that shells out to a bare tool name must not find the
+/// running release's binary and, through it, the live stores. `SPIRA_RUN` stays: the build
+/// wrapper's admission lease needs it.
+pub fn test_phase_env(env: &[(String, String)]) -> Vec<(String, String)> {
+    let release = env
+        .iter()
+        .find(|(k, _)| k == spira_config::RELEASE_ENV)
+        .map(|(_, v)| v.trim_end_matches('/').to_string())
+        .filter(|r| !r.is_empty());
+    env.iter()
+        .filter(|(k, _)| k != spira_config::RELEASE_ENV)
+        .map(|(k, v)| {
+            let v = match (&release, k.as_str()) {
+                (Some(r), "PATH") => v
+                    .split(':')
+                    .filter(|seg| *seg != r && !seg.starts_with(&format!("{r}/")))
+                    .collect::<Vec<_>>()
+                    .join(":"),
+                _ => v.clone(),
+            };
+            (k.clone(), v)
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------------------ re-entry
 
 /// THE RE-ENTRY CHECK (sp-p3srm; design item 6): a bead the round returned must pass the
@@ -768,6 +794,38 @@ mod tests {
         assert_eq!(got, vec![m("a", "a", &["b"]), m("b", "nested/b", &[])]);
         assert!(parse_metadata("not json").is_err());
         assert!(parse_metadata("{}").is_err());
+    }
+
+    #[test]
+    fn test_phase_env_drops_the_release_from_path_and_the_locator() {
+        let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let env = vec![
+            e("PATH", "/r/rel/bin:/r/rel/spira:/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
+            e(spira_config::RELEASE_ENV, "/r/rel/"),
+            e("SPIRA_RUN", "/run"),
+            e("HOME", "/h"),
+        ];
+        let got = test_phase_env(&env);
+        assert_eq!(
+            got,
+            vec![
+                e("PATH", "/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
+                e("SPIRA_RUN", "/run"),
+                e("HOME", "/h"),
+            ]
+        );
+        assert_eq!(test_phase_env(&[e("PATH", "/a:/b")]), vec![e("PATH", "/a:/b")]);
+    }
+
+    #[test]
+    fn gate_test_run_sees_no_lifecycle_locators() {
+        // Canary: only meaningful inside a gate trial (it sets SPIRA_GATE_BRANCH).
+        if std::env::var_os("SPIRA_GATE_BRANCH").is_none() {
+            return;
+        }
+        for k in ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
+            assert!(std::env::var_os(k).is_none(), "{k} is visible inside a gate test run");
+        }
     }
 
     #[test]

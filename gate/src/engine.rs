@@ -1820,7 +1820,14 @@ pub fn run_composed<W: World>(
             return (124, out, phases);
         }
         let t = w.now();
-        let (r, o) = w.run_gate(tree, env, &left(), &c);
+        let hermetic;
+        let step_env = if name == "test" {
+            hermetic = compose::test_phase_env(env);
+            &hermetic[..]
+        } else {
+            env
+        };
+        let (r, o) = w.run_gate(tree, step_env, &left(), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
         if !o.is_empty() {
             if !out.is_empty() {
