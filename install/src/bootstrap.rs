@@ -29,6 +29,16 @@ pub fn which(prog: &str) -> Option<String> {
     None
 }
 
+fn require_git_checkout(d: &Path) -> Result<(), String> {
+    if d.join(".git").exists() {
+        return Ok(());
+    }
+    Err(format!(
+        "derived repo {} is not a git checkout (no .git); export SPIRA_REPO to the real checkout",
+        d.display()
+    ))
+}
+
 /// Resolve host values from the environment (conf.sh's own precedence: explicit environment
 /// wins). Derives nothing beyond what conf.sh itself derives with a plain, no-side-effect
 /// default for a render-relevant key: `SPIRA_HOME = SPIRA_REPO/spira` (conf.sh: no-colon
@@ -59,12 +69,7 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         None => {
             let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
             let d = spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map);
-            if !d.join(".git").exists() {
-                return Err(format!(
-                    "derived repo {} is not a git checkout (no .git); export SPIRA_REPO to the real checkout",
-                    d.display()
-                ));
-            }
+            require_git_checkout(&d)?;
             d.to_string_lossy().into_owned()
         }
     };
@@ -363,5 +368,19 @@ mod stale_release_tests {
         assert!(msg.contains("REFUSING") && msg.contains("/new"), "{msg}");
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("new/bin/unit-ensure")), None);
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
+    }
+}
+
+#[cfg(test)]
+mod sp_i0rvd_tests {
+    use super::require_git_checkout;
+    #[test]
+    fn refuses_exported_tree_without_git() {
+        let d = std::env::temp_dir().join(format!("sp-i0rvd-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        assert!(require_git_checkout(&d).is_err());
+        std::fs::create_dir_all(d.join(".git")).unwrap();
+        assert!(require_git_checkout(&d).is_ok());
+        let _ = std::fs::remove_dir_all(&d);
     }
 }
