@@ -492,16 +492,6 @@ impl Lib for RealLib {
         // caller, who has no retry path of its own here (the next abandon does).
         crate::ops::helpers::cancel_branch_runs(forge, path, branch, "QUEUE");
     }
-    /// `spira-lc returned` — the caller verb that replaced lc.sh's `lc_returned` (sp-arpjt).
-    /// Best-effort and silent, as the seam call was; the machine reads its own switch.
-    fn lc_returned(&self, id: &str, reason: &str) {
-        let _ = Command::new("spira-lc")
-            .args(["returned", id, reason])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
     fn format_batch(&self, wt: &Path, base: &str, name: &str) {
         self.call(Op::FormatBatch, &[&wt.display().to_string(), base, name], false);
     }

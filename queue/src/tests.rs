@@ -242,9 +242,6 @@ impl Lib for FLib {
     fn cancel_runs(&self, _: &Path, _: &Path, br: &str) {
         self.log(format!("cancel_runs {br}"));
     }
-    fn lc_returned(&self, id: &str, reason: &str) {
-        self.log(format!("lc_returned {id} {reason}"));
-    }
     fn format_batch(&self, _: &Path, _: &str, _: &str) {
         self.log("format_batch".into());
     }
@@ -659,7 +656,6 @@ impl T {
     /// The OFF contract: spira-lc was never invoked, not even probed.
     fn assert_lc_untouched(&self) {
         assert!(self.lc.calls.borrow().is_empty(), "spira-lc invoked with lifecycle_enforce off: {:?}", self.lc.calls.borrow());
-        assert!(!self.lib.has("lc_returned"), "lc_returned with lifecycle_enforce off");
     }
     fn hold_lock(&self) -> crate::lock::Guard {
         match crate::lock::try_lock(&self.s().queue_dir, "spira") {
@@ -1004,7 +1000,10 @@ fn eject_member_marks_red_records_the_harness_cause_and_returns_survivors() {
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "needs rebase"]), 0);
     assert!(t.lib.has("land_mark sp-a RED ta needs rebase"));
     assert!(t.lib.has("cause_event sp-a eject"));
-    assert!(t.lib.has("lc_returned sp-a needs rebase"));
+    let calls = t.lc.calls.borrow().clone();
+    let d = calls.iter().position(|c| c == "event bead sp-a CERTIFIED 3 \"Deliver\"").unwrap_or_else(|| panic!("no Deliver: {calls:?}"));
+    let r = calls.iter().position(|c| c == "event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}").unwrap_or_else(|| panic!("no Returned: {calls:?}"));
+    assert!(d < r);
     assert!(t.lib.has("release_claim sp-a"));
     assert!(!t.lib.has("bead_reopen"));
     assert!(t.lib.has("land_mark sp-b CERTIFIED tb"));
@@ -1130,7 +1129,30 @@ fn the_environment_pins_the_switch_over_the_config() {
     t.lc.available.set(true);
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
-    assert!(t.lib.has("lc_returned sp-a"));
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("batch-ejected")));
+}
+
+#[test]
+fn eject_of_a_member_already_in_delivery_returns_without_a_second_deliver() {
+    let t = T::new(LandMode::Queue);
+    t.lifecycle_on();
+    open_batch_record(&t);
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(t.run(&["eject", "sp-a"]), 0);
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(!calls.contains("\"Deliver\""), "{calls}");
+    assert!(calls.contains("event bead sp-a IN_DELIVERY 7 {\"Returned\":{\"reason\":\"batch-ejected\"}}"), "{calls}");
+}
+
+#[test]
+fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
+    let t = T::new(LandMode::Queue);
+    t.lifecycle_on();
+    t.landstate("sp-c", "CERTIFIED tc 1\n");
+    assert_eq!(t.run(&["eject", "sp-c"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.contains(&"event bead sp-c CERTIFIED 3 \"Deliver\"".to_string()), "{calls:?}");
+    assert!(calls.contains(&"event bead sp-c IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}".to_string()), "{calls:?}");
 }
 
 #[test]

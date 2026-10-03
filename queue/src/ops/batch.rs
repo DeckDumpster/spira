@@ -24,6 +24,29 @@ where
     }
 }
 
+/// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
+/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal:
+/// the landstate is already written.
+fn lc_return(w: &World, id: &str) {
+    let fail = |why: String| w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
+    let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
+    let Ok(mut v) = version.trim().parse::<u64>() else { return fail(format!("unreadable version {version:?}")) };
+    let who = "queue.sh";
+    if state == "CERTIFIED" {
+        if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "\"Deliver\"") {
+            return fail(format!("Deliver refused (rc={rc}): {e}"));
+        }
+        state = "IN_DELIVERY".into();
+        v += 1;
+    }
+    if state != "IN_DELIVERY" {
+        return fail(format!("in state {state}, not CERTIFIED or IN_DELIVERY"));
+    }
+    if let Err((rc, e)) = w.lc.bead_event(id, &state, &v.to_string(), who, "{\"Returned\":{\"reason\":\"batch-ejected\"}}") {
+        fail(format!("Returned refused (rc={rc}): {e}"));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &str, red: bool, dry_run: bool) -> i32 {
     if !czar_ok(w) {
@@ -92,6 +115,9 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             return bead_resolves(w, id);
         }
         w.lib.bead_reopen(id, cause.as_str(), suites);
+        if lc_on {
+            lc_return(w, id);
+        }
         let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
@@ -137,7 +163,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
         // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
         w.lib.cause_event(id, cause.as_str());
         // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
-        w.lib.lc_returned(id, &bounded_text(&why));
+        lc_return(w, id);
         w.lib.release_claim(id);
     } else {
         // Pre-lifecycle (before sp-rlyl0): hand the bead back through bead_reopen — reopen,
