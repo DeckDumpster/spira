@@ -165,7 +165,7 @@ impl Seam for FakeSeam {
                     Out::fail(1, "")
                 }
             }
-            "land_state" | "lc_bead_verified" => Out::fail(1, ""),
+            "lc_bead_verified" => Out::fail(1, ""),
             "requeues_of" => Out::ok("1"),
             _ => Out::ok(""),
         }
@@ -1419,4 +1419,31 @@ fn rapid_recur_does_not_park_a_bead_with_real_prior_runs() {
     assert_eq!(o.code, 1, "{}", o.log);
     let w = o.w.lock().unwrap();
     assert!(!w.labels.get("sp-rr2").is_some_and(|l| l.contains("needs-ryan")), "{:?}", w.labels.get("sp-rr2")); // literal-ok: fixture/fallback
+}
+
+// ---- spira-lc is the only state source ------------------------------------------------
+
+fn reads_pre_lifecycle_state(src: &str) -> bool {
+    src.lines().any(|l| {
+        let l = l.trim_start();
+        !l.starts_with("//") && (l.contains("landstate") || l.contains("land_state") || l.contains("LANDSTATE"))
+    })
+}
+
+#[test]
+fn no_aeon_source_reads_the_landstate_ledger() {
+    assert!(reads_pre_lifecycle_state("let p = run.join(\"landstate\");"), "the matcher must fire on a planted read");
+    assert!(!reads_pre_lifecycle_state("// landstate is gone\nlet x = 1;"));
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut checked = 0;
+    for e in std::fs::read_dir(&dir).unwrap() {
+        let p = e.unwrap().path();
+        if p.extension().is_some_and(|x| x == "rs") && !p.file_name().is_some_and(|n| n == "tests.rs") {
+            checked += 1;
+            let src = std::fs::read_to_string(&p).unwrap();
+            let code = src.split("#[cfg(test)]").next().unwrap();
+            assert!(!reads_pre_lifecycle_state(code), "{} reads the landstate ledger; read state through spira-lc", p.display());
+        }
+    }
+    assert!(checked > 10);
 }

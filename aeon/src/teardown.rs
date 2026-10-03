@@ -63,9 +63,10 @@ impl Run<'_> {
     fn already_certified(&self) -> Option<String> {
         let tip = self.d.git.git(&self.s.repo, &["rev-parse", &self.s.branch]);
         let tip = if tip.success() { tip.text() } else { String::new() };
-        let ls = self.conf.land_state(&self.s.bead);
-        let mut it = ls.split_whitespace();
-        let (state, ltip) = (it.next().unwrap_or(""), it.next().unwrap_or(""));
+        let o = self.d.exec.exec("spira-lc", &s(&["show", &self.s.bead]), None, None);
+        let row: serde_json::Value = if o.success() { serde_json::from_str(o.stdout.trim()).ok()? } else { return None };
+        let bead = row.get("bead")?;
+        let (state, ltip) = (bead.get("state")?.as_str()?, bead.get("tip").and_then(|t| t.as_str()).unwrap_or(""));
         (state == "CERTIFIED" && !tip.is_empty() && ltip == tip).then_some(tip)
     }
 

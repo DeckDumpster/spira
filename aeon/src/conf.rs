@@ -148,22 +148,6 @@ impl Conf {
     pub fn ledger(&self) -> PathBuf {
         self.run.join("aeon-ledger.log")
     }
-    pub fn landstate(&self) -> PathBuf {
-        match get(&self.v, "LANDSTATE") {
-            Some(l) => PathBuf::from(l),
-            None => self.run.join("landstate"),
-        }
-    }
-
-    /// lib.sh `land_state <id>`, read in-process (sp-cnnt6, "wave 4.16"): landing-pass owns
-    /// the one WRITE (`landstate::mark`, reached here through `landing-pass mark`), but the
-    /// ledger's files are ordinary reads — same contract queue/watchtower already read
-    /// directly. Newlines stripped, matching the bash function's own `tr -d '\n'`; empty
-    /// when the record cannot be read, matching its `return 1` into no stdout.
-    pub fn land_state(&self, id: &str) -> String {
-        std::fs::read_to_string(self.landstate().join(id)).map(|t| t.chars().filter(|c| *c != '\n').collect()).unwrap_or_default()
-    }
-
     // ---- capacity pause (family K, wave 4.26) -----------------------------------------
     //
     // SPIRA_CAPACITY_PAUSE/_BACKOFF/_PROBE_LAST/_WITHDRAWN are lib.sh literals, not
@@ -280,7 +264,7 @@ pub fn resolve_home(flag: Option<&str>, env: &BTreeMap<String, String>, exe: Opt
 /// sourced `lib.sh`/`conf.sh` — a second, bash-shaped derivation of values
 /// `spira_config::resolve()` already computes in-process. This merges that in-process
 /// answer into `snap.vars` instead, via `entry().or_insert()` so nothing the seam itself
-/// still supplies (`seam::SNAPSHOT_VARS` — `LANDSTATE`, every `FAYTH_*`, ...) is ever
+/// still supplies (`seam::SNAPSHOT_VARS` — every `FAYTH_*`, ...) is ever
 /// overridden, matching conf.sh's own `${VAR:=default}` rule.
 ///
 /// `SPIRA_HOME`/`SPIRA_REPO`/`SPIRA_REPO_DERIVED` are inserted explicitly: `resolve()`
@@ -406,7 +390,7 @@ mod tests {
         std::env::set_var("SPIRA_TOML", dir.join("no-such-spira.toml"));
 
         let mut snap = crate::seam::Snapshot {
-            vars: vars(&[("LANDSTATE", "/seam/landstate")]),
+            vars: vars(&[("SPIRA_TRACE_MARK", "/seam/mark")]),
             ..Default::default()
         };
         merge_resolved_config(&mut snap, &home, &BTreeMap::new()).unwrap();
@@ -416,7 +400,7 @@ mod tests {
             None => std::env::remove_var("SPIRA_TOML"),
         }
 
-        assert_eq!(snap.vars.get("LANDSTATE").map(String::as_str), Some("/seam/landstate"), "the seam's own value must survive the merge");
+        assert_eq!(snap.vars.get("SPIRA_TRACE_MARK").map(String::as_str), Some("/seam/mark"), "the seam's own value must survive the merge");
         assert_eq!(snap.vars.get("SPIRA_HOME").map(String::as_str), Some(home.to_str().unwrap()));
         assert!(snap.vars.contains_key("SPIRA_REPO"));
         assert!(snap.vars.contains_key("SPIRA_REPO_DERIVED"));
