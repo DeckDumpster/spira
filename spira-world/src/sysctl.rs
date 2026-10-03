@@ -24,6 +24,15 @@ pub fn run(args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
+/// Whether `systemctl --user` can reach the user manager at all. `is-system-running` exits
+/// nonzero for a merely degraded manager, so only systemctl's own connect failure counts;
+/// without this check an unreachable bus reads as every unit being absent.
+pub fn bus_unreachable() -> Option<String> {
+    let o = Command::new(systemctl_bin()).args(["--user", "is-system-running"]).output().ok()?;
+    let err = String::from_utf8_lossy(&o.stderr);
+    err.contains("Failed to connect").then(|| format!("cannot reach the systemd user bus: {}", err.trim()))
+}
+
 /// Run `$SPIRA_SYSTEMCTL --user <args>`, returning only whether it exited zero — for an
 /// action (`stop`/`start`) where bash's own `&&` gates the "stopped"/"started" line on the
 /// command's exit status, not on any output.

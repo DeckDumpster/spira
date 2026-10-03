@@ -101,3 +101,29 @@ fn world_status_refuses_named_when_the_only_config_is_malformed() {
     );
     assert!(!stderr.contains("/tmp/spira"), "must never guess /tmp/spira:\n{stderr}");
 }
+
+/// A control that cannot check must refuse: when systemctl cannot connect to the user
+/// bus, `world status` names that, never classifying the timers as MISSING.
+#[test]
+fn world_status_refuses_when_the_user_bus_is_unreachable() {
+    let tmp = testkit::TempDir::new("wf3gc-world-status-no-bus");
+    let (home, harness_home, _run) = build_fixture(&tmp);
+    let stub = tmp.join("systemctl");
+    testkit::write_exe(&stub, "#!/bin/sh\necho 'Failed to connect to user scope bus via local transport' >&2\nexit 1\n");
+    let bin_dir = PathBuf::from(env!("CARGO_BIN_EXE_world")).parent().unwrap().to_path_buf();
+
+    let out = Command::new("env")
+        .arg("-i")
+        .arg(format!("HOME={}", home.display()))
+        .arg(format!("PATH={}:/usr/bin:/bin", bin_dir.display()))
+        .arg(format!("SPIRA_HOME={}", harness_home.display()))
+        .arg(format!("SPIRA_SYSTEMCTL={}", stub.display()))
+        .args(["world", "status"])
+        .output()
+        .unwrap();
+
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!out.status.success(), "must exit nonzero:\n{all}");
+    assert!(all.contains("cannot reach the systemd user bus"), "{all}");
+    assert!(!all.contains("MISSING"), "{all}");
+}
