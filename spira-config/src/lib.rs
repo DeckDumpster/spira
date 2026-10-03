@@ -498,6 +498,8 @@ pub const RETIRED_SPIRA_KEYS: &[RetiredKey] = &[
     RetiredKey { key: "reconciler_flow_bin", bead: "sp-gypjk" },
     RetiredKey { key: "loom_bin", bead: "sp-gypjk" },
     RetiredKey { key: "batcher_bin", bead: "sp-gypjk" },
+    // Flaky suites are deleted, not quarantined, so nothing reactivates on clean runs.
+    RetiredKey { key: "quarantine_clean_runs", bead: "sp-op2c2" },
 ];
 
 /// A retired `batcher_bin` value that is not the batcher itself (e.g. "/bin/true", the old
