@@ -233,6 +233,7 @@ BLID="$(bead.sh file "aeon semantic layer: blocked fixture" --for builder --repo
 seed_bead "$BLID"
 before_unread="$(ls "$SPIRA_MAIL/operator/new" 2>/dev/null | wc -l)"
 out="$(work_as "$BLID" blocked "which persona owns this?" --default "builder" 2>&1)"; rc=$?
+[ "$rc" = 0 ] || echo "# $out" >&2
 is "blocked: exits 0" "0" "$rc"
 row="$(root_sql --use-db spira_lifecycle sql -q "SELECT holds FROM bead WHERE bead_id='$BLID'" -r json 2>&1)"
 want "blocked: an ask hold is recorded" "ask" "$row"

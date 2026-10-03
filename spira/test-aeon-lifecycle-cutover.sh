@@ -150,7 +150,7 @@ seed_bead() {   # seed_bead <bead-id> <state> [holder] [lease_until]
     [ -n "${3:-}" ] && holder_sql="'$3'"
     [ -n "${4:-}" ] && lease_sql="$4"
     root_sql --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at, holder, lease_until) VALUES ('$1','$2','[]',0,0,$holder_sql,$lease_sql)" >/dev/null 2>&1
+        "REPLACE INTO bead (bead_id, state, holds, version, updated_at, holder, lease_until) VALUES ('$1','$2','[]',0,0,$holder_sql,$lease_sql)" >/dev/null 2>&1
 }
 row_json() {   # row_json <bead-id> -> the row's JSON, for want/nowant substring checks
     root_sql --use-db spira_lifecycle sql -q "SELECT state, holder, version FROM bead WHERE bead_id='$1'" -r json 2>/dev/null
