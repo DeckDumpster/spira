@@ -335,7 +335,8 @@ echo "duplicate client detection"
 LP_PROJ="$TMP/lp-projects/proj"; mkdir -p "$LP_PROJ"
 LP_HOLD_PY="$TMP/hold-open.py"
 cat > "$LP_HOLD_PY" <<'PY'
-import sys, time
+import os, sys, time
+time.sleep(float(os.environ.get('LP_HOLD_DELAY', '0')))
 f = open(sys.argv[1])
 if len(sys.argv) > 3:
     import os
@@ -358,9 +359,16 @@ LP_SID="live-pid-test-$(date +%s)"
 LP_TRANSCRIPT="$LP_PROJ/$LP_SID.jsonl"; : > "$LP_TRANSCRIPT"
 bash -c "exec -a claude python3 '$LP_HOLD_PY' '$LP_TRANSCRIPT' 10" &
 LP_PID=$!
-sleep 0.3
+LP_OPENED=0
+for _ in $(seq 50); do
+    for l in /proc/$LP_PID/fd/*; do
+        [ "$(readlink "$l" 2>/dev/null)" = "$LP_TRANSCRIPT" ] && { LP_OPENED=1; break 2; }
+    done
+    sleep 0.1
+done
 trap 'kill "$LP_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 
+is "fixture holder opened the transcript" 1 "$LP_OPENED"
 found="$(lp "$LP_SID")" || found=""
 is "live pid is found by its open transcript, with no --resume in argv" "$LP_PID" "$found"
 
