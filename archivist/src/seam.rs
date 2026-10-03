@@ -225,6 +225,10 @@ impl Seam for RealSeam {
         if let Some(w) = spec.wiki_dir {
             c.args(["--add-dir", w]);
         }
+        c.env_remove("SPIRA_WIKI");
+        if let Some(w) = spec.wiki_dir {
+            c.env("SPIRA_WIKI", w);
+        }
         c.current_dir(spec.cwd)
             .env("SPIRA_MAIL_FROM", spec.mail_from)
             .stdin(Stdio::piped())
@@ -262,6 +266,37 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
         .into_iter()
         .find(|c| c.join("lib.sh").is_file())
         .map(|c| c.canonicalize().unwrap_or(c))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_agent_process_receives_the_configured_wiki_in_its_environment() {
+        let dir = testkit::TempDir::new("archivist-wiki");
+        let bin = dir.join("agent.sh");
+        testkit::write_exe(&bin, "#!/bin/sh\nprintf '%s' \"${SPIRA_WIKI-unset}\" > \"$PWD/seen\"\n");
+        let log = dir.join("log");
+        let run = |wiki: Option<&str>| {
+            let spec = AgentSpec {
+                agent_bin: bin.to_str().unwrap(),
+                system_flag: "--x",
+                sysfile: Path::new("s"),
+                model: "m",
+                timeout_secs: 10,
+                wiki_dir: wiki,
+                cwd: dir.path(),
+                logfile: &log,
+                mail_from: "f",
+                task_stdin: "",
+            };
+            RealSeam { lib_sh: PathBuf::new() }.run_agent(&spec);
+            std::fs::read_to_string(dir.join("seen")).unwrap()
+        };
+        assert_eq!(run(Some("/the/wiki")), "/the/wiki");
+        assert_eq!(run(None), "unset");
+    }
 }
 
 #[cfg(test)]
