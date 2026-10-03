@@ -276,6 +276,40 @@ report_cargo() {
     fi
 }
 
+# A stand-in spira-lc answering from files under $LC_FIX, for suites that drive a binary
+# reading lifecycle rows. lc_fix_init <dir> builds it and sets LC_FIX and SPIRA_LC_BIN; run
+# the binary under test with both passed through. Rows: lc_bead <STATE> <id> <tip> <since>,
+# lc_delivery <STATE> <id> <mode> <entered_at> <version>. Calls to `event` are logged to
+# $LC_FIX/events.log; `touch $LC_FIX/refuse` makes them exit 3.
+lc_fix_init() {
+    LC_FIX="${1:?lc_fix_init needs a directory}"
+    rm -rf "$LC_FIX"; mkdir -p "$LC_FIX/bead" "$LC_FIX/delivery" "$LC_FIX/show"
+    : > "$LC_FIX/events.log"
+    cat > "$LC_FIX/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+join() { local first=1 f; printf '['; for f in "$@"; do [ -f "$f" ] || continue; [ $first = 1 ] || printf ','; first=0; cat "$f"; done; printf ']\n'; }
+case "$1" in
+    list)
+        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; else join "$LC_FIX/bead/${3:-}"/*; fi ;;
+    show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
+    event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
+    *) exit 7 ;;
+esac
+STUB
+    chmod +x "$LC_FIX/spira-lc"
+    SPIRA_LC_BIN="$LC_FIX/spira-lc"
+}
+lc_bead() {      # lc_bead <STATE> <id> <tip> <since>
+    mkdir -p "$LC_FIX/bead/$1"
+    printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"
+    printf '{"bead":{"tip":"%s"}}' "$3" > "$LC_FIX/show/$2"
+}
+lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
+    mkdir -p "$LC_FIX/delivery/$1"
+    printf '{"bead_id":"%s","mode":"%s","state":"%s","version":%s,"entered_at":%s}' "$2" "$3" "$1" "$5" "$4" > "$LC_FIX/delivery/$1/$2"
+    [ -f "$LC_FIX/show/$2" ] || printf '{"bead":{"tip":"deadbeef"}}' > "$LC_FIX/show/$2"
+}
+
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc
     _tl_init
     _TL_PLANNED="$1"

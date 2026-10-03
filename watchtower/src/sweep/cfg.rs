@@ -50,9 +50,6 @@ pub struct Cfg {
 }
 
 impl Cfg {
-    pub fn landstate_dir(&self) -> PathBuf {
-        self.spira_run.join("landstate")
-    }
     pub fn prompt_file(&self) -> PathBuf {
         self.prompt_file
             .clone()

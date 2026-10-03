@@ -170,6 +170,7 @@ impl Bd for RealBd {
         if id.is_empty() {
             return Err("bd create printed no id".into());
         }
+        let _ = spira_config::lifecycle_row::after_create("incident", &id);
         Ok(id)
     }
 

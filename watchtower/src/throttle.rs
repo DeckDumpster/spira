@@ -11,7 +11,7 @@
 
 use crate::git;
 use crate::incident::{self, Finding};
-use crate::landstate;
+use crate::lc;
 use crate::log::log;
 use std::path::Path;
 
@@ -31,36 +31,30 @@ impl Default for Cfg {
     }
 }
 
-/// Depth: CERTIFIED landstate records whose branch still exists AND whose tip is not yet an
-/// ancestor of the land ref. Stale records (branch gone, or tip already merged) do not
-/// count — an id with no live branch, or one already landed, is not queue depth.
-pub fn compute_depth(landstate_dir: &Path, repo: Option<&str>, land_ref: Option<&str>) -> i64 {
-    if !landstate_dir.is_dir() {
-        return 0;
-    }
+/// Depth: CERTIFIED beads whose branch still exists AND whose tip is not yet an ancestor of
+/// the land ref. Stale rows (branch gone, or tip already merged) do not count. `None` is
+/// spira-lc unreachable — the caller must not read it as an empty queue.
+pub fn compute_depth(repo: Option<&str>, land_ref: Option<&str>) -> Option<i64> {
     let mut depth = 0i64;
-    for rec in landstate::read_dir(landstate_dir) {
-        if rec.status != "CERTIFIED" {
-            continue;
-        }
-        let refname = format!("refs/heads/spira/{}", rec.id);
+    for b in lc::beads_in("CERTIFIED")? {
+        let refname = format!("refs/heads/spira/{}", b.id);
         if !git::ref_exists(repo, &refname) {
             continue;
         }
         if let Some(lref) = land_ref {
-            if !rec.tip.is_empty() && rec.tip != "none" && git::is_ancestor(repo, &rec.tip, lref) {
+            if !b.tip.is_empty() && b.tip != "none" && git::is_ancestor(repo, &b.tip, lref) {
                 continue;
             }
         }
         depth += 1;
     }
-    depth
+    Some(depth)
 }
 
-/// Minutes since the most recent LANDED record, or `None` ("?" — no LANDED record could be
-/// read, treated as drain unknown = drain zero, never as "nothing to drain").
-pub fn minutes_since_last_landed(landstate_dir: &Path, now: i64) -> Option<i64> {
-    landstate::last_landed(landstate_dir).map(|(_, at)| (now - at) / 60)
+/// Minutes since the most recent LANDED bead, or `None` ("?" — drain unknown, treated as
+/// drain zero, never as "nothing to drain").
+pub fn minutes_since_last_landed(now: i64) -> Option<i64> {
+    lc::last_landed().map(|(_, at)| (now - at) / 60)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,15 +123,18 @@ pub struct Ctx<'a> {
 /// Gathers, decides and performs the side effects (stamp write/remove, incident filing),
 /// logging exactly the lines the bash logged. `world.halted` and the incident.sh presence
 /// guard are checked by the caller (`main.rs`) — shared by all four checks.
-pub fn run(now: i64, landstate_dir: &Path, cfg: &Cfg, ctx: &Ctx) {
+pub fn run(now: i64, cfg: &Cfg, ctx: &Ctx) {
     if ctx.override_off {
         let _ = std::fs::remove_file(ctx.stamp);
         log("watchtower: throttle-check — override=off, admission not throttled");
         return;
     }
 
-    let depth = compute_depth(landstate_dir, ctx.repo, ctx.land_ref);
-    let since_land = minutes_since_last_landed(landstate_dir, now);
+    let Some(depth) = compute_depth(ctx.repo, ctx.land_ref) else {
+        log("watchtower: throttle-check skipped — spira-lc is unreachable, depth unknown");
+        return;
+    };
+    let since_land = minutes_since_last_landed(now);
     let already_throttled = ctx.stamp.is_file();
 
     match decide(depth, since_land, already_throttled, cfg) {
@@ -328,144 +325,4 @@ mod tests {
     }
 
     // --- depth computation: stale CERTIFIED filtering ----------------------------------
-
-    fn init_repo(dir: &Path) -> String {
-        std::process::Command::new("git")
-            .args(["init", "-q", "-b", "main"])
-            .arg(dir)
-            .status()
-            .unwrap();
-        for (k, v) in [("user.email", "t@t"), ("user.name", "t")] {
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(["config", k, v])
-                .status()
-                .unwrap();
-        }
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["commit", "-q", "--allow-empty", "-m", "init"])
-            .status()
-            .unwrap();
-        String::from_utf8(
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(dir)
-                .args(["rev-parse", "HEAD"])
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap()
-        .trim()
-        .to_string()
-    }
-
-    fn branch(dir: &Path, name: &str) {
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["branch", name])
-            .status()
-            .unwrap();
-    }
-
-    #[test]
-    fn depth_counts_a_live_unmerged_certified_branch() {
-        let d = testkit::TempDir::new("wt-throttle-depth");
-        let repo = d.join("git");
-        std::fs::create_dir_all(&repo).unwrap();
-        let base = init_repo(&repo);
-        branch(&repo, "spira/sp-live");
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        std::fs::write(ls.join("sp-live"), format!("CERTIFIED {} 1700000000 x\n", base)).unwrap();
-        let depth = compute_depth(&ls, Some(repo.to_str().unwrap()), Some("main"));
-        // tip == base == HEAD of main, so is_ancestor is true -> excluded (already merged).
-        assert_eq!(depth, 0);
-    }
-
-    #[test]
-    fn depth_excludes_a_certified_record_with_no_live_branch() {
-        let d = testkit::TempDir::new("wt-throttle-depth2");
-        let repo = d.join("git");
-        std::fs::create_dir_all(&repo).unwrap();
-        init_repo(&repo);
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        std::fs::write(ls.join("sp-gone"), "CERTIFIED deadbeef 1700000000 x\n").unwrap();
-        let depth = compute_depth(&ls, Some(repo.to_str().unwrap()), Some("main"));
-        assert_eq!(depth, 0);
-    }
-
-    #[test]
-    fn depth_counts_a_certified_branch_whose_tip_is_not_yet_on_the_land_ref() {
-        let d = testkit::TempDir::new("wt-throttle-depth3");
-        let repo = d.join("git");
-        std::fs::create_dir_all(&repo).unwrap();
-        init_repo(&repo);
-        branch(&repo, "spira/sp-ahead");
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["checkout", "-q", "spira/sp-ahead"])
-            .status()
-            .unwrap();
-        std::fs::write(repo.join("f.txt"), "x").unwrap();
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["add", "f.txt"])
-            .status()
-            .unwrap();
-        std::process::Command::new("git")
-            .arg("-C")
-            .arg(&repo)
-            .args(["commit", "-q", "-m", "work"])
-            .status()
-            .unwrap();
-        let ahead_tip = String::from_utf8(
-            std::process::Command::new("git")
-                .arg("-C")
-                .arg(&repo)
-                .args(["rev-parse", "spira/sp-ahead"])
-                .output()
-                .unwrap()
-                .stdout,
-        )
-        .unwrap()
-        .trim()
-        .to_string();
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        std::fs::write(
-            ls.join("sp-ahead"),
-            format!("CERTIFIED {} 1700000000 x\n", ahead_tip),
-        )
-        .unwrap();
-        let depth = compute_depth(&ls, Some(repo.to_str().unwrap()), Some("main"));
-        assert_eq!(depth, 1);
-    }
-
-    #[test]
-    fn minutes_since_last_landed_is_none_with_no_landed_record() {
-        let d = testkit::TempDir::new("wt-throttle-drain");
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        std::fs::write(ls.join("sp-a"), "CERTIFIED deadbeef 1700000000 x\n").unwrap();
-        assert_eq!(minutes_since_last_landed(&ls, 1_700_003_600), None);
-    }
-
-    #[test]
-    fn minutes_since_last_landed_picks_the_newest_landed_record() {
-        let d = testkit::TempDir::new("wt-throttle-drain2");
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        std::fs::write(ls.join("sp-a"), "LANDED deadbeef 1700000000 x\n").unwrap();
-        std::fs::write(ls.join("sp-b"), "LANDED deadbeef 1700003000 x\n").unwrap();
-        let now = 1_700_003_600;
-        assert_eq!(minutes_since_last_landed(&ls, now), Some((now - 1_700_003_000) / 60));
-    }
 }

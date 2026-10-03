@@ -36,7 +36,7 @@ git -C "$GIT_REPO" config user.name t
 git -C "$GIT_REPO" commit -q --allow-empty -m init
 GIT_BASE="$(git -C "$GIT_REPO" rev-parse HEAD)"
 
-# Write a CERTIFIED landstate file AND create a branch with a commit NOT on main.
+# Write a CERTIFIED spira-lc CERTIFIED row AND create a branch with a commit NOT on main.
 # Branch exists + tip not on main → throttle counts this as live queue depth.
 certified() {
     local id="$1"
@@ -45,30 +45,29 @@ certified() {
     local sha; sha="$(git -C "$GIT_REPO" rev-parse HEAD)"
     git -C "$GIT_REPO" branch -f "spira/$id" HEAD 2>/dev/null
     git -C "$GIT_REPO" checkout -q main 2>/dev/null
-    printf 'CERTIFIED %s %s\n' "$sha" "$NOW" > "$TMP/run/landstate/$id"
+    lc_bead CERTIFIED "$id" "$sha" "$NOW"
 }
 
-# CERTIFIED landstate with tip ON main — ancestry check filters it (landed, stale record).
+# CERTIFIED row with tip ON main — ancestry check filters it (landed, stale record).
 certified_landed() {
     local id="$1"
     git -C "$GIT_REPO" branch -f "spira/$id" "$GIT_BASE" 2>/dev/null
-    printf 'CERTIFIED %s %s\n' "$GIT_BASE" "$NOW" > "$TMP/run/landstate/$id"
+    lc_bead CERTIFIED "$id" "$GIT_BASE" "$NOW"
 }
 
-# CERTIFIED landstate with NO branch — branch-existence check filters it (dropped/superseded).
+# CERTIFIED row with NO branch — branch-existence check filters it (dropped/superseded).
 certified_gone() {
     local id="$1"
-    printf 'CERTIFIED fakeshafakeshafakeshafakeshafakeshafake %s\n' "$NOW" \
-        > "$TMP/run/landstate/$id"
+    lc_bead CERTIFIED "$id" fakeshafakeshafakeshafakeshafakeshafake "$NOW"
 }
 
-# Write a LANDED landstate file with a given age in seconds.
-landed() { printf 'LANDED fakeshafakeshafakeshafakeshafakeshafake %s\n' \
-               "$(( NOW - ${2:-60} ))" > "$TMP/run/landstate/$1"; }
+# Write a LANDED row with a given age in seconds.
+landed() { lc_bead LANDED "$1" fakeshafakeshafakeshafakeshafakeshafake "$(( NOW - ${2:-60} ))"; }
 
 fresh() {
     rm -rf "$TMP/run"
-    mkdir -p "$TMP/run/landstate"
+    mkdir -p "$TMP/run"
+    lc_fix_init "$TMP/lc"
     rm -f "$TMP/inc-subjects" "$TMP/inc-refs" "$TMP/inc-causes"
     while IFS= read -r _br; do
         git -C "$GIT_REPO" branch -D "$_br" 2>/dev/null || true
@@ -91,6 +90,7 @@ MOCK
     env -i PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" \
         SPIRA_THROTTLE_STAMP="$TMP/run/queue-throttled" \
         SPIRA_INCIDENT_SH="$mock" \
         SPIRA_TC_REPO="$GIT_REPO" \

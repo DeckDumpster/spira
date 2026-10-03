@@ -1,10 +1,10 @@
 //! `--pr-stall-check` — PR-mode stall detector. For each stalled bead, in the order a red
 //! check is tested first (the likeliest cause, sp-45rmp): red check -> escalate; allow_auto_
-//! merge=false -> escalate once per repo; CONFLICTING -> clear the landstate so landing
+//! merge=false -> escalate once per repo; CONFLICTING -> requeue the delivery so landing
 //! rebases next pass; otherwise -> arm auto-merge.
 
 use crate::incident::{self, Finding};
-use crate::landstate;
+use crate::lc;
 use crate::log::log;
 use crate::seams;
 use std::path::Path;
@@ -31,7 +31,7 @@ impl Default for Cfg {
 pub enum Action {
     EscalateRed,
     EscalateAutoMergeOff,
-    ClearConflicting,
+    RequeueConflicting,
     ArmAutoMerge,
 }
 
@@ -54,7 +54,7 @@ pub fn decide(red: bool, allow_auto_merge_false: bool, mergeable_conflicting: bo
     } else if allow_auto_merge_false {
         Action::EscalateAutoMergeOff
     } else if mergeable_conflicting {
-        Action::ClearConflicting
+        Action::RequeueConflicting
     } else {
         Action::ArmAutoMerge
     }
@@ -111,42 +111,35 @@ pub struct Stalled {
     pub id: String,
     pub repo: String,
     pub age_secs: i64,
-    pub file_path: std::path::PathBuf,
+    pub version: String,
 }
 
-/// Every `REBASED pr-open:<repo>` landstate record older than `stall_secs`.
-pub fn gather_stalled(landstate_dir: &Path, now: i64, cfg: &Cfg) -> Vec<Stalled> {
+/// Every pr-mode delivery in PR_OPEN for longer than `stall_secs`, with the registry repo
+/// whose checkout carries its branch. A row no repo carries is skipped, as an unregistered
+/// repo always was. `None` is spira-lc unreachable.
+pub fn gather_stalled(reg: &spira_config::repos::Registry, now: i64, cfg: &Cfg) -> Option<Vec<Stalled>> {
     let mut out = Vec::new();
-    if !landstate_dir.is_dir() {
-        return out;
-    }
-    for rec in landstate::read_dir(landstate_dir) {
-        if rec.status != "REBASED" {
+    for row in lc::pr_open()? {
+        if row.mode != "pr" {
             continue;
         }
-        let repo = match rec.reason.strip_prefix("pr-open:") {
-            Some(r) if !r.is_empty() => r.to_string(),
-            _ => continue,
-        };
-        let at = match rec.at_secs() {
-            Some(a) => a,
-            None => continue,
-        };
+        let Some(at) = row.entered_at else { continue };
         let age = now - at;
         if age < cfg.stall_secs {
             continue;
         }
-        out.push(Stalled {
-            id: rec.id.clone(),
-            repo,
-            age_secs: age,
-            file_path: landstate_dir.join(&rec.id),
+        let refname = format!("refs/heads/spira/{}", row.id);
+        let repo = reg.all().into_iter().find(|name| {
+            reg.root(name).map(|root| crate::git::ref_exists(Some(&root), &refname)).unwrap_or(false)
         });
+        if let Some(repo) = repo {
+            out.push(Stalled { id: row.id, repo, age_secs: age, version: row.version });
+        }
     }
-    out
+    Some(out)
 }
 
-pub fn run(now: i64, landstate_dir: &Path, spira_home: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
+pub fn run(now: i64, spira_home: &str, db: &str, home_repo: &str, incident_sh: &str, cfg: &Cfg) {
     if !incident::is_usable(incident_sh) {
         log(&format!(
             "watchtower: pr-stall-check skipped — {} not readable",
@@ -154,13 +147,14 @@ pub fn run(now: i64, landstate_dir: &Path, spira_home: &str, db: &str, home_repo
         ));
         return;
     }
-    let stalled = gather_stalled(landstate_dir, now, cfg);
+    let reg = seams::registry(spira_home);
+    let Some(stalled) = gather_stalled(&reg, now, cfg) else {
+        log("watchtower: pr-stall-check skipped — spira-lc is unreachable");
+        return;
+    };
     if stalled.is_empty() {
         return;
     }
-    // One registry snapshot for every stalled repo below, not one bash -c '. lib.sh; repo_root
-    // ...' subprocess per repo (sp-k6lku, "wave 4.13").
-    let reg = seams::registry(spira_home);
     for s in stalled {
         let repo_path = match reg.root(&s.repo) {
             Some(p) if Path::new(&p).join(".git").exists() => p,
@@ -213,11 +207,13 @@ pub fn run(now: i64, landstate_dir: &Path, spira_home: &str, db: &str, home_repo
                     s.repo, s.id, s.age_secs
                 ));
             }
-            Action::ClearConflicting => {
-                let _ = std::fs::remove_file(&s.file_path);
+            Action::RequeueConflicting => {
+                let requeued = lc::requeue_pr_open(&s.id, &s.version);
                 log(&format!(
-                    "watchtower: pr-stall-check: {} in {} is CONFLICTING — cleared landstate to trigger rebase",
-                    s.id, s.repo
+                    "watchtower: pr-stall-check: {} in {} is CONFLICTING — {}",
+                    s.id,
+                    s.repo,
+                    if requeued { "requeued to trigger rebase" } else { "requeue refused or spira-lc unreachable" }
                 ));
             }
             Action::ArmAutoMerge => {
@@ -255,7 +251,7 @@ mod tests {
     /// `trim_end()` treats that tab as whitespace too and strips it, so `split_once('\t')`
     /// then finds nothing to split on and both fields come back empty — CONFLICTING was
     /// silently discarded and the branch fell through to arming auto-merge instead of
-    /// clearing the landstate. Exercises the real subprocess path, not just `decide()`.
+    /// requeueing the delivery. Exercises the real subprocess path, not just `decide()`.
     #[test]
     fn gh_pr_facts_parses_conflicting_with_an_empty_conclusions_list() {
         let d = testkit::TempDir::new("wt-prstall-ghfacts");
@@ -286,8 +282,8 @@ mod tests {
     }
 
     #[test]
-    fn conflicting_clears_landstate_when_neither_red_nor_auto_merge_off() {
-        assert_eq!(decide(false, false, true), Action::ClearConflicting);
+    fn conflicting_requeues_when_neither_red_nor_auto_merge_off() {
+        assert_eq!(decide(false, false, true), Action::RequeueConflicting);
     }
 
     #[test]
@@ -305,42 +301,5 @@ mod tests {
         // A conclusion string that merely CONTAINS "FAILURE" as a substring of a longer
         // token must not match — tokens are compared whole.
         assert!(!is_red("NOTAFAILURE"));
-    }
-
-    #[test]
-    fn gather_stalled_only_picks_rebased_pr_open_past_the_threshold() {
-        let d = testkit::TempDir::new("wt-pr-stall-gather");
-        let ls = d.join("landstate");
-        std::fs::create_dir_all(&ls).unwrap();
-        let now = 1_700_100_000i64;
-        let cfg = Cfg::default();
-        // stale: age 7200s >= 3600s threshold
-        std::fs::write(
-            ls.join("sp-stale"),
-            format!("REBASED deadbeef {} pr-open:spira\n", now - 7200),
-        )
-        .unwrap();
-        // fresh: age 60s < threshold
-        std::fs::write(
-            ls.join("sp-fresh"),
-            format!("REBASED deadbeef {} pr-open:spira\n", now - 60),
-        )
-        .unwrap();
-        // wrong status
-        std::fs::write(
-            ls.join("sp-certified"),
-            format!("CERTIFIED deadbeef {} pr-open:spira\n", now - 7200),
-        )
-        .unwrap();
-        // wrong reason
-        std::fs::write(
-            ls.join("sp-other-reason"),
-            format!("REBASED deadbeef {} something-else\n", now - 7200),
-        )
-        .unwrap();
-        let stalled = gather_stalled(&ls, now, &cfg);
-        assert_eq!(stalled.len(), 1);
-        assert_eq!(stalled[0].id, "sp-stale");
-        assert_eq!(stalled[0].repo, "spira");
     }
 }
