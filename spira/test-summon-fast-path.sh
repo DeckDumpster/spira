@@ -64,6 +64,7 @@ export SPIRA_DB="$T/no-db"
 # source at its own context probe. Same one-line symlink trick test-summon-fayth.sh's own
 # `aeon --escape` fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$T/lib.sh"
+ln -s "$HERE/conf.d" "$T/conf.d"
 
 # THE AEON IS A BINARY (aeon.sh is gone): summon_fayth hands systemd-run the aeon it finds
 # on PATH (sp-gypjk). The mock SPIRA_SUMMON never execs it.
@@ -243,6 +244,7 @@ ln -s "$HERE/chamber" "$DSTUBS/chamber"
 ln -s "$HERE/ready-bucket.py" "$DSTUBS/ready-bucket.py"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone): it sources lib.sh from SPIRA_HOME.
 for _s in lib.sh conf.sh suite-covers.sh; do ln -s "$HERE/$_s" "$DSTUBS/$_s"; done
+ln -s "$HERE/conf.d" "$DSTUBS/conf.d"
 SUMMON_LOG="$T/d-summoned.log"
 printf '#!/bin/sh\necho summoned >> "%s"\n' "$SUMMON_LOG" > "$DSTUBS/mock-summon"; chmod +x "$DSTUBS/mock-summon"
 # SPIRA_SUMMON below is this mock, not systemd-run, so aeon_count takes its pidfile

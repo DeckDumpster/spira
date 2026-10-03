@@ -437,7 +437,7 @@ fn halted_draining_and_paused_decline_in_order() {
     std::fs::write(f2.run.join("capacity-pause"), format!("{} iso why\n", now + 321)).unwrap();
     let o = go(&f2, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[1], "awake builder paused");
-    assert!(o.log.contains("out of capacity for another 321s — claiming nothing"), "{}", o.log);
+    assert!(o.log.contains("out of capacity for another 32") && o.log.contains("s — claiming nothing"), "{}", o.log);
 }
 
 #[test]

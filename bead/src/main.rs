@@ -139,7 +139,7 @@ fn resolved_config(home: &str) -> spira_config::resolve::Resolved {
     let home_path = Path::new(home);
     let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home_path, &env_map);
-    spira_config::resolve::resolve_for_process(home_path, &repo, &env_map).unwrap_or_default()
+    spira_config::resolve::resolve_or_say("bead", home_path, &repo, &env_map)
 }
 
 /// `FAYTH_LABELS`, plainly evaluated — delegates to `spira_config::chamber::fayth_get`
