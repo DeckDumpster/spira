@@ -494,7 +494,7 @@ mod tests {
                 "config-fence: spira/cfg.sh: name".to_string(),
                 "payload-argv-lint: spira/payload.sh:2: env: $X_JSON handed to python3".to_string(),
                 "fence-scripts: spira/new-fence.sh: a new bash fence/lint script — write it as a spira-lint rule instead".to_string(),
-                "testlib-migrated: spira/test-own.sh: defines its own ok()/bad()/is()/want()/nowant()/wantrc() — source testlib.sh instead".to_string(),
+                "testlib-migrated: spira/test-own.sh: defines its own ok()/pass()/bad()/is()/want()/nowant()/wantrc() or a pass=/fail= counter — source testlib.sh instead".to_string(),
                 "script-exec: spira/noexec.sh: not executable — chmod +x it, or declare \"Sourced, never executed\" in its header".to_string(),
                 format!("deps-lint: spira/probe.sh:2: {prog}: command -v of a program spira/deps.toml does not declare"),
                 "covers-entries: spira/test-own.sh: # covers: token 'spira/gone.sh' matches no file in the tree".to_string(),
