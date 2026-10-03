@@ -1,5 +1,6 @@
 //! One module per rule. Each rule's intent, contract and allow-list schema: DESIGN.md.
 pub mod bd_stdin_lint;
+pub mod call_deadline;
 pub mod chmod_exec_leak;
 pub mod env_set_var_leak;
 pub mod conf_key_registry;
