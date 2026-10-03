@@ -376,11 +376,10 @@ mod sp_i0rvd_tests {
     use super::require_git_checkout;
     #[test]
     fn refuses_exported_tree_without_git() {
-        let d = std::env::temp_dir().join(format!("sp-i0rvd-{}", std::process::id()));
-        std::fs::create_dir_all(&d).unwrap();
+        let t = testkit::TempDir::new("i0rvd");
+        let d = t.path().to_path_buf();
         assert!(require_git_checkout(&d).is_err());
         std::fs::create_dir_all(d.join(".git")).unwrap();
         assert!(require_git_checkout(&d).is_ok());
-        let _ = std::fs::remove_dir_all(&d);
     }
 }
