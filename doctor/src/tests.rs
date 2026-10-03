@@ -1158,6 +1158,7 @@ fn daemon_base_path_reads_only_a_git_daemon_on_the_port() {
 #[test]
 fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
     let f = Fake::default();
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
     let out = check_dolt_telemetry(&f);
     assert!(out.iter().all(|l| l.level == Level::Ok), "{out:?}");
 }
@@ -1165,6 +1166,7 @@ fn dolt_telemetry_check_passes_when_disabled_and_the_backlog_is_small() {
 #[test]
 fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
     let f = Fake::default();
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
     *f.dolt_metrics_off.borrow_mut() = false;
     let out = check_dolt_telemetry(&f);
     assert!(out.iter().any(|l| l.level == Level::Fail && l.msg.contains("metrics.disabled")), "{out:?}");
@@ -1173,8 +1175,17 @@ fn dolt_telemetry_check_fails_when_metrics_are_not_disabled() {
 #[test]
 fn dolt_telemetry_check_fails_on_an_events_backlog_over_the_bound() {
     let f = Fake::default();
+    f.env.borrow_mut().insert("SPIRA_DOLT_DATA".into(), "/d".into());
     *f.dolt_events.borrow_mut() = 101;
     assert!(check_dolt_telemetry(&f).iter().any(|l| l.level == Level::Fail && l.msg.contains("eventsData")));
     *f.dolt_events.borrow_mut() = 100;
     assert!(check_dolt_telemetry(&f).iter().all(|l| l.level == Level::Ok));
+}
+
+#[test]
+fn dolt_telemetry_check_is_silent_on_a_host_that_runs_no_dolt_server() {
+    let f = Fake::default();
+    *f.dolt_metrics_off.borrow_mut() = false;
+    *f.dolt_events.borrow_mut() = 500;
+    assert!(check_dolt_telemetry(&f).is_empty());
 }
