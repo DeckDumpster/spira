@@ -187,7 +187,7 @@ file_under() {            # file_under <parent> -> FILE_OUT (new id), FILE_RC
     FILE_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" SPIRA_BEAD_LANE_OVERRIDE=1 \
         SPIRA_ALARM_LABEL="incident-test" \
-        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>&1)"
+        bead.sh file "remedy for $1" --for builder --repo harness --parent "$1" 2>"$TMP/file.err")"
     FILE_RC=$?
 }
 blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depends on
@@ -196,7 +196,7 @@ blocks_of() {             # blocks_of <id> -> space-separated ids it blocks-depe
 }
 
 file_under sp-lint-fil-inc
-wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"
+wantrc "filing a remedy under an incident exits 0" "0" "$FILE_RC"; cat "$TMP/file.err" | sed "s/^/# err: /"
 want   "the incident now blocks on the new remedy ($FILE_OUT)" "$FILE_OUT" "$(blocks_of sp-lint-fil-inc)"
 
 file_under sp-lint-fil-work
