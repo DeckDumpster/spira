@@ -185,7 +185,6 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
         if refresh > 0 {
             (c.log)(&format!("refreshed {br} onto {baseref} in {name} — rebased and force-pushed"));
         } else {
-            c.lib.land_mark(id, "REBASED", &tip, &format!("pr-open:{name}"));
             (c.log)(&format!("opened a pull request for {br} in {name}"));
         }
         0
@@ -564,7 +563,7 @@ mod tests {
         let rc = f.run("spira/sp-a", "sp-a", "t1");
         assert_eq!(rc, 0);
         assert!(f.lib.has("force_push origin spira/sp-a"));
-        assert!(f.lib.has("land_mark sp-a REBASED t1 pr-open:spira"));
+        assert!(!f.lib.has("land_mark sp-a REBASED"));
         assert!(f.logs.borrow().iter().any(|l| l.contains("opened a pull request")));
     }
 

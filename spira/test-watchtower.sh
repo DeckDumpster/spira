@@ -18,23 +18,15 @@
 # IDENTICALLY, and the reassuring reading is the one it gives — which is why a suite for it
 # earns its place beside the pipeline checks despite being neither a fence nor a soak.
 #
-# THE FIXTURE IS WRITTEN BY THE REAL WRITER (law-prefer-the-real-dependency). `land_mark` is
-# lifted out of landing.sh and run, rather than its output being imitated here, because the
-# whole defect lived in the seam between two programs' idea of the record format: the writer
-# emits no trailing newline on purpose, and `read` reports EOF-without-delimiter as failure
-# EVEN THOUGH IT HAS POPULATED EVERY VARIABLE. A hand-written fixture would reproduce
-# whichever half of that seam the test author remembered.
+# THE LANDING FIELD READS spira-lc, so the fixture is a stand-in spira-lc (testlib's
+# lc_fix_init) answering from rows this suite plants, and `wt` points SPIRA_LC_BIN at it.
 #
-# THE POSITIVE CONTROL COMES FIRST AND EVERYTHING AFTER IT IS READ THROUGH IT
-# (law-absence-needs-a-positive-control). Before any claim that the reader works, this suite
-# proves that the fixture still has the shape that broke it — that the record really ends
-# without a newline, and that the OLD `read ... || continue` idiom really does discard it.
-# Without that control, a writer someone "fixed" to append a newline would make every
-# assertion below pass while the reader silently went back to being wrong on the real files.
+# A ROW-LESS spira-lc AND AN UNREACHABLE ONE BOTH RENDER ?, never 0, and each case plants a
+# LANDED row beside it so the absence is read through a reader that demonstrably finds one.
 #
 # SPIRA_RUN AND SPIRA_WATCH_GATE_WINDOW ARE PINNED TO NON-DEFAULTS, and the program is run in
 # an empty environment (law-gates-run-in-a-clean-environment). A suite that inherited a real
-# spira.conf would assert against one box's landstate directory, and asserting against the
+# spira.conf would assert against one box's lifecycle rows, and asserting against the
 # shipped six-hour window would pass just as well if the code had the literal written in,
 # which is the thing the key exists to prevent.
 #
@@ -104,7 +96,7 @@ chmod +x "$SYSTEMCTL_CLEAN"
 # The program under test, in an environment holding nothing but what it needs. `--show`
 # gathers and prints and touches nothing, so nothing here can reach a database or file a bead.
 wt() {                   # wt [VAR=val ...] -> the snapshot
-    env -i PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_SUITES_SH="$MOCK_SUITES" \
@@ -120,115 +112,47 @@ field() {                # field <snapshot> <label> -> the rest of that line
 gate_field() {           # gate_field <snapshot> [<window label>]
     field "$1" "longest gate wait, ${2:-last 1h}"
 }
-fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run/landstate"; }
+fresh() { rm -rf "$TMP/run"; mkdir -p "$TMP/run"; lc_fix_init "$TMP/lc"; }
 
 # ======================================================================================
 echo
-echo "the positive control — the fixture still has the shape that broke the reader:"
-# ======================================================================================
-# THE WRITER ITSELF, not a copy of what it emits: `landing-pass mark`.
-fresh
-LANDSTATE="$TMP/run/landstate"
-land_mark() { landing-pass mark "$@"; }
-[ -n "$(command -v landing-pass)" ] \
-    && ok "landing-pass is the writer under test" \
-    || bad "landing-pass is the writer under test" "not on PATH"
-# Same lift for write_lapse_record (gap G8) — used by the whole-snapshot render below,
-# which is also where D12's two "every section present" loops merge into one.
-eval "$(sed -n '/^write_lapse_record() *{/,/^}/p' "$HERE/lib.sh")" 2>/dev/null
-
-# land_mark_at (lib.sh) is gone (retired dead at sp-27hsi: no caller left, and nothing below
-# ever actually called this extraction — the deterministic-age T1 cases further down write
-# LANDSTATE records directly with printf/touch -d instead). Nothing to lift here any more.
-
-if [ "$(type -t land_mark 2>/dev/null)" = function ]; then
-    land_mark sp-ctl LANDED deadbeef spira
-    is "the real writer produced a record" 1 "$(ls "$LANDSTATE" | wc -l)"
-
-    # THE SEAM, STATED AS BYTES, and read through `od` rather than through a command
-    # substitution: `$(...)` strips trailing newlines, so comparing its output is a test
-    # that cannot tell the two cases apart — it passes either way, which is how the first
-    # version of this control asserted the exact opposite of what it meant to.
-    lastb="$(tail -c1 "$LANDSTATE/sp-ctl" | od -An -tx1 | tr -d ' \n')"
-    [ "$lastb" != 0a ] && ok "the record ends WITHOUT a newline" \
-        || bad "the record ends WITHOUT a newline" "the writer now terminates it — this fixture no longer reproduces the defect"
-
-    # THE DEFECT, REPRODUCED. This is the idiom watchtower used to carry, run verbatim
-    # over the file the real writer just produced. It must find nothing — and if a later
-    # change to the writer makes it find something, the control fails and says so rather
-    # than letting the reader's tolerance go quietly untested.
-    seen=0
-    while IFS= read -r f; do
-        read -r st _t _a _w < "$f" 2>/dev/null || continue
-        [ "$st" = LANDED ] || continue
-        seen=$((seen+1))
-    done < <(find "$LANDSTATE" -maxdepth 1 -type f)
-    is "the OLD 'read ... || continue' discards it" 0 "$seen"
-
-    # And the same read, without the `|| continue`, has in fact populated every variable —
-    # which is why tolerating the status is safe rather than reckless.
-    st=""; at=""
-    read -r st _t at _w < "$LANDSTATE/sp-ctl" 2>/dev/null || true
-    is "the failed read had populated the state" LANDED "$st"
-    case "$at" in ''|*[!0-9]*) bad "the failed read had populated the timestamp" "got [$at]" ;;
-                  *) ok "the failed read had populated the timestamp" ;; esac
-fi
-
-# ======================================================================================
-echo
-echo "the landing field reads a real LANDED record:"
+echo "the landing field reads the newest LANDED bead from spira-lc:"
 # ======================================================================================
 fresh
-landing-pass mark sp-land LANDED cafe1 spira
-touch -d "@$(( NOW - 600 ))" "$LANDSTATE/sp-land" 2>/dev/null
-# 10 minutes ago, written through the real writer with a real timestamp: land_mark stamps
-# `date +%s` itself, so the age asserted here is the age the program computes, not one the
-# fixture chose.
+lc_bead LANDED sp-old cafe0 "$(( NOW - 3000 ))"
+lc_bead LANDED sp-land cafe1 "$(( NOW - 600 ))"
+lc_bead CERTIFIED sp-cert cafe9 "$(( NOW - 60 ))"
 snap="$(wt)"
 line="$(field "$snap" 'minutes since the last landing')"
-nowant "a LANDED record renders a number, not ?" "?" "$line"
-want   "and names the bead that landed" "sp-land" "$line"
+nowant "a LANDED row renders a number, not ?" "?" "$line"
+want   "and names the bead that landed most recently" "sp-land" "$line"
+nowant "and not an older landing" "sp-old" "$line"
+nowant "nor a bead that has not landed" "sp-cert" "$line"
 
 # ======================================================================================
 echo
-echo "a directory holding only RED records still renders ?, never 0:"
+echo "no LANDED row renders ?, never 0:"
 # ======================================================================================
 # THE WHOLE POINT OF THE FIELD. "Nothing has landed" and "nothing landed in the last zero
 # minutes" are opposite facts, and the second is the reassuring one.
 fresh
-landing-pass mark sp-red1 RED cafe2 gate
-landing-pass mark sp-red2 RED cafe3 no-rebase
+lc_bead REWORK sp-red1 cafe2 "$(( NOW - 60 ))"
+lc_bead CERTIFIED sp-red2 cafe3 "$(( NOW - 60 ))"
 line="$(field "$(wt)" 'minutes since the last landing')"
-want   "only RED renders ?" "?" "$line"
+want   "no LANDED row renders ?" "?" "$line"
 want   "and says so in words" "none recorded" "$line"
-nowant "and does not name a RED bead" "sp-red1" "$line"
-
-# ======================================================================================
-echo
-echo "an empty or malformed record is rejected without corrupting the running max:"
-# ======================================================================================
-# THE CONTAMINATION CASE. Because the reader no longer aborts the iteration on a failed
-# `read`, the four variables must be reset before each one — otherwise an unreadable file is
-# judged on the PREVIOUS file's state and one bead's landing is attributed to another. A
-# directory is a set, so this plants enough offenders that find must hand at least one of
-# them over after the good record whatever order it walks in.
-fresh
-landing-pass mark sp-good LANDED cafe4 spira
-: > "$LANDSTATE/sp-empty"
-printf 'garbage' > "$LANDSTATE/sp-junk"
-printf 'LANDED\n'  > "$LANDSTATE/sp-short"      # a state and nothing else
-printf 'LANDED tip notanumber x' > "$LANDSTATE/sp-nan"
-line="$(field "$(wt)" 'minutes since the last landing')"
-want   "the good record is still found" "sp-good" "$line"
-for junk in sp-empty sp-junk sp-short sp-nan; do
-    nowant "$junk is not credited with a landing" "$junk" "$line"
-done
+nowant "and does not name a non-landed bead" "sp-red1" "$line"
 
 fresh
-: > "$LANDSTATE/sp-empty"
-printf 'garbage' > "$LANDSTATE/sp-junk"
+lc_bead LANDED sp-good cafe4 "$(( NOW - 600 ))"
+lc_bead LANDED sp-nosince cafe5 null
 line="$(field "$(wt)" 'minutes since the last landing')"
-want "a directory of nothing but junk renders ?" "?" "$line"
+want   "a LANDED row with no entry time is not credited, the good one is" "sp-good" "$line"
+nowant "the row without a time is not named" "sp-nosince" "$line"
+
+fresh
+line="$(field "$(wt SPIRA_LC_BIN="$TMP/absent")" 'minutes since the last landing')"
+want "an unreachable spira-lc renders ?" "?" "$line"
 
 # ======================================================================================
 echo
@@ -301,7 +225,7 @@ echo "the strand ledger is reported by class, not by size:"
 ledger() {               # ledger <json> -> the collector's keys for that ledger
     mkdir -p "$TMP/run"
     printf '%s' "$1" > "$TMP/run/strands.json"
-    env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         cockpit-collect probe strands 2>/dev/null
 }
 key() {                  # key <keys> <name> -> its value
@@ -358,7 +282,7 @@ is   "while the ledger size is still known" "2" "$(key "$k" SP_STRANDS)"
 k="$(ledger 'not json at all')"
 is "an unparsable ledger renders ?" "?" "$(key "$k" SP_STRAND_GHOST)"
 rm -f "$TMP/run/strands.json"
-k="$(env -i PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
+k="$(env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         cockpit-collect probe strands 2>/dev/null)"
 is "a missing ledger renders ?"     "?" "$(key "$k" SP_STRAND_GHOST)"
 
@@ -382,7 +306,7 @@ echo "the snapshot still renders as a whole:"
 # this one snapshot exercises every section — D12: this used to be two near-identical loops,
 # here and in test-watchtower-lapse.sh, differing only in 'The graph' vs 'Lapsed aeons'.
 fresh
-landing-pass mark sp-whole LANDED cafe5 spira
+lc_bead LANDED sp-whole cafe5 "$(( NOW - 600 ))"
 if [ "$(type -t write_lapse_record 2>/dev/null)" = function ]; then
     SPIRA_RUN="$TMP/run" write_lapse_record sp-whole-lapsed 600 "writing output file" cafe5 >/dev/null
 fi
@@ -427,7 +351,7 @@ wt_file() {   # wt_file [VAR=val ...] -> $TMP/ops-prompt written; $TMP/incident-
         "$TMP/incident-called" > "$mock"
     chmod +x "$mock"
     rm -f "$TMP/incident-called" "$TMP/ops-prompt"
-    env -i PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$DF_CLEAN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -561,7 +485,7 @@ wt_file_multi() {   # wt_file_multi [VAR=val ...] -> appends incident subjects t
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "$2" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-subjects" > "$mock"
     chmod +x "$mock"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -578,7 +502,7 @@ wt_sinexempt_multi() {   # wt_sinexempt_multi [VAR=val ...] -> appends to $TMP/i
     printf '#!/usr/bin/env bash\nprintf "%%s|%%s\n" "$2" "${SPIRA_SIN_EXEMPT:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-sinexempt" > "$mock"
     chmod +x "$mock"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -594,7 +518,7 @@ wt_refs_multi() {   # wt_refs_multi [VAR=val ...] -> appends SPIRA_INCIDENT_REF 
     printf '#!/usr/bin/env bash\nprintf "%%s\n" "${SPIRA_INCIDENT_REF:-}" >> "%s"\ncat > /dev/null\n' \
         "$TMP/inc-refs" > "$mock"
     chmod +x "$mock"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -608,7 +532,7 @@ wt_body_unadopted() {  # wt_body_unadopted [VAR=val ...] -> writes unadopted esc
     printf '#!/usr/bin/env bash\n[ "${SPIRA_INCIDENT_CAUSE:-}" = unadopted-refs ] && cat >> "%s" || cat > /dev/null\n' \
         "$TMP/inc-unadopted-body" > "$mock"
     chmod +x "$mock"
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" LC_FIX="$LC_FIX" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_WATCH_GATE_WINDOW="$GATE_WINDOW" \
         SPIRA_WATCH_PROMPT_FILE="$TMP/ops-prompt" \
@@ -1217,7 +1141,7 @@ nowant "low memory prevents nominal skip" \
 #     render_flags_mem_breach_strictly_below_threshold, render_is_unknown_never_zero_on_a_failed_read}
 #   sweep::collect::tests::{czar_block_renders_unset_classes_as_unknown_throughout,
 #     czar_block_a_fired_class_carries_who_handled_it_and_leaves_others_untouched}
-#   landstate::tests::last_landed_picks_the_newest_landed_record,
+#   lc::tests::readers_parse_rows_and_requeue_sends_the_event,
 #     throttle::tests::minutes_since_last_landed_{is_none_with_no_landed_record,picks_the_newest_landed_record}
 #   gate_wait::tests::{picks_the_longest_wait_inside_the_window,
 #     rows_outside_the_window_are_excluded,no_rows_in_window_renders_unknown_not_zero,
