@@ -510,6 +510,19 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
         },
 
         BeadState::Submitted => match kind {
+            // The tip invariant, as in CERTIFIED: an aeon that commits again after submitting
+            // resubmits its moved tip, which replaces the pending one (any verdict on the old
+            // tip is now TipMismatch); the same tip again is a no-op. Refusing it stranded the
+            // bead: certification of the real tip was refused forever (sp-dvyic).
+            Submit { tip } => {
+                let mut new = row.clone();
+                if row.tip.as_deref() != Some(tip.as_str()) {
+                    new.tip = Some(tip.clone());
+                    new.gate_key = None;
+                }
+                new.version += 1;
+                Outcome::applied(new)
+            }
             GatePass { tip, gate_key } => {
                 if row.tip.as_deref() != Some(tip.as_str()) {
                     return tip_mismatch(row, tip);
@@ -557,7 +570,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
                 new.version += 1;
                 Outcome::applied(new)
             }
-            Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | Deliver | Delivered { .. }
+            Claim { .. } | Release | HolderDead | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
             | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
         },
@@ -1187,6 +1200,29 @@ mod tests {
         assert!(out.applied);
         assert_eq!(out.row.state, BeadState::Certified);
         assert_eq!(out.row.gate_key.as_deref(), Some("k1"), "an unchanged tip is not a change to void");
+    }
+
+    #[test]
+    fn a_moved_tip_resubmitted_while_submitted_replaces_the_pending_tip() {
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("abc123".into());
+        let out = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::Submit { tip: "def456".into() }));
+        assert!(out.applied);
+        assert_eq!((out.row.state, out.row.tip.as_deref()), (BeadState::Submitted, Some("def456")));
+        // ...and a verdict on the new tip now applies, where one on the old tip is refused.
+        let pass = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::GatePass { tip: "def456".into(), gate_key: "k".into() }));
+        assert_eq!(pass.row.state, BeadState::Certified);
+        let stale = apply(&out.row, &ev(BeadState::Submitted, out.row.version, BeadEventKind::GatePass { tip: "abc123".into(), gate_key: "k".into() }));
+        assert!(!stale.applied, "a verdict on the replaced tip is TipMismatch");
+    }
+
+    #[test]
+    fn resubmitting_the_same_tip_while_submitted_is_a_no_op() {
+        let mut r = row(BeadState::Submitted);
+        r.tip = Some("abc123".into());
+        let out = apply(&r, &ev(BeadState::Submitted, r.version, BeadEventKind::Submit { tip: "abc123".into() }));
+        assert!(out.applied);
+        assert_eq!((out.row.state, out.row.tip.as_deref()), (BeadState::Submitted, Some("abc123")));
     }
 
     #[test]
