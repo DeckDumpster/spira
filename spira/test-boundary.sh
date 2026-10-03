@@ -99,4 +99,13 @@ is   "GREEN: existing path + fresh README passes check" "0" "$rc"
 out="$(SPIRA_WIKI="" boundary.sh check 2>&1)"; rc=$?
 is   "the shipped tree passes check" "0" "$rc"
 [ "$rc" = 0 ] || printf '%s\n' "$out"
+
+# The round gate selects suites by touched files, so a change to what ships that touches no
+# boundary file reaches no README check; only a gate step catches it, and it must prove it looked.
+want   "a passing check proves it checked" "fence: boundary checked" "$out"
+printf 'spira | spira/boundary.sh | the renderer\nspira | spira/lib.sh | an added shipped path\n' > "$HARNESS/spira/boundary"
+out="$(bash "$HARNESS/spira/boundary.sh" check 2>&1)"; rc=$?
+is     "SEEN RED: an added shipped path with an unregenerated README fails check" "1" "$rc"
+nowant "a failing check prints no fence line" "fence: boundary checked" "$out"
+want   "gate.steps runs boundary.sh check" "step bash spira/boundary.sh check" "$(cat "$HERE/../gate.steps")"
 tl_summary
