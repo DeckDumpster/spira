@@ -67,7 +67,7 @@ STRANDSTUB
 chmod +x "$STUBS/strand"
 # THE SENTINEL IS A BINARY (sentinel.sh is gone). It sources lib.sh from SPIRA_HOME, so the
 # stub home carries the real lib.sh and what it sources; strand is the stub first on PATH.
-for _s in lib.sh conf.sh suite-covers.sh; do
+for _s in lib.sh conf.sh suite-covers.sh conf.d; do
     ln -s "$HERE/$_s" "$STUBS/$_s"
 done
 printf '#!/bin/sh\necho inactive\n'  > "$STUBS/mock-systemctl"; chmod +x "$STUBS/mock-systemctl"
