@@ -93,7 +93,7 @@ impl Machine for Fake {
                 let ver: u64 = version.parse().unwrap();
                 if machine == "bead" {
                     let Some(row) = self.beads.get(&key) else { return (2, "no row".into()) };
-                    let ev = BeadEvent { expect: BeadState::from_str(&expect).unwrap(), version: ver, kind: serde_json::from_str(&kind).unwrap(), actor };
+                    let ev = BeadEvent { expect: BeadState::from_str(&expect).unwrap(), version: ver, kind: serde_json::from_str(&kind).unwrap(), actor, at: None };
                     let o = lifecycle::bead::apply(row, &ev);
                     if !o.applied {
                         return (REFUSED, format!("refused: {:?}", o.refusal));

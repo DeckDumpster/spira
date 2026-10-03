@@ -12,13 +12,21 @@ pub struct TestlibMigrated;
 const NAME: &str = "testlib-migrated";
 const ALLOW_FILE: &str = "spira-lint/testlib-migrated-allow";
 
-/// A line that defines one of testlib.sh's primitives at the start of the line.
+/// A line that defines a testlib.sh primitive at the start of the line, or — in a file that
+/// never sources testlib.sh — a bare `pass=N`/`fail=N` counter.
 fn defines_primitive(content: &[u8]) -> bool {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^(ok|bad|fail|is|want|nowant|notwant|wantrc)\(\)").expect("static regex")
+    static FN: OnceLock<Regex> = OnceLock::new();
+    static CTR: OnceLock<Regex> = OnceLock::new();
+    static SRC: OnceLock<Regex> = OnceLock::new();
+    let f = FN.get_or_init(|| {
+        Regex::new(r"^(ok|bad|fail|is|want|nowant|notwant|wantrc|pass)\(\)").expect("static regex")
     });
-    lines(content).iter().any(|l| re.is_match(l))
+    let c = CTR.get_or_init(|| Regex::new(r"(^|; )(pass|fail)=[0-9]+").expect("static regex"));
+    let s = SRC.get_or_init(|| {
+        Regex::new(r"^\s*(\.|source)\s+.*testlib\.sh").expect("static regex")
+    });
+    let ls = lines(content);
+    ls.iter().any(|l| f.is_match(l)) || (!ls.iter().any(|l| s.is_match(l)) && ls.iter().any(|l| c.is_match(l)))
 }
 
 /// `spira/test-*.sh`, directly in spira/.
@@ -63,7 +71,7 @@ impl Rule for TestlibMigrated {
                         rule: NAME,
                         path: e.path.clone(),
                         line: None,
-                        message: "defines its own ok()/bad()/is()/want()/nowant()/wantrc() — source testlib.sh instead".into(),
+                        message: "defines its own ok()/pass()/bad()/is()/want()/nowant()/wantrc() or a pass=/fail= counter — source testlib.sh instead".into(),
                     });
                 }
             }
@@ -113,10 +121,18 @@ mod tests {
 
     #[test]
     fn every_primitive_counts() {
-        for p in ["ok", "bad", "fail", "is", "want", "nowant", "notwant", "wantrc"] {
+        for p in ["ok", "bad", "fail", "is", "want", "nowant", "notwant", "wantrc", "pass"] {
             assert!(defines_primitive(format!("x\n{p}() {{ :; }}\n").as_bytes()), "{p}");
         }
         assert!(!defines_primitive(b"okay() { :; }\n"));
+    }
+
+    #[test]
+    fn a_bare_counter_counts_only_without_testlib() {
+        assert!(defines_primitive(b"pass=0; fail=0\n"));
+        assert!(defines_primitive(b"x\nfail=0\n"));
+        assert!(!defines_primitive(b". \"$HERE/testlib.sh\"\npass=0\n"));
+        assert!(!defines_primitive(b"# pass=0\nbypass=1\n"));
     }
 
     #[test]

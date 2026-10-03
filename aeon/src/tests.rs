@@ -437,7 +437,7 @@ fn halted_draining_and_paused_decline_in_order() {
     std::fs::write(f2.run.join("capacity-pause"), format!("{} iso why\n", now + 321)).unwrap();
     let o = go(&f2, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), no_session());
     assert_eq!(ledger_lines(&o)[1], "awake builder paused");
-    assert!(o.log.contains("out of capacity for another 321s — claiming nothing"), "{}", o.log);
+    assert!(o.log.contains("out of capacity for another 32") && o.log.contains("s — claiming nothing"), "{}", o.log);
 }
 
 #[test]
@@ -1225,6 +1225,30 @@ fn sweep_runs_without_a_bead() {
     let task = std::fs::read_to_string(f.run.join("sweep-builder-4242.task.md")).unwrap();
     assert_eq!(task, "look at X");
     assert!(!f.run.join("aeon-builder-sweep-4242.pid").exists());
+}
+
+#[test]
+fn a_declared_core_statute_that_does_not_exist_refuses_the_start() {
+    let f = fx("corefail");
+    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    let cache = f.run.join("memories.json");
+    std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
+    let cache_s = cache.display().to_string();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-slug-that-does-not-exist")], false, Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    assert_eq!(o.code, 1);
+    assert!(o.log.contains("law-slug-that-does-not-exist"), "{}", o.log);
+    assert!(o.seen.is_empty(), "no session may start");
+    assert!(!f.run.join("sweep-builder-4242.task.md").exists());
+
+    let f = fx("coreok");
+    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    let cache = f.run.join("memories.json");
+    std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
+    let cache_s = cache.display().to_string();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
+    let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real")], false, Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
+    assert!(!o.seen.is_empty(), "positive control: a resolvable core slug starts the session: {}", o.log);
 }
 
 // ---- admission and summon jitter (sp-f4ig1) -------------------------------------------

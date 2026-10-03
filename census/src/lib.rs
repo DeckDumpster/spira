@@ -64,7 +64,8 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
                 let beads = it.next()?;
                 let events = it.next()?;
                 let class = it.next()?;
-                Some(format!("{beads} {class} ({events} detections)"))
+                let beads_part = it.next().map(|d| format!(", {d} beads")).unwrap_or_default();
+                Some(format!("{beads} {class} ({events} detections{beads_part})"))
             })
             .collect::<Vec<_>>()
             .join("\n")

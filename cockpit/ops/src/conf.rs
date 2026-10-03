@@ -39,7 +39,7 @@ pub fn self_source() {
     let home = PathBuf::from(release).join("spira");
     let env_map: BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-    let Ok(resolved) = spira_config::resolve::resolve_for_process(&home, &repo, &env_map) else { return };
+    let resolved = spira_config::resolve::resolve_or_say("cockpit-ops", &home, &repo, &env_map);
     for (k, v) in resolved.values {
         if NEVER_EXPORTED.contains(&k.as_str()) {
             continue;

@@ -126,8 +126,9 @@ bump_requeue "sp-d2" merge-conflict
 bump_requeue "sp-d2" merge-conflict
 
 out="$(census_out)"
-want "cross-bead: 2 distinct beads for sp-reopen-rebase-conflict" "2 sp-reopen-rebase-conflict" "$out"
-want "cross-bead: 3 total event detections shown" "sp-reopen-rebase-conflict (3 detections" "$out"
+# Same-instant events on two beads are one burst: one occurrence, both beads still shown.
+want "cross-bead: one burst ranks as 1 occurrence" "1 sp-reopen-rebase-conflict" "$out"
+want "cross-bead: 3 detections and 2 beads shown" "sp-reopen-rebase-conflict (3 detections, 2 beads" "$out"
 
 # ======================================================================================
 echo
@@ -211,7 +212,7 @@ bead_reopen "sp-g2" gate-red "first gate failure" >/dev/null 2>&1
 bead_reopen "sp-g3" gate-red "second gate failure" >/dev/null 2>&1
 
 out="$(census_out)"
-want "two beads with same cause: 2 distinct beads" "2 sp-reopen-gate-red" "$out"
+want "two beads with same cause in one burst: 1 occurrence, 2 beads" "1 sp-reopen-gate-red (2 detections, 2 beads" "$out"
 
 # Verify the cause is recorded in the events table as event_type='reopen'.
 testdb_reset

@@ -101,7 +101,7 @@ bump_requeue "$bid_c" quota-exceeded
 reclaim_event "$bid_c"
 
 out1="$(run_census)"
-want "bump_recur: 2 distinct beads, 4 detections" "2 sp-recur-suite-red (4" "$out1"
+want "bump_recur: one burst over 2 beads, 4 detections" "1 sp-recur-suite-red (4 detections, 2 beads" "$out1"
 want "bump_requeue: 1 distinct bead, 1 detection"  "1 sp-requeue-quota-exceeded (1" "$out1"
 want "bump_reclaim: 1 distinct bead, 1 detection"  "1 sp-reclaim (1"          "$out1"
 

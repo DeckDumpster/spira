@@ -32,7 +32,7 @@ fn kind() -> impl Strategy<Value = BeadEventKind> {
 }
 
 fn event_for(row: &BeadRow, kind: BeadEventKind) -> BeadEvent {
-    BeadEvent { expect: row.state, version: row.version, kind, actor: "p".into() }
+    BeadEvent { expect: row.state, version: row.version, kind, actor: "p".into(), at: None }
 }
 
 fn forward(row: &BeadRow) -> BeadEventKind {

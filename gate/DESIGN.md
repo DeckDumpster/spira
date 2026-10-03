@@ -86,6 +86,7 @@ reached the bash.
 | `SPIRA_GATE_BEAD` | ejected-suites lookup (the re-entry check), the key, `lc_certify` | — |
 | `SPIRA_GATE_CALLER` | `by=` in the cache entry | the branch |
 | `LANDSTATE` (lib.sh) | `<bead>.ejected`, else an `EJECTED` landstate row | `$SPIRA_RUN/landstate` |
+| `SPIRA_GATE_CLASS` (`certify` set by gate-worker; anything else is a landing round) | scratch reservation class: a round waits up to `SPIRA_GATE_LOCK_WAIT` for room and holds new certification builds off; certification yields, never preempted | as bash |
 | `SPIRA_GATE_BUDGET`, `SPIRA_GATE_ALL`, `SPIRA_CERTIFY_ALWAYS_COVERS`, `SPIRA_BATCH_MAXPAR`, `SPIRA_VERDICT_REPEAT_CONSIDERED`, `SPIRA_TESTENV_SETUP_SHARE`, `SPIRA_TESTENV_WARM_SLOTS` (sp-govet), `HOME` | passed through to the gate command | as bash |
 | `SPIRA_RELEASE` | the gate command's PATH, built from it (below) | the launcher |
 

@@ -907,10 +907,11 @@ impl<'w, W: World> Trial<'w, W> {
                 &re.required,
                 "base-",
             );
+            let before_tests = r != 0 && ph.last().is_some_and(|(n, _)| n == "base-tools" || n == "base-build");
             self.s.phases.extend(ph);
             base_rc = r;
             base_out = o;
-            base_ran = r != 124 && r != NOVERDICT;
+            base_ran = r != 124 && r != NOVERDICT && !before_tests;
         }
         if w.signalled() {
             return v(
@@ -1141,6 +1142,16 @@ impl<'w, W: World> Trial<'w, W> {
                     "gate: {name}'s base trial timed out on {t}— no verdict for {br}.\ngate: a killed suite cannot prove the base is broken; retry when the box is quieter."))
             }
             Attribution::BaseRed(s) => {
+                let s = if s == "-" && matches!(comp, Composition::Unit { .. }) {
+                    parse::failed_tests(&base_out).into_iter().next().unwrap_or(s)
+                } else {
+                    s
+                };
+                if s == "-" && matches!(comp, Composition::Unit { .. }) {
+                    return v(NOVERDICT, "gate-defect", format!(
+                        "gate: {name}'s unit trial is red on {base} but names no failing suite or test — a base-red nothing can file or dedupe is a gate defect, not {base}'s fault.\ngate: command: {cmd}\n--- {base}'s own output ---\n{}",
+                        parse::tail_bytes(&base_out, 8000)));
+                }
                 self.s.suite = s;
                 let reds = parse::red_suites(&base_out).join("\n");
                 let reds = if reds.is_empty() { "(no suite named; read the output)".to_string() } else { reds };
@@ -1338,7 +1349,8 @@ impl<'w, W: World> Trial<'w, W> {
             Ok(line) => w.eprint(&line),
             Err(e) => return short(e),
         }
-        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim) {
+        let wait = key::digits(ctx.var("SPIRA_GATE_LOCK_WAIT")).unwrap_or(0);
+        match w.reserve_scratch(tree, ctx.var("SPIRA_GATE_TARGET_ROOT"), &self.s.run, &lim, ctx.var("SPIRA_GATE_CLASS"), wait) {
             Ok(g) => {
                 *reservation = Some(g);
                 None

@@ -61,6 +61,8 @@ printf 'SPIRA_ID_PREFIX = sp\nSPIRA_RUN = %s\n' "$RUN" > "$CONF"
 REPO_MAP="$TMP/repo-map"
 : > "$REPO_MAP"
 export SPIRA_CONF="$CONF" HOME="$TMP/home" SPIRA_REPO_MAP="$REPO_MAP"
+# An operator-muted host files mail into cur/, where the unread-count checks never look.
+export SPIRA_MAIL_MUTE=0
 
 # SOURCEABLE, AND SILENT WHEN IT IS (pr-notify.sh's own guard): this reaches _PR_STATUS_PY
 # without triggering a live repo-map scan.
@@ -150,7 +152,7 @@ chmod +x "$GH_BIN/gh"
 
 run() {  # run [args...] -> pr-notify.sh in a clean env; stdout in $TMP/out
     env -i HOME="$TMP/home" PATH="$GH_BIN:$PATH" \
-        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" \
+        SPIRA_CONF="$CONF" SPIRA_REPO_MAP="$REPO_MAP" SPIRA_MAIL_MUTE=0 \
         SPIRA_REPO="$TMP/empty-repo" GH_LOG="$GH_LOG" \
         pr-notify.sh "$@" > "$TMP/out" 2>"$TMP/err"
 }

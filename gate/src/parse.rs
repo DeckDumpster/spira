@@ -28,6 +28,19 @@ pub fn red_suites(out: &str) -> Vec<String> {
     suites_where(out, &["RED", "TIMEOUT", "FAILED"], true)
 }
 
+/// `failed_tests`: the `<name>` of each cargo `test <name> ... FAILED` line, in order, unique.
+pub fn failed_tests(out: &str) -> Vec<String> {
+    let mut seen = Vec::new();
+    for l in out.lines() {
+        let Some(rest) = l.trim().strip_prefix("test ") else { continue };
+        let Some(name) = rest.strip_suffix(" ... FAILED") else { continue };
+        if !name.is_empty() && !name.contains(char::is_whitespace) && !seen.iter().any(|x| x == name) {
+            seen.push(name.to_string());
+        }
+    }
+    seen
+}
+
 /// `ran_suites`: every suite the runner reported any status for.
 pub fn ran_suites(out: &str) -> Vec<String> {
     suites_where(
@@ -217,6 +230,13 @@ pub fn tail_bytes(s: &str, n: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_tests_reads_cargo_failure_lines_only() {
+        let out = "test a::ok ... ok\ntest a::bad ... FAILED\ntest a::bad ... FAILED\ntest result: FAILED. 1 passed\n";
+        assert_eq!(failed_tests(out), vec!["a::bad".to_string()]);
+        assert!(failed_tests("test result: FAILED\n").is_empty());
+    }
 
     #[test]
     fn red_suites_reads_every_red_form_once_in_order() {

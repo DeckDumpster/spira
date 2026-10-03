@@ -1,0 +1,7 @@
+TYPE=u32
+GROUP=round
+DOC=SECONDS BETWEEN REPEATS of a ROUND DUE event while a round stays due.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # SECONDS BETWEEN REPEATS of a ROUND DUE event while a round stays due.
+    : "${SPIRA_ROUND_DUE_REMIND:=1200}"
+SPIRA_CONF_DEFAULT_EOF

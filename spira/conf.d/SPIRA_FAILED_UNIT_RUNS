@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Consecutive failed runs of a spira unit before watchtower files a failed-unit incident.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_FAILED_UNIT_RUNS:=3}"
+SPIRA_CONF_DEFAULT_EOF

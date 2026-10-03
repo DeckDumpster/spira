@@ -146,7 +146,7 @@ SPIRA_ID_PREFIX = sp
 # SPIRA_HEALTH_TIMEOUT = 30
 
 # How long an actionable event may wait with no reader before it is escalated through a channel
-# that needs no session, in seconds. `spira-watch-notify.timer` is what enforces it.
+# that needs no session, in seconds. `spira-notify.timer` is what enforces it.
 #
 # The window has to be comfortably longer than an ordinary gap between a watcher emitting and
 # somebody latching, because every escalation inside that gap is a false alarm — and it has to

@@ -115,6 +115,9 @@ pub struct BeadRow {
     /// `1 + max(depth of each prerequisite)`, recorded alongside `stack` at `claim`.
     #[serde(default)]
     pub stack_depth: u32,
+    /// When the row last entered LANDED or CERTIFIED (the event's `at`); unset otherwise.
+    #[serde(default)]
+    pub since: Option<i64>,
 }
 
 impl BeadRow {
@@ -133,6 +136,7 @@ impl BeadRow {
             version: 0,
             stack: Stack::new(),
             stack_depth: 0,
+            since: None,
         }
     }
 }
@@ -190,6 +194,10 @@ pub struct BeadEvent {
     pub version: Version,
     pub kind: BeadEventKind,
     pub actor: String,
+    /// Caller's clock, epoch seconds; the machine does no I/O. Recorded as `since` on entry
+    /// to LANDED or CERTIFIED.
+    #[serde(default)]
+    pub at: Option<i64>,
 }
 
 fn illegal(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
@@ -246,6 +254,15 @@ fn base_withdrawn_applies(row: &BeadRow, prereq: &str, tip: &str) -> bool {
 /// to compile here until this function accounts for it, which is the property the design
 /// calls "a test that fails when a state or event variant is added without an entry."
 pub fn apply(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
+    let mut out = apply_transition(row, ev);
+    let entered = out.row.state != row.state && matches!(out.row.state, BeadState::Landed | BeadState::Certified);
+    if out.applied && entered {
+        out.row.since = ev.at;
+    }
+    out
+}
+
+fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
     if ev.version != row.version {
         return Outcome::refuse(row.clone(), Refusal::StaleVersion { given: ev.version, current: row.version });
     }
@@ -745,7 +762,7 @@ mod tests {
     }
 
     fn ev(expect: BeadState, version: Version, kind: BeadEventKind) -> BeadEvent {
-        BeadEvent { expect, version, kind, actor: "test".into() }
+        BeadEvent { expect, version, kind, actor: "test".into(), at: None }
     }
 
     // Every (state, event-kind) pair, exhaustively, so a variant added to either enum
@@ -785,6 +802,28 @@ mod tests {
             BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
             BeadEventKind::Unhold { kind: HoldKind::Poison },
         ]
+    }
+
+    #[test]
+    fn since_is_stamped_on_entry_to_landed_and_certified_only() {
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("t".into());
+        let mut e = ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "t".into() });
+        e.at = Some(77);
+        let out = apply(&r, &e);
+        assert_eq!((out.row.state, out.row.since), (BeadState::Certified, Some(77)));
+
+        let mut e = ev(BeadState::InDelivery, r.version, BeadEventKind::Delivered { merge_sha: "m".into(), proof: "p".into() });
+        e.at = Some(88);
+        let out = apply(&r, &e);
+        assert_eq!((out.row.state, out.row.since), (BeadState::Landed, Some(88)));
+
+        let mut r = row(BeadState::InDelivery);
+        r.tip = Some("t".into());
+        let mut e = ev(BeadState::InDelivery, r.version, BeadEventKind::Requeued { tip: "other".into() });
+        e.at = Some(99);
+        let out = apply(&r, &e);
+        assert_eq!((out.row.state, out.row.since), (BeadState::Submitted, None));
     }
 
     #[test]

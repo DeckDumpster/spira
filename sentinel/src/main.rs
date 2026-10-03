@@ -91,7 +91,7 @@ pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String
         ));
     }
     let mut ctx = Context::parse(o.stdout.as_bytes())?;
-    merge_resolved_config(&mut ctx, home);
+    merge_resolved_config(&mut ctx, home)?;
     if repos {
         ctx.repos = resolve_repos(&ctx.vars, home);
     }
@@ -111,7 +111,7 @@ pub fn probe(r: &dyn Runner, home: &Path, repos: bool) -> Result<Context, String
 /// `ctx.vars` carries SPIRA_REPO_MAP/SPIRA_HOME_REPO/SPIRA_REPO/SPIRA_REPO_DERIVED
 /// correctly resolved by the time [`resolve_repos`] reads it below — one resolution, not
 /// two.
-fn merge_resolved_config(ctx: &mut Context, home: &Path) {
+fn merge_resolved_config(ctx: &mut Context, home: &Path) -> Result<(), String> {
     let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home, &env_map);
     // SPIRA_HOME/SPIRA_REPO are deliberately NEVER in resolve()'s own output (per-copy
@@ -123,11 +123,12 @@ fn merge_resolved_config(ctx: &mut Context, home: &Path) {
     // before anything resolve() itself produces.
     ctx.vars.entry("SPIRA_HOME".into()).or_insert_with(|| home.to_string_lossy().into_owned());
     ctx.vars.entry("SPIRA_REPO".into()).or_insert_with(|| repo.to_string_lossy().into_owned());
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
-        for (k, v) in resolved.values {
-            ctx.vars.entry(k).or_insert(v);
-        }
+    let resolved = spira_config::resolve::resolve_for_process(home, &repo, &env_map)
+        .map_err(|e| format!("cannot resolve config, refusing to summon on defaults: {e}"))?;
+    for (k, v) in resolved.values {
+        ctx.vars.entry(k).or_insert(v);
     }
+    Ok(())
 }
 
 /// `spira_repos` (every mapped repository, home first), then per repository `repo_root`/

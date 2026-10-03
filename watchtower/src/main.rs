@@ -3,6 +3,7 @@
 //! only argv dispatch and environment resolution — every module it calls is independently
 //! unit-tested.
 
+mod conditions;
 mod cpu_throttle;
 mod czar_outcome;
 mod deadline;
@@ -19,6 +20,7 @@ mod lapsed;
 mod lock_holders;
 mod log;
 mod pr_stall;
+mod probes;
 mod release_skew;
 mod sccache_wedge;
 mod seams;
@@ -52,7 +54,7 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
         let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
         let home = PathBuf::from(raw_env("SPIRA_HOME").unwrap_or_else(lib_sh_dir));
         let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-        spira_config::resolve::resolve_for_process(&home, &repo, &env_map).unwrap_or_default()
+        spira_config::resolve::resolve_or_say("watchtower", &home, &repo, &env_map)
     })
 }
 
@@ -362,6 +364,37 @@ fn main() {
                 &resolved_incident_sh(),
                 &cfg,
             );
+        }
+        Some("--conditions-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: conditions-check skipped — world is halted");
+                return;
+            }
+            let cfg = probes::Cfg {
+                systemctl: getenv("SPIRA_SYSTEMCTL").unwrap_or_else(|| "systemctl".to_string()),
+                journalctl: getenv("SPIRA_JOURNALCTL").unwrap_or_else(|| "journalctl".to_string()),
+                releases: getenv("SPIRA_RELEASES"),
+                keep: getenv_i64("SPIRA_RELEASES_KEEP", 100).max(1) as usize,
+                store_slack: getenv_i64("SPIRA_RELEASE_STORE_SLACK", 20).max(0) as usize,
+                unit_glob: getenv("SPIRA_RELEASE_CURRENCY_UNITS").unwrap_or_else(|| "spira-*-prod.service".to_string()),
+                stale_release_secs: getenv_i64("SPIRA_RELEASE_STALE_SECS", 3600),
+                failed_runs: getenv_i64("SPIRA_FAILED_UNIT_RUNS", 3),
+                tmp_path: getenv("SPIRA_TMP_PROBE_PATH").unwrap_or_else(|| "/tmp".to_string()),
+                tmp_floor_mib: getenv_i64("SPIRA_TMPFS_SHED_FREE_MIB", 6144),
+                df_bin: getenv("SPIRA_DF").unwrap_or_else(|| "df".to_string()),
+                disk_floor_pct: getenv_i64("SPIRA_DISK_FLOOR_PCT", 15),
+                psi_dir: getenv("SPIRA_PSI_DIR").unwrap_or_else(|| "/proc/pressure".to_string()),
+                psi_full_avg60: getenv("SPIRA_PSI_FULL_AVG60").and_then(|v| v.parse().ok()).unwrap_or(10.0),
+                psi_sustain_secs: getenv_i64("SPIRA_PSI_SUSTAIN_SECS", 300),
+            };
+            let db = getenv("SPIRA_DB").unwrap_or_default();
+            let home_repo = getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string());
+            let inc = resolved_incident_sh();
+            let ctx = conditions::Ctx { run: &run, db: &db, home_repo: &home_repo, incident_sh: &inc, bd: "bd" };
+            conditions::reconcile(n, &ctx, "release-currency", probes::release_currency(&cfg));
+            conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
+            conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
+            conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
         }
         Some(other) => {
             eprintln!("watchtower: unknown argument: {other}");

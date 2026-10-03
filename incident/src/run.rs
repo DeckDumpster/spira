@@ -226,6 +226,10 @@ fn file_new(bd: &dyn Bd, cfg: &FileConfig, reference: &str, title: &str, payload
     }
 
     let body = String::from_utf8_lossy(payload).into_owned();
+    // bd create rejects titles over 500 chars; clip (full text stays in the body) so a long
+    // aeon-filed title does not re-spool forever (sp-nredi).
+    let clipped: String = title.chars().take(490).collect();
+    let title = clipped.as_str();
     let id = match bd.create(cfg.db, title, cfg.kind, cfg.priority, labels, reference, &body, cfg.actor) {
         Ok(id) => id,
         Err(e) => {

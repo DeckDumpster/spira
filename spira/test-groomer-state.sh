@@ -18,7 +18,10 @@
 #      PAIRED with a closed, superseded bead (a recognised landing signal), left alone.
 #   3. CLOSED-NEVER-LANDED — a closed bead whose branch: label names a real branch ahead of
 #      the base is REOPENED: conflict (does not merge) or batch-ready (merges cleanly), each
-#      noting which. PAIRED with a closed, content-landed bead, left alone.
+#      noting which. PAIRED with a closed, content-landed bead, left alone. A batch-ready
+#      bead that still carries its closing aeon's assignee is left closed instead — that is
+#      aeon.sh's own close -> work-close-converted teardown window, not a stranded bead,
+#      PAIRED with the same shape once the assignee has been released.
 #   4. FALSE BLOCKER — an open bead that depends (type=blocks) on the conflict-case bead
 #      above is noted once that blocker is reopened.
 #
@@ -122,6 +125,8 @@ testdb_seed <<JSONL
 {"id":"sp-st-supr","title":"closed, superseded, no branch label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-supr","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-st-supr","depends_on_id":"sp-st-succ","type":"supersedes"}]}
 {"id":"sp-st-conflict","title":"closed, branch conflicts with base","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-conflict"],"dependencies":[{"issue_id":"sp-st-conflict","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-st-ready","title":"closed, branch merges cleanly","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","branch:sp-st-ready"],"dependencies":[{"issue_id":"sp-st-ready","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-livehold","title":"closed, batch-ready, but claim still live","status":"closed","issue_type":"task","assignee":"aeon-live","labels":["spira","plan","repo:$REPONAME","branch:sp-st-ready"],"dependencies":[{"issue_id":"sp-st-livehold","depends_on_id":"sp-epic","type":"parent-child"}]}
+{"id":"sp-st-releasedhold","title":"closed, batch-ready, claim already released","status":"closed","issue_type":"task","assignee":"","labels":["spira","plan","repo:$REPONAME","branch:sp-st-ready"],"dependencies":[{"issue_id":"sp-st-releasedhold","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-st-cl","title":"closed, content-landed label","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME","content-landed"],"dependencies":[{"issue_id":"sp-st-cl","depends_on_id":"sp-epic","type":"parent-child"}]}
 {"id":"sp-st-blocked","title":"blocked by the conflicting closed bead","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"dependencies":[{"issue_id":"sp-st-blocked","depends_on_id":"sp-epic","type":"parent-child"},{"issue_id":"sp-st-blocked","depends_on_id":"sp-st-conflict","type":"blocks"}]}
 JSONL
@@ -149,6 +154,8 @@ is    "sp-st-ready is reopened"       open  "$(status_of sp-st-ready)"
 want  "sp-st-conflict note says rebase" "rebase" "$(notes_of sp-st-conflict)"
 want  "sp-st-ready note says batch-ready" "batch-ready" "$(notes_of sp-st-ready)"
 is    "sp-st-cl (content-landed) stays closed" closed "$(status_of sp-st-cl)"
+is    "sp-st-livehold (live claim) stays closed" closed "$(status_of sp-st-livehold)"
+is    "sp-st-releasedhold (released claim) is reopened" open "$(status_of sp-st-releasedhold)"
 
 # ---- Case 4: FALSE BLOCKER ----
 want  "sp-st-blocked is noted about the false blocker" "blocked-by-unlanded" "$(notes_of sp-st-blocked)"

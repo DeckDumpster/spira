@@ -61,7 +61,7 @@ fn resolved_config() -> &'static spira_config::resolve::Resolved {
         let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
         let home = spira_home_dir();
         let repo = spira_config::resolve::derive_home_repo(&home, &env_map);
-        spira_config::resolve::resolve_for_process(&home, &repo, &env_map).unwrap_or_default()
+        spira_config::resolve::resolve_or_say("supervise", &home, &repo, &env_map)
     })
 }
 

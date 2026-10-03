@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Seconds a prod unit may render a release other than current before watchtower files a stale-release incident (one landing pass).
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_RELEASE_STALE_SECS:=3600}"
+SPIRA_CONF_DEFAULT_EOF

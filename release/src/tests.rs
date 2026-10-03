@@ -610,13 +610,13 @@ fn verify_uses_the_release_under_verification_even_when_the_callers_shell_path_p
 
 #[test]
 fn installed_units_map_back_to_their_templates() {
-    let t: BTreeSet<String> = ["spira-tool.service", "spira-job.timer", "shared.service", "spira-watch@.service", "spira-watch-notify.service"].iter().map(|s| s.to_string()).collect();
+    let t: BTreeSet<String> = ["spira-tool.service", "spira-job.timer", "shared.service", "spira-watch@.service", "spira-notify.service"].iter().map(|s| s.to_string()).collect();
     let m = |n: &str| units::template_for(n, &t, "prod").map(|m| (m.template, m.watcher));
     assert_eq!(m("spira-tool-prod.service"), Some(("spira-tool.service".into(), None)));
     assert_eq!(m("spira-job-prod.timer"), Some(("spira-job.timer".into(), None)));
     assert_eq!(m("shared.service"), Some(("shared.service".into(), None)));
     assert_eq!(m("spira-watch-pool-prod.service"), Some(("spira-watch@.service".into(), Some("pool".into()))));
-    assert_eq!(m("spira-watch-notify-prod.service"), Some(("spira-watch-notify.service".into(), None)));
+    assert_eq!(m("spira-notify-prod.service"), Some(("spira-notify.service".into(), None)));
     assert_eq!(m("spira-tool-test.service"), None, "another instance's unit is not ours");
     assert_eq!(m("local-overrides.service"), None);
     assert_eq!(m("spira-suites-prod.service"), None);

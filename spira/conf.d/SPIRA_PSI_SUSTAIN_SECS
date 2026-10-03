@@ -1,0 +1,6 @@
+TYPE=u32
+GROUP=watchtower
+DOC=Seconds io or memory pressure must stay crossed before watchtower files a pressure incident.
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    : "${SPIRA_PSI_SUSTAIN_SECS:=300}"
+SPIRA_CONF_DEFAULT_EOF

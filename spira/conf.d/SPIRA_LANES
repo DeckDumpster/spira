@@ -15,5 +15,6 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # A lane fayth still functions if its lane name is absent from this list (the mechanism is
     # FAYTH_LANE set, not membership here), but the declaration makes it visible to operators
     # reading SPIRA_LANES for the list of scheduled partitions.
-    : "${SPIRA_LANES:=ops groomer qa maechen czar}"
+    # The warden lane is declared because warden.fayth ships using it.
+    : "${SPIRA_LANES:=ops groomer qa maechen czar warden}"
 SPIRA_CONF_DEFAULT_EOF

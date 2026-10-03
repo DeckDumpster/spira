@@ -49,17 +49,8 @@ pub fn which(prog: &str) -> Option<String> {
 /// candidate — and refuses outright when even that fails, rather than ever rendering
 /// "/spira" again.
 ///
-/// `repo` ITSELF ALSO NEEDS A FALLBACK, not just `home`: `@SPIRA_REPO@` sat
-/// unused by any unit template until the cert-sweep units started passing it as their own
-/// `--repo` (sp-rgfi8, "release dir has no .git"), at which point an unset `SPIRA_REPO` —
-/// the same "neither set" shape this function already derives `home` for — substituted the
-/// empty string into `ExecStart=`, caught live by test-unit-drift.sh's "matching units"
-/// case rendering twice (once with `SPIRA_REPO` exported, once without) and getting two
-/// different cert-sweep units. Derived exactly as `spira/conf.sh`'s own
-/// `SPIRA_REPO_DERIVED` does — `git -C "$SPIRA_HOME" rev-parse --show-toplevel`, else
-/// `dirname "$SPIRA_HOME"` — via [`spira_config::resolve::derive_repo_filesystem`], the
-/// same helper `addr_for_home`'s own resolution already calls, just never surfaced into
-/// `HostValues.repo` before now.
+/// `repo` falls back to `derive_repo_filesystem` when unset: units substitute it into
+/// `ExecStart=`, and an empty value bakes `--repo ` into the installed unit.
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;

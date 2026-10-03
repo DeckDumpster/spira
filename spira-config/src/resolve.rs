@@ -232,6 +232,15 @@ fn containment_home(env: &BTreeMap<String, String>, home: &Path) -> Result<PathB
     ))
 }
 
+/// [`resolve_for_process`] for a long-lived binary that must stay live on a bad config:
+/// the error is named on stderr, then the empty [`Resolved`] is returned. Call once per start.
+pub fn resolve_or_say(who: &str, home: &Path, repo: &Path, env: &BTreeMap<String, String>) -> Resolved {
+    resolve_for_process(home, repo, env).unwrap_or_else(|e| {
+        eprintln!("{who}: config resolve failed, running on built-in defaults: {e}");
+        Resolved::default()
+    })
+}
+
 /// `spira.run`, resolved the way every caller that needs the run directory now gets it:
 /// [`resolve_for_process`] (env `SPIRA_RUN` wins outright, else `spira.toml`'s `run`, else
 /// the derived XDG default) — never a bare literal
@@ -975,6 +984,15 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    #[test]
+    fn resolve_or_say_returns_empty_on_a_missing_conf_d() {
+        let ws = testkit::TempDir::new("spira-config-resolve-or-say");
+        let home = ws.path().join("no-such-home");
+        let env = BTreeMap::new();
+        assert!(resolve_for_process(&home, &home, &env).is_err(), "positive control: this home must fail to resolve");
+        assert_eq!(resolve_or_say("test", &home, &home, &env), Resolved::default());
+    }
 
     fn fixture_home_repo(workspaces: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
         let repo = workspaces.join("spira-harness");

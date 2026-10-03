@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# test-watch-notify-rearm.sh — spira-watch-notify.timer re-arms after daemon-reload + restart.
+# test-watch-notify-rearm.sh — spira-notify.timer re-arms after daemon-reload + restart.
 #
 #   ./test-watch-notify-rearm.sh
 #
-# WHAT THIS TESTS (sp-n0c9d). sp-0djeb described spira-watch-notify.timer going
+# WHAT THIS TESTS (sp-n0c9d). sp-0djeb described spira-notify.timer going
 # "active (elapsed)" with no next trigger after a daemon-reload + restart with no reboot —
 # systemd left it with neither NextElapseUSecRealtime nor NextElapseUSecMonotonic set.
-# sp-0djeb's fix (OnActiveSec=5min in systemd/spira-watch-notify.timer, commit 5e2a35f54 via
+# sp-0djeb's fix (OnActiveSec=5min in systemd/spira-notify.timer, commit 5e2a35f54 via
 # sp-ly6l9) is confirmed landed on main; test-units-lint.sh's line-presence/ratio assertions
 # pass unmodified and never exercise the actual failure. This suite renders the REAL unit
 # under a live systemd --user instance and asserts it re-arms.
@@ -25,7 +25,7 @@
 # checkpoint 3 (sp-bz7uh.6).
 #
 # tier: T1
-# covers: systemd/spira-watch-notify.timer
+# covers: systemd/spira-notify.timer
 # priority: 2
 # timeout: 180
 set -uo pipefail
@@ -78,25 +78,25 @@ UDIR="$("${CEXEC[@]}" "$CNAME" bash -c 'printf "%s/.config/systemd/user" "$HOME"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"; cleanup' EXIT INT TERM
 sed -e 's#@[A-Za-z_]*@#/opt/x#g' -e 's#^ExecStart=.*#ExecStart=/bin/true#' \
-    -e '/^Standard\(Output\|Error\)=/d' "$HERE/../systemd/spira-watch-notify.service" \
-    > "$WORK/spira-watch-notify.service"
-sed -e 's/=5min$/=5s/' "$HERE/../systemd/spira-watch-notify.timer" > "$WORK/fixed.timer"
-grep -v '^On\(Active\|UnitActive\|Boot\)Sec=' "$WORK/fixed.timer" > "$WORK/stripped.timer"
+    -e '/^Standard\(Output\|Error\)=/d' "$HERE/../systemd/spira-notify.service" \
+    > "$WORK/spira-notify.service"
+sed -e 's/=5min$/=5s/' "$HERE/../systemd/spira-notify.timer" > "$WORK/fixed.timer"
+grep -v '^On\(Active\|UnitActive\)Sec=' "$WORK/fixed.timer" > "$WORK/stripped.timer"
 
 # trigger_after_restart <timer file>: prints the `Trigger:` line after fire + reload + restart.
 trigger_after_restart() {
     "${CEXEC[@]}" "$CNAME" mkdir -p "$UDIR"
-    podman cp "$WORK/spira-watch-notify.service" "$CNAME:$UDIR/spira-watch-notify.service"
-    podman cp "$1" "$CNAME:$UDIR/spira-watch-notify.timer"
+    podman cp "$WORK/spira-notify.service" "$CNAME:$UDIR/spira-notify.service"
+    podman cp "$1" "$CNAME:$UDIR/spira-notify.timer"
     podman exec --user root "$CNAME" chown -R spirauser "$UDIR"
     "${SC[@]}" daemon-reload
-    "${SC[@]}" stop spira-watch-notify.timer
-    "${SC[@]}" start spira-watch-notify.timer
+    "${SC[@]}" stop spira-notify.timer
+    "${SC[@]}" start spira-notify.timer
     sleep 8
     "${SC[@]}" daemon-reload
-    "${SC[@]}" restart spira-watch-notify.timer
+    "${SC[@]}" restart spira-notify.timer
     sleep 1
-    "${SC[@]}" status spira-watch-notify.timer --no-pager | grep 'Trigger:'
+    "${SC[@]}" status spira-notify.timer --no-pager | grep 'Trigger:'
 }
 
 echo
@@ -108,7 +108,7 @@ case "$red" in *"Trigger: n/a"*) ok "stripped timer: Trigger: n/a after reload+r
 echo
 echo "fix path — the real (fixed) timer keeps a next elapse after fire + reload + restart"
 trigger_after_restart "$WORK/fixed.timer" >/dev/null
-nxt="$("${SC[@]}" show spira-watch-notify.timer -p NextElapseUSecRealtime -p NextElapseUSecMonotonic)"
+nxt="$("${SC[@]}" show spira-notify.timer -p NextElapseUSecRealtime -p NextElapseUSecMonotonic)"
 nz="$(printf '%s\n' "$nxt" | awk -F= '$2!="" && $2!="0" && $2!="n/a"' | head -1)"
 [ -n "$nz" ] && ok "fixed timer has a next elapse after reload+restart (SEEN GREEN)" \
     || bad "fixed timer rearms after restart" "got [$nxt]"

@@ -156,7 +156,8 @@ const NEVER_EXPORTED: &[&str] = &["SPIRA_HOME", "SPIRA_REPO", "SPIRA_REPO_DERIVE
 fn merge_resolved_env(home: &Path) {
     let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
     let repo = spira_config::resolve::derive_home_repo(home, &env_map);
-    if let Ok(resolved) = spira_config::resolve::resolve_for_process(home, &repo, &env_map) {
+    {
+        let resolved = spira_config::resolve::resolve_or_say("batcher-cut", home, &repo, &env_map);
         for (k, v) in resolved.values {
             if NEVER_EXPORTED.contains(&k.as_str()) {
                 continue;
@@ -252,12 +253,9 @@ fn cut(o: &Opts) -> Result<(), String> {
 }
 
 /// A member whose merge conflicted with `base_sha` itself (not just with the round's own
-/// accumulation) is handed back for rebase immediately — section F — gated on
-/// `stale_retry_due` so a conflict recorded before the base last moved is not reopened a
-/// second time for the same fact. Runs before `combine()` ever cuts a batch, so this
-/// member's own `land_mark RED` has no batch to CAS against on spira-lc — the bead
-/// machine's own reopen path, not a batch-machine transition, matching sp-o7nbr.3's same
-/// call on batch.sh's analogous conflict path.
+/// accumulation) is handed to the rebase path — gated on `stale_retry_due` so a conflict
+/// recorded before the base last moved is not retried for the same fact. The batcher never
+/// reopens the bead or marks it RED: what the rebase path cannot settle stays CERTIFIED.
 fn handle_base_conflicts(
     env_: &Env,
     repo: &Repo,
@@ -268,29 +266,17 @@ fn handle_base_conflicts(
 ) -> BTreeMap<String, Vec<String>> {
     let mut deleted = BTreeMap::new();
     for m in sorted {
-        let base_files = if merges.get(&m.id) == Some(&MergeResult::Conflict) { io::base_conflict(repo, &env_.run, base_sha, &m.tip) } else { None };
+        let base_files = if merges.get(&m.id) == Some(&MergeResult::Conflict) { io::base_conflict(repo, base_sha, &m.tip) } else { None };
         let Some(base_files) = base_files else {
             io::conflict_streak_clear(env_, &m.id);
             continue; // conflicts only with this round's own accumulation — left CERTIFIED, retried next pass
         };
         deleted.insert(m.id.clone(), io::deleted_suites(repo, &m.tip, base_sha));
         if stale_retry_due(m.certified_at, base_moved_at) {
-            // 0/1/2: rebase-stale ran and already did everything this branch would —
-            // certified a mechanical/clean rebase, or reopened the bead itself with the
-            // conflicting hunk or gate output quoted. Only 3 (it could not even attempt
-            // the branch) falls through to this call's own, coarser bookkeeping.
+            // The rebase path decides: it certifies, or reopens the bead itself with the hunk
+            // quoted. The batcher never reopens or marks RED on its own (batcher-parity).
             io::conflict_streak_clear(env_, &m.id);
-            if io::rebase_stale(env_, &repo.name, &m.id) != 3 {
-                continue;
-            }
-            io::bump_requeue(env_, &m.id, "merge-conflict");
-            io::bead_reopen(
-                env_,
-                &m.id,
-                "rebase-conflict",
-                &format!("spira/{} conflicts with {} — reopened by the batcher for rebase.", m.id, repo.base),
-            );
-            io::land_mark(env_, &m.id, "RED", &m.tip, "conflicts-with-base");
+            let _ = io::rebase_stale(env_, &repo.name, &m.id);
         } else {
             let rounds = io::conflict_streak_bump(env_, &m.id, &m.tip);
             if rounds >= batcher::core::CONFLICT_EJECT_ROUNDS {
@@ -338,7 +324,11 @@ impl drive::RoundOps for LiveOps<'_> {
     }
 
     fn eject(&mut self, member: &Member, suites: &[String]) {
-        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites);
+        let fails: Vec<(String, String)> = suites
+            .iter()
+            .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
+            .collect();
+        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites, &fails);
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -357,6 +347,25 @@ impl drive::RoundOps for LiveOps<'_> {
                 println!("batcher {}: integration fix failed: {e}", self.repo.name);
                 false
             }
+        }
+    }
+
+    fn base_moved(&mut self, members: &[Member]) -> Result<Option<(String, Vec<Member>)>, String> {
+        let sha = io::resolve_base_sha(self.repo)?;
+        if sha == self.start_sha {
+            return Ok(None);
+        }
+        self.start_sha = sha.clone();
+        self.changed = members.iter().map(|m| (m.id.clone(), io::changed_paths(self.repo, &sha, &m.tip))).collect();
+        let rebuilt = merge_round(self.env, self.repo, self.wt, &sha, members.to_vec())?;
+        Ok(Some((sha, rebuilt)))
+    }
+
+    fn judge(&mut self, suites: &[String], members: &[String]) {
+        let j = batcher::core::Judgement { source: batcher::core::RedSource::Local, suites: suites.to_vec() };
+        match io::file_judgement(self.env, self.repo, &j, members, &self.evidence) {
+            Ok(id) => println!("{} — filed {id}", batcher::core::judgement_event(&j, &self.repo.name).text),
+            Err(e) => println!("batcher {}: red {} not attributable to any member — could not file the judgement: {e}", self.repo.name, suites.join(",")),
         }
     }
 
@@ -1036,3 +1045,34 @@ mod tests {
 
 #[cfg(test)]
 mod e2e;
+
+#[cfg(test)]
+mod base_conflict_handling {
+    use super::*;
+    use crate::io::base_conflict_tests::{fixture, git};
+    use std::fs;
+
+    fn member(id: &str, tip: &str) -> Member {
+        Member { id: id.into(), tip: tip.into(), title: String::new(), priority: None, express: false, certified_at: 100, stack: BTreeMap::new() }
+    }
+
+    #[test]
+    fn a_true_base_conflict_goes_to_the_rebase_path_and_is_never_reopened_or_marked() {
+        let d = testkit::TempDir::new("batcher-cut-hbc");
+        let [base, a, _b, c, _root] = fixture(&d);
+        git(&d, &["checkout", "-q", "--detach", &base]);
+        let log = d.join("calls");
+        fs::write(d.join("lib.sh"), format!("f() {{ echo \"$@\" >> '{0}'; }}\nbead_reopen() {{ f reopen \"$@\"; }}\nbump_requeue() {{ f bump \"$@\"; }}\n", log.display())).unwrap();
+        let mut e = io::lifecycle_tests_env(&d);
+        testkit::write_exe(&e.rebase_stale_bin, &format!("#!/bin/sh\necho rebase \"$@\" >> '{}'\nexit 3\n", log.display()));
+        testkit::write_exe(&e.landing_pass_bin, &format!("#!/bin/sh\necho landing-pass \"$@\" >> '{}'\n", log.display()));
+        e.run = d.to_path_buf();
+        let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
+        let sorted = vec![member("sp-a", &a), member("sp-c", &c)];
+        let merges: BTreeMap<String, MergeResult> = sorted.iter().map(|m| (m.id.clone(), MergeResult::Conflict)).collect();
+        handle_base_conflicts(&e, &repo, &sorted, &merges, &base, 200);
+        let calls = fs::read_to_string(&log).unwrap_or_default();
+        assert_eq!(calls.trim(), "rebase sp-c spira", "only the true base conflict reaches the rebase path, and nothing else is written: {calls}");
+    }
+}
+
