@@ -116,9 +116,26 @@ mod tests {
 
     #[test]
     fn descendant_count_of_current_pid_includes_no_self() {
-        // This process has no descendants of its own at test time (test binaries do not
-        // fork), so the count must be 0 rather than 1 from counting itself.
-        let pid = std::process::id() as i32;
-        assert_eq!(descendant_count(pid), 0);
+        // Counted from a private subtree: this test process shares its pid with concurrent
+        // tests that spawn children, so it cannot be the root.
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", "sleep 30 & wait"])
+            .spawn()
+            .unwrap();
+        let root = child.id() as i32;
+        let mut n = 0;
+        for _ in 0..200 {
+            n = descendant_count(root);
+            if n >= 1 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let _ = std::process::Command::new("pkill")
+            .args(["-P", &root.to_string()])
+            .status();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert_eq!(n, 1, "root itself must not be counted, only the sleep");
     }
 }
