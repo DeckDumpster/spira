@@ -3,6 +3,7 @@
 
 pub mod basecache;
 pub mod cert;
+pub mod cgroup;
 pub mod compose;
 pub mod def;
 pub mod engine;

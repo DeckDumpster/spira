@@ -77,23 +77,19 @@ nowant "and is not charged as BASE_FAIL"     "VERDICT=BASE_FAIL"  "$out_nv"
 # own command twice — once on the branch, once on the base — and both must see the same
 # shape of env: SPIRA_GATE_SELECT_HEAD names the BRANCH on both calls (it is what a
 # repository's own selection logic should key on; SPIRA_GATE_BRANCH itself changes per
-# trial and cannot be used for that), SPIRA_GATE_HOST_CORES is the host's real core count
-# (not the cgroup-limited nproc a CI preflight would otherwise see, folded in here per
-# docs/test-plan/gate-verdict.md section 4 cluster 3 — test-gate-unit.sh already proves
-# host_cores() itself is nproc-immune, so this row only has to prove the value reaches CMD).
+# trial and cannot be used for that).
 # --------------------------------------------------------------------------------------
 echo "the env contract reaches both trials, unchanged in shape"
 ENV_BR="$TMP/env-branch"; ENV_BASE="$TMP/env-base"
 _dump="echo BRANCH=\$SPIRA_GATE_BRANCH; echo BASE=\$SPIRA_GATE_BASE;"
 _dump="$_dump echo SELECT_HEAD=\$SPIRA_GATE_SELECT_HEAD;"
-_dump="$_dump echo HOST_CORES=\$SPIRA_GATE_HOST_CORES; echo EJECTED=\$SPIRA_GATE_EJECTED_SUITES;"
+_dump="$_dump echo HOST_CORES=\${SPIRA_GATE_HOST_CORES-unset}; echo EJECTED=\$SPIRA_GATE_EJECTED_SUITES;"
 _dump="$_dump echo BUDGET=\$SPIRA_GATE_BUDGET; echo RUN=\$SPIRA_RUN;"
 _dump="$_dump echo SUITES=\$SPIRA_GATE_SUITES; cat \"\$SPIRA_GATE_FILES\""
 _cmd="if [ \"\$SPIRA_GATE_BRANCH\" = \"$BR\" ]; then f=\"$ENV_BR\"; else f=\"$ENV_BASE\"; fi"
 _cmd="$_cmd; { $_dump; } > \"\$f\"; exit 1"
 printf 'repo | %s | push | origin/main |  | %s\n' "$REPO" "$_cmd" > "$MAP"
 gate_fixture_run "$BR" repo >/dev/null 2>&1
-real_cores="$(getconf _NPROCESSORS_ONLN 2>/dev/null)"
 branch_env="$(cat "$ENV_BR" 2>/dev/null)"; base_env="$(cat "$ENV_BASE" 2>/dev/null)"
 want "branch trial sees its own branch"           "BRANCH=$BR"           "$branch_env"
 # SPIRA_GATE_BASE is the landing ref pinned to its commit when the gate starts (sp-hh5h0):
@@ -102,7 +98,7 @@ want "base trial sees the base"                   "BASE=$(git -C "$REPO" rev-par
 want "SELECT_HEAD names the branch on the branch trial" "SELECT_HEAD=$BR" "$branch_env"
 want "SELECT_HEAD names the branch on the base trial too" "SELECT_HEAD=$BR" "$base_env"
 want "the branch trial sees the changed file"      "f1.txt"               "$branch_env"
-want "HOST_CORES is the real host count, not a cgroup-limited one" "HOST_CORES=$real_cores" "$branch_env"
+want "SPIRA_GATE_HOST_CORES is no longer exported" "HOST_CORES=unset" "$branch_env"
 want "SUITES defaults to conf.sh's gate-suites path" "SUITES=/" "$branch_env"
 want "and names gate-suites"                         "gate-suites"          "$branch_env"
 want "BUDGET reaches the branch trial (sp-vq2za: the selector's own budget)" "BUDGET=300" "$branch_env"

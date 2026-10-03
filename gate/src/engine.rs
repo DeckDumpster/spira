@@ -652,7 +652,6 @@ impl<'w, W: World> Trial<'w, W> {
                         .map(|p| p.to_string_lossy().into_owned())
                         .unwrap_or_default(),
                 ),
-                e("SPIRA_GATE_HOST_CORES", &ctx.host_cores),
                 e("SPIRA_GATE_EJECTED_SUITES", &ejected),
                 e("SPIRA_GATE_ALL", ctx.var_or("SPIRA_GATE_ALL", "0")),
                 // Suites off for a unit or fences composition: the gate string runs its
