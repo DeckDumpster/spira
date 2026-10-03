@@ -357,3 +357,8 @@ psi_sustain_secs
 release_currency_units
 release_stale_secs
 release_store_slack
+round_due_remind
+round_idle_cut
+round_marker_max_age
+round_min
+warden_label
