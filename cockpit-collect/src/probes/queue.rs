@@ -250,6 +250,9 @@ mod tests {
     fn unreachable_lifecycle_store_renders_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-queue-missing");
+        // The repo's own harness home, as a fixture: run_dir() resolves SPIRA_RUN's
+        // containment against it, and the gate no longer leaks a production SPIRA_RELEASE.
+        std::env::set_var("SPIRA_HOME", concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"));
         std::env::set_var("SPIRA_RUN", run.path());
         std::env::set_var("SPIRA_QUEUE_DIR", run.path().join("queue"));
         std::env::set_var("SPIRA_LC_BIN", run.path().join("no-such-spira-lc"));
