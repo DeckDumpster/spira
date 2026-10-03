@@ -596,7 +596,7 @@ mod tests {
     // properties are asserted directly against it, no extraction needed.
     #[test]
     fn probes_registry_is_well_formed() {
-        assert_eq!(PROBES.len(), 19, "19 probes registered");
+        assert_eq!(PROBES.len(), 20, "20 probes registered");
         let mut seen = std::collections::HashSet::new();
         let mut shorter_timeout = 0;
         for p in PROBES {
