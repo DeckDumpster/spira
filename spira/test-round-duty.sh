@@ -56,8 +56,12 @@ wrun() {
 TMPBD="$TMP/fakebd"
 wrun watch --interval 1 --ticks 1 >/dev/null
 [ ! -s "$INBOX" ]; is "a pass with nothing due writes nothing to the inbox" "0" "$?"
-( sleep 2; echo '[{"id":"sp-old","title":"already open"},{"id":"sp-new","title":"decide X"}]' > "$ASKS" ) &
-out="$(wrun watch --interval 1 --ticks 8)"; wait
+rm -f "$TMP/run/watchd/round-duty.health"
+wrun watch --interval 1 --ticks 8 > "$TMP/watch.out" &
+wpid=$!
+for _ in $(seq 100); do [ -e "$TMP/run/watchd/round-duty.health" ] && break; sleep 0.1; done
+echo '[{"id":"sp-old","title":"already open"},{"id":"sp-new","title":"decide X"}]' > "$ASKS"
+wait "$wpid"; out="$(cat "$TMP/watch.out")"
 want "a new ask is forwarded to the log" "NEW ASK sp-new: decide X" "$out"
 nowant "a baseline ask is not announced" "NEW ASK sp-old" "$out"
 want "the ask is woken into the inbox" "[watch:round-duty] NEW ASK sp-new: decide X" "$(cat "$INBOX")"
