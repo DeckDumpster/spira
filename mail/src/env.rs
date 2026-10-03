@@ -47,31 +47,28 @@ impl Env {
     /// a built-in default. A key that does not resolve refuses, named. Only per-call facts
     /// (`--from`-style overrides, the bead in hand, `*_CONSIDERED` acknowledgements) and the two
     /// knobs not yet registered are read from the environment.
-    pub fn load() -> Env {
-        let fail = |e: String| -> ! {
-            eprintln!("mail: FATAL: {e}");
-            std::process::exit(1)
-        };
-        let home = spira_config::resolve::locate_home_for_process().unwrap_or_else(|e| fail(e));
-        let cfg = |k: &str| spira_config::process::cfg(k).unwrap_or_else(|e| fail(e));
-        let cfg_u64 = |k: &str| spira_config::process::cfg_parse::<u64>(k).unwrap_or_else(|e| fail(e));
-        let path = |k: &str| PathBuf::from(cfg(k));
-        Env {
-            mail_root: path("SPIRA_MAIL"),
-            kinds_dir: path("SPIRA_MAIL_KINDS"),
-            index_file: path("SPIRA_MAIL_INDEX"),
-            mute: matches!(cfg("SPIRA_MAIL_MUTE").as_str(), "1" | "true"),
-            loom_budget_ms: cfg_u64("SPIRA_LOOM_BUDGET_MS"),
-            repeat_window_s: cfg_u64("SPIRA_MAIL_REPEAT_WINDOW"),
-            tidy_fresh_s: cfg_u64("SPIRA_MAIL_TIDY_FRESH"),
-            id_prefix: cfg("SPIRA_ID_PREFIX"),
-            ask_label: cfg("SPIRA_ASK_LABEL"),
-            db: cfg("SPIRA_DB"),
-            bd_bin: cfg("SPIRA_BD"),
+    pub fn load() -> Result<Env, String> {
+        let fail = |e: String| format!("FATAL: {e}");
+        let home = spira_config::resolve::locate_home_for_process().map_err(fail)?;
+        let cfg = |k: &str| spira_config::process::cfg(k).map_err(fail);
+        let cfg_u64 = |k: &str| spira_config::process::cfg_parse::<u64>(k).map_err(fail);
+        let path = |k: &str| cfg(k).map(PathBuf::from);
+        Ok(Env {
+            mail_root: path("SPIRA_MAIL")?,
+            kinds_dir: path("SPIRA_MAIL_KINDS")?,
+            index_file: path("SPIRA_MAIL_INDEX")?,
+            mute: matches!(cfg("SPIRA_MAIL_MUTE")?.as_str(), "1" | "true"),
+            loom_budget_ms: cfg_u64("SPIRA_LOOM_BUDGET_MS")?,
+            repeat_window_s: cfg_u64("SPIRA_MAIL_REPEAT_WINDOW")?,
+            tidy_fresh_s: cfg_u64("SPIRA_MAIL_TIDY_FRESH")?,
+            id_prefix: cfg("SPIRA_ID_PREFIX")?,
+            ask_label: cfg("SPIRA_ASK_LABEL")?,
+            db: cfg("SPIRA_DB")?,
+            bd_bin: cfg("SPIRA_BD")?,
             // Not registered yet: read as before until the registration round declares them.
             bd_conn_retries: var_u64("SPIRA_BDQ_CONN_RETRIES", 2) as u32,
-            operator_actor: cfg("SPIRA_OPERATOR_ACTOR"),
-            run_dir: path("SPIRA_RUN"),
+            operator_actor: cfg("SPIRA_OPERATOR_ACTOR")?,
+            run_dir: path("SPIRA_RUN")?,
             home,
             mail_from: var("SPIRA_MAIL_FROM"),
             lint_considered: var("SPIRA_MAIL_LINT_CONSIDERED"),
@@ -79,7 +76,7 @@ impl Env {
             allow_blocking: var("SPIRA_MAIL_ALLOW_BLOCKING").is_some(),
             bead_id: var("BEAD_ID"),
             lock_timeout_ms: var_u64("SPIRA_MAIL_LOCK_TIMEOUT_MS", 30_000),
-        }
+        })
     }
 
     /// The bead-id pattern, `<prefix>-[a-z0-9]{4,}` — `_bead_id_re` in mail.sh, prefix

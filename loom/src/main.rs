@@ -11,7 +11,13 @@ use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cfg = Config::from_env();
+    let cfg = match Config::from_env() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::from(1);
+        }
+    };
 
     // `--print-config` resolves the configuration and stops: a preflight that wants to say
     // what this box will actually do, without starting the server.

@@ -22,10 +22,14 @@ impl Real {
     /// Resolves `home` (an explicit, valid `$SPIRA_HOME` first; else release-relative:
     /// `<release>/bin/doctor` -> `<release>/spira/`), then captures conf.sh's derived
     /// environment once.
-    pub fn new() -> Real {
-        let home = Self::resolve_home();
+    pub fn try_new() -> Result<Real, String> {
+        let home = Self::resolve_home()?;
         let env = Self::capture_env(&home);
-        Real { home, env }
+        Ok(Real { home, env })
+    }
+
+    pub fn new() -> Real {
+        Real::try_new().unwrap_or_else(|e| panic!("{e}"))
     }
 
     /// `argv[0]`'s directory, never `current_exe()`'s. `current_exe()` canonicalizes every
@@ -35,12 +39,12 @@ impl Real {
     /// resolution always missed silently there (empty output, exit code standing in for a
     /// verdict). `argv[0]` is exactly the path PATH search resolved to, unresolved further
     /// — bash's own `$0`/`${BASH_SOURCE[0]}` never re-resolved it either.
-    fn resolve_home() -> PathBuf {
+    fn resolve_home() -> Result<PathBuf, String> {
         if let Ok(h) = std::env::var("SPIRA_HOME") {
             if !h.is_empty() {
                 let p = PathBuf::from(&h);
                 if p.join("conf.sh").is_file() {
-                    return p;
+                    return Ok(p);
                 }
             }
         }
@@ -49,17 +53,14 @@ impl Real {
                 if let Some(release_dir) = bin_dir.parent() {
                     let candidate = release_dir.join("spira");
                     if candidate.join("conf.sh").is_file() {
-                        return candidate;
+                        return Ok(candidate);
                     }
                 }
             }
         }
         match std::env::var("SPIRA_HOME") {
-            Ok(h) if !h.is_empty() => PathBuf::from(h),
-            _ => {
-                eprintln!("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable");
-                std::process::exit(3)
-            }
+            Ok(h) if !h.is_empty() => Ok(PathBuf::from(h)),
+            _ => Err("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable".to_string()),
         }
     }
 
