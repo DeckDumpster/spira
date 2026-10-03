@@ -220,7 +220,30 @@ rm -f "$REPO/.git/logs/refs/heads/local/main"   # the reflog _pb_arrival_ts read
 out="$(pb --show)"; rc=$?
 is     "8: exit 0 even though the arrival record is unreadable"  "0" "$rc"
 nowant "8: no spurious CLEAR — the check refuses, it does not default to fresh" "CLEAR" "$out"
-nowant "8: and no OVER either — nothing is reported at all"      "OVER" "$out"
-is     "8: no mail sent"                                          "0" "$(mail_count)"
+nowant "8: and no OVER either"                                   "OVER" "$out"
+want   "8: it alarms BLIND instead of going silent"               "BLIND fixlocal" "$out"
+is     "8: the blindness is mailed once"                          "1" "$(mail_grep "BLIND fixlocal")"
+clear_mail
+out="$(pb --show)"
+is     "8b: still blind — no repeat mail (transitions, not state)" "0" "$(mail_count)"
+
+# ============================================================================
+echo
+echo "9 — a spira.toml that does not parse alarms; the production-shaped gate value parses"
+# ============================================================================
+clear_mail
+rm -rf "$RUN/watchd"
+GOOD="$TMP/good.toml"; BAD="$TMP/bad.toml"
+printf '%s\n' '[repo.fixlocal]' 'path = "/tmp/x"' 'mode = "push"' 'base = "origin/main"' \
+    'gate = "bash spira/inventory.sh && { _s=\"$(bash spira/gate-touched.sh \"$B\")\"; [ -n \"$_s\" ] || exit 0; }"' > "$GOOD"
+printf '%s\n' '[repo.fixlocal]' 'path = "/tmp/x"' 'mode = "push"' 'base = "origin/main"' \
+    'gate = "bash spira/inventory.sh && { _s="$(bash spira/gate-touched.sh "$B")"; }"' > "$BAD"
+spira-config validate "$GOOD" >/dev/null 2>&1; rc=$?
+is "9: the properly escaped gate value parses" "0" "$rc"
+spira-config validate "$BAD" >/dev/null 2>&1; rc=$?
+is "9: the broken fixture really fails to parse (positive control)" "1" "$rc"
+out="$(SPIRA_TOML="$BAD" pb --show)"
+want "9: a toml that does not parse alarms BLIND" "BLIND _config" "$out"
+is   "9: and is mailed" "1" "$(mail_grep "BLIND _config")"
 
 tl_summary

@@ -101,15 +101,39 @@ _pb_backlog() {
     printf '%s %s %s\n' "$count" "$(( now - arrival_ts ))" "$head_sha"
 }
 
+# _pb_blind <key> <why> — a tick that cannot measure is an alarm, never silence
+# (law-absence-needs-a-positive-control). Mailed on the crossing into blindness only.
+_pb_blind() {
+    local key="$1" why="$2" statefile prev=ok
+    statefile="$(_pb_state_file "$key")"
+    [ -r "$statefile" ] && read -r prev < "$statefile" 2>/dev/null
+    if [ "$prev" != blind ]; then
+        _report "BLIND $key: the backlog watcher cannot measure — $why"
+        mkdir -p "$STATE_DIR"
+        printf 'blind\n' > "$statefile.tmp" && mv "$statefile.tmp" "$statefile"
+    fi
+}
+
+_pb_unblind() {
+    local key="$1" statefile prev=ok
+    statefile="$(_pb_state_file "$key")"
+    [ -r "$statefile" ] && read -r prev < "$statefile" 2>/dev/null
+    if [ "$prev" = blind ]; then
+        rm -f "$statefile"
+        _report "SIGHTED $key: the backlog watcher can measure again"
+    fi
+}
+
 # _pb_tick_repo <name> — one repo's worth of the tick: skips anything not queue.local,
 # computes the backlog, and mails only on a threshold crossing (ok<->over).
 _pb_tick_repo() {
     local name="$1" repo out count age head over prev statefile
-    repo="$(repo_root "$name" 2>/dev/null)" || return 0
+    repo="$(repo_root "$name" 2>/dev/null)" || { _pb_blind "$name" "repo-map has no checkout for it"; return 0; }
     [ -d "$repo/.git" ] || return 0
     [ "$(repo_land "$name" 2>/dev/null)" = "queue.local" ] || return 0
 
-    out="$(_pb_backlog "$name" "$repo")" || return 0
+    out="$(_pb_backlog "$name" "$repo")" || { _pb_blind "$name" "the unpublished range could not be computed"; return 0; }
+    _pb_unblind "$name"
     read -r count age head <<< "$out"
 
     over=0
@@ -134,11 +158,17 @@ _pb_tick_repo() {
 
 # _pb_tick — one pass over every repo in the repo-map.
 _pb_tick() {
-    local name
+    local name names err
+    [ -z "${SPIRA_TOML_FILE:-}" ] || err="$(spira-config validate "$SPIRA_TOML_FILE" 2>&1 >/dev/null)" \
+        || { _pb_blind _config "spira.toml does not parse: $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-300)"; return 0; }
+    _pb_unblind _config
+    names="$(repo_names 2>&1)" \
+        || { _pb_blind _repo-map "repo_names failed: $(printf '%s' "$names" | tr '\n' ' ' | cut -c1-300)"; return 0; }
+    _pb_unblind _repo-map
     while IFS= read -r name; do
         [ -n "$name" ] || continue
         _pb_tick_repo "$name"
-    done < <(repo_names 2>/dev/null)
+    done <<< "$names"
 }
 
 _pb_write_health() {
