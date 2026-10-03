@@ -77,6 +77,18 @@ pub fn run(args: &[String], conn: &Conn) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("classify: reading repository configuration: {e}")),
     };
 
+    if cfg.repos.is_empty() {
+        return (
+            CANNOT_TELL,
+            format!(
+                "classify: no repositories resolved from {} under --home {} (repos asked for: {})",
+                cfg.source,
+                parsed.home.display(),
+                if parsed.repos.is_empty() { "all".to_string() } else { parsed.repos.join(", ") }
+            ),
+        );
+    }
+
     let repo_names: Vec<String> =
         if parsed.repos.is_empty() { cfg.repos.keys().cloned().collect() } else { parsed.repos.clone() };
 

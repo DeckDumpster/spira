@@ -136,6 +136,7 @@ _spira_conf_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # one it means.
 _spira_conf_home_env=""; [ -n "${SPIRA_HOME:-}" ] && _spira_conf_home_env=1
 SPIRA_HOME="${SPIRA_HOME:-$_spira_conf_here}"
+SPIRA_CONFIG_HOME="${SPIRA_CONFIG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/spira}"
 
 # The checkout the harness is installed in. `git -C ... --show-toplevel` rather than
 # "two directories up", because the harness may be installed anywhere, and because a
