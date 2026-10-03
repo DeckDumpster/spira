@@ -110,6 +110,15 @@ fn discard(rt: &dyn ContainerRuntime, owner_dir: &Path, name: &str) {
     let _ = fs::remove_file(owner_file(owner_dir, name));
 }
 
+/// Drop slot `i`'s recorded spare, if any (the caller holds the slot lock).
+pub fn drop_spare(rt: &dyn ContainerRuntime, owner_dir: &Path, run: &Path, i: usize) {
+    let record = paths(run, i).2;
+    if let Some(sp) = read_spare(&record) {
+        let _ = fs::remove_file(&record);
+        discard(rt, owner_dir, &sp.name);
+    }
+}
+
 /// Claim slot `i`'s spare for this trial (the caller holds the slot lock and has checked
 /// the tree out into `slot`). The owner file is rewritten to this process **before** the
 /// record is removed, so a concurrent warm sweep never sees the spare both unrecorded and

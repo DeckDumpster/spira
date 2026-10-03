@@ -203,6 +203,105 @@ pub(crate) fn try_lock(path: &Path) -> Option<File> {
     (rc == 0).then_some(f)
 }
 
+/// [`try_lock`], stamping the lock's mtime on success: the recency [`shed_idle_slots`] evicts by.
+fn lock_slot(path: &Path) -> Option<File> {
+    let f = try_lock(path)?;
+    let _ = f.set_modified(std::time::SystemTime::now());
+    Some(f)
+}
+
+/// Scratch room and a ledger reservation for one slot. On a refusal, idle slot and warm caches
+/// are shed — least recently used first, only as far as the refusal's shortfall — and the
+/// check runs once more; the refusal stands only when they cannot cover it.
+fn make_room(req: &Request, base: &Path, log: &dyn Fn(&str)) -> Result<Option<spira_config::scratch::Guard>, String> {
+    let try_once = || {
+        scratch_room(base, req.min_free_mib, req.min_mem_mib)?;
+        reserve_slot(base, req.min_free_mib)
+    };
+    let refusal = match try_once() {
+        Ok(g) => return Ok(g),
+        Err(e) => e,
+    };
+    let held = if crate::testdb::on_tmpfs(base) {
+        spira_config::scratch::reserved_mib(&spira_config::scratch::ledger_for(base))
+    } else {
+        0
+    };
+    let need = req.min_free_mib.saturating_add(held);
+    if shed_idle_slots(base, need, &|| free_mib(base), req.release_warm, log) == 0 {
+        return Err(refusal);
+    }
+    try_once()
+}
+
+fn dir_bytes(p: &Path) -> u64 {
+    let Ok(rd) = fs::read_dir(p) else { return 0 };
+    rd.flatten()
+        .map(|e| match e.file_type() {
+            Ok(t) if t.is_dir() => dir_bytes(&e.path()),
+            _ => e.metadata().map(|m| m.len()).unwrap_or(0),
+        })
+        .sum()
+}
+
+/// Evict idle `.testenv-slot-N` / `.testenv-warm-N` directories under `base`, least recently
+/// locked first, until `free()` reaches `need_mib`. Idle means the slot's lock can be taken
+/// with `flock -n`; the directory is removed while that lock is held, so a run never loses a
+/// slot it is using. Logs each eviction with the bytes freed; returns how many were evicted.
+pub(crate) fn shed_idle_slots(
+    base: &Path,
+    need_mib: u64,
+    free: &dyn Fn() -> Option<u64>,
+    release_warm: &dyn Fn(usize),
+    log: &dyn Fn(&str),
+) -> usize {
+    let Some(mut now_free) = free() else { return 0 };
+    if now_free >= need_mib {
+        return 0;
+    }
+    let mut cands: Vec<(std::time::SystemTime, String, bool, usize)> = Vec::new();
+    for e in fs::read_dir(base).into_iter().flatten().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let parsed = name
+            .strip_prefix(".testenv-slot-")
+            .map(|n| (false, n))
+            .or_else(|| name.strip_prefix(".testenv-warm-").map(|n| (true, n)))
+            .and_then(|(w, n)| n.parse::<usize>().ok().map(|i| (w, i)));
+        let Some((warm, i)) = parsed else { continue };
+        if !e.path().is_dir() {
+            continue;
+        }
+        let used = fs::metadata(base.join(format!("{name}.lock")))
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        cands.push((used, name, warm, i));
+    }
+    cands.sort();
+    let mut evicted = 0;
+    for (_, name, warm, i) in cands {
+        if now_free >= need_mib {
+            break;
+        }
+        let Some(_lock) = try_lock(&base.join(format!("{name}.lock"))) else {
+            continue;
+        };
+        if warm {
+            release_warm(i);
+        }
+        let dir = base.join(&name);
+        let bytes = dir_bytes(&dir);
+        if fs::remove_dir_all(&dir).is_err() {
+            continue;
+        }
+        log(&format!(
+            "evicted idle scratch slot {name}: {bytes} bytes freed (scratch short of {need_mib} MiB)"
+        ));
+        evicted += 1;
+        now_free = free().unwrap_or(now_free);
+    }
+    evicted
+}
+
 fn head_of(wt: &Path) -> Option<String> {
     git(wt, &["rev-parse", "--verify", "-q", "HEAD"]).ok()
 }
@@ -243,6 +342,9 @@ pub struct Request<'a> {
     /// [`scratch_room`]'s bounds for a slot on the scratch root.
     pub min_free_mib: u64,
     pub min_mem_mib: u64,
+    /// Called with a warm slot's index just before its idle directory is evicted, under the
+    /// slot's lock: the caller drops the spare container that mounts it.
+    pub release_warm: &'a dyn Fn(usize),
 }
 
 /// The first free warm slot (DESIGN.md §11.2), locked and checked out at the commit; None
@@ -263,7 +365,7 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
     };
     for i in 0..slots {
         let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
-        let Some(lock) = try_lock(&lock_path) else {
+        let Some(lock) = lock_slot(&lock_path) else {
             continue;
         };
         match prepare_slot(req.repo, &slot, req.commit) {
@@ -306,11 +408,10 @@ pub fn acquire(req: &Request, log: &dyn Fn(&str)) -> Result<Worktree, String> {
     let base = scratch_root(req.run_dir);
     fs::create_dir_all(&base)
         .map_err(|e| format!("cannot create worktree directory {}: {e}", base.display()))?;
-    scratch_room(&base, req.min_free_mib, req.min_mem_mib).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
-    let reservation = reserve_slot(&base, req.min_free_mib).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
+    let reservation = make_room(req, &base, log).map_err(|e| format!("{SCRATCH_SHORT}: {e}"))?;
     for i in 0..req.slots {
         let slot = base.join(format!(".testenv-slot-{i}"));
-        let Some(lock) = try_lock(&base.join(format!(".testenv-slot-{i}.lock"))) else {
+        let Some(lock) = lock_slot(&base.join(format!(".testenv-slot-{i}.lock"))) else {
             continue;
         };
         match prepare_slot(req.repo, &slot, req.commit) {
@@ -457,6 +558,7 @@ mod tests {
             slots: 1,
             min_free_mib: 0,
             min_mem_mib: 0,
+            release_warm: &|_| {},
         };
         let wt = acquire(&r1, &|_| {}).unwrap();
         assert!(matches!(wt.kind, Kind::Slot { .. }));
@@ -474,6 +576,7 @@ mod tests {
             slots: 1,
             min_free_mib: 0,
             min_mem_mib: 0,
+            release_warm: &|_| {},
         };
         let eph = acquire(&r2, &|_| {}).unwrap();
         assert!(matches!(eph.kind, Kind::Ephemeral));
@@ -508,6 +611,7 @@ mod tests {
             slots: 1,
             min_free_mib: 0,
             min_mem_mib: 0,
+            release_warm: &|_| {},
         };
         let wt = acquire(&r3, &|_| {}).unwrap();
         assert!(matches!(wt.kind, Kind::InPlace));
@@ -523,5 +627,95 @@ mod tests {
         assert!(!matches!(wt.kind, Kind::InPlace));
         drop(wt);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Four slot dirs of `kib` KiB each under `base`; free space is a fixed floor plus 100 MiB
+    /// per dir that is gone, so a test sees only evictions that really removed something.
+    fn idle_world(tag: &str) -> (testkit::TempDir, PathBuf) {
+        let d = testkit::TempDir::new(tag);
+        let base = d.join("scratch");
+        fs::create_dir_all(&base).unwrap();
+        for (n, age) in [(".testenv-slot-0", 40), (".testenv-warm-0", 10), (".testenv-slot-1", 30), (".testenv-warm-1", 20)] {
+            fs::create_dir_all(base.join(n)).unwrap();
+            fs::write(base.join(n).join("blob"), vec![0u8; 2048]).unwrap();
+            let lock = File::create(base.join(format!("{n}.lock"))).unwrap();
+            lock.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age * 60))
+                .unwrap();
+        }
+        (d, base)
+    }
+
+    fn free_of(base: &Path) -> impl Fn() -> Option<u64> + '_ {
+        move || {
+            let gone = [".testenv-slot-0", ".testenv-warm-0", ".testenv-slot-1", ".testenv-warm-1"]
+                .iter()
+                .filter(|n| !base.join(n).exists())
+                .count() as u64;
+            Some(10 + 100 * gone)
+        }
+    }
+
+    #[test]
+    fn a_shortfall_evicts_idle_slots_least_recently_used_first_and_no_more() {
+        let (_d, base) = idle_world("shed-lru");
+        let logs = std::cell::RefCell::new(Vec::new());
+        let released = std::cell::RefCell::new(Vec::new());
+        let n = shed_idle_slots(
+            &base,
+            210,
+            &free_of(&base),
+            &|i| released.borrow_mut().push(i),
+            &|m| logs.borrow_mut().push(m.to_string()),
+        );
+        assert_eq!(n, 2, "{logs:?}");
+        assert!(!base.join(".testenv-slot-0").exists(), "oldest goes first");
+        assert!(!base.join(".testenv-slot-1").exists(), "then the next oldest");
+        assert!(base.join(".testenv-warm-0").exists() && base.join(".testenv-warm-1").exists());
+        assert_eq!(*released.borrow(), Vec::<usize>::new(), "no warm slot was touched");
+        let logs = logs.borrow();
+        assert_eq!(logs.len(), 2);
+        assert!(logs[0].contains(".testenv-slot-0") && logs[0].contains("2048 bytes"), "{logs:?}");
+        assert_eq!(shed_idle_slots(&base, 0, &free_of(&base), &|_| {}, &|_| {}), 0, "no shortfall, no eviction");
+    }
+
+    #[test]
+    fn a_locked_slot_is_never_evicted() {
+        let (_d, base) = idle_world("shed-busy");
+        let held = try_lock(&base.join(".testenv-slot-0.lock")).unwrap();
+        let released = std::cell::RefCell::new(Vec::new());
+        let n = shed_idle_slots(&base, u64::MAX, &free_of(&base), &|i| released.borrow_mut().push(i), &|_| {});
+        assert_eq!(n, 3, "everything idle goes, the held slot stays");
+        assert!(base.join(".testenv-slot-0/blob").exists());
+        assert_eq!(*released.borrow(), vec![1, 0], "warm slots are released LRU-first");
+        drop(held);
+    }
+
+    #[test]
+    fn refusal_stands_only_when_idle_caches_cannot_cover_the_shortfall() {
+        let d = testkit::TempDir::new("make-room");
+        let repo = d.join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        let run = d.join("run");
+        let req = |min_free_mib| Request {
+            repo: &repo,
+            rev: "HEAD",
+            commit: "HEAD",
+            cwd: &d,
+            run_dir: &run,
+            slots: 1,
+            min_free_mib,
+            min_mem_mib: 0,
+            release_warm: &|_| {},
+        };
+        let base = scratch_root(&run);
+        fs::create_dir_all(base.join(".testenv-slot-0")).unwrap();
+        // nothing the idle cache frees can reach an unreachable floor: refused, and the cache is gone
+        let e = make_room(&req(u64::MAX), &base, &|_| {}).unwrap_err();
+        assert!(e.contains("SPIRA_TESTENV_SCRATCH_MIN_FREE_MIB"), "{e}");
+        assert!(!base.join(".testenv-slot-0").exists());
+        // a floor that is met needs no eviction
+        fs::create_dir_all(base.join(".testenv-slot-0")).unwrap();
+        assert!(make_room(&req(0), &base, &|_| {}).is_ok());
+        assert!(base.join(".testenv-slot-0").exists());
     }
 }

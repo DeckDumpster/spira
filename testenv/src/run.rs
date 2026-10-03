@@ -758,6 +758,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         slots: s.scratch_slots,
         min_free_mib: s.scratch_min_free_mib,
         min_mem_mib: s.scratch_min_mem_mib,
+        release_warm: &|i| warm::drop_spare(deps.rt, &deps.owner_dir, &s.run, i),
     };
     let warm_wanted = args.deadline.is_some() && args.artifacts.is_none() && s.warm_slots > 0;
     let warm_wt = if warm_wanted {
