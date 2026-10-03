@@ -12,8 +12,21 @@ use std::time::{Duration, Instant};
 /// Set by SIGINT/SIGTERM/SIGHUP: stop launching, kill what is running, tear down, exit.
 pub static CANCEL: AtomicBool = AtomicBool::new(false);
 
+#[cfg(not(test))]
 pub fn cancelled() -> bool {
     CANCEL.load(Ordering::SeqCst)
+}
+
+// The flag is process-global; tests that flip it would cancel every concurrent test, so
+// under test only a thread that opted in via `observe_cancel` sees it.
+#[cfg(test)]
+thread_local! {
+    pub static OBSERVE_CANCEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+#[cfg(test)]
+pub fn cancelled() -> bool {
+    OBSERVE_CANCEL.with(|o| o.get()) && CANCEL.load(Ordering::SeqCst)
 }
 
 extern "C" fn on_signal(_: libc::c_int) {
@@ -413,6 +426,7 @@ mod tests {
     /// calling thread synchronously, so the flag is visible the instant it returns.
     #[test]
     fn install_signal_handlers_catches_hup() {
+        OBSERVE_CANCEL.with(|o| o.set(true));
         CANCEL.store(false, Ordering::SeqCst);
         install_signal_handlers();
         unsafe { libc::raise(libc::SIGHUP) };

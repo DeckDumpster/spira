@@ -168,6 +168,7 @@ mod tests {
         std::fs::create_dir_all(d.join("src")).unwrap();
         std::fs::write(d.join("src/main.rs"), "fn main() { println!(\"ok\"); }\n").unwrap();
 
+        crate::runtime::OBSERVE_CANCEL.with(|o| o.set(true));
         CANCEL.store(false, Ordering::SeqCst);
         let flipper = std::thread::spawn(|| {
             std::thread::sleep(Duration::from_millis(1500));
