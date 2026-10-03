@@ -359,17 +359,18 @@ runpass
 is "a quiet pass leaves it alone" "2" "$(cat "$RUN/watchd/answers.restarts" 2>/dev/null)"
 # A COUNTER THAT CLIMBS WITH NOTHING SAYING WHY IS A METER NOBODY CAN ACT ON.
 reset_mtimes; fresh_show; touch -d "@$NEWER" "$COCKPIT/db.sh"; runpass
-has "and every restart names the file behind it" "$(cat "$TMP/out")" "$COCKPIT/db.sh"
-# A restarting pass is the steady pass's systemctl show, stat and `watchd manifest`, plus
-# `watchd restart <name>` and the one `systemctl restart` it issues through the shim. Asserted
-# as a profile by program, with the counted lines attached on failure, so a stray exec names
-# itself instead of arriving as a bare number.
-profile="systemctl=$(grep -c '^systemctl' "$EXECLOG" || true) stat=$(grep -c '^stat' "$EXECLOG" || true) watchd=$(grep -c '^watchd' "$EXECLOG" || true) mkdir=$(grep -c '^mkdir' "$EXECLOG" || true) forbidden=$(grep -c '^FORBIDDEN' "$EXECLOG" || true)"
-if [ "$profile" = "systemctl=2 stat=1 watchd=2 mkdir=0 forbidden=0" ]; then
-    ok "a restarting pass costs a show, a stat, two watchd and one restart — and no more than that"
+# Both assertions read only the lines that concern this one watcher: a count of everything
+# the pass did moves with whatever else the box does while it runs.
+RESTART_UNIT="spira-watch-answers-prod.service"
+has "and every restart names the file behind it" "$(grep "restarting $RESTART_UNIT" "$TMP/out")" "$COCKPIT/db.sh is newer"
+# A restarting pass spends exactly one `watchd restart <name>` and one `systemctl restart
+# <unit>` on the stale watcher, and touches no store and no directory.
+watcher_calls="restart_watchd=$(grep -cx 'watchd restart answers' "$EXECLOG" || true) restart_systemctl=$(grep -cE "^systemctl .*restart $RESTART_UNIT\$" "$EXECLOG" || true) mkdir=$(grep -c '^mkdir' "$EXECLOG" || true) forbidden=$(grep -c '^FORBIDDEN' "$EXECLOG" || true)"
+if [ "$watcher_calls" = "restart_watchd=1 restart_systemctl=1 mkdir=0 forbidden=0" ]; then
+    ok "a restarting pass restarts the stale watcher once, through watchd, and touches nothing else"
 else
-    bad "a restarting pass costs a show, a stat, two watchd and one restart — and no more than that" \
-        "$profile :: $(grep -E '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" | cut -c1-80 | tr '\n' '|')"
+    bad "a restarting pass restarts the stale watcher once, through watchd, and touches nothing else" \
+        "$watcher_calls :: $(grep -E '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" | cut -c1-80 | tr '\n' '|')"
 fi
 # The restart is not bookkeeping: a counter that moved without systemctl being called would
 # be a meter measuring itself.
