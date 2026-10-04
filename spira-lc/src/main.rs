@@ -42,6 +42,15 @@ fn main() {
         std::process::exit(serve::run(&args[1..]));
     }
 
+    // Pure git, no machine: answers the same with the lifecycle switch on or off.
+    if args.first().map(String::as_str) == Some("content-landed") {
+        let [_, repo, br, base] = &args[..] else {
+            eprintln!("usage: spira-lc content-landed <repo> <branch> <baseref>");
+            std::process::exit(64);
+        };
+        std::process::exit(if git_evidence::content_on_base(std::path::Path::new(repo), br, base) { 0 } else { 1 });
+    }
+
     // The caller verbs (callers.rs; DESIGN.md §2): the switch first, before any socket or
     // connection — off, they answer exactly what the retired shell library answered off.
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
