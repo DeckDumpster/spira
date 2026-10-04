@@ -574,7 +574,14 @@ lc_event_bead() {
 # it; Claim is illegal from WORKING (lifecycle/src/bead.rs), so this is the only path back.
 lc_claim_bead() {
     local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
-    row="$(lc_bead_row "$id")" || return 2
+    # A bead filed by any path that skips row creation (raw `bd create` — acceptance, and at
+    # least four actors in production; sp-tb4yk) has no lifecycle row, and `spira-lc show`
+    # cannot tell "no row" from "unreachable". create-bead is idempotent and fails only when
+    # the machine is unreachable: so create the READY row here, at the claim, and re-read.
+    if ! row="$(lc_bead_row "$id")" || [ -z "${row%%$'\t'*}" ]; then
+        spira-lc create-bead "$id" >/dev/null 2>&1 || return 2
+        row="$(lc_bead_row "$id")" || return 2
+    fi
     IFS=$'\t' read -r state version _ _ <<< "$row"
     [ -n "$state" ] || return 2
     if [ "$state" = WORKING ]; then
