@@ -173,6 +173,10 @@ fn fixture() -> (Fx, Fake) {
         git(&r, &["checkout", "-q", "main"]);
         f.put(id, b("closed"));
     }
+    git(&r, &["checkout", "-q", "-b", "spira/sp-vac", "main"]);
+    git(&r, &["commit", "-q", "--allow-empty", "-m", "sp-vacuous: another bead's commit"]);
+    git(&r, &["checkout", "-q", "main"]);
+    f.put("sp-vac", b("closed"));
     git(&r, &["branch", "spira/round-54", "main"]);
     // sp-supsafe: superseded, conflicts with the base. sp-supunsafe: adds content cleanly.
     git(&r, &["checkout", "-q", "-b", "spira/sp-supsafe", "main"]);
@@ -348,6 +352,20 @@ fn content_landed_evidence_is_a_machine_event_on_and_the_label_off() {
     sweep(&f, opts(), &[repo(&fx)]);
     assert!(f.called(&format!("lc sp-cl1 merge-tree:{main}")), "{:?}", f.calls.borrow());
     assert!(!f.called("lc sp-cl0") && !f.called("label "));
+}
+
+#[test]
+fn a_branch_with_no_commit_naming_the_bead_is_not_content_landed_evidence() {
+    for enforce in [true, false] {
+        let (fx, mut f) = fixture();
+        f.enforce = enforce;
+        sweep(&f, opts(), &[repo(&fx)]);
+        let out = f.out();
+        assert!(out.contains("KEEP   sp-vac  1 commit(s) not in main, none naming the bead"), "{out}");
+        assert!(exists(&fx, "spira/sp-vac"));
+        assert!(!f.called("lc sp-vac") && !f.called("label sp-vac") && !f.called("close sp-vac") && !f.called("send sp-vac"), "{:?}", f.calls.borrow());
+        assert!(f.called("close sp-cl1 "), "a branch with its own commit is still applied");
+    }
 }
 
 #[test]
