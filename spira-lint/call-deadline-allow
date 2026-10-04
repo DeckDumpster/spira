@@ -193,7 +193,6 @@
 5 spira/test-cross-repo.sh
 5 spira/test-cutover-deploy.sh
 7 spira/test-deadlock-sweep.sh
-1 spira/test-dependents.sh
 3 spira/test-destroy-branch.sh
 1 spira/test-dispatch-open-children.sh
 5 spira/test-epic-claim-order.sh
@@ -223,8 +222,6 @@
 1 spira/test-install-rehearsal.sh
 4 spira/test-land-local-release.sh
 4 spira/test-land-mode-local.sh
-1 spira/test-landed-reap.sh
-8 spira/test-landed-search.sh
 3 spira/test-landing-base-fail.sh
 3 spira/test-landing-cutover-round.sh
 2 spira/test-landing-pass-map.sh

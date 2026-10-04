@@ -106,18 +106,17 @@ landed_key() { printf 'spira.landed.%s' "$1"; }
 # (landstate is advisory, the database is authoritative). So the absence of a branch from
 # the repo is not a problem; the presence of one without a LANDED entry is.
 pilgrimage_branches_landed() {
-    local epic="$1" child repo_name repo ls_file ls_state ok=1
+    local epic="$1" child repo_name repo ls_state ok=1
     while IFS= read -r child; do
         [ -n "$child" ] || continue
         for repo_name in $(spira_repos); do
             repo="$(repo_root "$repo_name")" || continue
             [ "$(repo_land "$repo_name")" = push ] || continue
             git -C "$repo" show-ref --verify --quiet "refs/heads/spira/$child" 2>/dev/null || continue
-            # A live push-mode branch must have a LANDED entry in landstate.
-            ls_file="$SPIRA_RUN/landstate/$child"
-            ls_state="$(awk '{print $1}' < "$ls_file" 2>/dev/null)"
+            # A live push-mode branch must be LANDED in the lifecycle record.
+            ls_state="$(spira-lc state "$child" 2>/dev/null)"
             if [ "${ls_state:-}" != LANDED ]; then
-                log "$epic: ASSERTION — spira/$child in $repo_name is live but landstate reads '${ls_state:-missing}'; deferring close until landing records it"
+                log "$epic: ASSERTION — spira/$child in $repo_name is live but the lifecycle record reads '${ls_state:-missing}'; deferring close until landing records it"
                 ok=0
             fi
         done

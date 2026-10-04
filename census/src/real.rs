@@ -156,18 +156,12 @@ impl World for Real {
         }
     }
     fn landed(&self, id: &str) -> i32 {
-        let Some(repo) = self.repo_root() else { return 2 };
         let envs = spira_config::release_env::child_path_env(self.home.parent(), std::env::var("PATH").ok().as_deref());
-        Command::new("landing-pass")
-            .args(["landed", id, &repo])
-            .envs(envs)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .ok()
-            .and_then(|s| s.code())
-            .unwrap_or(2)
+        let out = Command::new("spira-lc").args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
+        match out {
+            Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
+            _ => 2,
+        }
     }
 
     fn count_py(&self, tabular: &str) -> Result<String, String> {

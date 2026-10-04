@@ -13,10 +13,8 @@
 //! crate's binary (`strand detect-livelocked`, …) so a caller that still sources lib.sh
 //! directly (a test suite, `attempts.sh`) keeps working unchanged.
 //!
-//! GIT AND `landing-pass` ARE REACHED AS SUBPROCESSES, BY NAME ON PATH, never re-derived:
-//! `landed`/`landed_sha` already has one canonical, tested implementation
-//! (`landing-pass landed <id> <repo>`, family R, sp-81t4d); calling it is the same
-//! "RETIRE rather than port" discipline as lib.sh's own `landed()` shim. `content_landed`
+//! GIT AND `spira-lc` ARE REACHED AS SUBPROCESSES, BY NAME ON PATH, never re-derived:
+//! "landed" is the lifecycle record's LANDED state (`spira-lc state <id>`). `content_landed`
 //! and the plain merge-tree clean check have no CLI door yet, so they run the same `git`
 //! commands lib.sh's own (still-bash) `content_landed` runs — no new logic, just moved.
 //! `detect_invalid_closed`'s statute-phrase predicates live in one file shared with aeon's
@@ -154,15 +152,12 @@ fn merge_tree_write_tree(repo: &Path, base: &str, branch: &str) -> Option<String
     (!first.is_empty()).then_some(first)
 }
 
-/// `landing-pass landed <id> <repo>` (family R, sp-81t4d): prints the sha on a found exit,
-/// nothing on "not landed" or "cannot tell" — both of which this reads as `None`, exactly as
-/// `landed "$id" "$r_path" 2>/dev/null && continue` only continues on the found exit.
-fn landed_sha_via_cli(id: &str, repo_path: &str) -> Option<String> {
-    let o = Command::new("landing-pass").args(["landed", id, repo_path]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    Some(String::from_utf8_lossy(&o.stdout).trim().to_string())
+/// Whether the lifecycle record has the bead LANDED (`spira-lc state`). A missing row or an
+/// unreachable record reads as `None`: both mean "cannot prove it landed". The commit is not
+/// recorded here, so the sha is empty and callers fall back to the base's own commit search.
+fn landed_sha_via_cli(id: &str, _repo_path: &str) -> Option<String> {
+    let o = Command::new("spira-lc").args(["state", id]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
+    (o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "LANDED").then(String::new)
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

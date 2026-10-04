@@ -14,8 +14,10 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
 git init -q "$TMP/repo"; git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m x
 tip="$(git -C "$TMP/repo" rev-parse HEAD)"
 git -C "$TMP/repo" branch spira/sp-aaa
-mkdir -p "$TMP/run/landstate" "$TMP/run/rounds"
-echo "CERTIFIED $tip" > "$TMP/run/landstate/sp-aaa"
+mkdir -p "$TMP/run/rounds" "$TMP/bin"
+printf '#!/usr/bin/env bash\n[ "$1 $2" = "list-state CERTIFIED" ] && printf "sp-aaa\\t\\t\\n"\nexit 0\n' > "$TMP/bin/spira-lc"
+chmod +x "$TMP/bin/spira-lc"
+PATH="$TMP/bin:$PATH"
 
 run() {
     env -i PATH="$PATH" HOME="$TMP" SPIRA_RUN="$TMP/run" SPIRA_REPO="$TMP/repo" \

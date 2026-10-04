@@ -446,40 +446,16 @@ impl Run<'_> {
                 } else {
                     self.s.rebase_conflicts = rb.stdout.trim_end().to_string();
                     let conflicts = if self.s.rebase_conflicts.is_empty() { "unknown".to_string() } else { self.s.rebase_conflicts.clone() };
-                    let cited = if restricted {
-                        String::new()
+                    let others = self.sv("other_beads_on_conflicts", &s(&[&repo, &branch, &base, &self.s.rebase_conflicts])).text();
+                    let mut n = format!("Reopened by aeon.sh: closed behind {base} and {branch} does not rebase onto it — conflicts in {conflicts}. The brief asked for this rebase before closing.");
+                    if !others.is_empty() {
+                        n.push_str(&format!(" Those files were changed on {base} by {others} — check whether this work is already landed before resolving."));
                     } else {
-                        let o = self.d.exec.exec("landing-pass", &s(&["cited-commit", &id, &repo, &fq]), None, None);
-                        if o.success() { o.text() } else { String::new() }
-                    };
-                    if !cited.is_empty() {
-                        self.log(&format!("{f}: {id} closed behind {base} but notes cite {cited} on {base} — retiring as landed"));
-                        // A failed mark is logged, never discarded: the bead reads landed-on-main with no
-                        // delivery record to show it. SPIRA_RUN is passed explicitly (law-a-binary-resolves-the-config-it-reads).
-                        let mo = self.d.exec.exec(
-                            "env",
-                            &s(&[&format!("SPIRA_RUN={}", self.conf.run.display()), "landing-pass", "mark", &id, "LANDED", &cited, "cited-on-main"]),
-                            None,
-                            None,
-                        );
-                        if !mo.success() {
-                            self.log(&format!("{f}: {id} landing-pass mark LANDED {cited} cited-on-main FAILED (rc={}): {}", mo.code, mo.first_err_line()));
-                        }
-                        if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("fix on {base} cited in notes as {cited}"), "cited-landed"])) != 0 {
-                            self.log(&format!("{f}: {id} branch retire failed"));
-                        }
-                    } else {
-                        let others = self.sv("other_beads_on_conflicts", &s(&[&repo, &branch, &base, &self.s.rebase_conflicts])).text();
-                        let mut n = format!("Reopened by aeon.sh: closed behind {base} and {branch} does not rebase onto it — conflicts in {conflicts}. The brief asked for this rebase before closing.");
-                        if !others.is_empty() {
-                            n.push_str(&format!(" Those files were changed on {base} by {others} — check whether this work is already landed before resolving."));
-                        } else {
-                            n.push_str(" A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it.");
-                        }
-                        self.bead_reopen(REBASE_CONFLICT, &n);
-                        self.requeue(REBASE_CONFLICT, format!("{branch} would not rebase onto {base} (conflicts in {conflicts}); the next aeon is handed the rebase."));
-                        self.log(&format!("{f}: {id} REOPENED — closed behind {base}, conflicts in {conflicts}"));
+                        n.push_str(" A merge conflict is not an escalation — the next aeon is handed the rebase and must resolve it.");
                     }
+                    self.bead_reopen(REBASE_CONFLICT, &n);
+                    self.requeue(REBASE_CONFLICT, format!("{branch} would not rebase onto {base} (conflicts in {conflicts}); the next aeon is handed the rebase."));
+                    self.log(&format!("{f}: {id} REOPENED — closed behind {base}, conflicts in {conflicts}"));
                 }
             }
         }
