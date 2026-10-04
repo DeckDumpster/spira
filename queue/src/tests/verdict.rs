@@ -67,21 +67,6 @@ fn publish_record_missing_a_field_is_left_for_a_hand_look() {
     assert!(t.forge.calls.borrow().is_empty());
 }
 
-#[test]
-fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
-    let t = T::new(LandMode::QueueLocal);
-    publish_record(&t);
-    t.forge.status.borrow_mut().push(Some("green\nrun-url: http://r/1\n".into()));
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert_eq!(t.forge.calls.borrow()[1], "check-status 77 spira/publish/X");
-    assert!(t.lib.has("push origin m3:refs/heads/main"));
-    assert!(has_call(&t.forge.calls, "pr-close 77"));
-    assert!(!t.qfile("publish").exists());
-    assert!(t.landing_log().contains("QUEUE PUBLISH_GREEN 1000 repo=spira pr=77 head=m3"));
-    assert!(t.lib.has("notify spira publish PR 77 merged"));
-    assert!(t.out().contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"));
-    t.assert_lc_untouched();
-}
 
 #[test]
 fn publish_on_a_pr_that_is_not_open_never_moves_the_forge_target() {
@@ -157,8 +142,8 @@ fn publish_red_files_one_fix_forward_and_marks_the_head() {
     assert!(t.landing_log().contains("QUEUE PUBLISH_RED 1000 repo=spira pr=77 suites=test-b.sh,test-a.sh fix_forward=sp-fix1"));
     assert!(t.lib.has("notify spira publish PR 77 red"));
     assert!(t.out().contains("verdict spira: publish PR 77 red — filed fix-forward sp-fix1"));
-    // never a reopen, never a landstate change, never judgement
-    assert!(!t.lib.has("bead_reopen") && !t.lib.has("land_mark"));
+    // never a reopen, never judgement
+    assert!(!t.lib.has("bead_reopen") && !t.lc.has("abandon-batch"));
     assert!(!has_call(&t.scripts.calls, "judgement-ci"));
 }
 
@@ -215,6 +200,13 @@ fn step_on_queue_local_settles_a_green_publish_before_publishing_again() {
 fn batch(t: &T) {
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta sp-b:tb\nopened=500\nbranch=spira/queue/x\nowner=batcher\n");
     t.git.set("origin/main", "b0");
+}
+
+/// `batch`, with the lifecycle batch row spira-lc cut for it.
+fn lc_batch(t: &T) {
+    batch(t);
+    let rec = record(t);
+    t.open_record(&format!("{rec}batch_id=spira-1\nversion=3\n"));
 }
 
 fn record(t: &T) -> String {
@@ -286,13 +278,13 @@ fn a_failed_status_call_is_pending_not_a_verdict() {
     t.forge.status.borrow_mut().push(None);
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("PR 12 pending"), "{}", t.out());
-    assert!(!t.lib.has("land_mark"));
+    assert!(!t.lc.has("abandon-batch"));
 }
 
 #[test]
 fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     let t = T::new(LandMode::Queue);
-    batch(&t);
+    lc_batch(&t);
     *t.forge.run.borrow_mut() = Some("77".into());
     t.forge.status.borrow_mut().extend([Some("harness_fault\n".into()), Some("provision_fault\n".into()), Some("harness_fault\n".into())]);
     assert_eq!(t.run(&["verdict", "spira"]), 0);
@@ -305,7 +297,7 @@ fn harness_fault_reruns_within_the_budget_then_closes_and_returns_members() {
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("verdict spira: PR 12 harness fault — retries exhausted; closing batch"));
     assert!(has_call(&t.forge.calls, "pr-close 12"));
-    assert!(t.lib.has("land_mark sp-a CERTIFIED ta") && t.lib.has("land_mark sp-b CERTIFIED tb"));
+    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 batch closed"));
     assert!(!t.qfile("open").exists());
     let mail = t.scripts.calls.borrow().iter().find(|c| c.starts_with("mail-operator")).cloned().unwrap();
     assert!(mail.starts_with("mail-operator Merge queue: spira CI fault after 3 attempts\n## Note\nMerge queue batch for spira closed after 3 failed CI run attempts.\n\nPR 12 (head h1) has been closed."), "{mail}");
@@ -318,45 +310,17 @@ fn green_on_another_head_or_no_head_is_refused_as_a_fault() {
         ("green\n", "verdict spira: PR 12 green but head-sha missing — cannot verify sealed head; harness fault; PR closed, members requeued", "Merge queue: spira CI head unverifiable (missing head-sha)"),
     ] {
         let t = T::new(LandMode::Queue);
-        batch(&t);
+        lc_batch(&t);
         t.forge.status.borrow_mut().push(Some(answer.into()));
         assert_eq!(t.run(&["verdict", "spira"]), 0);
         assert!(t.out().contains(line), "{}", t.out());
         assert!(has_call(&t.scripts.calls, &format!("mail-operator {subject}\n")));
-        assert!(t.lib.has("land_mark sp-a CERTIFIED ta"));
-        assert!(!t.lib.has("push") && !t.lib.has("land_mark sp-a LANDED"));
+        assert!(t.lc.has("abandon-batch spira-1"));
+        assert!(!t.lib.has("push") && !t.lc.has("land "));
         assert!(!t.qfile("open").exists());
     }
 }
 
-#[test]
-fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
-    let t = T::new(LandMode::Queue);
-    batch(&t);
-    t.git.set("refs/heads/spira/queue/x", "h1");
-    t.git.set("refs/heads/spira/queue/old", "o1");
-    t.git.ancestor("spira/queue/old", "origin/main");
-    *t.git.branches.borrow_mut() = vec![("spira/queue/old".into(), "o1".into()), ("spira/queue/new".into(), "n1".into())];
-    t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\nflaky: test-f.sh\n".into()));
-    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
-    assert!(t.lib.has("push origin h1:main"));
-    assert!(t.out().contains("verdict spira: PR 12 landed by fast-forward (h1)"));
-    for (id, tip) in [("sp-a", "ta"), ("sp-b", "tb")] {
-        assert!(t.lib.has(&format!("land_mark {id} LANDED {tip} ")), "{:?}", t.lib.calls.borrow());
-        assert!(t.lib.has(&format!("gh_closeout {id} h1")));
-        assert!(t.lib.has(&format!("close_on_land {id} h1")));
-    }
-    assert!(t.lib.has("notify spira PR 12 merged (fast-forward)"));
-    assert!(has_call(&t.scripts.calls, "observe-flake test-f.sh h1"));
-    assert!(!t.qfile("open").exists());
-    assert!(t.lib.has("push origin :refs/heads/spira/queue/x"));
-    assert!(t.git.calls.borrow().contains(&"branch -D sanctioned spira/queue/x".to_string()));
-    assert!(t.out().contains("verdict spira: deleted batch branch spira/queue/x"));
-    // a stale queue ref already on the base is reaped; one that is not stays
-    assert!(t.out().contains("verdict spira: reaped stale queue ref spira/queue/old"));
-    assert!(!t.git.calls.borrow().iter().any(|c| c.ends_with("spira/queue/new")));
-    t.assert_lc_untouched();
-}
 
 #[test]
 fn a_refused_fast_forward_keeps_the_batch() {
@@ -367,13 +331,12 @@ fn a_refused_fast_forward_keeps_the_batch() {
     assert_eq!(t.run(&["verdict", "spira"]), 1);
     assert!(t.err().contains("verdict spira: PR 12 fast-forward push failed"));
     assert!(t.qfile("open").exists());
-    assert!(!t.lib.has("land_mark"));
+    assert!(!t.lc.has("abandon-batch"));
 }
 
 #[test]
 fn green_with_lifecycle_on_walks_the_batch_to_landed_on_spira_lc() {
     let t = T::new(LandMode::Queue);
-    t.lifecycle_on();
     t.open_record("pr=12\nhead=h1\nbase=b0\nmembers=sp-a:ta\nbranch=\nbatch_id=B1\nversion=3\n");
     t.git.set("origin/main", "b0");
     t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
@@ -399,13 +362,13 @@ fn a_moved_base_rebuilds_and_force_pushes_when_no_member_is_in_it() {
     assert!(rec.ends_with("head=merged-tb\nretries=0\nmembers=sp-a:ta sp-b:tb\nbase=b1\n"), "{rec}");
     assert!(t.out().contains("verdict spira: PR 12 rebuilt on moved base (b1) — re-pushed (head merged-tb)"));
     assert!(!has_call(&t.forge.calls, "pr-close"));
-    assert!(!t.lib.has("land_mark"));
+    assert!(!t.lc.has("abandon-batch"));
 }
 
 #[test]
 fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     let t = T::new(LandMode::Queue);
-    batch(&t);
+    lc_batch(&t);
     t.git.set("origin/main", "b1");
     t.git.ancestor("ta", "b1");
     t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
@@ -413,23 +376,23 @@ fn a_moved_base_already_carrying_a_member_closes_and_lands_that_member() {
     assert!(!t.git.calls.borrow().iter().any(|c| c.starts_with("merge")));
     assert!(has_call(&t.forge.calls, "pr-close 12"));
     assert!(t.out().contains("verdict spira: PR 12 base moved (b1) — closed, members requeued"));
-    assert!(t.lib.has("land_mark sp-a LANDED ta already-in-base") && t.lib.has("close_on_land sp-a b1"));
+    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 base moved") && t.lc.has("event bead sp-a CERTIFIED 3 \"Deliver\"") && t.lib.has("close_on_land sp-a b1"));
     assert!(t.out().contains("verdict spira: sp-a already in moved base — LANDED"));
-    assert!(t.lib.has("land_mark sp-b CERTIFIED tb"));
+    assert!(!t.lc.has("event bead sp-b"));
     assert!(!t.qfile("open").exists());
 }
 
 #[test]
 fn a_moved_base_that_conflicts_closes_and_requeues() {
     let t = T::new(LandMode::Queue);
-    batch(&t);
+    lc_batch(&t);
     t.git.set("origin/main", "b1");
     t.git.merge_fail.borrow_mut().insert("tb".into());
     t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0);
     assert!(t.out().contains("verdict spira: PR 12 base moved — conflict in sp-b; closing and requeuing"));
     assert!(!t.lib.has("push"));
-    assert!(t.lib.has("land_mark sp-a CERTIFIED ta") && t.lib.has("land_mark sp-b CERTIFIED tb"));
+    assert!(t.lc.has("abandon-batch spira-1 CI_RUNNING 4 base moved"));
     assert!(!t.qfile("open").exists());
 }
 
@@ -446,7 +409,7 @@ fn red_summons_judgement_once_with_the_suites_and_the_run() {
     assert!(record(&t).ends_with("judgement=sp-j1\n"));
     assert!(t.out().contains("verdict spira: PR 12 red (test-b.sh,test-a.sh) — batcher-owned, summoned judgement (sp-j1)"));
     // the PR and its members are left exactly as they are
-    assert!(!has_call(&t.forge.calls, "pr-close") && !t.lib.has("land_mark") && !t.lib.has("bead_reopen"));
+    assert!(!has_call(&t.forge.calls, "pr-close") && !t.lc.has("abandon-batch") && !t.lib.has("bead_reopen"));
     // the next pass does not summon twice
     t.forge.status.borrow_mut().push(Some("red\nred-suite: test-a.sh\n".into()));
     assert_eq!(t.run(&["verdict", "spira"]), 0);
@@ -549,10 +512,9 @@ fn other_modes_have_nothing_to_settle() {
 fn verdict_with_lifecycle_on_and_spira_lc_unreachable_refuses_before_reading_anything() {
     let t = T::new(LandMode::Queue);
     batch(&t);
-    t.lifecycle_on();
-    *t.lc.in_delivery.borrow_mut() = Err("dolt down".into());
+    *t.lc.rows.borrow_mut() = Err("dolt down".into());
     assert_eq!(t.run(&["verdict", "spira"]), 1);
-    assert!(t.err().contains("queue.sh verdict: lifecycle_enforce is on and spira-lc is unreachable (dolt down)"));
+    assert!(t.err().contains("queue.sh verdict: spira-lc is unreachable (dolt down)"));
     assert!(t.forge.calls.borrow().is_empty());
 }
 
@@ -596,4 +558,45 @@ fn a_repeat_publish_red_files_anew_when_the_prior_bead_is_closed_or_the_suites_d
         assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
         assert!(t.lib.has("create_bug"), "{prior}");
     }
+}
+
+#[test]
+fn publish_green_fast_forwards_the_forge_and_retires_the_record() {
+    let t = T::new(LandMode::QueueLocal);
+    publish_record(&t);
+    t.forge.status.borrow_mut().push(Some("green\nrun-url: http://r/1\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert_eq!(t.forge.calls.borrow()[1], "check-status 77 spira/publish/X");
+    assert!(t.lib.has("push origin m3:refs/heads/main"));
+    assert!(has_call(&t.forge.calls, "pr-close 77"));
+    assert!(!t.qfile("publish").exists());
+    assert!(t.landing_log().contains("QUEUE PUBLISH_GREEN 1000 repo=spira pr=77 head=m3"));
+    assert!(t.lib.has("notify spira publish PR 77 merged"));
+    assert!(t.out().contains("verdict spira: publish PR 77 green — origin/main fast-forwarded to m3"));
+}
+
+#[test]
+fn green_on_an_unmoved_base_fast_forwards_lands_every_member_and_cleans_up() {
+    let t = T::new(LandMode::Queue);
+    batch(&t);
+    t.git.set("refs/heads/spira/queue/x", "h1");
+    t.git.set("refs/heads/spira/queue/old", "o1");
+    t.git.ancestor("spira/queue/old", "origin/main");
+    *t.git.branches.borrow_mut() = vec![("spira/queue/old".into(), "o1".into()), ("spira/queue/new".into(), "n1".into())];
+    t.forge.status.borrow_mut().push(Some("green\nhead-sha: h1\nflaky: test-f.sh\n".into()));
+    assert_eq!(t.run(&["verdict", "spira"]), 0, "{}", t.err());
+    assert!(t.lib.has("push origin h1:main"));
+    assert!(t.out().contains("verdict spira: PR 12 landed by fast-forward (h1)"));
+    for id in ["sp-a", "sp-b"] {
+        assert!(t.lib.has(&format!("gh_closeout {id} h1")));
+        assert!(t.lib.has(&format!("close_on_land {id} h1")));
+    }
+    assert!(t.lib.has("notify spira PR 12 merged (fast-forward)"));
+    assert!(has_call(&t.scripts.calls, "observe-flake test-f.sh h1"));
+    assert!(!t.qfile("open").exists());
+    assert!(t.lib.has("push origin :refs/heads/spira/queue/x"));
+    assert!(t.git.calls.borrow().contains(&"branch -D sanctioned spira/queue/x".to_string()));
+    assert!(t.out().contains("verdict spira: deleted batch branch spira/queue/x"));
+    assert!(t.out().contains("verdict spira: reaped stale queue ref spira/queue/old"));
+    assert!(!t.git.calls.borrow().iter().any(|c| c.ends_with("spira/queue/new")));
 }

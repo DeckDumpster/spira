@@ -33,40 +33,26 @@ fn agrees(w: &World, c: &Ctx) -> Result<(), i32> {
     Ok(())
 }
 
-/// The work of this repository that is between CERTIFIED-into-a-round and LANDED (§8 D5).
-/// Switch OFF: the legacy records only — an open batch record, a BATCHED landstate whose tip
-/// is a commit here; spira-lc is never asked. Switch ON: those plus every IN_DELIVERY
-/// lifecycle row whose tip is a commit here, and a failed spira-lc read is Err (cannot tell),
-/// which refuses like a positive answer.
-pub fn in_delivery(w: &World, c: &Ctx, path: &std::path::Path, lc_on: bool) -> Result<Vec<String>, String> {
+/// The work of this repository that is between CERTIFIED-into-a-round and LANDED (§8 D5): an
+/// open batch record plus every IN_DELIVERY lifecycle row whose tip is a commit here. A
+/// failed spira-lc read is Err (cannot tell), which refuses like a positive answer.
+pub fn in_delivery(w: &World, c: &Ctx, path: &std::path::Path) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
     if let Ok(Some(kv)) = records::read_kv(&c.queue_file("open")) {
         out.push(format!("open batch PR {}", kv.get_first("pr").unwrap_or("?")));
     }
-    let states = records::all_land_states(&c.s.landstate)?;
     let here = |t: &str| crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t);
-    for (id, ls) in &states {
-        if ls.state == "BATCHED" && here(&ls.tip) {
-            out.push(id.clone());
-        }
-    }
-    if lc_on {
-        for row in w.lc.in_delivery()? {
-            let tip = row.tip.clone().filter(|t| !t.is_empty()).or_else(|| states.iter().find(|(i, _)| *i == row.bead_id).map(|(_, s)| s.tip.clone()));
-            if tip.as_deref().map(here).unwrap_or(false) && !out.contains(&row.bead_id) {
-                out.push(row.bead_id.clone());
-            }
+    for row in w.lc.bead_rows(Some("IN_DELIVERY"))? {
+        if row.tip.as_deref().map(here).unwrap_or(false) && !out.contains(&row.bead_id) {
+            out.push(row.bead_id.clone());
         }
     }
     Ok(out)
 }
 
 fn refuse_in_delivery(w: &World, label: &str, c: &Ctx, path: &std::path::Path) -> Result<(), i32> {
-    let lc_on = super::lifecycle_on(w);
-    if lc_on {
-        super::require_lc(w, label)?;
-    }
-    match in_delivery(w, c, path, lc_on) {
+    super::require_lc(w, label)?;
+    match in_delivery(w, c, path) {
         Ok(v) if v.is_empty() => Ok(()),
         Ok(v) => {
             w.err(format!(

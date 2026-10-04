@@ -225,17 +225,6 @@ pub fn parse_bd_json(text: &str) -> Result<Vec<BeadRow>, String> {
     Ok(items.into_iter().filter_map(|i| serde_json::from_value(i).ok()).collect())
 }
 
-/// Pin the lifecycle switch into a step child's environment (queue-step-all.md). OFF is
-/// `SPIRA_LIFECYCLE_ENFORCE=0` and nothing else: spira-lc is invoked by name (sp-gypjk), so
-/// there is no path to poison, and binary presence is never the switch.
-fn lifecycle_env(c: &mut Command, lc_off: bool) {
-    if lc_off {
-        c.env("SPIRA_LIFECYCLE_ENFORCE", "0");
-    } else {
-        c.env("SPIRA_LIFECYCLE_ENFORCE", "1");
-    }
-}
-
 // ------------------------------------------------------------------------------- lib seam
 
 pub struct RealLib {
@@ -337,7 +326,6 @@ impl Lib for RealLib {
             home: PathBuf::from(g("home")),
             run: PathBuf::from(g("run")),
             queue_dir: PathBuf::from(g("queue_dir")),
-            landstate: PathBuf::from(g("landstate")),
             releases: pb(&g("releases")),
             forge: PathBuf::from(g("forge")),
             repo_map: pb(&g("repo_map")),
@@ -397,12 +385,6 @@ impl Lib for RealLib {
         let landref = spira_config::repos::landref(&reg, name).unwrap_or_default();
         (land, landref)
     }
-    /// landing-pass owns the landstate ledger's one writer now (sp-cnnt6, "wave 4.16"):
-    /// `landing-pass mark`, reading `$SPIRA_RUN` from this process's own environment —
-    /// never the lib.sh seam, which this family dropped.
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        let _ = Command::new("landing-pass").args(["mark", id, state, tip, reason]).status();
-    }
     fn bead_reopen(&self, id: &str, cause: &str, suites: &str) -> bool {
         self.call(Op::BeadReopen, &[id, cause, suites], false).0 == 0
     }
@@ -417,7 +399,7 @@ impl Lib for RealLib {
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare
-    /// name now, the same way `land_mark` shells to `landing-pass` — no lib.sh snippet
+    /// name now, like the other compiled tools — no lib.sh snippet
     /// backs this any more. stdout/stderr inherit straight through, exactly as the
     /// dropped seam call's own `capture: false` did.
     fn gh_issue_closeout(&self, id: &str, sha: &str, repo: &Path) {
@@ -559,13 +541,12 @@ impl Scripts for RealScripts {
         }
         let _ = child.wait();
     }
-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32 {
+    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32 {
         let mut c = Command::new(bin);
         c.arg("cut").arg(repo).arg("--home").arg(&self.home);
         if wait_zero {
             c.env("SPIRA_QUEUE_BATCH_WAIT", "0");
         }
-        lifecycle_env(&mut c, lc_off);
         c.stdin(Stdio::null()).status().ok().and_then(|s| s.code()).unwrap_or(127)
     }
     fn czar_fence(&self, class: &str) -> bool {
@@ -748,9 +729,25 @@ impl Lc for RealLc {
         let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
         serde_json::from_str::<serde_json::Value>(&out).map(|_| ()).map_err(|e| format!("spira-lc list: {e}"))
     }
-    fn in_delivery(&self) -> Result<Vec<LcBeadRow>, String> {
-        let out = self.stdout(&["list", "--state", "IN_DELIVERY"])?;
+    fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String> {
+        let out = match state {
+            Some(s) => self.stdout(&["list", "--state", s])?,
+            None => self.stdout(&["list"])?,
+        };
         serde_json::from_str(&out).map_err(|e| format!("spira-lc list: {e}"))
+    }
+    fn bead_row(&self, bead: &str) -> Option<LcBeadRow> {
+        let out = self.stdout(&["show", bead]).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&out).ok()?;
+        serde_json::from_value(v.get("bead")?.clone()).ok()
+    }
+    fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)> {
+        let (rc, out) = self.run(&["certify", bead, tip, "pass", detail, actor]);
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err((rc, out.trim().to_string()))
+        }
     }
 }
 
@@ -769,10 +766,6 @@ impl ConfigStore for RealConfig {
     fn set_repo_row(&self, toml: &Path, name: &str, mode: &str, base: &str) -> Result<(), String> {
         let (mk, bk) = (format!("repo.{name}.mode"), format!("repo.{name}.base"));
         spira_config::set_paths_in_file(toml, &[(&mk, mode), (&bk, base)])
-    }
-    fn lifecycle_enforce(&self, toml: Option<&Path>) -> bool {
-        let Some(p) = toml.filter(|p| p.is_file()) else { return false };
-        spira_config::load(p).ok().and_then(|d| d.spira).and_then(|s| s.lifecycle_enforce).unwrap_or(false)
     }
     fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String> {
         spira_config::legacy_map::set_row_in_file(map, name, land, base)
@@ -892,7 +885,7 @@ mod tests {
         let d = crate::testutil::tmpdir("reallib");
         fs::write(
             d.join("lib.sh"),
-            r#"SPIRA_RUN=/run/x; LANDSTATE=/run/x/landstate; SPIRA_RELEASES=; SPIRA_DB=/db
+            r#"SPIRA_RUN=/run/x; SPIRA_RELEASES=; SPIRA_DB=/db
 git() { printf 'origin\nupstream\n'; }
 land_subject() { echo "noise on stdout"; printf 'spira: land %s — T' "$1"; }
 rebase_branch() { REBASE_FAILURE=conflict; return 1; }
@@ -1070,24 +1063,6 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
     }
 
     #[test]
-    fn batcher_cut_carries_the_lifecycle_switch() {
-        // verdict runs in process now (DESIGN-verdict.md) and batch.sh is deleted
-        // (sp-uwhx0) — batcher_cut is the only remaining Scripts method that both spawns a
-        // child and takes lc_off, so it is the only one left to prove the switch on.
-        let _serial = crate::testutil::serial();
-        let d = crate::testutil::tmpdir("lc-env");
-        let rec = d.join("seen");
-        let bin = d.join("batcher");
-        testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf 'batcher %s %s\\n' \"$2\" \"${{SPIRA_LIFECYCLE_ENFORCE:-unset}}\" >> {}\n", rec.display()));
-        let s = RealScripts { home: d.to_path_buf() };
-        s.batcher_cut(&bin, "spira", false, true);
-        s.batcher_cut(&bin, "svc", false, false);
-        let seen = fs::read_to_string(&rec).unwrap();
-        let lines: Vec<&str> = seen.lines().collect();
-        assert_eq!(lines, ["batcher spira 0", "batcher svc 1"]);
-    }
-
-    #[test]
     fn batcher_cut_passes_home_explicitly() {
         let _serial = crate::testutil::serial();
         let d = crate::testutil::tmpdir("cut-home");
@@ -1096,7 +1071,7 @@ rebase_branch() { REBASE_FAILURE=conflict; return 1; }
         testkit::write_exe(&bin, &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n", rec.display()));
         let home = d.join("h");
         let s = RealScripts { home: home.clone() };
-        s.batcher_cut(&bin, "spira", false, false);
+        s.batcher_cut(&bin, "spira", false);
         assert_eq!(fs::read_to_string(&rec).unwrap().trim(), format!("cut spira --home {}", home.display()));
     }
 

@@ -92,30 +92,6 @@ pub fn render_members(ms: &[Member]) -> String {
     ms.iter().map(Member::render).collect::<Vec<_>>().join(" ")
 }
 
-/// One landstate record: `<STATE> <tip|none> <epoch> <reason…>` (lib.sh land_mark).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LandState {
-    pub state: String,
-    pub tip: String,
-    pub at: u64,
-    pub reason: String,
-}
-
-impl LandState {
-    pub fn parse(text: &str) -> Option<LandState> {
-        let line = text.replace('\n', "");
-        let mut it = line.splitn(4, ' ');
-        let state = it.next()?.to_string();
-        if state.is_empty() {
-            return None;
-        }
-        let tip = it.next().unwrap_or("").to_string();
-        let at = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let reason = it.next().unwrap_or("").trim().to_string();
-        Some(LandState { state, tip, at, reason })
-    }
-}
-
 /// Why an eject took a member out — the bd `reopen` cause row spira-claim classifies
 /// (spira-claim/DESIGN.md §3 ReturnClass). DESIGN.md §8 D1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -177,6 +153,16 @@ pub struct LcBeadRow {
     pub state: String,
     #[serde(default, deserialize_with = "opt_string_any")]
     pub tip: Option<String>,
+    #[serde(default, deserialize_with = "opt_u64_any")]
+    pub since: Option<u64>,
+}
+
+fn opt_u64_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    Ok(match serde_json::Value::deserialize(d)? {
+        serde_json::Value::Number(n) => n.as_u64(),
+        serde_json::Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    })
 }
 
 fn opt_string_any<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
@@ -207,15 +193,6 @@ mod tests {
         assert_eq!(m.len(), 3);
         assert_eq!(m[2], Member { id: "c".into(), tip: String::new() });
         assert_eq!(render_members(&m[..2]), "a:1 b:2");
-    }
-
-    #[test]
-    fn landstate_parses_no_newline_and_trailing_space() {
-        let l = LandState::parse("LANDED abc 1700000000 ").unwrap();
-        assert_eq!((l.state.as_str(), l.tip.as_str(), l.at, l.reason.as_str()), ("LANDED", "abc", 1700000000, ""));
-        let r = LandState::parse("RED abc 5 eject reason here").unwrap();
-        assert_eq!(r.reason, "eject reason here");
-        assert!(LandState::parse("").is_none());
     }
 
     #[test]

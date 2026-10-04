@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{actor, czar_ok, idents, lifecycle_on, require_lc, lock_held_by_caller, read_text, repo_path, resolve, take_lock, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, idents, require_lc, lock_held_by_caller, read_text, repo_path, resolve, take_lock, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::model::{LandMode, Member};
 use crate::records::{self, write_atomic};
@@ -132,8 +132,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
             Err(rc) => return rc,
         }
     };
-    let lc_on = lifecycle_on(w);
-    if lc_on && require_lc(w, "land-local").is_err() {
+    if require_lc(w, "land-local").is_err() {
         return FAIL;
     }
     let Some(base_sha) = w.git.rev_parse(&path, &base) else {
@@ -222,25 +221,12 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
     let _ = w.git.update_ref(&path, &archive, &head, None);
     let _ = write_atomic(&seqfile, &format!("{n}\n"));
 
-    let landed_reason = ungated.as_ref().map(|r| format!("ungated: {r}")).unwrap_or_default();
     for m in &ms {
-        w.lib.land_mark(&m.id, "LANDED", &m.tip, &landed_reason);
         w.lib.gh_issue_closeout(&m.id, &head, &path);
         w.lib.bead_close_on_land(&m.id, &head);
-        if ungated.is_some() {
-            // bead_close_on_land re-marks LANDED (at the head) with its own "Closed by
-            // landing pass" reason; the ungated reason must be the one that stays (§8 D12).
-            // Only the reason changes: the tip is whatever the record now holds, so publish
-            // (§8 D4) reads the same tip it would after a certified land.
-            let tip = records::land_state(&c.s.landstate, &m.id)
-                .filter(|st| st.state == "LANDED")
-                .map(|st| st.tip)
-                .unwrap_or_else(|| m.tip.clone());
-            w.lib.land_mark(&m.id, "LANDED", &tip, &landed_reason);
-        }
         w.out(format!("queue.sh land-local: {} landed at {head}", m.id));
     }
-    let lc_faults = if lc_on { ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count() } else { 0 };
+    let lc_faults = ms.iter().filter(|m| !lc_deliver(w, &path, &head, m)).count();
     // The landing is recorded; now publish its release (§8 D13). A fault never reverts the
     // ref or the records: it leaves `current` where it was and makes the exit non-zero.
     let outcome = plan.as_ref().map(|p| super::deploy::run(w, p, &head));
@@ -286,7 +272,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
 /// A landed member's walk on spira-lc: Deliver (CERTIFIED -> IN_DELIVERY) then Delivered
 /// (-> LANDED), from the row's own state and version. The landing is already recorded, so a
 /// refusal is reported, never undone; false when the member did not reach LANDED.
-fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
+pub fn lc_deliver(w: &World, path: &Path, head: &str, m: &Member) -> bool {
     let fail = |why: String| {
         w.err(format!("queue.sh land-local: spira-lc: {}: {why} — landed on the ref but not LANDED on spira-lc", m.id));
         false

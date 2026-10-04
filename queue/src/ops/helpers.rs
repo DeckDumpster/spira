@@ -16,24 +16,25 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::ports::{Divergence, Git};
-use crate::real::RealGit;
-use crate::records;
+use crate::ports::{Divergence, Git, Lc};
+use crate::real::{RealGit, RealLc};
 
-/// `queue_certified_list <repo-path>`: every `spira/*` branch whose landstate (under
-/// `$SPIRA_RUN/landstate`, read exactly as lib.sh addressed it) is CERTIFIED, as
-/// `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the reconciler's
-/// mergeability check, cockpit-collect's "next up" pane) draws from.
+/// `queue_certified_list <repo-path>`: every `spira/*` branch whose lifecycle row is
+/// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
+/// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
-    let run = std::env::var("SPIRA_RUN").unwrap_or_default();
-    let landstate = PathBuf::from(format!("{run}/landstate"));
+    let lc = RealLc { bin: Some(PathBuf::from("spira-lc")) };
+    certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/"))
+}
+
+/// The CERTIFIED rows whose bead has a `spira/<id>` branch among `branches`.
+pub fn certified_rows(lc: &dyn Lc, branches: &[(String, String)]) -> Vec<(String, String, u64)> {
+    let rows = lc.bead_rows(Some("CERTIFIED")).unwrap_or_default();
     let mut out = Vec::new();
-    for (branch, _) in RealGit.branches(repo, "refs/heads/spira/") {
+    for (branch, _) in branches {
         let Some(id) = branch.strip_prefix("spira/") else { continue };
-        if let Some(ls) = records::land_state(&landstate, id) {
-            if ls.state == "CERTIFIED" {
-                out.push((id.to_string(), ls.tip, ls.at));
-            }
+        if let Some(r) = rows.iter().find(|r| r.bead_id == id) {
+            out.push((id.to_string(), r.tip.clone().unwrap_or_default(), r.since.unwrap_or(0)));
         }
     }
     out

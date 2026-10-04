@@ -1,11 +1,11 @@
 //! The queue's own files (DESIGN.md §3, §4): the `open` and `publish` key=value records,
-//! `round-seq`, landstate records, and the atomic writer every one of them goes through.
+//! `round-seq`, and the atomic writer every one of them goes through.
 
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use crate::model::{LandState, Member};
+use crate::model::Member;
 
 /// An ordered `key=value` record. Order and unknown keys survive a rewrite; `get` returns
 /// the LAST occurrence of a key (grep | tail -1, as queue_batch_owner reads owner=) except
@@ -94,41 +94,6 @@ pub fn read_seq(path: &Path) -> u64 {
     fs::read_to_string(path).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0)
 }
 
-/// A landstate record for `id`, or None when absent/unreadable/empty.
-pub fn land_state(landstate: &Path, id: &str) -> Option<LandState> {
-    fs::read_to_string(landstate.join(id)).ok().and_then(|t| LandState::parse(&t))
-}
-
-/// Every landstate record (skipping sidecars `<id>.ejected*`, `.rc`, temp files).
-pub fn all_land_states(landstate: &Path) -> Result<Vec<(String, LandState)>, String> {
-    let rd = match fs::read_dir(landstate) {
-        Ok(rd) => rd,
-        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("{}: {e}", landstate.display())),
-    };
-    let mut out = Vec::new();
-    for ent in rd.flatten() {
-        let name = ent.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') || name.contains(".ejected") || name.ends_with(".rc") || name.contains(".gate-key") {
-            continue;
-        }
-        // land_mark's temp file is `<id>.<pid>`: a purely numeric last segment.
-        if let Some((_, ext)) = name.rsplit_once('.') {
-            if ext.len() > 2 && ext.chars().all(|c| c.is_ascii_digit()) {
-                continue;
-            }
-        }
-        if !ent.path().is_file() {
-            continue;
-        }
-        if let Some(ls) = fs::read_to_string(ent.path()).ok().and_then(|t| LandState::parse(&t)) {
-            out.push((name, ls));
-        }
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(out)
-}
-
 /// The open record rewritten for a claim: drop owner/pre_claim_owner/claim_reason, then
 /// append the claim's three keys (queue.sh cmd_claim).
 pub fn claim_rewrite(kv: &Kv, prev_owner: &str, reason: &str) -> Kv {
@@ -206,17 +171,5 @@ mod tests {
         assert_eq!(read_seq(&d.join("round-seq")), 0);
         fs::write(d.join("round-seq"), "7\n").unwrap();
         assert_eq!(read_seq(&d.join("round-seq")), 7);
-    }
-
-    #[test]
-    fn landstate_listing_skips_sidecars_and_temps() {
-        let d = tmpdir("ls");
-        fs::write(d.join("sp-a"), "LANDED t1 5 ").unwrap();
-        fs::write(d.join("sp-s088v.5"), "BATCHED t2 5 ").unwrap();
-        fs::write(d.join("sp-a.ejected"), "x").unwrap();
-        fs::write(d.join("sp-b.12345"), "LANDED t 5").unwrap();
-        let all = all_land_states(&d).unwrap();
-        let ids: Vec<_> = all.iter().map(|(i, _)| i.as_str()).collect();
-        assert_eq!(ids, vec!["sp-a", "sp-s088v.5"]);
     }
 }

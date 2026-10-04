@@ -14,7 +14,6 @@ pub struct Settings {
     pub home: PathBuf,
     pub run: PathBuf,
     pub queue_dir: PathBuf,
-    pub landstate: PathBuf,
     pub releases: Option<PathBuf>,
     pub forge: PathBuf,
     pub repo_map: Option<PathBuf>,
@@ -138,7 +137,6 @@ pub trait Lib {
     fn toml_path(&self) -> Option<PathBuf>;
     /// R20: `repo_land` and `spira_landref` read back after a transition's write.
     fn readback(&self, name: &str) -> (String, String);
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn bead_reopen(&self, id: &str, cause: &str, suites: &str) -> bool;
     fn cause_event(&self, id: &str, cause: &str);
     fn release_claim(&self, id: &str);
@@ -174,8 +172,6 @@ pub trait Lib {
 pub trait Scripts {
     /// `gate.sh <branch> <repo>` with SPIRA_GATE_BEAD / SPIRA_GATE_SUITES: (rc, output).
     fn gate(&self, branch: &str, repo: &str, bead: &str, suites: &str) -> (i32, String);
-    /// `lc_off`: lifecycle_enforce is OFF — the child must not reach spira-lc (real.rs pins
-    /// `SPIRA_LIFECYCLE_ENFORCE=0`, the one switch every child reads).
     /// `batcher judgement-ci <repo> --suites CSV --members CSV --evidence T --home --run --db`,
     /// stdout and stderr combined (the verdict reads `id=` off it).
     fn judgement_ci(&self, bin: &Path, s: &Settings, repo: &str, suites: &str, members: &str, evidence: &str) -> RunOut;
@@ -183,7 +179,7 @@ pub trait Scripts {
     fn observe_flake(&self, suite: &str, sha: &str);
     /// `mail send operator --from "Spira Queue <queue@spira>" --subject S`, body on stdin.
     fn mail_operator(&self, subject: &str, body: &str);
-    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool, lc_off: bool) -> i32;
+    fn batcher_cut(&self, bin: &Path, repo: &str, wait_zero: bool) -> i32;
     fn czar_fence(&self, class: &str) -> bool;
     /// `<bin> <args…>` — the release producer. `bin` is resolved by the caller
     /// (`deploy::release_bin`, §8 D14): the round's own `<bins>/release` when it exists,
@@ -241,8 +237,12 @@ pub trait Lc {
     fn land_batch(&self, batch_id: &str, version: &str, actor: &str, sha: &str) -> Result<(), (i32, String)>;
     /// A reachability probe (one read against the lifecycle database). Err names why.
     fn probe(&self) -> Result<(), String>;
-    /// `list --state IN_DELIVERY`. Err = cannot tell.
-    fn in_delivery(&self) -> Result<Vec<LcBeadRow>, String>;
+    /// `list [--state S]`: every bead row (with `since`). Err = cannot tell.
+    fn bead_rows(&self, state: Option<&str>) -> Result<Vec<LcBeadRow>, String>;
+    /// `show <bead>` → the bead row; None when it has no row or the machine cannot say.
+    fn bead_row(&self, bead: &str) -> Option<LcBeadRow>;
+    /// `certify <bead> <tip> pass <detail> <actor>`: record a gate pass at `tip`.
+    fn certify(&self, bead: &str, tip: &str, detail: &str, actor: &str) -> Result<(), (i32, String)>;
 }
 
 /// The config documents, through the spira-config library only
@@ -252,8 +252,6 @@ pub trait ConfigStore {
     fn repo_row(&self, toml: &Path, name: &str) -> Result<(String, String), String>;
     /// Write `[repo.<name>] mode` and `base` (validated, atomic).
     fn set_repo_row(&self, toml: &Path, name: &str, mode: &str, base: &str) -> Result<(), String>;
-    /// `spira.lifecycle_enforce` from the resolved document; false when absent/unreadable.
-    fn lifecycle_enforce(&self, toml: Option<&Path>) -> bool;
     /// The legacy map's land/base columns for `name` (spira_config::legacy_map), atomic.
     fn set_legacy_map_row(&self, map: &Path, name: &str, land: &str, base: &str) -> Result<(), String>;
 }
