@@ -106,6 +106,8 @@ pub trait World {
     fn mkdir_p(&self, p: &Path);
 
     // ---- escalate's once-per-condition-per-run stamp ----
+    /// True while another process holds the repo's queue lock (a land-local mid-activation).
+    fn queue_lock_held(&self, repo_name: &str) -> bool;
     fn stamp_read(&self, key: &str) -> Option<String>;
     fn stamp_write(&self, key: &str, val: &str);
 

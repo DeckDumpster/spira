@@ -1350,6 +1350,7 @@ dependencies = [
 name = "skew"
 version = "1.0.0"
 dependencies = [
+ "libc",
  "spira-config",
 ]
 

@@ -872,6 +872,13 @@ fn refresh_check_only(w: &dyn World, repo: &Path, name: &str) -> i32 {
         return 0;
     }
 
+    if w.queue_lock_held(name) {
+        w.out(&format!(
+            "skew: refresh: queue.local — running ({running}) differs from {base} but the queue lock is held; a land-local in flight, not skew"
+        ));
+        return 0;
+    }
+
     let finding = format!(
         "LOCAL-SKEW running {running} does not match {base} ({base_sha}) — queue.local deploys only through queue land-local; refresh never resets it"
     );

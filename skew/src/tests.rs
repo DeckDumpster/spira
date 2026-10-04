@@ -55,6 +55,7 @@ pub struct Fake {
     pub harness_dirs_ref: RefCell<BTreeMap<String, Vec<String>>>, // key "<repo>|<ref>"
     pub harness_dirs_wd: RefCell<BTreeMap<String, Vec<String>>>,  // key "<repo>"
     pub now: RefCell<String>,
+    pub queue_locked: RefCell<bool>,
 }
 
 impl Fake {
@@ -210,6 +211,9 @@ impl World for Fake {
         self.removed.borrow_mut().push(p.to_path_buf());
     }
     fn mkdir_p(&self, _p: &Path) {}
+    fn queue_lock_held(&self, _repo_name: &str) -> bool {
+        *self.queue_locked.borrow()
+    }
     fn stamp_read(&self, key: &str) -> Option<String> {
         self.stamps.borrow().get(key).cloned()
     }
@@ -649,6 +653,24 @@ fn refresh_queue_local_mismatch_escalates_local_skew() {
     assert_eq!(rc, 1);
     assert!(f.stdout_joined().contains("LOCAL-SKEW"));
     assert_eq!(f.mail_calls.borrow().len(), 1);
+}
+
+#[test]
+fn refresh_queue_local_mismatch_during_a_land_local_does_not_escalate() {
+    let f = Fake::default();
+    f.set_env("SPIRA_REPO", "/repo");
+    *f.home_repo.borrow_mut() = "home".into();
+    f.repo_roots.borrow_mut().insert("home".into(), PathBuf::from("/repo"));
+    f.repo_lands.borrow_mut().insert("home".into(), "queue.local".into());
+    f.git_repos.borrow_mut().push(PathBuf::from("/repo"));
+    f.landrefs.borrow_mut().insert("home".into(), "local/main".into());
+    f.rev_parse.borrow_mut().insert("/repo|local/main".into(), "tip".into());
+    f.rev_parse.borrow_mut().insert("/repo|HEAD".into(), "stale".into());
+    *f.queue_locked.borrow_mut() = true;
+
+    assert_eq!(refresh(&f, None), 0);
+    assert!(f.stdout_joined().contains("land-local in flight"));
+    assert!(f.mail_calls.borrow().is_empty());
 }
 
 #[test]
