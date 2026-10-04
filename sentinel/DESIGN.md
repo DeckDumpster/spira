@@ -185,7 +185,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
   TimeoutStartSec=900. The live drop-in sets
-  `Environment=SPIRA_SKIP_CLOSED_CHECK=1`.
+  `Environment=SPIRA_SKIP_CLOSED_CHECK=1`; the key is also a resolved config key (`spira/conf.d/SPIRA_SKIP_CLOSED_CHECK`), so the config file carries it across a unit re-render.
 - `spira-summon[-<inst>].timer` → `.service` runs `sentinel --summon-only` every 15 s.
   TimeoutStartSec=60.
 - Every aeon unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
