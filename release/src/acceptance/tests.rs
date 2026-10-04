@@ -678,3 +678,18 @@ fn phase_a_bootstrap_conf_sets_id_prefix() {
     let doc = spira_config::SpiraToml { spira: Some(section), repo: Default::default(), persona: Default::default() };
     assert!(spira_config::require_id_prefix(&doc).is_ok(), "the converted document must pass the same check doctor/pre-activate run");
 }
+
+#[test]
+fn lifecycle_states_reads_the_store_s_real_history_shape() {
+    // As production's spira-lc history prints it (2026-10-04): applied is the string "1",
+    // the row's READY is only the first event's from_state, and refused events repeat.
+    let h = r#"[{"from_state":"READY","to_state":"WORKING","applied":"1"},
+        {"from_state":"WORKING","to_state":"SUBMITTED","applied":"1"},
+        {"from_state":"SUBMITTED","to_state":"SUBMITTED","applied":"0"},
+        {"from_state":"SUBMITTED","to_state":"CERTIFIED","applied":"1"},
+        {"from_state":"CERTIFIED","to_state":"LANDED","applied":"1"}]"#;
+    let got = crate::acceptance::lifecycle_states(h);
+    assert_eq!(got, vec!["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"]);
+    assert_eq!(crate::acceptance::missing_in_order(&crate::acceptance::expected_lifecycle("push"), &got), None);
+    assert!(crate::acceptance::lifecycle_states(r#"[{"from_state":"READY","to_state":"WORKING","applied":"0"}]"#).is_empty(), "nothing applied, nothing passed through");
+}

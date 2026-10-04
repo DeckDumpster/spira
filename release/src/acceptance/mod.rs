@@ -367,15 +367,30 @@ pub fn ready_has(ready_json: &str, id: &str) -> bool {
     bd_json(ready_json).is_some_and(|v| v.iter().any(|b| b.get("id").and_then(|x| x.as_str()) == Some(id)))
 }
 
-/// The applied `to_state` values of `spira-lc history <id>`, in event order, consecutive
-/// repeats collapsed. Unreadable is empty.
+/// The states a bead passed through per `spira-lc history <id>`: the first applied event's
+/// `from_state`, then every applied event's `to_state`, consecutive repeats collapsed.
+/// Unreadable is empty. A bead's row is created READY without an event, so READY is only
+/// ever a `from_state`; and the store returns `applied` as the string "1" — reading only
+/// `to_state` and only a numeric 1 made this empty for every real history (sp-6ka75).
 pub fn lifecycle_states(history_json: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for e in bd_json(history_json).unwrap_or_default() {
-        let applied = e.get("applied").is_some_and(|a| a.as_i64() == Some(1) || a.as_bool() == Some(true));
-        let Some(s) = e.get("to_state").and_then(|s| s.as_str()).filter(|_| applied) else { continue };
+    fn push(out: &mut Vec<String>, s: &str) {
         if out.last().map(String::as_str) != Some(s) {
             out.push(s.to_string());
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for e in bd_json(history_json).unwrap_or_default() {
+        let applied = e.get("applied").is_some_and(|a| {
+            a.as_i64() == Some(1) || a.as_bool() == Some(true) || a.as_str().is_some_and(|x| x == "1" || x == "true")
+        });
+        if !applied {
+            continue;
+        }
+        if let (true, Some(f)) = (out.is_empty(), e.get("from_state").and_then(|s| s.as_str())) {
+            push(&mut out, f);
+        }
+        if let Some(s) = e.get("to_state").and_then(|s| s.as_str()) {
+            push(&mut out, s);
         }
     }
     out
