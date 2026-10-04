@@ -7,6 +7,7 @@
 //!   sending --status-from <f>   read `id<TAB>status` from a file instead of bd (tests)
 //!   sending --skip-queue        every repository EXCEPT queue/queue.local ones (the sentinel)
 //!   sending --queue-only        ONLY queue/queue.local repositories (the straggler sweep)
+//!   sending --budget-secs <n>   stop after n seconds, exit 0, leave the rest for the next pass
 //!   sending --no-fetch          judge against the base refs as they stand
 //!
 //! Exit 0 when nothing failed, 1 when a deletion failed, 2 on a usage or context error.
@@ -281,6 +282,6 @@ fn main() {
         }
     };
     let label = w.submitted_label.clone();
-    let mut s = Sweep { w: &w, opts, submitted_label: label, tally: Default::default() };
+    let mut s = Sweep { w: &w, opts, submitted_label: label, tally: Default::default(), deadline: None, truncated: false };
     std::process::exit(s.run(&repos));
 }

@@ -2,6 +2,7 @@
 //! only a branch whose every change the base already holds is ever deleted.
 
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -25,6 +26,9 @@ pub struct Opts {
     /// One bead id or branch; None sweeps every branch (and PASS 2).
     pub only: Option<String>,
     pub scope: Scope,
+    /// Wall-clock allowance for one invocation; spent, the sweep stops and exits 0 with the
+    /// remainder for the next tick (law-calls-have-deadlines).
+    pub budget: Option<Duration>,
 }
 
 /// One branch's disposition: what may happen to it, and why. Decided by reading only —
@@ -145,6 +149,8 @@ pub struct Sweep<'a> {
     pub opts: Opts,
     pub submitted_label: String,
     pub tally: Tally,
+    pub deadline: Option<Instant>,
+    pub truncated: bool,
 }
 
 fn q(n: Option<u64>) -> String {
@@ -155,7 +161,11 @@ impl<'a> Sweep<'a> {
     /// The whole invocation: every repository in scope, then the tally line. Returns the
     /// exit status (0 when nothing failed).
     pub fn run(&mut self, repos: &[Repo]) -> i32 {
+        self.deadline = self.opts.budget.map(|b| Instant::now() + b);
         for r in repos {
+            if self.out_of_time() {
+                break;
+            }
             match self.opts.scope {
                 Scope::SkipQueue if r.queued => continue,
                 Scope::QueueOnly if !r.queued => continue,
@@ -167,6 +177,17 @@ impl<'a> Sweep<'a> {
             self.w.log(&format!("sending: {} sent, {} failed", self.tally.sent, self.tally.failed));
         }
         i32::from(self.tally.failed != 0)
+    }
+
+    fn out_of_time(&mut self) -> bool {
+        if self.deadline.is_some_and(|d| Instant::now() >= d) {
+            if !self.truncated {
+                self.truncated = true;
+                self.w.log("sending: time budget spent — remaining branches and worktrees wait for the next pass");
+            }
+            return true;
+        }
+        false
     }
 
     fn say(&self, s: &str) {
@@ -205,6 +226,9 @@ impl<'a> Sweep<'a> {
 
         // PASS 1 — every spira/* branch, exactly one disposition.
         for br in &brs {
+            if self.out_of_time() {
+                break;
+            }
             let id = br.strip_prefix("spira/").unwrap_or(br);
             if let Some(only) = self.opts.only.as_deref() {
                 if only != id && only != br {
@@ -231,6 +255,9 @@ impl<'a> Sweep<'a> {
         for (w, br) in g.worktrees() {
             if !w.starts_with(&wts) || w == wts {
                 continue;
+            }
+            if self.out_of_time() {
+                break;
             }
             let Some(base_name) = w.file_name().map(|n| n.to_string_lossy().into_owned()) else { continue };
             if base_name.starts_with('.') {
