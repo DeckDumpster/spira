@@ -938,56 +938,6 @@ fn observe_queue_lock_age(cfg: &Config) -> Vec<Check> {
     checks
 }
 
-/// Beads whose landstate is CERTIFIED at a tip the lifecycle does not show CERTIFIED at the same tip.
-fn observe_certified_lifecycle(cfg: &Config) -> Vec<Check> {
-    if !cfg.lifecycle_enforce {
-        return Vec::new();
-    }
-    let certified: Vec<(String, String)> = fs::read_dir(cfg.spira_run.join("landstate"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|e| {
-            let id = e.file_name().to_string_lossy().into_owned();
-            let body = fs::read_to_string(e.path()).ok()?;
-            let mut w = body.lines().next()?.split_whitespace();
-            (w.next()? == "CERTIFIED").then(|| (id, w.next().unwrap_or("").to_string()))
-        })
-        .collect();
-    if certified.is_empty() {
-        return Vec::new();
-    }
-    let out = run_cmd(&cfg.lc_bin, &["list", "--state", "CERTIFIED"]);
-    let rows = match serde_json::from_str::<serde_json::Value>(&out) {
-        Ok(serde_json::Value::Array(rows)) => rows,
-        _ => {
-            return vec![Check {
-                key: "certified-lifecycle".into(),
-                raw: RawStatus::Unobservable { reason: "spira-lc list --state CERTIFIED unreadable".into() },
-                remedy: Remedy::Escalate,
-            }]
-        }
-    };
-    let held: std::collections::HashMap<&str, &str> = rows
-        .iter()
-        .filter_map(|r| Some((r.get("bead_id")?.as_str()?, r.get("tip")?.as_str()?)))
-        .collect();
-    certified
-        .into_iter()
-        .map(|(id, tip)| {
-            let raw = match held.get(id.as_str()) {
-                Some(t) if *t == tip => RawStatus::Satisfied,
-                other => RawStatus::Gap {
-                    desired: format!("lifecycle CERTIFIED at {tip}"),
-                    observed: other.map_or("no lifecycle CERTIFIED".into(), |t| format!("lifecycle CERTIFIED at {t}")),
-                    since_hint: None,
-                },
-            };
-            Check { key: format!("certified-lifecycle:{id}"), raw, remedy: Remedy::Escalate }
-        })
-        .collect()
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // evaluate: run one Check through the pure engine, act on the verdict.
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1109,7 +1059,6 @@ fn run_pass() -> Result<(), String> {
     checks.extend(observe_disk(&cfg));
     checks.extend(observe_queue_mergeable(&cfg));
     checks.extend(observe_queue_lock_age(&cfg));
-    checks.extend(observe_certified_lifecycle(&cfg));
 
     let n = checks.len();
     for check in checks {
@@ -1284,39 +1233,6 @@ mod tests {
         });
         assert!(!marker.exists(), "a remedy that did not close its gap must not be retried blind");
         assert!(escalated.exists(), "a remedy that did not close its gap must escalate on the next pass");
-    }
-
-    #[test]
-    fn certified_landstate_without_a_matching_lifecycle_certified_is_a_gap() {
-        let dir = scratch_dir("certified-lifecycle");
-        fs::create_dir_all(dir.join("landstate")).unwrap();
-        for (id, body) in [("sp-ok", "CERTIFIED aaa 5"), ("sp-none", "CERTIFIED bbb 5"), ("sp-moved", "CERTIFIED ccc 5"), ("sp-red", "RED ddd 5")] {
-            fs::write(dir.join("landstate").join(id), format!("{body}\n")).unwrap();
-        }
-        let lc = dir.join("fake-lc");
-        testkit::write_exe(
-            &lc,
-            "#!/usr/bin/env bash\necho '[{\"bead_id\":\"sp-ok\",\"tip\":\"aaa\"},{\"bead_id\":\"sp-moved\",\"tip\":\"zzz\"}]'\n",
-        );
-        let cfg = Config {
-            spira_run: dir.to_path_buf(),
-            lc_bin: lc.to_string_lossy().to_string(),
-            lifecycle_enforce: true,
-            ..test_config()
-        };
-        let gap = |c: &Check| matches!(c.raw, RawStatus::Gap { .. });
-        let mut got: Vec<(String, bool)> = observe_certified_lifecycle(&cfg).iter().map(|c| (c.key.clone(), gap(c))).collect();
-        got.sort();
-        assert_eq!(
-            got,
-            vec![
-                ("certified-lifecycle:sp-moved".to_string(), true),
-                ("certified-lifecycle:sp-none".to_string(), true),
-                ("certified-lifecycle:sp-ok".to_string(), false),
-            ]
-        );
-        let off = Config { lifecycle_enforce: false, ..test_config_from(&cfg) };
-        assert!(observe_certified_lifecycle(&off).is_empty());
     }
 
     #[test]
