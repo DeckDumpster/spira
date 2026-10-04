@@ -32,6 +32,13 @@ pub struct Inputs {
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
     pub sccache_dav_addr_set: bool,
+    /// The resolved `SPIRA_REPO` (`bootstrap::units_repo`'s own choice: the repo map's
+    /// home-repo root when that is a git checkout, else the release directory) is itself a
+    /// git checkout. The cert-sweep units run `git rev-parse --repo` at every tick; a fresh
+    /// install with no mapped harness checkout resolves `--repo` to the release directory,
+    /// which has no `.git`, so both units failed every run with "not a git repository"
+    /// (sp-8lztt). False on a fresh install with no harness checkout mapped.
+    pub repo_is_git_checkout: bool,
     /// The root installer's `--system-user` phase has installed the SYSTEM spira-lc unit
     /// (`spira_config::resolve::lc_system_mode`). Off is same-user mode, the default: this
     /// manifest then installs the operator's own `lc-serve.service` (sp-xfqnr).
@@ -44,7 +51,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -84,10 +91,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-watchtower.timer", true));
     m.units.push(t("spira-skew.service", false));
     m.units.push(t("spira-skew.timer", true));
-    m.units.push(t("spira-cert-sweep-full.service", false));
-    m.units.push(t("spira-cert-sweep-full.timer", true));
-    m.units.push(t("spira-cert-sweep-sample.service", false));
-    m.units.push(t("spira-cert-sweep-sample.timer", true));
     m.units.push(t("spira-archivist.service", false));
     m.units.push(t("spira-archivist.timer", true));
     m.units.push(t("spira-czar-pass.service", false));
@@ -201,6 +204,27 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.notes.push("Set it in spira.conf (this box's own LAN address, e.g. 192.168.1.56:9431) and re-run install.".into());
     }
 
+    // spira-cert-sweep-{full,sample}: both run `git rev-parse --repo` against the resolved
+    // `SPIRA_REPO` on every tick. A fresh install with no harness checkout mapped
+    // (`SPIRA_REPO_MAP`) resolves `--repo` to the release directory, which has no `.git`, so
+    // both units exited 2 on every run with "not a git repository" and acceptance phase B
+    // refused on them (sp-8lztt) — the same shape as sp-7i16g/sp-b2jsl's render-time fix,
+    // which only helps boxes that DO have a mapped checkout. Declined like
+    // sccache-dav.service until one exists; an inert unit that would run forever is noise.
+    if inputs.repo_is_git_checkout {
+        m.units.push(t("spira-cert-sweep-full.service", false));
+        m.units.push(t("spira-cert-sweep-full.timer", true));
+        m.units.push(t("spira-cert-sweep-sample.service", false));
+        m.units.push(t("spira-cert-sweep-sample.timer", true));
+    } else {
+        m.optional.push("spira-cert-sweep-full.service".into());
+        m.optional.push("spira-cert-sweep-full.timer".into());
+        m.optional.push("spira-cert-sweep-sample.service".into());
+        m.optional.push("spira-cert-sweep-sample.timer".into());
+        m.notes.push("SPIRA_REPO is not a git checkout — not installing the cert-sweep units.".into());
+        m.notes.push("Map a real harness checkout (SPIRA_REPO_MAP) and re-run install to enable continuous certification.".into());
+    }
+
     m.units.push(t("spira-broker.service", false));
     m.units.push(t("spira-broker.timer", inputs.broker_enable));
 
@@ -287,6 +311,7 @@ mod tests {
             broker_enable: false,
             inotify_present: true,
             sccache_dav_addr_set: false,
+            repo_is_git_checkout: true,
             lc_system_mode: false,
             watch_names: Ok(vec!["testview".into(), "notify".into()]),
         }
@@ -309,6 +334,33 @@ mod tests {
         let u = m2.units.iter().find(|u| u.name == "sccache-dav.service").expect("installed once the address is set");
         assert!(u.enable, "a plain long-running service, enabled like spira-loom.service");
         assert!(!m2.optional.contains(&"sccache-dav.service".to_string()));
+    }
+
+    /// sp-8lztt: on a fresh install with no harness checkout mapped, the resolved
+    /// `SPIRA_REPO` is the release directory, which has no `.git` — both cert-sweep units
+    /// then run `git rev-parse --repo` against a non-repository on every tick and fail.
+    /// They must be declined (like `sccache-dav.service`, `dolt-beads.service`) rather than
+    /// installed when `repo_is_git_checkout` is false; this must fail against manifest.rs
+    /// before this bead, which installs them unconditionally.
+    #[test]
+    fn cert_sweep_units_are_installed_only_when_the_repo_is_a_git_checkout() {
+        let cert_sweep_names = ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer"];
+
+        let m = build(&inputs()).unwrap();
+        for n in cert_sweep_names {
+            assert!(m.units.iter().any(|u| u.name == n), "a mapped git checkout: {n} is installed");
+            assert!(!m.optional.contains(&n.to_string()));
+        }
+
+        let mut i = inputs();
+        i.repo_is_git_checkout = false;
+        let m2 = build(&i).unwrap();
+        for n in cert_sweep_names {
+            assert!(!m2.units.iter().any(|u| u.name == n), "no git checkout: {n} must not be installed");
+            assert!(m2.optional.contains(&n.to_string()), "{n} must be declared optional, not just absent");
+        }
+        assert!(m2.notes.iter().any(|n| n.contains("SPIRA_REPO") && n.contains("git checkout")), "{:?}", m2.notes);
+        assert!(m2.unlisted(cert_sweep_names).is_empty(), "declined units must never be UNLISTED");
     }
 
     /// sp-xfqnr: same-user mode (no --system-user) installs and enables the operator's own

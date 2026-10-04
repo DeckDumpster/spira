@@ -187,6 +187,17 @@ closed on its own confusion: an init failure is the caller's job to distinguish 
 skew.sh itself documented is gate's own responsibility now, at the `gate` crate's call
 site, not `skew`'s — `skew`'s own exit code is faithful either way).
 
+**NOT APPLICABLE is exit 0, not exit 3** (sp-wecsq). `check`'s forge-tag branch (release
+mode, not `queue.local`) answers MANIFEST-MISMATCH by resolving a release tag to the commit
+it points at, which needs a real git checkout of the harness at `SPIRA_REPO` — a
+release-only install (no `repo:spira` row; the installed Spira is read-only by design, §1)
+never has one. That is not this box's version of "could not check this time" (CANNOT-VERIFY,
+a real tag lookup that came up empty); the facts the question needs cannot exist on this
+kind of install at all, so `check` says so on stdout and exits 0, before ever calling
+`resolve_all_tags`. Release acceptance phase B's fresh install has exactly this shape; before
+this fix `spira-skew-prod.service` exited 3 on every run there, forever, which `check_oneshots`
+(release crate) correctly refused to accept as the unit "starting clean."
+
 ## 8. Test strategy
 
 Unit tests (33, `cargo test -p skew`) cover every subcommand's branches against a `Fake`.

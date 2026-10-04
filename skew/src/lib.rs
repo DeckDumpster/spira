@@ -207,6 +207,28 @@ pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
 
     let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
     let repo_path = PathBuf::from(&spira_repo);
+
+    // NOT APPLICABLE, NOT CANNOT-CHECK: this branch's own job (MANIFEST-MISMATCH) can only
+    // be answered by resolving a release tag to the commit it points at, which needs a real
+    // git checkout of the harness at SPIRA_REPO — `resolve_all_tags` can list tag NAMES from
+    // a local tarball directory or `gh release list` with no checkout at all, but turning a
+    // name into a commit always calls `rev_parse` against THIS path. A release-only install
+    // (no repo:spira in the map, so home_repo() resolves to nothing and queue.local above
+    // never matches, and SPIRA_REPO is never rendered into this unit's own Environment=
+    // either, see spira-skew.service) has no such checkout BY DESIGN — "the installed Spira
+    // is read-only" (DESIGN.md §1) — so this is not a box where the question is
+    // unexpectedly unanswerable (CANNOT-VERIFY, exit 3), it is a box the question does not
+    // apply to at all: exit 0, named on stdout, same as `check_local`'s own "in effect" line.
+    // Caught live by release acceptance phase B, whose fresh install has exactly this shape
+    // (sp-wecsq) — every run exited 3 forever, not a transient "could not check" this once.
+    if !w.is_git_repo(&repo_path) {
+        w.out(&format!(
+            "skew: not applicable — no harness checkout at SPIRA_REPO ({}); this box runs an installed release only, so release-tag currency against a git checkout cannot be asked here",
+            repo_path.display()
+        ));
+        return EXIT_OK;
+    }
+
     let all_tags = match resolve_all_tags(w, &repo_path) {
         Ok(t) => t,
         Err(code) => return code,
