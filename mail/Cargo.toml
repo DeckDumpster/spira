@@ -11,6 +11,7 @@ sha2 = "0.10"
 libc = "0.2"
 regex = "1"
 spira-config = { path = "../spira-config" }
+bead = { path = "../bead" }
 
 [[bin]]
 name = "mail"

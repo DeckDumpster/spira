@@ -38,8 +38,10 @@ pub fn tidy(
     }
 
     let ask_ids: HashSet<String> = bead::open_ask_ids(bd, ask_label)?.into_iter().collect();
-    if ask_ids.is_empty() && !bead::probe_store(bd) {
-        return Err("positive control failed — bead store unreadable; refusing to move any mail".to_string());
+    if ask_ids.is_empty() {
+        if let Err(out) = bead::probe_store(bd) {
+            return Err(format!("positive control failed {} — bead store unreadable; refusing to move any mail", bead::bd_failure_detail(&out)));
+        }
     }
 
     let inbox_dir = mail_root.join(mailbox);
@@ -178,6 +180,16 @@ mod tests {
         let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(1, "down")]);
         let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
         assert!(err.contains("positive control"), "{err}");
+    }
+
+    #[test]
+    fn positive_control_failure_names_bds_exit_code_and_stderr() {
+        let d = testkit::TempDir::new("mail-tidy");
+        setup(d.path(), "operator");
+        let bd = FakeBd::new(vec![BdOut::ok("[]"), BdOut::fail(3, "Error 1045: Access denied for user 'spira_lc'")]);
+        let err = tidy(&bd, true, d.path(), "operator", "asks", 3600, "sp", false).unwrap_err();
+        assert!(err.contains("bd exit 3"), "{err}");
+        assert!(err.contains("Access denied for user 'spira_lc'"), "{err}");
     }
 
     #[test]

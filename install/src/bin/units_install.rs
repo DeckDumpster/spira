@@ -99,8 +99,10 @@ fn main() -> ExitCode {
                 for inotify in [false, true] {
                     for sccache in [false, true] {
                         for lc_system in [false, true] {
-                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
-                                union.extend(m.optional);
+                            for repo_git in [false, true] {
+                                if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                                    union.extend(m.optional);
+                                }
                             }
                         }
                     }
@@ -122,14 +124,16 @@ fn main() -> ExitCode {
                 for inotify in [false, true] {
                     for broker in [false, true] {
                         for (sccache, lc_system) in [(false, false), (false, true), (true, false), (true, true)] {
-                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
-                                for u in &m.units {
-                                    units.insert(u.name.clone());
-                                    if u.enable {
-                                        enable.insert(u.name.clone());
+                            for repo_git in [false, true] {
+                                if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                                    for u in &m.units {
+                                        units.insert(u.name.clone());
+                                        if u.enable {
+                                            enable.insert(u.name.clone());
+                                        }
                                     }
+                                    optional.extend(m.optional);
                                 }
-                                optional.extend(m.optional);
                             }
                         }
                     }
