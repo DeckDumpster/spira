@@ -3,7 +3,6 @@
 //!   landing-pass --pass      pr mode (spira-landing-pass.timer)
 //!   landing-pass land        push, hold, queue, queue.local (CHECK 6's worker)
 //!   landing-pass halt [--reason T | --reason-file F|-] [--dry-run]
-//!   landing-pass sweep-red
 //!   landing-pass noverdict <id> <branch> <repo> <reason> <outcome>
 //!                            `spira_land_noverdict` alone, gate output on stdin (sp-31hjr;
 //!                            the real-sender suites' way in, no whole pass)
@@ -26,7 +25,7 @@ use landing_pass::pr::{PrPass, RealPrTools};
 use landing_pass::real::{load_context, RealBeads, RealClock, RealGit, RealLib, RealProcs, RealTools, SeamRunner};
 use landing_pass::records::Files;
 use landing_pass::report::Reporter;
-use landing_pass::lifecycle::{lifecycle_on, pin_for_children, RealLc};
+use landing_pass::lifecycle::{pin_for_children, RealLc};
 use landing_pass::{signals, util};
 use std::cell::Cell;
 use std::collections::BTreeMap;
@@ -53,7 +52,6 @@ fn main() -> ExitCode {
         Cmd::Pr => pr(),
         Cmd::Land => land(),
         Cmd::Halt { reason, dry_run } => halt_cmd(reason, dry_run),
-        Cmd::SweepRed => sweep_red(),
         Cmd::Noverdict { id, branch, repo, reason, outcome } => noverdict_cmd(&id, &branch, &repo, &reason, &outcome),
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
         Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
@@ -132,11 +130,8 @@ fn pr() -> i32 {
         out.log("landing-pass: repository map is not configured or unreadable — refusing to run");
         return 1;
     }
-    s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
-    pin_for_children(s.lifecycle_enforce);
-    if !s.lifecycle_enforce {
-        s.lc_bin = None;
-    }
+    s.lifecycle_enforce = true;
+    pin_for_children(true);
     let beads = RealBeads {
         home: s.home.clone(),
         db: s.db.clone(),
@@ -186,12 +181,9 @@ fn land() -> i32 {
             return 1;
         }
     };
-    s.lifecycle_enforce = lifecycle_on(s.toml.as_deref());
+    s.lifecycle_enforce = true;
     // Before the signal thread exists: the environment is only ever set single-threaded.
-    pin_for_children(s.lifecycle_enforce);
-    if !s.lifecycle_enforce {
-        s.lc_bin = None;
-    }
+    pin_for_children(true);
     let files = Files::new(&s.run);
     let _lock = match try_lock(&files.lock()) {
         Ok(Some(l)) => l,
@@ -361,26 +353,6 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
     lib.ask_rebase_loop(&refs);
     0
-}
-
-fn sweep_red() -> i32 {
-    let quiet = Reporter::capture(None);
-    let run = home()
-        .and_then(|h| load_context(&h, &quiet).ok())
-        .map(|(s, _)| s.run)
-        .or_else(|| std::env::var_os("SPIRA_RUN").map(PathBuf::from));
-    let Some(run) = run else {
-        eprintln!("sweep-red: cannot resolve SPIRA_RUN");
-        return 1;
-    };
-    let (rc, out, err) = halt::sweep_red(&run.join("landstate"));
-    for l in out {
-        println!("{l}");
-    }
-    for l in err {
-        eprintln!("{l}");
-    }
-    rc
 }
 
 /// `$SPIRA_RUN` alone — never the lib.sh seam. `mark`/`state` are the hot path every other
@@ -605,11 +577,10 @@ fn cited_commit_cmd(id: &str, repo: &str, base: &str) -> i32 {
 /// exit code (`|| true`), so there is no exit-code contract to preserve beyond "ran".
 fn close_on_land_cmd(id: &str, sha: &str) -> i32 {
     let Ok(home) = resolve_home() else { return 0 };
-    let Ok(run) = run_dir() else { return 0 };
     let Ok(beads) = resolve_beads(&home) else { return 0 };
     let row = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
     let out = Reporter::stdout(None);
-    land_verify::close_on_land(&RealGit, &out, &run, &home, &beads.submitted_label, row.as_ref(), id, sha);
+    land_verify::close_on_land(&RealGit, &out, &home, &beads.submitted_label, row.as_ref(), id, sha);
     0
 }
 

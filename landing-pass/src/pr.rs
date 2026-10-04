@@ -14,7 +14,6 @@ use crate::records::Files;
 use crate::report::Reporter;
 use crate::util::{command, run_capture, unix_now};
 use std::collections::HashMap;
-use std::path::Path;
 use std::process::Stdio;
 
 pub trait PrTools {
@@ -129,7 +128,6 @@ impl<'a> PrPass<'a> {
             }
             if self.git.content_landed(&r.path, br, &base_fq) {
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
-                write_content_mark(&self.s.landstate(), id, tip);
                 // OFF (production): the CONTENT record and nothing else — spira-lc is never run
                 // (f031f6dee). ON: the Delivered event, best-effort additive; a machine that
                 // cannot be asked or refuses is a loud LIFECYCLE: line and the pass goes on.
@@ -163,12 +161,6 @@ impl<'a> PrPass<'a> {
         }
         (refs.len() as u64, acted)
     }
-}
-
-/// The CONTENT record ("<state> <tip> <at>"), written directly as this pass always has —
-/// the pr pass runs every 90 s and never sourced lib.sh for it.
-fn write_content_mark(dir: &Path, id: &str, tip: &str) {
-    let _ = crate::util::atomic_write(&dir.join(id), &format!("CONTENT {tip} {}", unix_now()));
 }
 
 pub struct RealPrTools<'a> {

@@ -179,8 +179,6 @@ impl<'a> Pass<'a> {
             self.walk_repo(repo);
         }
 
-        crate::prune::prune_landstate(self);
-
         self.queue_step("queue late: ");
 
         for r in self.repos {
@@ -442,28 +440,8 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} is labelled {} — leaving it for the cutover round", self.s.cutover_label));
             return Screen::Done(Flow::Next);
         }
-        if let Some(ls) = self.files.land_state(id) {
-            if ls.state == "EJECTED" {
-                self.log(&format!("CHECK6 {id}: closed but landstate is EJECTED — reopening so the aeon can fix the batch gate failure"));
-                let tip = if ls.tip.is_empty() { "none".to_string() } else { ls.tip.clone() };
-                self.lib.land_mark(id, "RED", &tip, "ejected-not-requeued");
-                self.lib.reopen(id, "batch-eject", "Reopened by sentinel: batch gate failure recorded but bead closed before aeon could fix it.");
-                self.out.progress(&format!("reopened {id} — ejected-not-requeued"));
-                return Screen::Done(Flow::Next);
-            }
-            if ls.state == "LANDED" {
-                self.log(&format!(
-                    "CHECK6 {id}: closed with landstate LANDED but {br} is not on {} (landed by another route, e.g. cherry-pick) — leaving the record for the Sending to reap, not gating",
-                    w.base
-                ));
-                return Screen::Done(Flow::Next);
-            }
-        }
         if self.git.content_landed(&repo.path, br, &w.base_fq) {
             self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
-            let tip = self.git.rev_parse(&repo.path, br).unwrap_or_else(|| "none".into());
-            self.lib.land_mark(id, "CONTENT", &tip, "");
-            self.files.drop_ejected(id);
             return Screen::Done(Flow::Next);
         }
         if self.procs.holder_alive(id) {
@@ -485,7 +463,7 @@ impl<'a> Pass<'a> {
         if self.s.gate_worker {
             return self.certify_queued(w, br, id, bead, &tip);
         }
-        let g = self.run_gate(&w.repo.name, br, id, true, &tip);
+        let g = self.run_gate(&w.repo.name, br, id);
         self.certify_judge(w, br, id, bead, &tip, g)
     }
 
@@ -501,7 +479,6 @@ impl<'a> Pass<'a> {
         let fix = is_base_fix(bead.external_ref.as_deref(), name);
         match q.enqueue(&GateJob::new(name, br, id, tip, fix)) {
             Ok(true) => {
-                self.lib.land_mark(id, "GATING", tip, "");
                 self.log(&format!("CHECK6 {id}: {br} queued for gate-worker at {tip}"));
             }
             Ok(false) => self.log(&format!("CHECK6 {id}: {br} is already with gate-worker at {tip}")),
@@ -514,15 +491,6 @@ impl<'a> Pass<'a> {
     fn certify_screen(&self, w: &Walk, br: &str, id: &str, bead: &BeadRow) -> Result<String, Flow> {
         let repo = w.repo;
         let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-        if let Some(ls) = self.files.land_state(id) {
-            if ls.state == "WITHDRAWN" && ls.tip == tip {
-                self.log(&format!("CHECK6 {id}: withdrawn at {tip} — staying WITHDRAWN until the tip changes"));
-                return Err(Flow::Next);
-            }
-            if ls.state == "CERTIFIED" && ls.tip == tip {
-                return Err(Flow::Next);
-            }
-        }
         if !self.s.gate_worker && !self.budget_allows(bead, &repo.name, id) {
             return Err(Flow::BudgetCut);
         }
@@ -537,7 +505,6 @@ impl<'a> Pass<'a> {
         if g.outcome != GateOutcome::Pass {
             let reason = g.reason_or("unspecified");
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
-            self.lib.land_mark(id, "GATED", &tip, &format!("{}:{reason}", g.outcome.word()));
             match g.outcome {
                 GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
                 GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
@@ -572,7 +539,6 @@ impl<'a> Pass<'a> {
                         &format!("reopened {id} — {br} failed {name}'s certification gate"),
                         &tail_lines(&g.out, 3),
                     );
-                    self.lib.land_mark(id, "RED", &tip, "gate");
                 }
             }
             return Flow::Next;
@@ -590,8 +556,6 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
             return Flow::Next;
         }
-        self.lib.land_mark(id, "CERTIFIED", &tip, "");
-        self.files.mark_submitted(id, &tip, "certified", self.clock.now());
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
         Flow::Next
     }
@@ -666,7 +630,6 @@ impl<'a> Pass<'a> {
                 if let Some(n) = note {
                     self.log(&n);
                 }
-                self.lib.land_mark(&id, "GATING", &tip, "");
                 let ticket = self.tools.gate_start(&br, &name, &wait, &id);
                 let fix = is_base_fix(bead.external_ref.as_deref(), &name);
                 inflight.push(Job { ticket, br, bead, tip, fix });
@@ -781,14 +744,11 @@ impl<'a> Pass<'a> {
         false
     }
 
-    pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str, mark_gating: bool, tip: &str) -> GateRun {
+    pub(crate) fn run_gate(&self, name: &str, br: &str, id: &str) -> GateRun {
         self.set_run(name, br, "gate");
         let (wait, note) = gate_lock_wait(self.s.land_maxsec, self.start, self.s.gate_lock_wait.as_deref(), self.clock.now());
         if let Some(n) = note {
             self.log(&n);
-        }
-        if mark_gating {
-            self.lib.land_mark(id, "GATING", tip, "");
         }
         let (rc, out) = self.tools.gate(br, name, &wait, id);
         self.set_run(name, br, "");
@@ -808,8 +768,6 @@ impl<'a> Pass<'a> {
                     self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
                     return;
                 }
-                self.lib.land_mark(id, "CERTIFIED", tip, "");
-                self.files.mark_submitted(id, tip, "certified", self.clock.now());
                 self.out.progress(&format!("certified {br} in {name} — base-fix (suite {suite})"));
             }
             return;
@@ -906,17 +864,9 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: {} now contains every change on {br} — nothing left to rebase", w.base));
                 continue;
             }
-            let old_tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-            let certified = self.files.land_state(id).is_some_and(|ls| ls.state == "CERTIFIED" && ls.tip == old_tip);
             let rb = self.lib.rebase(br, &w.base_fq, &repo.path, name);
             if rb.ok {
                 self.swept.set(self.swept.get() + 1);
-                let tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-                if certified {
-                    self.lib.land_mark(id, "CERTIFIED", &tip, "carried");
-                } else {
-                    self.lib.land_mark(id, "REBASED", &tip, "swept");
-                }
                 self.log(&format!("CHECK6 {id}: rebased {br} onto {} after this pass's landings — still landable", w.base));
                 continue;
             }
@@ -934,21 +884,11 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: {br} does not rebase onto {}, but its pull request is merged — landed, not stuck", w.base));
                 continue;
             }
-            let cur_tip = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-            let cur_base = self.git.rev_parse(&repo.path, &w.base_fq).unwrap_or_default();
-            if let Some(ls) = self.files.land_state(id) {
-                if ls.state == "RED" && ls.tip == cur_tip {
-                    self.log(&format!("CHECK6 {id}: tip unchanged since last RED mark — skipping duplicate bump"));
-                    continue;
-                }
-            }
             self.lib.bump_requeue(id, "merge-conflict");
             let n = self.lib.requeues_of(id).max(1);
             let rc = self.lib.recut(br, &w.base_fq, &repo.path, name);
             if rc.ok {
                 self.swept.set(self.swept.get() + 1);
-                let t = self.git.rev_parse(&repo.path, br).unwrap_or_default();
-                self.lib.land_mark(id, "REBASED", &t, "recut-swept");
                 self.log(&format!(
                     "CHECK6 {id}: re-cut {br} onto {} after this pass's landings ({} commit(s)) — still landable",
                     w.base, rc.applied
@@ -956,7 +896,6 @@ impl<'a> Pass<'a> {
                 continue;
             }
             self.swept_conflict.set(self.swept_conflict.get() + 1);
-            let t = self.git.rev_parse(&repo.path, br).unwrap_or_default();
             let conflicts = first_nonempty(&[&rc.conflicts, &rb.conflicts, "unknown"]);
             let others = self.lib.other_beads(&repo.path, br, &w.base_fq, first_nonempty(&[&rc.conflicts, &rb.conflicts]));
             let n_s = n.to_string();
@@ -966,7 +905,6 @@ impl<'a> Pass<'a> {
                 "escalated {id} — re-cut conflicted on {br} after {n} attempt(s); {} commit(s) moved to {}",
                 rc.applied, w.base
             ));
-            self.lib.land_mark(id, "RED", &t, &format!("no-rebase@{cur_base}"));
         }
     }
 }

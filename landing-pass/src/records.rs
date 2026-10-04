@@ -1,8 +1,6 @@
-//! The pass's own files under $SPIRA_RUN (DESIGN.md §2.4). Landstate is READ here; every
-//! landstate WRITE goes through this crate's own `landstate::mark` (its TSD dual-write),
-//! lib.sh `land_mark` before sp-cnnt6 ("wave 4.16"). The rest are this pass's own records.
+//! The pass's own files under $SPIRA_RUN (DESIGN.md §2.4).
 
-use crate::model::{LandState, RunRecord, StatusFile, Submitted};
+use crate::model::{RunRecord, StatusFile};
 use crate::util::{atomic_write, branch_key};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -54,9 +52,6 @@ impl Files {
     pub fn new(run: &Path) -> Files {
         Files { run: run.to_path_buf() }
     }
-    pub fn landstate_dir(&self) -> PathBuf {
-        self.run.join("landstate")
-    }
     pub fn status(&self) -> PathBuf {
         self.run.join("landing.status")
     }
@@ -80,30 +75,6 @@ impl Files {
     }
     pub fn lock(&self) -> PathBuf {
         self.run.join("landing.lock")
-    }
-
-    pub fn land_state(&self, id: &str) -> Option<LandState> {
-        fs::read_to_string(self.landstate_dir().join(id)).ok().and_then(|t| LandState::parse(&t))
-    }
-
-    pub fn drop_ejected(&self, id: &str) {
-        let _ = fs::remove_file(self.landstate_dir().join(format!("{id}.ejected")));
-    }
-
-    pub fn submitted(&self, id: &str) -> Option<Submitted> {
-        fs::read_to_string(self.run.join("submitted").join(id)).ok().and_then(|t| Submitted::parse(&t))
-    }
-
-    /// lib.sh `mark_submitted <id> <tip> <state>` (refreshes 0), written atomically.
-    pub fn mark_submitted(&self, id: &str, tip: &str, state: &str, now: u64) {
-        self.mark_submitted_refreshed(id, tip, state, now, 0);
-    }
-
-    /// lib.sh `mark_submitted <id> <tip> <state> <refreshes>` — the pr pass's own refresh
-    /// counter (DESIGN.md §6, land_pr).
-    pub fn mark_submitted_refreshed(&self, id: &str, tip: &str, state: &str, now: u64, refreshes: u32) {
-        let rec = Submitted { tip: tip.into(), at: now, state: state.into(), refreshes };
-        let _ = atomic_write(&self.run.join("submitted").join(id), &rec.render());
     }
 
     /// A PASS clears the machinery-fault counters for this branch.

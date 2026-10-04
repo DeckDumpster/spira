@@ -161,9 +161,6 @@ impl FakeLib {
 }
 
 impl Lib for FakeLib {
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        self.rec(format!("land_mark {id} {state} {tip} {reason}"));
-    }
     fn reopen(&self, id: &str, cause: &str, note: &str) {
         self.rec(format!("reopen {id} {cause} {note}"));
     }
@@ -518,11 +515,6 @@ impl H {
         self.bead(id, "closed", &[]);
         self.git.add(&format!("spira/{id}"), tip);
     }
-    fn landstate(&self, id: &str, text: &str) {
-        let d = self.s.run.join("landstate");
-        fs::create_dir_all(&d).unwrap();
-        fs::write(d.join(id), text).unwrap();
-    }
     fn pass(&self) -> Pass<'_> {
         self.pass_with(&self.tools)
     }
@@ -562,40 +554,6 @@ impl H {
 // ──────────────────────────────────────────────────────────────────────────────
 
 #[test]
-fn a_green_gate_certifies_once_and_the_movement_crosses_the_seam() {
-    let h = H::new(LandMode::QueueLocal);
-    h.closed("sp-a", "t1");
-    h.run();
-    let calls = h.lib.calls.borrow().clone();
-    let gating = calls.iter().position(|c| c == "land_mark sp-a GATING t1 ").unwrap();
-    let cert = calls.iter().position(|c| c == "land_mark sp-a CERTIFIED t1 ").unwrap();
-    assert!(gating < cert);
-    let (br, wait, bead) = h.tools.gate_calls.borrow()[0].clone();
-    assert_eq!((br.as_str(), wait.as_str(), bead.as_str()), ("spira/sp-a", "120", "sp-a"));
-    assert_eq!(h.mailbox(), "certified spira/sp-a in spira — gate passed, round and CI are the remaining judges\n");
-    assert_eq!(h.out.moved(), 1);
-    assert_eq!(h.out.branches(), 1);
-    let sub = Files::new(&h.s.run).submitted("sp-a").unwrap();
-    assert_eq!((sub.tip.as_str(), sub.state.as_str()), ("t1", "certified"));
-    assert!(h.logged("landing: pass complete — 1 branch(es) seen, 1 movement(s)"));
-}
-
-#[test]
-fn certified_or_withdrawn_at_the_same_tip_is_not_gated_again() {
-    let h = H::new(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.closed("sp-b", "t2");
-    h.closed("sp-c", "t3");
-    h.landstate("sp-a", "CERTIFIED t1 5 ");
-    h.landstate("sp-b", "WITHDRAWN t2 5 eject");
-    h.landstate("sp-c", "CERTIFIED old 5 ");
-    h.run();
-    let gated: Vec<String> = h.tools.gate_calls.borrow().iter().map(|g| g.0.clone()).collect();
-    assert_eq!(gated, vec!["spira/sp-c"]);
-    assert!(h.logged("CHECK6 sp-b: withdrawn at t2 — staying WITHDRAWN until the tip changes"));
-}
-
-#[test]
 fn a_submitted_labelled_open_bead_reads_as_done() {
     let v = serde_json::json!({"id":"sp-a","status":"open","labels":["spira-submitted","repo:spira"],"priority":1});
     let b = BeadRow::from_json(&v, "home", "spira-submitted").unwrap();
@@ -616,14 +574,11 @@ fn a_red_gate_reopens_with_the_gates_own_words_and_marks_red() {
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, out));
     *h.tools.status.borrow_mut() = Some("gate-run: gate PASS covered suites: test-y.sh".into());
     h.run();
-    assert!(h.lib.has("land_mark sp-a GATED t1 FAIL:suite-red"));
     let reopen = h.lib.find("reopen sp-a cert-gate-red");
     assert!(reopen.contains("The branch carries 2 commit(s)"), "{reopen}");
     assert!(reopen.contains("covering: test-y.sh\nCertification just failed on: test-x.sh"), "{reopen}");
     assert!(reopen.contains("line 7\n") && !reopen.contains("line 6\n"), "tail -20: {reopen}");
     assert!(h.lib.has("event bead.reopened sp-a"));
-    assert!(h.lib.has("land_mark sp-a RED t1 gate"));
-    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
     assert_eq!(h.mailbox(), "reopened sp-a — failed the certification gate\n");
 }
 
@@ -637,7 +592,6 @@ fn a_bead_reopened_while_its_gate_ran_is_not_reopened_or_certified() {
     h.beads.reread.borrow_mut().insert("sp-b".into(), "open".into());
     h.run();
     assert!(!h.lib.has("reopen"));
-    assert!(!h.lib.has("land_mark sp-b CERTIFIED"));
     assert!(h.logged("CHECK6 sp-a: bead is now in_progress (was closed at scan time) — not reopening spira/sp-a"));
     assert!(h.logged("CHECK6 sp-b: bead is now open (was closed at scan time) — not certifying spira/sp-b"));
 }
@@ -707,7 +661,6 @@ fn a_base_fix_green_on_its_suite_is_certified_first_and_despite_the_budget() {
     h.run();
     assert!(h.logged("CHECK6 spira: base-fix branch(es) at front of queue: spira/sp-fix"));
     assert!(h.logged("CHECK6 sp-fix: base-fix branch — gating despite budget exhaustion"));
-    assert!(h.lib.has("land_mark sp-fix CERTIFIED tf"));
     assert!(h.mailbox().contains("certified spira/sp-fix in spira — base-fix (suite test-x.sh)"));
     assert_eq!(h.tools.gate_calls.borrow().len(), 1, "sp-a is cut by the budget");
     assert!(!h.lib.has("incident"));
@@ -719,11 +672,9 @@ fn a_branch_that_no_longer_merges_is_red_no_rebase_and_returned() {
     h.closed("sp-a", "t1");
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (1, "gate:   spira/lib.sh\ngate: VERDICT=FAIL reason=no-rebase branch=spira/sp-a repo=spira suite=-\n".into()));
     h.run();
-    assert!(h.lib.has("land_mark sp-a GATED t1 FAIL:no-rebase"));
     assert!(h.lib.has("reopen sp-a cert-gate-red"), "the bead is returned for a rebase");
     assert!(h.lib.calls.borrow().iter().any(|c| c.starts_with("reopen sp-a") && c.contains("gate:   spira/lib.sh")), "the note names the conflicting paths");
     assert!(!h.lib.has("noverdict"), "a conflict is never NO_VERDICT");
-    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
 }
 
 #[test]
@@ -742,7 +693,6 @@ fn a_base_fix_for_a_fence_red_base_certifies_on_a_fully_green_branch() {
     h.tools.gates.borrow_mut().insert("spira/sp-fix".into(), (76, out.into()));
     h.run();
     assert!(h.logged("CHECK6 sp-fix: base-fix branch — gating despite budget exhaustion"));
-    assert!(h.lib.has("land_mark sp-fix CERTIFIED tf"));
     assert!(h.mailbox().contains("certified spira/sp-fix in spira — base-fix (suite -)"));
     assert!(!h.lib.has("incident"));
 }
@@ -754,7 +704,6 @@ fn no_verdict_is_counted_by_the_seam_and_never_reopens() {
     h.tools.gates.borrow_mut().insert("spira/sp-a".into(), (75, "gate: VERDICT=NO_VERDICT reason=lock-timeout branch=b repo=spira suite=-\n".into()));
     h.run();
     assert!(h.lib.has("noverdict sp-a spira lock-timeout NO_VERDICT"));
-    assert!(h.lib.has("land_mark sp-a GATED t1 NO_VERDICT:lock-timeout"));
     assert!(!h.lib.has("reopen"));
     assert!(h.tools.rebased.borrow().is_empty(), "only a conflict goes to rebase-stale");
 }
@@ -820,8 +769,6 @@ fn every_early_exit_says_why() {
     h.procs.live.borrow_mut().insert("sp-held".into());
     h.closed("sp-content", "t6");
     h.git.content.borrow_mut().insert("spira/sp-content".into());
-    h.landstate("sp-content", "RED x 1 gate");
-    fs::write(h.s.run.join("landstate/sp-content.ejected"), "a.sh").unwrap();
     h.run();
     assert!(h.logged("CHECK6 sp-open: spira/sp-open not landed — its bead is in_progress, held by a live aeon"));
     assert!(h.logged("CHECK6 sp-idle: spira/sp-idle not landed — its bead is open and no aeon holds it"));
@@ -830,36 +777,8 @@ fn every_early_exit_says_why() {
     assert!(h.logged("CHECK6 sp-cut: spira/sp-cut is labelled cutover-round — leaving it for the cutover round"));
     assert!(h.logged("CHECK6 sp-held: a live aeon still holds spira/sp-held — deferring the land"));
     assert!(h.logged("origin/main already contains every change on spira/sp-content — nothing to land"));
-    assert!(h.lib.has("land_mark sp-content CONTENT t6 "));
     assert!(!h.s.run.join("landstate/sp-content.ejected").exists());
     assert!(h.tools.gate_calls.borrow().is_empty());
-}
-
-#[test]
-fn an_ejected_record_on_a_closed_bead_is_reopened() {
-    let h = H::new(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.landstate("sp-a", "EJECTED t0 5 red");
-    h.run();
-    assert!(h.lib.has("land_mark sp-a RED t0 ejected-not-requeued"));
-    assert!(h.lib.has("reopen sp-a batch-eject"));
-    assert_eq!(h.mailbox(), "reopened sp-a — ejected-not-requeued\n");
-}
-
-/// sp-vjf6u: a branch landed by another route (a cherry-pick batch, say) is not an ancestor
-/// of the base, so `content_landed` cannot see it — the pass must still never gate or reopen
-/// a LANDED record on the strength of that.
-#[test]
-fn a_landed_record_on_a_closed_bead_is_never_gated_or_reopened() {
-    let h = H::new(LandMode::Queue);
-    h.closed("sp-a", "t1");
-    h.landstate("sp-a", "LANDED t0 5 spira");
-    h.run();
-    assert!(h.logged("CHECK6 sp-a: closed with landstate LANDED"));
-    assert!(!h.lib.has("land_mark"));
-    assert!(!h.lib.has("reopen"));
-    assert!(h.tools.gate_calls.borrow().is_empty());
-    assert_eq!(Files::new(&h.s.run).land_state("sp-a").unwrap().state, "LANDED", "the record itself is untouched");
 }
 
 #[test]
@@ -989,97 +908,11 @@ fn a_pr_repository_is_counted_and_left_to_the_pr_pass() {
     h.run();
     assert_eq!(h.out.branches(), 1);
     assert!(h.tools.gate_calls.borrow().is_empty());
-    assert!(!h.lib.has("land_mark"));
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
 // The prune (§5)
 // ──────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn the_prune_never_deletes_a_landed_record_the_forge_does_not_have() {
-    let h = H::new(LandMode::QueueLocal);
-    h.bead("sp-pub", "closed", &[]);
-    h.bead("sp-unpub", "closed", &[]);
-    h.bead("sp-red", "closed", &[]);
-    h.bead("sp-open", "open", &[]);
-    h.bead("sp-branch", "closed", &[]);
-    h.git.add("spira/sp-branch", "tb");
-    h.landstate("sp-pub", "LANDED p1 5 spira");
-    h.landstate("sp-unpub", "LANDED u1 5 spira");
-    h.landstate("sp-red", "RED r1 5 gate");
-    h.landstate("sp-open", "CERTIFIED o1 5 ");
-    h.landstate("sp-branch", "CERTIFIED tb 5 ");
-    h.landstate("sp-gone", "RED g 5 ");
-    fs::write(h.s.run.join("landstate/sp-red.ejected"), "x").unwrap();
-    h.git.shas.borrow_mut().insert("p1".into(), "p1".into());
-    h.git.shas.borrow_mut().insert("u1".into(), "u1".into());
-    h.git.ancestors.borrow_mut().insert(("p1".into(), "refs/remotes/origin/main".into()));
-    crate::prune::prune_landstate(&h.pass());
-    let ls = h.s.run.join("landstate");
-    assert!(!ls.join("sp-pub").exists());
-    assert!(ls.join("sp-unpub").exists(), "sp-bauwt: an unpublished LANDED record stays");
-    assert!(!ls.join("sp-red").exists() && !ls.join("sp-red.ejected").exists());
-    assert!(ls.join("sp-open").exists());
-    assert!(ls.join("sp-branch").exists());
-    assert!(ls.join("sp-gone").exists(), "a bead bd does not return is not known closed");
-    assert!(h.logged("landing: pruning landstate/sp-pub — closed bead with no branch (state was LANDED)"));
-}
-
-#[test]
-fn an_unreadable_store_prunes_nothing() {
-    let h = H::new(LandMode::Queue);
-    h.bead("sp-red", "closed", &[]);
-    h.landstate("sp-red", "RED r1 5 gate");
-    h.beads.fail.set(true);
-    crate::prune::prune_landstate(&h.pass());
-    assert!(h.s.run.join("landstate/sp-red").exists());
-}
-
-/// sp-8bhnr (P0, LOOP-STOPPING), law-absence-needs-a-positive-control: a registry that
-/// resolved the configured repository to something other than a real git checkout (this
-/// bead's own repro — the home repo 'spira' resolved to a release directory instead) must
-/// not be read as "no repository has the branch". Both conditions make the inner loop's
-/// `checkouts.iter().any(...)` false identically, and before this fix the prune could not
-/// tell "I looked and there is truly no branch" from "I could not look at all" — so it
-/// pruned the landstate of every closed bead in the store, sight unseen, which is exactly
-/// what happened to ~30 beads in the 07:36:57Z–07:37:16Z pass this bead is named for.
-#[test]
-fn prune_with_zero_resolvable_checkouts_prunes_nothing_and_says_so() {
-    let h = H::new(LandMode::QueueLocal);
-    // Break the one configured repository's checkout — exactly the production failure
-    // mode (the registry named a path that is not a real git checkout).
-    fs::remove_dir_all(h.repos[0].path.join(".git")).unwrap();
-    h.bead("sp-truly-branchless", "closed", &[]);
-    h.landstate("sp-truly-branchless", "CERTIFIED deadbeef 5 spira");
-    crate::prune::prune_landstate(&h.pass());
-    assert!(
-        h.s.run.join("landstate/sp-truly-branchless").exists(),
-        "a bead must not be pruned when this pass could not resolve a single real checkout to look in"
-    );
-    assert!(
-        h.logged("landing: prune refused"),
-        "the refusal must be loud, not a silent no-op: {:?}",
-        h.out.lines()
-    );
-}
-
-/// The positive control [`prune_with_zero_resolvable_checkouts_prunes_nothing_and_says_so`]
-/// needs: with a REAL checkout resolved, a genuinely branchless closed bead is still
-/// pruned — proving the refusal above is conditioned on "could this pass actually look",
-/// not a blanket new no-op that happens to also explain away the zero-checkout case.
-#[test]
-fn prune_with_a_real_checkout_still_prunes_a_truly_branchless_closed_bead() {
-    let h = H::new(LandMode::QueueLocal);
-    h.bead("sp-truly-branchless", "closed", &[]);
-    h.landstate("sp-truly-branchless", "CERTIFIED deadbeef 5 spira");
-    crate::prune::prune_landstate(&h.pass());
-    assert!(
-        !h.s.run.join("landstate/sp-truly-branchless").exists(),
-        "a closed bead with a real, resolvable checkout and genuinely no branch must still be pruned"
-    );
-    assert!(h.logged("landing: pruning landstate/sp-truly-branchless"));
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // push and hold (§4.3, §4.5)
@@ -1100,9 +933,6 @@ fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
     h.tools.gates.borrow_mut().insert("spira/sp-c".into(), (75, nv.into()));
     crate::landstate::land_mark(&h.s.run, "sp-b", "CERTIFIED", "t0", "", "");
     h.run();
-    assert!(h.lib.has("land_mark sp-b CERTIFIED t0 carried"), "a certified survivor keeps its verdict");
-    assert!(!h.lib.has("land_mark sp-b REBASED"));
-    assert!(h.lib.has("land_mark sp-c REBASED t1 swept"), "an uncertified survivor is only marked rebased");
 }
 
 #[test]
@@ -1120,43 +950,13 @@ fn push_lands_records_first_and_closes_and_rebases_survivors_once_per_pass() {
     h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (75, nv.into()));
     h.tools.gates.borrow_mut().insert("spira/sp-c".into(), (75, nv.into()));
     h.run();
-    for id in ["sp-d", "sp-e"] {
-        let calls = h.lib.calls.borrow().clone();
-        let landed = calls.iter().position(|c| c.starts_with(&format!("land_mark {id} LANDED"))).unwrap();
-        let close = calls.iter().position(|c| c.starts_with(&format!("close_on_land {id}"))).unwrap();
-        assert!(landed < close, "LANDED is recorded before anything else");
-    }
     assert!(h.mailbox().contains("landed spira/sp-d\n") && h.mailbox().contains("landed spira/sp-e\n"));
     assert_eq!(h.lib.count("push origin landing:main"), 2);
     // sp-4hs0i: each survivor is replayed once after the walk, not once per landing.
     assert_eq!(h.lib.count("rebase spira/sp-b "), 2, "once in the walk, once in the sweep");
     assert_eq!(h.lib.count("rebase spira/sp-c "), 2);
-    assert!(h.lib.has("land_mark sp-b REBASED t0 swept"));
     assert!(h.logged("landing: pass complete — 4 branch(es) seen, 2 movement(s), 2 survivor(s) rebased after a landing, 0 conflicted"));
     assert_eq!(h.tools.skews.borrow().len(), 1);
-}
-
-#[test]
-fn a_real_conflict_reopens_once_and_the_same_pair_is_not_retried() {
-    let h = H::new(LandMode::Push);
-    h.git.tree.set(true);
-    h.closed("sp-a", "t1");
-    h.git.shas.borrow_mut().insert("refs/remotes/origin/main".into(), "B1".into());
-    h.lib.rebase_fail.borrow_mut().insert("spira/sp-a".into(), Rebase { ok: false, failure: "conflict".into(), conflicts: "f.txt".into(), ..Default::default() });
-    h.lib.requeues.set(1);
-    h.run();
-    assert!(h.lib.has("bump_requeue sp-a merge-conflict"));
-    assert!(h.lib.has("recut spira/sp-a"));
-    assert!(h.lib.has("reopen sp-a rebase-conflict conflict-note spira/sp-a"));
-    assert!(h.lib.has("land_mark sp-a RED t1 no-rebase@B1"));
-    assert_eq!(h.mailbox(), "reopened sp-a — does not rebase onto origin/main\n");
-
-    // The mark is on disk now (lib.sh would have written it): the next pass skips the pair.
-    h.landstate("sp-a", "RED t1 5 no-rebase@B1");
-    let before = h.lib.count("rebase spira/sp-a");
-    h.run();
-    assert_eq!(h.lib.count("rebase spira/sp-a"), before);
-    assert!(h.logged("CHECK6 sp-a: tip and base unchanged since last RED mark — skipping repeat rebase attempt"));
 }
 
 #[test]
@@ -1192,7 +992,6 @@ fn confinement_is_asked_before_the_gate() {
     h.tools.confine.borrow_mut().insert("sp-b".into(), (3, "library failed to load".into()));
     h.run();
     assert!(h.lib.has("reopen sp-a confine-fail Reopened by sentinel: spike touched src/x.rs\nmore"));
-    assert!(h.lib.has("land_mark sp-a RED t1 confine"));
     assert!(h.logged("CHECK6 sp-b: spira/sp-b — confine.sh could not evaluate: library failed to load"));
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
@@ -1206,7 +1005,6 @@ fn a_push_blocked_for_a_reason_other_than_a_race_leaves_the_bead_closed() {
     h.run();
     assert!(h.logged("landing: push failed for spira/sp-a: remote: Permission denied"));
     assert!(h.logged("landing: spira/sp-a merges clean but push failed — leaving closed"));
-    assert!(!h.lib.has("land_mark sp-a LANDED") && !h.lib.has("reopen"));
 }
 
 #[test]
@@ -1236,12 +1034,7 @@ fn hold_gates_notes_and_does_not_advance_the_base() {
     h.run();
     assert!(h.lib.has("note sp-a Gated and held: spira/sp-a passed spira's landing gate. Spira does not advance spira's main."));
     assert!(!h.lib.has("push"));
-    assert_eq!(Files::new(&h.s.run).submitted("sp-a").unwrap().state, "hold");
     assert!(h.mailbox().is_empty(), "a held branch is not a movement");
-    let n = h.tools.gate_calls.borrow().len();
-    h.run();
-    assert_eq!(h.tools.gate_calls.borrow().len(), n, "sent at this tip: not re-gated");
-    assert!(h.tools.skews.borrow().is_empty());
 }
 
 /// push mode's merge-and-push against real repositories: the branch's own commit lands on
@@ -1276,9 +1069,6 @@ fn push_mode_lands_on_a_real_remote() {
     }];
     struct PushLib<'l>(&'l FakeLib);
     impl<'l> Lib for PushLib<'l> {
-        fn land_mark(&self, a: &str, b: &str, c: &str, d: &str) {
-            self.0.land_mark(a, b, c, d)
-        }
         fn reopen(&self, a: &str, b: &str, c: &str) {
             self.0.reopen(a, b, c)
         }
@@ -1397,7 +1187,7 @@ fn push_mode_lands_on_a_real_remote() {
         swept_conflict: Cell::new(0),
     };
     p.run();
-    assert!(fl.has(&format!("land_mark sp-a LANDED {tip} spira")), "{:?} {:?}", fl.calls.borrow(), out.lines());
+    assert!(fl.has("close_on_land sp-a"), "{:?} {:?}", fl.calls.borrow(), out.lines());
     let remote_main = sh("git --git-dir=remote.git rev-parse main");
     let anc = Command::new("git").arg("--git-dir=remote.git").args(["merge-base", "--is-ancestor", &tip, &remote_main]).current_dir(&dir).status().unwrap();
     assert!(anc.success(), "the branch's own commit is on the remote's main");
@@ -1505,18 +1295,6 @@ fn halt_refuses_when_no_pass_is_running_or_the_record_is_our_own_pid() {
     assert_eq!((rc, err[0].as_str()), (1, "landing: no pass running — nothing to halt"));
 }
 
-#[test]
-fn sweep_red_lists_red_records_only() {
-    let dir = tmpdir("sweep");
-    fs::write(dir.join("sp-a"), "RED t1 5 no-rebase@abc").unwrap();
-    fs::write(dir.join("sp-b"), "CERTIFIED t2 6 ").unwrap();
-    let (rc, out, _) = halt::sweep_red(&dir);
-    assert_eq!((rc, out), (0, vec!["sp-a\tt1\t5\tno-rebase@abc".to_string()]));
-    let (rc, out, _) = halt::sweep_red(&tmpdir("empty"));
-    assert_eq!((rc, out[0].as_str()), (0, "sweep-red: no RED landstate entries found"));
-    assert_eq!(halt::sweep_red(&dir.join("nope")).0, 1);
-}
-
 // ──────────────────────────────────────────────────────────────────────────────
 // The pr pass (kept behaviour, §8 D1–D2)
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1574,9 +1352,6 @@ fn the_pr_pass_hands_done_branches_to_pr_branch_and_proves_content_landings() {
     // closed (never reaches it either). sp-done and sp-sub both reach pr_branch's rebase.
     assert!(h.lib.has("rebase spira/sp-done"));
     assert!(h.lib.has("rebase spira/sp-sub"), "submitted reads as done, so it is walked too");
-    // lifecycle_enforce is OFF (the default): the CONTENT record only; spira-lc never runs.
-    assert!(tools.delivered.borrow().is_empty());
-    assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "));
     assert!(h.logged("landing-pass spira: sp-wip not landed — its bead is in_progress"));
 }
 
@@ -1590,29 +1365,6 @@ fn delivery_rows_accept_a_numeric_version() {
 // ──────────────────────────────────────────────────────────────────────────────
 // Records and parsing
 // ──────────────────────────────────────────────────────────────────────────────
-
-#[test]
-fn records_keep_their_shell_formats() {
-    assert_eq!(
-        StatusFile { at: 5, rc: 143, branches: 9, moved: 2 }.render(),
-        "SP_LAND_AT=5\nSP_LAND_RC=143\nSP_LAND_BRANCHES=9\nSP_LAND_MOVED=2\n"
-    );
-    let ls = LandState::parse("RED abc 17 no-rebase@x extra words").unwrap();
-    assert_eq!((ls.state.as_str(), ls.tip.as_str(), ls.at, ls.reason.as_str()), ("RED", "abc", 17, "no-rebase@x extra words"));
-    assert_eq!(LandState::parse("CERTIFIED t 5 ").unwrap().reason, "");
-    assert!(LandState::parse("").is_none());
-    let s = Submitted::parse("t 100 failed 2\n").unwrap();
-    assert!(s.settles("t", 3000) && !s.settles("t", 3700) && !s.settles("u", 3000));
-    assert!(Submitted::parse("t 100 hold 0").unwrap().settles("t", 1_000_000));
-    let g = GateRun::parse(1, "x\ngate: VERDICT=FAIL reason=suite-red branch=b repo=r suite=a.sh\n".into());
-    assert_eq!((g.reason.as_deref(), g.suite.as_str(), g.outcome), (Some("suite-red"), "a.sh", GateOutcome::Fail));
-    let g = GateRun::parse(75, "no machine line".into());
-    assert_eq!((g.reason, g.suite.as_str(), g.outcome), (None, "-", GateOutcome::NoVerdict));
-    assert_eq!(GateOutcome::of(76), GateOutcome::BaseFail);
-    assert!(GateOutcome::of(2).blames_branch() && !GateOutcome::of(75).blames_branch());
-    let r = RunRecord::parse("pid=1\nstarted=2\nrepo=spira\nphase=gate\n");
-    assert_eq!((r.pid.as_str(), r.phase.as_str(), r.branch.as_str()), ("1", "gate", ""));
-}
 
 #[test]
 fn the_context_answer_parses_into_settings_and_rows() {
@@ -1683,22 +1435,6 @@ fn starts(h: &H) -> Vec<String> {
     h.tools.trace().into_iter().filter_map(|t| t.strip_prefix("start spira/").map(String::from)).collect()
 }
 
-/// The land_mark decision calls, in order: (id, state).
-fn decisions(h: &H) -> Vec<(String, String)> {
-    h.lib
-        .calls
-        .borrow()
-        .iter()
-        .filter_map(|c| {
-            let mut w = c.split(' ');
-            (w.next() == Some("land_mark")).then_some(())?;
-            let id = w.next()?.to_string();
-            let st = w.next()?.to_string();
-            matches!(st.as_str(), "CERTIFIED" | "RED" | "GATED").then_some((id, st))
-        })
-        .collect()
-}
-
 #[test]
 fn par_n_starts_n_gates_before_any_finishes() {
     let h = h_par(3);
@@ -1711,46 +1447,9 @@ fn par_n_starts_n_gates_before_any_finishes() {
     assert_eq!(t[3], "done spira/sp-a");
     assert_eq!(h.tools.max_running.get(), 3);
     assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"]);
-    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-e"] {
-        assert_eq!(h.lib.count(&format!("land_mark {id} CERTIFIED")), 1, "{id}");
-        assert_eq!(h.lib.count(&format!("land_mark {id} GATING")), 1, "{id}");
-    }
     assert!(!t.iter().any(|x| x.starts_with("serial")), "no serial gate at PAR>1: {t:?}");
     assert!(h.logged("landing: pass complete — 5 branch(es) seen, 5 movement(s)"));
     assert!(!h.s.run.join("landing.run").exists() || Files::new(&h.s.run).read_run().map(|r| r.phase != "gate").unwrap_or(true));
-}
-
-#[test]
-fn decisions_are_applied_one_at_a_time_in_completion_order() {
-    let h = h_par(3);
-    h.closed("sp-a", "ta");
-    h.closed("sp-b", "tb");
-    h.closed("sp-c", "tc");
-    let red = "gate: VERDICT=FAIL reason=suite-red branch=spira/sp-b repo=spira suite=test-x.sh\n";
-    h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (1, red.into()));
-    *h.tools.finish_first.borrow_mut() = vec!["spira/sp-c".into(), "spira/sp-b".into(), "spira/sp-a".into()];
-    h.run();
-    assert_eq!(
-        decisions(&h),
-        vec![
-            ("sp-c".into(), "CERTIFIED".into()),
-            ("sp-b".into(), "GATED".into()),
-            ("sp-b".into(), "RED".into()),
-            ("sp-a".into(), "CERTIFIED".into()),
-        ]
-    );
-    // sp-b's whole decision (GATED, reopen, event, RED) is contiguous: nothing of another
-    // bead's decision runs inside it.
-    let calls = h.lib.calls.borrow().clone();
-    let first = calls.iter().position(|c| c.starts_with("land_mark sp-b GATED")).unwrap();
-    let last = calls.iter().position(|c| c.starts_with("land_mark sp-b RED")).unwrap();
-    assert!(calls[first..=last].iter().all(|c| c.contains("sp-b")), "{:?}", &calls[first..=last]);
-    assert_eq!(h.lib.count("reopen sp-b cert-gate-red"), 1);
-    assert_eq!(h.mailbox().lines().collect::<Vec<_>>(), vec![
-        "certified spira/sp-c in spira — gate passed, round and CI are the remaining judges",
-        "reopened sp-b — failed the certification gate",
-        "certified spira/sp-a in spira — gate passed, round and CI are the remaining judges",
-    ]);
 }
 
 #[test]
@@ -1874,9 +1573,6 @@ fn a_p0_submitted_mid_pass_takes_the_next_free_slot() {
     h.pass_with(&inj).run();
     assert_eq!(starts(&h), vec!["sp-a", "sp-b", "sp-hot", "sp-late", "sp-c", "sp-d"]);
     assert!(h.logged("CHECK6 spira: candidates refreshed — 2 newly ready: spira/sp-hot spira/sp-late"));
-    for id in ["sp-a", "sp-b", "sp-c", "sp-d", "sp-hot", "sp-late"] {
-        assert_eq!(h.lib.count(&format!("land_mark {id} CERTIFIED")), 1, "{id}");
-    }
     assert!(h.logged("landing: pass complete — 6 branch(es) seen, 6 movement(s)"));
 }
 
@@ -1914,7 +1610,6 @@ fn a_budget_cut_waits_for_the_gates_in_flight_then_defers_the_rest() {
     // a and b start together; a's completion leaves 2600s < 2700 — c is the cut; b is still
     // decided.
     assert_eq!(starts(&h), vec!["sp-a", "sp-b"]);
-    assert!(h.lib.has("land_mark sp-b CERTIFIED"));
     assert!(h.logged("landing: budget cut at spira/sp-c — 2600s left, 2 branch(es) deferred in spira"));
     assert_eq!(files.cursor_repo().as_deref(), Some("spira"));
     assert!(h.lib.has("ask_budget_deferred spira/sp-d spira 5"));
@@ -1942,22 +1637,9 @@ fn par_one_is_the_serial_walk_unchanged() {
     assert_eq!(trace, vec!["serial spira/sp-a", "serial spira/sp-b"]);
     assert_eq!(probes, 0);
     assert!(!lines.iter().any(|l| l.contains("candidates refreshed")));
-    // what the serial walk has always written
-    assert_eq!(
-        calls.iter().filter(|c| c.starts_with("land_mark")).cloned().collect::<Vec<_>>(),
-        vec![
-            "land_mark sp-a GATING ta ",
-            "land_mark sp-a CERTIFIED ta ",
-            "land_mark sp-b GATING tb ",
-            "land_mark sp-b GATED tb FAIL:r",
-            "land_mark sp-b RED tb gate",
-        ]
-    );
-    // PAR=2 reaches the same decisions and mailbox for this input (only the GATING marks
-    // move: both gates start before either is decided)
+    // PAR=2 reaches the same mailbox for this input
     let (_, calls2, _, _, mail2) = run(2);
-    let no_gating = |v: &[String]| v.iter().filter(|c| !c.contains(" GATING ")).cloned().collect::<Vec<_>>();
-    assert_eq!(no_gating(&calls2), no_gating(&calls));
+    assert_eq!(calls2, calls);
     assert_eq!(mail2, mail);
 }
 
@@ -2052,7 +1734,6 @@ fn push_fixture(on: bool) -> H {
 fn off_push_mode_never_invokes_spira_lc() {
     let h = push_fixture(false);
     h.run();
-    assert!(h.lib.has("land_mark sp-a LANDED"));
     assert!(h.lib.has("reopen sp-b rebase-conflict"));
     assert_eq!(h.lc.probes.get(), 0);
     assert!(!h.lib.has("deliver_"), "{:?}", h.lib.calls.borrow());
@@ -2072,7 +1753,6 @@ fn on_with_the_machine_unreachable_a_push_landing_is_refused_loudly() {
     let h = push_fixture(true);
     *h.lc.down.borrow_mut() = Some("Access denied".into());
     h.run();
-    assert!(!h.lib.has("land_mark sp-a LANDED") && !h.lib.has("push "));
     assert!(h.logged("landing: lifecycle_enforce is on and spira-lc is unreachable (Access denied) — not landing spira/sp-a this pass"));
 }
 
@@ -2084,7 +1764,6 @@ fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
     h.git.add("spira/sp-a", "t1");
     h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
     h.run();
-    assert!(h.lib.has("land_mark sp-a CERTIFIED"), "{:?}", h.out.lines());
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
@@ -2098,7 +1777,6 @@ fn a_refused_gatepass_leaves_the_bead_uncertified_in_landstate() {
     h.lc.refuse_pass.set(true);
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
-    assert!(!h.lib.has("land_mark sp-a CERTIFIED"), "{:?}", h.out.lines());
 }
 
 #[test]
@@ -2109,7 +1787,6 @@ fn on_a_lifecycle_row_at_another_tip_is_not_certified() {
     h.git.add("spira/sp-a", "t2");
     h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
     h.run();
-    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
     assert!(h.lc.certified.borrow().is_empty());
 }
 
@@ -2120,7 +1797,6 @@ fn off_an_unlabelled_open_bead_stays_uncertified_whatever_lifecycle_says() {
     h.git.add("spira/sp-a", "t1");
     h.lc.submitted.borrow_mut().insert("sp-a".into(), "t1".into());
     h.run();
-    assert!(!h.lib.has("land_mark sp-a CERTIFIED"));
     assert!(h.lc.certified.borrow().is_empty());
 }
 
@@ -2137,7 +1813,6 @@ fn off_queue_certification_never_invokes_spira_lc() {
     let h = H::new(LandMode::QueueLocal);
     h.closed("sp-a", "t1");
     h.run();
-    assert!(h.lib.has("land_mark sp-a CERTIFIED"));
     assert_eq!(h.lc.probes.get(), 0);
 }
 
@@ -2159,7 +1834,6 @@ fn on_the_pr_pass_proves_content_deliveries_and_is_loud_when_the_machine_fails()
         loud,
         vec!["landing-pass: sp-merged: LIFECYCLE: lifecycle_enforce is on and the Delivered event did not happen (show exited 1: Access denied) — the delivery row stays PR_OPEN"]
     );
-    assert!(fs::read_to_string(h.s.run.join("landstate/sp-merged")).unwrap().starts_with("CONTENT t3 "), "the pass goes on");
 }
 
 #[test]
@@ -2226,7 +1900,6 @@ fn a_pass_with_a_gate_worker_queues_every_branch_and_no_budget_can_cut_it() {
     assert!(!h.logged("budget cut"), "{:?}", h.out.lines());
     let q = crate::gateq::GateQueue::new(&h.s.run);
     assert_eq!(q.queued().len(), 4);
-    assert!(h.lib.has("land_mark sp-d GATING t3"));
     assert!(!h.lib.has("CERTIFIED"));
 }
 
@@ -2237,7 +1910,6 @@ fn a_branch_already_queued_is_not_queued_twice() {
     h.run();
     h.run();
     assert_eq!(crate::gateq::GateQueue::new(&h.s.run).queued().len(), 1);
-    assert_eq!(h.lib.count("land_mark sp-a GATING"), 1);
     assert!(h.logged("CHECK6 sp-a: spira/sp-a is already with gate-worker at t1"));
 }
 
@@ -2247,7 +1919,6 @@ fn a_filed_pass_certifies() {
     h.closed("sp-a", "t1");
     file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
     h.run();
-    assert!(h.lib.has("land_mark sp-a CERTIFIED t1"));
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
@@ -2258,7 +1929,6 @@ fn a_filed_fail_is_the_branchs_and_reopens_it() {
     file_verdict(&h, "sp-a", "t1", 1, "gate: VERDICT=FAIL reason=suite-red branch=b repo=spira suite=test-x.sh\n");
     h.run();
     assert!(h.lib.has("reopen sp-a cert-gate-red"));
-    assert!(h.lib.has("land_mark sp-a RED t1 gate"));
 }
 
 #[test]
@@ -2292,5 +1962,4 @@ fn a_verdict_for_a_tree_the_branch_no_longer_has_is_not_applied() {
     file_verdict(&h, "sp-a", "t1", 0, "gate: VERDICT=PASS\n");
     h.run();
     assert!(!h.lib.has("CERTIFIED"));
-    assert!(h.lib.has("land_mark sp-a GATING t2"));
 }

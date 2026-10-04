@@ -7,7 +7,6 @@ pub enum Cmd {
     /// `land`: the gated pass.
     Land,
     Halt { reason: Reason, dry_run: bool },
-    SweepRed,
     /// `noverdict <id> <branch> <repo> <reason> <outcome>`: `spira_land_noverdict` alone,
     /// stdin = the gate output (sp-31hjr) — the real-sender suites' way to drive the
     /// native counting/escalation without a whole pass, the same shape as sentinel's
@@ -57,14 +56,13 @@ pub enum Reason {
     File(String),
 }
 
-pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red | noverdict <id> <branch> <repo> <reason> <outcome> | mark <id> <state> <tip> [reason] [extra] | state <id> | landed <id> <repo> | land-subject <id> | pr-merged <repo> <branch> | conflict-note <repo> <branch> <base> <name> <conflicts> <actor> [rq_n] | other-beads <repo> <branch> <base> <files> | is-work-type <type> | cited-commit <id> <repo> <base> | close-on-land <id> [sha]";
+pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | noverdict <id> <branch> <repo> <reason> <outcome> | mark <id> <state> <tip> [reason] [extra] | state <id> | landed <id> <repo> | land-subject <id> | pr-merged <repo> <branch> | conflict-note <repo> <branch> <base> <name> <conflicts> <actor> [rq_n] | other-beads <repo> <branch> <base> <files> | is-work-type <type> | cited-commit <id> <repo> <base> | close-on-land <id> [sha]";
 
 /// Err((exit code, message for stderr)).
 pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
     match args.first().map(String::as_str) {
         Some("--pass") | Some("pr") if args.len() == 1 => Ok(Cmd::Pr),
         Some("land") if args.len() == 1 => Ok(Cmd::Land),
-        Some("sweep-red") if args.len() == 1 => Ok(Cmd::SweepRed),
         Some("-h") | Some("--help") => Ok(Cmd::Help),
         Some("halt") => parse_halt(&args[1..]),
         Some("mark") if (4..=6).contains(&args.len()) => Ok(Cmd::Mark {
@@ -156,7 +154,6 @@ mod tests {
     fn verbs_and_halt_options() {
         assert_eq!(parse(&v(&["--pass"])), Ok(Cmd::Pr));
         assert_eq!(parse(&v(&["land"])), Ok(Cmd::Land));
-        assert_eq!(parse(&v(&["sweep-red"])), Ok(Cmd::SweepRed));
         assert_eq!(
             parse(&v(&["halt", "--reason", "x y", "--dry-run"])),
             Ok(Cmd::Halt { reason: Reason::Text("x y".into()), dry_run: true })

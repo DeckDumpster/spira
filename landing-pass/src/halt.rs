@@ -1,10 +1,10 @@
-//! `landing-pass halt` — stop a running pass cleanly — and `landing-pass sweep-red`.
+//! `landing-pass halt` — stop a running pass cleanly.
 //!
 //! halt signals the pass named in landing.run, waits for it (SPIRA_HALT_GRACE, default 30 s)
 //! before SIGKILL, tears its containers down by name, removes unpushed batch branches of
 //! queue(forge) repositories, and records why. --dry-run touches nothing.
 
-use crate::model::{LandMode, LandState, RepoRow, RunRecord};
+use crate::model::{LandMode, RepoRow, RunRecord};
 use crate::ports::Git;
 use crate::records::Files;
 use crate::util::{atomic_write, iso_utc};
@@ -145,35 +145,6 @@ fn cleanup_orphan_batch_branches(repos: &[RepoRow], queue_dir: &Path, git: &dyn 
             }
         }
     }
-}
-
-/// `sweep-red`: every RED landstate record as `id\ttip\tat\treason`.
-pub fn sweep_red(landstate: &Path) -> (i32, Vec<String>, Vec<String>) {
-    let Ok(rd) = fs::read_dir(landstate) else {
-        return (1, vec![], vec![format!("sweep-red: landstate dir not found: {}", landstate.display())]);
-    };
-    let mut names: Vec<String> = rd
-        .flatten()
-        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    let mut out = Vec::new();
-    for n in names {
-        let Some(ls) = fs::read_to_string(landstate.join(&n)).ok().and_then(|t| first_line_state(&t)) else { continue };
-        if ls.state == "RED" {
-            out.push(format!("{n}\t{}\t{}\t{}", ls.tip, ls.at, ls.reason));
-        }
-    }
-    if out.is_empty() {
-        out.push("sweep-red: no RED landstate entries found".into());
-    }
-    (0, out, vec![])
-}
-
-/// `read -r state tip at reason < f` reads the first line only.
-fn first_line_state(t: &str) -> Option<LandState> {
-    LandState::parse(t.split('\n').next().unwrap_or(""))
 }
 
 pub struct RealHalt {
