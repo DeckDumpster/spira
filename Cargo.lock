@@ -734,6 +734,7 @@ dependencies = [
 name = "mail"
 version = "1.0.0"
 dependencies = [
+ "bead",
  "libc",
  "regex",
  "serde",

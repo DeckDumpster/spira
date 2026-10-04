@@ -40,9 +40,17 @@ pub trait Bd {
 /// The real `bd` binary, `-C <db>` prefixed. Refuses (matching mail.sh's own
 /// `[ -n "${SPIRA_DB:-}" ]` guards at every call site) rather than let `bd` fall through to
 /// auto-discovering the operator's real store when `SPIRA_DB` is unset.
+///
+/// `conn_retries` (>= 1) retries a call whose stderr names a dropped pooled connection —
+/// `bead::bdq::should_retry`'s own rule, the one every other `bd` caller in this workspace
+/// (aeon, cockpit-collect, incident, sentinel) already applies. A store freshly started by
+/// install (dolt-beads.service listening, but the pool's first connection already stale) is
+/// not "unreachable" — it is the one failure mode retrying past is sound for; every other
+/// failure (a real auth/schema/network refusal) still surfaces on the first try, unretried.
 pub struct BdCli {
     pub bin: String,
     pub db: String,
+    pub conn_retries: u32,
 }
 
 impl Bd for BdCli {
@@ -50,6 +58,20 @@ impl Bd for BdCli {
         if self.db.is_empty() {
             return BdOut::fail(1, "SPIRA_DB is empty/unset");
         }
+        let tries = self.conn_retries.max(1);
+        let mut last = BdOut::default();
+        for t in 1..=tries {
+            last = self.run_once(args, stdin);
+            if !bead::bdq::should_retry(last.code, t, tries, last.stderr.contains("invalid connection")) {
+                break;
+            }
+        }
+        last
+    }
+}
+
+impl BdCli {
+    fn run_once(&self, args: &[String], stdin: Option<&str>) -> BdOut {
         let mut cmd = Command::new(&self.bin);
         cmd.arg("-C").arg(&self.db);
         cmd.args(args);
@@ -379,6 +401,7 @@ pub mod fake {
 mod tests {
     use super::fake::FakeBd;
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn unresolved_when_store_not_configured() {
@@ -488,5 +511,72 @@ mod tests {
     fn open_ask_ids_parses_a_real_list() {
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), vec!["sp-open1".to_string()]); // literal-ok: test fixture
+    }
+
+    // -- BdCli's own retry on a dropped pooled connection ------------------------------------
+    //
+    // A store install just started (dolt-beads.service listening, but the first pooled
+    // connection already gone stale) fails `bd`'s first call with "invalid connection" on
+    // stderr — not a genuinely unreachable store, the one case every other `bd` caller in
+    // this workspace (aeon::bd::BdCli, cockpit-collect, incident, sentinel) already retries
+    // past via `bead::bdq::should_retry`. Before this fix, mail's own `BdCli` had no retry
+    // at all, so `open_ask_ids` surfaced that single transient hiccup as "bead store query
+    // failed — refusing to move any mail" on a store that was, in truth, healthy.
+
+    /// A scripted fake `bd`: fails once with "invalid connection" on stderr, then succeeds —
+    /// a stand-in for a store whose pool just dropped its first connection. `calls.log`
+    /// (one line per invocation) is the test's own call count, independent of the script's
+    /// internal state file.
+    fn flaky_bd_script(dir: &Path) -> std::path::PathBuf {
+        let script = dir.join("fake-bd.sh");
+        let state = dir.join("state");
+        let log = dir.join("calls.log");
+        let body = format!(
+            "#!/bin/sh\necho called >> {log}\nif [ ! -f {state} ]; then\n  touch {state}\n  echo 'Error 1105: invalid connection' >&2\n  exit 1\nfi\necho '[]'\nexit 0\n",
+            log = log.display(),
+            state = state.display(),
+        );
+        std::fs::write(&script, body).unwrap();
+        let mut perm = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+        std::fs::set_permissions(&script, perm).unwrap();
+        script
+    }
+
+    #[test]
+    fn retries_once_past_a_dropped_connection_then_succeeds() {
+        let d = testkit::TempDir::new("mail-bdcli-retry");
+        let script = flaky_bd_script(d.path());
+        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        let out = bd.run(&a(&["list", "--json"]), None);
+        assert_eq!(out.code, 0, "stderr={}", out.stderr);
+        assert_eq!(out.stdout.trim(), "[]");
+        let calls = std::fs::read_to_string(d.path().join("calls.log")).unwrap();
+        assert_eq!(calls.lines().count(), 2, "expected exactly one retry: {calls:?}");
+    }
+
+    #[test]
+    fn does_not_retry_a_failure_that_is_not_a_dropped_connection() {
+        let d = testkit::TempDir::new("mail-bdcli-no-retry");
+        let script = d.path().join("fake-bd.sh");
+        let log = d.path().join("calls.log");
+        let body = format!("#!/bin/sh\necho called >> {log}\necho 'Error: no beads project found' >&2\nexit 1\n", log = log.display());
+        std::fs::write(&script, body).unwrap();
+        let mut perm = std::fs::metadata(&script).unwrap().permissions();
+        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
+        std::fs::set_permissions(&script, perm).unwrap();
+        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        let out = bd.run(&a(&["list", "--json"]), None);
+        assert_eq!(out.code, 1);
+        let calls = std::fs::read_to_string(&log).unwrap();
+        assert_eq!(calls.lines().count(), 1, "a real refusal must not be retried: {calls:?}");
+    }
+
+    #[test]
+    fn open_ask_ids_succeeds_through_bdcli_once_the_dropped_connection_is_retried() {
+        let d = testkit::TempDir::new("mail-bdcli-retry-open-ask");
+        let script = flaky_bd_script(d.path());
+        let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
+        assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), Vec::<String>::new()); // literal-ok: test fixture
     }
 }

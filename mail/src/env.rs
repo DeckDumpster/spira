@@ -21,6 +21,7 @@ pub struct Env {
     pub ask_label: String,
     pub db: String,
     pub bd_bin: String,
+    pub bd_conn_retries: u32,
     pub operator_actor: String,
     pub run_dir: PathBuf,
     pub home: PathBuf,
@@ -70,6 +71,11 @@ impl Env {
             ask_label: spira_config::resolve::resolve_ask_label(&env_map, &home).unwrap_or_default(),
             db: spira_config::resolve::resolve_key(&env_map, &home, "SPIRA_DB").unwrap_or_default(),
             bd_bin: var("SPIRA_BD").unwrap_or_else(|| "bd".to_string()),
+            // Same convention and same default as every other `bd` caller in this workspace
+            // (aeon, cockpit-collect, incident, sentinel): retry a call once past a dropped
+            // pooled connection ("invalid connection" on stderr) rather than refuse on the
+            // first transient hiccup against a store that just started.
+            bd_conn_retries: var_u64("SPIRA_BDQ_CONN_RETRIES", 2) as u32,
             operator_actor: var("SPIRA_OPERATOR_ACTOR").unwrap_or_else(|| "operator".to_string()),
             run_dir,
             home,
