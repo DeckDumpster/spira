@@ -170,7 +170,9 @@ impl Bd for RealBd {
         if id.is_empty() {
             return Err("bd create printed no id".into());
         }
-        let _ = spira_config::lifecycle_row::after_create("incident", &id);
+        if let Err(e) = spira_config::lifecycle_row::after_create("incident", &id) {
+            eprintln!("incident: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+        }
         Ok(id)
     }
 
