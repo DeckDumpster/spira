@@ -100,7 +100,7 @@ pass() {  # pass <land|pr>
 
 remote_main() { git -C "$REMOTE" rev-parse main; }
 on_remote_main() { git -C "$REMOTE" log --format=%s main | grep -q "$1"; }
-events() { cat "$EMITTED"; }
+events() { cat "$RUN/events.log" 2>/dev/null; }
 
 echo "test-landing-modes.sh"
 
