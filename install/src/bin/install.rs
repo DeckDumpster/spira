@@ -97,12 +97,14 @@ fn dependencies(dry: bool) -> Result<(), String> {
     }
     std::fs::create_dir_all(&bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
     let gz = bin.join(".duckdb.download.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
     run_ok(
         "curl",
         &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &gz.to_string_lossy(), &url],
     )
     .map_err(|e| format!("cannot fetch duckdb from {url}: {e}"))?;
-    let out = Command::new("gunzip").args(["-c", &gz.to_string_lossy()]).output().map_err(|e| format!("gunzip: {e}"))?;
+    // batch-job: unpacking the downloaded duckdb once per install; bounded at 120 s.
+    let out = Command::new("timeout").args(["120", "gunzip", "-c", &gz.to_string_lossy()]).output().map_err(|e| format!("gunzip: {e}"))?;
     let _ = std::fs::remove_file(&gz);
     if !out.status.success() || out.stdout.is_empty() {
         return Err(format!("cannot unpack duckdb from {url}"));

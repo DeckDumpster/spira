@@ -50,6 +50,13 @@ version_min = ""
 version_probe = "journalctl --version"
 
 [[dep]]
+name = "gunzip"
+tier = "runtime"
+purpose = "install unpacks the pinned duckdb download (duckdb_cli-linux-<arch>.gz) before preflight"
+version_min = ""
+version_probe = "gunzip --version"
+
+[[dep]]
 name = "tar"
 tier = "runtime"
 purpose = "release build extracts git archive of the commit it builds (release crate)"
