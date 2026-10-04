@@ -49,6 +49,7 @@ TMP="$(mktemp -d)"; trap 'testdb_drop 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 
 STUBS="$TMP/stubs"
 mkdir -p "$STUBS"
+printf '#!/bin/sh\n[ "$1" = list ] && echo "[]"\nexit 0\n' > "$STUBS/spira-lc"; chmod +x "$STUBS/spira-lc"
 for _s in pilgrimage.sh reflect.sh; do
     printf '#!/bin/sh\n' > "$STUBS/$_s"; chmod +x "$STUBS/$_s"
 done
@@ -153,7 +154,7 @@ run_pass() {
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     env -i \
         PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_LIFECYCLE_ENFORCE=0 \
+        SPIRA_LIFECYCLE_ENFORCE=1 \
         SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
