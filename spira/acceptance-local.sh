@@ -258,7 +258,12 @@ tar -xzf '$_al_ctar' -C \"\$HOME/release-under-test\"
     printf 'acceptance-local: could not extract %s for the agent in the container\n' "$_al_ctar" >&2
     exit 2
 }
-_al_agent="/home/spirauser/release-under-test/$_al_release_name/spira/acceptance-agent.sh"
+# The container user's home, asked of the container rather than assumed.
+_al_chome="$(testenv container exec --name "$CNAME" --user spirauser bash -c 'printf %s "$HOME"')" && [ -n "$_al_chome" ] || {
+    printf 'acceptance-local: could not read the container user'"'"'s HOME\n' >&2
+    exit 2
+}
+_al_agent="$_al_chome/release-under-test/$_al_release_name/spira/acceptance-agent.sh"
 
 _al_tag="local-$(git -C "$TREE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)-$(date -u +%Y%m%dT%H%M%SZ)"
 _al_prev_args=""
