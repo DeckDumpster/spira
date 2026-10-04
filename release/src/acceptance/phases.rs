@@ -52,10 +52,20 @@ impl Run<'_> {
         Cmd::new(name).envs(&self.launcher_env())
     }
 
+    /// deploy.sh names its forge repository from SPIRA_FORGE_REPO or the checkout's git
+    /// remote, and an installed release has no remote: hand it the owner/repo this run
+    /// already resolved for its own gh calls, or every upgrade deploy exits 2 (sp-j0vhm).
+    fn forge(&self, c: Cmd) -> Cmd {
+        match &self.o.gh_repo {
+            Some(r) => c.env("SPIRA_FORGE_REPO", r),
+            None => c,
+        }
+    }
+
     /// `deploy.sh` of the release under test: always `--allow-draft` (acceptance runs before
     /// the draft is published), and the local tarball when this run was handed one.
     fn deploy_tag(&self) -> Cmd {
-        let mut c = self.tool("deploy.sh").arg("--allow-draft");
+        let mut c = self.forge(self.tool("deploy.sh")).arg("--allow-draft");
         if let Some(t) = &self.o.a.tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -64,7 +74,7 @@ impl Run<'_> {
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
     fn deploy_prev(&self, prev: &str) -> Cmd {
-        let mut c = self.tool("deploy.sh");
+        let mut c = self.forge(self.tool("deploy.sh"));
         if let Some(t) = &self.o.a.prev_tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
