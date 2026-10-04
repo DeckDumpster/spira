@@ -255,6 +255,7 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         sccache_dav_addr_set: resolve_home(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), argv0_path().as_deref())
             .map(|h| !sccache_dav_addr(Path::new(&h)).is_empty())
             .unwrap_or(false),
+        lc_system_mode: spira_config::resolve::lc_system_mode(),
         watch_names: watch_names(),
     })?;
     for note in &m.notes {

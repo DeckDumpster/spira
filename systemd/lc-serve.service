@@ -1,0 +1,43 @@
+[Unit]
+# THE SAME-USER SERVE UNIT (sp-xfqnr). An aeon reaches the lifecycle store only through
+# `work` -> SPIRA_LC_SOCKET, with no direct fallback by design; on a box without the root
+# installer's --system-user phase (spira-lc.service/.socket, a SYSTEM unit running as its
+# own Unix user) nothing answered that socket, so an aeon could be summoned but never claim
+# or submit. This unit is that answer for same-user mode: `spira-lc serve` as the operator,
+# on the user manager's runtime directory — %t/spira-lc/sock, i.e. /run/user/<uid>/spira-lc/
+# sock, the path spira_config::resolve::lc_socket_default gives every caller in this mode.
+# Installed only in same-user mode (install/src/manifest.rs `lc_system_mode`). Shared, not
+# per-instance (no `spira-` prefix, so no instance suffix): the store it serves lives on the
+# one shared dolt-beads.service, and two instances' copies would fight over one socket.
+Description=spira-lc — the lifecycle store's same-user service (bead/delivery/batch state)
+Documentation=file://@SPIRA_HOME@/lifecycle/schema.sql
+After=dolt-beads.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+# THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu), plus ~/.local/bin (%h) where install puts
+# dolt and bd: `work blocked` and friends shell out to bead.sh/mail from this process.
+Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:%h/.local/bin:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=SPIRA_HOME=@SPIRA_HOME@
+Environment=SPIRA_REPO=@SPIRA_REPO@
+Environment=SPIRA_DB=@SPIRA_DB@
+Environment=SPIRA_RUN=@SPIRA_RUN@
+# The same-user spira_lc credential spira-install phase 1.5 writes (0600, the operator's).
+Environment=SPIRA_LC_PASSWORD_FILE=@SPIRA_LC_PASSWORD_FILE@
+Environment=SPIRA_LC_USER=spira_lc
+Environment=SPIRA_LC_SOCKET=%t/spira-lc/sock
+Type=simple
+# serve binds the socket itself (no socket activation: it does not take LISTEN_FDS), inside
+# the runtime directory systemd creates for it under %t and removes on stop.
+RuntimeDirectory=spira-lc
+RuntimeDirectoryMode=0700
+ExecStart=@SPIRA_PROD_ROOT@/bin/spira-lc serve %t/spira-lc/sock
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:@SPIRA_RUN@/spira-lc.log
+StandardError=append:@SPIRA_RUN@/spira-lc.log
+
+[Install]
+WantedBy=default.target

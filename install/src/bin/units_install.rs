@@ -98,8 +98,10 @@ fn main() -> ExitCode {
             for testdb in [false, true] {
                 for inotify in [false, true] {
                     for sccache in [false, true] {
-                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
-                            union.extend(m.optional);
+                        for lc_system in [false, true] {
+                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                                union.extend(m.optional);
+                            }
                         }
                     }
                 }
@@ -119,8 +121,8 @@ fn main() -> ExitCode {
             for testdb in [false, true] {
                 for inotify in [false, true] {
                     for broker in [false, true] {
-                        for sccache in [false, true] {
-                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
+                        for (sccache, lc_system) in [(false, false), (false, true), (true, false), (true, true)] {
+                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
                                 for u in &m.units {
                                     units.insert(u.name.clone());
                                     if u.enable {

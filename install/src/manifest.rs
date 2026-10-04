@@ -32,6 +32,10 @@ pub struct Inputs {
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
     pub sccache_dav_addr_set: bool,
+    /// The root installer's `--system-user` phase has installed the SYSTEM spira-lc unit
+    /// (`spira_config::resolve::lc_system_mode`). Off is same-user mode, the default: this
+    /// manifest then installs the operator's own `lc-serve.service` (sp-xfqnr).
+    pub lc_system_mode: bool,
     /// Plain watcher names from the manifest (`watchd.sh units`, `spira-watch@<name>.service`
     /// with the wrapper stripped) — `Err` when the manifest itself is malformed, matching
     /// units.sh's `return 1` when `watchd.sh units` fails.
@@ -40,7 +44,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -138,6 +142,19 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // spira-lc.service: a SYSTEM unit installed by the root installer's --system-user phase,
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
+
+    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket an aeon's `work`
+    // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
+    // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
+    // system mode spira-lc.socket already answers /run/spira-lc/sock as its own Unix user,
+    // and a second, operator-run copy would hand the store to the credential the privilege
+    // split exists to keep away from the operator, so it is declined there.
+    if inputs.lc_system_mode {
+        m.optional.push("lc-serve.service".into());
+        m.notes.push("spira-lc runs as a system service (--system-user) — not installing lc-serve.service.".into());
+    } else {
+        m.units.push(t("lc-serve.service", true));
+    }
 
     if inputs.inotify_present {
         m.units.push(t("spira-mail-deliver.service", true));
@@ -270,6 +287,7 @@ mod tests {
             broker_enable: false,
             inotify_present: true,
             sccache_dav_addr_set: false,
+            lc_system_mode: false,
             watch_names: Ok(vec!["testview".into(), "notify".into()]),
         }
     }
@@ -291,6 +309,25 @@ mod tests {
         let u = m2.units.iter().find(|u| u.name == "sccache-dav.service").expect("installed once the address is set");
         assert!(u.enable, "a plain long-running service, enabled like spira-loom.service");
         assert!(!m2.optional.contains(&"sccache-dav.service".to_string()));
+    }
+
+    /// sp-xfqnr: same-user mode (no --system-user) installs and enables the operator's own
+    /// serve unit, shared across instances (no suffix); system mode declines it.
+    #[test]
+    fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
+        let m = build(&inputs()).unwrap();
+        let u = m.units.iter().find(|u| u.name == "lc-serve.service").expect("same-user mode installs it");
+        assert!(u.enable);
+        assert!(m.enable("prod").contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+        assert!(!m.optional.contains(&"lc-serve.service".to_string()));
+
+        let mut i = inputs();
+        i.lc_system_mode = true;
+        let m2 = build(&i).unwrap();
+        assert!(!m2.units.iter().any(|u| u.name == "lc-serve.service"), "system mode: not installed");
+        assert!(m2.optional.contains(&"lc-serve.service".to_string()), "declined, so never UNLISTED");
+        assert!(!m2.enable("prod").iter().any(|u| u.starts_with("lc-serve")));
+        assert!(m2.unlisted(["lc-serve.service"]).is_empty());
     }
 
     #[test]
