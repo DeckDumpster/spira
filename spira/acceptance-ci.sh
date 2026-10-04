@@ -84,7 +84,17 @@ for _m in queue.local:scratch-queue pr:scratch-pr; do
     git -C "$HOME/${_m#*:}" config user.name "Spira Acceptance"
     git -C "$HOME/${_m#*:}" commit --allow-empty -m "init"
     git -C "$HOME/${_m#*:}" push origin main
-    printf '%s | %s | %s | origin/main | |\n' "${_m#*:}" "$HOME/${_m#*:}" "${_m%%:*}" \
+    _base="origin/main"
+    if [ "${_m%%:*}" = "queue.local" ]; then
+        # queue.local's base must be a LOCAL branch, never a remote-tracking ref: queue.sh
+        # publish refuses one outright ("... — not a queue.local base", queue/src/ops/
+        # publish.rs), and every real queue.local row carries a local/<branch> base (set by
+        # queue.sh to-local). The forge target (origin/main) is resolved separately, by
+        # name, never by splitting the land ref (spira_publish_forge).
+        git -C "$HOME/${_m#*:}" branch local/main main
+        _base="local/main"
+    fi
+    printf '%s | %s | %s | %s | |\n' "${_m#*:}" "$HOME/${_m#*:}" "${_m%%:*}" "$_base" \
         >> "${XDG_CONFIG_HOME:-$HOME/.config}/spira/repo-map"
 done
 
