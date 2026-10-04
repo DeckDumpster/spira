@@ -126,6 +126,10 @@ publish-backlog|daemon|publish-backlog.sh watch --interval 900|publish-backlog.s
 # `watchd.sh tail stranded-runner`.
 stranded-runner|daemon|@SPIRA_HOME@/stranded-runner.sh watch --interval 120|@SPIRA_HOME@/stranded-runner.sh health
 
+# AEON-WATCH is the standing look at the fleet: one line per live aeon, and STALL, GATE,
+# TESTENV, CHURN, REOPENS flags. Status only — never an aeon's transcript or a process argv.
+aeon-watch|daemon|@SPIRA_HOME@/aeon-watch.sh watch --interval 600|@SPIRA_HOME@/aeon-watch.sh health
+
 # queue-watch — merge-queue transitions for every `mode = "queue"` repository: batch opened,
 # CI, ejected, re-pushed, landed (verified on base), closed without landing, forced cuts,
 # priority inversions and stalls. Derived from queue state and the forge, never from the
