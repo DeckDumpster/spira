@@ -18,3 +18,7 @@ test-install-dolt-refuse-stop.sh | quarantined | 2026-10-03T16:54:49Z | sp-vyeol
 test-reconciler-alert.sh | quarantined | 2026-10-03T21:37:26Z | sp-z6mz1 until=2026-10-10T00:00:00Z | red on local/main since round 284 (container-only cargo test failure); quarantined until sp-z6mz1 lands
 test-watchtower.sh | quarantined | 2026-10-03T21:37:26Z | sp-bqqt2 until=2026-10-10T00:00:00Z | ghost/empty-epic classification red on local/main and on publish PRs #481/#482; quarantined until sp-bqqt2 lands
 test-deploy-preflight-new-unit.sh | quarantined | 2026-10-03T22:06:32Z | sp-iqj2t until=2026-10-10T00:00:00Z | pre-deploy doctor FAILs on a fresh host (red on local/main and publish PRs #481-#483); quarantined so its fix can certify
+test-canary.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
+test-queue-ops.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
+test-sentinel-pass.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
+test-spike.sh | quarantined | 2026-10-04T19:08:16Z | sp-91dvb until=2026-10-11T00:00:00Z | red on the full suite of local/main 04602fe67 (2026-10-04); quarantined at the world restart until sp-91dvb fixes it
