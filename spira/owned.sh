@@ -56,6 +56,39 @@ while IFS=' ' read -r _kind _name; do
     esac
 done < <(units-install --list-manifest) || exit 1
 
+# UNION IN WHAT IS ACTUALLY ON DISK FOR THIS INSTANCE (sp-da4y0). --list-manifest reflects
+# this box's CURRENT resolution of conditional inputs (e.g. Inputs::repo_is_git_checkout,
+# probed fresh by manifest_from_env on every call, never frozen at install time) — a unit
+# installed under yesterday's resolution that today's resolves differently (the repo was a
+# git checkout then, is not seen as one now, or vice versa) is invisible to --list-manifest,
+# so a removal pass driven by that list alone leaves it behind. Acceptance hit this exactly
+# (run 37222619835): install resolved the repo as a git checkout and installed
+# spira-cert-sweep-{full,sample}-prod.{service,timer}; uninstall's own re-resolution saw it
+# as not one, so those four were absent from the manifest and the stray sweep only reported
+# them, never removed them. A real spira-*-<instance> unit FILE already on disk is ground
+# truth regardless of what a fresh recomputation says now, so fold in every one found —
+# matching how the manifest's own `unbuilt` list already keeps an earlier run's
+# dependency-missing units removable. Safe from transients: spira-aeon-*/spira-landing/
+# spira-audit* are systemd-run and never file-backed, so this glob cannot see one; a
+# different instance's files never match the -<instance> suffix.
+_owned_glob_inst="${SPIRA_INSTANCE:-prod}"
+if [ -n "$_owned_glob_inst" ]; then
+    _owned_known=" "
+    for _og_n in "${_OWNED_UNIT_NAMES[@]+"${_OWNED_UNIT_NAMES[@]}"}"; do
+        _owned_known="$_owned_known$_og_n "
+    done
+    for _og_f in "$UNITDIR"/spira-*-"$_owned_glob_inst".service "$UNITDIR"/spira-*-"$_owned_glob_inst".timer; do
+        [ -e "$_og_f" ] || continue
+        _og_bn="$(basename "$_og_f")"
+        case "$_owned_known" in
+            *" $_og_bn "*) ;;
+            *) _OWNED_UNIT_NAMES+=("$_og_bn"); _owned_known="$_owned_known$_og_bn " ;;
+        esac
+    done
+    unset _og_n _og_f _og_bn _owned_known
+fi
+unset _owned_glob_inst
+
 # ---------------------------------------------------------------------------
 # LIST: kind|id|location|phase|retention
 # ---------------------------------------------------------------------------
