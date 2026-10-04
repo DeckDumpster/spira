@@ -32,6 +32,7 @@ pub struct SweepData {
     pub gate_wait: gate_wait::GateWait,
     pub gate_win_label: String,
     pub gate_silence: Option<gate_wait::Silence>,
+    pub gate_slow: Option<gate_wait::Slow>,
     pub nv_worst: i64,
     pub nv_worst_key: Option<String>,
 
@@ -94,6 +95,7 @@ impl SweepData {
             },
             gate_win_label: "last 6h".to_string(),
             gate_silence: None,
+            gate_slow: None,
             nv_worst: 0,
             nv_worst_key: None,
             unsent_inflight_disp: "0".to_string(),
@@ -226,6 +228,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
     let gate_log_text = std::fs::read_to_string(cfg.gate_log()).unwrap_or_default();
     let gw = gate_wait::compute(&gate_log_text, now, cfg.gate_window_s);
     let gate_win_label = gate_wait::window_label(cfg.gate_window_s);
+    let gate_slow = gate_wait::slow(&gate_log_text, now, 86400, cfg.gate_p90_limit_s, 20);
     let gate_silence = gate_wait::silence(&gate_log_text, &lc::beads_in("SUBMITTED").unwrap_or_default(), now, cfg.gate_silence_window_s);
 
     // YIELD ------------------------------------------------------------------------------
@@ -359,6 +362,7 @@ pub fn collect(now: i64, cfg: &Cfg) -> SweepData {
         gate_wait: gw,
         gate_win_label,
         gate_silence,
+        gate_slow,
         nv_worst,
         nv_worst_key,
         unsent_inflight_disp,

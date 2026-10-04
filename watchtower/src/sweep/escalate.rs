@@ -30,6 +30,7 @@ pub fn run(d: &SweepData, cfg: &Cfg) {
     closed_stranded(d, cfg);
     dedup_meter(d, cfg);
     gate_silent(d, cfg);
+    gate_slow(d, cfg);
     idle_while_ready(d, cfg);
     moot_sweep(cfg);
 }
@@ -322,6 +323,24 @@ fn gate_silent(d: &SweepData, cfg: &Cfg) {
     log(&format!("watchtower: gate-silent escalation filed (last gate {last})"));
 }
 
+fn gate_slow(d: &SweepData, cfg: &Cfg) {
+    let Some(s) = &d.gate_slow else { return };
+    let Some(inc) = usable_inc(cfg) else {
+        log(&format!("watchtower: {} is missing — gate-slow escalation not filed", cfg.incident_sh));
+        return;
+    };
+    let body = format!(
+        "The gate's p90 wall (gate.log ran= less waited=) over the last 24h is {}s across {} gates; the ceiling is {}s.\n\nSee the phases= field of the slowest gate.log rows for the phase that overruns; the whole-gate deadline (SPIRA_GATE_DEADLINE) and per-phase caps are in gate/DESIGN.md.\n",
+        s.p90, s.rows, cfg.gate_p90_limit_s
+    );
+    let f = Finding::new(&cfg.db, &cfg.home_repo, "GATE SLOW: p90 gate wall over the ceiling", &body)
+        .priority(1)
+        .reference("incident:gate-slow")
+        .cause("gate-slow");
+    incident::file(inc, &f);
+    log(&format!("watchtower: gate-slow escalation filed (p90 {}s)", s.p90));
+}
+
 fn idle_while_ready(d: &SweepData, cfg: &Cfg) {
     if d.idle_while_ready.is_empty() {
         return;
@@ -402,6 +421,7 @@ mod tests {
             snap_stale_s: 60,
             gate_window_s: 21600,
             gate_silence_window_s: 3600,
+            gate_p90_limit_s: 300,
             gate_log: None,
             yield_window_s: 86400,
             yield_sh: None,
@@ -572,6 +592,21 @@ mod tests {
         let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
         assert!(captured.contains("REF=incident:gate-silent"));
         assert!(captured.contains("2026-09-28T07:37:41Z"));
+    }
+
+    #[test]
+    fn gate_slow_files_only_when_the_p90_is_over() {
+        let d = testkit::TempDir::new("wt-escalate-gate-slow");
+        let inc = fake_incident(&d);
+        let cfg = cfg_with(&d, inc);
+        gate_slow(&SweepData::fixture_nominal(1_700_000_000), &cfg);
+        assert!(!d.join("captured.txt").exists());
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        data.gate_slow = Some(crate::gate_wait::Slow { p90: 358, rows: 40 });
+        gate_slow(&data, &cfg);
+        let captured = std::fs::read_to_string(d.join("captured.txt")).unwrap();
+        assert!(captured.contains("REF=incident:gate-slow"));
+        assert!(captured.contains("358s"));
     }
 
     #[test]

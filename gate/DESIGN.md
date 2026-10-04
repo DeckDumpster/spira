@@ -80,6 +80,8 @@ reached the bash.
 | `SPIRA_VERDICTS` | the verdict cache | `$SPIRA_RUN/verdicts` |
 | `SPIRA_VERDICT_TTL` | seconds a cached PASS is good; non-numeric reads 0 | 0 |
 | `SPIRA_GATE_TIMEOUT` | `timeout` on the gate command | 2700 |
+| `SPIRA_GATE_DEADLINE` | whole-gate wall clock from the end of the waits: every phase, base trial included. At expiry NO_VERDICT `reason=deadline` naming the running phase; never a pass | 300 |
+| `SPIRA_GATE_BUDGET` | the selector's prediction of suite time (testenv `--deadline`); with the fixed phases it fits the deadline | 140 |
 | `SPIRA_GATE_LOCK_WAIT` | wait for an admission slot and for the tree lock | `4 × SPIRA_GATE_TIMEOUT` |
 | `SPIRA_CERTIFY_PAR` | admission pool size; unset or non-numeric derives `min(nproc/4, MemAvailable/400MiB)`, at least 1, re-read every second | derived |
 | `SPIRA_GATE_SUITES` | `off` skips admission unless the round named suites against the bead; in the key; passed through | `on` |
@@ -1106,3 +1108,12 @@ With `SPIRA_GATE_CPU_QUOTA` set (percent, `400` = four cores), the binary re-exe
 (`SPIRA_GATE_IN_UNIT` marks the child). A set but unusable quota is `NO_VERDICT
 reason=cgroup-unavailable`, never an unconfined run. The suite width defaults to the
 cgroup-aware core count, so `SPIRA_GATE_HOST_CORES` is gone.
+
+## The deadline and the phase caps (sp-juboj)
+
+`SPIRA_GATE_DEADLINE` is enforced: each phase and each base-side call runs under
+`min(SPIRA_GATE_TIMEOUT, what is left of the deadline)`, and a phase with a cap (`phase_cap`: tools 40 s,
+fences 90 s, gate 190 s; `base-` ignored) is cut at it. The branch trial's fixed caps sum under the
+deadline. A kill at either is NO_VERDICT `deadline` naming the last phase in `gate.log`'s `phases=`. An
+operator `SPIRA_GATE_TIMEOUT` shorter than the deadline keeps reason `timeout`. The watchtower pages
+(`GATE SLOW`) when the p90 of `ran` less `waited` over 24 h exceeds `SPIRA_WATCH_GATE_P90_LIMIT` (300).

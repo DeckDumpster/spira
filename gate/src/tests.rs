@@ -1373,13 +1373,13 @@ fn a_base_trial_that_did_not_run_leaves_it_untestable() {
         .borrow_mut()
         .insert(BASE.into(), (124, String::new()));
     assert_eq!(f.run(), NOVERDICT);
-    assert!(f.verdict_line().contains("reason=base-untestable"));
+    assert!(f.verdict_line().contains("reason=deadline"), "a base trial killed at the whole-gate deadline judged nothing");
 }
 
 #[test]
 fn a_deadline_or_harness_fault_is_not_a_red() {
     for (rc, out, reason) in [
-        (124, "test-a.sh ok", "timeout"),
+        (124, "test-a.sh ok", "deadline"),
         (75, "", "harness-fault"),
         (
             1,
@@ -3304,4 +3304,31 @@ fn the_base_trial_never_names_a_suite_the_base_does_not_have() {
     assert!(!named_new_on_base, "the base trial named a suite the base lacks: {cmds:?}");
     assert!(!base_reentry.is_empty(), "the base trial still re-runs the suites the base has: {cmds:?}");
     assert!(!f.verdict_line().contains("base-untestable"), "{}", f.verdict_line());
+}
+
+#[test]
+fn a_phase_that_outlasts_the_deadline_is_no_verdict_naming_the_phase() {
+    let f = Fake::new();
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    let line = f.verdict_line();
+    assert!(line.contains("reason=deadline"), "{line}");
+    assert!(f.stderr().contains("phase `gate` was running"), "{}", f.stderr());
+}
+
+#[test]
+fn an_operator_timeout_shorter_than_the_deadline_stays_a_timeout() {
+    let f = Fake::new();
+    f.set_var("SPIRA_GATE_TIMEOUT", "10");
+    f.runs.borrow_mut().insert(MERGE_SHA.into(), (124, String::new()));
+    assert_eq!(f.run(), NOVERDICT);
+    assert!(f.verdict_line().contains("reason=timeout"), "{}", f.verdict_line());
+}
+
+#[test]
+fn phase_caps_sum_under_the_deadline() {
+    let fixed: u64 = ["tools", "gate"].iter().filter_map(|p| crate::engine::phase_cap(p)).sum();
+    assert!(fixed < crate::engine::DEADLINE_DEFAULT, "{fixed}");
+    assert_eq!(crate::engine::phase_cap("base-tools"), crate::engine::phase_cap("tools"));
+    assert_eq!(crate::engine::phase_cap("reentry"), None);
 }
