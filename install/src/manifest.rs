@@ -274,6 +274,48 @@ impl Manifest {
     }
 }
 
+/// Every template name any combination of this box's SIX conditional inputs (dolt data,
+/// testdb data, `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
+/// checkout`) could ever push into `Manifest::units` — the same completeness union
+/// `--list-optional`/`--list-union` already compute for a human (`SPIRA_BROKER_ENABLE` is
+/// left out: it never changes which units exist, only `spira-broker.timer`'s `enable`),
+/// factored out here so a REMOVAL caller gets it too (sp-da4y0).
+///
+/// `manifest_from_env` probes every one of these fresh on each call — `repo_is_git_
+/// checkout` in particular is a filesystem check, not a frozen fact from install time — so
+/// `units-install --list-manifest`'s CURRENT resolution can legitimately differ from what
+/// was true when a unit was actually installed. A unit this box installed under
+/// yesterday's resolution (the repo was a git checkout then) is still one this box's
+/// manifest could install; an uninstall that only ever asks "what would I install right
+/// now" misses it. `spira-watch@.service`, the never-installed-directly template, is
+/// excluded exactly as `template_names()` excludes it.
+pub fn union_template_names() -> Vec<String> {
+    let mut set = std::collections::BTreeSet::new();
+    for dolt in [false, true] {
+        for testdb in [false, true] {
+            for inotify in [false, true] {
+                for sccache in [false, true] {
+                    for lc_system in [false, true] {
+                        for repo_git in [false, true] {
+                            let inputs = Inputs { dolt_data_set: dolt, testdb_data_set: testdb, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
+                            if let Ok(m) = build(&inputs) {
+                                set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// [`union_template_names`], resolved to this instance's installed names via [`inst_name`]
+/// — what a removal caller actually needs to check against disk.
+pub fn union_installed_names(instance: &str) -> Vec<String> {
+    union_template_names().iter().map(|n| inst_name(n, instance)).collect()
+}
+
 /// `inst_name` (units.sh): a `spira-*.service`/`.timer` template gets the instance suffix
 /// appended before its extension; everything else (shared units, and the watcher template
 /// itself, which is never installed directly) keeps its plain name.
@@ -481,5 +523,33 @@ mod tests {
         let m = build(&inputs()).unwrap();
         let on_disk = ["spira-watch@.service"];
         assert_eq!(m.unlisted(on_disk), Vec::<String>::new());
+    }
+
+    /// sp-da4y0: the cert-sweep units are declined under SOME resolutions of
+    /// `repo_is_git_checkout` (see `cert_sweep_units_are_installed_only_when_the_repo_is_a_
+    /// git_checkout` above) — exactly the shape a removal pass must not miss. The union must
+    /// carry them regardless, and resolve them to this instance's installed names.
+    #[test]
+    fn union_template_names_carries_a_conditionally_declined_template() {
+        let names = union_template_names();
+        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service"] {
+            assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
+        }
+        assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
+
+        let installed = union_installed_names("test");
+        assert!(installed.contains(&"spira-cert-sweep-full-test.service".to_string()));
+        assert!(installed.contains(&"spira-cert-sweep-sample-test.timer".to_string()));
+        assert!(installed.contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+    }
+
+    /// A name this manifest never produces under ANY input combination (an unrelated or
+    /// retired template) must never appear — the union is bounded to real templates, not
+    /// every unit file a disk scan might turn up (an actually-unknown stray from an older
+    /// harness version must stay a reported STRAY, never get swept into a silent removal).
+    #[test]
+    fn union_template_names_never_invents_an_unknown_template() {
+        let names = union_template_names();
+        assert!(!names.iter().any(|n| n == "spira-legacy-shard.service"));
     }
 }
