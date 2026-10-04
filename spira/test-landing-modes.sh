@@ -72,7 +72,7 @@ fixture() {
     git -C "$REPO" fetch -q origin
     printf '%s | %s | %s | origin/main | | |\n' "$REPONAME" "$REPO" "$mode" > "$SH/land-map"
     rm -rf "$RUN/submitted" "$RUN/landstate" "$RUN/tip-at-gate"
-    : > "$EMITTED"; : > "$FORGE_LOG"; : > "$FORGE_PRS"
+    rm -f "$RUN/events.log"; : > "$EMITTED"; : > "$FORGE_LOG"; : > "$FORGE_PRS"
     testdb_reset
     testdb_seed <<'JSONL'
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-01T00:00:00Z"}
