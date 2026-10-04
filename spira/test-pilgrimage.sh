@@ -47,7 +47,11 @@ export SPIRA_CONF="$TMP/no-such-conf"
 # both stubbed below), but sourcing pilgrimage.sh still sources conf.sh, whose schema check
 # runs against $SPIRA_DB if a store exists there — a nonexistent path skips it.
 export SPIRA_DB="$TMP/no-such-db"
-export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/landstate"
+export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
+LCSTATE="$TMP/lc-state"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] && [ -s "%s/$2" ] && cat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/bin/spira-lc"
+chmod +x "$TMP/bin/spira-lc"; mkdir -p "$LCSTATE"
+PATH="$TMP/bin:$PATH"
 
 LREMOTE="$TMP/lrepo.git"
 git init -q --bare -b main "$LREMOTE"
@@ -77,24 +81,24 @@ git -C "$TMP/wt-c1" commit -q -m "feat: sp-assert-c1 — work"
 
 out="$(pilgrimage_branches_landed sp-assert-epic)"; rc=$?
 want "a live branch with no landstate entry blocks the close" \
-     "ASSERTION — spira/sp-assert-c1 in lrepo is live but landstate reads 'missing'" "$out"
+     "ASSERTION — spira/sp-assert-c1 in lrepo is live but the lifecycle record reads 'missing'" "$out"
 eq   "and pilgrimage_branches_landed returns 1" "1" "$rc"
 
 # A non-LANDED state (e.g. GATED) also blocks the close.
-printf 'GATED abc123 1234567890 fixture\n' > "$SPIRA_RUN/landstate/sp-assert-c1"
+echo GATED > "$LCSTATE/sp-assert-c1"
 out="$(pilgrimage_branches_landed sp-assert-epic)"; rc=$?
-want "a GATED landstate entry also blocks the close" "landstate reads 'GATED'" "$out"
+want "a GATED record also blocks the close" "lifecycle record reads 'GATED'" "$out"
 eq   "and still returns 1" "1" "$rc"
 
 # Once the LANDED entry exists, the epic may close.
-printf 'LANDED abc123 1234567890 lrepo\n' > "$SPIRA_RUN/landstate/sp-assert-c1"
+echo LANDED > "$LCSTATE/sp-assert-c1"
 out="$(pilgrimage_branches_landed sp-assert-epic)"; rc=$?
-eq     "with a LANDED entry, pilgrimage_branches_landed returns 0" "0" "$rc"
+eq     "with a LANDED record, pilgrimage_branches_landed returns 0" "0" "$rc"
 nowant "and logs no assertion" "ASSERTION" "$out"
 
 git -C "$git_work" worktree remove --force "$TMP/wt-c1" 2>/dev/null
 git -C "$git_work" branch -q -D spira/sp-assert-c1 2>/dev/null
-rm -f "$SPIRA_RUN/landstate/sp-assert-c1"
+rm -f "$LCSTATE/sp-assert-c1"
 
 # A CHILD IN A PR-MODE REPO IS NOT CHECKED — landing.sh does not write landstate for pr.
 printf 'lrepo | %s | pr | origin/main | |\n' "$git_work" > "$LMAP"
