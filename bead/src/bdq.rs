@@ -458,7 +458,9 @@ pub fn retryable(args: &[String], stderr: &str) -> bool {
         return false;
     }
     let verb = args.iter().find(|a| !a.starts_with('-')).map(String::as_str).unwrap_or("");
-    READ_VERBS.contains(&verb) || stderr.contains("failed to open database")
+    READ_VERBS.contains(&verb)
+        || stderr.contains("failed to open database")
+        || stderr.contains("failed to check if database")
 }
 
 /// A call that mutates the store: anything whose verb is not a read. These are the calls the
@@ -795,6 +797,10 @@ mod tests {
         assert!(retryable(&a(&["--json", "count"]), "Error: invalid connection"));
         assert!(!retryable(&a(&["close", "x"]), "Error: invalid connection"));
         assert!(retryable(&a(&["close", "x"]), "failed to open database: invalid connection"));
+        assert!(retryable(
+            &a(&["note", "x"]),
+            "failed to check if database spira exists on server: invalid connection"
+        ));
         assert!(!retryable(&a(&["show", "x"]), "bead not found"));
     }
 
