@@ -4,7 +4,7 @@
 # sits in, even under lifecycle_enforce's restricted PATH (/usr/bin:/bin:<release>/bin),
 # which omits <release>/spira (sp-tf7nt).
 #
-# covers: spira/hooks/pre-commit aeon/src/restrict.rs
+# covers: spira/hooks/pre-commit spira/worktree-hooks.sh aeon/src/restrict.rs
 # tier: T1
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -60,5 +60,28 @@ stub "$REL/spira" exclude.sh 0
 commit c.txt; rc=$?
 is   "a missing tool refuses the commit" 1 "$rc"
 want "and names it" "branch-guard.sh is not on PATH" "$(cat "$TMP/out")"
+
+# THE COMPOSED WORKTREE HOOK (sp-djgb4). An aeon worktree's pre-commit is written by
+# worktree-hooks.sh: the canonical hook, then pre-commit-guard.sh — which must be found the
+# same way, beside the hooks, not by bare name on the restricted PATH.
+stub "$REL/spira" exclude.sh 0
+stub "$REL/spira" branch-guard.sh 0
+stub "$REL/spira" pre-commit-guard.sh 0
+cp "$HERE/worktree-hooks.sh" "$REL/spira/worktree-hooks.sh"
+WREPO="$TMP/wrepo"
+git init -q -b main "$WREPO"
+git -C "$WREPO" config user.name t
+git -C "$WREPO" config user.email t@example.com
+git -C "$WREPO" commit -q --allow-empty -m init
+git -C "$WREPO" worktree add -q -b work "$TMP/wt"
+git -C "$TMP/wt" config user.name t
+git -C "$TMP/wt" config user.email t@example.com
+SPIRA_HOME="$REL/spira" bash "$REL/spira/worktree-hooks.sh" install "$TMP/wt" >/dev/null 2>&1
+is "worktree-hooks.sh arms the worktree" 0 "$?"
+: > "$LOG"
+printf 'x\n' > "$TMP/wt/d.txt"; git -C "$TMP/wt" add d.txt
+env -i HOME="$TMP" PATH="/usr/bin:/bin:$GIT_BIN:$REL/bin" git -C "$TMP/wt" commit -q -m d >"$TMP/out" 2>&1; rc=$?
+is "a worktree commit under the restricted PATH passes both hooks" 0 "$rc"
+want "pre-commit-guard.sh beside the hooks ran" "pre-commit-guard.sh" "$(cat "$LOG")"
 
 tl_summary
