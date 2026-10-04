@@ -17,7 +17,6 @@ pub enum Op {
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
-    CloseOnLand,
     Comment,
     Event,
     Rebase,
@@ -91,7 +90,6 @@ fn body(op: Op) -> &'static str {
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",
         Op::ReleaseClaim => "release_claim \"$1\"\nexit $?\n",
-        Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::Comment => "printf '%s' \"$2\" | bdq comment \"$1\" --stdin >/dev/null 2>&1 || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" - \"$2\" \"$3\" || true\nexit 0\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\" 2>/dev/null; __rc=$?\nprintf '\\036%s' \"${REBASE_FAILURE:-}\"\nexit $__rc\n",
@@ -207,7 +205,7 @@ mod tests {
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
             Op::Context, Op::TomlPath, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
-            Op::CloseOnLand, Op::Comment, Op::Event, Op::Rebase,
+            Op::Comment, Op::Event, Op::Rebase,
             Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug, Op::AmendBug,
         ] {

@@ -118,7 +118,7 @@ make_branch sp-db2
 if branch_exists spira/sp-db2; then ok "unlanded branch exists before destroy"; else bad "unlanded branch exists" "branch was not created"; fi
 
 # Confirm content_landed sees it as unlanded (positive control for content_landed itself).
-if content_landed "$REPO" spira/sp-db2 origin/main; then
+if spira-lc content-landed "$REPO" spira/sp-db2 origin/main; then
     bad "content_landed sees unlanded branch as unlanded" "returned 0 — branch content appears landed already"
 else
     ok "content_landed correctly refuses the unlanded branch"
@@ -156,7 +156,7 @@ else
 fi
 
 # content_landed must approve it.
-if content_landed "$REPO" spira/sp-db3 origin/main; then
+if spira-lc content-landed "$REPO" spira/sp-db3 origin/main; then
     ok "content_landed approves squash-landed branch"
 else
     bad "content_landed should approve squash-landed branch" "returned non-zero — fence would incorrectly refuse"

@@ -143,25 +143,15 @@ echo "test-sending-closed-reap.sh"
 # shellcheck disable=SC1090
 . "$SH/lib.sh"
 
-if content_landed "$REPO" "spira/sp-groom" "origin/main"; then
+if spira-lc content-landed "$REPO" "spira/sp-groom" "origin/main"; then
     ok "sp-groom: content_landed correctly returns 0 (ancestor branch, sp-bf31a)"
 else
     bad "sp-groom: content_landed must return 0 for an ancestor (0-ahead) branch" "returned non-zero"
 fi
-if content_landed "$REPO" "spira/sp-btch" "origin/main"; then
+if spira-lc content-landed "$REPO" "spira/sp-btch" "origin/main"; then
     bad "sp-btch: content_landed must return non-zero (conflict after base moved)" "returned 0"
 else
     ok "sp-btch: content_landed correctly returns non-zero (conflict with post-batch base)"
-fi
-if in_fixture landing-pass landed "sp-btch" "$REPO" 2>/dev/null; then
-    ok "sp-btch: landed() finds the naming commit on origin/main"
-else
-    bad "sp-btch: landed() must return 0 (batch commit on main names it)" "returned non-zero"
-fi
-if in_fixture landing-pass landed "sp-keep" "$REPO" 2>/dev/null; then
-    bad "sp-keep: landed() must return non-zero" "returned 0 — fixture is wrong"
-else
-    ok "sp-keep: landed() correctly returns non-zero (not on main)"
 fi
 
 # ---------------------------------------------------------------------------

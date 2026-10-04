@@ -12,7 +12,7 @@ use crate::ports::{Base, Repo, Sent, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     All,
-    /// The sentinel's per-pass call: queue-mode repos reap at landing (bead_close_on_land).
+    /// The sentinel's per-pass call: queue-mode repos reap at landing (`spira-lc close-on-land`).
     SkipQueue,
     /// The daily straggler sweep: queue-mode repos only.
     QueueOnly,

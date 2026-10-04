@@ -393,7 +393,7 @@ echo "test-sending.sh"
 . "$HERE/lib.sh"
 echo
 echo "fixture confirmation:"
-if content_landed "$REPO" spira/sp-cl0 origin/main; then
+if spira-lc content-landed "$REPO" spira/sp-cl0 origin/main; then
     ok "sp-cl0: content_landed true via the ancestor shortcut (ahead=0)"
 else
     bad "sp-cl0: content_landed true via the ancestor shortcut" "returned non-zero — fixture is wrong"
@@ -403,25 +403,15 @@ if git -C "$REPO" merge-base --is-ancestor spira/sp-cl1 origin/main 2>/dev/null;
 else
     ok "sp-cl1: ancestry alone refuses it (the defect content_landed exists to fix)"
 fi
-if content_landed "$REPO" spira/sp-cl1 origin/main; then
+if spira-lc content-landed "$REPO" spira/sp-cl1 origin/main; then
     ok "sp-cl1: content_landed approves the empty-commit branch"
 else
     bad "sp-cl1: content_landed approves the empty-commit branch" "returned non-zero"
 fi
-if content_landed "$REPO" spira/sp-sq origin/main; then
+if spira-lc content-landed "$REPO" spira/sp-sq origin/main; then
     bad "sp-sq: content_landed must be false (base diverged past the squash)" "returned 0"
 else
     ok "sp-sq: content_landed correctly false"
-fi
-if landing-pass landed sp-otherpr "$REPO" 2>/dev/null; then
-    ok "sp-otherpr: landed() finds the naming commit"
-else
-    bad "sp-otherpr: landed() finds the naming commit" "returned non-zero"
-fi
-if landing-pass landed sp-cherry "$REPO" 2>/dev/null; then
-    ok "sp-cherry: landed() finds the (stale) naming commit"
-else
-    bad "sp-cherry: landed() finds the (stale) naming commit" "returned non-zero"
 fi
 
 # ---- the pass ---------------------------------------------------------------------------

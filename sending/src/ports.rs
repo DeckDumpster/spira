@@ -50,7 +50,7 @@ pub trait World {
     fn bead(&self, id: &str) -> Option<Value>;
     /// The mid-send recheck and the verified deletion (spira_reap_landed_branch).
     fn send(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str) -> Sent;
-    /// bead_close_on_land.
+    /// `spira-lc close-on-land`.
     fn close_on_land(&self, id: &str, sha: &str);
     /// spira_destroy_worktree; true when removed (or nothing to remove).
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool;

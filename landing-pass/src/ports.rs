@@ -47,17 +47,10 @@ pub trait Git {
     fn delete_branch(&self, repo: &Path, branch: &str) -> bool;
     /// short names of refs matching a pattern (`for-each-ref --format=%(refname:short)`).
     fn refs_matching(&self, repo: &Path, pattern: &str) -> Vec<String>;
-    /// `git log --format=%H%x09%s --grep=<grep> -F <refs…>` (family R, sp-81t4d — `landed`/
-    /// `landed_sha`'s one search): "sha\tsubject" per candidate commit, newest first. `refs`
-    /// empty or unresolvable is the caller's own "cannot tell" (law-closed-is-not-landed);
-    /// this never guesses a ref on its own.
-    fn log_grep(&self, repo: &Path, grep: &str, refs: &[String]) -> Option<String>;
     /// `git merge-base <a> <b>`; None when there is no common ancestor (or git fails).
     fn merge_base(&self, repo: &Path, a: &str, b: &str) -> Option<String>;
     /// `git log --format=%s <range> [-- <paths…>]`.
     fn log_subjects(&self, repo: &Path, range: &str, paths: &[&str]) -> Option<String>;
-    /// `git log -1 --format=%B <sha>^{commit}` — the full commit message body.
-    fn commit_body(&self, repo: &Path, sha: &str) -> Option<String>;
 }
 
 /// The lib.sh seam (DESIGN.md §6). Every call is one fixed script; every value on stdin.

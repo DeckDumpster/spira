@@ -406,16 +406,10 @@ mod tests {
         fn refs_matching(&self, _: &Path, _: &str) -> Vec<String> {
             Vec::new()
         }
-        fn log_grep(&self, _: &Path, _: &str, _: &[String]) -> Option<String> {
-            None
-        }
         fn merge_base(&self, _: &Path, _: &str, _: &str) -> Option<String> {
             None
         }
         fn log_subjects(&self, _: &Path, _: &str, _: &[&str]) -> Option<String> {
-            None
-        }
-        fn commit_body(&self, _: &Path, _: &str) -> Option<String> {
             None
         }
     }
@@ -721,17 +715,11 @@ mod tests {
             fn refs_matching(&self, r: &Path, p: &str) -> Vec<String> {
                 self.0.refs_matching(r, p)
             }
-            fn log_grep(&self, r: &Path, g: &str, refs: &[String]) -> Option<String> {
-                self.0.log_grep(r, g, refs)
-            }
             fn merge_base(&self, r: &Path, a: &str, b: &str) -> Option<String> {
                 self.0.merge_base(r, a, b)
             }
             fn log_subjects(&self, r: &Path, range: &str, paths: &[&str]) -> Option<String> {
                 self.0.log_subjects(r, range, paths)
-            }
-            fn commit_body(&self, r: &Path, sha: &str) -> Option<String> {
-                self.0.commit_body(r, sha)
             }
         }
         let dup_git = DupGit(FGit::default());

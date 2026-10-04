@@ -228,7 +228,7 @@ pub fn land_local(w: &World, repo: Option<&str>, head_arg: &str, members: &Text,
         w.lib.gh_issue_closeout(&m.id, &head, &path);
         w.lib.bead_close_on_land(&m.id, &head);
         if ungated.is_some() {
-            // bead_close_on_land re-marks LANDED (at the head) with its own "Closed by
+            // close-on-land re-marks LANDED (at the head) with its own "Closed by
             // landing pass" reason; the ungated reason must be the one that stays (§8 D12).
             // Only the reason changes: the tip is whatever the record now holds, so publish
             // (§8 D4) reads the same tip it would after a certified land.

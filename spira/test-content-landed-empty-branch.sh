@@ -67,7 +67,7 @@ fi
 
 echo
 echo "empty branch — content_landed returns 0 for an ancestor branch (sp-bf31a):"
-if content_landed "$REPO" "spira/sp-empty" "origin/main"; then
+if spira-lc content-landed "$REPO" "spira/sp-empty" "origin/main"; then
     ok "content_landed returns 0 for an ancestor branch (ancestor implies landed)"
 else
     bad "content_landed must return 0 for an ancestor branch" "it returned non-zero"
@@ -102,7 +102,7 @@ else
     bad "squash fixture" "branch should have commits ahead of origin/main"
 fi
 
-if content_landed "$REPO" "spira/sp-sq" "origin/main"; then
+if spira-lc content-landed "$REPO" "spira/sp-sq" "origin/main"; then
     ok "content_landed returns 0 for squash-merged branch (content already on base)"
 else
     bad "content_landed should return 0 for squash-merged" "it returned non-zero"

@@ -32,13 +32,12 @@ pub enum Op {
     /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
     /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
     Status,
-    CloseOnLand,
     LabelAdd,
     LabelRemove,
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -94,7 +93,6 @@ fn body(op: Op) -> &'static str {
         Op::Bead => BEAD,
         Op::Beads => BEADS,
         Op::Status => STATUS,
-        Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
         Op::LabelRemove => "bdq label remove \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
     }

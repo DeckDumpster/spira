@@ -221,7 +221,7 @@ impl World for Real {
         }
     }
     fn close_on_land(&self, id: &str, sha: &str) {
-        self.seam(Op::CloseOnLand, &[id, sha]);
+        let _ = std::process::Command::new("spira-lc").args(["close-on-land", id, sha]).status();
     }
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool {
         reap::destroy_worktree(&self.run(), &self.reaplog_path(), id, w, repo, why, self)
