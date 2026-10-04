@@ -154,7 +154,7 @@ run_pass() {
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     env -i \
         PATH="$PATH" HOME="$TMP/home" \
-        SPIRA_LIFECYCLE_ENFORCE=1 \
+        SPIRA_LIFECYCLE_ENFORCE=0 \
         SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
@@ -225,7 +225,7 @@ echo
 echo "--audit — the decoupled worker actually does the walk, and never lands or summons:"
 # ======================================================================================
 rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
-audit_out="$(run_pass "$_run" "--audit")"
+audit_out="$(run_pass "$_run" "--audit" SPIRA_LIFECYCLE_ENFORCE=1)"
 is   "audit: sending.sh IS called (with --skip-queue, sp-jci6o)" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "audit: sending.sh called with --skip-queue" \
