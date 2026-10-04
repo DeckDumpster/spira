@@ -25,6 +25,7 @@
 mod drive;
 mod flip;
 mod io;
+mod order;
 mod vm;
 
 use std::collections::BTreeMap;
@@ -469,7 +470,12 @@ fn stabilize_round(env_: &Env, repo: &Repo, wt: &Path, start_sha: &str, starting
         return Ok(None);
     }
 
-    let suites = io::all_suites(repo, &round_branch);
+    let history = std::fs::read_to_string(tsd::family_path(&env_.run, "suite-timing")).unwrap_or_default();
+    let ordered = order::longest_first(&io::all_suites(repo, &round_branch), &history);
+    if !ordered.unmeasured.is_empty() {
+        println!("batcher {}: ALARM no recorded wall time for {} — scheduled first", repo.name, ordered.unmeasured.join(","));
+    }
+    let suites = ordered.list;
     let changed: BTreeMap<String, Vec<String>> = members.iter().map(|m| (m.id.clone(), io::changed_paths(repo, start_sha, &m.tip))).collect();
 
     let mut runner = vm::VmRunner::new(env_, repo, wt, start_sha, &round, changed.clone())?;

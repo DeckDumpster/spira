@@ -17,6 +17,7 @@ use batcher::core::{Id, Member, MergeResult};
 
 use crate::drive::{MainEnd, MainKind, MainPoll, RoundRunner};
 use crate::io::{self, Env, Repo};
+use crate::order;
 
 /// Only these extensions may differ for a rerun to reuse the round's release binaries.
 fn binary_neutral(path: &str) -> bool {
@@ -321,6 +322,7 @@ impl RoundRunner for VmRunner<'_> {
                 if self.child.is_some() {
                     return Err("the corpus already ran for this round".into());
                 }
+                order::covers(&io::suites_in(&self.wt, "HEAD"), suites)?;
                 let err = fs::File::create(&self.stderr_path).map_err(|e| format!("{}: {e}", self.stderr_path.display()))?;
                 let mut cmd = Command::new("systemd-run");
                 cmd.args(scope_args(std::env::var("ROUND_CPU_QUOTA").ok().as_deref()));
