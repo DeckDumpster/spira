@@ -699,6 +699,51 @@ unset _ub
 
 # ==========================================================================
 echo
+echo "RESOLUTION DRIFT (sp-da4y0) — a unit installed under one resolution of a conditional input is removed even when uninstall's own re-resolution of it says otherwise:"
+# spira-cert-sweep-{full,sample} (sp-8lztt) are installed only when
+# Inputs::repo_is_git_checkout is true — probed FRESH by manifest_from_env on every
+# units-install call, never frozen at install time. owned.sh's removal list comes from
+# `units-install --list-manifest` recomputed NOW, so a repo that was a git checkout at
+# install time but is not seen as one by uninstall time (a different SPIRA_REPO, a
+# scratch-repo cleanup, a release directory with no .git) drops these four units from the
+# manifest silently; the stop/disable/remove pass, driven solely by that list, never
+# touches the unit files still on disk. The stray sweep only REPORTS what it finds
+# unlisted — it does not remove. Acceptance hit exactly this (run 37222619835): install
+# resolved the repo as a git checkout and installed all four; uninstall.sh's own
+# re-resolution saw it as not one and left all four behind.
+# ==========================================================================
+
+git -C "$FAKE_REPO" init -q 2>/dev/null || { printf 'fixture: git init FAKE_REPO failed\n'; exit 1; }
+_seed_units || { printf 'fixture: re-seed for resolution-drift failed\n'; exit 1; }
+
+for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
+           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
+    isfile "resolution-drift: $_cs is seeded while the repo is a git checkout" "$DEST/$_cs"
+done
+
+# Flip the resolution uninstall.sh's own owned.sh call will see: the repo is no longer a
+# git checkout by the time uninstall runs.
+rm -rf "$FAKE_REPO/.git"
+
+drift_out="$(un)"
+drift_rc=$?
+iszero "resolution-drift: uninstall exits 0" "$drift_rc"
+
+for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
+           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
+    [ -e "$DEST/$_cs" ] \
+        && bad "resolution-drift: $_cs is removed" "still in $DEST" \
+        || ok  "resolution-drift: $_cs is removed"
+done
+want   "resolution-drift: the full-sweep service was stopped" \
+    "stop spira-cert-sweep-full-test.service" "$(cat "$MOCK_LOG")"
+want   "resolution-drift: the sample-sweep service was stopped" \
+    "stop spira-cert-sweep-sample-test.service" "$(cat "$MOCK_LOG")"
+nowant "resolution-drift: none of them is left as a stray" "STRAY  spira-cert-sweep" "$drift_out"
+unset _cs
+
+# ==========================================================================
+echo
 echo "LINGER STAMP ABSENT — linger already on but not by this install is left alone:"
 # ==========================================================================
 
