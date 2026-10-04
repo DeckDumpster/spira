@@ -376,6 +376,12 @@ impl World for Real {
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
             let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            // No unit matched: systemd answers exit 1 with no output at all — a fresh host
+            // before install. That is an empty list, as systemd_enabled_unit_files already
+            // treats it; any real failure prints its reason and still errors (sp-47myv).
+            if text.trim().is_empty() {
+                return Ok(Vec::new());
+            }
             return Err(text.lines().next().unwrap_or("").to_string());
         }
         let mut rows = Vec::new();
