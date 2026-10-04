@@ -260,7 +260,7 @@ pub fn check_schema_delete(args: &[String]) -> Option<String> {
 /// `[ "${1:-}" = create ]` — whether this call is a `bd create`, which is when all three
 /// fences above run.
 pub fn is_create(args: &[String]) -> bool {
-    args.first().map(String::as_str) == Some("create")
+    matches!(args.first().map(String::as_str), Some("create" | "create-form" | "q"))
 }
 
 /// A bead created already closed (`--status closed`) is never claimed, so it needs no
@@ -502,6 +502,8 @@ mod tests {
     #[test]
     fn is_create_only_true_for_the_create_verb() {
         assert!(is_create(&s(&["create", "x"])));
+        assert!(is_create(&s(&["q", "x"])));
+        assert!(is_create(&s(&["create-form"])));
         assert!(!is_create(&s(&["update", "sp-a"])));
         assert!(!is_create(&s(&[])));
     }
