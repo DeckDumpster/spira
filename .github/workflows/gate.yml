@@ -878,6 +878,16 @@ jobs:
           printf '::add-mask::%s\n' "$tok"
           printf 'token=%s\n' "$tok" >> "$GITHUB_OUTPUT"
 
+      - name: Build spira-config for release.sh
+        # release.sh sources lib.sh, which resolves configuration through the Rust
+        # spira-config binary; a hosted runner has none, and without it the cut died
+        # with "spira-config not found on PATH" (sp-y5wki). Build just that binary and put
+        # it first on PATH for the steps that follow.
+        run: |
+          set -euo pipefail
+          cargo build --release --locked -p spira-config
+          printf '%s\n' "$GITHUB_WORKSPACE/target/release" >> "$GITHUB_PATH"
+
       - name: Cut release tag
         id: cut
         env:
