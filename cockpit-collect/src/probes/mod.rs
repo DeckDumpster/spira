@@ -487,7 +487,7 @@ fn py_truthy(v: Option<&Value>) -> bool {
 
 pub fn core_counts_keys() -> Kv {
     let mut out = Kv::new();
-    let ask_label = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--status", "open", "--limit", "0", "--label", &ask_label]));
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
@@ -571,7 +571,7 @@ pub fn sphere_keys() -> Kv {
 
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
     match rows {
         None => {
