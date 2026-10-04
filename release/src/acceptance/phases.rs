@@ -514,9 +514,17 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         let landed = format!("phase A stage 5: bead {id} landed on {}:{land_ref}", scratch.display());
         r.follow("phase A", &id, &land_ref, &base, &landed);
         let mode = land_modes.iter().find(|(n, _)| *n == home_repo).map(|(_, m)| m.clone()).unwrap_or_else(|| "push".into());
-        let hist = h.run(&r.tool("spira-lc").args(["history", &id]));
-        let got = lifecycle_states(&hist.out);
         let want = expected_lifecycle(&mode);
+        // LANDED is recorded by the sending sweep inside the sentinel's audit worker, one pass
+        // after the push — never at the instant stage 5 sees the commit. Read history until it
+        // holds the whole sequence or the bound runs out; the last read is what is judged
+        // (sp-53own: a single immediate read saw [.., CERTIFIED], missing LANDED).
+        let mut hist = h.run(&r.tool("spira-lc").args(["history", &id]));
+        let _ = r.poll(120, 5, || {
+            hist = h.run(&r.tool("spira-lc").args(["history", &id]));
+            hist.rc == 0 && missing_in_order(&want, &lifecycle_states(&hist.out)).is_none()
+        });
+        let got = lifecycle_states(&hist.out);
         let name = format!("phase A: {id} lifecycle event sequence {} ({mode})", want.join(" -> "));
         r.check(&name, hist.rc == 0 && missing_in_order(&want, &got).is_none(), || {
             format!("spira-lc history {id} rc={} — saw [{}], missing {}", hist.rc, got.join(", "), missing_in_order(&want, &got).unwrap_or("history"))

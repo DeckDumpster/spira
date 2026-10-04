@@ -237,9 +237,15 @@ _un_removed_names=()   # for sweep exclusion
 #    Left running, the next activate.sh's restart step can revive it under a
 #    release it was never launched against (sp-hvtdj).
 # ---------------------------------------------------------------------------
-_un_transient="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --state=active --no-legend --plain \
-    'spira-landing*' 'spira-aeon-*' 2>/dev/null || true)"
-if [ -n "$_un_transient" ]; then
+# spira-audit* too (the sentinel's audit worker, `sentinel --audit`). Swept here AND again
+# after every timer is stopped below: a sentinel pass already running can start a new
+# transient after this first sweep, and acceptance found one alive after uninstall
+# (spira-audit.service, sp-53own). After the timers are gone nothing starts another.
+_un_stop_transients() {
+    local _un_transient _un_tline _un_tu
+    _un_transient="$("${SPIRA_SYSTEMCTL:-systemctl}" --user list-units --state=active --no-legend --plain \
+        'spira-landing*' 'spira-aeon-*' 'spira-audit*' 2>/dev/null || true)"
+    [ -n "$_un_transient" ] || return 0
     printf '\nStopping live transient units...\n'
     while IFS= read -r _un_tline; do
         _un_tu="$(printf '%s\n' "$_un_tline" | awk '{print $1}')"
@@ -247,8 +253,8 @@ if [ -n "$_un_transient" ]; then
         _un_act "stopping $_un_tu" "${SPIRA_SYSTEMCTL:-systemctl}" --user stop "$_un_tu"
         _un_removed_names+=("$_un_tu")
     done <<< "$_un_transient"
-fi
-unset _un_transient _un_tline _un_tu
+}
+_un_stop_transients
 
 _un_stop_disable() {
     local u="$1"
@@ -267,6 +273,7 @@ if [ "${#_un_unit_names[@]}" -gt 0 ]; then
         case "$_un_u" in *.timer) continue ;; esac
         _un_stop_disable "$_un_u"
     done
+    _un_stop_transients
     printf '\nRemoving unit files...\n'
     for _un_p in "${_un_unit_paths[@]}"; do
         if [ -f "$_un_p" ]; then
