@@ -54,8 +54,154 @@ fn phase(n: &str) {
 /// The pinned duckdb, the same version spira/testenv/Containerfile installs (DUCKDB_VERSION).
 const DUCKDB_VERSION: &str = "1.5.5";
 
+/// The pinned mozilla/sccache release (sp-x6v17). Same version doctor/src/real.rs's test
+/// fixture (REAL_SCCACHE_018_HELP) captures `sccache --help` output for, so the webdav-feature
+/// text this code checks at runtime is text an existing test already pins independently.
+/// mozilla/sccache's Cargo.toml sets `default = ["all"]`, and `all` lists `webdav` — its
+/// release CI (ci.yml's `build` job) builds the plain `sccache` binary for
+/// x86_64/aarch64-unknown-linux-musl with no `--no-default-features`, so the published
+/// tarball's binary already has the backend doctor::check_sccache requires. (The
+/// `--no-default-features --features=dist-server` row in that matrix builds a DIFFERENT
+/// binary, `sccache-dist`, not this one.)
+const SCCACHE_VERSION: &str = "0.18.0";
+
+/// The pinned inotify-tools release (sp-x6v17). inotify-tools is normally a distro package
+/// (`apt install inotify-tools`) and install carries no sudo, so apt cannot be the
+/// provisioning path here. Its own release workflow (.github/workflows/build.yml) builds
+/// inotifywait with `ALL_STATIC=1` and asserts `file -L "$bin" | grep -q static` before
+/// publishing — i.e. upstream already guarantees the binary this tarball carries has no
+/// shared-library dependency on the box's libc/distro, which is what makes vendoring it
+/// (rather than building from source, which would need a full distro toolchain) safe.
+const INOTIFY_TOOLS_VERSION: &str = "4.26.262";
+
+/// Map `std::env::consts::ARCH` to mozilla/sccache's release target triple. Upstream only
+/// publishes Linux x86_64/aarch64 (musl) assets.
+fn sccache_target(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64-unknown-linux-musl"),
+        "aarch64" => Ok("aarch64-unknown-linux-musl"),
+        other => Err(format!("no sccache build for architecture {other}")),
+    }
+}
+
+/// Map `std::env::consts::ARCH` to inotify-tools' release arch label (its asset names use
+/// the bare arch, unlike sccache's target triple).
+fn inotify_tools_arch(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" => Ok("aarch64"),
+        other => Err(format!("no inotify-tools build for architecture {other}")),
+    }
+}
+
+fn sccache_url(target: &str) -> String {
+    format!("https://github.com/mozilla/sccache/releases/download/v{SCCACHE_VERSION}/sccache-v{SCCACHE_VERSION}-{target}.tar.gz")
+}
+
+fn inotify_tools_url(arch: &str) -> String {
+    format!("https://github.com/inotify-tools/inotify-tools/releases/download/{INOTIFY_TOOLS_VERSION}/inotify-tools-{INOTIFY_TOOLS_VERSION}-{arch}-linux.tar.gz")
+}
+
+/// The path of the `sccache` member inside its own release tarball — `tar -O` pulls just
+/// this file out without ever extracting the rest to disk. (mozilla/sccache's release.yml
+/// `Create release assets` step: `tar -zcvf "$d.tar.gz" "$d"` where `$d` is this exact
+/// directory name — the same string the published asset's filename is built from.)
+fn sccache_tar_member(target: &str) -> String {
+    format!("sccache-v{SCCACHE_VERSION}-{target}/sccache")
+}
+
+/// Parses `sccache --help`'s "Enabled features" block the same way doctor::check_sccache
+/// does (doctor/src/lib.rs) — reimplemented rather than shared, since install does not
+/// otherwise depend on the doctor crate (it invokes doctor as an external binary, phase 0).
+fn sccache_help_has_webdav(help: &str) -> bool {
+    help.lines().find(|l| l.trim_start().starts_with("WebDAV:")).is_some_and(|l| l.trim_end().ends_with("true"))
+}
+
+/// The pinned Go toolchain (go.dev/dl), used ONLY to build aerc, and ONLY when no usable
+/// go (>= GO_MIN_MAJOR.GO_MIN_MINOR — aerc's own go.mod says `go 1.25.0`) is already
+/// reachable (sp-x6v17: "reuse it rather than fetching a second"; find_usable_go, below,
+/// checks the same GO env / $HOME/.local/go/bin/go / PATH candidates doctor's own go check
+/// and build-bd.sh's $GO default already use before this ever fetches anything). Fetched
+/// into $HOME/.local/go — that exact path, not a system path like /usr/local/go — so a
+/// toolchain this code fetches is indistinguishable from one an operator placed there by
+/// hand per doctor's own hint text ("or use $HOME/.local/go/bin/go").
+const GO_VERSION: &str = "1.27.1";
+const GO_MIN_MAJOR: u32 = 1;
+const GO_MIN_MINOR: u32 = 25;
+/// go.dev/dl's published sha256 for go{GO_VERSION}.linux-{amd64,arm64}.tar.gz — checked
+/// after download, unlike duckdb/sccache/inotify-tools' fetches, because this one tarball
+/// becomes the compiler every subsequent build in this phase trusts.
+const GO_SHA256_AMD64: &str = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445";
+const GO_SHA256_ARM64: &str = "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec";
+
+/// The pinned aerc tag (git.sr.ht/~rjarry/aerc). NOT a "v"-prefixed go module version (its
+/// tags are bare "0.22.0", which `go install git.sr.ht/~rjarry/aerc@0.22.0` cannot resolve —
+/// go module version queries require a canonical `vX.Y.Z` — and aerc publishes no prebuilt
+/// binary release either), so this fetches the tag's own source archive and builds it from
+/// a local checkout instead, where no VCS tag lookup is needed at all.
+const AERC_VERSION: &str = "0.22.0";
+
+/// Map `std::env::consts::ARCH` to go.dev/dl's GOARCH naming (distinct from both
+/// sccache_target's Rust-triple style and inotify_tools_arch's bare label).
+fn go_release_arch(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("amd64"),
+        "aarch64" => Ok("arm64"),
+        other => Err(format!("no go toolchain build for architecture {other}")),
+    }
+}
+
+fn go_release_sha256(goarch: &str) -> Result<&'static str, String> {
+    match goarch {
+        "amd64" => Ok(GO_SHA256_AMD64),
+        "arm64" => Ok(GO_SHA256_ARM64),
+        other => Err(format!("no pinned go{GO_VERSION} checksum for {other}")),
+    }
+}
+
+fn go_release_url(goarch: &str) -> String {
+    format!("https://go.dev/dl/go{GO_VERSION}.linux-{goarch}.tar.gz")
+}
+
+fn aerc_src_url() -> String {
+    format!("https://git.sr.ht/~rjarry/aerc/archive/{AERC_VERSION}.tar.gz")
+}
+
+/// Parses `go version`'s stdout (`"go version go1.27.1 linux/amd64\n"`) and reports whether
+/// it names a version >= `min_major.min_minor`. Malformed/unexpected output is `false`,
+/// never a panic.
+fn go_version_at_least(output: &str, min_major: u32, min_minor: u32) -> bool {
+    let Some(tok) = output.split_whitespace().nth(2).and_then(|w| w.strip_prefix("go")) else {
+        return false;
+    };
+    let mut parts = tok.split('.');
+    let Some(major) = parts.next().and_then(|p| p.parse::<u32>().ok()) else {
+        return false;
+    };
+    let minor = parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
+    (major, minor) >= (min_major, min_minor)
+}
+
+/// Parses `aerc -v`'s stdout (`"aerc 0.22.0 (go1.27.1 amd64 linux)\n"`, from main.go's
+/// `ShowVersion`/`buildInfo` — main.Version is what `-ldflags "-X main.Version=..."` sets)
+/// and reports whether it names exactly `version`.
+fn aerc_reports_version(output: &str, version: &str) -> bool {
+    output.split_whitespace().nth(1) == Some(version)
+}
+
+/// Whether fetch_aerc can skip the entire go-toolchain-then-build pipeline: the aerc
+/// already at `~/.local/bin/aerc` (the exact binary GOBIN would overwrite) already reports
+/// the pinned AERC_VERSION. `current` is `None` when that path is absent or did not run.
+fn aerc_build_can_be_skipped(current: Option<&str>) -> bool {
+    current.is_some_and(|s| aerc_reports_version(s, AERC_VERSION))
+}
+
 /// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
-/// metrics.disabled, and fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
+/// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
+/// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
+/// inotifywait, and aerc (building it from source behind a fetched Go toolchain when no
+/// usable one is already present).
 fn dependencies(dry: bool) -> Result<(), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
     let bin = Path::new(&home).join(".local/bin");
@@ -79,6 +225,15 @@ fn dependencies(dry: bool) -> Result<(), String> {
         info("set dolt metrics.disabled true (dolt config --global)");
     }
 
+    fetch_duckdb(dry, &bin)?;
+    fetch_sccache(dry, &bin)?;
+    fetch_inotifywait(dry, &bin)?;
+    fetch_aerc(dry, &bin, &home)?;
+    Ok(())
+}
+
+/// Fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
     let have_duckdb = Command::new("timeout").args(["5", "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
     if have_duckdb {
         skip("duckdb on PATH");
@@ -95,7 +250,7 @@ fn dependencies(dry: bool) -> Result<(), String> {
         would(&format!("fetch duckdb {DUCKDB_VERSION} from {url} into {}", dest.display()));
         return Ok(());
     }
-    std::fs::create_dir_all(&bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
     let gz = bin.join(".duckdb.download.gz");
     // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
     run_ok(
@@ -119,6 +274,257 @@ fn dependencies(dry: bool) -> Result<(), String> {
         return Err(format!("installed {} does not run", dest.display()));
     }
     info(&format!("installed duckdb {DUCKDB_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch sccache into ~/.local/bin unless the sccache already resolvable on PATH already
+/// reports the webdav backend (doctor::check_sccache's own bar — not a version comparison,
+/// since that is the actual property both doctor and every build need). No `cargo` is
+/// guaranteed present on a fresh box (acceptance run 37222619835 had neither cargo nor
+/// sccache on PATH), so `cargo install sccache --features webdav` cannot be the
+/// provisioning path install itself takes; fetch mozilla/sccache's own prebuilt release
+/// binary instead, which already carries the feature (see SCCACHE_VERSION's comment).
+fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
+    let current_help = Command::new("timeout")
+        .args(["5", "sccache", "--help"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if current_help.as_deref().is_some_and(sccache_help_has_webdav) {
+        skip("sccache on PATH with webdav backend");
+        return Ok(());
+    }
+    let target = sccache_target(std::env::consts::ARCH)?;
+    let url = sccache_url(target);
+    let dest = bin.join("sccache");
+    if dry {
+        would(&format!("fetch sccache {SCCACHE_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".sccache.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch sccache from {url}: {e}"))?;
+    let member = sccache_tar_member(target);
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", &member]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack sccache from {url}"));
+    }
+    let tmp = bin.join(".sccache.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod sccache: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("sccache"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !sccache_help_has_webdav(&help) {
+        return Err(format!("installed {} does not report the webdav backend", dest.display()));
+    }
+    info(&format!("installed sccache {SCCACHE_VERSION} (webdav) at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch inotifywait into ~/.local/bin unless it is already on PATH. No sudo, so this
+/// vendors inotify-tools' own statically-linked release binary rather than `apt install
+/// inotify-tools` (see INOTIFY_TOOLS_VERSION's comment on why that binary is safe to vendor).
+fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
+    if which_prog("inotifywait").is_some() {
+        skip("inotifywait on PATH");
+        return Ok(());
+    }
+    let arch = inotify_tools_arch(std::env::consts::ARCH)?;
+    let url = inotify_tools_url(arch);
+    let dest = bin.join("inotifywait");
+    if dry {
+        would(&format!("fetch inotifywait {INOTIFY_TOOLS_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".inotify-tools.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch inotify-tools from {url}: {e}"))?;
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", "usr/bin/inotifywait"]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack inotifywait from {url}"));
+    }
+    let tmp = bin.join(".inotifywait.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod inotifywait: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    // inotifywait --help exits 1 by design (inotify-tools' own release check relies on this
+    // too); its first line names the binary, which is all that is worth asserting here.
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("inotifywait"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !help.contains("inotifywait") {
+        return Err(format!("installed {} does not run", dest.display()));
+    }
+    info(&format!("installed inotifywait {INOTIFY_TOOLS_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
+/// The first already-usable go (>= GO_MIN_MAJOR.GO_MIN_MINOR) found among: $GO, the
+/// conventional $HOME/.local/go/bin/go, or PATH — the same candidate order doctor's own
+/// go check (doctor/src/lib.rs's check_operator_channel) uses, so this reuses exactly what
+/// doctor would already call "go — <path>" rather than fetching a second toolchain.
+fn find_usable_go(home: &str) -> Option<String> {
+    let candidates = [std::env::var("GO").ok().filter(|v| !v.is_empty()), Some(format!("{home}/.local/go/bin/go")), which_prog("go")];
+    for c in candidates.into_iter().flatten() {
+        if !Path::new(&c).is_file() {
+            continue;
+        }
+        let ver = Command::new("timeout").args(["5", &c, "version"]).output();
+        if let Ok(o) = ver {
+            if o.status.success() && go_version_at_least(&String::from_utf8_lossy(&o.stdout), GO_MIN_MAJOR, GO_MIN_MINOR) {
+                return Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Fetch the pinned go.dev/dl toolchain into $HOME/.local/go. Only called from fetch_aerc
+/// when find_usable_go found nothing usable; `dry` is handled by fetch_aerc's own
+/// early-return, so this is never reached in a dry run, but it keeps its own guard for any
+/// future direct caller.
+fn fetch_go_toolchain(dry: bool, home: &str) -> Result<String, String> {
+    let goarch = go_release_arch(std::env::consts::ARCH)?;
+    let url = go_release_url(goarch);
+    let dest = format!("{home}/.local/go");
+    let gobin = format!("{dest}/bin/go");
+    if dry {
+        would(&format!("fetch go {GO_VERSION} from {url} into {dest}"));
+        return Ok(gobin);
+    }
+    let local = format!("{home}/.local");
+    std::fs::create_dir_all(&local).map_err(|e| format!("cannot create {local}: {e}"))?;
+    let tgz = format!("{local}/.go-toolchain.download.tar.gz");
+    // batch-job: install downloads a pinned Go toolchain once per host, only when aerc needs
+    // building and no usable go is already present; bounded by curl --max-time 300.
+    run_ok("curl", &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz, &url])
+        .map_err(|e| format!("cannot fetch go toolchain from {url}: {e}"))?;
+    let want = go_release_sha256(goarch)?;
+    let sha = Command::new("timeout").args(["5", "sha256sum", &tgz]).output().map_err(|e| format!("sha256sum: {e}"))?;
+    let got = String::from_utf8_lossy(&sha.stdout).split_whitespace().next().unwrap_or("").to_string();
+    if got != want {
+        let _ = std::fs::remove_file(&tgz);
+        return Err(format!("go toolchain checksum mismatch for {url}: got {got}, want {want}"));
+    }
+    let extract_tmp = format!("{local}/.go.new");
+    let _ = std::fs::remove_dir_all(&extract_tmp);
+    std::fs::create_dir_all(&extract_tmp).map_err(|e| format!("cannot create {extract_tmp}: {e}"))?;
+    // batch-job: unpacking the fetched go toolchain tree (~210 MB uncompressed) once per
+    // install; bounded at 180 s.
+    let unpacked = Command::new("timeout").args(["180", "tar", "-xzf", &tgz, "-C", &extract_tmp]).status().map(|s| s.success()).unwrap_or(false);
+    let _ = std::fs::remove_file(&tgz);
+    if !unpacked {
+        let _ = std::fs::remove_dir_all(&extract_tmp);
+        return Err(format!("cannot unpack go toolchain from {url}"));
+    }
+    let new_go = format!("{extract_tmp}/go/bin/go");
+    let ok = Command::new("timeout")
+        .args(["5", &new_go, "version"])
+        .output()
+        .map(|o| o.status.success() && go_version_at_least(&String::from_utf8_lossy(&o.stdout), GO_MIN_MAJOR, GO_MIN_MINOR))
+        .unwrap_or(false);
+    if !ok {
+        let _ = std::fs::remove_dir_all(&extract_tmp);
+        return Err(format!("fetched go toolchain at {new_go} does not run or is below go{GO_MIN_MAJOR}.{GO_MIN_MINOR}"));
+    }
+    let _ = std::fs::remove_dir_all(&dest);
+    std::fs::rename(format!("{extract_tmp}/go"), &dest).map_err(|e| format!("cannot install go toolchain to {dest}: {e}"))?;
+    let _ = std::fs::remove_dir_all(&extract_tmp);
+    info(&format!("installed go {GO_VERSION} at {dest}"));
+    Ok(gobin)
+}
+
+/// Build aerc (git.sr.ht/~rjarry/aerc, COCKPIT_MAIL's default) into ~/.local/bin, unless the
+/// aerc already there already reports AERC_VERSION. aerc publishes no prebuilt binary
+/// release (unlike duckdb/sccache/inotify-tools above), so this fetches its pinned tag's
+/// source archive and runs `go install` against that local checkout — reusing an already-
+/// usable go toolchain (find_usable_go) when one exists, fetching a pinned one
+/// (fetch_go_toolchain) only when it doesn't.
+fn fetch_aerc(dry: bool, bin: &Path, home: &str) -> Result<(), String> {
+    let dest = bin.join("aerc");
+    let current = Command::new("timeout")
+        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if aerc_build_can_be_skipped(current.as_deref()) {
+        skip(&format!("aerc {AERC_VERSION} at {}", dest.display()));
+        return Ok(());
+    }
+    if dry {
+        would(&format!("fetch a go toolchain if needed, then build aerc {AERC_VERSION} (git.sr.ht/~rjarry/aerc) into {}", dest.display()));
+        return Ok(());
+    }
+    let go = match find_usable_go(home) {
+        Some(g) => g,
+        None => fetch_go_toolchain(dry, home)?,
+    };
+
+    let cache = format!("{home}/.cache/spira-install");
+    std::fs::create_dir_all(&cache).map_err(|e| format!("cannot create {cache}: {e}"))?;
+    let src = format!("{cache}/aerc-{AERC_VERSION}");
+    // A stale partial checkout from an interrupted earlier run must not be mistaken for a
+    // fresh one — `tar --strip-components=1` below would merge into it rather than replace it.
+    let _ = std::fs::remove_dir_all(&src);
+    std::fs::create_dir_all(&src).map_err(|e| format!("cannot create {src}: {e}"))?;
+    let url = aerc_src_url();
+    let tgz = format!("{cache}/.aerc-src.download.tar.gz");
+    // batch-job: install downloads the pinned aerc source archive once per host; bounded by
+    // curl --max-time 300.
+    run_ok("curl", &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz, &url])
+        .map_err(|e| format!("cannot fetch aerc source from {url}: {e}"))?;
+    // batch-job: unpacking the aerc source archive (a few hundred KB) once per install;
+    // bounded at 60 s.
+    let unpacked = Command::new("timeout").args(["60", "tar", "-xzf", &tgz, "-C", &src, "--strip-components=1"]).status().map(|s| s.success()).unwrap_or(false);
+    let _ = std::fs::remove_file(&tgz);
+    if !unpacked {
+        let _ = std::fs::remove_dir_all(&src);
+        return Err(format!("cannot unpack aerc source from {url}"));
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    // batch-job: `go install` resolves and compiles aerc's module dependencies over the
+    // network (no vendor/ directory is bundled in the source archive) and compiles the
+    // program; bounded at 600 s. GOTOOLCHAIN=local pins the build to exactly the go binary
+    // this invokes, never a second, possibly-newer toolchain auto-fetched mid-build because
+    // go.mod names a newer `go` line than expected.
+    let build = Command::new("timeout")
+        .args(["600", &go, "install", "-trimpath", "-ldflags", &format!("-X main.Version={AERC_VERSION}"), "."])
+        .current_dir(&src)
+        .env("GOBIN", bin)
+        .env("GOFLAGS", "-mod=mod")
+        .env("GOTOOLCHAIN", "local")
+        .status();
+    let _ = std::fs::remove_dir_all(&src);
+    match build {
+        Ok(s) if s.success() => {}
+        Ok(s) => return Err(format!("go install aerc failed ({s}) — see stderr above")),
+        Err(e) => return Err(format!("cannot run go install for aerc: {e}")),
+    }
+    let verify = Command::new("timeout")
+        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    if !aerc_reports_version(&verify, AERC_VERSION) {
+        return Err(format!("installed {} does not report version {AERC_VERSION}", dest.display()));
+    }
+    info(&format!("installed aerc {AERC_VERSION} (go install via {go}) at {}", dest.display()));
     Ok(())
 }
 
@@ -1211,4 +1617,111 @@ fn base64_no_pad(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod dependency_fetch_tests {
+    use super::*;
+
+    #[test]
+    fn sccache_target_maps_known_arches_to_mozillas_release_triples() {
+        assert_eq!(sccache_target("x86_64").unwrap(), "x86_64-unknown-linux-musl");
+        assert_eq!(sccache_target("aarch64").unwrap(), "aarch64-unknown-linux-musl");
+        assert!(sccache_target("riscv64").is_err());
+    }
+
+    #[test]
+    fn inotify_tools_arch_maps_known_arches_to_the_bare_label() {
+        assert_eq!(inotify_tools_arch("x86_64").unwrap(), "x86_64");
+        assert_eq!(inotify_tools_arch("aarch64").unwrap(), "aarch64");
+        assert!(inotify_tools_arch("riscv64").is_err());
+    }
+
+    #[test]
+    fn sccache_url_names_the_pinned_version_and_asset() {
+        let url = sccache_url("x86_64-unknown-linux-musl");
+        assert_eq!(url, "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz");
+    }
+
+    #[test]
+    fn inotify_tools_url_names_the_pinned_version_and_asset() {
+        let url = inotify_tools_url("aarch64");
+        assert_eq!(url, "https://github.com/inotify-tools/inotify-tools/releases/download/4.26.262/inotify-tools-4.26.262-aarch64-linux.tar.gz");
+    }
+
+    #[test]
+    fn sccache_tar_member_is_the_versioned_directory_the_release_asset_actually_contains() {
+        // mozilla/sccache's release.yml packs the binary at <dirname>/sccache where
+        // <dirname> is the same string the published .tar.gz's own filename is built
+        // from — not just "sccache" at the tarball root.
+        assert_eq!(sccache_tar_member("x86_64-unknown-linux-musl"), "sccache-v0.18.0-x86_64-unknown-linux-musl/sccache");
+    }
+
+    /// The exact text of sccache 0.18.0's own "Enabled features" block (captured live,
+    /// built with `--features webdav`) — doctor/src/real.rs's REAL_SCCACHE_018_HELP pins
+    /// this same text independently; kept in sync by inspection, not by sharing code.
+    const REAL_SCCACHE_018_HELP_WEBDAV_TRUE: &str = "Enabled features:\n    S3:        false\n    Redis:     false\n    Memcached: false\n    GCS:       false\n    GHA:       false\n    Azure:     false\n    WebDAV:    true\n    OSS:       false\n    COS:       false\n";
+
+    #[test]
+    fn sccache_help_has_webdav_true_passes() {
+        assert!(sccache_help_has_webdav(REAL_SCCACHE_018_HELP_WEBDAV_TRUE));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_false_fails() {
+        let help = REAL_SCCACHE_018_HELP_WEBDAV_TRUE.replace("WebDAV:    true", "WebDAV:    false");
+        assert!(!sccache_help_has_webdav(&help));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_missing_line_fails() {
+        assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
+    }
+
+    #[test]
+    fn go_release_arch_maps_known_arches_to_godevs_goarch_naming() {
+        assert_eq!(go_release_arch("x86_64").unwrap(), "amd64");
+        assert_eq!(go_release_arch("aarch64").unwrap(), "arm64");
+        assert!(go_release_arch("riscv64").is_err());
+    }
+
+    #[test]
+    fn go_release_sha256_is_pinned_per_goarch_and_refuses_unknown_ones() {
+        assert_eq!(go_release_sha256("amd64").unwrap(), GO_SHA256_AMD64);
+        assert_eq!(go_release_sha256("arm64").unwrap(), GO_SHA256_ARM64);
+        assert!(go_release_sha256("386").is_err());
+    }
+
+    #[test]
+    fn go_release_url_and_aerc_src_url_name_the_pinned_versions() {
+        assert_eq!(go_release_url("amd64"), "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz");
+        assert_eq!(aerc_src_url(), "https://git.sr.ht/~rjarry/aerc/archive/0.22.0.tar.gz");
+    }
+
+    #[test]
+    fn go_version_at_least_reads_the_real_go_version_output_shape() {
+        assert!(go_version_at_least("go version go1.27.1 linux/amd64\n", 1, 25));
+        assert!(go_version_at_least("go version go1.25.0 linux/amd64\n", 1, 25));
+        assert!(!go_version_at_least("go version go1.24.9 linux/amd64\n", 1, 25));
+        assert!(!go_version_at_least("go version go0.9 linux/amd64\n", 1, 25));
+        assert!(!go_version_at_least("", 1, 25));
+        assert!(!go_version_at_least("not go at all\n", 1, 25));
+    }
+
+    #[test]
+    fn aerc_reports_version_matches_the_real_dash_v_output_shape() {
+        assert!(aerc_reports_version("aerc 0.22.0 (go1.27.1 amd64 linux)\n", "0.22.0"));
+        assert!(!aerc_reports_version("aerc 0.21.0 (go1.25.0 amd64 linux)\n", "0.22.0"));
+        assert!(!aerc_reports_version("", "0.22.0"));
+        assert!(!aerc_reports_version("aerc\n", "0.22.0"));
+    }
+
+    /// sp-x6v17: the coordinator asked specifically for this case — a present-at-the-
+    /// pinned-version aerc must skip the whole go-toolchain-then-build pipeline.
+    #[test]
+    fn a_present_at_pinned_version_aerc_skips_the_build() {
+        assert!(aerc_build_can_be_skipped(Some("aerc 0.22.0 (go1.27.1 amd64 linux)\n")));
+        assert!(!aerc_build_can_be_skipped(Some("aerc 0.21.0 (go1.25.0 amd64 linux)\n")));
+        assert!(!aerc_build_can_be_skipped(None));
+    }
 }
