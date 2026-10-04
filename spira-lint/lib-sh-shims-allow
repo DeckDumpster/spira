@@ -31,7 +31,6 @@ spira/lib.sh:park_unmapped
 # --- touched"): each still has a live bash caller there, or a bash test suite that drives
 # --- the function itself as its subject rather than the Rust port every production path
 # --- already uses. No CLI door exists to shim onto without first touching that caller.
-spira/lib.sh:content_landed
 spira/lib.sh:spira_status_seam
 spira/lib.sh:spira_bead_status
 spira/lib.sh:spira_db_reachable

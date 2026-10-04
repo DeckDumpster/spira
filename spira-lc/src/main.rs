@@ -42,6 +42,16 @@ fn main() {
         std::process::exit(serve::run(&args[1..]));
     }
 
+    if args.first().map(|s| s.as_str()) == Some("content-landed") {
+        std::process::exit(match &args[1..] {
+            [repo, br, base] => i32::from(!callers::content_landed(std::path::Path::new(repo), br, base)),
+            _ => {
+                eprintln!("usage: spira-lc content-landed <repo> <branch> <baseref>");
+                2
+            }
+        });
+    }
+
     // The caller verbs (callers.rs; DESIGN.md §2): the switch first, before any socket or
     // connection — off, they answer exactly what the retired shell library answered off.
     if let Some(verb) = args.first().filter(|v| callers::is_verb(v)) {
