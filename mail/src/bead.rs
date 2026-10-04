@@ -645,3 +645,27 @@ mod tests {
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), Vec::<String>::new()); // literal-ok: test fixture
     }
 }
+
+#[cfg(test)]
+mod after_create_not_discarded {
+    #[test]
+    fn no_caller_discards_after_create_failure() {
+        let sources = [
+            ("gh-intake", include_str!("../../gh-intake/src/real.rs")),
+            ("groomer", include_str!("../../groomer/src/bd.rs")),
+            ("incident", include_str!("../../incident/src/real.rs")),
+            ("maechen-trigger", include_str!("../../maechen-trigger/src/real.rs")),
+            ("mail", include_str!("bead.rs")),
+            ("bdq", include_str!("../../bead/src/bin/bdq.rs")),
+        ];
+        for (name, src) in sources {
+            assert!(src.contains("lifecycle_row::after_create"), "{name}: positive control: caller not found");
+            for line in src.lines() {
+                let l = line.trim_start();
+                if l.starts_with("let _ =") && l.contains("after_create") {
+                    panic!("{name}: discards after_create failure: {l}");
+                }
+            }
+        }
+    }
+}
