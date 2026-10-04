@@ -336,6 +336,38 @@ pub fn bead_replied(bd: &dyn Bd, db_configured: bool, id: &str, actor: &str) -> 
     arr.iter().any(|e| e.get("actor").and_then(|a| a.as_str()) == Some(actor))
 }
 
+/// The last `max_bytes` of `stderr`, trimmed and UTF-8 safe (rounds forward to the next
+/// char boundary rather than splitting one). Empty when `stderr` is empty.
+fn stderr_tail(stderr: &str, max_bytes: usize) -> String {
+    let trimmed = stderr.trim();
+    if trimmed.len() <= max_bytes {
+        return trimmed.to_string();
+    }
+    let mut start = trimmed.len() - max_bytes;
+    while start < trimmed.len() && !trimmed.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("…{}", &trimmed[start..])
+}
+
+/// `"(bd exit <code>): <last ~300 bytes of stderr>"`, or `"(bd exit <code>, no stderr)"`
+/// when bd left nothing on stderr — the detail every refusal rooted in a failed `bd` call
+/// appends to its own message. Before this, a refusal named only "bead store query failed",
+/// swallowing bd's own stderr; acceptance run 37217149529's forensics carry no "invalid
+/// connection" anywhere because of exactly that — the dropped-pooled-connection cause sp-yrxoc
+/// fixed is plausible but was never confirmed from that log. This makes the next failure name
+/// itself: a dropped connection reads differently from a real auth or schema refusal. bd's
+/// own stderr never carries a credential (the store's password lives in a file bd never
+/// echoes); this never touches the process environment, so none can leak through it either.
+pub fn bd_failure_detail(out: &BdOut) -> String {
+    let tail = stderr_tail(&out.stderr, 300);
+    if tail.is_empty() {
+        format!("(bd exit {}, no stderr)", out.code)
+    } else {
+        format!("(bd exit {}): {tail}", out.code)
+    }
+}
+
 /// The open ask-labelled bead ids `tidy` keeps mail for. `Err` on a query the store could
 /// not answer (law-a-control-that-cannot-check-must-refuse) — distinct from a real `[]`.
 pub fn open_ask_ids(bd: &dyn Bd, ask_label: &str) -> Result<Vec<String>, String> {
@@ -352,14 +384,20 @@ pub fn open_ask_ids(bd: &dyn Bd, ask_label: &str) -> Result<Vec<String>, String>
             };
             Ok(arr.iter().filter_map(|x| x.get("id").and_then(|i| i.as_str()).map(str::to_string)).filter(|s| !s.is_empty()).collect())
         }
-        Err(_) => Err("bead store query failed — refusing to move any mail".to_string()),
+        Err(_) => Err(format!("bead store query failed {} — refusing to move any mail", bd_failure_detail(&out))),
     }
 }
 
 /// The probe an empty [`open_ask_ids`] result needs before it is trusted (an empty result
-/// from a broken query would archive every live ask).
-pub fn probe_store(bd: &dyn Bd) -> bool {
-    bd.run(&a(&["list", "--limit", "1", "--brief", "--json"]), None).code == 0
+/// from a broken query would archive every live ask). `Err` carries the failing call's exit
+/// code and stderr so the caller's refusal can name what actually went wrong.
+pub fn probe_store(bd: &dyn Bd) -> Result<(), BdOut> {
+    let out = bd.run(&a(&["list", "--limit", "1", "--brief", "--json"]), None);
+    if out.code == 0 {
+        Ok(())
+    } else {
+        Err(out)
+    }
 }
 
 #[cfg(test)]
@@ -511,6 +549,31 @@ mod tests {
     fn open_ask_ids_parses_a_real_list() {
         let bd = FakeBd::new(vec![BdOut::ok(r#"[{"id":"sp-open1"}]"#)]);
         assert_eq!(open_ask_ids(&bd, "needs-operator").unwrap(), vec!["sp-open1".to_string()]); // literal-ok: test fixture
+    }
+
+    #[test]
+    fn open_ask_ids_refusal_names_bds_exit_code_and_stderr() {
+        let bd = FakeBd::new(vec![BdOut::fail(2, "Error 1105: invalid connection to dolt-beads on 127.0.0.1:3307")]);
+        let err = open_ask_ids(&bd, "needs-operator").unwrap_err(); // literal-ok: test fixture
+        assert!(err.contains("bd exit 2"), "{err}");
+        assert!(err.contains("invalid connection to dolt-beads on 127.0.0.1:3307"), "{err}");
+        assert!(err.contains("refusing to move any mail"), "{err}");
+    }
+
+    #[test]
+    fn bd_failure_detail_says_so_when_stderr_is_empty() {
+        let out = BdOut::fail(127, "");
+        assert_eq!(bd_failure_detail(&out), "(bd exit 127, no stderr)");
+    }
+
+    #[test]
+    fn bd_failure_detail_keeps_only_the_last_300_bytes() {
+        let long = "x".repeat(400);
+        let out = BdOut::fail(1, long.as_str());
+        let detail = bd_failure_detail(&out);
+        assert!(detail.starts_with("(bd exit 1): …"), "{detail}");
+        // 300 bytes of 'x' plus the leading ellipsis character, plus the "(bd exit 1): " prefix.
+        assert!(detail.ends_with(&"x".repeat(300)), "{detail}");
     }
 
     // -- BdCli's own retry on a dropped pooled connection ------------------------------------
