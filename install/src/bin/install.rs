@@ -368,6 +368,18 @@ fn install_aerc(dry: bool, bin: &Path, release_root: Option<&Path>) -> Result<()
         skip(&format!("aerc {AERC_VERSION} at {}", dest.display()));
         return Ok(());
     }
+    // SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, same shape as phase 4.5's
+    // SPIRA_INSTALL_LC_STORE_CONSIDERED): an install-suite fixture that installs from a
+    // plain tree or a `release build --bin-dir` stage carries no AERC_VENDORED_REL at all
+    // — that path is for production's own build-tarball.sh tarballs, never these fixtures
+    // — so the fail-closed refusal below would stop every such suite at phase -1, long
+    // before the phase it actually means to test. This is a NAMED, loud opt-out: one line
+    // saying aerc was not installed and why, never a silent skip, and it never fires
+    // against a real release (where no caller has reason to set it).
+    if nonempty_env("SPIRA_INSTALL_AERC_CONSIDERED").is_some() {
+        info("aerc NOT installed — SPIRA_INSTALL_AERC_CONSIDERED is set (a fixture with no release-vendored binary); aerc will not run until install runs without it");
+        return Ok(());
+    }
     let Some(release_root) = release_root else {
         return Err(format!(
             "cannot install aerc {AERC_VERSION}: this process is not running from a built release (no ancestor holds both bin/ and spira/conf.sh), so there is no {AERC_VENDORED_REL} to copy — build a release tarball first (bash spira/build-tarball.sh build --workspace <repo>), which builds aerc {AERC_VERSION} once and ships it there; install never builds it"
@@ -1641,6 +1653,25 @@ mod dependency_fetch_tests {
         assert!(e.contains(AERC_VENDORED_REL), "{e}");
         assert!(e.contains("build-tarball.sh"), "{e}");
         assert!(!bin.join("aerc").exists());
+    }
+
+    /// SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, the same named-opt-out shape phase 4.5's
+    /// SPIRA_INSTALL_LC_STORE_CONSIDERED already uses): an install-suite fixture installing
+    /// from a plain tree has no release at all to resolve, let alone one carrying
+    /// AERC_VENDORED_REL — without this escape hatch the fail-closed refusal above stops
+    /// every such suite dead in phase -1, long before the phase it actually means to test
+    /// (test-install-hooks-artifact.sh and 7 siblings, caught by the landing gate). Named
+    /// and loud: Ok(()), but only after printing why aerc was not installed — never a
+    /// silent skip, and no caller with a real release has reason to set it.
+    #[test]
+    fn install_aerc_considered_opt_out_reports_and_skips_with_no_release_root() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str()), ("SPIRA_INSTALL_AERC_CONSIDERED", Some("1"))]);
+        let bin = testkit::TempDir::new("install-aerc-bin-considered");
+
+        let r = install_aerc(false, &bin, None);
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!bin.join("aerc").exists(), "the opt-out must not fabricate an aerc binary");
     }
 
     #[test]
