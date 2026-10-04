@@ -275,7 +275,7 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
         cfg.ssh_tries,
         &a.tree_dir,
         &commit,
-        a.vmid.clone(),
+        None, // the hypervisor assigns the id (/cluster/nextid)
         cfg.host_addr.as_deref().unwrap_or(""),
         a.toolchain.as_deref().unwrap_or(""),
         cfg.cache_home.as_deref().unwrap_or(""),

@@ -33,7 +33,7 @@ means the same thing.
 | `round-vm run <tree-dir> [--suites CSV] [--maxpar N] [--toolchain V] [--results-dir D]` | the remote batch's own output | see 2.2 |
 | `round-vm status` | exactly three lines: `ready: <handle> <addr>\|none`, `provisioning: pid <pid>\|none`, `outage: <reason>\|none` | 0 |
 | `round-vm _provision-bg` | internal: the one background provision | 0 |
-| `round-vm template <tree-dir> [--vmid N]` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
+| `round-vm template <tree-dir>` | `<new-template-vmid> <image-ref>` | 0 built, verified a template; 1 failed (the half-built VM destroyed, or named if it could not be); 2 usage/preflight |
 
 Every option also accepts the `--opt=value` spelling. An unknown verb or no verb exits 1.
 
@@ -157,8 +157,7 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
    the template it builds must agree with every round cloned from it on where `CARGO_HOME`
    lives, or §2.2's own preflight refuses every round the moment it is run the way
    production actually runs it — with no ambient `CARGO_HOME` to fall back to at all).
-2. VMID: `--vmid N` if given (templates belong in their own range; nextid lands in the band
-   round clones use), else the hypervisor's nextid.
+2. VMID: always the hypervisor's `/cluster/nextid`; the caller never chooses one (per Ryan 2026-10-04, sp-bb0l2).
 3. **Linked** clone of `PVE_TEMPLATE_VMID` to it, named `round-template-<commit12>` — the
    same clone a round VM gets, so the old template's base disk stays referenced and cannot
    be destroyed while the new one exists. A full clone was tried first and abandoned: it
@@ -180,7 +179,7 @@ It **never repoints anything**: it prints the new VMID; switching `PVE_TEMPLATE_
    and reports the reason; a VM that will not die is named on stderr for the operator.
 
 **Operator procedure** (infrastructure — an agent builds and proves, the operator switches):
-1. `round-vm template <a checkout of local/main> --vmid 91xx` (templates in their own range);
+1. `round-vm template <a checkout of local/main>` (the hypervisor assigns the VMID);
    stdout is `<vmid> <image-ref>`. About 17 minutes, a cold build with its heartbeat.
 2. Prove it without touching production: `SPIRA_PVE_ENV=<a copy of pve.env naming the new
    VMID> SPIRA_ROUND_VM_STATE_DIR=<scratch> SPIRA_ROUND_VM_MIRROR_PORT=<a free port> round-vm

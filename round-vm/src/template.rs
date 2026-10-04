@@ -11,12 +11,11 @@ use crate::provider::{boot, destroy_fenced, DestroyError, Provider, ProvisionSpe
 use crate::run::{shell_quote, SshRemote};
 
 pub const TEMPLATE_USAGE: &str =
-    "round-vm template: usage: round-vm template <tree-dir> [--vmid <n>] [--toolchain <ver>]";
+    "round-vm template: usage: round-vm template <tree-dir> [--toolchain <ver>]";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TemplateArgs {
     pub tree_dir: PathBuf,
-    pub vmid: Option<String>,
     /// sp-xjnzl: the toolchain `rustup` must have installed on the template so a round can
     /// pin to it (`run --toolchain`) and match the host's own rustc byte-for-byte — sccache
     /// hashes the compiler's version string, so an unpinned "stable" drifting out of step
@@ -27,19 +26,18 @@ pub struct TemplateArgs {
 pub fn parse_template_args(args: &[String]) -> Result<TemplateArgs, String> {
     let mut it = args.iter();
     let tree = it.next().filter(|a| !a.starts_with("--")).ok_or(TEMPLATE_USAGE)?;
-    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), vmid: None, toolchain: None };
+    let mut r = TemplateArgs { tree_dir: PathBuf::from(tree), toolchain: None };
     while let Some(a) = it.next() {
         let (key, inline) = match a.split_once('=') {
             Some((k, v)) if k.starts_with("--") => (k, Some(v.to_string())),
             _ => (a.as_str(), None),
         };
         match key {
+            // THE HYPERVISOR ASSIGNS EVERY VM ID (/cluster/nextid), never the caller: a chosen
+            // id collided with an existing VM and was refused, and the next was a guess
+            // (per Ryan 2026-10-04: "stop choosing a VM id and let the hypervisor do it").
             "--vmid" => {
-                let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --vmid needs a value")?;
-                if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) {
-                    return Err(format!("round-vm template: --vmid must be a number, got {v:?}"));
-                }
-                r.vmid = Some(v);
+                return Err("round-vm template: --vmid is not accepted — the hypervisor assigns every VM id (/cluster/nextid)".into());
             }
             "--toolchain" => {
                 let v = inline.or_else(|| it.next().cloned()).ok_or("round-vm template: --toolchain needs a value")?;
@@ -342,13 +340,13 @@ mod tests {
     const SHA: &str = "0123456789abcdef0123";
 
     #[test]
-    fn args_take_a_tree_an_explicit_vmid_and_a_toolchain() {
+    fn args_take_a_tree_and_a_toolchain_and_refuse_a_chosen_vmid() {
         assert_eq!(
             parse_template_args(&s(&["/t"])).unwrap(),
-            TemplateArgs { tree_dir: "/t".into(), vmid: None, toolchain: None }
+            TemplateArgs { tree_dir: "/t".into(), toolchain: None }
         );
-        assert_eq!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap().vmid.as_deref(), Some("9120"));
-        assert_eq!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap().vmid.as_deref(), Some("9121"));
+        assert!(parse_template_args(&s(&["/t", "--vmid", "9120"])).unwrap_err().contains("hypervisor assigns"));
+        assert!(parse_template_args(&s(&["/t", "--vmid=9121"])).unwrap_err().contains("hypervisor assigns"));
         assert_eq!(
             parse_template_args(&s(&["/t", "--toolchain", "1.98.1"])).unwrap().toolchain.as_deref(),
             Some("1.98.1")
@@ -358,7 +356,6 @@ mod tests {
             Some("1.98.1")
         );
         assert!(parse_template_args(&s(&[])).is_err());
-        assert!(parse_template_args(&s(&["/t", "--vmid", "abc"])).unwrap_err().contains("number"));
         assert!(parse_template_args(&s(&["/t", "--bogus"])).unwrap_err().contains("--bogus"));
         assert!(parse_template_args(&s(&["/t", "--toolchain"])).unwrap_err().contains("needs a value"));
     }
