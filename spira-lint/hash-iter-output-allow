@@ -1,0 +1,11 @@
+# hash-iter-output: files that iterate a HashMap/HashSet into output and predate the rule, as
+# `<count> <path>`. Generated: spira-lint --only hash-iter-output --emit-allow.
+#
+# SHRINK-ONLY. A count goes down as the iteration moves to a BTreeMap/BTreeSet or is sorted;
+# nothing is raised for a NEW iteration.
+1 cockpit-collect/src/probes/core_detail.rs
+1 cockpit-collect/src/probes/reachable.rs
+1 cockpit-collect/src/probes/unsent.rs
+1 cockpit-collect/src/supervisor.rs
+1 lifecycle-guard/src/shell.rs
+2 sentinel/src/waiters.rs

@@ -100,17 +100,21 @@ fn main() -> ExitCode {
         }
     };
     if emit_allow {
-        if only.as_deref() != Some("call-deadline") {
-            eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline\n{USAGE}");
-            return ExitCode::from(2);
-        }
-        return match spira_lint::rules::call_deadline::render_allow(&tree) {
+        let (name, render): (&str, fn(&Tree) -> Result<String, spira_lint::LintError>) = match only.as_deref() {
+            Some("call-deadline") => ("call-deadline", spira_lint::rules::call_deadline::render_allow),
+            Some("hash-iter-output") => ("hash-iter-output", spira_lint::rules::hash_iter_output::render_allow),
+            _ => {
+                eprintln!("spira-lint: --emit-allow is only supported with --only call-deadline or --only hash-iter-output\n{USAGE}");
+                return ExitCode::from(2);
+            }
+        };
+        return match render(&tree) {
             Ok(text) => {
                 print!("{text}");
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("call-deadline: error: {e}");
+                eprintln!("{name}: error: {e}");
                 ExitCode::from(3)
             }
         };
