@@ -17,6 +17,15 @@ mod supervisor;
 pub(crate) mod test_support {
     use std::sync::Mutex;
     pub static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// Pins `SPIRA_HOME` beside `SPIRA_RUN`: `run_dir()` judges the run dir against the home's
+    /// config, so a test that sets only `SPIRA_RUN` passes or exits the binary by test order.
+    pub fn set_run(run: &std::path::Path) -> testkit::EnvGuard {
+        testkit::env(&[
+            ("SPIRA_HOME", Some(concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"))),
+            ("SPIRA_RUN", Some(run.to_str().unwrap())),
+        ])
+    }
 }
 
 fn usage() -> i32 {

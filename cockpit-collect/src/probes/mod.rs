@@ -1198,7 +1198,7 @@ mod tests {
     fn strand_keys_parses_ghost_and_other() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let path = testkit::TempDir::new("cc-strand");
-        std::env::set_var("SPIRA_RUN", path.path());
+        let _env = crate::test_support::set_run(path.path());
         // `escalated` is a timestamp (0 while unescalated, a nonzero epoch once raised —
         // strand.sh's own row shape), never a JSON boolean; this fixture uses the real shape.
         std::fs::write(
@@ -1229,7 +1229,7 @@ mod tests {
     fn strand_keys_missing_file_renders_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let path = testkit::TempDir::new("cc-strand-missing");
-        std::env::set_var("SPIRA_RUN", path.path());
+        let _env = crate::test_support::set_run(path.path());
         let kv = strand_keys();
         let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_STRANDS"), Some("?".to_string()));
