@@ -240,6 +240,31 @@ tar -xzOf "$_al_tarball" --wildcards '*/bin/release' > "$_wd/release" 2>/dev/nul
     exit 2
 }
 
+# acceptance-agent.sh SOURCES THE TREE'S conf.sh BY ITS OWN PATH (the script's $HERE), and
+# conf.sh's conf-gen.sh then wants to write two generated fragments beside it. /workspace is
+# bind-mounted straight from the host checkout (ryan's own uid), and rootless podman's user
+# namespace maps that uid to root inside the container regardless of the host file modes — so
+# spirauser can never write under /workspace, and conf-gen.sh failed with "Permission denied"
+# on its .tmp file, leaving SPIRA_DB unbound in the agent (sp-dn2rl problem 2). Point the agent
+# at a copy extracted BY spirauser instead: the tarball just staged above, which is this same
+# candidate's own tree (every git-tracked file, per build-tarball.sh) — so it is writable with
+# no loss of fidelity to what's under test.
+_al_release_name="$(basename "$_al_tarball" .tar.gz)"
+testenv container exec --name "$CNAME" --user spirauser bash -c "
+set -uo pipefail
+mkdir -p \"\$HOME/release-under-test\"
+tar -xzf '$_al_ctar' -C \"\$HOME/release-under-test\"
+" || {
+    printf 'acceptance-local: could not extract %s for the agent in the container\n' "$_al_ctar" >&2
+    exit 2
+}
+# The container user's home, asked of the container rather than assumed.
+_al_chome="$(testenv container exec --name "$CNAME" --user spirauser bash -c 'printf %s "$HOME"')" && [ -n "$_al_chome" ] || {
+    printf 'acceptance-local: could not read the container user'"'"'s HOME\n' >&2
+    exit 2
+}
+_al_agent="$_al_chome/release-under-test/$_al_release_name/spira/acceptance-agent.sh"
+
 _al_tag="local-$(git -C "$TREE" rev-parse --short=12 HEAD 2>/dev/null || printf unknown)-$(date -u +%Y%m%dT%H%M%SZ)"
 _al_prev_args=""
 if [ -n "$PRED" ]; then
@@ -300,12 +325,23 @@ done
 log "acceptance-local: running release acceptance $([ -n "$PRED" ] && printf 'phases A-D (predecessor %s)' "$PRED" || printf 'phase A') (tag=$_al_tag)"
 testenv container exec --name "$CNAME" --user spirauser bash -c "
 set -uo pipefail
+# cd OUT OF /workspace FIRST. /workspace is a bind mount of <tree> — a worktree whose
+# .git FILE holds the gitdir path on the HOST (e.g. .../harness/.git/worktrees/<name>),
+# which does not exist inside the container's mount namespace. install.sh's phase 5 runs
+# \`git config --global beads.role maintainer\` (no -C) and exclude.sh's own ROOT fallback
+# runs \`git rev-parse --show-toplevel\` — both cwd-relative — and with cwd=/workspace
+# EVERY such call dies \"fatal: not a git repository\", which is what install.sh reported
+# as \"could not set beads.role\" and \"exclude.sh install failed\" (sp-dn2rl problem 1).
+# \$HOME is spirauser's own, real, non-worktree directory: cwd-relative git calls either
+# succeed or cleanly find no repository there, exactly as install.sh intends when
+# SPIRA_REPO (unset here, same as in acceptance-ci.sh) leaves it to discover one.
+cd \"\$HOME\"
 export SPIRA_ACCEPTANCE_FORENSICS=\"\$HOME/acceptance-forensics\"
 mkdir -p \"\$SPIRA_ACCEPTANCE_FORENSICS\"
 exec /tmp/release acceptance '$_al_tag' \
     --scratch-repo \"\$HOME/scratch-repo\" \
     --tarball '$_al_ctar' \
-    --agent /workspace/spira/acceptance-agent.sh \
+    --agent '$_al_agent' \
     --bd-db \"\$HOME/.local/share/spira/db\" $_al_prev_args
 "
 _al_rc=$?
