@@ -152,7 +152,8 @@ run_pass() {
     mkdir -p "$run"
     local -a sarg=(); [ -n "$arg" ] && sarg=("$arg")
     env -i \
-        PATH="$PATH" HOME="$HOME" \
+        PATH="$PATH" HOME="$TMP/home" \
+        SPIRA_LIFECYCLE_ENFORCE=0 \
         SPIRA_HOME="$STUBS" PATH="$STUBS:$PATH" \
         SPIRA_RUN="$run" \
         SPIRA_DB="$SPIRA_DB" \
@@ -173,6 +174,7 @@ run_pass() {
         sentinel "${sarg[@]}" 2>&1
 }
 
+mkdir -p "$TMP/home"
 _run="$TMP/run-pass"
 rm -f "$SUMMON_LOG" "$SENDING_LOG" "$LAUNCH_ARGV"
 pass1_out="$(run_pass "$_run" "")"

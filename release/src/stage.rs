@@ -213,10 +213,16 @@ pub fn up(o: &StageOpts) -> Result<Stage, String> {
     fs::create_dir_all(sh.join("chamber")).map_err(|e| format!("cannot create chamber: {e}"))?;
     for entry in fs::read_dir(&o.harness_spira).map_err(|e| format!("cannot read {}: {e}", o.harness_spira.display()))?.flatten() {
         let p = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if p.is_dir() && name == "conf.d" {
+            let link = sh.join(&name);
+            let _ = fs::remove_file(&link);
+            std::os::unix::fs::symlink(&p, &link).map_err(|e| format!("cannot symlink {name}: {e}"))?;
+            continue;
+        }
         if !p.is_file() {
             continue;
         }
-        let name = entry.file_name().to_string_lossy().to_string();
         let is_script = name.ends_with(".sh") || name.ends_with(".py");
         if !is_script || name.starts_with("test-") || name == "stage.sh" || name == "canary.sh" {
             continue;
