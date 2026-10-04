@@ -1,0 +1,9 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2021"
+description = "spira-sim — deterministic simulation of the Spira loop: virtual-time event loop driven by one seed."
+
+[lib]
+name = "sim"
+path = "src/lib.rs"
