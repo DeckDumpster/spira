@@ -13,7 +13,6 @@
 #      any line is appended.
 #   4. An invalid family name (uppercase, space, path separator) is refused, no file created.
 #   5. Neither --root nor SPIRA_RUN set is refused with a clear message.
-#      the tsd row is best-effort, landing itself never depends on it.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
 #      the sole producer since the git-notes ledger and suite-times.sh were retired.
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
