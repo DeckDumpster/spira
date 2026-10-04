@@ -81,6 +81,17 @@ impl Run<'_> {
         c.arg(prev)
     }
 
+    /// `uninstall.sh --yes`, carrying the SAME `SPIRA_HOME_REPO` `install_env()` handed the
+    /// install it is undoing. Without it, `owned.sh list` (which `uninstall.sh` asks what it
+    /// owns) re-derives `repo_is_git_checkout` from scratch under bare `launcher_env()` —
+    /// no home-repo override there, so it resolves a different answer than install saw — and
+    /// the cert-sweep units (optional on that flag, manifest.rs) installed under one answer
+    /// go unlisted, hence unremoved, under the other: `spira-cert-sweep-{full,sample}.{service,timer}`
+    /// left running after every `uninstall.sh --yes` in this harness (sp-dn2rl).
+    fn uninstall(&self) -> Cmd {
+        self.tool("uninstall.sh").env("SPIRA_HOME_REPO", self.o.scratch_name()).arg("--yes")
+    }
+
     /// One variable as the release under test's own conf.sh resolves it (DESIGN.md Decision 3).
     fn conf_value(&self, key: &str, extra: &[(&str, &str)]) -> Option<String> {
         let conf_sh = self.o.releases().join("current/spira/conf.sh");
@@ -542,7 +553,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     }
 
     println!("\nphase A — uninstall and clean state");
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
     let left: Vec<String> = first_fields(&r.systemctl(&["list-unit-files", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
     r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.join("\n"));
@@ -657,7 +668,7 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
     } else {
         r.bad("phase C: unit set after rollback matches pre-upgrade snapshot", &diff.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase C: uninstall.sh --yes after rollback exits 0", rc);
 }
 
@@ -789,6 +800,6 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             None => r.ok("phase D: world running after aged rollback"),
         }
     }
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase D: uninstall.sh exits 0", rc);
 }

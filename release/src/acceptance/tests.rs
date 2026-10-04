@@ -467,6 +467,15 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
         assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "{}", c.line());
         assert_eq!(c.env_of("SPIRA_CONF"), Some(b.root.join("config/spira/spira.conf").display().to_string().as_str()), "{}", c.line());
     }
+    // uninstall.sh (phases A, C, D) carries the SAME SPIRA_HOME_REPO install_env() gave the
+    // install it undoes. Without it, owned.sh's manifest re-derives repo_is_git_checkout
+    // from scratch under bare launcher_env(), resolves a different answer than install saw,
+    // and leaves the cert-sweep units unlisted — hence unremoved (sp-dn2rl).
+    let uninstalls: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "uninstall.sh").collect();
+    assert_eq!(uninstalls.len(), 3, "phase A, C and D each uninstall once");
+    for c in &uninstalls {
+        assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"), "{}", c.line());
+    }
     let deploys_of_tag: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "deploy.sh" && c.args.last().unwrap().ends_with("20260930T000000Z")).collect();
     assert_eq!(deploys_of_tag.len(), 2, "phase B and phase D");
     for c in deploys_of_tag {
