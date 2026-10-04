@@ -171,6 +171,8 @@ struct Fake {
     rollback: (i32, &'static str),
     never_lands: bool,
     history_gap: bool,
+    lc_create_fails: bool,
+    rows: RefCell<Vec<String>>,
     no_cutover_script: bool,
     cutover_rc: i32,
     land_modes: Vec<(&'static str, &'static str)>,
@@ -191,6 +193,8 @@ impl Fake {
             rollback: (0, ""),
             never_lands: false,
             history_gap: false,
+            lc_create_fails: false,
+            rows: RefCell::new(Vec::new()),
             no_cutover_script: false,
             cutover_rc: 0,
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
@@ -264,6 +268,13 @@ impl Fake {
             }
             ("spira-config", ["repo", "names"]) => ok(&self.land_modes.iter().map(|(n, _)| format!("{n}\n")).collect::<String>()),
             ("spira-config", ["repo", "land", n]) => ok(&format!("{}\n", self.land_modes.iter().find(|(x, _)| x == n).map_or("", |(_, m)| m))),
+            ("spira-lc", ["create-bead", id]) => {
+                if self.lc_create_fails {
+                    return Out { rc: 2, text: "cannot tell: connecting to the socket: Connection refused\n".into(), out: String::new() };
+                }
+                self.rows.borrow_mut().push(id.to_string());
+                ok("{}\n")
+            }
             ("spira-lc", ["history", _]) => {
                 let states = if self.history_gap { &["READY", "WORKING", "SUBMITTED", "LANDED"][..] } else { &["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"][..] };
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
@@ -591,6 +602,24 @@ fn a_bead_that_never_lands_fails_stage_5_inside_its_budget() {
     assert_eq!(fails.len(), 1, "{fails:#?}");
     assert!(fails[0].starts_with("phase A stage 5: bead sp-p1 landed on ") && fails[0].contains("no commit with bead id on origin/main after 12"), "{fails:#?}");
     assert!(f.clock.get() - start < 400, "the budget bounds the wait");
+}
+
+#[test]
+fn the_probe_bead_is_filed_with_its_lifecycle_row() {
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
+    assert_eq!(*f.rows.borrow(), *f.probes.borrow(), "every probe gets a row, and only probes");
+}
+
+#[test]
+fn a_probe_whose_row_cannot_be_created_fails_bead_filed() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.lc_create_fails = true;
+    assert_eq!(phases::run(&f, b.opts(&[])), 1);
+    let fails = b.fails();
+    assert!(fails.iter().any(|x| x.starts_with("phase A: bead filed") && x.contains("create-bead")), "{fails:#?}");
 }
 
 #[test]

@@ -258,7 +258,15 @@ impl Run<'_> {
     fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
         let l = format!("acceptance,{},{},repo:{}", labels.plan, labels.scope, self.o.scratch_name());
         let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
-        (extract_bead_id(&out.text), out.text)
+        let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
+        // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
+        // lifecycle_enforce a rowless bead is never claimable, so the probe sat unsummoned
+        // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
+        let lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
+        if lc.rc != 0 {
+            return (None, format!("{}spira-lc create-bead {id} rc={}: {}", out.text, lc.rc, lc.text.trim_end()));
+        }
+        (Some(id), out.text)
     }
 
     /// Stages 2-5 for a filed bead: summoned (branch), committed, closed, landed by ancestry

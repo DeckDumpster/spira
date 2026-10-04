@@ -629,6 +629,28 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
                 info("lc-serve.service active on the lifecycle store");
+                // The store is built and serving, so this install runs on the lifecycle machine:
+                // turn spira.lifecycle_enforce on, unless the operator already set it either way
+                // (a seeder never overwrites a decision). Off by default, a fresh install never
+                // used the store it just built, and acceptance's lifecycle sequence saw nothing
+                // (acceptance 37183437236, sp-6ka75).
+                match spira_config::discover(None) {
+                    Some(toml) if toml.is_file() => {
+                        let set = spira_config::load(&toml).ok().and_then(|d| d.spira).and_then(|s| s.lifecycle_enforce);
+                        if set.is_some() {
+                            skip(&format!("spira.lifecycle_enforce already set in {} — left as the operator set it", toml.display()));
+                        } else if let Err(e) = spira_config::set_paths_in_file(&toml, &[("spira.lifecycle_enforce", "true")]) {
+                            eprintln!("install: phase lifecycle store failed — could not set spira.lifecycle_enforce in {}: {e}", toml.display());
+                            return ExitCode::from(2);
+                        } else {
+                            info(&format!("spira.lifecycle_enforce = true in {}", toml.display()));
+                        }
+                    }
+                    _ => {
+                        eprintln!("install: phase lifecycle store failed — spira-config discovered no config document to turn lifecycle_enforce on in");
+                        return ExitCode::from(2);
+                    }
+                }
             }
             Err(e) => {
                 eprintln!("install: phase lifecycle store failed — {e}");
