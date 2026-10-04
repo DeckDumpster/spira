@@ -119,8 +119,6 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 rm -rf ~/round-work ~/round-bins ~/round-launcher.env
 git clone --quiet "git://${host_addr}:${port}/mirror.git" ~/round-work
-mkdir -p ~/cargo-target
-ln -sfn ~/cargo-target ~/round-work/target
 cd ~/round-work
 # sp-xjnzl-2: warm conf.sh's own generated fragments (conf.d.keys.generated.sh,
 # conf.d.defaults.generated.sh — gitignored, never present after a fresh clone) ONCE,
@@ -157,7 +155,7 @@ export SCCACHE_IGNORE_SERVER_IO_ERROR=1
 export SCCACHE_WEBDAV_ENDPOINT="http://${host_addr}:9431"
 export SCCACHE_WEBDAV_KEY_PREFIX="/"
 t0=$(date +%s)
-if ! cargo build -q --profile release --workspace; then
+if ! cargo build -q --profile release --workspace --config profile.release.incremental=false; then
     echo "round-vm: the round's workspace build failed" >&2
     exit 4
 fi
@@ -847,6 +845,12 @@ mod tests {
     }
 
     #[test]
+    fn the_round_builds_once_in_a_clean_tree_with_testenvs_own_flags() {
+        assert!(!REMOTE_SCRIPT.contains("ln -sfn"), "a target symlink dirties the tree and dangles in the container");
+        assert!(REMOTE_SCRIPT.contains(&format!("cargo build -q --profile release --workspace {}", spira_config::build::one_shot_words("release"))));
+    }
+
+    #[test]
     fn conf_gen_is_warmed_once_before_the_workspace_build_and_the_suite_batch() {
         // sp-xjnzl-2: a fresh clone never carries conf.sh's gitignored generated fragments,
         // so every suite's own conf.sh sourcing would otherwise regenerate them independently
@@ -918,14 +922,6 @@ mod tests {
         assert!(check < clone, "cargo must be checked before the clone, not after it fails");
         let path_export = REMOTE_SCRIPT.find(r#"export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin""#).expect("puts cargo's install dirs on PATH");
         assert!(path_export < check, "PATH must be widened before the check that reads it");
-    }
-
-    #[test]
-    fn remote_script_recreates_the_target_symlink_after_every_clone() {
-        let rm = REMOTE_SCRIPT.find("rm -rf ~/round-work").expect("wipes round-work every round");
-        let symlink = REMOTE_SCRIPT.find("ln -sfn ~/cargo-target ~/round-work/target").expect("re-points target outside round-work");
-        let clone = REMOTE_SCRIPT.find("git clone").expect("clones the mirror");
-        assert!(rm < clone && clone < symlink, "the symlink must be recreated after the clone recreates round-work, every round");
     }
 
     /// Runs only REMOTE_SCRIPT's guard, with no `cargo` reachable — never reaching the git
