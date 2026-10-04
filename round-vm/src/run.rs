@@ -13,7 +13,8 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::config::Config;
+use crate::config::{Config, PveEnv};
+use crate::template::Record;
 use crate::pool::{Deps, Pool};
 use crate::procs::{command, FileLock};
 use crate::schema::{AcquireMode, Manifest, ProcId, Vm};
@@ -66,6 +67,8 @@ pub trait Host: Sync {
     fn head(&self, tree: &Path) -> Result<(String, String), String>;
     /// Points the mirror at `tree`'s HEAD and makes sure the daemon serving it is up.
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String>;
+    /// The testenv image tag `commit` of `tree` needs, computed without a checkout.
+    fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String>;
     /// Fetches `branch` of `tree`'s repository into the mirror as `refs/heads/<as_ref>`.
     fn mirror_ref(&self, tree: &Path, branch: &str, as_ref: &str) -> Result<(), String>;
 }
@@ -82,6 +85,8 @@ pub struct BatchJob {
     /// sharing with the host.
     pub cache_home: Option<String>,
     pub testenv_registry: Option<String>,
+    /// Seconds of setup (script start to the suites launching) beyond which the run reports SETUP-SLOW.
+    pub setup_alarm_secs: u64,
 }
 
 /// The VM side, reached only by address.
@@ -111,7 +116,8 @@ pub fn shell_quote(s: &str) -> String {
 /// build is incremental on the one just made) and stages `target/release`'s executables
 /// into `~/round-bins/` so the host pulls the binaries and not cargo's target directory.
 pub const REMOTE_SCRIPT: &str = r#"set -euo pipefail
-host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7"
+host_addr="$1" port="$2" suites="$3" maxpar="$4" toolchain="$5" cache_home="$6" registry="$7" setup_alarm="$8"
+t_start=$(date +%s)
 export PATH="$HOME/.cargo/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin"
 if ! command -v cargo >/dev/null 2>&1; then
     echo "round-vm: cargo not found on PATH ($PATH) — the template is missing a Rust toolchain" >&2
@@ -187,6 +193,7 @@ else
     echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
     exit 3
 fi
+setup_secs=$(( $(date +%s) - t_start ))
 export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
@@ -196,6 +203,11 @@ else
     testenv --mode parallel --profile release round
 fi
 rc=$?
+suites_secs=$(( $(date +%s) - t_start - setup_secs ))
+echo "round-vm: setup ${setup_secs}s, suites ${suites_secs}s" >&2
+if [ "$setup_secs" -gt "$setup_alarm" ]; then
+    echo "round-vm: SETUP-SLOW: setup took ${setup_secs}s, over the ${setup_alarm}s limit — something is being built or fetched that the template should hold" >&2
+fi
 mkdir -p ~/round-bins
 find target/release -maxdepth 1 -type f -executable -exec cp {} ~/round-bins/ \; 2>/dev/null
 exit "$rc"
@@ -217,6 +229,7 @@ pub fn remote_command(job: &BatchJob) -> String {
         job.toolchain.clone().unwrap_or_default(),
         job.cache_home.clone().unwrap_or_default(),
         job.testenv_registry.clone().unwrap_or_default(),
+        job.setup_alarm_secs.to_string(),
     ];
     let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
     format!("bash -s -- {}", quoted.join(" "))
@@ -313,7 +326,7 @@ pub struct GitHost {
     pub listen: String,
 }
 
-fn git(args: &[&str]) -> Result<String, String> {
+pub(crate) fn git(args: &[&str]) -> Result<String, String> {
     let out = command("git").args(args).stdin(Stdio::null()).output().map_err(|e| format!("git: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -359,6 +372,37 @@ impl Host for GitHost {
     fn head(&self, tree: &Path) -> Result<(String, String), String> {
         let t = tree.to_string_lossy();
         Ok((git(&["-C", &t, "rev-parse", "HEAD"])?, git(&["-C", &t, "rev-parse", "HEAD^{tree}"])?))
+    }
+
+    fn image_tag(&self, tree: &Path, commit: &str) -> Result<String, String> {
+        let scratch = self.state_dir.join(format!(".tag.{}", std::process::id()));
+        let _ = fs::remove_dir_all(&scratch);
+        fs::create_dir_all(&scratch).map_err(|e| e.to_string())?;
+        let r = (|| {
+            let mut archive = command("git")
+                .args(["-C", &tree.to_string_lossy(), "archive", "--format=tar", commit, "spira/testenv/Containerfile", "spira/deps.toml"])
+                .stdout(Stdio::piped())
+                .spawn()
+                .map_err(|e| format!("git archive: {e}"))?;
+            let out = archive.stdout.take().ok_or("git archive: no stdout")?;
+            let st = command("tar").arg("-x").arg("-C").arg(&scratch).stdin(out).status().map_err(|e| format!("tar: {e}"))?;
+            if !archive.wait().map_err(|e| e.to_string())?.success() || !st.success() {
+                return Err(format!("cannot read the image closure of {commit}"));
+            }
+            let o = command("testenv")
+                .args(["container", "tag"])
+                .env("SPIRA_TESTENV_HARNESS", &scratch)
+                .output()
+                .map_err(|e| format!("testenv container tag: {e}"))?;
+            let tag = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            if o.status.success() && !tag.is_empty() {
+                Ok(tag)
+            } else {
+                Err(format!("testenv container tag exited {}: {}", o.status.code().unwrap_or(-1), String::from_utf8_lossy(&o.stderr).trim()))
+            }
+        })();
+        let _ = fs::remove_dir_all(&scratch);
+        r
     }
 
     fn prepare_mirror(&self, tree: &Path) -> Result<(), String> {
@@ -576,6 +620,9 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
             return 2;
         }
     };
+    if let Some(code) = stale_template(env, &args.tree_dir, &commit_sha) {
+        return code;
+    }
     if let Err(e) = env.host.prepare_mirror(&args.tree_dir) {
         eprintln!("round-vm run: cannot prepare the mirror from {}: {e}", args.tree_dir.display());
         return 2;
@@ -593,6 +640,34 @@ pub fn run(env: &RunEnv, args: &RunArgs) -> i32 {
         eprintln!("round-vm run: warning: release of {} failed: {e}", vm.handle);
     }
     code
+}
+
+/// Exit 3 (no verdict) when the recorded template holds a different image than the tree
+/// needs: refusing here costs seconds, where a VM that cannot find its image costs a boot.
+/// A record that describes a template `pve.env` no longer names is not evidence either way.
+fn stale_template(env: &RunEnv, tree: &Path, commit: &str) -> Option<i32> {
+    let rec = Record::read(&env.cfg.state_dir)?;
+    if let Ok(pe) = PveEnv::load(&env.cfg.pve_env_path, &|k| std::env::var(k).ok()) {
+        if pe.template_vmid != rec.vmid {
+            eprintln!("round-vm run: template.json describes template {}, pve.env names {} — not checking the image tag", rec.vmid, pe.template_vmid);
+            return None;
+        }
+    }
+    let tag = match env.host.image_tag(tree, commit) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("round-vm run: cannot compute the tree's image tag ({e}) — the VM will check it");
+            return None;
+        }
+    };
+    if rec.holds(&tag) {
+        return None;
+    }
+    eprintln!(
+        "round-vm run: TEMPLATE-STALE: template {} holds {}, this tree needs localhost/spira-testenv:{tag} — refusing to boot a VM that would cold-build it; run `round-vm refresh` (it records the new template and recycles the warm pool)",
+        rec.vmid, rec.image
+    );
+    Some(3)
 }
 
 fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &str, commit_sha: &str, tree_sha: &str) -> i32 {
@@ -616,6 +691,7 @@ fn on_vm(env: &RunEnv, args: &RunArgs, vm: &Vm, mode: AcquireMode, host_addr: &s
         toolchain: args.toolchain.clone(),
         cache_home: cfg.cache_home.clone(),
         testenv_registry: cfg.testenv_registry.clone(),
+        setup_alarm_secs: cfg.setup_alarm_secs,
     };
     let t0 = Instant::now();
     let Some(spool_dir) = args.attr_spool.clone() else {
@@ -906,8 +982,9 @@ mod tests {
             toolchain: Some("1.82.0".into()),
             cache_home: Some("/opt/spira/cargo".into()),
             testenv_registry: Some("registry.example/spira".into()),
+            setup_alarm_secs: 45,
         });
-        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira'");
+        assert_eq!(cmd, "bash -s -- '10.0.0.1' '9430' '' '16' '1.82.0' '/opt/spira/cargo' 'registry.example/spira' '45'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
 
@@ -937,7 +1014,7 @@ mod tests {
             .arg("-c")
             .arg(REMOTE_SCRIPT)
             .arg("round-vm-test")
-            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", ""])
+            .args(["host", "9430", "", "16", "", "/nonexistent-cargo-home", "", "60"])
             .env("PATH", "/usr/bin:/bin")
             .env("HOME", "/nonexistent-home")
             .output()
@@ -1062,6 +1139,9 @@ mod tests {
         }
         fn prepare_mirror(&self, _: &Path) -> Result<(), String> {
             Ok(())
+        }
+        fn image_tag(&self, tree: &Path, _: &str) -> Result<String, String> {
+            if tree.ends_with("tag-unreadable") { Err("no closure".into()) } else if tree.ends_with("newer-image") { Ok("tagB".into()) } else { Ok("tagA".into()) }
         }
         fn mirror_ref(&self, _: &Path, branch: &str, _: &str) -> Result<(), String> {
             if branch == "missing" { Err("no such branch".into()) } else { Ok(()) }
@@ -1199,6 +1279,48 @@ mod tests {
         RunArgs { tree_dir: fx.d.path().join("tree"), maxpar: Some(24), ..Default::default() }
     }
 
+    fn record_template(fx: &mut Fixture, vmid: &str, image: &str, pve_names: &str) {
+        let ca = fx.d.path().join("ca.pem");
+        fs::write(&ca, "x").unwrap();
+        let env = fx.d.path().join("pve.env");
+        fs::write(&env, format!("PVE_TOKEN_ID=t\nPVE_TOKEN_SECRET=s\nPVE_NODE=n\nPVE_CACERT={}\nPVE_TEMPLATE_VMID={pve_names}\n", ca.display())).unwrap();
+        fx.cfg.pve_env_path = env;
+        fs::create_dir_all(&fx.cfg.state_dir).unwrap();
+        Record { vmid: vmid.into(), image: image.into() }.write(&fx.cfg.state_dir).unwrap();
+    }
+
+    fn newer_tree(fx: &Fixture) -> RunArgs {
+        RunArgs { tree_dir: fx.d.path().join("newer-image"), maxpar: Some(24), ..Default::default() }
+    }
+
+    #[test]
+    fn a_run_refuses_when_the_recorded_template_holds_another_image_and_boots_nothing() {
+        let mut fx = fixture();
+        record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "130");
+        let remote = FakeRemote::green();
+        assert_eq!(go(&fx, &remote, &newer_tree(&fx)), 3);
+        assert!(remote.jobs.lock().unwrap().is_empty(), "no batch ran");
+        assert!(fx.fp.name("100").is_none(), "no VM was acquired");
+        assert_eq!(go(&fx, &FakeRemote::green(), &tree(&fx)), 0, "positive control: the matching tree runs");
+    }
+
+    #[test]
+    fn a_record_for_a_template_pve_env_no_longer_names_is_not_evidence() {
+        let mut fx = fixture();
+        record_template(&mut fx, "130", "localhost/spira-testenv:tagA", "131");
+        assert_eq!(go(&fx, &FakeRemote::green(), &newer_tree(&fx)), 0);
+    }
+
+    #[test]
+    fn the_remote_script_reports_setup_against_suites_and_alarms_over_the_limit() {
+        let setup = REMOTE_SCRIPT.find("setup_secs=$(( $(date +%s) - t_start ))").expect("setup is measured");
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(setup < batch, "setup ends where the suites start");
+        assert!(REMOTE_SCRIPT.contains("round-vm: setup ${setup_secs}s, suites ${suites_secs}s"));
+        assert!(REMOTE_SCRIPT.contains("SETUP-SLOW"));
+        assert!(REMOTE_SCRIPT.contains("[ \"$setup_secs\" -gt \"$setup_alarm\" ]"));
+    }
+
     #[test]
     fn green_run_pulls_everything_writes_the_manifest_installs_and_releases() {
         let fx = fixture();
@@ -1215,7 +1337,7 @@ mod tests {
         // path-ok: a test asserting where round-vm installs a fixture binary in a temp worktree
         assert!(tree(&fx).tree_dir.join("target/release/batcher").is_file(), "installed into the round worktree");
         assert!(fs::read_to_string(fx.cfg.run_dir.join("tsd/suite.jsonl")).unwrap().contains("\"ran_on\":\"100\""));
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' ''"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].ends_with("'' '24' '' '/opt/spira/cargo' '' '180'"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]
@@ -1224,7 +1346,7 @@ mod tests {
         fx.cfg.testenv_registry = Some("registry.example/spira".into());
         let remote = FakeRemote::green();
         assert_eq!(go(&fx, &remote, &tree(&fx)), 0);
-        assert!(remote.jobs.lock().unwrap()[0].ends_with("'registry.example/spira'"), "{:?}", remote.jobs.lock().unwrap());
+        assert!(remote.jobs.lock().unwrap()[0].contains("'registry.example/spira'"), "{:?}", remote.jobs.lock().unwrap());
     }
 
     #[test]

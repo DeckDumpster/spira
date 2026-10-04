@@ -93,6 +93,8 @@ pub struct Config {
     /// SPIRA_TESTENV_REGISTRY, forwarded to the VM so a changed image tag costs one pull
     /// there instead of a full rebuild.
     pub testenv_registry: Option<String>,
+    /// A round whose setup (before its suites start) exceeds this many seconds reports SETUP-SLOW.
+    pub setup_alarm_secs: u64,
     pub vcpus: u32,
     pub maxpar: u32,
     pub retry_interval: Duration,
@@ -145,6 +147,7 @@ impl Config {
             host_addr: src.get("SPIRA_ROUND_VM_HOST_ADDR"),
             cache_home: src.get("SPIRA_ROUND_VM_CACHE_HOME"),
             testenv_registry: src.get("SPIRA_TESTENV_REGISTRY"),
+            setup_alarm_secs: num(src, "SPIRA_ROUND_VM_SETUP_ALARM_SECS", 180)?,
             vcpus: num(src, "SPIRA_ROUND_VM_VCPUS", 16)?,
             maxpar: num(src, "SPIRA_ROUND_VM_MAXPAR", 16)?,
             retry_interval: Duration::from_secs(num(src, "SPIRA_ROUND_VM_RETRY_INTERVAL", 60)?),
