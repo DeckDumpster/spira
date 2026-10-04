@@ -446,26 +446,16 @@ impl Run<'_> {
                 } else {
                     self.s.rebase_conflicts = rb.stdout.trim_end().to_string();
                     let conflicts = if self.s.rebase_conflicts.is_empty() { "unknown".to_string() } else { self.s.rebase_conflicts.clone() };
-                    let cited = if restricted {
-                        String::new()
-                    } else {
-                        let o = self.d.exec.exec("landing-pass", &s(&["cited-commit", &id, &repo, &fq]), None, None);
-                        if o.success() { o.text() } else { String::new() }
-                    };
-                    if !cited.is_empty() {
-                        self.log(&format!("{f}: {id} closed behind {base} but notes cite {cited} on {base} — retiring as landed"));
-                        // A failed mark is logged, never discarded: the bead reads landed-on-main with no
-                        // delivery record to show it. SPIRA_RUN is passed explicitly (law-a-binary-resolves-the-config-it-reads).
-                        let mo = self.d.exec.exec(
-                            "env",
-                            &s(&[&format!("SPIRA_RUN={}", self.conf.run.display()), "landing-pass", "mark", &id, "LANDED", &cited, "cited-on-main"]),
-                            None,
-                            None,
-                        );
+                    let cited = if restricted { false } else { self.content_on_base(&fq, &branch) };
+                    if cited {
+                        self.log(&format!("{f}: {id} closed behind {base} but its content is already on {base} — retiring as landed"));
+                        // A failed event is logged, never discarded: the bead would keep reading unlanded.
+                        let proof = format!("merge-tree:{fq}");
+                        let mo = self.d.exec.exec("spira-lc", &s(&["content-on-base", &id, &proof, "aeon"]), None, None);
                         if !mo.success() {
-                            self.log(&format!("{f}: {id} landing-pass mark LANDED {cited} cited-on-main FAILED (rc={}): {}", mo.code, mo.first_err_line()));
+                            self.log(&format!("{f}: {id} spira-lc content-on-base {proof} FAILED (rc={}): {}", mo.code, mo.first_err_line()));
                         }
-                        if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("fix on {base} cited in notes as {cited}"), "cited-landed"])) != 0 {
+                        if self.sdo("spira_destroy_branch", &s(&[&id, &branch, &repo, &format!("content already on {base}"), "content-landed"])) != 0 {
                             self.log(&format!("{f}: {id} branch retire failed"));
                         }
                     } else {
@@ -483,6 +473,18 @@ impl Run<'_> {
                 }
             }
         }
+    }
+
+    /// Does `base` already hold every change `branch` makes? Content, not ancestry: a merge of the
+    /// two that leaves base's own tree unchanged.
+    fn content_on_base(&self, base: &str, branch: &str) -> bool {
+        let mt = self.d.git.git(&self.s.repo, &["merge-tree", "--write-tree", base, &format!("refs/heads/{branch}")]);
+        if !mt.success() {
+            return false;
+        }
+        let merged = mt.text().lines().next().unwrap_or("").trim().to_string();
+        let tree = self.d.git.git(&self.s.repo, &["rev-parse", &format!("{base}^{{tree}}")]);
+        tree.success() && !merged.is_empty() && merged == tree.text().trim()
     }
 
     fn workflow_fence(&mut self, r: &str, st: &mut String) {

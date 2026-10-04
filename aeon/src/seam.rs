@@ -19,8 +19,7 @@
 //! `fayth_free` stay on the seam — their owning crate is `strand`, not this one, so the
 //! unchanged bash names (now one-line shims) are still the right way to reach them.
 //!
-//! Bead and delivery state is read through `spira-lc` via `self.d.exec`, never this seam;
-//! the cited-on-main mark goes through `landing-pass mark`.
+//! Bead and delivery state is read and written through `spira-lc` via `self.d.exec`, never this seam.
 //!
 //! `_aeon_capacity_paused`, `capacity_reset_at` and `capacity_pause_set` are dropped the
 //! same way (wave 4.26, family K → `capacity.rs`): `run.rs`/`sweep.rs`/`escape.rs`/

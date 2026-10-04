@@ -40,13 +40,8 @@ struct World {
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
     /// test that never mentions stacking at all).
     stack_answer: Option<String>,
-    /// Makes the `env SPIRA_RUN=… landing-pass mark …` exec call this test's fixture
-    /// synthesizes fail, so a test can prove the caller logs it rather than discarding it
-    /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
-    /// every other test's "every exec succeeds" assumption unchanged.
-    fail_landing_pass_mark: bool,
-    /// What `landing-pass cited-commit` prints; empty means the notes cite nothing on base.
-    cited_commit: String,
+    /// Makes the `spira-lc content-on-base` exec call refuse.
+    fail_content_on_base: bool,
 }
 
 type W = Arc<Mutex<World>>;
@@ -189,16 +184,8 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
-        if prog == "landing-pass" && args.first().map(String::as_str) == Some("cited-commit") {
-            let c = self.0.lock().unwrap().cited_commit.clone();
-            return if c.is_empty() { Out::fail(1, "") } else { Out::ok(&c) };
-        }
-        if prog == "env"
-            && args.iter().any(|a| a == "landing-pass")
-            && args.iter().any(|a| a == "mark")
-            && self.0.lock().unwrap().fail_landing_pass_mark
-        {
-            return Out::fail(1, "landing-pass mark: stub refusal");
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
+            return Out::fail(1, "spira-lc content-on-base: stub refusal");
         }
         Out::ok("")
     }
@@ -1167,10 +1154,8 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
 }
 
 #[test]
-fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_pass() {
-    // sp-cnnt6: closed behind base, does not rebase, but the session's own notes cite a
-    // commit already on base — landing-pass (not a lib.sh seam) retires it as LANDED.
-    let f = fx("cited");
+fn a_close_behind_base_with_its_content_already_there_records_content_on_base() {
+    let f = fx("a_close_behind_base_with_its_content_already_there_records_content_on_base");
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
@@ -1178,33 +1163,26 @@ fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "theirs\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
-        w.cited_commit = "deadbeef".into();
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
     let w = o.w.lock().unwrap();
     assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "env"
-            && args.iter().any(|x| x == "landing-pass")
-            && args.iter().any(|x| x == "mark")
-            && args.iter().any(|x| x == "deadbeef")
-            && args.iter().any(|x| x.starts_with("SPIRA_RUN="))),
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
         "{:?}",
         w.exec_calls
     );
-    assert!(o.log.contains("notes cite deadbeef on"), "{}", o.log);
-    assert!(!o.log.contains("FAILED"), "a successful mark logs nothing alarming: {}", o.log);
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(!o.log.contains("FAILED"), "a successful event logs nothing alarming: {}", o.log);
 }
 
 #[test]
-fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
-    // The same scenario, except the exec of `landing-pass mark` itself refuses — proving
-    // the caller no longer discards that result (it used to be `let _ = ...`).
-    let f = fx("cited-mark-fails");
+fn a_failed_content_on_base_event_is_logged_loudly_not_discarded() {
+    let f = fx("a_failed_content_on_base_event_is_logged_loudly_not_discarded");
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
@@ -1212,23 +1190,24 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "theirs\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
-        w.cited_commit = "deadbeef".into();
-        w.fail_landing_pass_mark = true;
+        w.fail_content_on_base = true;
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
     let w = o.w.lock().unwrap();
     assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "env" && args.iter().any(|x| x == "landing-pass") && args.iter().any(|x| x == "mark")),
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
         "{:?}",
         w.exec_calls
     );
-    assert!(o.log.contains("landing-pass mark LANDED deadbeef cited-on-main FAILED"), "{}", o.log);
-    assert!(o.log.contains("landing-pass mark: stub refusal"), "{}", o.log);
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(o.log.contains("spira-lc content-on-base merge-tree:"), "{}", o.log);
+    assert!(o.log.contains("FAILED"), "{}", o.log);
+    assert!(o.log.contains("stub refusal"), "{}", o.log);
 }
 
 #[test]
