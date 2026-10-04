@@ -108,7 +108,13 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
-    *"spira-landing*"*"spira-aeon-*"*) printf '%s\n' "${MOCK_TRANSIENT_UNITS:-}" ;;
+    *"spira-landing*"*"spira-aeon-*"*)
+        # The first sweep sees MOCK_TRANSIENT_UNITS; a later one (after the timers are
+        # stopped) sees MOCK_LATE_TRANSIENT — a transient a sentinel pass started in between.
+        n=$(( $(cat "${MOCK_LIST_COUNT:-/dev/null}" 2>/dev/null || echo 0) + 1 ))
+        [ -n "${MOCK_LIST_COUNT:-}" ] && echo "$n" > "$MOCK_LIST_COUNT"
+        if [ "$n" -gt 1 ] && [ -n "${MOCK_LATE_TRANSIENT:-}" ]; then printf '%s\n' "$MOCK_LATE_TRANSIENT"
+        else printf '%s\n' "${MOCK_TRANSIENT_UNITS:-}"; fi ;;
     *list-units*) printf '' ;;
     *is-active*)  printf 'inactive\n' ;;
     *daemon-reload*) ;;
@@ -160,6 +166,8 @@ un() {
         "LAYOUT_LOG=$LAYOUT_LOG" \
         "MOCK_LINGER=${MOCK_LINGER:-yes}" \
         "MOCK_TRANSIENT_UNITS=${MOCK_TRANSIENT_UNITS:-}" \
+        "MOCK_LIST_COUNT=${MOCK_LIST_COUNT:-}" \
+        "MOCK_LATE_TRANSIENT=${MOCK_LATE_TRANSIENT:-}" \
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" 2>&1
 }
 
@@ -406,6 +414,17 @@ want   "transient: systemctl stop was actually called on the aeon one" \
 nowant "transient: not reported as a stray (it was handled, not missed)" \
     "STRAY  spira-landing" "$trans_out"
 MOCK_TRANSIENT_UNITS=""
+
+# A transient a sentinel pass starts AFTER the first sweep (sp-53own): only the second
+# sweep, after every timer is stopped, can catch it.
+_seed_units || { printf 'fixture: re-seed for late-transient failed\n'; exit 1; }
+export MOCK_LIST_COUNT="$TMP/list-count"; : > "$MOCK_LIST_COUNT"
+export MOCK_LATE_TRANSIENT="spira-audit.service loaded active running sentinel --audit"
+: > "$MOCK_LOG"
+late_out="$(un)"
+want "late transient: the audit worker started mid-uninstall is stopped" "stop spira-audit.service" "$(cat "$MOCK_LOG")"
+want "late transient: and reported"                                      "stopping spira-audit.service" "$late_out"
+unset MOCK_LIST_COUNT MOCK_LATE_TRANSIENT
 
 # ==========================================================================
 echo

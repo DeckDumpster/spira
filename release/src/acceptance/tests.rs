@@ -172,6 +172,7 @@ struct Fake {
     never_lands: bool,
     history_gap: bool,
     lc_create_fails: bool,
+    history_late: Cell<u32>,
     rows: RefCell<Vec<String>>,
     no_cutover_script: bool,
     cutover_rc: i32,
@@ -194,6 +195,7 @@ impl Fake {
             never_lands: false,
             history_gap: false,
             lc_create_fails: false,
+            history_late: Cell::new(0),
             rows: RefCell::new(Vec::new()),
             no_cutover_script: false,
             cutover_rc: 0,
@@ -276,6 +278,11 @@ impl Fake {
                 ok("{}\n")
             }
             ("spira-lc", ["history", _]) => {
+                if self.history_late.get() > 0 {
+                    self.history_late.set(self.history_late.get() - 1);
+                    let ev: Vec<String> = ["WORKING", "SUBMITTED", "CERTIFIED"].iter().map(|s| format!(r#"{{"from_state":"x","to_state":"{s}","applied":"1"}}"#)).collect();
+                    return ok(&format!("[{}]", ev.join(",")));
+                }
                 let states = if self.history_gap { &["READY", "WORKING", "SUBMITTED", "LANDED"][..] } else { &["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"][..] };
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
                 ok(&format!("[{}]", ev.join(",")))
@@ -692,4 +699,14 @@ fn lifecycle_states_reads_the_store_s_real_history_shape() {
     assert_eq!(got, vec!["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"]);
     assert_eq!(crate::acceptance::missing_in_order(&crate::acceptance::expected_lifecycle("push"), &got), None);
     assert!(crate::acceptance::lifecycle_states(r#"[{"from_state":"READY","to_state":"WORKING","applied":"0"}]"#).is_empty(), "nothing applied, nothing passed through");
+}
+
+#[test]
+fn a_landed_event_recorded_a_pass_later_is_waited_for() {
+    // The audit worker records LANDED one sentinel pass after the push (sp-53own).
+    let b = Box_::new();
+    let f = b.fake();
+    f.history_late.set(3);
+    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
+    assert_eq!(f.history_late.get(), 0, "the late reads were all consumed");
 }
