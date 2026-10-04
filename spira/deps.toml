@@ -197,7 +197,7 @@ absent = "no mail is delivered to registered readers mid-session — escalations
 [[dep]]
 name = "aerc"
 tier = "operator"
-purpose = "the operator's mail client for reading and answering; any Maildir client works. NOT fetched by install (sp-x6v17, operator-ruling-reviewed): unlike duckdb/sccache/inotify-tools, aerc (git.sr.ht/~rjarry/aerc) publishes no prebuilt binary release — building it needs a Go >=1.25 toolchain, which install does not otherwise provide and which this manifest's own `go` entry below treats as an operator-recovered gap, not an install-fetched one, and a fresh box has no go at all (acceptance run 37222619835: doctor's own go check read \"go absent\"). Auto-provisioning aerc would mean install bootstrapping a second toolchain (fetch go, then `go build`) purely to reach a mail client COCKPIT_MAIL already lets the operator swap for anything that reads a Maildir — a materially bigger, riskier mechanism than vendoring one static binary. Left for the operator to decide: fetch+build a pinned Go toolchain in phase -1 just for this, or point COCKPIT_MAIL at a Maildir client that does ship one."
+purpose = "the operator's mail client for reading and answering; any Maildir client works. Fetched by install (sp-x6v17, operator ruling 2026-10-03: law-install-installs-every-dependency, no optional tier): unlike duckdb/sccache/inotify-tools, aerc (git.sr.ht/~rjarry/aerc) publishes no prebuilt binary release, and its own tags (\"0.22.0\", no \"v\" prefix) are not a valid go module version query, so `go install git.sr.ht/~rjarry/aerc@<tag>` cannot resolve it either. install's phase -1 instead fetches the pinned tag's source archive (git.sr.ht/~rjarry/aerc/archive/<tag>.tar.gz) and runs `go install` against that local checkout — no VCS tag lookup needed there at all — with GOBIN=~/.local/bin, GOFLAGS=-mod=mod, GOTOOLCHAIN=local, and `-ldflags \"-X main.Version=<tag>\"` so the built binary's own `-v` reports exactly the pinned tag. It reuses an already-usable go (>=1.25, the `go` entry below) when find_usable_go finds one (env GO, $HOME/.local/go/bin/go, or PATH) and fetches a pinned go.dev/dl toolchain into $HOME/.local/go only when none is usable — never a second toolchain alongside one already there. Idempotent: skipped entirely when ~/.local/bin/aerc already reports the pinned version."
 version_min = ""
 version_probe = "aerc --version"
 
@@ -211,7 +211,7 @@ version_probe = "hunk --version"
 [[dep]]
 name = "go"
 tier = "operator"
-purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally"
+purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally. Since sp-x6v17, install's own phase -1 also reuses whatever go it finds here (env GO, $HOME/.local/go/bin/go, or PATH — find_usable_go in install/src/bin/install.rs) to build aerc, and fetches a pinned go.dev/dl toolchain into $HOME/.local/go itself when none is usable for that — that exact path, so a toolchain install fetches and one an operator places by hand are the same thing to every later check. The bd-mismatch recovery this purpose describes is otherwise unchanged: still manual, still `go version` via build-bd.sh's $GO."
 version_min = ""
 version_probe = "go version"
 
