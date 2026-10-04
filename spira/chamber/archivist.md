@@ -43,7 +43,7 @@ was worth doing. So the taxonomy is not "make a bead" — it is this:
 bd -C {{DB}} note <bead-id> --stdin <<'NOTE'
 <what was in flight, and where it was left>
 NOTE
-bd -C {{DB}} create "<title>" --body-file - -l spira,plan,repo:<name> <<'BODY'
+bdq create "<title>" --body-file - -l spira,plan,repo:<name> <<'BODY'
 <what the session decided to do, and everything needed to do it without this transcript>
 BODY
 bead.sh file "<title>" --kind insight --repo <name> --body-file - <<'BODY'

@@ -47,7 +47,7 @@ should be filed.
 reference. File the follow-up, then add the original bead to the allowlist citing it so
 the UNFILED-FOLLOW row clears on the next detector pass:
 
-    new_id="$(bd -C "{{DB}}" create "<follow-up title>" \
+    new_id="$(bdq create "<follow-up title>" \
         --type task --priority 3 \
         -l "{{SCOPE}}plan,repo:{{HOME_REPO}}" \
         --description - <<'DESC'
@@ -179,7 +179,7 @@ alongside the partition labels. The `covers:` label is what `census` reads to de
 suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red`):
 
     cls="sp-recur-suite-red"   # replace with the actual class from census output
-    bd -C "{{DB}}" create "<failure class: one-line title>" \
+    bdq create "<failure class: one-line title>" \
         --type task --priority 2 \
         -l "{{SCOPE}}plan,repo:{{HOME_REPO}}" \
         -l "{{REMEDY_LABEL}},covers:$cls" \

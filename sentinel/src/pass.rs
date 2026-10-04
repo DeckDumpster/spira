@@ -580,6 +580,7 @@ impl<'a> Sentinel<'a> {
             if self.lc == Lifecycle::On {
                 if let Some(rows) = self.lc_rows() {
                     self.check5_lc(snap, &rows);
+                    self.check_rowless(snap, &rows);
                 }
             }
         }

@@ -98,7 +98,7 @@ pane where no file can be opened.
 Then keep going on everything that does not depend on the answer. A spike blocked on one of
 its options still has the others to cost.
 
-If you find other work, **do not do it**: file it (`bd -C {{DB}} create ... -l spira,plan`
+If you find other work, **do not do it**: file it (`bdq create ... -l spira,plan`
 plus the `repo:` label naming the repository it belongs to) and link it from your document.
 
 <!-- task -->
