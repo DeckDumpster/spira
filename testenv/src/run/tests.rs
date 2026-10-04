@@ -1480,6 +1480,20 @@ fn mounting(rt: &FakeRuntime, slot: PathBuf) {
     );
 }
 
+/// A sibling test's fork can hold a copy of the slot's flock descriptor until its exec, so a
+/// trial that follows another on the same slot first waits for the lock to be really free.
+fn slot_lock_free(lock: &Path) {
+    fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    let end = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < end {
+        if crate::worktree::try_lock(lock).is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("slot lock {} still held after 30s", lock.display());
+}
+
 fn batch_rows(w: &World) -> Vec<String> {
     fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl"))
         .unwrap_or_default()
@@ -1495,13 +1509,14 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     w.env.insert("SPIRA_TESTENV_WARM_SLOTS".into(), "1".into());
     w.env.insert("SPIRA_VERDICT_TTL".into(), "0".into());
     let run = w.root.join("run");
-    let (slot, _, record) = crate::warm::paths(&run, 0);
+    let (slot, lock, record) = crate::warm::paths(&run, 0);
     let rt = runtime();
     mounting(&rt, slot.clone());
     let b = FakeBuilder::new(None);
     let args = ["--deadline", "300", "--suites", "test-a.sh", "topic"];
 
     // 1st trial: the slot has no spare yet — it boots its own container ON the slot
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("warm slot 0: no spare booted in this slot yet")));
     let ups: Vec<Vec<String>> = rt
@@ -1543,6 +1558,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
         .iter()
         .filter(|c| c[0] == "up")
         .count();
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(
         w.has_line(|l| l.contains(&format!("claimed warm spare {spare}"))),
@@ -1575,6 +1591,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     assert_eq!(*w.refills.lock().unwrap(), vec![0, 0]);
 
     // 3rd trial with no refill in between: the spare is gone, so it boots cold again
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("no spare booted")));
 }
