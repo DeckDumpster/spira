@@ -621,7 +621,6 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
         asked_dir: dir.join("run/poison-asked"),
         ask_label: "needs-ryan".into(), // literal-ok: fixture/fallback
         beads_actor: "harness".into(),
-        landing_pass: String::new(), // not exercised by any unpoison test
     };
     (l, dir)
 }

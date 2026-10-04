@@ -55,46 +55,10 @@ pub fn admission_exempt(cause: &str) -> bool {
 // bead_reopen
 // =========================================================================================
 
-/// `landing-pass state <id>`'s first two fields — all `bead_reopen` ever reads of it
-/// (`read -r _wd_st _wd_tip _ <<< "$(land_state "$id")"` discards the epoch and the reason).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LandState {
-    pub state: String,
-    pub tip: String,
-}
-
-/// Parses `landing-pass state`'s own render ("<STATE> <tip|none> <epoch> [reason…]", no
-/// trailing newline) for just the two fields above — the same `read -r` shape
-/// `landing_pass::model::LandState::parse` uses, independently re-derived here because this
-/// crate reaches landing-pass only through its CLI (store.rs's own rule: "the only I/O is
-/// reading bd and spira-lc through their CLIs" — landing-pass joins that list, never a
-/// `landing-pass = { path = ... }` crate dependency). `None` on an empty or unparseable
-/// string — the same "nothing to read" `_wd_st` ends up as when bash's `read` sees an empty
-/// `$(...)`.
-pub fn parse_land_state(text: &str) -> Option<LandState> {
-    let flat: String = text.chars().filter(|c| *c != '\n').collect();
-    let t = flat.trim_start();
-    let mut it = t.splitn(2, char::is_whitespace);
-    let state = it.next().unwrap_or("").to_string();
-    if state.is_empty() {
-        return None;
-    }
-    let rest = it.next().unwrap_or("").trim_start();
-    let tip = rest.split(char::is_whitespace).next().unwrap_or("").to_string();
-    Some(LandState { state, tip })
-}
-
-/// Every store, file and bd/landing-pass touch `bead_reopen` makes, as a trait method —
+/// Every store, file and bd touch `bead_reopen` makes, as a trait method —
 /// [`run`] below is pure decision logic over this interface, and [`crate::unpoison::Live`]
 /// is the one real implementation.
 pub trait World {
-    /// `land_state "$id" 2>/dev/null` — `None` on ANY failure (no record, or landing-pass
-    /// could not be reached): bash's `2>/dev/null` plus an empty `read` treat every such
-    /// case alike, by skipping the withdrawal below. Never fail the whole reopen over this.
-    fn land_state(&mut self, id: &str) -> Option<LandState>;
-    /// `land_mark "$id" WITHDRAWN <tip> <reason>` — best-effort, exactly like bash (no
-    /// caller of `bead_reopen` checks `land_mark`'s own return).
-    fn land_mark_withdrawn(&mut self, id: &str, tip: &str, reason: &str);
     /// The `$LANDSTATE/<id>.ejected` sidecar gate.sh reads unconditionally — best-effort
     /// (bash: `printf ... && mv -f ... || true`).
     fn write_ejected(&mut self, id: &str, suites: &str);
@@ -141,18 +105,6 @@ pub const FAILURE_REASON: &str = "bd refused the reopen, the release or the note
 pub fn run(o: &Opts, w: &mut dyn World) -> i32 {
     let mut rc = 0;
     let exempt = admission_exempt(&o.cause);
-
-    // A CERTIFIED bead reopened here must stop being admissible: the batch builder selects
-    // on landstate alone, and WITHDRAWN is a state it never admits. EXCEPT the submitted
-    // conversion (work-close-converted): the work is done and certification proceeds from
-    // submitted, so a CERTIFIED record written moments earlier must stay admissible.
-    if let Some(ls) = w.land_state(&o.id) {
-        if ls.state == "CERTIFIED" && !exempt {
-            let tip = if ls.tip.is_empty() { "none".to_string() } else { ls.tip };
-            let reason = if o.suites.is_empty() { o.cause.clone() } else { format!("{} suites={}", o.cause, o.suites) };
-            w.land_mark_withdrawn(&o.id, &tip, &reason);
-        }
-    }
 
     if !o.suites.is_empty() {
         w.write_ejected(&o.id, &o.suites);

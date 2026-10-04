@@ -1091,13 +1091,6 @@ fn env_nonempty(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|s| !s.trim().is_empty())
 }
 
-/// `landing-pass`, by name on PATH, same as `spira-lc` (sp-gypjk) — no conf.sh key ever
-/// named this binary's path, so `SPIRA_LANDING_PASS` is this port's own escape hatch (tests
-/// only), never a bash-exported default to honour.
-fn landing_pass_bin() -> String {
-    env_nonempty("SPIRA_LANDING_PASS").unwrap_or_else(|| "landing-pass".into())
-}
-
 fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     let mut o = match unpoison_opts(a) {
         Ok(o) => o,
@@ -1135,7 +1128,6 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         asked_dir,
         ask_label,
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
-        landing_pass: landing_pass_bin(),
     };
     let (code, out) = unpoison::run(&o, &mut live);
     Outcome { code, out, err: String::new() }
@@ -1233,7 +1225,6 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor.clone(),
-        landing_pass: landing_pass_bin(),
     };
     let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
     let (code, out) = deadlock::run(&o, &candidates, &mut live);
@@ -1453,7 +1444,6 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor,
-        landing_pass: landing_pass_bin(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
     let rc = reopen::run(&o, &mut live);

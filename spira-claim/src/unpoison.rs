@@ -657,11 +657,6 @@ pub struct Live {
     pub asked_dir: PathBuf,
     pub ask_label: String,
     pub beads_actor: String,
-    /// `landing-pass`, by name on PATH, same as `spira-lc` (sp-gypjk) — `bead_reopen`'s own
-    /// reads/writes of the landstate ledger (wave 4.19, row I) go through its CLI, never a
-    /// `landing-pass = { path = ... }` crate dependency (store.rs's own rule: the only I/O
-    /// here is reading bd and spira-lc through their CLIs; landing-pass joins that list).
-    pub landing_pass: String,
 }
 
 impl Live {
@@ -679,14 +674,6 @@ impl Live {
 
     fn lc(&self, args: &[&str]) -> Result<store::Ran, String> {
         let mut c = Command::new(&self.store.lc);
-        c.args(args);
-        store::run_full(c, self.store.timeout, None)
-    }
-
-    /// `landing-pass <args>`, to completion — `bead_reopen`'s own `land_state`/`land_mark`
-    /// reads/writes.
-    fn land(&self, args: &[&str]) -> Result<store::Ran, String> {
-        let mut c = Command::new(&self.landing_pass);
         c.args(args);
         store::run_full(c, self.store.timeout, None)
     }
@@ -844,18 +831,6 @@ impl World for Live {
 // already draws ("the write is unpoison's Live, reused rather than duplicated").
 
 impl crate::reopen::World for Live {
-    fn land_state(&mut self, id: &str) -> Option<crate::reopen::LandState> {
-        let r = self.land(&["state", id]).ok()?;
-        if r.code != 0 {
-            return None;
-        }
-        crate::reopen::parse_land_state(&r.stdout)
-    }
-
-    fn land_mark_withdrawn(&mut self, id: &str, tip: &str, reason: &str) {
-        let _ = self.land(&["mark", id, "WITHDRAWN", tip, reason]);
-    }
-
     fn write_ejected(&mut self, id: &str, suites: &str) {
         let Some(dir) = self.landstate_dir() else { return };
         let tmp = dir.join(format!("{id}.ejected.{}", std::process::id()));
