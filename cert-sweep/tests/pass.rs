@@ -178,6 +178,13 @@ fn shipped_units_satisfy_usage() {
     }
 }
 
+#[test]
+fn the_sample_unit_bounds_testenv_inside_its_own_timeout() {
+    let t = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/spira-cert-sweep-sample.service")).unwrap();
+    let num = |after: &str| -> u64 { t.split(after).nth(1).unwrap().split_whitespace().next().unwrap().trim_start_matches('=').parse().unwrap() };
+    assert!(num(" --deadline ") < num("TimeoutStartSec"), "the runner must give up before systemd kills the unit");
+}
+
 fn history_with_one_flip_and_one_regression() -> Fx {
     let fx = Fx::new();
     fx.commit("1");

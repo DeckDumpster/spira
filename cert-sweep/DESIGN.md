@@ -8,7 +8,9 @@ that makes a red cheap to attribute.
 
 - `spira-cert-sweep-full` (hourly): every `spira/test-*.sh` on the round VM (`round-vm run`).
 - `spira-cert-sweep-sample` (every 30 min): a random 1/`--subset-div` of the suites on this host
-  (`testenv`), resampled each pass.
+  (`testenv`), resampled each pass. The unit passes `--deadline` to `testenv`, which cuts the trial
+  below `TimeoutStartSec`: suites it could not start are deferred, and a run that could not get
+  capacity ends as `SWEEP FAULT` carrying testenv's `VERDICT` line instead of being killed.
 
 Both read the tip of `--base` (default `local/main`) and label it with the
 `refs/archive/rounds/<n>` that points at it (`?` if none does).
