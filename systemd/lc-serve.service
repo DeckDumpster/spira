@@ -19,7 +19,7 @@ StartLimitBurst=5
 # THE LAUNCHER'S PATH, SET OUTRIGHT (sp-31gtu), plus ~/.local/bin (%h) where install puts
 # dolt and bd: `work blocked` and friends shell out to bead.sh/mail from this process.
 Environment=SPIRA_RELEASE=@SPIRA_RELEASE@
-Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:%h/.local/bin:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
+Environment=PATH=@SPIRA_RELEASE@/bin:@SPIRA_RELEASE@/spira:/usr/local/bin:/usr/bin:/bin@SPIRA_PATH_TAIL@
 Environment=SPIRA_HOME=@SPIRA_HOME@
 Environment=SPIRA_REPO=@SPIRA_REPO@
 Environment=SPIRA_DB=@SPIRA_DB@
