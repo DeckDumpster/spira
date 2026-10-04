@@ -109,9 +109,23 @@ compose_brief() {
     # THE CORE SET COMES FROM THE PERSONA, not from the box. An operator session and a builder
     # need different statutes in full text; the rest arrive as an index either way. See
     # FAYTH_STATUTE_CORE in the fayth for which ones and why.
+    #
+    # PLUS THIS INSTALLATION'S OWN (sp-crr3n): SPIRA_STATUTE_CORE_LOCAL names slugs that never
+    # ship with the fayth — this operator's own repositories, labels or preferences
+    # (law-harness-ships-mechanism-not-inventory) — appended to the persona's core exactly the
+    # way aeon's statutes() does it. A local slug the database lacks is demoted to the index
+    # the same as any other unresolved core slug; see the refusal check just below.
+    local core_local="${SPIRA_STATUTE_CORE_LOCAL:-}" core_persona core_merged
+    core_persona="$(fayth_get "$FAYTH" FAYTH_STATUTE_CORE "")"
+    case "$core_persona,$core_local" in
+        ,) core_merged="" ;;
+        *,) core_merged="$core_persona" ;;
+        ,*) core_merged="$core_local" ;;
+        *) core_merged="$core_persona,$core_local" ;;
+    esac
     statutes="$(render_memories \
         "$(fayth_get "$FAYTH" FAYTH_MEMORY_PREFIXES law-)" "" \
-        "$(fayth_get "$FAYTH" FAYTH_STATUTE_CORE "")")" || statutes=""
+        "$core_merged")" || statutes=""
     if [ -z "$statutes" ]; then
         # render_memories swallows bd's stderr, so empty output means either "bd could not
         # reach the store" or "the store answered and there is genuinely nothing" — and
@@ -151,8 +165,11 @@ compose_brief() {
     # recognise to the index tier, so one mistyped or retired slug costs that statute its full
     # text and says nothing. All of them mistyped costs the whole point of the persona, and the
     # brief still looks complete: 24KB, every placeholder filled, the law apparently present.
-    if [ -n "$(fayth_get "$FAYTH" FAYTH_STATUTE_CORE "")" ] && ! grep -q '^## law-' "$out"; then
-        echo "concierge: FAYTH_STATUTE_CORE is declared but no statute rendered in full" >&2
+    # core_merged, not a fresh FAYTH_STATUTE_CORE read: a core made up entirely of
+    # SPIRA_STATUTE_CORE_LOCAL slugs demotes the same way an empty FAYTH_STATUTE_CORE would,
+    # and must refuse the same way.
+    if [ -n "$core_merged" ] && ! grep -q '^## law-' "$out"; then
+        echo "concierge: a core statute (FAYTH_STATUTE_CORE or SPIRA_STATUTE_CORE_LOCAL) is declared but no statute rendered in full" >&2
         echo "  every slug in it was demoted to the index — check them against:" >&2
         echo "  $HARNESS/rule.sh list" >&2
         return 1

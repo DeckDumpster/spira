@@ -937,8 +937,10 @@ impl<'a> Run<'a> {
         Ok(())
     }
 
-    /// `render_memories "${FAYTH_MEMORY_PREFIXES:-law-}" "" "${FAYTH_STATUTE_CORE:-}"`.
-    /// Err when a declared core slug names no memory: the brief would be silently thinned.
+    /// `render_memories "${FAYTH_MEMORY_PREFIXES:-law-}" "" "${FAYTH_STATUTE_CORE:-}"`, with
+    /// this installation's own `SPIRA_STATUTE_CORE_LOCAL` slugs appended to whatever core the
+    /// persona resolves (`brief::with_local_core`). Err when a declared core slug — local or
+    /// not — names no memory: the brief would be silently thinned.
     pub fn statutes(&self) -> Result<String, String> {
         let cache = self.conf.s("SPIRA_MEMORIES_CACHE");
         let age = self.conf.n("SPIRA_MEMORIES_CACHE_AGE", 300);
@@ -964,6 +966,7 @@ impl<'a> Run<'a> {
             }
         }
         let core = if self.fayth.statute_core.is_empty() { self.conf.s("SPIRA_STATUTE_CORE") } else { self.fayth.statute_core.clone() };
+        let core = brief::with_local_core(&core, &self.conf.s("SPIRA_STATUTE_CORE_LOCAL"));
         let harness = self.conf.or("SPIRA_REPO", "<harness>");
         let missing = brief::missing_core(&json, &self.fayth.memory_prefixes, &core);
         if !missing.is_empty() {

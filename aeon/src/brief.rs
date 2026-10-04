@@ -592,6 +592,22 @@ pub fn split(statutes: &str, prompt: &str) -> (String, String) {
     (format!("# Memories in force\n\n{statutes}\n\n---\n\n{sys}"), task)
 }
 
+/// Appends this installation's own core slugs (`SPIRA_STATUTE_CORE_LOCAL`) to whatever core a
+/// persona already resolved (its `FAYTH_STATUTE_CORE`, else `SPIRA_STATUTE_CORE`). The shipped
+/// chamber and the shipped default both carry only mechanism
+/// (law-harness-ships-mechanism-not-inventory); a slug naming this operator's own
+/// repositories, labels or preferences lives in `SPIRA_STATUTE_CORE_LOCAL` instead, in config
+/// that never ships. A missing local slug refuses exactly like any other missing core slug —
+/// the caller runs the merged result through [`missing_core`] same as any other core CSV.
+pub fn with_local_core(core_csv: &str, local_csv: &str) -> String {
+    match (core_csv.trim().is_empty(), local_csv.trim().is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => local_csv.trim().to_string(),
+        (false, true) => core_csv.trim().to_string(),
+        (false, false) => format!("{},{}", core_csv.trim(), local_csv.trim()),
+    }
+}
+
 /// Declared core slugs that name no memory in the namespace: the persona would start without them.
 pub fn missing_core(mem_json: &str, prefixes: &str, core_csv: &str) -> Vec<String> {
     let Ok(serde_json::Value::Object(d)) = serde_json::from_str::<serde_json::Value>(mem_json.trim()) else { return Vec::new() };
@@ -924,6 +940,31 @@ mod tests {
         assert!(missing_core("garbage", "law-", "law-a").is_empty());
         assert!(missing_core("{}", "law-", "law-a").is_empty(), "a namespace with no memories has nothing to have renamed");
         assert!(missing_core(r#"{"sop-x":"X"}"#, "law-", "law-a").is_empty());
+    }
+
+    #[test]
+    fn with_local_core_appends_and_handles_empties() {
+        assert_eq!(with_local_core("", ""), "");
+        assert_eq!(with_local_core("law-a", ""), "law-a");
+        assert_eq!(with_local_core("", "law-local"), "law-local");
+        assert_eq!(with_local_core("law-a,law-b", "law-local"), "law-a,law-b,law-local");
+        assert_eq!(with_local_core(" law-a ", " law-local "), "law-a,law-local", "trims each side");
+    }
+
+    #[test]
+    fn local_core_slug_renders_in_full_and_a_missing_one_refuses() {
+        let j = r#"{"law-a":"A text","law-local":"Local text"}"#;
+        let merged = with_local_core("law-a", "law-local");
+        assert!(missing_core(j, "law-", &merged).is_empty(), "both slugs resolve");
+        let rendered = render_memories(j, "law-", 120000, &merged, "/h");
+        assert!(rendered.contains("## law-local\n\nLocal text"), "{rendered}");
+
+        let merged_missing = with_local_core("law-a", "law-gone-local");
+        assert_eq!(
+            missing_core(j, "law-", &merged_missing),
+            vec!["law-gone-local"],
+            "a SPIRA_STATUTE_CORE_LOCAL slug the database lacks refuses exactly like any other missing core slug"
+        );
     }
 
     #[test]
