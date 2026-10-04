@@ -607,6 +607,28 @@ fn main() -> ExitCode {
                     info(&l);
                 }
                 changes += 1;
+                // lc-serve.service was enabled in phase 4, before this store existed, and may
+                // have given up (StartLimitBurst): restart it now and require it to be active —
+                // fail closed, since an aeon cannot claim without it (sp-xfqnr).
+                // batch-job: one restart of a service during install; bounded by timeout 30.
+                let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
+                let mut active = false;
+                for _ in 0..20 {
+                    active = Command::new("timeout")
+                        .args(["5", "systemctl", "--user", "is-active", "--quiet", "lc-serve.service"])
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if active {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                if !active {
+                    eprintln!("install: phase lifecycle store failed — lc-serve.service is not active after the store was built (journalctl --user -u lc-serve.service)");
+                    return ExitCode::from(2);
+                }
+                info("lc-serve.service active on the lifecycle store");
             }
             Err(e) => {
                 eprintln!("install: phase lifecycle store failed — {e}");
