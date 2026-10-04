@@ -246,11 +246,6 @@ impl Seam for Fake {
     fn bump_requeue(&self, id: &str, reason: &str) {
         self.calls.borrow_mut().push(format!("bump {id} {reason}"));
     }
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        self.calls
-            .borrow_mut()
-            .push(format!("land_mark {id} {state} {tip} {reason}"));
-    }
     fn note(&self, id: &str, text: &str) {
         self.calls.borrow_mut().push(format!("note {id} {text}"));
     }
@@ -356,13 +351,6 @@ fn real_same_line_conflict_is_returned_with_the_hunk_quoted() {
         );
     }
     assert_eq!(seam.calls("bump sp-cf merge-conflict").len(), 1);
-    assert_eq!(
-        seam.calls("land_mark sp-cf RED")[0],
-        format!(
-            "land_mark sp-cf RED {old} no-rebase@{}",
-            git(&fx.repo, &["rev-parse", "main"])
-        )
-    );
     assert!(
         fx.log().contains("outcome=conflict reason=files: f.txt"),
         "{}",
@@ -412,7 +400,6 @@ fn red_gate_restores_the_pre_rebase_tip_and_quotes_the_gate() {
         reopen.contains("VERDICT=FAIL") && reopen.contains(&old),
         "{reopen}"
     );
-    assert!(seam.calls("land_mark sp-gr RED")[0].contains(&old));
     assert!(
         fx.log().contains("outcome=gate-red reason=tip="),
         "{}",
@@ -475,7 +462,6 @@ fn a_gate_with_no_verdict_is_not_a_red() {
     assert_eq!(fx.tip("sp-nv"), old, "restored");
     assert_eq!(seam.calls("submit").len(), 1);
     assert!(seam.calls("reopen").is_empty(), "{:?}", seam.calls("reopen"));
-    assert!(seam.calls("land_mark").is_empty(), "{:?}", seam.calls("land_mark"));
 }
 
 /// `/proc/<pid>/cmdline`, NUL-joined argv rendered as spaces — for polling a just-spawned
@@ -706,8 +692,6 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     let home = fx.root.join("home");
     let out = fx.root.join("calls");
     // A stand-in lib.sh / queue / bd: each records its argv, one per line, and any stdin.
-    // land_mark is NOT here (sp-cnnt6, "wave 4.16" — landing-pass owns that write now, a
-    // stand-in landing-pass binary below records it instead).
     write(
         &home.join("lib.sh"),
         &format!(
@@ -723,22 +707,17 @@ fn lib_seam_passes_payloads_on_stdin_and_reads_status_with_a_positive_control() 
     // testkit::write_exe, never write + chmod: a write descriptor held while another test
     // thread forks makes the exec fail with ETXTBSY (testkit/DESIGN.md).
     testkit::write_exe(&queue, "#!/bin/sh\necho \"out:$1 $2 $3\"; echo err >&2; exit 1\n");
-    let landing_pass = home.join("landing-pass");
-    testkit::write_exe(&landing_pass, &format!("#!/bin/sh\nprintf '%s|' \"$@\" >> '{o}'; echo >> '{o}'\n", o = out.display()));
     let bd = fx.root.join("bd");
     testkit::write_exe(&bd, "#!/bin/sh\n[ \"$3\" = list ] && { echo '[{\"id\":\"sp-any\"}]'; exit 0; }\ncase \"$4\" in sp-ip) echo '{\"status\":\"in_progress\"}';; *) exit 1;; esac\n");
 
     let mut s = LibSeam::new(home.clone(), Some(fx.root.to_path_buf()), bd.to_string_lossy().into(), fx.run.clone());
     s.queue_bin = queue;
-    s.landing_pass_bin = landing_pass;
     let note = "multi\nline $(not expanded) 'quoted'";
     s.reopen("sp-1", "rebase-conflict", note);
     s.note("sp-1", "hello");
-    s.land_mark("sp-1", "RED", "abc", "no-rebase@def");
     let calls = std::fs::read_to_string(&out).unwrap();
     assert!(calls.contains(&format!("bead_reopen|sp-1|rebase-conflict|{note}|")), "{calls}");
     assert!(calls.contains("bdq|note|sp-1|hello|"), "{calls}");
-    assert!(calls.contains("mark|sp-1|RED|abc|no-rebase@def|"), "landing-pass mark got the right argv: {calls}");
 
     let info = s.repo("fixture").unwrap();
     assert_eq!((info.path, info.landref.as_str()), (PathBuf::from("/r/fixture"), "local/main"));
