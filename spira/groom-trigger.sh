@@ -127,7 +127,7 @@ fi
 # not a question Ryan answers. Priority 3: hygiene work, not urgent, but important
 # enough to run on schedule. No repo: label — the groomer reads the whole graph,
 # not one repository.
-if "$BD" -C "$DB" create \
+if SPIRA_DB="$DB" SPIRA_BD="$BD" bdq create \
     "Groomer pass — scheduled graph hygiene" \
     --type task \
     --label "$LABELS,delivers:note:${SPIRA_RUN}/groom.log" \
