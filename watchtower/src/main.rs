@@ -25,6 +25,7 @@ mod probes;
 mod release_skew;
 mod sccache_wedge;
 mod seams;
+mod dolt_drop;
 mod slow_query;
 mod sweep;
 mod throttle;
@@ -440,6 +441,21 @@ fn main() {
                 sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
             };
             conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+        }
+        Some("--dolt-drop-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: dolt-drop-check skipped \u{2014} world is halted");
+                return;
+            }
+            let log_path = getenv("SPIRA_DOLT_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("dolt-beads.log"));
+            dolt_drop::run(
+                &log_path,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+                getenv_i64("SPIRA_DOLT_DROP_WINDOW_MINS", 5).max(1) as usize,
+                getenv_i64("SPIRA_DOLT_DROP_PER_MIN", 30).max(1) as usize,
+            );
         }
         Some("--slow-query-check") => {
             if world_halted(&run) {
