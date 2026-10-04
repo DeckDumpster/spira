@@ -299,6 +299,7 @@ impl<'a> Sentinel<'a> {
             "--sccache-wedge-check",
             "--conditions-check",
             "--slow-query-check",
+            "--dolt-drop-check",
             "--drift-check",
         ] {
             self.h.run(
