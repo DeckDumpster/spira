@@ -21,6 +21,7 @@ mod cutover;
 mod db;
 mod git_evidence;
 mod legacy_files;
+mod migrate;
 mod wire;
 mod repo_config;
 mod rows;
@@ -152,6 +153,10 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
         Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
+        // lifecycle/migrations/*.sql in filename order, each ADD COLUMN applied only when
+        // the column is absent (migrate.rs) — what spira-install's lifecycle-store phase runs
+        // after schema.sql, so a fresh database and an old one converge (sp-xfqnr).
+        Some("admin-migrate") => migrate::run(&args[1..], conn),
         // The one-time migration classifier (design §4). Deploys inert like the rest of
         // this binary: nothing calls it until the cutover deploy step (a later bead).
         Some("classify") => classify_cmd::run(&args[1..], conn),
