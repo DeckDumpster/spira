@@ -579,7 +579,7 @@ lc_claim_bead() {
     # cannot tell "no row" from "unreachable". create-bead is idempotent and fails only when
     # the machine is unreachable: so create the READY row here, at the claim, and re-read.
     if ! row="$(lc_bead_row "$id")" || [ -z "${row%%$'\t'*}" ]; then
-        spira-lc create-bead "$id" >/dev/null 2>&1 || return 2
+        timeout 5 spira-lc create-bead "$id" >/dev/null 2>&1 || return 2
         row="$(lc_bead_row "$id")" || return 2
     fi
     IFS=$'\t' read -r state version _ _ <<< "$row"
