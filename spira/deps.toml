@@ -129,7 +129,7 @@ version_probe = "cargo --version"
 [[dep]]
 name = "sccache"
 tier = "operator"
-purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Since sp-xjnzl this cache is also shared with every ephemeral round-vm over a small WebDAV store (sccache-dav), which needs the `webdav` backend compiled in — `cargo install sccache --locked` alone (no feature flags) silently builds a binary that passes every ordinary check and never speaks WebDAV. Install: cargo install sccache --locked --no-default-features --features webdav — `doctor`'s \"compilation cache\" section runs `sccache --help` and fails if its own \"Enabled features\" block says WebDAV: false, so presence on PATH is checked separately from this."
+purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Since sp-xjnzl this cache is also shared with every ephemeral round-vm over a small WebDAV store (sccache-dav), which needs the `webdav` backend compiled in — `cargo install sccache --locked` alone (no feature flags) silently builds a binary that passes every ordinary check and never speaks WebDAV. `doctor`'s \"compilation cache\" section runs `sccache --help` and fails if its own \"Enabled features\" block says WebDAV: false, so presence on PATH is checked separately from this. install's phase -1 (sp-x6v17, law-install-installs-every-dependency) now fetches this itself when the sccache already on PATH lacks the webdav line: a fresh box has no cargo at all (acceptance run 37222619835), so `cargo install ... --features webdav` cannot be install's own provisioning path — it fetches mozilla/sccache's prebuilt release binary instead (built with default features, which include webdav)."
 version_min = ""
 version_probe = "sccache --version"
 absent = "every build tool refuses rather than compile every dependency cold: the gate is NO_VERDICT reason=no-build-cache, testenv faults rc=3 reason=no-build-cache, release build errors; an aeon session runs with its builds uncached and says so. SPIRA_BUILD_CACHE=off opts out on purpose."
@@ -189,7 +189,7 @@ absent = "every suite that builds a container fixture cannot run; testenv.sh and
 [[dep]]
 name = "inotifywait"
 tier = "operator"
-purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start"
+purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start. install's phase -1 (sp-x6v17, law-install-installs-every-dependency) fetches this itself when it is not already on PATH: install carries no sudo, so `apt install inotify-tools` cannot be the provisioning path, but inotify-tools' own release workflow publishes a verified-static inotifywait binary (`file -L $bin | grep -q static`, checked at publish time) for x86_64/aarch64 linux, which install vendors straight into ~/.local/bin instead."
 version_min = ""
 version_probe = "inotifywait --version"
 absent = "no mail is delivered to registered readers mid-session — escalations and verdict replies wait for the next session start."
@@ -197,7 +197,7 @@ absent = "no mail is delivered to registered readers mid-session — escalations
 [[dep]]
 name = "aerc"
 tier = "operator"
-purpose = "the operator's mail client for reading and answering; any Maildir client works"
+purpose = "the operator's mail client for reading and answering; any Maildir client works. NOT fetched by install (sp-x6v17, operator-ruling-reviewed): unlike duckdb/sccache/inotify-tools, aerc (git.sr.ht/~rjarry/aerc) publishes no prebuilt binary release — building it needs a Go >=1.25 toolchain, which install does not otherwise provide and which this manifest's own `go` entry below treats as an operator-recovered gap, not an install-fetched one, and a fresh box has no go at all (acceptance run 37222619835: doctor's own go check read \"go absent\"). Auto-provisioning aerc would mean install bootstrapping a second toolchain (fetch go, then `go build`) purely to reach a mail client COCKPIT_MAIL already lets the operator swap for anything that reads a Maildir — a materially bigger, riskier mechanism than vendoring one static binary. Left for the operator to decide: fetch+build a pinned Go toolchain in phase -1 just for this, or point COCKPIT_MAIL at a Maildir client that does ship one."
 version_min = ""
 version_probe = "aerc --version"
 

@@ -54,8 +54,74 @@ fn phase(n: &str) {
 /// The pinned duckdb, the same version spira/testenv/Containerfile installs (DUCKDB_VERSION).
 const DUCKDB_VERSION: &str = "1.5.5";
 
+/// The pinned mozilla/sccache release (sp-x6v17). Same version doctor/src/real.rs's test
+/// fixture (REAL_SCCACHE_018_HELP) captures `sccache --help` output for, so the webdav-feature
+/// text this code checks at runtime is text an existing test already pins independently.
+/// mozilla/sccache's Cargo.toml sets `default = ["all"]`, and `all` lists `webdav` — its
+/// release CI (ci.yml's `build` job) builds the plain `sccache` binary for
+/// x86_64/aarch64-unknown-linux-musl with no `--no-default-features`, so the published
+/// tarball's binary already has the backend doctor::check_sccache requires. (The
+/// `--no-default-features --features=dist-server` row in that matrix builds a DIFFERENT
+/// binary, `sccache-dist`, not this one.)
+const SCCACHE_VERSION: &str = "0.18.0";
+
+/// The pinned inotify-tools release (sp-x6v17). inotify-tools is normally a distro package
+/// (`apt install inotify-tools`) and install carries no sudo, so apt cannot be the
+/// provisioning path here. Its own release workflow (.github/workflows/build.yml) builds
+/// inotifywait with `ALL_STATIC=1` and asserts `file -L "$bin" | grep -q static` before
+/// publishing — i.e. upstream already guarantees the binary this tarball carries has no
+/// shared-library dependency on the box's libc/distro, which is what makes vendoring it
+/// (rather than building from source, which would need a full distro toolchain) safe.
+const INOTIFY_TOOLS_VERSION: &str = "4.26.262";
+
+/// Map `std::env::consts::ARCH` to mozilla/sccache's release target triple. Upstream only
+/// publishes Linux x86_64/aarch64 (musl) assets.
+fn sccache_target(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64-unknown-linux-musl"),
+        "aarch64" => Ok("aarch64-unknown-linux-musl"),
+        other => Err(format!("no sccache build for architecture {other}")),
+    }
+}
+
+/// Map `std::env::consts::ARCH` to inotify-tools' release arch label (its asset names use
+/// the bare arch, unlike sccache's target triple).
+fn inotify_tools_arch(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" => Ok("aarch64"),
+        other => Err(format!("no inotify-tools build for architecture {other}")),
+    }
+}
+
+fn sccache_url(target: &str) -> String {
+    format!("https://github.com/mozilla/sccache/releases/download/v{SCCACHE_VERSION}/sccache-v{SCCACHE_VERSION}-{target}.tar.gz")
+}
+
+fn inotify_tools_url(arch: &str) -> String {
+    format!("https://github.com/inotify-tools/inotify-tools/releases/download/{INOTIFY_TOOLS_VERSION}/inotify-tools-{INOTIFY_TOOLS_VERSION}-{arch}-linux.tar.gz")
+}
+
+/// The path of the `sccache` member inside its own release tarball — `tar -O` pulls just
+/// this file out without ever extracting the rest to disk. (mozilla/sccache's release.yml
+/// `Create release assets` step: `tar -zcvf "$d.tar.gz" "$d"` where `$d` is this exact
+/// directory name — the same string the published asset's filename is built from.)
+fn sccache_tar_member(target: &str) -> String {
+    format!("sccache-v{SCCACHE_VERSION}-{target}/sccache")
+}
+
+/// Parses `sccache --help`'s "Enabled features" block the same way doctor::check_sccache
+/// does (doctor/src/lib.rs) — reimplemented rather than shared, since install does not
+/// otherwise depend on the doctor crate (it invokes doctor as an external binary, phase 0).
+fn sccache_help_has_webdav(help: &str) -> bool {
+    help.lines().find(|l| l.trim_start().starts_with("WebDAV:")).is_some_and(|l| l.trim_end().ends_with("true"))
+}
+
 /// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
-/// metrics.disabled, and fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
+/// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
+/// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend), and
+/// inotifywait.
 fn dependencies(dry: bool) -> Result<(), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
     let bin = Path::new(&home).join(".local/bin");
@@ -79,6 +145,14 @@ fn dependencies(dry: bool) -> Result<(), String> {
         info("set dolt metrics.disabled true (dolt config --global)");
     }
 
+    fetch_duckdb(dry, &bin)?;
+    fetch_sccache(dry, &bin)?;
+    fetch_inotifywait(dry, &bin)?;
+    Ok(())
+}
+
+/// Fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
     let have_duckdb = Command::new("timeout").args(["5", "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
     if have_duckdb {
         skip("duckdb on PATH");
@@ -95,7 +169,7 @@ fn dependencies(dry: bool) -> Result<(), String> {
         would(&format!("fetch duckdb {DUCKDB_VERSION} from {url} into {}", dest.display()));
         return Ok(());
     }
-    std::fs::create_dir_all(&bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
     let gz = bin.join(".duckdb.download.gz");
     // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
     run_ok(
@@ -119,6 +193,103 @@ fn dependencies(dry: bool) -> Result<(), String> {
         return Err(format!("installed {} does not run", dest.display()));
     }
     info(&format!("installed duckdb {DUCKDB_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch sccache into ~/.local/bin unless the sccache already resolvable on PATH already
+/// reports the webdav backend (doctor::check_sccache's own bar — not a version comparison,
+/// since that is the actual property both doctor and every build need). No `cargo` is
+/// guaranteed present on a fresh box (acceptance run 37222619835 had neither cargo nor
+/// sccache on PATH), so `cargo install sccache --features webdav` cannot be the
+/// provisioning path install itself takes; fetch mozilla/sccache's own prebuilt release
+/// binary instead, which already carries the feature (see SCCACHE_VERSION's comment).
+fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
+    let current_help = Command::new("timeout")
+        .args(["5", "sccache", "--help"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if current_help.as_deref().is_some_and(sccache_help_has_webdav) {
+        skip("sccache on PATH with webdav backend");
+        return Ok(());
+    }
+    let target = sccache_target(std::env::consts::ARCH)?;
+    let url = sccache_url(target);
+    let dest = bin.join("sccache");
+    if dry {
+        would(&format!("fetch sccache {SCCACHE_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".sccache.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch sccache from {url}: {e}"))?;
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let member = sccache_tar_member(target);
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", &member]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack sccache from {url}"));
+    }
+    let tmp = bin.join(".sccache.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod sccache: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("sccache"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !sccache_help_has_webdav(&help) {
+        return Err(format!("installed {} does not report the webdav backend", dest.display()));
+    }
+    info(&format!("installed sccache {SCCACHE_VERSION} (webdav) at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch inotifywait into ~/.local/bin unless it is already on PATH. No sudo, so this
+/// vendors inotify-tools' own statically-linked release binary rather than `apt install
+/// inotify-tools` (see INOTIFY_TOOLS_VERSION's comment on why that binary is safe to vendor).
+fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
+    if which_prog("inotifywait").is_some() {
+        skip("inotifywait on PATH");
+        return Ok(());
+    }
+    let arch = inotify_tools_arch(std::env::consts::ARCH)?;
+    let url = inotify_tools_url(arch);
+    let dest = bin.join("inotifywait");
+    if dry {
+        would(&format!("fetch inotifywait {INOTIFY_TOOLS_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".inotify-tools.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch inotify-tools from {url}: {e}"))?;
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", "usr/bin/inotifywait"]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack inotifywait from {url}"));
+    }
+    let tmp = bin.join(".inotifywait.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod inotifywait: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    // inotifywait --help exits 1 by design (inotify-tools' own release check relies on this
+    // too); its first line names the binary, which is all that is worth asserting here.
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("inotifywait"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !help.contains("inotifywait") {
+        return Err(format!("installed {} does not run", dest.display()));
+    }
+    info(&format!("installed inotifywait {INOTIFY_TOOLS_VERSION} at {}", dest.display()));
     Ok(())
 }
 
@@ -1211,4 +1382,64 @@ fn base64_no_pad(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod dependency_fetch_tests {
+    use super::*;
+
+    #[test]
+    fn sccache_target_maps_known_arches_to_mozillas_release_triples() {
+        assert_eq!(sccache_target("x86_64").unwrap(), "x86_64-unknown-linux-musl");
+        assert_eq!(sccache_target("aarch64").unwrap(), "aarch64-unknown-linux-musl");
+        assert!(sccache_target("riscv64").is_err());
+    }
+
+    #[test]
+    fn inotify_tools_arch_maps_known_arches_to_the_bare_label() {
+        assert_eq!(inotify_tools_arch("x86_64").unwrap(), "x86_64");
+        assert_eq!(inotify_tools_arch("aarch64").unwrap(), "aarch64");
+        assert!(inotify_tools_arch("riscv64").is_err());
+    }
+
+    #[test]
+    fn sccache_url_names_the_pinned_version_and_asset() {
+        let url = sccache_url("x86_64-unknown-linux-musl");
+        assert_eq!(url, "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz");
+    }
+
+    #[test]
+    fn inotify_tools_url_names_the_pinned_version_and_asset() {
+        let url = inotify_tools_url("aarch64");
+        assert_eq!(url, "https://github.com/inotify-tools/inotify-tools/releases/download/4.26.262/inotify-tools-4.26.262-aarch64-linux.tar.gz");
+    }
+
+    #[test]
+    fn sccache_tar_member_is_the_versioned_directory_the_release_asset_actually_contains() {
+        // mozilla/sccache's release.yml packs the binary at <dirname>/sccache where
+        // <dirname> is the same string the published .tar.gz's own filename is built
+        // from — not just "sccache" at the tarball root.
+        assert_eq!(sccache_tar_member("x86_64-unknown-linux-musl"), "sccache-v0.18.0-x86_64-unknown-linux-musl/sccache");
+    }
+
+    /// The exact text of sccache 0.18.0's own "Enabled features" block (captured live,
+    /// built with `--features webdav`) — doctor/src/real.rs's REAL_SCCACHE_018_HELP pins
+    /// this same text independently; kept in sync by inspection, not by sharing code.
+    const REAL_SCCACHE_018_HELP_WEBDAV_TRUE: &str = "Enabled features:\n    S3:        false\n    Redis:     false\n    Memcached: false\n    GCS:       false\n    GHA:       false\n    Azure:     false\n    WebDAV:    true\n    OSS:       false\n    COS:       false\n";
+
+    #[test]
+    fn sccache_help_has_webdav_true_passes() {
+        assert!(sccache_help_has_webdav(REAL_SCCACHE_018_HELP_WEBDAV_TRUE));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_false_fails() {
+        let help = REAL_SCCACHE_018_HELP_WEBDAV_TRUE.replace("WebDAV:    true", "WebDAV:    false");
+        assert!(!sccache_help_has_webdav(&help));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_missing_line_fails() {
+        assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
+    }
 }
