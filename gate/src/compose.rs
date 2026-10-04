@@ -484,6 +484,22 @@ pub fn touched_suites(changed: &[Changed]) -> Vec<String> {
 /// SKIPPED, SKIP-REQ, UNREACHED, DEFERRED and silence prove nothing.
 const SATISFIED: &[&str] = &["ok", "DISABLED", "QUARANTINED-RED"];
 
+/// Split re-entry's `required` into the suites this gate can prove and the ones the tree's own
+/// `spira/skip-allowlist.tsv` declares un-runnable under testenv (first column of each
+/// non-comment line). A declared skip can never report `ok` here, so requiring it made every
+/// branch that touched one NO_VERDICT forever (sp-xfqnr: test-install-rehearsal.sh, which
+/// needs nested podman). The dropped ones are named by the caller; the full-suite VM round
+/// (law-landing-rounds-run-the-full-suite-on-a-vm) is where they run.
+pub fn drop_declared_skips(required: &[String], allowlist: &str) -> (Vec<String>, Vec<String>) {
+    let declared: std::collections::BTreeSet<&str> = allowlist
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split('\t').next())
+        .collect();
+    required.iter().cloned().partition(|s| !declared.contains(s.as_str()))
+}
+
 /// The required suites that `out` does not show satisfied, in `required`'s order. A suite
 /// reported twice counts by its last report (the re-entry phase re-runs what the gate string
 /// deferred).
@@ -1083,5 +1099,20 @@ cargo: test tests::x ... ok";
             };
             assert_eq!(g, want, "{input:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod drop_declared_skips_tests {
+    use super::drop_declared_skips;
+    #[test]
+    fn declared_skips_leave_required_and_are_named() {
+        let req = vec!["test-a.sh".to_string(), "test-install-rehearsal.sh".to_string()];
+        let allow = "# header\ntest-install-rehearsal.sh\tskip:podman_not_on_PATH\twhy\n\n";
+        let (kept, dropped) = drop_declared_skips(&req, allow);
+        assert_eq!(kept, vec!["test-a.sh".to_string()]);
+        assert_eq!(dropped, vec!["test-install-rehearsal.sh".to_string()]);
+        let (k2, d2) = drop_declared_skips(&req, "");
+        assert_eq!((k2.len(), d2.len()), (2, 0), "no allowlist drops nothing");
     }
 }
