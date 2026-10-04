@@ -174,10 +174,18 @@ fi
 printf 'export SPIRA_RELEASE=%q\nexport SPIRA_REPO=%q\nexport PATH=%q\n' "$SPIRA_RELEASE" "$SPIRA_REPO" "$PATH" > ~/round-launcher.env
 echo "round-vm: launcher: SPIRA_RELEASE=$SPIRA_RELEASE" >&2
 tag="$(testenv container tag)" || tag=""
-if [ -n "$tag" ] && podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
+# A ROUND NEVER COLD-BUILDS ITS IMAGE (law-unexpected-image-builds-are-killed-then-fixed,
+# sp-lktok). An absent image means this VM predates the template, or the template predates
+# the tree: refuse at once, naming it, rather than compile toolchains for twenty minutes in
+# the critical path. Exit 3 (cannot tell): no verdict was reached.
+if [ -z "$tag" ]; then
+    echo "round-vm: IMAGE-ABSENT: testenv could not compute the image tag for this tree — refusing to run (a round never builds its image)" >&2
+    exit 3
+elif podman image exists "localhost/spira-testenv:$tag" 2>/dev/null; then
     echo "round-vm: template image: localhost/spira-testenv:$tag present" >&2
-elif [ -n "$tag" ]; then
-    echo "round-vm: template image: localhost/spira-testenv:$tag absent — this round builds it; refresh the template with round-vm template" >&2
+else
+    echo "round-vm: IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it (law-unexpected-image-builds-are-killed-then-fixed); refresh the template with round-vm template and recycle the warm pool" >&2
+    exit 3
 fi
 export SPIRA_BATCH_MAXPAR="$maxpar"
 if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
@@ -830,7 +838,12 @@ mod tests {
         let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
         assert!(clone < check && check < batch, "checked after the clone, before testenv starts");
         assert!(REMOTE_SCRIPT.contains("template image: localhost/spira-testenv:$tag present"));
-        assert!(REMOTE_SCRIPT.contains("absent — this round builds it; refresh the template with round-vm template"));
+        assert!(!REMOTE_SCRIPT.contains("this round builds it"), "a round never cold-builds its image");
+        assert!(REMOTE_SCRIPT.contains("IMAGE-ABSENT: localhost/spira-testenv:$tag is not on this VM — refusing to cold-build it"));
+        let absent = REMOTE_SCRIPT.find("refusing to cold-build it").unwrap();
+        let batch = REMOTE_SCRIPT.find("testenv --mode parallel").unwrap();
+        assert!(absent < batch, "the refusal precedes the batch");
+        assert!(REMOTE_SCRIPT[absent..batch].contains("exit 3"), "an absent image exits 3 before any batch runs");
     }
 
     #[test]
