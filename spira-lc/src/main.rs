@@ -65,7 +65,10 @@ fn main() {
     }
 
     let conn = match Conn::from_env() {
-        Ok(c) => c,
+        Ok(mut c) => {
+            c.io_timeout = db::io_timeout_for(args.first().map(String::as_str).unwrap_or(""));
+            c
+        }
         Err(e) => {
             eprintln!("cannot tell: {e:?}");
             std::process::exit(CANNOT_TELL);

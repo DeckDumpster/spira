@@ -43,14 +43,20 @@ fn cannot(msg: impl std::fmt::Display) -> ScriptFailure {
 
 impl Wire {
     pub fn connect(host: &str, port: u16, user: &str, password: &str, database: Option<&str>) -> Result<Self, ScriptFailure> {
+        Self::connect_with(host, port, user, password, database, IO_TIMEOUT)
+    }
+
+    /// [`Wire::connect`] with an explicit socket limit — only the admin batch verbs use one
+    /// other than [`IO_TIMEOUT`] (see `db::ADMIN_IO_TIMEOUT`).
+    pub fn connect_with(host: &str, port: u16, user: &str, password: &str, database: Option<&str>, io: Duration) -> Result<Self, ScriptFailure> {
         let addr = (host, port)
             .to_socket_addrs()
             .map_err(|e| cannot(format!("resolving {host}:{port}: {e}")))?
             .next()
             .ok_or_else(|| cannot(format!("{host}:{port} resolves to nothing")))?;
         let stream = TcpStream::connect_timeout(&addr, IO_TIMEOUT).map_err(|e| cannot(format!("connecting to {host}:{port}: {e}")))?;
-        stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(cannot)?;
-        stream.set_write_timeout(Some(IO_TIMEOUT)).map_err(cannot)?;
+        stream.set_read_timeout(Some(io)).map_err(cannot)?;
+        stream.set_write_timeout(Some(io)).map_err(cannot)?;
         let _ = stream.set_nodelay(true);
         let mut wire = Wire { stream, last_used: Instant::now() };
         wire.handshake(user, password, database)?;

@@ -34,6 +34,23 @@ pub struct Conn {
     /// The one live connection, opened on first use and dropped on any failure: after an
     /// error a transaction may still be open, so the next call starts from a fresh session.
     session: Mutex<Option<Wire>>,
+    /// The socket read/write limit for this connection: the 5 s query cap, or
+    /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
+    pub io_timeout: std::time::Duration,
+}
+
+/// The admin batch verbs' socket limit (admin-apply-ddl, admin-migrate): one-off install
+/// DDL on a fresh Dolt server under load ran past the 5 s query cap ("Resource temporarily
+/// unavailable", sp-4o5um). Bounded, and never used for a query.
+// batch-job: install-time schema DDL, bounded at 120 s; not a query on any serving path.
+pub const ADMIN_IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The socket limit a verb's connection uses.
+pub fn io_timeout_for(verb: &str) -> std::time::Duration {
+    match verb {
+        "admin-apply-ddl" | "admin-migrate" => ADMIN_IO_TIMEOUT,
+        _ => std::time::Duration::from_secs(5),
+    }
 }
 
 // The String is surfaced only through the derived `Debug` impl (every caller prints the
@@ -62,11 +79,11 @@ impl Conn {
         let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None) })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
     }
 
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
-        Wire::connect(&self.host, self.port, &self.user, &self.password, database)
+        Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout)
     }
 
     /// A single read-only query: the rows of its last result set.
@@ -412,5 +429,19 @@ mod password_tests {
     #[test]
     fn an_unreadable_named_file_is_an_error_not_a_blank_password() {
         assert!(password_from(Some("/missing".into()), None, no_read).is_err());
+    }
+}
+
+#[cfg(test)]
+mod io_timeout_tests {
+    use super::*;
+    #[test]
+    fn only_the_admin_batch_verbs_get_the_long_socket_limit() {
+        assert_eq!(io_timeout_for("admin-apply-ddl"), ADMIN_IO_TIMEOUT);
+        assert_eq!(io_timeout_for("admin-migrate"), ADMIN_IO_TIMEOUT);
+        for v in ["show", "event", "history", "create-bead", "list", "serve", ""] {
+            assert_eq!(io_timeout_for(v), std::time::Duration::from_secs(5), "{v} keeps the 5 s query cap");
+        }
+        assert!(ADMIN_IO_TIMEOUT <= std::time::Duration::from_secs(120), "bounded");
     }
 }
