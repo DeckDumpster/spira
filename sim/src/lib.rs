@@ -1,6 +1,10 @@
 //! Single-threaded event loop over virtual time. Every decision between actor runs
 //! (tie order, run durations, jitter) comes from one seeded PRNG.
 
+pub mod actors;
+pub mod fit;
+pub mod units;
+
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BinaryHeap};
 
@@ -23,6 +27,18 @@ impl Rng {
         z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
         z ^ (z >> 31)
+    }
+
+    /// Uniform in `[0, 1)`.
+    pub fn unit(&mut self) -> f64 {
+        (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
+    }
+
+    /// Standard normal (Box-Muller; always consumes two draws).
+    pub fn normal(&mut self) -> f64 {
+        let u1 = 1.0 - self.unit();
+        let u2 = self.unit();
+        (-2.0 * u1.ln()).sqrt() * (std::f64::consts::TAU * u2).cos()
     }
 
     /// Uniform in `lo..=hi`.

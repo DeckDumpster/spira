@@ -1,0 +1,12 @@
+[[actor]]
+name = "landing-pass"
+command = "landing-pass --pass"
+timer = "spira-landing-pass.timer"
+duration = "land.land-local"
+
+[[actor]]
+name = "gate-worker"
+command = "gate-worker run"
+timer = "spira-gate-worker.timer"
+duration = "gate.ran"
+staged = true
