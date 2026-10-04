@@ -275,6 +275,26 @@ for pkg in meta['packages']:
         chmod +x "$stage/bin/${_bin_names[$_i]}"
     done
 
+    # AERC (sp-41so3): built ONCE here, at release-build time, never at install time — see
+    # install/src/bin/install.rs's AERC_VERSION doc comment for why (install-time `go
+    # install` needed ~95 network fetches to proxy.golang.org on every host and failed real
+    # acceptance under load on 2026-10-04). Shipped at vendor/bin/aerc, a sibling of bin/
+    # rather than inside it, so release::build::clashes' bin/+spira/ scan and this
+    # function's own compat-symlink pass just above never have to learn aerc is not one of
+    # this workspace's own [[bin]] targets.
+    #
+    # CONDITIONAL ON THE FILE EXISTING, same reasoning as conf-gen.sh above: a tree with no
+    # spira/build-aerc.sh (test-workspace-dist.sh's synthetic Rust-workspace fixtures,
+    # test-tarball-bins.sh's and test-mail-sh-compat.sh's minimal spira/ fixtures, or any
+    # repository this harness never ships from) packages with no vendor/ at all. Install's
+    # own fail-closed refusal (install_aerc, sp-41so3) is what then catches a caller who
+    # runs such a tree's spira-install for real.
+    if [ -f "$stage/spira/build-aerc.sh" ]; then
+        mkdir -p "$stage/vendor/bin"
+        bash "$stage/spira/build-aerc.sh" "$stage/vendor/bin" \
+            || { echo "build-tarball.sh: spira/build-aerc.sh failed — refusing to pack a release with no aerc" >&2; return 1; }
+    fi
+
     # COMPAT NAMES (sp-6onps-compat). spira/deps.toml's [[compat]] table is the one
     # declared list — read the same way (python3/tomllib) conf.sh reads deps.toml's [[dep]]
     # table, never a second hand-written name list to drift from this one or from
@@ -318,6 +338,13 @@ _COMPAT_PY
         local _h; _h="$(sha256sum "$_alias_path" | awk '{print $1}')"
         printf 'bin/%s %s\n' "$(basename "$_alias_path")" "$_h" >> "$stage/MANIFEST"
     done
+    # vendor/bin/aerc (sp-41so3), when spira/build-aerc.sh built one above — recorded the
+    # same way bin/*'s own binaries are, so install's own copy (install_aerc) is checking
+    # against the same sha a verify of this tarball would.
+    if [ -f "$stage/vendor/bin/aerc" ]; then
+        local _h; _h="$(sha256sum "$stage/vendor/bin/aerc" | awk '{print $1}')"
+        printf 'vendor/bin/aerc %s\n' "$_h" >> "$stage/MANIFEST"
+    fi
 
     # Pack. -C to the parent so the top-level entry is the versioned directory.
     tar -czf "$outfile" -C "$tmp" "$name"
