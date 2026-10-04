@@ -34,4 +34,14 @@ case "$out" in *"names law-chamber-core-a,"*) bad "a resolvable slug is not repo
 out="$(SPIRA_DB="$TMP/nowhere" "$CHECK" "$TMP/good" 2>&1)"; rc=$?
 is "an unreadable store is refused, not passed" 2 "$rc"
 
+# THE SHIPPED SEEDS COVER THE BUILDER'S CORE. A fresh install holds only what spira/statutes/
+# ships, so a core slug the builder declares but the seeds lack makes every fresh-install
+# builder refuse to start (acceptance 37183437236, sp-6ka75). Static: no store needed.
+# The other fayths are sp-crr3n's to bring under this check.
+core="$(sed -n 's/^FAYTH_STATUTE_CORE="\(.*\)"/\1/p' "$HERE/chamber/builder.fayth" | tr ', ' '\n\n' | sed '/^$/d')"
+[ -n "$core" ] || bad "builder.fayth declares a core statute (positive control)" "none parsed"
+unshipped=""
+for c in $core; do [ -f "$HERE/statutes/$c.txt" ] || unshipped="$unshipped $c"; done
+is "every builder core statute ships in spira/statutes/" "" "${unshipped# }"
+
 tl_summary
