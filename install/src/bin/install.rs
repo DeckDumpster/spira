@@ -229,8 +229,8 @@ fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
         &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
     )
     .map_err(|e| format!("cannot fetch sccache from {url}: {e}"))?;
-    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
     let member = sccache_tar_member(target);
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
     let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", &member]).output().map_err(|e| format!("tar: {e}"))?;
     let _ = std::fs::remove_file(&tgz);
     if !out.status.success() || out.stdout.is_empty() {
