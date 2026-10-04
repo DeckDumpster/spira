@@ -240,6 +240,7 @@ _rendered="$(env -i \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     "MOCK_LOG=$MOCK_LOG" \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
     units-install prod --render 2>/dev/null)"
 _render_rc=$?
@@ -275,6 +276,7 @@ run_install() {   # run_install <SPIRA_REPO> -- extra env assignments...
         "SPIRA_COCKPIT=$COCKPIT_DIR" \
         "MOCK_LOG=$MOCK_LOG" \
         SPIRA_INSTALL_FORCE=1 \
+        SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "$@" \

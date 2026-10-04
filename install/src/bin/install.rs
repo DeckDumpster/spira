@@ -260,10 +260,7 @@ fn main() -> ExitCode {
     // ---- phase 1.5: same-user spira_lc credential ---------------------------------------
     phase("phase 1.5: spira-lc same-user credential");
     {
-        let cred = nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
-            let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-            spira_config::resolve::lc_credential_default(&env_map)
-        });
+        let cred = same_user_credential_path();
         for path in [cred.clone(), format!("{cred}-ro")] {
             if Path::new(&path).is_file() {
                 skip(&format!("{path} already exists"));
@@ -587,6 +584,34 @@ fn main() -> ExitCode {
         if rc != 0 {
             eprintln!("install: phase units failed — seed.sh failed with the database server running");
             return ExitCode::from(2);
+        }
+    }
+
+    // ---- phase 4.5: lifecycle store -------------------------------------------------------
+    // sp-xfqnr: a fresh same-user install never built spira_lifecycle, so with
+    // lifecycle_enforce on an aeon was summoned but could not claim or submit, and `spira-lc
+    // history` exited 2. Here, after phase 4 has dolt-beads.service listening: schema,
+    // migrations, grants — idempotent, and fatal when it cannot be done (no silent skip).
+    phase("phase 4.5: lifecycle store");
+    if spira_config::resolve::lc_system_mode() {
+        skip("spira-lc runs as a system service (--system-user) — its store and grants are spira/cutover-deploy.sh's, with the credentials under /etc/spira-lc");
+    } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
+        info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
+    } else if opts.dry {
+        would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+    } else {
+        let port = nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.as_ref().and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307);
+        match lifecycle_store_phase(port) {
+            Ok(lines) => {
+                for l in lines {
+                    info(&l);
+                }
+                changes += 1;
+            }
+            Err(e) => {
+                eprintln!("install: phase lifecycle store failed — {e}");
+                return ExitCode::from(2);
+            }
         }
     }
 
@@ -1058,6 +1083,50 @@ fn standalone_system_user(instance: &str, dry: bool) -> ExitCode {
 fn group_gid(group: &str) -> Option<u32> {
     let out = Command::new("getent").args(["group", group]).output().ok()?;
     String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
+}
+
+/// The same-user spira_lc credential: `SPIRA_LC_PASSWORD_FILE`, else the default path under
+/// the operator's config dir. Its read-only sibling is this path with `-ro` appended. Phase
+/// 1.5 creates both; phase 4.5 spends them.
+fn same_user_credential_path() -> String {
+    nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        spira_config::resolve::lc_credential_default(&env_map)
+    })
+}
+
+/// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
+/// admin (`SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`, default root with an empty
+/// password — what a fresh dolt-beads.service has, and what cutover-deploy.sh defaults to),
+/// against the SQL this release ships beside its unit templates.
+fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
+    use install::lifecycle_store::{self, Admin};
+    let host = nonempty_env("SPIRA_LC_HOST");
+    if host.is_none() && !tcp_up(port) {
+        return Err(format!("no Dolt server is listening on 127.0.0.1:{port} for the lifecycle store (SPIRA_LC_PORT / dolt-server.yaml)"));
+    }
+    let lifecycle_dir = bootstrap::templates_dir().parent().map(|r| r.join("lifecycle")).ok_or("cannot locate this release's lifecycle/ directory")?;
+    let cred = same_user_credential_path();
+    let rw = lifecycle_store::read_credential(Path::new(&cred))?;
+    let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
+    let admin = Admin {
+        user: nonempty_env("SPIRA_LC_ADMIN_USER").unwrap_or_else(|| "root".into()),
+        password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(),
+        host,
+        port,
+    };
+    lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, |args, env| {
+        // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
+        let mut c = Command::new("timeout");
+        c.arg("120").arg("spira-lc").args(args).stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        match c.output() {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    })
 }
 
 fn create_same_user_credential(path: &str) -> Result<(), String> {
