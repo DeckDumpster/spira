@@ -233,6 +233,30 @@ fn main() -> ExitCode {
         changes += 1;
     }
 
+    // Resolve the locations the rest of install reads, now that the config exists. They
+    // were read straight from this process's environment, which a fresh host never sets,
+    // so the database phase initialised "" (sp-xbxcb). install.sh used to source conf.sh here.
+    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false)] {
+        if nonempty_env(key).is_some() {
+            continue;
+        }
+        match spira_config::resolve::key_for_process(key) {
+            Ok(v) if !v.trim().is_empty() => {
+                info(&format!("{key} = {v} (resolved from config)"));
+                std::env::set_var(key, v);
+            }
+            Ok(_) | Err(_) if !required => {}
+            Ok(_) => {
+                eprintln!("install: {key} resolved empty — refusing to continue");
+                return ExitCode::from(2);
+            }
+            Err(e) => {
+                eprintln!("install: cannot resolve {key}: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
     // ---- phase 1.5: same-user spira_lc credential ---------------------------------------
     phase("phase 1.5: spira-lc same-user credential");
     {
