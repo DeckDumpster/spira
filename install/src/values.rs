@@ -169,7 +169,9 @@ mod tests {
         for k in ["SPIRA_RELEASE=/h", "SPIRA_HOME=/h/spira", "SPIRA_REPO=/h", "SPIRA_DB=/db", "SPIRA_RUN=/run"] {
             assert!(out.contains(&format!("\nEnvironment={k}\n")), "{k}");
         }
-        assert!(out.contains("%h/.local/bin"), "dolt and bd live in ~/.local/bin");
+        // PATH is the standard unit form (release, system dirs, then the configured tail, which
+        // is where ~/.local/bin — dolt and bd — comes from); the release crate enforces the shape.
+        assert!(out.lines().any(|l| l.starts_with("Environment=PATH=/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin")), "standard unit PATH:\n{out}");
         assert!(!out.contains("\nUser="), "a user unit runs as the operator");
     }
 
