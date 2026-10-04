@@ -314,6 +314,30 @@ fn check_cannot_verify_alone_is_exit_3_not_1() {
     assert!(f.stdout_joined().contains("CANNOT-VERIFY"));
 }
 
+/// FRESH RELEASE INSTALL (sp-wecsq): a release is activated (symlink + MANIFEST both
+/// present), `home_repo()` is not `queue.local` (no `repo:spira` row at all on a box that
+/// only runs installed releases), and `SPIRA_REPO` names no real git checkout -- exactly
+/// release acceptance phase B's shape, where `spira-skew-prod.service` exited 3 on every
+/// run. There is no git checkout anywhere for this branch to resolve a release tag's commit
+/// against, so this is not a transient "could not check" (CANNOT-VERIFY, exit 3); the
+/// question does not apply on this kind of install at all, and must say so on stdout at
+/// exit 0 -- never a silent pass, and never the escalation path either.
+#[test]
+fn check_no_harness_checkout_is_not_applicable_not_cannot_verify() {
+    let f = Fake::default();
+    f.set_env("SPIRA_RELEASES", "/releases");
+    f.symlinks.borrow_mut().insert(PathBuf::from("/releases/current"), "rel-1".into());
+    f.files.borrow_mut().insert(PathBuf::from("/releases/rel-1/MANIFEST"), format!("commit {}\n", "a".repeat(40)));
+    // No SPIRA_REPO set, no repo:spira row, no git checkout anywhere -- a release-only box.
+    *f.home_repo.borrow_mut() = "spira".into();
+
+    let rc = check(&f, true); // --escalate, to prove this path never mails anyone.
+    assert_eq!(rc, EXIT_OK);
+    assert!(f.stdout_joined().contains("not applicable"), "{}", f.stdout_joined());
+    assert!(f.stderr_joined().is_empty(), "{}", f.stderr_joined());
+    assert!(f.mail_calls.borrow().is_empty());
+}
+
 #[test]
 fn check_checkout_mode_delegates_to_gap() {
     let f = Fake::default();
