@@ -208,4 +208,15 @@ n="$(lone_pct "$ROOT/systemd/spira-ops.service")"
 [ "$n" -eq 0 ] && ok "spira-ops.service Exec lines carry no unescaped % specifier" \
     || bad "spira-ops.service Exec lines carry no unescaped % specifier" "$n line(s) with a lone %"
 
+# EVERY ExecStart BEGINS WITH A PLACEHOLDER (sp-ycxt2). doctor's check_prod_checkout — which
+# deploy's pre-health runs — reads ExecStart's first path and refuses any installed unit
+# running from outside $SPIRA_RELEASES; a literal /bin/bash wrapper in spira-ops.service
+# refused every deploy. Positive control: the matcher flags a planted offender.
+bare_exec() { grep -hE '^ExecStart=-?/' "$@" 2>/dev/null; }
+printf 'ExecStart=/bin/bash -c %s\n' "'exec x'" > "$TMP/planted-exec.service"
+[ -n "$(bare_exec "$TMP/planted-exec.service")" ] && ok "bare-ExecStart matcher flags a planted literal path" \
+    || bad "bare-ExecStart matcher flags a planted literal path" "matcher silent on planted offender"
+_bare="$(cd "$ROOT/systemd" && grep -lE '^ExecStart=-?/' *.service 2>/dev/null | tr '\n' ' ')"
+is "every template's ExecStart begins with a placeholder (no literal path)" "" "${_bare% }"
+
 tl_summary
