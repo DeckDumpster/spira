@@ -51,6 +51,75 @@ fn parse_args() -> Result<Opts, String> {
 fn phase(n: &str) {
     println!("\n[{n}]");
 }
+/// The pinned duckdb, the same version spira/testenv/Containerfile installs (DUCKDB_VERSION).
+const DUCKDB_VERSION: &str = "1.5.5";
+
+/// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
+/// metrics.disabled, and fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+fn dependencies(dry: bool) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
+    let bin = Path::new(&home).join(".local/bin");
+    let path = std::env::var("PATH").unwrap_or_default();
+    if !path.split(':').any(|p| Path::new(p) == bin) {
+        std::env::set_var("PATH", format!("{}:{path}", bin.display()));
+    }
+
+    let metrics_off = Command::new("timeout")
+        .args(["5", "dolt", "config", "--global", "--get", "metrics.disabled"])
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false);
+    if metrics_off {
+        skip("dolt metrics.disabled already true");
+    } else if dry {
+        would("run: dolt config --global --add metrics.disabled true");
+    } else {
+        run_ok("timeout", &["5", "dolt", "config", "--global", "--add", "metrics.disabled", "true"])
+            .map_err(|e| format!("cannot set dolt metrics.disabled: {e}"))?;
+        info("set dolt metrics.disabled true (dolt config --global)");
+    }
+
+    let have_duckdb = Command::new("timeout").args(["5", "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    if have_duckdb {
+        skip("duckdb on PATH");
+        return Ok(());
+    }
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => return Err(format!("no duckdb build for architecture {other}")),
+    };
+    let url = format!("https://github.com/duckdb/duckdb/releases/download/v{DUCKDB_VERSION}/duckdb_cli-linux-{arch}.gz");
+    let dest = bin.join("duckdb");
+    if dry {
+        would(&format!("fetch duckdb {DUCKDB_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(&bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let gz = bin.join(".duckdb.download.gz");
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &gz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch duckdb from {url}: {e}"))?;
+    let out = Command::new("gunzip").args(["-c", &gz.to_string_lossy()]).output().map_err(|e| format!("gunzip: {e}"))?;
+    let _ = std::fs::remove_file(&gz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack duckdb from {url}"));
+    }
+    let tmp = bin.join(".duckdb.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod duckdb: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let ok = Command::new("timeout").args(["5", dest.to_str().unwrap_or("duckdb"), "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    if !ok {
+        return Err(format!("installed {} does not run", dest.display()));
+    }
+    info(&format!("installed duckdb {DUCKDB_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
 fn info(s: &str) {
     println!("  {s}");
 }
@@ -99,6 +168,16 @@ fn main() -> ExitCode {
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
+    }
+
+    // ---- phase -1: dependencies ----------------------------------------------------------
+    // Install provides what its own doctor demands BEFORE the preflight judges the host
+    // (law-install-installs-every-dependency, sp-k0n0j): a fresh host used to fail preflight on
+    // two things install could have supplied — dolt's telemetry flag and duckdb.
+    phase("phase -1: dependencies");
+    if let Err(e) = dependencies(opts.dry) {
+        eprintln!("install: {e}");
+        return ExitCode::from(1);
     }
 
     // ---- phase 0: preflight -------------------------------------------------------------
