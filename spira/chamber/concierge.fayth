@@ -65,7 +65,16 @@ FAYTH_MEMORY_PREFIXES="law-"
 #
 # These are the ones whose violation by THIS role is expensive, in the order they bite:
 # where work goes, how a decision reaches him, what "done" means, and which trees are live.
-FAYTH_STATUTE_CORE="law-filed-bead-queued-xor-escalated,law-no-filing-only-escalation,law-escalate-decisions-not-problems,law-decisions-surface-immediately,law-escalations-carry-their-evidence,law-answers-need-a-delivery-path,law-commit-to-a-recommendation,law-decompose-by-deliverable,law-file-it-and-let-the-loop-fix-it,law-closed-is-not-landed,law-the-harness-checkout-is-production,law-production-is-not-a-working-tree,law-prod-is-a-different-checkout,law-commit-only-paths-you-changed,law-git-dash-c-not-cd,law-absence-needs-a-positive-control,law-alerts-must-be-actionable,law-detection-outranks-rejection,law-guard-binds-the-caller,law-harness-ships-mechanism-not-inventory"
+#
+# SIX SLUGS DROPPED HERE (sp-crr3n): not shipped in spira/statutes/ because each is inventory,
+# not mechanism — law-harness-ships-mechanism-not-inventory. law-filed-bead-queued-xor-escalated
+# and law-no-filing-only-escalation name this operator's own needs-ryan/overseer labels and his
+# historical bead counts; law-decisions-surface-immediately and law-commit-to-a-recommendation
+# name Ryan by name as the decision recipient; law-prod-is-a-different-checkout names this
+# operator's own repositories and deploy paths (pokebot, pokedumpster, deckdumpster, household,
+# Gas Town); law-git-dash-c-not-cd's scar names those same repositories by name. A colleague's
+# install would refuse to start on these the way builder's did on sp-6ka75.
+FAYTH_STATUTE_CORE="law-escalate-decisions-not-problems,law-escalations-carry-their-evidence,law-answers-need-a-delivery-path,law-decompose-by-deliverable,law-file-it-and-let-the-loop-fix-it,law-closed-is-not-landed,law-the-harness-checkout-is-production,law-production-is-not-a-working-tree,law-commit-only-paths-you-changed,law-absence-needs-a-positive-control,law-alerts-must-be-actionable,law-detection-outranks-rejection,law-guard-binds-the-caller,law-harness-ships-mechanism-not-inventory"
 
 # OPUS, AND THE REMIT IS WHY. "Its remit is unbounded" (per the operator, 2026-08-30): this
 # is the session that works a design out, reads across seven repositories, decides what to

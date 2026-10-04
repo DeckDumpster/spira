@@ -10,7 +10,10 @@ FAYTH_LABELS="${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}$SPIRA_WARDEN_LABEL"
 FAYTH_EXCLUDE_LABELS="spira-poison,$SPIRA_ASK_LABEL,$SPIRA_CI_LABEL"
 
 FAYTH_MEMORY_PREFIXES="law-"
-FAYTH_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-a-concierge-duty-is-a-missing-mechanism,law-anomalies-are-not-coincidences,law-absence-needs-a-positive-control,law-escalate-decisions-not-problems"
+# law-a-concierge-duty-is-a-missing-mechanism dropped (sp-crr3n): not shipped in
+# spira/statutes/ — its scar is Ryan's own day-by-day account of hand duties he personally
+# ran, which is inventory, not mechanism (law-harness-ships-mechanism-not-inventory).
+FAYTH_STATUTE_CORE="law-landed-is-not-in-force,law-closed-is-not-landed,law-anomalies-are-not-coincidences,law-absence-needs-a-positive-control,law-escalate-decisions-not-problems"
 
 FAYTH_MODEL=claude-sonnet-5-5
 FAYTH_MAX_CONCURRENT=1
