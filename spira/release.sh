@@ -24,7 +24,9 @@
 #
 #           --dispatch   Ask for a release instead of cutting one locally: fires
 #                        gate.yml's workflow_dispatch with cut=true. gate.yml's
-#                        own cut job still refuses a HEAD with no green gate.
+#                        own cut job still refuses a HEAD with no green gate. Refused
+#                        without a recorded acceptance-local.sh A-D pass on that commit;
+#                        override with SPIRA_LOCAL_PASS_OVERRIDE="<reason>" (logged).
 #
 # show <tag>             Print the bead ids and commits in the named release
 #                        tag. The repository is inferred from the tag message.
@@ -82,6 +84,10 @@ do_cut() {
     }
 
     if [ -n "$dispatch" ]; then
+        spira-config local-pass check acceptance-ad "$sha" || {
+            printf 'release: refusing to dispatch a cut for %s at %s\n' "$name" "$sha" >&2
+            exit 1
+        }
         # gh needs a bare branch name, not a remote-tracking ref like origin/main.
         local branch="${base##*/}"
         ( cd "$repo" && ghq workflow run gate.yml --ref "$branch" -f cut=true ) || {

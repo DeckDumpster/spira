@@ -1255,6 +1255,48 @@ fn cmd_fayth(args: &[String]) -> ExitCode {
     }
 }
 
+fn cmd_local_pass(args: &[String]) -> ExitCode {
+    use spira_config::local_pass::{check, record, Kind, Verdict, OVERRIDE_ENV};
+    let usage = || {
+        eprintln!("usage: spira-config local-pass <record|check> <full-suite|acceptance-ad> <commit-sha> [producer]");
+        ExitCode::from(2)
+    };
+    let (Some(op), Some(kind), Some(sha)) = (args.first(), args.get(1).and_then(|k| Kind::parse(k)), args.get(2)) else {
+        return usage();
+    };
+    let Some(run) = env::var_os("SPIRA_RUN").map(PathBuf::from) else {
+        eprintln!("local-pass: SPIRA_RUN is not set");
+        return ExitCode::FAILURE;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+        .to_string();
+    let who = env::var("USER").unwrap_or_else(|_| "unknown".into());
+    match op.as_str() {
+        "record" => match record(&run, kind, sha, args.get(3).map(String::as_str).unwrap_or("unknown"), &now) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+        "check" => match check(&run, kind, sha, env::var(OVERRIDE_ENV).ok().as_deref(), &who, &now) {
+            Ok(Verdict::Passed) => ExitCode::SUCCESS,
+            Ok(Verdict::Overridden(r)) => {
+                eprintln!("local-pass: {} check for {sha} OVERRIDDEN: {r}", kind.as_str());
+                ExitCode::SUCCESS
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::FAILURE
+            }
+        },
+        _ => usage(),
+    }
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -1350,6 +1392,7 @@ fn main() -> ExitCode {
         Some("unit") => cmd_unit(&args[1..]),
         Some("deps") => cmd_deps(&args[1..]),
         Some("convert-legacy") => cmd_convert_legacy(&args[1..]),
+        Some("local-pass") => cmd_local_pass(&args[1..]),
         Some("migrate") => match args.get(1) {
             Some(file) => cmd_migrate(file),
             None => {

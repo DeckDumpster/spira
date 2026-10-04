@@ -6,6 +6,7 @@ use super::{czar_ok, Acquire, Ctx, idents, landing_log, lock, lock_held_by_calle
 use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
+use spira_config::local_pass;
 
 pub fn publish(w: &World, repo: Option<&str>) -> i32 {
     publish_with(w, repo, lock_held_by_caller(w))
@@ -108,6 +109,20 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     if members.is_empty() {
         w.err(format!("queue.sh publish: {name} has new commits on {base} but no land commit (spira: land <id>) in range — refusing"));
         return FAIL;
+    }
+
+    let who = w.env.var("USER").unwrap_or_else(|| "unknown".into());
+    let override_reason = w.env.var(local_pass::OVERRIDE_ENV);
+    match local_pass::check(&c.s.run, local_pass::Kind::FullSuite, &head_sha, override_reason.as_deref(), &who, &w.clock.now().to_string()) {
+        Ok(local_pass::Verdict::Passed) => {}
+        Ok(local_pass::Verdict::Overridden(why)) => {
+            w.out(format!("queue.sh publish: full-suite local-pass check for {head_sha} OVERRIDDEN by {who}: {why}"));
+            landing_log(&c.s.run, &format!("QUEUE PUBLISH_OVERRIDE {} repo={name} head={head_sha} by={who}", w.clock.now()));
+        }
+        Err(why) => {
+            w.err(format!("queue.sh publish: refusing to open a publish PR for {head_sha}: {why}"));
+            return FAIL;
+        }
     }
 
     let stamp = w.clock.stamp();

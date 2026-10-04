@@ -1961,3 +1961,19 @@ fn a_linked_worktree_resolves_to_its_owning_repos_map_name_and_finds_a_base() {
     assert_eq!(found.name, "mapped");
     assert_eq!(landref(&found, &d).as_deref(), Some("main"));
 }
+
+#[test]
+fn a_green_run_records_a_full_suite_pass_only_when_it_selected_every_suite() {
+    use spira_config::local_pass::{check, Kind, Verdict};
+    let t = testkit::TempDir::new("full-pass");
+    let (run, dir) = (t.path().join("run"), t.path().join("spira"));
+    fs::create_dir_all(&dir).unwrap();
+    for n in ["test-a.sh", "test-b.sh", "not-a-suite.sh"] {
+        fs::write(dir.join(n), "").unwrap();
+    }
+    let names = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    record_full_suite_pass(&run, "aaaa", &names(&["test-a.sh"]), &dir, &|_| {});
+    assert!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0").is_err());
+    record_full_suite_pass(&run, "aaaa", &names(&["test-b.sh", "test-a.sh"]), &dir, &|_| {});
+    assert_eq!(check(&run, Kind::FullSuite, "aaaa", None, "u", "0"), Ok(Verdict::Passed));
+}

@@ -1931,6 +1931,7 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         let _ = fs::write(&verdict_path, f.render());
     }
     if deferred.is_empty() {
+        record_full_suite_pass(&s.run, &commit, &selected, &suite_dir, &|m| deps.log(m));
         deps.log("all suites passed");
     } else {
         deps.log("every suite that finished before the deadline passed");
@@ -1942,6 +1943,22 @@ pub fn run(args: &RunArgs, deps: &Deps) -> Finish {
         deferred: deferred_count,
         skipped: skipped.len(),
         ..Finish::green(ran)
+    }
+}
+
+/// A green, undeferred run whose selection is every suite in the tree is the full-suite round
+/// that publish looks for (law-nothing-runs-on-ci-until-it-passes-locally).
+pub(crate) fn record_full_suite_pass(run: &Path, commit: &str, selected: &[String], suite_dir: &Path, log: &dyn Fn(&str)) {
+    let mut got: Vec<&str> = selected.iter().map(String::as_str).collect();
+    got.sort_unstable();
+    let all = crate::suites::model::population(suite_dir);
+    if got != all.iter().map(String::as_str).collect::<Vec<_>>() {
+        return;
+    }
+    let now = iso_utc(now_epoch());
+    match spira_config::local_pass::record(run, spira_config::local_pass::Kind::FullSuite, commit, "testenv", &now) {
+        Ok(()) => log(&format!("recorded a full-suite local pass for {commit}")),
+        Err(e) => log(&format!("could not record the full-suite pass: {e}")),
     }
 }
 
