@@ -227,7 +227,7 @@ is   "audit: sending.sh IS called (with --skip-queue, sp-jci6o)" \
      "1" "$(grep -c . "$SENDING_LOG" 2>/dev/null || echo 0)"
 want "audit: sending.sh called with --skip-queue" \
      "--skip-queue" "$(cat "$SENDING_LOG" 2>/dev/null)"
-want "audit: CHECK4 examines the dispatchable set" "CHECK4 examining" "$audit_out"
+want "audit: CHECK4 runs (lifecycle off, so it declines to examine)" "CHECK4 lifecycle_enforce is off" "$audit_out"
 is   "audit: never summons (CHECK 7 is normal-pass only)" \
      "0" "$(grep -c . "$SUMMON_LOG" 2>/dev/null || echo 0)"
 is   "audit: never dispatches landing (CHECK 6 is normal-pass only)" \
