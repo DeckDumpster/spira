@@ -710,3 +710,19 @@ fn a_landed_event_recorded_a_pass_later_is_waited_for() {
     assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
     assert_eq!(f.history_late.get(), 0, "the late reads were all consumed");
 }
+
+#[test]
+fn every_deploy_carries_the_forge_repository_this_run_resolved() {
+    // An installed release has no git remote; deploy.sh must be told its repo (sp-j0vhm).
+    let b = Box_::new();
+    let f = b.fake();
+    let mut o = with_prev(&b, &[]);
+    o.gh_repo = Some("Owner/spira".into());
+    phases::run(&f, o);
+    let log = f.log.borrow();
+    let deploys: Vec<&Cmd> = log.iter().filter(|c| c.prog == "deploy.sh").collect();
+    assert!(deploys.len() >= 3, "upgrade, rollback and aged deploys ran: {}", deploys.len());
+    for c in deploys {
+        assert_eq!(c.env_of("SPIRA_FORGE_REPO"), Some("Owner/spira"), "{}", c.line());
+    }
+}
