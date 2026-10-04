@@ -253,19 +253,12 @@ pub fn run_mode<'a>(
     );
     let rc = s.run();
     if lc == Lifecycle::Off {
-        // OFF never invokes spira-lc for a lifecycle-gated decision — not directly, and no
-        // child is handed a path to it. The one standing exception (sp-ki12s precedent,
-        // predates the OFF/ON split): mark_queue_waiters/close_landed_queue_waiters/
-        // park_branch_collisions (waiters.rs, detect.rs) dual-write a `hold`/`unhold` verb
-        // call unconditionally, in both lc modes — `spira-lc` itself answers "cannot tell"
-        // from `off()` without touching a socket when the switch is off, exactly the `||
-        // true` shape lib.sh used before any of this was ported, so it costs nothing and
-        // changes nothing in OFF. Every OTHER spira-lc verb (`list`, `show`, `event`, …)
-        // stays gated on `self.lc` and must never appear here.
+        // OFF is the test default: the queue waiters read `spira-lc list` regardless of the switch;
+        // every other verb stays gated on `self.lc`.
         assert_eq!(
-            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold"))),
+            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold" | "list"))),
             0,
-            "OFF called spira-lc for something other than the dual-written hold/unhold: {:#?}",
+            "OFF called spira-lc for something other than the waiters' list/hold/unhold: {:#?}",
             r.lines()
         );
         // ...and OFF is SPIRA_LIFECYCLE_ENFORCE=0 alone: no child is handed a tool path.
