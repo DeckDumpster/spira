@@ -184,8 +184,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 **Systemd units:**
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
-  TimeoutStartSec=900. The live drop-in sets
-  `Environment=SPIRA_SKIP_CLOSED_CHECK=1`; the key is also a resolved config key (`spira/conf.d/SPIRA_SKIP_CLOSED_CHECK`), so the config file carries it across a unit re-render.
+  TimeoutStartSec=900. CHECK 5 and its skip switch are gone.
 - `spira-summon[-<inst>].timer` → `.service` runs `sentinel --summon-only` every 15 s.
   TimeoutStartSec=60.
 - Every aeon unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
@@ -210,7 +209,7 @@ environment has no effect.
 - `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
   SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_POISON_AT SPIRA_REQUEUE_AT SPIRA_RECLAIM_AT
   SPIRA_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_WORK_CLOSE_TYPES`, in that order, plus **new**
-  `SPIRA_SKIP_CLOSED_CHECK` and `SPIRA_SKIP_RECLAIM` when they are set (§9, B1).
+  `SPIRA_SKIP_RECLAIM` when it is set (§9, B1).
 
 `spira-landing` runs `landing-pass land` (the PATH-resolved program: a transient unit has no launcher PATH). It is launched the same way with:
 
@@ -647,7 +646,7 @@ cost 302 s against a 60 s pass budget (§5).
    - `decide n 0 0 "" 1:1:1 1`. If it says `clear`, Unhold poison and progress
      `CHECK4 <id>: stale poison cleared — <n> attempt(s), below threshold <P>`.
 
-**CHECK 5 — closed but not landed** (audit; skipped under `SPIRA_SKIP_CLOSED_CHECK=1`).
+**CHECK 5 — closed but not landed** (audit — DELETED; lifecycle LANDED supersedes it).
 
 1. **Incidents.** Open or in-progress snapshot rows carrying `$SPIRA_INCIDENT_LABEL`,
    keyed by their `ref:<hash>` label.

@@ -244,7 +244,6 @@ pub struct Cfg {
     pub systemctl: String,
     pub summon: String,
     pub skip_reclaim: bool,
-    pub skip_closed: bool,
     /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
     /// unit test can point one at a fixture; nothing reads them from the environment.
     pub tsd_bin: String,
@@ -338,7 +337,6 @@ impl Cfg {
             "SPIRA_SCOPE_LABEL",
             "SPIRA_WORK_CLOSE_TYPES",
             "SPIRA_BATCH_MAXPAR",
-            "SPIRA_SKIP_CLOSED_CHECK",
             "SPIRA_SKIP_RECLAIM",
         ] {
             raw.insert(k.to_string(), s(k));
@@ -402,7 +400,6 @@ impl Cfg {
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
             summon: or("SPIRA_SUMMON", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
-            skip_closed: matches!(c.get("SPIRA_SKIP_CLOSED_CHECK"), Some("1" | "true")),
             tsd_bin: "tsd-write".into(),
             lc_bin: "spira-lc".into(),
             landing_bin: "landing-pass".into(),
@@ -591,17 +588,5 @@ pub mod tests {
         assert_eq!(k.incident_sh, PathBuf::from("incident.sh"));
         assert_eq!((k.lc_bin.as_str(), k.claim_bin.as_str(), k.strand_bin.as_str(), k.landing_bin.as_str(), k.tsd_bin.as_str(), k.sending_bin.as_str()), ("spira-lc", "spira-claim", "strand", "landing-pass", "tsd-write", "sending"));
         assert_eq!(k.pass_target, 60);
-    }
-
-    #[test]
-    fn skip_closed_check_is_read_from_a_resolved_var_not_only_the_env() {
-        let skip = |vars: &[(&str, &str)]| {
-            let c = Context::parse(&probe_bytes(&[("SPIRA_RUN", "/r")], vars, &[], &[], &[], None)).unwrap();
-            Cfg::from_context(&c, Path::new("/h")).skip_closed
-        };
-        assert!(!skip(&[]));
-        assert!(!skip(&[("SPIRA_SKIP_CLOSED_CHECK", "0")]));
-        assert!(skip(&[("SPIRA_SKIP_CLOSED_CHECK", "1")]));
-        assert!(skip(&[("SPIRA_SKIP_CLOSED_CHECK", "true")]));
     }
 }

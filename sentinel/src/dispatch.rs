@@ -193,7 +193,7 @@ impl<'a> Sentinel<'a> {
             // B1: the switches the operator sets on the sentinel's unit reach the worker
             // that actually runs the checks they switch off.
             a.extend(self.lifecycle_setenv());
-            for k in ["SPIRA_SKIP_CLOSED_CHECK", "SPIRA_SKIP_RECLAIM"] {
+            for k in ["SPIRA_SKIP_RECLAIM"] {
                 if !self.cfg.raw(k).is_empty() {
                     a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
                 }

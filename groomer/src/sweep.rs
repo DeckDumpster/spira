@@ -2,12 +2,9 @@
 //! before the model pass. Parsing each detector's line is pure ([`parse`]); applying the
 //! remedy is the impure half below, against [`crate::bd::Bd`] and [`crate::seam::Seam`].
 //!
-//! Three passes, in the order `groomer.sh` ran them (DESIGN.md §3):
+//! Two passes, in the order `groomer.sh` ran them (DESIGN.md §3):
 //! 1. the LIVELOCK worklist (`ask-no-overseer`, `ci-stuck`, `unmapped-repo`, `unclaimable`);
-//! 2. the whole-graph STATE scan (`landed-but-open`, `closed-no-branch`,
-//!    `closed-never-landed` conflict/batch-ready, then `blocked-by-unlanded` over whatever
-//!    got reopened);
-//! 3. the incident partition (`incident-is-code`).
+//! 2. the incident partition (`incident-is-code`).
 
 use crate::bd::Bd;
 use crate::litter;
@@ -21,9 +18,7 @@ pub struct Livelock {
     pub reason: String,
 }
 
-/// One parsed `STATE <id> <kind> [<extra>] — <evidence>` line. `extra` carries
-/// `closed-never-landed`'s `conflict`/`batch-ready` tag, or `blocked-by-unlanded`'s
-/// blocker id; empty otherwise.
+/// One parsed `STATE <id> <kind> [<extra>] — <evidence>` line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StateLine {
     pub id: String,
@@ -41,25 +36,10 @@ pub fn parse_livelock(line: &str) -> Option<Livelock> {
     Some(Livelock { id: id.to_string(), category: category.trim().to_string(), reason: reason.to_string() })
 }
 
-/// `STATE <id> <kind> [<extra>] — <evidence>`. `kind` is the first token after the id;
-/// for `blocked-by-unlanded` a second token (the blocker id) follows before the em dash.
-///
-/// `closed-never-landed conflict|batch-ready` is the one shape that does NOT cleanly
-/// split on an em dash: lib.sh's own line carries `<repo> <branch> <base>` between the
-/// tag and its own `— reason` text (`detect_closed_unlanded_states`'s
-/// `printf 'STATE %s closed-never-landed conflict %s %s %s — does not merge, needs a
-/// rebase\n'`), and `groomer.sh` never split it further — `_sw_reason` was always
-/// everything after `closed-never-landed conflict `, repo/branch/base included. `extra`
-/// here is just the tag; `evidence` is that whole tail, matching the bash byte for byte.
+/// `STATE <id> <kind> [<extra>] — <evidence>`. `kind` is the first token after the id.
 pub fn parse_state(line: &str) -> Option<StateLine> {
     let rest = line.strip_prefix("STATE ")?;
     let (id, rest) = rest.split_once(' ')?;
-    for tag in ["conflict", "batch-ready"] {
-        let prefix = format!("closed-never-landed {tag} ");
-        if let Some(tail) = rest.strip_prefix(prefix.as_str()) {
-            return Some(StateLine { id: id.to_string(), kind: "closed-never-landed".to_string(), extra: tag.to_string(), evidence: tail.to_string() });
-        }
-    }
     let (head, evidence) = rest.split_once(" — ").unwrap_or((rest, ""));
     let mut parts = head.splitn(2, ' ');
     let kind = parts.next().unwrap_or("").to_string();
@@ -133,82 +113,7 @@ pub fn sweep(bd: &dyn Bd, seam: &dyn Seam, dry_run: bool) -> Result<Outcome, Str
         }
     }
 
-    // ---- pass 2: whole-graph STATE scan -------------------------------------------------
-    let mut reopened: Vec<String> = Vec::new();
-    let lbo = seam.detect_landed_but_open()?;
-    for line in lbo.lines() {
-        let Some(row) = parse_state(line) else { continue };
-        if row.kind == "landed-but-open" {
-            log.push(format!("CLOSED {} — landed-but-open: {}", row.id, row.evidence));
-            if !dry_run {
-                let _ = bd.close(&row.id, &format!("landed-but-open: {}", row.evidence));
-            }
-            acted += 1;
-        }
-    }
-
-    let cul = seam.detect_closed_unlanded_states()?;
-    for line in cul.lines() {
-        let Some(row) = parse_state(line) else { continue };
-        match row.kind.as_str() {
-            "closed-no-branch" => {
-                log.push(format!("DROPPED {} — closed-no-branch: {}", row.id, row.evidence));
-                if !dry_run {
-                    let _ = bd.label_add(&row.id, "spira-dropped");
-                    let _ = bd.note(&row.id, &format!("Labeled spira-dropped by groomer sweep: closed-no-branch — {}", row.evidence));
-                }
-                acted += 1;
-            }
-            "closed-never-landed" if row.extra == "conflict" => {
-                log.push(format!("REOPENED {} — closed-never-landed, needs a rebase: {}", row.id, row.evidence));
-                if !dry_run {
-                    let _ = seam.bead_reopen(
-                        &row.id,
-                        "closed-never-landed-conflict",
-                        &format!("Reopened by groomer sweep: closed but its branch does not merge cleanly into the base — {}. Needs a rebase before it can land.", row.evidence),
-                    );
-                }
-                reopened.push(row.id.clone());
-                acted += 1;
-            }
-            "closed-never-landed" if row.extra == "batch-ready" => {
-                log.push(format!("REOPENED {} — closed-never-landed, batch-ready: {}", row.id, row.evidence));
-                if !dry_run {
-                    let _ = seam.bead_reopen(
-                        &row.id,
-                        "closed-never-landed-batch-ready",
-                        &format!("Reopened by groomer sweep: closed but never landed — {}. The branch merges cleanly; it is batch-ready to requeue as-is.", row.evidence),
-                    );
-                }
-                reopened.push(row.id.clone());
-                acted += 1;
-            }
-            _ => {}
-        }
-    }
-
-    if !reopened.is_empty() {
-        let ids = reopened.join(" ");
-        let fb = seam.detect_false_blockers(&ids)?;
-        for line in fb.lines() {
-            let Some(row) = parse_state(line) else { continue };
-            if row.kind == "blocked-by-unlanded" {
-                log.push(format!("NOTED {} — false blocker: {} {}", row.id, row.extra, row.evidence));
-                if !dry_run {
-                    let _ = bd.note(
-                        &row.id,
-                        &format!(
-                            "groomer sweep: this bead was blocked-by-unlanded — {} {}. The blocker was reopened this pass; this bead should become ready once it lands.",
-                            row.extra, row.evidence
-                        ),
-                    );
-                }
-                acted += 1;
-            }
-        }
-    }
-
-    // ---- pass 3: incident partition ----------------------------------------------------
+    // ---- pass 2: incident partition ----------------------------------------------------
     let inc = seam.detect_incident_needs_builder()?;
     for line in inc.lines() {
         let Some(row) = parse_state(line) else { continue };
@@ -255,38 +160,11 @@ mod sweep_tests {
 
     #[test]
     fn parses_a_simple_state_line() {
-        let row = parse_state("STATE sp-1 landed-but-open — commit abc123 on main names it").unwrap();
+        let row = parse_state("STATE sp-1 incident-is-code — branch already carries a commit").unwrap();
         assert_eq!(row.id, "sp-1");
-        assert_eq!(row.kind, "landed-but-open");
+        assert_eq!(row.kind, "incident-is-code");
         assert_eq!(row.extra, "");
-        assert_eq!(row.evidence, "commit abc123 on main names it");
-    }
-
-    #[test]
-    fn parses_a_closed_never_landed_line_with_repo_branch_base_folded_into_evidence() {
-        // lib.sh's real shape: repo/branch/base sit between the tag and lib.sh's own
-        // `— reason`, and groomer.sh never split them out — the whole tail is the
-        // evidence this crate hands to `bead_reopen`'s note, unchanged.
-        let row = parse_state("STATE sp-2 closed-never-landed conflict fixture sp-2-branch abc123 — does not merge, needs a rebase").unwrap();
-        assert_eq!(row.kind, "closed-never-landed");
-        assert_eq!(row.extra, "conflict");
-        assert_eq!(row.evidence, "fixture sp-2-branch abc123 — does not merge, needs a rebase");
-    }
-
-    #[test]
-    fn parses_a_closed_never_landed_batch_ready_line() {
-        let row = parse_state("STATE sp-7 closed-never-landed batch-ready fixture sp-7-branch abc123 — merges cleanly, ready to requeue").unwrap();
-        assert_eq!(row.kind, "closed-never-landed");
-        assert_eq!(row.extra, "batch-ready");
-        assert_eq!(row.evidence, "fixture sp-7-branch abc123 — merges cleanly, ready to requeue");
-    }
-
-    #[test]
-    fn parses_a_blocked_by_unlanded_line_with_the_blocker_id_as_extra() {
-        let row = parse_state("STATE sp-3 blocked-by-unlanded sp-2 — sp-2 was reopened this pass").unwrap();
-        assert_eq!(row.kind, "blocked-by-unlanded");
-        assert_eq!(row.extra, "sp-2");
-        assert_eq!(row.evidence, "sp-2 was reopened this pass");
+        assert_eq!(row.evidence, "branch already carries a commit");
     }
 
     #[test]
@@ -331,46 +209,6 @@ mod sweep_tests {
         let out = sweep(&bd, &seam, false).unwrap();
         assert!(bd.log().is_empty());
         assert!(out.log.iter().any(|l| l.starts_with("REPORT sp-unc unclaimable")));
-    }
-
-    #[test]
-    fn sweep_closes_landed_but_open() {
-        let bd = FakeBd::new();
-        let seam = FakeSeam::new();
-        *seam.landed_but_open.borrow_mut() = "STATE sp-4 landed-but-open — commit names it\n".into();
-        let out = sweep(&bd, &seam, false).unwrap();
-        assert!(bd.log().iter().any(|c| c.starts_with("close sp-4 landed-but-open")));
-        assert_eq!(out.acted, 1);
-    }
-
-    #[test]
-    fn sweep_drops_closed_no_branch() {
-        let bd = FakeBd::new();
-        let seam = FakeSeam::new();
-        *seam.closed_unlanded.borrow_mut() = "STATE sp-5 closed-no-branch — no branch ever recorded\n".into();
-        sweep(&bd, &seam, false).unwrap();
-        assert!(bd.log().contains(&"label add sp-5 spira-dropped".to_string()));
-    }
-
-    #[test]
-    fn sweep_reopens_conflict_and_batch_ready_and_then_checks_false_blockers() {
-        let bd = FakeBd::new();
-        let seam = FakeSeam::new();
-        *seam.closed_unlanded.borrow_mut() = "STATE sp-6 closed-never-landed conflict fixture sp-6-branch abc123 — does not merge, needs a rebase\nSTATE sp-7 closed-never-landed batch-ready fixture sp-7-branch abc123 — merges cleanly, ready to requeue\n".into();
-        *seam.false_blockers.borrow_mut() = "STATE sp-8 blocked-by-unlanded sp-6 — was blocked\n".into();
-        let out = sweep(&bd, &seam, false).unwrap();
-        assert!(seam.log().iter().any(|c| c == "bead_reopen sp-6 closed-never-landed-conflict Reopened by groomer sweep: closed but its branch does not merge cleanly into the base — fixture sp-6-branch abc123 — does not merge, needs a rebase. Needs a rebase before it can land."));
-        assert!(seam.log().iter().any(|c| c.starts_with("detect_false_blockers sp-6 sp-7")));
-        assert!(bd.log().iter().any(|c| c.starts_with("note sp-8")));
-        assert_eq!(out.acted, 3);
-    }
-
-    #[test]
-    fn sweep_does_not_check_false_blockers_when_nothing_was_reopened() {
-        let bd = FakeBd::new();
-        let seam = FakeSeam::new();
-        sweep(&bd, &seam, false).unwrap();
-        assert!(!seam.log().iter().any(|c| c.starts_with("detect_false_blockers")));
     }
 
     #[test]

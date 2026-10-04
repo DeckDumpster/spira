@@ -46,8 +46,7 @@ refuses to run without it.
 
 ## What stays in lib.sh, and how this crate reaches it
 
-The detectors `sweep` drives — `detect_livelocked`, `detect_landed_but_open`,
-`detect_closed_unlanded_states`, `detect_false_blockers`, `detect_incident_needs_builder`
+The detectors `sweep` drives — `detect_livelocked`, `detect_incident_needs_builder`
 — and the write-side helpers `bead_reopen`, `bump_poison_cleared`, `poison_asked_clear`
 all live in `spira/lib.sh` and stay there: lib.sh is the rewrite programme's own group 4,
 proposed last, and Ryan's standing instruction during the cutover was "leave lib.sh
@@ -78,9 +77,7 @@ already-Rust binary, invoked by bare name on the release PATH, same as `spira-cl
 
 - `LIVELOCK <id> <category> — <reason>` — categories `ask-no-overseer`, `ci-stuck`,
   `unmapped-repo`, `unclaimable`.
-- `STATE <id> <kind> [<extra>] — <evidence>` — kinds `landed-but-open`,
-  `closed-no-branch`, `closed-never-landed <conflict|batch-ready>`,
-  `blocked-by-unlanded <blocker-id>`, `incident-is-code`.
+- `STATE <id> <kind> [<extra>] — <evidence>` — kind `incident-is-code`.
 
 Everything else in this crate is a direct 1:1 argument mapping onto `bd` verbs
 (`src/bd.rs::Bd`), kept behind a trait for the same reason as the lib.sh seam: every

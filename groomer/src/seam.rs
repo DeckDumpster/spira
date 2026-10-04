@@ -14,13 +14,6 @@ use std::process::{Command, Stdio};
 pub trait Seam {
     /// `detect_livelocked` — one `LIVELOCK <id> <category> — <reason>` line per row.
     fn detect_livelocked(&self) -> Result<String, String>;
-    /// `detect_landed_but_open` — one `STATE <id> landed-but-open — <evidence>` line.
-    fn detect_landed_but_open(&self) -> Result<String, String>;
-    /// `detect_closed_unlanded_states` — `closed-no-branch` / `closed-never-landed
-    /// conflict|batch-ready` STATE lines.
-    fn detect_closed_unlanded_states(&self) -> Result<String, String>;
-    /// `detect_false_blockers <space-separated ids>`.
-    fn detect_false_blockers(&self, reopened_ids: &str) -> Result<String, String>;
     /// `detect_incident_needs_builder`.
     fn detect_incident_needs_builder(&self) -> Result<String, String>;
     /// `bead_reopen <id> <cause> <note>`.
@@ -104,18 +97,6 @@ impl LibSeam {
 impl Seam for LibSeam {
     fn detect_livelocked(&self) -> Result<String, String> {
         Ok(strand::detectors::detect_livelocked(self.strand_cfg()))
-    }
-
-    fn detect_landed_but_open(&self) -> Result<String, String> {
-        Ok(strand::detectors::detect_landed_but_open(self.strand_cfg()))
-    }
-
-    fn detect_closed_unlanded_states(&self) -> Result<String, String> {
-        Ok(strand::detectors::detect_closed_unlanded_states(self.strand_cfg()))
-    }
-
-    fn detect_false_blockers(&self, reopened_ids: &str) -> Result<String, String> {
-        Ok(strand::detectors::detect_false_blockers(self.strand_cfg(), reopened_ids))
     }
 
     fn detect_incident_needs_builder(&self) -> Result<String, String> {
@@ -212,9 +193,6 @@ pub mod fake {
     #[derive(Default)]
     pub struct FakeSeam {
         pub livelocked: RefCell<String>,
-        pub landed_but_open: RefCell<String>,
-        pub closed_unlanded: RefCell<String>,
-        pub false_blockers: RefCell<String>,
         pub incident_needs_builder: RefCell<String>,
         pub calls: RefCell<Vec<String>>,
         pub confs: RefCell<std::collections::BTreeMap<String, String>>,
@@ -239,21 +217,6 @@ pub mod fake {
         fn detect_livelocked(&self) -> Result<String, String> {
             self.calls.borrow_mut().push("detect_livelocked".into());
             Ok(self.livelocked.borrow().clone())
-        }
-
-        fn detect_landed_but_open(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_landed_but_open".into());
-            Ok(self.landed_but_open.borrow().clone())
-        }
-
-        fn detect_closed_unlanded_states(&self) -> Result<String, String> {
-            self.calls.borrow_mut().push("detect_closed_unlanded_states".into());
-            Ok(self.closed_unlanded.borrow().clone())
-        }
-
-        fn detect_false_blockers(&self, reopened_ids: &str) -> Result<String, String> {
-            self.calls.borrow_mut().push(format!("detect_false_blockers {reopened_ids}"));
-            Ok(self.false_blockers.borrow().clone())
         }
 
         fn detect_incident_needs_builder(&self) -> Result<String, String> {

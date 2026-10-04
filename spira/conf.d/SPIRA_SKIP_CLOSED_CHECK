@@ -1,9 +1,0 @@
-TYPE=bool
-GROUP=check5
-DOC=SKIPS CHECK 5 (CLOSED NOT LANDED) AND ITS LIFECYCLE COUNTERPART ON EVERY SENTINEL AUDIT PASS.
-SCHEMA=Skips sentinel CHECK 5 (closed-not-landed) and CHECK5-LC on every audit pass. A resolved key, so the operator's config file carries it and a unit re-render cannot silently re-enable the check the way an environment-only drop-in could. Default off: the check runs.
-DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
-    # SKIPS CHECK 5 (CLOSED NOT LANDED) AND ITS LIFECYCLE COUNTERPART ON EVERY SENTINEL AUDIT
-    # PASS. A config key, not a unit drop-in: a re-render of the unit cannot drop it. Off by default.
-    : "${SPIRA_SKIP_CLOSED_CHECK:=0}"
-SPIRA_CONF_DEFAULT_EOF
