@@ -2020,6 +2020,19 @@ fn on_check4_note_names_the_hold() {
     assert_eq!(r.count(|s| is_bd(s, "label")), 0, "ON writes no bd label");
 }
 
+// sp-uqrdn: the queue waiters read spira-lc only — with lifecycle_enforce OFF they read
+// nothing and decide nothing; an unreachable machine there is not the unit's failure.
+#[test]
+fn off_never_reads_the_machine_and_never_fails_the_unit_for_it() {
+    let (w, r, sink, clock) = setup("offnolc");
+    r.on(|s| if s.prog == "spira-lc" { fail(2) } else { None });
+    let rc = run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "0")], None);
+    assert_eq!(rc, 0, "{}", sink.text());
+    assert!(!sink.has("LIFECYCLE UNREACHABLE"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")), 0);
+    assert!(sink.has("pass complete"));
+}
+
 #[test]
 fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
     let (w, r, sink, clock) = setup("onfail");

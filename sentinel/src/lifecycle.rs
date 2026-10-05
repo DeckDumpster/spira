@@ -222,8 +222,13 @@ impl<'a> Sentinel<'a> {
     /// ON mode's one lifecycle read. The machine is authoritative, so an absent binary or a
     /// failed read is LOUD: one `LIFECYCLE UNREACHABLE` line naming why, no lifecycle
     /// decision this pass, and the unit exits 1 once the rest of the pass has run.
-    /// Never called in OFF mode.
+    /// OFF mode has no machine to read: None, quietly — never a read, never LOUD, never exit
+    /// 1. Its callers then decide nothing, as CHECK 4 does when off (sp-uqrdn made the queue
+    /// waiters lifecycle-only, and an unguarded read failed every OFF pass).
     pub fn lc_rows(&self) -> Option<Vec<LcRow>> {
+        if self.lc == crate::cfg::Lifecycle::Off {
+            return None;
+        }
         if let Some(memo) = self.lc_memo.borrow().as_ref() {
             return memo.clone();
         }
