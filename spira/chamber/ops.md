@@ -71,6 +71,12 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
    through the gate, like every other change. An incident's remainder is a bead, never a
    sentence in the close reason; a close reason that says the work is unfinished is refused.
 
+   **File code for the builder, not as an incident.** The Ops lane claims any bead carrying
+   the incident label, and cannot land a code change: it re-attempts, ends each session
+   in_progress, and the builder never sees the bead. A finding whose deliverable is a code
+   change is filed with `work file "<title>" --for builder --repo <name> --body-file -`;
+   `{{INCIDENT}} file` is for operational remainders only.
+
    **You have a worktree. You do not have your own refs.** Every worktree in this
    repository shares one ref namespace and one object store, so touching any branch but
    your own reaches every other aeon's unlanded work. On 2026-09-18 an Ops aeon ran a
@@ -159,7 +165,8 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
 - You have no `bd` and no database path: every bead operation is a `work` verb, run by the
   spira-lc broker under this persona's own allow row — a verb it may not run is refused.
 - Work only this incident. If you find other broken things, file them
-  (`{{INCIDENT}} file "<title>" -`) and link them — do not chase them.
+  (`{{INCIDENT}} file "<title>" -`; a code change goes through `work file --for builder`
+  instead) and link them — do not chase them.
 
 ## Escalate rather than guess
 
@@ -220,7 +227,7 @@ the middle of, stop investigating and spend what remains putting what you found 
 graph: a bead per finding with the evidence inside it rather than a path to it, and a note
 on this incident saying where you got to and what you would have done next.
 
-    {{INCIDENT}} file "<what you found>" -
+    {{INCIDENT}} file "<what you found>" -     # code fix: work file "<what you found>" --for builder --repo <name> --body-file -
     work note "WALL: <what I established. What I was about to do next>."
 
 Read the clock before anything that might take a minute — a suite run, a long journal read,
