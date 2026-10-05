@@ -48,147 +48,54 @@ fn stderr_trimmed(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).trim().to_string()
 }
 
-fn etc_spira_real() -> bool {
-    Path::new("/etc/spira/spira.toml").is_file() || Path::new("/etc/spira/spira.conf").is_file()
-}
-
+/// THE ONE SOURCE: `$SPIRA_TOML` is the file. Found → printed, exit 0.
 #[test]
-fn prints_the_path_and_exits_0_when_found() {
+fn prints_the_pinned_path_and_exits_0() {
     let dir = scratch_dir("found");
-    let xdg_toml = write_toml(&dir, "xdg/spira/spira.toml");
-    let out = locate(&[
-        ("HOME", dir.join("home-empty").to_str().unwrap()),
-        ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap()),
-    ]);
-    assert!(out.status.success());
-    assert_eq!(stdout_trimmed(&out), xdg_toml.to_str().unwrap());
+    let p = write_toml(&dir, "anywhere/spira.toml");
+    let out = locate(&[("SPIRA_TOML", p.to_str().unwrap())]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_trimmed(&out));
+    assert_eq!(stdout_trimmed(&out), p.display().to_string());
 }
 
+/// Unset → exit 1, naming SPIRA_TOML — even with a spira.toml (and a legacy spira.conf) in
+/// every place the old search looked: XDG, HOME/.config.
 #[test]
-fn exits_1_naming_tried_paths_when_nothing_is_found() {
-    if etc_spira_real() {
-        eprintln!("skipping: this machine has a real /etc/spira config");
-        return;
-    }
-    let dir = scratch_dir("notfound");
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    let out = locate(&[("HOME", home.to_str().unwrap())]);
-    assert_eq!(out.status.code(), Some(1));
-    assert_eq!(stdout_trimmed(&out), "");
-    let err = stderr_trimmed(&out);
-    assert!(err.contains("no spira.toml found"), "{err}");
-    assert!(err.contains(".config/spira/spira.toml"), "{err}");
-    assert!(err.contains("/etc/spira/spira.toml"), "{err}");
-}
-
-#[test]
-fn exits_2_naming_the_legacy_conf_when_only_it_exists() {
-    let dir = scratch_dir("legacy");
-    let home = dir.join("home");
-    let conf = write_legacy_conf(&home, ".config/spira/spira.conf");
-    let out = locate(&[("HOME", home.to_str().unwrap())]);
-    assert_eq!(out.status.code(), Some(2));
-    assert_eq!(stdout_trimmed(&out), "");
-    let err = stderr_trimmed(&out);
-    assert!(err.contains(conf.to_str().unwrap()), "{err}");
-    assert!(err.contains("spira-config convert"), "{err}");
-}
-
-#[test]
-fn pinned_spira_toml_wins_over_a_real_xdg_file() {
-    let dir = scratch_dir("pin-priority");
-    let explicit = write_toml(&dir, "explicit/spira.toml");
-    let xdg_toml = write_toml(&dir, "xdg/spira/spira.toml");
-    let out = locate(&[
-        ("SPIRA_TOML", explicit.to_str().unwrap()),
-        ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap()),
-    ]);
-    assert!(out.status.success());
-    assert_eq!(stdout_trimmed(&out), explicit.to_str().unwrap());
-    // positive control that the XDG tier the pin pre-empted really is reachable on its own:
-    let out2 = locate(&[("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap())]);
-    assert_eq!(stdout_trimmed(&out2), xdg_toml.to_str().unwrap());
-}
-
-#[test]
-fn pinned_spira_toml_missing_does_not_fall_through_to_xdg() {
-    let dir = scratch_dir("pin-miss");
+fn unset_refuses_and_nothing_is_discovered() {
+    let dir = scratch_dir("unset");
     write_toml(&dir, "xdg/spira/spira.toml");
+    write_toml(&dir, "home/.config/spira/spira.toml");
+    let conf = write_legacy_conf(&dir, "xdg/spira/spira.conf");
     let out = locate(&[
-        ("SPIRA_TOML", dir.join("nonexistent.toml").to_str().unwrap()),
+        ("HOME", dir.join("home").to_str().unwrap()),
         ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap()),
+        ("SPIRA_CONF", conf.to_str().unwrap()),
     ]);
     assert_eq!(out.status.code(), Some(1));
-    let err = stderr_trimmed(&out);
-    assert!(err.contains("nonexistent.toml"), "{err}");
-    // It must name ONLY the pinned path, never the XDG file it never consulted:
-    assert!(!err.contains("xdg/spira/spira.toml"), "{err}");
+    assert!(stdout_trimmed(&out).is_empty(), "nothing may be printed: {}", stdout_trimmed(&out));
+    assert!(stderr_trimmed(&out).contains("SPIRA_TOML is not set"), "{}", stderr_trimmed(&out));
 }
 
+/// A pin to a missing file → exit 1, naming that path.
 #[test]
-fn spira_repo_is_never_a_candidate() {
-    // THE REGRESSION sp-hconl FIXES, exercised through the CLI: a spira.toml sitting beside
-    // $SPIRA_REPO must not be found, matching conf.sh's current (post sp-9hwim) search.
-    if etc_spira_real() {
-        eprintln!("skipping: this machine has a real /etc/spira config");
-        return;
-    }
-    let dir = scratch_dir("repo-ignored");
-    let repo = dir.join("repo");
-    write_toml(&repo, "spira.toml");
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    let out = locate(&[("SPIRA_REPO", repo.to_str().unwrap()), ("HOME", home.to_str().unwrap())]);
+fn a_pin_to_a_missing_file_refuses_naming_it() {
+    let dir = scratch_dir("missing");
+    let p = dir.join("nope.toml");
+    let out = locate(&[("SPIRA_TOML", p.to_str().unwrap())]);
     assert_eq!(out.status.code(), Some(1));
-    assert_eq!(stdout_trimmed(&out), "");
+    assert!(stderr_trimmed(&out).contains(&p.display().to_string()), "{}", stderr_trimmed(&out));
 }
 
-// Proves the no-file-argument path of get/validate/export is wired through the SAME search,
-// not just exposed standalone as its own subcommand.
+/// `get` with no file argument reads the one file, and refuses without it rather than
+/// reading the working directory or blocking on stdin.
 #[test]
-fn get_with_no_file_arg_finds_it_via_the_xdg_tier() {
-    let dir = scratch_dir("get-wiring");
-    write_toml(&dir, "xdg/spira/spira.toml");
-    let out = run(
-        &["get", "spira.operator"],
-        &[
-            ("HOME", dir.join("home-empty").to_str().unwrap()),
-            ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap()),
-        ],
-    );
-    assert!(out.status.success(), "stderr: {}", stderr_trimmed(&out));
+fn get_with_no_file_arg_reads_spira_toml_or_refuses() {
+    let dir = scratch_dir("get");
+    let p = write_toml(&dir, "s/spira.toml");
+    let out = run(&["get", "spira.operator"], &[("SPIRA_TOML", p.to_str().unwrap())]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr_trimmed(&out));
     assert_eq!(stdout_trimmed(&out), "fixture");
-}
-
-// The fail-closed fix itself: before this bead, `get`/`validate`/`export --sh` with no file
-// argument and no resolvable config either read whatever `./spira.toml` happened to be in the
-// CURRENT DIRECTORY (never checked against the real search tiers) or blocked forever on
-// stdin. Now it refuses by name instead of guessing either way.
-#[test]
-fn get_with_no_file_arg_and_nothing_resolvable_refuses_instead_of_reading_cwd_or_blocking() {
-    if etc_spira_real() {
-        eprintln!("skipping: this machine has a real /etc/spira config");
-        return;
-    }
-    let dir = scratch_dir("get-refuse");
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    // A decoy spira.toml in a DIFFERENT directory from the one the process runs in: if the
-    // old cwd-guessing behaviour regressed back in, this would need to be where the process
-    // actually runs to matter, so this alone doesn't prove anything — the regression this
-    // guards is cwd-vs-tiers, not "exists somewhere".
-    let mut cmd = Command::new(env!("CARGO_BIN_EXE_spira-config"));
-    cmd.env_clear();
-    cmd.env("HOME", &home);
-    cmd.current_dir(&dir);
-    cmd.args(["get", "spira.operator"]);
-    // Plant the decoy AFTER setting current_dir's target, directly in the cwd the child runs
-    // in — proving a real ./spira.toml in the cwd is no longer read as a fallback.
-    write_toml(&dir, "spira.toml");
-    let out = cmd.output().expect("spira-config runs");
-    assert!(!out.status.success());
-    assert_eq!(stdout_trimmed(&out), "");
-    let err = stderr_trimmed(&out);
-    assert!(err.contains("no spira.toml found") || err.contains("tried:"), "{err}");
+    let out = run(&["get", "spira.operator"], &[]);
+    assert_ne!(out.status.code(), Some(0));
+    assert!(stdout_trimmed(&out).is_empty());
 }

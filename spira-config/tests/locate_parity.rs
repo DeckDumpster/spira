@@ -11,7 +11,7 @@
 //! scratch `$HOME`/`$XDG_CONFIG_HOME` the test creates itself with `env_clear()`.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 fn repo_root() -> PathBuf {
@@ -41,8 +41,7 @@ fn extract_function(text: &str, name: &str) -> String {
 /// whichever one `call` names, printing its stdout unindented.
 fn harness_script(conf_sh: &str, call: &str) -> String {
     let toml_fn = extract_function(conf_sh, "spira_toml_file");
-    let conf_fn = extract_function(conf_sh, "spira_conf_file");
-    format!("#!/usr/bin/env bash\nset -u\n{conf_fn}\n\n{toml_fn}\n\n{call}\n")
+    format!("#!/usr/bin/env bash\nset -u\n{toml_fn}\n\n{call}\n")
 }
 
 fn scratch_dir(tag: &str) -> testkit::TempDir {
@@ -70,10 +69,7 @@ fn bash_spira_toml_file(env: &[(&str, &str)]) -> String {
 }
 
 /// The compiled `spira-config locate`'s answer under the same environment: `Some(path)` on a
-/// clean exit (Found), `None` on exit 1 (NotFound) or exit 2 (LegacyOnly) — collapsed the
-/// same way `discover()` collapses them, since `spira_toml_file` alone (never
-/// `spira_toml_resolve`'s auto-convert) is bash's side of this comparison, and
-/// `spira_toml_file` only ever says "a path" or "empty", never "ambiguous".
+/// clean exit (Found), `None` on exit 1 (NotFound).
 fn rust_locate(env: &[(&str, &str)]) -> Option<String> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_spira-config"));
     cmd.env_clear();
@@ -99,10 +95,6 @@ fn assert_parity(scenario: &str, env: &[(&str, &str)]) {
     );
 }
 
-fn etc_spira_real() -> bool {
-    Path::new("/etc/spira/spira.toml").is_file()
-}
-
 #[test]
 fn parity_explicit_spira_toml_set_and_present() {
     let dir = scratch_dir("set-present");
@@ -115,86 +107,29 @@ fn parity_explicit_spira_toml_set_and_present() {
 fn parity_explicit_spira_toml_set_and_missing() {
     let dir = scratch_dir("set-missing");
     let p = dir.join("nonexistent.toml");
-    assert_parity(
-        "SPIRA_TOML set, file missing (no fallthrough)",
-        &[("SPIRA_TOML", p.to_str().unwrap())],
-    );
+    assert_parity("SPIRA_TOML set, file missing", &[("SPIRA_TOML", p.to_str().unwrap())]);
 }
 
+/// The one source: unset means none — on both sides — even with a spira.toml where the
+/// old search (XDG, HOME/.config) looked.
 #[test]
-fn parity_xdg_config_home_tier() {
-    let dir = scratch_dir("xdg");
-    fs::create_dir_all(dir.join("xdg/spira")).unwrap();
-    fs::write(dir.join("xdg/spira/spira.toml"), "[spira]\n").unwrap();
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    assert_parity(
-        "XDG_CONFIG_HOME tier",
-        &[
-            ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap()),
-            ("HOME", home.to_str().unwrap()),
-        ],
-    );
-}
-
-#[test]
-fn parity_home_dot_config_tier_when_xdg_unset() {
-    let dir = scratch_dir("home");
-    fs::create_dir_all(dir.join("home/.config/spira")).unwrap();
-    fs::write(dir.join("home/.config/spira/spira.toml"), "[spira]\n").unwrap();
-    assert_parity(
-        "HOME/.config fallback (XDG unset)",
-        &[("HOME", dir.join("home").to_str().unwrap())],
-    );
-}
-
-#[test]
-fn parity_nothing_found() {
-    if etc_spira_real() {
-        eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
-        return;
+fn parity_unset_finds_nothing_even_with_files_in_the_old_tiers() {
+    let dir = scratch_dir("unset");
+    for rel in ["xdg/spira/spira.toml", "home/.config/spira/spira.toml"] {
+        let p = dir.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(&p, "[spira]\n").unwrap();
     }
-    let dir = scratch_dir("none");
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    assert_parity("nothing at any tier", &[("HOME", home.to_str().unwrap())]);
+    let env = [("HOME", dir.join("home").to_str().unwrap().to_string()), ("XDG_CONFIG_HOME", dir.join("xdg").to_str().unwrap().to_string())];
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    assert_eq!(bash_spira_toml_file(&env), "", "conf.sh must not discover a file");
+    assert_eq!(rust_locate(&env), None, "spira-config must not discover a file");
 }
 
-#[test]
-fn parity_spira_repo_is_ignored_by_both() {
-    // THE CASE THIS BEAD EXISTS FOR: both sides must agree $SPIRA_REPO is not a candidate —
-    // conf.sh since sp-9hwim, spira-config as of this bead.
-    if etc_spira_real() {
-        eprintln!("skipping: this machine has a real /etc/spira/spira.toml");
-        return;
-    }
-    let dir = scratch_dir("repo-ignored");
-    fs::create_dir_all(dir.join("repo")).unwrap();
-    fs::write(dir.join("repo/spira.toml"), "[spira]\n").unwrap();
-    let home = dir.join("home-empty");
-    fs::create_dir_all(&home).unwrap();
-    assert_parity(
-        "SPIRA_REPO set with a real spira.toml beside it, but unconsulted by either side",
-        &[("SPIRA_REPO", dir.join("repo").to_str().unwrap()), ("HOME", home.to_str().unwrap())],
-    );
-}
-
-/// Positive control for the test harness itself: proves `extract_function` really is reading
-/// `conf.sh`'s current text (not a cached or hand-copied body) by asserting the doc comment
-/// directly above `spira_toml_file` still carries the citation conf.sh's own author attached
-/// to the SPIRA_REPO removal — if sp-9hwim's change were ever reverted without this test
-/// noticing, this is what would catch it independently of the behavioural comparisons above.
-/// Also asserts the function BODY itself never names `SPIRA_REPO` — the actual parity claim,
-/// not just the comment above it.
+/// The extraction pulls the real function out of this tree's conf.sh.
 #[test]
 fn extraction_pulls_the_real_current_conf_sh_text() {
-    let conf_sh = fs::read_to_string(repo_root().join("spira/conf.sh")).expect("read conf.sh");
-    let toml_fn = extract_function(&conf_sh, "spira_toml_file");
-    assert!(!toml_fn.contains("SPIRA_REPO"), "{toml_fn}");
-    let doc_line = conf_sh
-        .lines()
-        .take_while(|l| !l.trim_end().starts_with("spira_toml_file() {"))
-        .last()
-        .expect("a line precedes spira_toml_file's definition");
-    assert!(doc_line.contains("sp-9hwim"), "{doc_line}");
+    let conf_sh = fs::read_to_string(repo_root().join("spira/conf.sh")).unwrap();
+    let f = extract_function(&conf_sh, "spira_toml_file");
+    assert!(f.contains("SPIRA_TOML") && !f.contains("XDG_CONFIG_HOME"), "{f}");
 }

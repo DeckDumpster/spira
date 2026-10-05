@@ -390,14 +390,18 @@ fn cmd_env_bootstrap_sh() -> ExitCode {
 /// non-zero means `conf.sh` must `exit 1` outright. Every diagnostic line is printed here,
 /// to stderr, so `conf.sh` itself prints nothing further.
 fn cmd_check_bd() -> ExitCode {
-    let bd = env::var("SPIRA_BD").unwrap_or_else(|_| "bd".to_string());
-    let db = env::var("SPIRA_DB").unwrap_or_default();
-    let run = env::var("SPIRA_RUN").unwrap_or_default();
-    let doctor = env::var("SPIRA_DOCTOR").map(|v| !v.is_empty()).unwrap_or(false);
-    let conf_file = env::var("SPIRA_CONF_FILE")
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "spira.conf".to_string());
+    // Handed explicitly by conf.sh from the resolved config; a missing one is a refusal.
+    let need = |k: &str| env::var(k).ok().filter(|v| !v.is_empty()).ok_or_else(|| format!("spira-config check-bd: {k} was not handed in — refusing"));
+    let (bd, db, run, conf_file) = match (need("SPIRA_BD"), need("SPIRA_DB"), need("SPIRA_RUN"), need("SPIRA_TOML_FILE")) {
+        (Ok(a), Ok(b), Ok(c), Ok(d)) => (a, b, c, d),
+        (a, b, c, d) => {
+            for e in [a.err(), b.err(), c.err(), d.err()].into_iter().flatten() {
+                eprintln!("{e}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    let doctor = env::var("SPIRA_DOCTOR").is_ok_and(|v| !v.is_empty());
     let result = spira_config::env_bootstrap::check_bd_schema(&bd, &db, &run, doctor, &conf_file);
     for m in &result.messages {
         eprintln!("{m}");
@@ -489,10 +493,7 @@ fn cmd_deps(args: &[String]) -> ExitCode {
         Some("require") if args.len() > 1 => {
             let bins: Vec<&str> = args[1..].iter().map(String::as_str).collect();
             let path = env::var("PATH").unwrap_or_default();
-            let conf_file = env::var("SPIRA_CONF_FILE")
-                .ok()
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "spira.conf".to_string());
+            let conf_file = env::var("SPIRA_TOML_FILE").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "$SPIRA_TOML".to_string());
             match spira_config::deps::require(&deps, &bins, &path, &conf_file) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(msg) => {
