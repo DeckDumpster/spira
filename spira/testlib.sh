@@ -349,7 +349,8 @@ lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
 # open/blocked/deferred → READY, in_progress → WORKING (holder = assignee), closed →
 # $LC_MIRROR_CLOSED (default LANDED); a `spira-poison` label → a poison hold, the ask label
 # ($SPIRA_ASK_LABEL) → an ask hold; epics and events have no row. A fixture row may say
-# `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none.
+# `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none;
+# for a real store (which drops unknown fields), `<dir>/states` lines `<id> <STATE>` do it.
 # Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
 lc_mirror_bd() {
     local dir="${1:?lc_mirror_bd needs a directory}"
@@ -358,7 +359,7 @@ lc_mirror_bd() {
 #!/usr/bin/env bash
 if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
 else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
-printf '%s' "$src" | python3 -c '
+printf '%s' "$src" | LC_MIRROR_DIR="$(dirname "$0")" python3 -c '
 import json, os, sys
 verb = sys.argv[1] if len(sys.argv) > 1 else ""
 try:
@@ -370,6 +371,14 @@ if isinstance(beads, dict):
 words = {"open": "READY", "blocked": "READY", "deferred": "READY", "in_progress": "WORKING",
          "closed": os.environ.get("LC_MIRROR_CLOSED") or "LANDED"}
 ask = os.environ.get("SPIRA_ASK_LABEL", "")
+pinned = {}
+try:
+    for line in open(os.path.join(os.environ["LC_MIRROR_DIR"], "states")):
+        f = line.split()
+        if len(f) == 2:
+            pinned[f[0]] = f[1]
+except (OSError, KeyError):
+    pass
 rows = []
 for b in beads:
     if not isinstance(b, dict) or not b.get("id") or b.get("_lc_rowless"):
@@ -377,7 +386,7 @@ for b in beads:
     if b.get("issue_type") in ("epic", "event") and "_lc_state" not in b:
         continue
     labels = b.get("labels") or []
-    state = b.get("_lc_state") or words.get(b.get("status") or "open", "READY")
+    state = pinned.get(b["id"]) or b.get("_lc_state") or words.get(b.get("status") or "open", "READY")
     holds = b.get("_lc_holds")
     if holds is None:
         holds = (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])

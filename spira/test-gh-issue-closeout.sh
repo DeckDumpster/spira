@@ -202,6 +202,9 @@ printf '\n6. gh-intake unlanded-scan asks about a truly unlanded bead, and the d
 testdb_seed <<JSONL
 {"id":"sp-scan1","title":"Truly unlanded","status":"closed","issue_type":"task","labels":["spira","plan","repo:fixture"],"external_ref":"github:fixture/testrepo#3","updated_at":"2026-09-05T00:00:00Z","closed_at":"2026-09-05T00:00:00Z"}
 JSONL
+# Its builder finished it and the machine has it over without a delivery (DONE): neither
+# landed nor in flight, which is what the scan asks about.
+echo "sp-scan1 DONE" >> "$TMP/lcm/states"
 : > "$GHLOG"; : > "$MAILLOG"
 scan_out="$(gh-intake unlanded-scan 2>&1)"
 want "direction 1 — a missed ask is actually sent" "asked operator about github:fixture/testrepo#3" "$scan_out"
