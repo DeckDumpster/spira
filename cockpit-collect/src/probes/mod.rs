@@ -1407,6 +1407,57 @@ mod tests {
         assert!(!aeon_alive(&pf), "a pid that does not exist is never alive");
     }
 
+    fn strand_kv(json: &str) -> impl Fn(&str) -> Option<String> {
+        let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
+        let path = testkit::TempDir::new("cc-strand-case");
+        let _env = crate::test_support::set_run(path.path());
+        std::fs::write(path.path().join("strands.json"), json).unwrap();
+        let kv = strand_keys();
+        move |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone())
+    }
+
+    #[test]
+    fn strand_keys_counts_two_ghosts_as_two_and_reports_no_other_class() {
+        let get = strand_kv(r#"{"spira,plan:ghost:sp-a":{},"spira,plan:ghost:sp-b":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("2".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("none".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_empty_epic_is_its_own_class_not_a_ghost() {
+        let get = strand_kv(r#"{"spira,plan:empty:sp-jj88":{"first":1788811865,"acted":0,"escalated":1788812834}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("0".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=1".into()));
+        assert_eq!(get("SP_STRANDS"), Some("1".into()));
+    }
+
+    #[test]
+    fn strand_keys_itemises_every_other_class_and_keeps_ghost_apart() {
+        let get = strand_kv(r#"{"p:ghost:sp-a":{},"p:empty:sp-b":{},"p:empty:sp-c":{},"p:stuck:sp-d":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("empty=2,stuck=1".into()));
+    }
+
+    #[test]
+    fn strand_keys_splits_from_the_right_so_a_partition_may_hold_a_colon() {
+        let get = strand_kv(r#"{"spira:plan,extra:ghost:sp-a":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("1".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_unclassifiable_key_makes_ghost_unknown_and_is_itself_reported() {
+        let get = strand_kv(r#"{"bogus":{},"p:ghost:sp-a":{}}"#);
+        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
+        assert_eq!(get("SP_STRAND_OTHER"), Some("unclassified=1".into()));
+        assert_eq!(get("SP_STRANDS"), Some("2".into()));
+    }
+
+    #[test]
+    fn strand_keys_an_unparsable_ledger_is_unread_not_empty() {
+        let get = strand_kv("not json at all");
+        assert_eq!(get("SP_STRAND_GHOST"), Some("?".into()));
+    }
+
     #[test]
     fn strand_keys_missing_file_renders_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();

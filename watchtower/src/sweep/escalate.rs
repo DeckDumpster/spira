@@ -403,7 +403,7 @@ mod tests {
         std::fs::write(
             &inc,
             format!(
-                "#!/usr/bin/env bash\n{{ echo \"REF=$SPIRA_INCIDENT_REF\"; echo \"TITLE=$2\"; cat; echo '---'; }} >> {}\n",
+                "#!/usr/bin/env bash\n{{ echo \"REF=$SPIRA_INCIDENT_REF\"; echo \"TITLE=$2\"; echo \"SIN=$SPIRA_SIN_EXEMPT\"; cat; echo '---'; }} >> {}\n",
                 capture.display()
             ),
         )
@@ -617,5 +617,144 @@ mod tests {
         data.env.set("SP_UNADOPTED", "5");
         unadopted_refs(&data, &cfg); // must not panic, and files nothing
         assert!(!d.join("captured.txt").exists());
+    }
+
+    fn captured(d: &std::path::Path) -> String {
+        std::fs::read_to_string(d.join("captured.txt")).unwrap_or_default()
+    }
+
+    fn drain(mins: Option<i64>) -> SweepData {
+        let mut d = SweepData::fixture_nominal(1_700_000_000);
+        d.drain = super::super::collect::Drain::Draining { since: "2026-09-08 20:02:00 UTC".into(), mins };
+        d
+    }
+
+    #[test]
+    fn drain_escalation_fires_at_and_above_the_threshold_not_below() {
+        let d = testkit::TempDir::new("wt-esc-drain");
+        let cfg = cfg_with(&d, fake_incident(&d));
+        drain_escalation(&drain(Some(14)), &cfg);
+        assert!(captured(&d).is_empty(), "below the 15m threshold must not file");
+        drain_escalation(&drain(Some(15)), &cfg);
+        let c = captured(&d);
+        assert!(c.contains("TITLE=DRAINING: world.sh summons gated"));
+        assert!(c.contains("DRAINING for 15m"));
+    }
+
+    #[test]
+    fn drain_escalation_with_a_zero_threshold_fires_at_once_and_is_sin_exempt() {
+        let d = testkit::TempDir::new("wt-esc-drain-zero");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.drain_warn_mins = 0;
+        drain_escalation(&drain(Some(0)), &cfg);
+        let c = captured(&d);
+        assert!(c.contains("TITLE=DRAINING:"));
+        assert!(c.contains("SIN=1"), "the drain escalation must not itself become a Sin");
+    }
+
+    #[test]
+    fn drain_escalation_is_silent_when_not_draining_or_the_age_is_unreadable() {
+        let d = testkit::TempDir::new("wt-esc-drain-quiet");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.drain_warn_mins = 0;
+        drain_escalation(&SweepData::fixture_nominal(1_700_000_000), &cfg);
+        drain_escalation(&drain(None), &cfg);
+        assert!(captured(&d).is_empty());
+    }
+
+    fn file_one(tag: &str, f: fn(&SweepData, &Cfg), pairs: &[(&str, &str)]) -> String {
+        let d = testkit::TempDir::new(tag);
+        let cfg = cfg_with(&d, fake_incident(&d));
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        for (k, v) in pairs {
+            data.env.set(*k, *v);
+        }
+        f(&data, &cfg);
+        captured(&d)
+    }
+
+    #[test]
+    fn batched_stranded_fires_on_a_positive_count_and_names_the_branches() {
+        let c = file_one("wt-esc-bs", batched_stranded, &[("SP_BATCHED_STRANDED", "1"), ("SP_BATCHED_STRANDED_NAMES", "sp-stuck")]);
+        assert!(c.contains("TITLE=SENDING: BATCHED branch absent from open batch"));
+        assert!(c.contains("sp-stuck"));
+    }
+
+    #[test]
+    fn batched_stranded_is_silent_at_zero_and_at_a_question_mark() {
+        assert!(file_one("wt-esc-bs0", batched_stranded, &[("SP_BATCHED_STRANDED", "0")]).is_empty());
+        assert!(file_one("wt-esc-bsq", batched_stranded, &[("SP_BATCHED_STRANDED", "?")]).is_empty());
+    }
+
+    #[test]
+    fn batched_too_long_fires_on_a_positive_count_and_names_the_branches() {
+        let c = file_one("wt-esc-bl", batched_too_long, &[("SP_BATCHED_TOO_LONG", "1"), ("SP_BATCHED_TOO_LONG_NAMES", "sp-slow")]);
+        assert!(c.contains("TITLE=QUEUE: BATCHED branch not resolved (too long)"));
+        assert!(c.contains("sp-slow"));
+    }
+
+    #[test]
+    fn batched_too_long_is_silent_at_zero_and_at_a_question_mark() {
+        assert!(file_one("wt-esc-bl0", batched_too_long, &[("SP_BATCHED_TOO_LONG", "0")]).is_empty());
+        assert!(file_one("wt-esc-blq", batched_too_long, &[("SP_BATCHED_TOO_LONG", "?")]).is_empty());
+    }
+
+    #[test]
+    fn the_unadopted_body_names_the_branches_and_falls_back_to_unavailable_without_the_key() {
+        let c = file_one("wt-esc-un", unadopted_refs, &[("SP_UNADOPTED", "1"), ("SP_UNADOPTED_NAMES", "sp-stray")]);
+        assert!(c.contains("Branches (spira/ prefix omitted): sp-stray"));
+        assert!(!c.contains("%(*refname"));
+        let c = file_one("wt-esc-un-old", unadopted_refs, &[("SP_UNADOPTED", "1")]);
+        assert!(c.contains("Unadopted refs: 1") && c.contains("(unavailable)"));
+    }
+
+    #[test]
+    fn unadopted_refs_is_silent_at_zero_and_at_a_question_mark() {
+        assert!(file_one("wt-esc-un0", unadopted_refs, &[("SP_UNADOPTED", "0")]).is_empty());
+        assert!(file_one("wt-esc-unq", unadopted_refs, &[("SP_UNADOPTED", "?")]).is_empty());
+    }
+
+    #[test]
+    fn dedup_meter_is_silent_at_zero_and_at_a_question_mark() {
+        assert!(file_one("wt-esc-dd0", dedup_meter, &[("SP_DUP_REFS", "0")]).is_empty());
+        assert!(file_one("wt-esc-ddq", dedup_meter, &[("SP_DUP_REFS", "?")]).is_empty());
+        let c = file_one("wt-esc-dd", dedup_meter, &[("SP_DUP_REFS", "2"), ("SP_DUP_BEADS", "1")]);
+        assert!(c.contains("TITLE=DEDUP: duplicate incident refs detected (2 refs, 1 surplus)"));
+    }
+
+    #[test]
+    fn an_unread_oldest_unsent_is_silent_even_at_a_zero_threshold() {
+        let d = testkit::TempDir::new("wt-esc-unsent0");
+        let mut cfg = cfg_with(&d, fake_incident(&d));
+        cfg.unsent_warn_h = 0;
+        let mut data = SweepData::fixture_nominal(1_700_000_000);
+        data.env.set("SP_UNSENT_OLDEST_H", "?");
+        sending_oldest_unsent(&data, &cfg);
+        assert!(captured(&d).is_empty());
+    }
+
+    /// Every dedupe key is a string literal fixed in the source: running an escalation
+    /// twice over different measurements must name the same reference both times.
+    #[test]
+    fn each_escalations_dedupe_reference_is_stable_across_different_measurements() {
+        let cases: [(&str, fn(&SweepData, &Cfg), &str, [&str; 2], &str); 5] = [
+            ("wt-ref-bs", batched_stranded, "SP_BATCHED_STRANDED", ["1", "2"], "incident:sending-batched-stranded"),
+            ("wt-ref-bl", batched_too_long, "SP_BATCHED_TOO_LONG", ["1", "4"], "incident:queue-batched-too-long"),
+            ("wt-ref-un", unadopted_refs, "SP_UNADOPTED", ["3", "5"], "incident:sending-unadopted-refs"),
+            ("wt-ref-ou", sending_oldest_unsent, "SP_UNSENT_OLDEST_H", ["30", "31"], "incident:sending-oldest-unsent"),
+            ("wt-ref-dd", dedup_meter, "SP_DUP_REFS", ["2", "4"], "incident:dedup-meter-nonzero"),
+        ];
+        for (tag, f, key, values, want) in cases {
+            let refs: Vec<String> = values
+                .iter()
+                .map(|v| {
+                    file_one(&format!("{tag}-{v}"), f, &[(key, v)])
+                        .lines()
+                        .find_map(|l| l.strip_prefix("REF=").map(String::from))
+                        .unwrap_or_else(|| panic!("{tag} filed nothing at {v}"))
+                })
+                .collect();
+            assert_eq!(refs, vec![want.to_string(); 2], "{tag}");
+        }
     }
 }
