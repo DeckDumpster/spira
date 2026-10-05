@@ -14,14 +14,13 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
-
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-open-batch
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up openbatch || { echo "test-queue-open-batch: could not build fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-open-batch: could not build a lifecycle fixture"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
@@ -30,7 +29,6 @@ REMOTE="$TMP/remote.git"
 RUN="$TMP/run"
 SH="$TMP/spira"
 REPONAME=fixture-repo
-LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 
 git init -q --bare -b main "$REMOTE"
@@ -39,7 +37,7 @@ git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -107,7 +105,7 @@ plant_bead() {   # plant_bead <id> [<title>]
 }
 
 # certify <id> <path-in-repo> <content> — a CERTIFIED branch spira/<id> off main,
-# adding/overwriting <path> with <content>, and its own bead + landstate record.
+# adding/overwriting <path> with <content>, and its own bead + CERTIFIED lifecycle row.
 certify() {
     local id="$1" path="$2" content="$3"
     git -C "$REPO" worktree add -q -b "spira/$id" "$RUN/worktree/$id" origin/main
@@ -115,11 +113,10 @@ certify() {
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "$id: work"
     local tip; tip="$(git -C "$REPO" rev-parse "spira/$id")"
-    printf 'CERTIFIED %s %s\n' "$tip" "$(date +%s)" > "$LANDSTATE/$id"
+    lcfix_seed "$id" CERTIFIED "$tip"
     plant_bead "$id" "bead for $id"
 }
 
-landstate_of() { { read -r st _ < "$LANDSTATE/$1"; } 2>/dev/null; printf '%s' "${st:-}"; }
 branch_exists() { git -C "$REPO" show-ref --verify -q "refs/heads/spira/$1" 2>/dev/null; }
 open_batch_file() { printf '%s/%s/open' "$QUEUEDIR" "$REPONAME"; }
 remote_queue_branches() { git --git-dir="$REMOTE" for-each-ref --format='%(refname:short)' 'refs/heads/spira/queue/*' 2>/dev/null; }
@@ -127,7 +124,8 @@ remote_queue_branches() { git --git-dir="$REMOTE" for-each-ref --format='%(refna
 clean_case() {
     rm -f "$(open_batch_file)"
     : > "$FORGE_LOG"; : > "$BODY_LOG"; : > "$GATE_COUNT"; printf '0\n' > "$GATE_RC_FILE"
-    find "$LANDSTATE" -maxdepth 1 -type f -delete 2>/dev/null
+    local t
+    for t in event delivery batch_member batch bead; do lcfix_sql -q "DELETE FROM $t" >/dev/null 2>&1; done
     local wt
     for wt in "$RUN/worktree"/sp-* "$RUN/worktree"/.open-batch-*; do
         [ -e "$wt" ] && git -C "$REPO" worktree remove -f "$wt" 2>/dev/null || true
@@ -144,10 +142,10 @@ echo "test-queue-open-batch.sh"
 
 # =============================================================================
 # 1. Positive control: two independent certified branches, no conflicts, gate
-#    green — assembled, pushed, PR opened, record written, members BATCHED.
+#    green — assembled, pushed, PR opened, record written, members IN_DELIVERY.
 # =============================================================================
 echo
-echo "1. assembles both members, opens the PR, writes the record, marks BATCHED:"
+echo "1. assembles both members, opens the PR, writes the record, moves the members to IN_DELIVERY:"
 seed
 certify sp-a fa.txt "a-content"
 certify sp-b fb.txt "b-content"
@@ -165,8 +163,8 @@ want "1. record lists sp-b:"      "sp-b:"    "$rec1"
 branch1="$(printf '%s\n' "$rec1" | sed -n 's/^branch=//p')"
 want "1. commit message names sp-a with its own title" "spira: land sp-a — bead for sp-a" \
     "$(git -C "$REPO" log --format=%s "$branch1" -n 5 2>/dev/null)"
-is   "1. sp-a is BATCHED"  "BATCHED" "$(landstate_of sp-a)"
-is   "1. sp-b is BATCHED"  "BATCHED" "$(landstate_of sp-b)"
+is   "1. sp-a is IN_DELIVERY"  "IN_DELIVERY" "$(lcfix_state sp-a)"
+is   "1. sp-b is IN_DELIVERY"  "IN_DELIVERY" "$(lcfix_state sp-b)"
 want "1. landing.log records the batch" "verdict=green source=open-batch" \
     "$(cat "$RUN/landing.log" 2>/dev/null)"
 
@@ -180,7 +178,7 @@ clean_case
 
 # =============================================================================
 # 3. --dry-run: reports members, merge head and the would-be record; no branch,
-#    no push, no PR, no landstate change.
+#    no push, no PR, no lifecycle change.
 # =============================================================================
 echo
 echo "3. --dry-run makes no changes:"
@@ -197,8 +195,8 @@ want "3. shows would-be record"    "would write open record" "$out3"
 is   "3. no PR created"            "0"             "$(wc -l < "$FORGE_LOG")"
 [ -f "$(open_batch_file)" ] && bad "3. no open record written" "file exists" \
     || ok "3. no open record written"
-is   "3. sp-c still CERTIFIED"     "CERTIFIED"     "$(landstate_of sp-c)"
-is   "3. sp-d still CERTIFIED"     "CERTIFIED"     "$(landstate_of sp-d)"
+is   "3. sp-c still CERTIFIED"     "CERTIFIED"     "$(lcfix_state sp-c)"
+is   "3. sp-d still CERTIFIED"     "CERTIFIED"     "$(lcfix_state sp-d)"
 qb3="$(remote_queue_branches)"
 [ -z "$qb3" ] && ok "3. no queue branch pushed" || bad "3. no queue branch pushed" "$qb3"
 clean_case
@@ -221,7 +219,7 @@ rec4="$(cat "$(open_batch_file)" 2>/dev/null)"
 want  "4. record includes sp-e"   "sp-e:" "$rec4"
 want  "4. record includes sp-g"   "sp-g:" "$rec4"
 nowant "4. record excludes sp-f"  "sp-f:" "$rec4"
-is    "4. sp-f is still CERTIFIED (not reopened)" "CERTIFIED" "$(landstate_of sp-f)"
+is    "4. sp-f is still CERTIFIED (not reopened)" "CERTIFIED" "$(lcfix_state sp-f)"
 if branch_exists sp-f; then ok "4. sp-f branch untouched"
 else bad "4. sp-f branch untouched" "branch missing"; fi
 clean_case
@@ -243,7 +241,7 @@ git -C "$REPO" fetch -q origin
 out5="$(openbatch fixture-repo)"
 want "5. names base conflict" "sp-h: conflicts with base" "$out5"
 want "5. no cut — nothing admissible" "no cut" "$out5"
-is   "5. sp-h is still CERTIFIED" "CERTIFIED" "$(landstate_of sp-h)"
+is   "5. sp-h is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-h)"
 [ -f "$(open_batch_file)" ] && bad "5. no open record written" "file exists" \
     || ok "5. no open record written"
 clean_case
@@ -280,7 +278,7 @@ want "7. names the gate failure" "pre-flight gate failed" "$out7"
 is   "7. gate was called once"   "1" "$(wc -l < "$GATE_COUNT")"
 is   "7. no PR created"          "0" "$(wc -l < "$FORGE_LOG")"
 [ "$rc7" -ne 0 ] && ok "7. non-zero exit" || bad "7. non-zero exit" "rc=$rc7"
-is   "7. sp-j is still CERTIFIED" "CERTIFIED" "$(landstate_of sp-j)"
+is   "7. sp-j is still CERTIFIED" "CERTIFIED" "$(lcfix_state sp-j)"
 [ -f "$(open_batch_file)" ] && bad "7. no open record written" "file exists" \
     || ok "7. no open record written"
 qb7="$(remote_queue_branches)"
