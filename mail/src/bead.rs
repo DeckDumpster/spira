@@ -622,10 +622,9 @@ mod tests {
             log = log.display(),
             state = state.display(),
         );
-        std::fs::write(&script, body).unwrap();
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).unwrap();
+        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
+        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
+        testkit::write_exe(&script, &body);
         script
     }
 
@@ -647,10 +646,9 @@ mod tests {
         let script = d.path().join("fake-bd.sh");
         let log = d.path().join("calls.log");
         let body = format!("#!/bin/sh\necho called >> {log}\necho 'Error: no beads project found' >&2\nexit 1\n", log = log.display());
-        std::fs::write(&script, body).unwrap();
-        let mut perm = std::fs::metadata(&script).unwrap().permissions();
-        std::os::unix::fs::PermissionsExt::set_mode(&mut perm, 0o755);
-        std::fs::set_permissions(&script, perm).unwrap();
+        // testkit::write_exe, never fs::write + chmod: a write descriptor another test thread's
+        // fork inherits makes the exec below fail ETXTBSY under load (a round VM's unit step).
+        testkit::write_exe(&script, &body);
         let bd = BdCli { bin: script.display().to_string(), db: d.path().display().to_string(), conn_retries: 2 };
         let out = bd.run(&a(&["list", "--json"]), None);
         assert_eq!(out.code, 1);

@@ -93,11 +93,8 @@ fn build_bin(package: &str, bin: &str) -> PathBuf {
 
 /// A tiny shell script, written executable, at `path`.
 fn write_script(path: &Path, body: &str) {
-    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    let mut perm = std::fs::metadata(path).unwrap().permissions();
-    perm.set_mode(0o755);
-    std::fs::set_permissions(path, perm).unwrap();
+    // testkit::write_exe: no write descriptor a concurrent fork could inherit (ETXTBSY under load).
+    testkit::write_exe(path, &format!("#!/bin/sh\n{body}\n"));
 }
 
 /// One fixture release root: `<root>/bin/{sentinel,spira-claim,spira-config,watchd,bd,
