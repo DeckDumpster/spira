@@ -83,7 +83,7 @@ lack "builder labels exclude warden" "warden-sweep" "$(fayth_get builder FAYTH_L
 is "warden lane" "warden" "$(fayth_get warden FAYTH_LANE)"
 want "warden lane is declared" "warden" "${SPIRA_LANES:-}"
 want "brief forbids claiming plan beads" "Never claim a plan bead" "$(cat "$HERE/chamber/warden.md")"
-want "brief files follow-ups through the contract" "bead.sh file" "$(cat "$HERE/chamber/warden.md")"
+want "brief files follow-ups through the contract" "work file" "$(cat "$HERE/chamber/warden.md")"
 
 echo
 tl_summary

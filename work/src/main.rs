@@ -22,6 +22,8 @@ use std::time::Duration;
 const CANNOT_TELL: i32 = work::CANNOT_TELL;
 const REFUSED: i32 = work::REFUSED;
 const TIMEOUT: Duration = Duration::from_secs(10);
+// batch-job: a lane verb's broker-run tool is bounded at 300 s by the broker; wait just past it.
+const TOOL_TIMEOUT: Duration = Duration::from_secs(310);
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,15 +38,25 @@ fn main() {
         std::process::exit(REFUSED);
     }
 
-    let Ok(bound) = std::env::var("SPIRA_WORK_BEAD_ID") else {
-        eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
-        std::process::exit(CANNOT_TELL);
+    // A lane verb (sp-st0mm) runs unbound too — the archivist has no bead of its own — and
+    // sends `-` in the bound slot; a bound verb refuses without a binding.
+    let bound = match std::env::var("SPIRA_WORK_BEAD_ID") {
+        Ok(b) if !b.is_empty() => b,
+        _ if !work::needs_binding(&verb) => "-".to_string(),
+        _ => {
+            eprintln!("cannot tell: SPIRA_WORK_BEAD_ID is not set — this environment is not bound to a bead");
+            std::process::exit(CANNOT_TELL);
+        }
     };
     let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
 
     let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
-    let req = match work::build_request(&bound, &verb, &verb_args, tip.as_deref(), &actor) {
+    let read_stdin = || {
+        let mut s = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut s).map(|_| s).map_err(|e| e.to_string())
+    };
+    let (verb_args, body) = match work::collect_body(&verb_args, |p| std::fs::read_to_string(p).map_err(|e| e.to_string()), read_stdin) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("{e}");
@@ -52,7 +64,18 @@ fn main() {
         }
     };
 
-    match send(&req) {
+    let req = match work::build_request_with_body(&bound, &verb, &verb_args, tip.as_deref(), &actor, body.as_deref()) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(REFUSED);
+        }
+    };
+
+    // A harness tool (a groomer sweep, a queue step) reads the whole graph; the broker bounds
+    // it at 300 s, so this client waits that long for those and no longer.
+    let wait = if work::LANE_VERBS.contains(&verb.as_str()) { TOOL_TIMEOUT } else { TIMEOUT };
+    match send(&req, wait) {
         Ok((code, out)) => {
             if !out.is_empty() {
                 println!("{out}");
@@ -87,10 +110,10 @@ fn read_tip(bead: &str) -> Option<String> {
 /// The exact wire protocol spira-lc's own CLI speaks to its socket (client.rs): one JSON
 /// line in (the argv array), one JSON line out (`{exit_code, stdout}`). No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
-fn send(argv: &[String]) -> Result<(i32, String), String> {
+fn send(argv: &[String], wait: Duration) -> Result<(i32, String), String> {
     let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET")?;
     let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
-    stream.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(wait)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
 
     let request = serde_json::to_string(argv).map_err(|e| e.to_string())?;
