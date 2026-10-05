@@ -282,46 +282,8 @@ BODY
 is "mail send kind=question wrote the marker itself" "yes" \
    "$([ -e "$SPIRA_RUN/sp-ow-mail.operator-wait" ] && echo yes || echo no)"
 
-# ==========================================================================================
-echo
-echo "ROW: operator-wait marker present AND bead closed — consumed, not left stranded (sp-nw7jb)"
-# ==========================================================================================
-# THE DEFECT THIS GUARDS. The disposition gathering that consumes the operator-wait marker
-# only runs for an OPEN bead (the `st != closed` branch above) — so a session that sent a
-# kind-question mail and then closed its own bead in the same breath never reached the
-# branch that removes the marker. It sat on disk forever: no garbage collector, one
-# consumer, and that consumer never ran.
-#
-# COMMITTED, so close_verdict reads "keep|committed" and the close genuinely stands — a
-# close with nothing committed is reopened by an entirely different, unrelated mechanism
-# (closed-without-commit) that would otherwise obscure what this row is proving. Chore, not
-# task: a work-type close is converted to "submitted" by a later, unrelated block regardless
-# of commit or this fix, for the same reason.
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-cat /dev/stdin > /dev/null
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-_bd="${SPIRA_BD:-bd}"
-# The bound bead is BEAD_ID, from the aeon: since sp-v62vn the claim is the lifecycle
-# row's, and bd's status no longer reads in_progress for it.
-id="${BEAD_ID:-}"
-if [ -n "$id" ]; then
-    printf 'the aeon wrote this %s\n' "$(date +%s%N)" > f
-    git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id — the work"
-    printf '%s\n' "$SESSION_EPOCH" > "$SPIRA_RUN/$id.operator-wait"
-    BD_IGNORE_SCHEMA_SKEW=1 "$_bd" -C "$SPIRA_DB" close "$id" --reason "done, asked a question in passing" >/dev/null 2>&1
-fi
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$FA_BIN/claude"
-fa_reset; fa_seed sp-ow-3; bd -C "$SPIRA_DB" update sp-ow-3 --type chore >/dev/null 2>&1
-fa_run_aeon >/dev/null
-is   "the marker does not survive the session that wrote it, even though the bead closed" "no" \
-     "$([ -e "$SPIRA_RUN/sp-ow-3.operator-wait" ] && echo yes || echo no)"
-is   "the close stands (a non-work type closes by the agent's own hand, unchanged)" "closed" "$(fa_status sp-ow-3)"
-want "the close is recorded as carrying an operator-wait marker" \
-     "operator-wait marker" "$(fa_notes sp-ow-3)"
+# ROW DELETED — an operator-wait marker consumed by a session that CLOSED its bead (sp-nw7jb)
+# was teardown's closed branch, which no session reaches since sp-v62vn.
 
 # ==========================================================================================
 echo
@@ -503,54 +465,18 @@ chmod +x "$FA_BIN/claude"
 fa_reset; fa_seed sp-ex-2
 printf 1 > "$FA_TMP/shim-rc"
 rc="$(fa_run_aeon)"
-is "bead is converted to submitted, not left closed" "open" "$(fa_status sp-ex-2)"
+# Since sp-v62vn the session is restricted, and its hand-on (the shim's close, which the
+# lifecycle stand-in reads as `work submit`) is the submitted disposition, not teardown's
+# closed branch: the bd-close conversion to open+spira-submitted and that branch's
+# ledger-the-claude-rc line are gone with the branch, so neither is asserted any more.
 is "aeon exits 0 despite claude rc=1 (the fix)" "0" "$rc"
-want "ledger still records the real rc" "rc=1" "$(fa_ledger_line sp-ex-2)"
 want "and records the submitted status" "status=submitted" "$(fa_ledger_line sp-ex-2)"
 # The positive control for this UC (bead not closed, claude rc=1, aeon exits non-zero) is
 # the "session did not close" row above (sp-rq-2) — the same discrimination, one fewer run.
 
-# ==========================================================================================
-echo
-echo "ROW: FAYTH_GRAPH_ONLY persona closes a work bead with no commit — close stands (sp-wnsks)"
-# ==========================================================================================
-# The groomer's own shape: no Edit or Write in FAYTH_TOOLS, so its close is never followed
-# by a commit — sp-yyzm3 (filed by hand, no delivers: label) was converted to submitted
-# by the row above's same logic and stranded there forever, since a graph-only edit never
-# produces the commit that conversion waits for. FAYTH_GRAPH_ONLY=1 is the fix: the
-# conversion above must not fire for this persona, commit or no commit.
-cat > "$FA_HOME/chamber/groomonly.fayth" <<GOFAYTH
-FAYTH_NAME=groomonly
-FAYTH_LABELS="\${SPIRA_SCOPE_LABEL:+\${SPIRA_SCOPE_LABEL},}\${SPIRA_PLAN_LABEL}"
-FAYTH_EXCLUDE_LABELS="spira-poison,${SPIRA_ASK_LABEL:-needs-operator}"
-FAYTH_MAX_CONCURRENT=1
-FAYTH_HEARTBEAT_SECONDS=600
-FAYTH_GRAPH_ONLY=1
-GOFAYTH
-printf 'groom-only close {{BEAD_ID}}\n{{PARK}}\n' > "$FA_HOME/chamber/groomonly.md"
-
-cat > "$FA_BIN/claude" <<'SHIM'
-#!/usr/bin/env bash
-printf '{"type":"assistant","message":{"id":"m1","content":[{"type":"tool_use","name":"Bash","input":{"command":"true"}}]}}\n'
-cat /dev/stdin > /dev/null 2>&1
-id="${BEAD_ID:-}"   # the bound bead (sp-v62vn: bd status no longer reads in_progress)
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "graph-only: dependency re-pointed, nothing to commit" >/dev/null 2>&1
-printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":1000,"num_turns":1,"total_cost_usd":0.001}\n'
-exit 0
-SHIM
-chmod +x "$FA_BIN/claude"
-
-fa_reset; fa_seed sp-ex-3
-rc="$(fa_run_aeon groomonly)"
-is "graph-only close stands — NOT converted to submitted" "closed" "$(fa_status sp-ex-3)"
-is "aeon exits 0" "0" "$rc"
-# fa_ledger_line hardcodes the "builder" fayth name; this row runs as groomonly, so read
-# its own last done-line directly rather than duplicating that assumption.
-ledger3="$(grep " sp-ex-3 rc=" "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1)"
-want   "ledger has a done line for this bead" "sp-ex-3" "$ledger3"
-nowant "and it does NOT record a submitted conversion" "status=submitted" "$ledger3"
-# The positive control for this UC (the same shim, no FAYTH_GRAPH_ONLY) is the "exit code,
-# bead mode" row above (sp-ex-2): identical close, converted to submitted without the flag.
+# ROW DELETED — FAYTH_GRAPH_ONLY's close standing unconverted (sp-wnsks) was a rule inside
+# teardown's closed branch, which no session reaches since sp-v62vn (every session is
+# restricted and hands its bead on through the work verbs).
 
 # ==========================================================================================
 echo
