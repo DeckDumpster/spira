@@ -256,6 +256,7 @@ printf '#!/usr/bin/env bash\necho "gate: VERDICT=PASS reason=stub branch=$1 repo
     > "$L_SH/gate.sh"; chmod +x "$L_SH/gate.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/confine.sh"; chmod +x "$L_SH/confine.sh"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$L_SH/skew"; chmod +x "$L_SH/skew"
+lc_path_stub "$L_SH" "$TMP/lcfix-l"
 
 testdb_seed <<'JSONL'
 {"id":"sp-epic2","title":"epic","status":"open","issue_type":"epic","labels":[],"updated_at":"2026-09-04T00:00:00Z"}

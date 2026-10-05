@@ -309,12 +309,10 @@ fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, w
 
 /// lib.sh `bead_close_on_land <id> <sha>` — the only place a work bead is closed for a
 /// landed reason. Idempotent both ways: a bead already `closed` is left alone, and one
-/// never marked submitted is left alone too. On a successful close, marks the ledger
-/// LANDED (a write this crate already owns, [`crate::landstate::land_mark`] — no seam) and
-/// best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
+/// never marked submitted is left alone too. On a successful close, best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
 /// directly here).
 #[allow(clippy::too_many_arguments)]
-pub fn close_on_land(git: &dyn Git, out: &Reporter, run: &Path, home: &Path, submitted_label: &str, row: Option<&BeadRow>, id: &str, sha: &str) {
+pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, submitted_label: &str, row: Option<&BeadRow>, id: &str, sha: &str) {
     let Some(row) = row else { return };
     match close_on_land_status(row, submitted_label) {
         "closed" | "other" => return,
@@ -327,7 +325,6 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, run: &Path, home: &Path, sub
         return;
     }
     out.log(&format!("land-close {id}: closed at {shown_sha} (submitted -> landed)"));
-    crate::landstate::land_mark(run, id, "LANDED", sha, "Closed by the landing pass", "");
 
     let (Some(repo_label), Some(branch_label)) = (label_value(&row.labels, "repo:"), label_value(&row.labels, "branch:")) else { return };
     let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), home);

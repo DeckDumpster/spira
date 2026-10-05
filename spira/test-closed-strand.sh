@@ -2,17 +2,9 @@
 #
 # test-closed-strand.sh — stranded-bead detection and recovery (sp-bf31a).
 #
-# THREE SCENARIOS:
+# ONE SCENARIO:
 #
-#   1. EJECTED-NOT-REQUEUED. A bead is closed with a branch and a landstate of EJECTED
-#      (batch gate failure). The sentinel (CHECK6) reopens it on the next pass.
-#      Positive control: an open bead with an EJECTED landstate is left alone.
-#
-#   2. LANDSTATE PRUNE. A closed bead's landstate file exists but the branch is gone.
-#      The landing pass prunes the orphaned file.
-#      Positive control: a closed bead WITH a live branch keeps its landstate.
-#
-#   3. ANOMALY SPLIT. SP_UNLANDED_N is split into SP_STRANDED_N (older than cert window)
+#   ANOMALY SPLIT. SP_UNLANDED_N is split into SP_STRANDED_N (older than cert window)
 #      and SP_CERT_N (within cert window). A bead closed 5 minutes ago counts as
 #      awaiting cert, not stranded.
 #
@@ -40,7 +32,8 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 git -C "$REPO" remote set-head origin main
-mkdir -p "$RUN/worktree" "$RUN/landstate" "$SH/chamber"
+mkdir -p "$RUN/worktree" "$SH/chamber"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/incident.sh" "$HERE/suite-covers.sh" "$SH/"
@@ -99,89 +92,7 @@ echo "test-closed-strand.sh"
 
 # ======================================================================================
 echo
-echo "SCENARIO 1: EJECTED-NOT-REQUEUED — CHECK6 reopens a closed+EJECTED bead:"
-# ======================================================================================
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-ej","title":"ejected closed","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-ej","depends_on_id":"sp-epic","type":"parent-child"}]}
-{"id":"sp-open","title":"open with ejected landstate","status":"open","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","dependencies":[{"issue_id":"sp-open","depends_on_id":"sp-epic","type":"parent-child"}]}
-JSONL
-touch "$RUN/sp-ej.log" "$RUN/sp-open.log"
-
-# Create branches for both beads.
-git -C "$REPO" worktree add -q -b "spira/sp-ej" "$RUN/worktree/sp-ej" main
-git -C "$RUN/worktree/sp-ej" commit -q --allow-empty -m "sp-ej: work"
-git -C "$REPO" worktree add -q -b "spira/sp-open" "$RUN/worktree/sp-open" main
-git -C "$RUN/worktree/sp-open" commit -q --allow-empty -m "sp-open: work"
-
-# Write EJECTED landstate for both beads.
-_tip_ej="$(git -C "$REPO" rev-parse "spira/sp-ej")"
-_tip_open="$(git -C "$REPO" rev-parse "spira/sp-open")"
-printf 'EJECTED %s 0\n' "$_tip_ej"   > "$RUN/landstate/sp-ej"
-printf 'EJECTED %s 0\n' "$_tip_open" > "$RUN/landstate/sp-open"
-
-is "sp-ej starts closed"  closed "$(status_of sp-ej)"
-is "sp-open starts open"  open   "$(status_of sp-open)"
-
-out="$(landing)"
-printf '%s\n' "$out" | grep -E "sp-ej|sp-open|ejected|EJECTED|reopened" | head -20 >&2
-
-want   "CHECK6 reopens the closed+EJECTED bead"       "reopened sp-ej"    "$out"
-is     "sp-ej is now open"                            open "$(status_of sp-ej)"
-nowant "CHECK6 does not reopen the open+EJECTED bead" "reopened sp-open"  "$out"
-is     "sp-open stays open"                           open "$(status_of sp-open)"
-
-git -C "$REPO" worktree remove --force "$RUN/worktree/sp-ej"   2>/dev/null || true
-git -C "$REPO" worktree remove --force "$RUN/worktree/sp-open" 2>/dev/null || true
-git -C "$REPO" branch -D "spira/sp-ej" "spira/sp-open" 2>/dev/null || true
-rm -f "$RUN/landstate/sp-ej" "$RUN/landstate/sp-open"
-
-# ======================================================================================
-echo
-echo "SCENARIO 2: LANDSTATE PRUNE — orphaned landstate file removed each pass:"
-# ======================================================================================
-testdb_reset
-testdb_seed <<JSONL
-{"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["spira"],"updated_at":"$PAST"}
-{"id":"sp-pruned","title":"no branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-pruned","depends_on_id":"sp-epic","type":"parent-child"}]}
-{"id":"sp-kept","title":"has branch","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"$PAST","started_at":"$PAST","dependencies":[{"issue_id":"sp-kept","depends_on_id":"sp-epic","type":"parent-child"}]}
-JSONL
-touch "$RUN/sp-pruned.log" "$RUN/sp-kept.log"
-
-# sp-pruned: has a landstate but no branch — the orphaned case.
-printf 'RED none 0\n' > "$RUN/landstate/sp-pruned"
-
-# sp-kept: has a landstate AND a live branch — must not be pruned.
-git -C "$REPO" worktree add -q -b "spira/sp-kept" "$RUN/worktree/sp-kept" main
-git -C "$RUN/worktree/sp-kept" commit -q --allow-empty -m "sp-kept: work"
-printf 'RED none 0\n' > "$RUN/landstate/sp-kept"
-
-[ -f "$RUN/landstate/sp-pruned" ] \
-    && ok "sp-pruned landstate exists before the pass" \
-    || bad "sp-pruned landstate exists before the pass" "file not created"
-
-out="$(landing)"
-printf '%s\n' "$out" | grep -i "pruning\|landstate" | head -10 >&2
-
-if [ -f "$RUN/landstate/sp-pruned" ]; then
-    bad "orphaned landstate sp-pruned was pruned" "file still exists after landing pass"
-else
-    ok "orphaned landstate sp-pruned was pruned by the landing pass"
-fi
-if [ -f "$RUN/landstate/sp-kept" ]; then
-    ok "landstate sp-kept was NOT pruned (bead has a live branch)"
-else
-    bad "landstate sp-kept was NOT pruned" "file was incorrectly removed"
-fi
-
-git -C "$REPO" worktree remove --force "$RUN/worktree/sp-kept" 2>/dev/null || true
-git -C "$REPO" branch -D "spira/sp-kept" 2>/dev/null || true
-rm -f "$RUN/landstate/sp-kept"
-
-# ======================================================================================
-echo
-echo "SCENARIO 3: ANOMALY SPLIT — SP_STRANDED_N vs SP_AWAITING_N:"
+echo "SCENARIO: ANOMALY SPLIT — SP_STRANDED_N vs SP_AWAITING_N:"
 # ======================================================================================
 # This scenario invokes cockpit-collect directly (like test-cockpit-unlanded.sh).
 REAL_BD="$(PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin" command -v bd 2>/dev/null)"

@@ -47,6 +47,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -124,7 +125,7 @@ branch() {
 }
 
 main_tip()     { git -C "$REMOTE" rev-parse main 2>/dev/null; }
-landstate()    { cat "$RUN/landstate/${1:-}" 2>/dev/null; }
+lc_calls()     { grep "^certify $1 " "$LC_FIX/calls.log" 2>/dev/null; }
 gate_n()       { [ -f "$GATE_COUNT" ] && wc -l < "$GATE_COUNT" || echo 0; }
 
 echo "test-certify.sh"
@@ -138,20 +139,8 @@ out="$(landing)"
 is   "gate called once at queue-mode entry"  "1"        "$(gate_n)"
 want "certify is reported"                   "certified spira/sp-cert-green" "$out"
 is   "remote main is unchanged"              "$before"  "$(main_tip)"
-case "$(landstate sp-cert-green)" in
-    CERTIFIED*) ok "landstate says CERTIFIED" ;;
-    *)          bad "landstate says CERTIFIED" "got: $(landstate sp-cert-green)" ;;
-esac
+want "lifecycle was told the gate passed" " pass " "$(lc_calls sp-cert-green)"
 is   "bead stays closed after certify"       "closed"   "$(status_of sp-cert-green)"
-
-# -----------------------------------------------------------------------------------------
-# SECOND PASS ON THE SAME TIP: no-op — already CERTIFIED at this tip, so no re-gate and no
-# duplicate certify message. This is what keeps a waiting branch from being re-gated every
-# pass.
-# -----------------------------------------------------------------------------------------
-out2="$(landing)"
-is   "gate not re-called on second pass"     "0"        "$(gate_n)"
-nowant "no second certify message"           "certified spira/sp-cert-green" "$out2"
 
 # -----------------------------------------------------------------------------------------
 # TIP MOVE: moving the branch tip after certification re-gates and re-certifies the new tip.
@@ -165,10 +154,7 @@ new_tip="$(git -C "$REPO" rev-parse spira/sp-cert-move 2>/dev/null)"
 out="$(landing)"   # second pass: re-gates and re-certifies the new tip
 is   "gate re-called after tip move"   "1"  "$(gate_n)"
 want "second certify reported"         "certified spira/sp-cert-move" "$out"
-case "$(landstate sp-cert-move)" in
-    *"$new_tip"*) ok "landstate updated to new tip" ;;
-    *)            bad "landstate updated to new tip" "expected [$new_tip] in [$(landstate sp-cert-move)]" ;;
-esac
+want "lifecycle was told the new tip passed" "certify sp-cert-move $new_tip pass" "$(lc_calls sp-cert-move)"
 
 # -----------------------------------------------------------------------------------------
 # GATE FAIL REOPENS THE BEAD AND DOES NOT CERTIFY. This is the plant that a landing.sh with
@@ -181,10 +167,7 @@ out="$(landing)"
 is   "FAIL: gate was called"           "1"    "$(gate_n)"
 want "FAIL: reopen is reported"        "reopened sp-cert-fail — failed the certification gate" "$out"
 is   "FAIL: bead is no longer closed"  "no"   "$([ "$(status_of sp-cert-fail)" = closed ] && echo yes || echo no)"
-case "$(landstate sp-cert-fail)" in
-    RED*) ok "FAIL: landstate says RED" ;;
-    *)    bad "FAIL: landstate says RED" "got: $(landstate sp-cert-fail)" ;;
-esac
+want "FAIL: lifecycle was told red" " red " "$(lc_calls sp-cert-fail)"
 nowant "FAIL: never reaches CERTIFIED" "certified spira/sp-cert-fail" "$out"
 
 # -----------------------------------------------------------------------------------------
@@ -200,32 +183,14 @@ is   "NO_VERDICT: gate was called"          "1"      "$(gate_n)"
 is   "NO_VERDICT: bead stays closed"        "closed" "$(status_of sp-cert-noverdict)"
 nowant "NO_VERDICT: never reopened"         "reopened sp-cert-noverdict" "$out"
 nowant "NO_VERDICT: never certified"        "certified spira/sp-cert-noverdict" "$out"
-case "$(landstate sp-cert-noverdict)" in
-    CERTIFIED*) bad "NO_VERDICT: landstate is not CERTIFIED" "got: $(landstate sp-cert-noverdict)" ;;
-    *)          ok "NO_VERDICT: landstate is not CERTIFIED" ;;
-esac
+nowant "NO_VERDICT: lifecycle was not told it passed" " pass " "$(lc_calls sp-cert-noverdict)"
 
 # -----------------------------------------------------------------------------------------
-# WITHDRAWN AT THE SAME TIP STAYS WITHDRAWN (sp-pedat): a bead ejected while certified
-# stays closed in the store (queue.sh eject's mid-batch path writes RED/WITHDRAWN without
-# reopening the bd issue), so this pass reaches it as an ordinary closed queue-mode bead.
-# "not CERTIFIED" must not be read as "needs certifying" — a withdrawal at the current tip
-# holds until the tip moves.
+# A MOVED TIP (the aeon's rework) is gated and certified again.
 # -----------------------------------------------------------------------------------------
 seed; branch sp-cert-withdrawn
 landing > /dev/null   # first pass: certify
-wd_tip="$(git -C "$REPO" rev-parse spira/sp-cert-withdrawn 2>/dev/null)"
-printf 'WITHDRAWN %s %s eject\n' "$wd_tip" "$(date +%s)" > "$RUN/landstate/sp-cert-withdrawn"
 rm -f "$GATE_COUNT" "$RUN/landing.progress"
-out="$(landing)"
-is   "gate not called on a withdrawn bead" "0" "$(gate_n)"
-nowant "no re-certify message for the withdrawn bead" "certified spira/sp-cert-withdrawn" "$out"
-case "$(landstate sp-cert-withdrawn)" in
-    WITHDRAWN*) ok "landstate stays WITHDRAWN at the same tip" ;;
-    *)          bad "landstate stays WITHDRAWN at the same tip" "got: $(landstate sp-cert-withdrawn)" ;;
-esac
-
-# A new tip (the aeon's rework) recertifies normally — and is gated again.
 printf 'v2\n' > "$RUN/worktree/sp-cert-withdrawn/sp-cert-withdrawn.txt"
 git -C "$RUN/worktree/sp-cert-withdrawn" add -A
 git -C "$RUN/worktree/sp-cert-withdrawn" commit -q -m "sp-cert-withdrawn sp-1fm88 — rework"
@@ -233,10 +198,7 @@ wd_tip2="$(git -C "$REPO" rev-parse spira/sp-cert-withdrawn 2>/dev/null)"
 out="$(landing)"
 is   "moved tip: gate re-called"      "1" "$(gate_n)"
 want "moved tip: certify is reported" "certified spira/sp-cert-withdrawn" "$out"
-case "$(landstate sp-cert-withdrawn)" in
-    *"$wd_tip2"*) ok "landstate certifies the new tip" ;;
-    *)            bad "landstate certifies the new tip" "expected [$wd_tip2] in [$(landstate sp-cert-withdrawn)]" ;;
-esac
+want "moved tip: lifecycle was told the new tip passed" "certify sp-cert-withdrawn $wd_tip2 pass" "$(lc_calls sp-cert-withdrawn)"
 
 # -----------------------------------------------------------------------------------------
 # TEN BRANCHES, ONE PASS: every one is gated exactly once and reaches CERTIFIED.
@@ -249,10 +211,7 @@ out="$(landing)"
 is "ten branches: exactly ten gate.sh invocations" "10" "$(gate_n)"
 _certified_n=0
 for i in 1 2 3 4 5 6 7 8 9 10; do
-    case "$(landstate "sp-ten-$i")" in
-        CERTIFIED*) _certified_n=$(( _certified_n + 1 )) ;;
-        *) bad "sp-ten-$i reached CERTIFIED" "got: $(landstate "sp-ten-$i")" ;;
-    esac
+    if lc_called "$LC_FIX" certify "sp-ten-$i"; then _certified_n=$(( _certified_n + 1 )); else bad "sp-ten-$i reached CERTIFIED" "no certify event for it"; fi
 done
 is "ten branches: all ten reached CERTIFIED in one pass" "10" "$_certified_n"
 
@@ -342,10 +301,7 @@ want "queue.local: certify is reported"      "certified spira/sp-qlocal-cert" "$
 is   "queue.local: local/main is untouched"  "$localmain_before" "$(git -C "$LOCALREPO" rev-parse local/main)"
 is   "queue.local: branch tip is byte-identical (never rebased)" \
     "$qlocal_tip" "$(git -C "$LOCALREPO" rev-parse spira/sp-qlocal-cert)"
-case "$(landstate sp-qlocal-cert)" in
-    CERTIFIED*) ok "queue.local: landstate says CERTIFIED" ;;
-    *)          bad "queue.local: landstate says CERTIFIED" "got: $(landstate sp-qlocal-cert)" ;;
-esac
+want "queue.local: lifecycle was told the gate passed" " pass " "$(lc_calls sp-qlocal-cert)"
 is   "queue.local: bead stays closed"        "closed" "$(status_of sp-qlocal-cert)"
 nowant "queue.local: no reopen for the planted conflict" "Reopened by sentinel" "$out"
 

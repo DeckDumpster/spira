@@ -62,7 +62,6 @@ pub trait Git {
 
 /// The lib.sh seam (DESIGN.md §6). Every call is one fixed script; every value on stdin.
 pub trait Lib {
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn reopen(&self, id: &str, cause: &str, note: &str);
     fn event(&self, kind: &str, id: &str, title: &str, detail: &str);
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str);

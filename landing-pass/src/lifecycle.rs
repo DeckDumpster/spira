@@ -1,23 +1,8 @@
-//! The lifecycle switch (DESIGN.md §9). `lifecycle_enforce` is THE switch for everything
-//! that touches the lifecycle machine, resolved by the shared spira-config rule: the process
-//! environment's `SPIRA_LIFECYCLE_ENFORCE` wins (`1`/`true` = on, anything else = off); else
-//! the typed `spira.lifecycle_enforce`; else OFF. Binary presence is never consulted — a
-//! spira-lc on disk does not turn anything on.
-//!
-//! OFF (production today): this binary never invokes spira-lc, not even to probe it.
-//! ON: spira-lc is authoritative; one that cannot be reached is a loud refusal of the step
-//! that needed it.
+//! The lifecycle machine is the only record: spira-lc is authoritative, and one that cannot
+//! be reached is a loud refusal of the step that needed it.
 
-/// This invocation's switch: `spira_config::lifecycle_enforce` — the one resolution rule the
-/// harness's crates share — over the document conf.sh resolved (`SPIRA_TOML_FILE`).
-pub fn lifecycle_on(doc: Option<&std::path::Path>) -> bool {
-    spira_config::lifecycle_enforce(doc)
-}
-
-/// Pin the resolved switch into this process's environment before any child starts, so
-/// every child resolves the same mode. OFF is SPIRA_LIFECYCLE_ENFORCE=0 — the one switch the
-/// bash this binary still runs (pr-pass-branch.sh, the lib.sh seams) reads; spira-lc is
-/// invoked by name, so there is no path to poison (sp-gypjk).
+/// Pin the switch into this process's environment before any child starts, so the bash
+/// this binary still runs (the lib.sh seams) resolves the same mode.
 pub fn pin_for_children(on: bool) {
     std::env::set_var("SPIRA_LIFECYCLE_ENFORCE", if on { "1" } else { "0" });
 }

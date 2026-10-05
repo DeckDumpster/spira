@@ -154,7 +154,6 @@ spira/test-landing-pr.sh
 spira/test-landing-queue-early.sh
 spira/test-landing-race.sh
 spira/test-landing-rebase.sh
-spira/test-landing-red-recurring.sh
 spira/test-landing.sh
 spira/test-land-local-release.sh
 spira/test-land-mode-local.sh

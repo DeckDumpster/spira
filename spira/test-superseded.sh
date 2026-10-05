@@ -41,6 +41,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
    "$HERE/suite-covers.sh" "$SH/"

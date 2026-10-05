@@ -102,8 +102,7 @@ pub struct Settings {
     pub pr_refresh_max: u32,
     /// The config document conf.sh resolved (`SPIRA_TOML_FILE`), for the lifecycle switch.
     pub toml: Option<PathBuf>,
-    /// THE lifecycle switch (DESIGN.md §9), resolved once per invocation by
-    /// `lifecycle::lifecycle_on`. OFF: spira-lc is never invoked.
+    /// Always true in a real invocation: spira-lc is the only record. Tests may set it false.
     pub lifecycle_enforce: bool,
     /// `SPIRA_ASK_LABEL` (sp-31hjr): the label an operator ask carries — `ask_already_open`'s
     /// own query, native now (family C).
@@ -129,10 +128,6 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn landstate(&self) -> PathBuf {
-        self.run.join("landstate")
-    }
-
     /// Defaults for tests: everything under one run directory.
     pub fn for_run(run: PathBuf) -> Settings {
         Settings {
@@ -299,40 +294,6 @@ impl LandState {
         let at = it.next().unwrap_or("").parse().unwrap_or(0);
         let reason = it.next().unwrap_or("").trim().to_string();
         Some(LandState { state, tip, at, reason })
-    }
-}
-
-/// `$SPIRA_RUN/submitted/<id>`: "<tip> <epoch> <state> <refreshes>\n" (lib.sh mark_submitted).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Submitted {
-    pub tip: String,
-    pub at: u64,
-    pub state: String,
-    pub refreshes: u32,
-}
-
-impl Submitted {
-    pub fn parse(text: &str) -> Option<Submitted> {
-        let mut w = text.split_whitespace();
-        let tip = w.next()?.to_string();
-        let at = w.next()?.parse().ok()?;
-        let state = w.next().unwrap_or("").to_string();
-        let refreshes = w.next().and_then(|n| n.parse().ok()).unwrap_or(0);
-        Some(Submitted { tip, at, state, refreshes })
-    }
-    pub fn render(&self) -> String {
-        format!("{} {} {} {}\n", self.tip, self.at, self.state, self.refreshes)
-    }
-    /// lib.sh `submitted <id> <tip>`: nothing more to do for this tip — the same tip, and
-    /// not a failed submission (a failed one is retried, but not sooner than an hour).
-    pub fn settles(&self, tip: &str, now: u64) -> bool {
-        if self.tip != tip {
-            return false;
-        }
-        if self.state != "failed" {
-            return true;
-        }
-        now.saturating_sub(self.at) < 3600
     }
 }
 
