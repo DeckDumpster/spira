@@ -14,8 +14,30 @@ pub fn looks_like_bead_id(s: &str) -> bool {
     if s.get(0..3).filter(|p| p.eq_ignore_ascii_case("sp-")).is_none() {
         return false;
     }
-    let rest = &s[3..];
-    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric())
+    // `sp-<alnum>` then any number of `.<digits>` child parts (sp-oqf8c.3, sp-zs04v.3.1): a
+    // child bead must be able to bind and submit like any other (the broker's own check
+    // already allows the dot; this one refused every child bead).
+    let mut parts = s[3..].split('.');
+    let head = parts.next().unwrap_or("");
+    !head.is_empty()
+        && head.chars().all(|c| c.is_ascii_alphanumeric())
+        && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+}
+
+#[cfg(test)]
+mod bead_id_tests {
+    use super::looks_like_bead_id;
+
+    #[test]
+    fn child_bead_ids_are_bead_ids() {
+        assert!(looks_like_bead_id("sp-oqf8c"));
+        assert!(looks_like_bead_id("sp-oqf8c.3"));
+        assert!(looks_like_bead_id("sp-zs04v.3.1"));
+        assert!(!looks_like_bead_id("sp-oqf8c."));
+        assert!(!looks_like_bead_id("sp-.3"));
+        assert!(!looks_like_bead_id("sp-a.b"));
+        assert!(!looks_like_bead_id("sp-st-lbo"));
+    }
 }
 
 /// The one enforcement point for "a verb naming any bead other than the bound one is
