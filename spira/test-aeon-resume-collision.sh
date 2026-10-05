@@ -123,9 +123,17 @@ cands="$(spira-lc list 2>/dev/null)"
 # aeon. Which id it was is recorded, so the suite learns the aeon's own order, never assumes it.
 STOLEN_MARK="$TMP/stolen"
 STEAL="$TMP/steal"; mkdir -p "$STEAL"
+# The stand-in hands verbs it does not answer to the next spira-lc on PATH — which, with this
+# wrapper first, would be the wrapper again; so the wrapper hands those to the tree's own
+# spira-lc directly.
+REAL_LC="$(PATH="${PATH//$TMP\/lcm:/}" command -v spira-lc)"
 cat > "$STEAL/spira-lc" <<STUB
 #!/usr/bin/env bash
-if [ "\${1:-}" = event ] && [[ "\$*" == *Claim* ]] && [ ! -f "$STOLEN_MARK" ]; then
+case "\${1:-}" in
+    show|list|event|create-bead|unclaim) ;;
+    *) exec "$REAL_LC" "\$@" ;;
+esac
+if [ "\$1" = event ] && [[ "\$*" == *Claim* ]] && [ ! -f "$STOLEN_MARK" ]; then
     printf '%s\n' "\$3" > "$STOLEN_MARK"
     "$TMP/lcm/spira-lc" event bead "\$3" --expect READY --version 0 --actor aeon-other --kind '{"Claim":{}}' >/dev/null 2>&1
 fi

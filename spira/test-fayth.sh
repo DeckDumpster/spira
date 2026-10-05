@@ -124,8 +124,9 @@ is "ops is summoned for its own incident bead" "1" "$(summons)"
 
 set_store "$PLAN_BEAD"; rm -f "$SUMMONED"
 is "ops does NOT take the builder's plan bead" "0" "$(fayth_ready ops 2>/dev/null)"
-summon_fayth ops >/dev/null 2>&1 || true
-is "and ops is not summoned for it" "0" "$(summons)"
+sum_out="$(summon_fayth ops 2>&1)" || true
+[ "$(summons)" = 0 ] && ok "and ops is not summoned for it" \
+    || bad "and ops is not summoned for it" "summons=$(summons); summon_fayth said: $sum_out"
 
 # ==========================================================================================
 # fayth_ready — builder uses ITS OWN predicate

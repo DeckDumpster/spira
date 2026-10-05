@@ -513,7 +513,9 @@ aeon_fixture_agent() {
 #   else a claim this stand-in applied ($SPIRA_RUN/lc-claim/<id>, the holder) → WORKING;
 #   else bd in_progress → WORKING (holder = assignee); anything else → READY.
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
-# Verbs: `show <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), and
+# Verbs: `show <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0),
+# `unclaim <id> <actor>` (spira-lc's own rule: a WORKING row is released only by its holder,
+# else exit 1; any other state is already released, 0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
 # exit 3, refused — a bead another aeon holds is never taken over) and records the holder
 # (and appends "<id> <actor>" to $SPIRA_RUN/lc-claims.log, so a suite can ask who claimed);
@@ -526,7 +528,7 @@ lc_aeon_mirror() {
     cat > "$dir/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 case "${1:-}" in
-    show|list|event|create-bead) ;;
+    show|list|event|create-bead|unclaim) ;;
     *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
 esac
 [ "$1" = create-bead ] && exit 0
@@ -578,6 +580,18 @@ elif verb == "show":
     if r is None:
         sys.exit(1)
     print(json.dumps({"bead": r, "delivery": None}))
+elif verb == "unclaim":
+    i, actor = (args[1] if len(args) > 1 else ""), (args[2] if len(args) > 2 else "")
+    r = rows.get(i)
+    if r is None or not actor:
+        sys.exit(1)
+    if r["state"] != "WORKING":
+        sys.exit(0)
+    if r["holder"] != actor:
+        sys.exit(1)
+    claim = os.path.join(run, "lc-claim", i)
+    if os.path.exists(claim):
+        os.remove(claim)
 elif verb == "event":
     i = args[2] if len(args) > 2 else ""
     opt = {args[k]: args[k + 1] for k in range(3, len(args) - 1) if args[k].startswith("--")}
