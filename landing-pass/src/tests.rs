@@ -399,12 +399,17 @@ struct FakeLc {
     probes: Cell<u32>,
     down: RefCell<Option<String>>,
     submitted: RefCell<HashMap<String, String>>,
+    /// `spira-lc list --state CERTIFIED` rows: id → tip.
+    certified_rows: RefCell<HashMap<String, String>>,
     certified: RefCell<Vec<String>>,
     refuse_pass: Cell<bool>,
 }
 impl crate::lifecycle::Lc for FakeLc {
     fn submitted(&self) -> Result<HashMap<String, String>, String> {
         Ok(self.submitted.borrow().clone())
+    }
+    fn certified(&self) -> Result<HashMap<String, String>, String> {
+        Ok(self.certified_rows.borrow().clone())
     }
     fn certify(&self, id: &str, tip: &str, outcome: &str, _: &str) -> Result<String, String> {
         self.certified.borrow_mut().push(format!("{id} {tip} {outcome}"));
@@ -1776,6 +1781,37 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
     h.lc.refuse_pass.set(true);
     h.run();
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
+}
+
+/// Local acceptance on d40bbb589 (phase A, push-mode scratch repo): under enforce the model
+/// never closes its bead, and the push gate's own GatePass moves the row SUBMITTED ->
+/// CERTIFIED before the land. Reading only SUBMITTED as ready, the pass refused the land
+/// ("bead is now open (was closed at scan time)") and every later pass skipped the branch as
+/// "its bead is open" — CERTIFIED forever, never LANDED.
+#[test]
+fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
+    let mut h = H::new(LandMode::Push);
+    h.s.lifecycle_enforce = true;
+    h.git.tree.set(true);
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.certified_rows.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(!h.logged("CHECK6 sp-a: spira/sp-a not landed — its bead is open and no aeon holds it"));
+    assert!(h.lib.has("deliver_delivered sp-a head1"), "{:?}", h.lib.calls.borrow());
+}
+
+/// A queued repository's CERTIFIED beads belong to the batcher: the pass must not walk them
+/// again (that would re-gate a certified tip every pass).
+#[test]
+fn on_queue_mode_a_certified_bead_is_not_walked_again() {
+    let mut h = H::new(LandMode::QueueLocal);
+    h.s.lifecycle_enforce = true;
+    h.bead("sp-a", "open", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.lc.certified_rows.borrow_mut().insert("sp-a".into(), "t1".into());
+    h.run();
+    assert!(h.lc.certified.borrow().is_empty());
 }
 
 #[test]

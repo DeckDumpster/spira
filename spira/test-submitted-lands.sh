@@ -22,6 +22,8 @@
 #      claim, never landed.
 #   3. pr/hold mode: the merge happens off-box, and the Sending is the first to see the work
 #      on the base. A submitted bead whose branch is found landed there is closed.
+#   4. lifecycle_enforce, push mode: a bead whose lifecycle row the push gate moved from
+#      SUBMITTED to CERTIFIED is still landed by that same pass.
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
@@ -176,5 +178,33 @@ out="$(sending)"
 want "the Sending sends the landed branch"             "sp-sl-3" "$out"
 is   "and closes the submitted bead"                   closed "$(field sp-sl-3 status)"
 want "with the landed outcome"                         "OUTCOME: landed" "$(field sp-sl-3 close_reason)"
+
+# ======================================================================================
+echo
+echo "4. lifecycle_enforce, push mode — the gate certifies the SUBMITTED row, and it still lands:"
+# ======================================================================================
+# Local acceptance on d40bbb589: the model finishes with `work submit` (no bd close), so the
+# bead is open and only the lifecycle row says SUBMITTED. The push gate itself records
+# GatePass (SUBMITTED -> CERTIFIED) before the land; the pass then re-read the bead, found
+# no SUBMITTED row, logged "bead is now open (was closed at scan time) — not landing" and
+# every later pass skipped it as "its bead is open": READY, WORKING, SUBMITTED, CERTIFIED
+# and never LANDED. Here gate.sh moves the fixture row to CERTIFIED exactly as the real
+# gate's GatePass does.
+testdb_reset; seed sp-sl-4
+git -C "$REPO" fetch -q origin
+git -C "$REPO" branch -q -f spira/sp-sl-4 origin/main
+git -C "$REPO" worktree add -q "$TMP/wt4" spira/sp-sl-4
+printf 'four\n' > "$TMP/wt4/four.txt"
+git -C "$TMP/wt4" add -A; git -C "$TMP/wt4" commit -qm "sp-sl-4: the work"
+git -C "$REPO" worktree remove --force "$TMP/wt4"
+tip4="$(git -C "$REPO" rev-parse spira/sp-sl-4)"
+rm -rf "$LC_FIX/bead"; lc_bead SUBMITTED sp-sl-4 "$tip4" 1
+stub gate.sh "mkdir -p '$LC_FIX/bead/CERTIFIED'; mv '$LC_FIX/bead/SUBMITTED/sp-sl-4' '$LC_FIX/bead/CERTIFIED/sp-sl-4' 2>/dev/null; sed -i 's/SUBMITTED/CERTIFIED/' '$LC_FIX/bead/CERTIFIED/sp-sl-4'; echo \"gate: VERDICT=PASS reason=stub branch=\$1 repo=\${2:-?}\" >&2; exit 0"
+is   "setup: the bead is open (no model closes it under enforce)" open "$(field sp-sl-4 status)"
+out="$(SPIRA_LIFECYCLE_ENFORCE=1 landing)"
+gate_pass
+nowant "the pass does not refuse the land right after its own gate" "bead is now open" "$out"
+want   "the landing pass lands the certified bead's branch"         "landed spira/sp-sl-4" "$out"
+want   "its commit is on origin/main"                               "sp-sl-4: the work" "$(on_base)"
 
 tl_summary

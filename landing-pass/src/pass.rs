@@ -115,25 +115,45 @@ impl<'a> Pass<'a> {
         st
     }
 
+    /// [`Pass::land_status`] for a push or hold repository: its own gate records GatePass
+    /// before the land, so under `lifecycle_enforce` a CERTIFIED row reads as closed too.
+    /// Reading SUBMITTED alone refused every push land right after its own gate passed
+    /// ("bead is now open (was closed at scan time)"), once the model's `bd close` was gone.
+    pub(crate) fn push_land_status(&self, id: &str) -> String {
+        let st = self.land_status(id);
+        if st != "closed" && self.s.lifecycle_enforce && self.lc.certified().is_ok_and(|m| m.contains_key(id)) {
+            return "closed".into();
+        }
+        st
+    }
+
     fn status_closed(&self, id: &str) -> (bool, String) {
         let st = self.land_status(id);
         (st == "closed", st)
     }
 
     /// `bd show` rows, with the lifecycle machine's SUBMITTED-at-the-branch-tip rows read as
-    /// closed: under `lifecycle_enforce` the label is a projection, never the source.
-    pub(crate) fn show_rows(&self, repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
+    /// closed: under `lifecycle_enforce` the label is a projection, never the source. For a
+    /// repository that lands its own beads (`push`/`hold`, `own_certified`), CERTIFIED at the
+    /// tip reads as closed too: its gate certified it, and nothing else will land it.
+    pub(crate) fn show_rows(&self, repo: &std::path::Path, ids: &[String], own_certified: bool) -> Result<Vec<BeadRow>, String> {
         let mut rows = self.beads.show(ids)?;
         if !self.s.lifecycle_enforce {
             return Ok(rows);
         }
-        let submitted = match self.lc.submitted() {
+        let mut submitted = match self.lc.submitted() {
             Ok(m) => m,
             Err(why) => {
                 self.log(&crate::lifecycle::unreachable_line(&why, "no bead reads as submitted this pass"));
                 return Ok(rows);
             }
         };
+        if own_certified {
+            match self.lc.certified() {
+                Ok(m) => submitted.extend(m),
+                Err(why) => self.log(&crate::lifecycle::unreachable_line(&why, "no certified bead reads as ready this pass")),
+            }
+        }
         for r in rows.iter_mut().filter(|r| r.status != "closed") {
             let Some(tip) = submitted.get(&r.id) else { continue };
             if self.git.rev_parse(repo, &format!("spira/{}", r.id)).as_deref() == Some(tip.as_str()) {
@@ -285,7 +305,7 @@ impl<'a> Pass<'a> {
         }
 
         let ids: Vec<String> = refs.iter().map(|(b, _)| b.trim_start_matches("spira/").to_string()).collect();
-        let beads: HashMap<String, BeadRow> = match self.show_rows(&repo.path, &ids) {
+        let beads: HashMap<String, BeadRow> = match self.show_rows(&repo.path, &ids, !repo.mode.queued()) {
             Ok(rows) => rows.into_iter().map(|b| (b.id.clone(), b)).collect(),
             Err(e) => {
                 self.log(&format!("CHECK6 {name}: the bead store could not be read ({e}) — every branch reads as not closed this pass"));
@@ -690,7 +710,7 @@ impl<'a> Pass<'a> {
         }
         let ids: Vec<String> =
             fresh.iter().map(|(b, _)| b).chain(retry.iter()).map(|b| b.trim_start_matches("spira/").to_string()).collect();
-        let Ok(rows) = self.show_rows(&repo.path, &ids) else { return };
+        let Ok(rows) = self.show_rows(&repo.path, &ids, !repo.mode.queued()) else { return };
         for r in rows {
             w.beads.insert(r.id.clone(), r);
         }
