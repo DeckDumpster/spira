@@ -226,30 +226,6 @@ pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
     }
 }
 
-/// What a closed bead's lifecycle row says about a batch eviction racing the close.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Eviction {
-    None,
-    Stale,
-    Cap,
-    Reopen,
-}
-
-/// The row is `spira-lc show`'s bead object: REWORK with an eviction reason is an eviction.
-/// `row_tip` is the tip the eviction was recorded against; `cur_tip` the branch tip now.
-pub fn eviction_reopen(state: &str, reason: &str, row_tip: &str, cur_tip: &str, recent: i64, escalate_at: i64) -> Eviction {
-    if state != "REWORK" || !matches!(reason, "batch-ejected" | "base-withdrawn") {
-        return Eviction::None;
-    }
-    if !row_tip.is_empty() && !cur_tip.is_empty() && row_tip != cur_tip {
-        return Eviction::Stale;
-    }
-    if recent >= escalate_at {
-        return Eviction::Cap;
-    }
-    Eviction::Reopen
-}
-
 /// `open_ask_blocker <bd-show-json> <bead-id> <ask-label>`: does the bead carry an open,
 /// ask-labelled `blocks` dependency? (the teardown's decision_blocked input). Unparseable or
 /// empty JSON fails closed — not blocked, proceeds (sp-eq8a4.2.1).
@@ -545,18 +521,6 @@ mod tests {
         assert_eq!(disposition(&i).ledger_status, "?");
         let r = DispositionIn { requeue_cause: Some("-".into()), tip_moved: true, ..base() };
         assert_eq!(disposition(&r).note, NoteKey::Unlanded, "`-` is no cause");
-    }
-
-    #[test]
-    fn eviction_table() {
-        assert_eq!(eviction_reopen("CERTIFIED", "", "abc", "abc", 0, 3), Eviction::None);
-        assert_eq!(eviction_reopen("REWORK", "suites-failed", "abc", "abc", 0, 3), Eviction::None);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "abc", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "base-withdrawn", "abc", "abc", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "def", 0, 3), Eviction::Stale);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "", "def", 0, 3), Eviction::Reopen);
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "", 0, 3), Eviction::Reopen, "unknown current tip is not stale");
-        assert_eq!(eviction_reopen("REWORK", "batch-ejected", "abc", "abc", 3, 3), Eviction::Cap);
     }
 
     // test-aeon-disposition.sh's open_ask_blocker table.

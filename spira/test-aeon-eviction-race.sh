@@ -2,10 +2,10 @@
 #
 # test-aeon-eviction-race.sh — a bead closed in bd while its lifecycle row carries a live
 #   batch eviction is not taken as closed: since sp-mve9i the aeon reads the close from the
-#   row (REWORK), so the race below has nothing left to reopen. (History follows.) The pure decision (reopen/stale/cap/none) is aeon::decide::eviction_reopen
-#   (aeon/src/decide.rs) — eviction_reopen (lib.sh) retired dead (sp-j89pd, wave 4.2: zero
-#   live callers); its T1 table is deleted with it. aeon's own block is only the side
-#   effects (idempotence sidecar, the reopen/escalate calls), proved below by T3.
+#   row (REWORK), so the race below has nothing left to reopen, and the aeon's eviction-race
+#   reopen block (with aeon::decide::eviction_reopen) is deleted as unreachable: it fired only
+#   on a closed bead whose row was REWORK, and a REWORK row is never a close. This suite is
+#   the proof that stays. (History follows.)
 #
 # THE ORIGINAL DEFECT (sp-htw4r). A batch eviction writes landstate=RED/EJECTED and calls
 # bead_reopen. An aeon still in flight does not see the reopen — it closes the bead after

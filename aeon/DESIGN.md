@@ -29,7 +29,7 @@ the bead store, the lifecycle machine, git and a handful of files under `$SPIRA_
 5. **Runs the model session** under a liveness lease (trace growth renews it) and a
    deliverable-progress wall (thrash), streaming its trace to `$SPIRA_RUN/<bead>.log`.
 6. **Judges the outcome** — closed is not landed: the verdict fences (commit naming the
-   bead, delivers evidence, eviction race, own-worktree dirty, SOP closing rule, close
+   bead, delivers evidence, own-worktree dirty, SOP closing rule, close
    reason, groom escalations, workflow run, rebase currency), then the teardown disposition,
    which charges an attempt **only** for a named failure of the work (default-deny).
 7. **Accounts** — ledger lines `born`/`awake`/`done` that the cockpit, watchtower and the
@@ -46,8 +46,8 @@ ledger, the session — no claim, no worktree, no verdict.
   program only checks resumability (git) for the top tier, which `spira-claim` by design
   leaves to its caller.
 - **Not the poison decision.** Attempts and poison are `spira-claim`'s fold over the event
-  rows this program writes. The one count the aeon itself needs (prior eviction-race
-  reopens) is read from `spira-claim requeues --json`, not from hand-written SQL.
+  rows this program writes. (The one count the aeon itself needed — prior eviction-race
+  reopens, from `spira-claim requeues --json` — went with the eviction-race block, below.)
 - **Brief rendering is a separate module from claim selection** (`brief.rs` vs
   `claim.rs`): sp-f0qhr was ejected twice for mixing them. Nothing in `claim.rs` knows
   about chambers, `{{FINISH}}` or `lifecycle_enforce`.
@@ -161,7 +161,6 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
 | `$SPIRA_RUN/aeon-empty-gh/` | w | empty `GH_CONFIG_DIR` for the session |
 | `$SPIRA_MAIL/aeon-<bead>/{new,cur,tmp}` | w/rm | per-claim mailbox |
-| `$LANDSTATE/<bead>.evict-seen` | r/w | eviction-race idempotence sidecar |
 | `$SPIRA_RUN/world.halted`, `world.draining` | r | world gates |
 | `$SPIRA_RUN/groom.log` | r | groom escalation check window |
 | `<worktree gitdir>/spira-dirty-before` | w | pre-session dirty snapshot for the pre-commit hook |
@@ -307,7 +306,6 @@ struct Disposition { ledger_status: String, charge: bool, requeue_cause: Option<
 enum NoteKey { Capacity, Slain, ThrashCharged, Thrash, Lapsed, GateUnfinished,
     DecisionBlocked, Timeout, Requeue, OperatorWait, Submitted, YieldHeadless, PreSession,
     Unlanded, NotJudged }
-enum Eviction { None, Stale, Cap, Reopen }
 enum SopVerdict { Satisfied, Decline, Poison }
 struct CloseVerdict { outcome: String, reason: String, msg: String } // "outcome|reason|msg"
 
@@ -413,8 +411,7 @@ type is a work type (`bead_is_work_type`) and which carries no `delivers:` label
 ### 4.6 Verdict block (after the session, in order)
 
 wiki commit → status/superseded/delivers/type from one `bd show` → `verdict_committed` →
-eviction race (`eviction_reopen`; count of prior `eviction-race` reopens from spira-claim)
-→ `close_verdict` (keep delivers / keep superseded / reopen delivers-mismatch / reopen
+`close_verdict` (keep delivers / keep superseded / reopen delivers-mismatch / reopen
 closed-without-commit unless a work type) → own-worktree dirty (reopen prod-dirty,
 `SPIRA_ALLOW_PROD_DIRTY`) → SOP closing rule (`sop_rule_verdict`; poison) → close-reason
 fence (`close-reason-flags.py`, `SPIRA_CLOSE_REASON_OVERRIDE`) → groom escalation check →
@@ -461,13 +458,12 @@ is reimplemented in Rust, §6):
 | `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
 | `release_own_claim` | every release: `spira-lc unclaim` (lifecycle Release + bd `unclaim --if-assignee`, sp-hyo5e) |
-| `lc_claim_bead`, `lc_bead_verified` (the eviction-race `hold` is `spira-lc hold`, run directly since sp-arpjt) | lifecycle machine |
+| `lc_claim_bead`, `lc_bead_verified` | lifecycle machine |
 | `park_unmapped` | unmapped repo |
 | `spira_prune_worktrees` | prune-with-repair before cutting a worktree |
 | `bead_reopen` | every reopen (landstate WITHDRAWN, label removal, release, cause row, note) |
 | `bump_requeue`, `bump_lapsed`, `write_lapse_record`, `thrash_streak_bump`, `requeues_of` | event rows / thrash metadata / the display count on a requeue note |
 | `capacity_reset_at`, `capacity_pause_set` | the account's capacity window |
-| `eviction_reopen`'s inputs: `land_state`, `land_mark` | landstate |
 | `bead_is_work_type`, `bead_cited_commit_on_base`, `other_beads_on_conflicts`, `spira_destroy_branch` | helpers shared with landing |
 
 `session_outcome`, `session_yield_headless`, `open_ask_blocker`, `verdict_committed`,
@@ -499,7 +495,7 @@ Other subprocess seams are the scripts aeon.sh already called (§2.7), invoked t
 `log`/`die`; `bdq`/`bdjson`/`json_only`/`claim_retry` (for the aeon's own bd calls — the czar
 fence and create-time checks do not apply to any call the aeon makes itself); `aeon_own_unit`;
 `fayth_fenced`; `fayth_lease_seconds`; `world_stop_decide`; `hb_tick`; `aeon_disposition`;
-`outcome_charges`; `eviction_reopen` (pure part); `sop_rule_verdict`; `bead_has_label`;
+`outcome_charges`; `sop_rule_verdict`; `bead_has_label`;
 `session_result_fields`; `attempt_trace`; `spira_trace_mark`; `worktree_evict_foreign`;
 `worktree_move_aside`; `render_memories`; `system_prompt_split`; `aeon_settings`;
 `aeon_claude_argv` (`persona_model` through the spira-config library on conf.sh's resolved
@@ -526,8 +522,8 @@ Fakes for `Bd`, `Seam`, `Exec` and `Launcher`; git is real
 | module | contract it pins |
 |---|---|
 | `ledger` | every ledger format byte for byte, cockpit-metrics' regex over it, dry run writes nothing, trim 20,000→5,000, session fields (sum vs last, half-even rounding, `?` never 0), `attempt_trace` segments across a 64 KiB chunk, trace-mark numbering |
-| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, eviction, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
-| `verdict` | `eviction_race_count`; `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
+| `decide` | the disposition table row by row and its precedence, hb_tick (test-aeon-lease/test-thrash rows), world-stop, SOP verdict; `open_ask_blocker`, `session_outcome`, `session_yield_headless` and `rapid_recur_streak` phrasing/fixture tables (sp-8kqww, wave 4.33 — ported from the bash suites they retired) |
+| `verdict` | `verdict_committed` (branch then landrefs fallback), `delivers_verdict` (beads/note/report/applied.jsonl/check/action), `close_verdict` precedence (sp-8kqww, wave 4.33) |
 | `brief` | FINISH follows lifecycle_enforce only; LANDING/PARK per mode; FIXTURE truthful; resume/slain/deadline/holds renderers; notes bounding (`bead_body_is_bounded`); overlays whole/section/append/absent/blocks; literal, ordered substitution; thrash banner lands in task.md; system/task split; memories tiering and budget |
 | `claim` | ready set on stdin and nothing in argv; lookup/rank failure is claim-error; resumable tier; lost race falls through; claim_retry |
 | `worktree` | fresh cut + resume; mislabeled branch reset (sp-om71s case 1); own branch at a previous path moved aside (case 2); test-aeon-worktree-evict-foreign.sh row for row, including the refused move |
@@ -568,7 +564,8 @@ Changed:
 6. **The eviction-race prior count** comes from `spira-claim requeues --json` (reopen rows
    with cause `eviction-race`) instead of a hand-built `SELECT COUNT(*) … requeued …`
    interpolating the bead id. bead_reopen writes one such row per eviction-race reopen, so
-   the count is the same; on "cannot tell" it is 0, as before.
+   the count is the same; on "cannot tell" it is 0, as before. (Retired with the
+   eviction-race block, sp-mve9i — see "The eviction-race block, deleted".)
 7. **`aeon_alive`/install detect the binary** (cutover), since a Rust process's cmdline
    does not contain `aeon.sh`. Until cutover item 5 lands, lib.sh reads every binary
    aeon as dead (aeon_name_take would reuse names; pidfile-mode aeon_count would undercount),
@@ -713,3 +710,14 @@ Kept, although they look wrong (flagged for the operator):
     `world_stop_decide`, `hb_tick`, `hb_wait_outcome`, `sop_rule_verdict`,
     `render_*_brief`, `bound_bead_notes`, `system_prompt_split`, `aeon_claude_argv`,
     `aeon_settings`) lose their last caller, retire them with these suites.
+
+## The eviction-race block, deleted (sp-mve9i)
+
+The verdict fence used to reopen a bead closed in bd while its lifecycle row carried a live
+batch eviction (REWORK with `batch-ejected`/`base-withdrawn`), with an idempotence sidecar
+(`<bead>.evict-seen`) and a cap that escalated to the operator. Since sp-mve9i the aeon reads
+the close from the lifecycle row (`decide::builder_closed`: past the builder), and a REWORK
+row is never past the builder, so the block's condition could not hold. It is deleted with
+`decide::eviction_reopen`, `Eviction`, `verdict::EVICTION_RACE` and `eviction_race_count`.
+test-aeon-eviction-race.sh stays as the proof that an evicted bead's bd close is not read as
+a close. The `eviction-race` cause still folds in spira-claim's events and census for history.
