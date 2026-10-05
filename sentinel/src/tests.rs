@@ -1546,7 +1546,7 @@ fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
         !sink.has(" f blocked-by-unlanded"),
         "f depends on d, which is not in the unlanded set"
     );
-    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc, alongside CHECK 5's own"));
+    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc"));
 }
 
 #[test]
@@ -1606,6 +1606,44 @@ fn check5_lc_never_runs_off_and_never_gates_the_legacy_check5_call() {
     assert!(
         sink.has("audit pass complete"),
         "the audit pass still completed"
+    );
+}
+
+/// sp-jnwbn: the landstate CHECK 5 (closed-not-landed) is deleted, not switched off — with
+/// no skip switch in the environment (the drop-in a unit re-render deleted on
+/// 2026-10-04), a closed, aeon-worked bead with no landing record files no incident, walks
+/// no base history, and logs no CHECK5 line. Before the deletion this exact world filed an
+/// incident for sp-n ("landstate=none tip=none ...") and walked the base once.
+#[test]
+fn landstate_check5_never_runs_without_its_off_switch() {
+    let (w, r, sink, clock) = setup("c5gone");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"sp-n","status":"closed","issue_type":"task","labels":["spira","plan"]}]"#);
+        }
+        None
+    });
+    std::fs::write(w.run.join("sp-n.log"), "").unwrap();
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1")],
+        Some(&["spira\t/src/spira\torigin/main\t0"]),
+    );
+    assert!(sink.has("audit pass complete"), "{}", sink.text());
+    assert!(!sink.has("CHECK5"), "{}", sink.text());
+    assert_eq!(
+        r.count(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file")),
+        0,
+        "no closed-not-landed incident is filed"
+    );
+    assert_eq!(
+        r.count(|s| s.prog == "git" && s.args.iter().any(|a| a == "--format=%s")),
+        0,
+        "no base-history walk"
     );
 }
 

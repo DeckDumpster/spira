@@ -178,7 +178,6 @@
 5 spira/test-certify.sh
 2 spira/test-chamber-core-check.sh
 1 spira/test-chamber-repo-labels.sh
-27 spira/test-check5-invariant.sh
 5 spira/test-closed-strand.sh
 2 spira/test-cockpit-bd-contract.sh
 3 spira/test-cockpit-funnel.sh
@@ -210,7 +209,7 @@
 5 spira/test-groom-escalation-check.sh
 4 spira/test-groomer-incident-reroute.sh
 9 spira/test-groomer-split-piece.sh
-10 spira/test-groomer-state.sh
+9 spira/test-groomer-state.sh
 3 spira/test-groomer-sweep.sh
 12 spira/test-incident.sh
 2 spira/test-install-aeons.sh
@@ -278,7 +277,6 @@
 4 spira/test-sending-closed-reap.sh
 1 spira/test-sending-mode-filter.sh
 11 spira/test-sending.sh
-3 spira/test-sentinel-check5-subsumed.sh
 7 spira/test-set-state-semantics.sh
 1 spira/test-skew-check-release.sh
 1 spira/test-skew-foreign.sh

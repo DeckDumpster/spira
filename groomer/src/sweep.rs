@@ -1,4 +1,4 @@
-//! `groomer sweep [--dry-run]` — mechanical livelock and whole-graph STATE remedies run
+//! `groomer sweep [--dry-run]` — mechanical livelock and incident-reroute remedies run
 //! before the model pass. Parsing each detector's line is pure ([`parse`]); applying the
 //! remedy is the impure half below, against [`crate::bd::Bd`] and [`crate::seam::Seam`].
 //!

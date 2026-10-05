@@ -84,7 +84,6 @@ spira/test-census-pipeline.sh
 spira/test-certified-withdraw.sh
 spira/test-certify.sh
 spira/test-chamber-repo-labels.sh
-spira/test-check5-invariant.sh
 spira/test-closed-strand.sh
 spira/test-cockpit-bd-contract.sh
 spira/test-cockpit-funnel.sh
@@ -196,7 +195,6 @@ spira/test-review.sh
 spira/test-sending-closed-reap.sh
 spira/test-sending-mode-filter.sh
 spira/test-sending.sh
-spira/test-sentinel-check5-subsumed.sh
 spira/test-sentinel-pass.sh
 spira/test-session-hook.sh
 spira/test-skew-copies.sh
@@ -235,7 +233,6 @@ aeon/src/run.rs
 round-vm/src/cli.rs
 round-vm/src/config.rs
 sentinel/src/cfg.rs
-sentinel/src/check5.rs
 sentinel/src/tests.rs
 spira-claim/src/main.rs
 spira-claim/src/store.rs

@@ -236,7 +236,7 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+        PATH="$SH:$PATH" \
             command sentinel --audit 2>&1
     )"
     normal_out="$(
@@ -246,7 +246,7 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+        PATH="$SH:$PATH" \
             command sentinel 2>&1
     )"
     printf '%s\n%s\n' "$audit_out" "$normal_out"
