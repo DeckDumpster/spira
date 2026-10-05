@@ -626,8 +626,8 @@ lc_bead_verified() {
 #
 # ONE CALL, THROUGH THE MACHINE (sp-hyo5e): `spira-lc unclaim` applies the lifecycle Release
 # (switch on; best-effort, refusals from past-WORKING states are the row already being right)
-# and releases bd's claim mutex with `bd unclaim --if-assignee <me>` — the compare-and-swap
-# inverse of the aeon's `bd update --claim`. If a supervisor reclaimed the bead and handed it
+# and releases bd's claim mutex with bd's own unclaim under --if-assignee <me> — the
+# compare-and-swap inverse of the aeon's claim. If a supervisor reclaimed the bead and handed it
 # to another aeon between our fence check and this call, bd refuses and the bead is left with
 # the new holder. Nothing in shell writes a claim or a status around the machine any more.
 #
