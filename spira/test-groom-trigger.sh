@@ -84,6 +84,18 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
+# STUB SPIRA-LC. Whether a trigger bead is still open is its lifecycle row (sp-mve9i, design
+# §3.4), never bd status: `list` answers LC_LIST_OUTPUT (default: no rows).
+STUB_LC="$T/stub-lc"
+cat > "$STUB_LC" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    list) printf '%s\n' "${LC_LIST_OUTPUT:-[]}"; exit 0 ;;
+    *)    exit 2 ;;
+esac
+STUB
+chmod +x "$STUB_LC"
+
 # FIVE_OPEN: a minimal JSON array satisfying SPIRA_GROOM_THRESHOLD=5 (default). Used
 # as BD_TOTAL_OUTPUT wherever the short-circuit predicate must not suppress filing.
 FIVE_OPEN='[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'
@@ -99,6 +111,7 @@ run_trigger() {
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
         BD_TOTAL_OUTPUT="${BD_TOTAL_OUTPUT:-[]}" \
         SPIRA_DB="$T/fixture.db" \
@@ -132,7 +145,7 @@ echo "DEDUP: an open trigger exists — bd create is NOT called"
 # NOT appear in the log — if it does, the dedup check is broken.
 : > "$BD_LOG"
 BD_LIST_OUTPUT='[{"id":"sp-test","title":"Groomer pass"}]'
-out="$(BD_LIST_OUTPUT='[{"id":"sp-test","title":"Groomer pass"}]' run_trigger)"; rc=$?
+out="$(BD_LIST_OUTPUT='[{"id":"sp-test","title":"Groomer pass"}]' LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"READY"}]' run_trigger)"; rc=$?
 is     "dedup exits 0"              0           "$rc"
 nowant "bd create NOT called"       "create"    "$(cat "$BD_LOG")"
 want   "list IS called for dedup"   "list"      "$(cat "$BD_LOG")"
@@ -165,6 +178,7 @@ out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_LIST_OUTPUT="[]" \
         SPIRA_RUN="$T/run" \
         SPIRA_DB="$T/fixture.db" \
@@ -187,6 +201,7 @@ out="$(BD_LIST_OUTPUT="[]" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_TOTAL_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
@@ -217,6 +232,7 @@ out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_TOTAL_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
