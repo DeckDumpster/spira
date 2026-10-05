@@ -301,4 +301,29 @@ mod tests {
         assert!(fences.iter().any(|f| f == "build-fence"), "{fences:?}");
         assert!(!fences.iter().any(|f| f == crate::fence::SELECTOR), "{fences:?}");
     }
+
+    /// The lifecycle analyser guards every landing (sp-ts2qr; design bead-lifecycle-state-
+    /// machine §3.6(3), §3.8(2)): the tree builds its own lifecycle-guard, runs it over the
+    /// whole gate tree in gate mode, and the gate expects its fence line. The step carries no
+    /// `--rules` file and no path but the tree's root: there is no allow-list to hand it.
+    #[test]
+    fn the_checked_in_definition_runs_the_lifecycle_guard_over_the_whole_tree() {
+        let d = checked_in();
+        assert!(
+            d.bins.iter().any(|b| b.var == "SPIRA_GUARD_BIN" && b.package == "lifecycle-guard"),
+            "gate.steps does not build the tree's lifecycle-guard: {:?}",
+            d.bins
+        );
+        let steps: Vec<&String> = d.steps.iter().filter(|s| s.contains("SPIRA_GUARD_BIN")).collect();
+        assert_eq!(
+            steps,
+            [&r#""$SPIRA_GUARD_BIN" --gate ."#.to_string()],
+            "the guard runs once, in gate mode, over the tree root, with no rules or allow-list"
+        );
+        let fences = crate::fence::expected(&d.command());
+        assert!(fences.iter().any(|f| f == crate::fence::GUARD), "{fences:?}");
+        // It is a fence of every composition: the unit composition drops only the build fence.
+        let unit = crate::compose::gate_string(&crate::compose::Composition::Unit { touched: Vec::new(), crates: Vec::new() }, &d.command()).0;
+        assert!(crate::fence::expected(&unit).iter().any(|f| f == crate::fence::GUARD), "{unit}");
+    }
 }

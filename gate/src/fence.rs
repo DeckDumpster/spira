@@ -48,6 +48,15 @@ pub const LINT_RULE_FENCES: &[&str] = &[
     "tier-budget-areas",
 ];
 
+/// The lifecycle analyser's word in a gate string (sp-ts2qr: `bin SPIRA_GUARD_BIN
+/// lifecycle-guard` + `step "$SPIRA_GUARD_BIN" --gate .`). It is no `bash <path>` word, so
+/// without this the gate would not expect its line and a guard that scanned nothing would
+/// pass as silently as the test plan's fence once did (sp-ufbkh).
+const GUARD_WORDS: &[&str] = &["$SPIRA_GUARD_BIN", "${SPIRA_GUARD_BIN}"];
+
+/// lifecycle-guard's fence line: `fence: lifecycle-guard checked <n> files`.
+pub const GUARD: &str = "lifecycle-guard";
+
 /// The fences `cmd` runs, in the order they appear, each once.
 pub fn expected(cmd: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -96,6 +105,19 @@ pub fn expected(cmd: &str) -> Vec<String> {
                 }
             }
             words.push((at, names));
+        }
+    }
+    for gw in GUARD_WORDS {
+        let mut i = 0;
+        while let Some(off) = cmd[i..].find(gw) {
+            let at = i + off;
+            let end = at + gw.len();
+            let braced_dup = *gw == "$SPIRA_GUARD_BIN" && cmd[..at].ends_with("${");
+            i = end;
+            if braced_dup || cmd[end..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_') {
+                continue;
+            }
+            words.push((at, vec![GUARD.to_string()]));
         }
     }
     words.sort_by_key(|(at, _)| *at);
@@ -200,6 +222,23 @@ mod tests {
             "the selector runs no fence"
         );
         assert_eq!(expected("$SPIRA_LINT_BIN_OTHER"), Vec::<String>::new());
+    }
+
+    /// The lifecycle analyser is a fence by its variable, quoted or braced, in string order;
+    /// a longer variable that merely starts with the name is not it.
+    #[test]
+    fn the_lifecycle_guard_word_is_a_fence() {
+        assert_eq!(
+            expected(r#""$SPIRA_LINT_BIN" --only x && "$SPIRA_GUARD_BIN" --gate . && bash spira/build-fence.sh"#),
+            ["spira-lint", "lifecycle-guard", "build-fence"]
+        );
+        assert_eq!(expected(r#""${SPIRA_GUARD_BIN}" --gate ."#), ["lifecycle-guard"]);
+        assert_eq!(expected("$SPIRA_GUARD_BIN_OTHER --gate ."), Vec::<String>::new());
+        assert_eq!(
+            silent(&expected(r#""$SPIRA_GUARD_BIN" --gate ."#), "lifecycle-guard: ok\n"),
+            ["lifecycle-guard"],
+            "a guard run with no fence line is silent"
+        );
     }
 
     #[test]

@@ -92,3 +92,14 @@ inherits = "dev"
 opt-level = 0
 incremental = true
 debug = "line-tables-only"
+
+# lifecycle-guard runs as a gate fence over the whole tree (gate.steps, sp-ts2qr), built in
+# this profile by the gate's tools phase. At opt-level 0 the tree-sitter bash parse of the
+# harness's ~116k lines of shell took ~22 s every gate; optimising the guard and its parser
+# alone costs a few seconds of compile once per cached tree.
+[profile.aeon.package.lifecycle-guard]
+opt-level = 2
+[profile.aeon.package.tree-sitter]
+opt-level = 2
+[profile.aeon.package.tree-sitter-bash]
+opt-level = 2
