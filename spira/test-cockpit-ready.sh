@@ -23,9 +23,20 @@ trap 'rm -rf "$TMP"' EXIT
 RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 
+# The ready set is the lifecycle machine's (sp-v62vn: there is no off mode). This machine
+# holds one READY row, so the probe always asks bd for that bead's content — an empty bd
+# answer is zero ready, a refusing bd is a refusal.
+PROBE_LC="$TMP/probe-lc"; mkdir -p "$PROBE_LC"
+cat > "$PROBE_LC/spira-lc" <<'LC'
+#!/usr/bin/env bash
+[ "$1" = list ] && printf '[{"bead_id":"sp-ck-none","state":"READY","holder":null,"lease_until":null,"holds":[]}]\n'
+exit 0
+LC
+chmod +x "$PROBE_LC/spira-lc"
+
 run_probe() {   # run_probe <SPIRA_BD=path> -> stdout of probe()
     local bd_path="$1"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$PROBE_LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
