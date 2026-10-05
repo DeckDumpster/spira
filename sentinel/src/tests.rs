@@ -691,13 +691,10 @@ fn summon_only_gates_then_reads_ready_once() {
         run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
         0
     );
-    assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
-    assert_eq!(r.count(|s| is_bd(s, "list")), 0);
-    let ready = r.find(|s| is_bd(s, "ready")).unwrap();
-    assert!(
-        ready.line().contains("--label spira"),
-        "summon-only reads READY_ARGS"
-    );
+    // The ready set is fetched ONCE, by spira-claim inside bulk-ready-by-fayth: the sentinel
+    // itself no longer reads bd here (it counted nothing from it after sp-uqrdn).
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "the sentinel makes no bd call of its own");
+    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth")), 1);
     assert!(sink.has("summon-only: live=2 fayths=[builder ops]"));
     assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
     assert!(sink.has("summon-only pass complete — 0 action(s)"));
