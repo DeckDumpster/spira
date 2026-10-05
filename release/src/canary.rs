@@ -265,7 +265,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
 
 /// Every spira-lc call's bound (`timeout` argv): one row read or one event against the
 /// stage's own server.
-const LC_DEADLINE: &[&str] = &["10"];
+const LC_DEADLINE: &[&str] = &["5"];
 
 /// `cmd` with the stage's env laid over the caller's.
 fn staged<'c>(cmd: &'c mut Command, env: &[(String, String)]) -> &'c mut Command {
@@ -365,7 +365,7 @@ pub fn canary_worker() -> Result<(), String> {
 /// `timeout`'s argv for the worker's Submit: `spira-lc work <id> submit --tip <tip> --actor
 /// <holder>`, the verb `work submit` sends for an aeon.
 pub(crate) fn submit_args(id: &str, tip: &str, holder: &str) -> Vec<String> {
-    ["10", "spira-lc", "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
+    ["5", "spira-lc", "work", id, "submit", "--tip", tip, "--actor", holder].iter().map(|s| s.to_string()).collect()
 }
 
 /// The stage's one fayth (stage.rs `fayth_content`): the worker's ready set is this fayth's.

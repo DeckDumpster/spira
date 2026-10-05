@@ -187,7 +187,7 @@ fn live_pid(dir: &Path) -> Option<u32> {
 pub fn stop(root: &Path) {
     let dir = root.join(LC_DIR);
     let Some(pid) = live_pid(&dir) else { return };
-    let _ = Command::new("kill").args(["-TERM", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("timeout").args(["5", "kill", "-TERM", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(10) {
         if live_pid(&dir).is_none() {
@@ -195,7 +195,7 @@ pub fn stop(root: &Path) {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    let _ = Command::new("timeout").args(["5", "kill", "-KILL", &pid.to_string()]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
 }
 
 #[cfg(test)]

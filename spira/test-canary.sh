@@ -13,8 +13,8 @@
 #   - The stage git setup is correct: bare remote + working checkout on main
 #   - release stage down removes STAGE_ROOT completely, and stops the stage's lifecycle server
 #   - release stage up stands up a lifecycle store of its own (sp-880u4): a private Dolt
-#     sql-server built from lifecycle/ the way spira-install builds one, with every SPIRA_LC_*
-#     path under STAGE_ROOT, so no spira-lc call reaches the operator's machine
+#     sql-server built from lifecycle/ the way install builds one, its env pointing every
+#     lifecycle path under STAGE_ROOT, so no lifecycle call leaves the stage
 #   - release canary-worker claims through that machine and submits (READY -> SUBMITTED)
 #   - release canary runs end-to-end on a stage: bead filed → sentinel pass (with
 #     fake-summon.sh / release canary-worker) → landing pass → commit on origin/main
@@ -45,7 +45,7 @@ isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
 # lc_field <id> <field> — one field of the bead's row in the stage's lifecycle machine
 # (`spira-lc show`, reached through the stage's own SPIRA_LC_* env), empty when no row.
 lc_field() {
-    timeout 10 spira-lc show "$1" 2>/dev/null | python3 -c '
+    timeout 5 spira-lc show "$1" 2>/dev/null | python3 -c '
 import sys, json
 try: b = (json.load(sys.stdin) or {}).get("bead") or {}
 except Exception: b = {}
@@ -83,7 +83,7 @@ printf '\nT1: stage up creates expected structure\n'
     is "SPIRA_LC_USER=spira_lc" "spira_lc" "${SPIRA_LC_USER:-}"
     exists "stage lifecycle credential" "${SPIRA_LC_PASSWORD_FILE:-/nonexistent}"
     isnt "stage lifecycle port is not the operator's 3307" "3307" "${SPIRA_LC_PORT:-3307}"
-    lc_list="$(timeout 10 spira-lc list 2>&1)"; lc_rc=$?
+    lc_list="$(timeout 5 spira-lc list 2>&1)"; lc_rc=$?
     is "spira-lc list answers from the stage's machine" "0" "$lc_rc"
     is "the stage's machine starts empty" "[]" "$(tr -d '[:space:]' <<< "$lc_list")"
 
@@ -208,7 +208,7 @@ printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 
     # Its lifecycle row, as release canary files it. POSITIVE CONTROL: READY before the
     # worker, so the SUBMITTED below is the worker's doing.
-    timeout 10 spira-lc create-bead "$bead" >/dev/null 2>&1
+    timeout 5 spira-lc create-bead "$bead" >/dev/null 2>&1
     is "bead's lifecycle row is READY before the worker" "READY" "$(lc_field "$bead" state)"
 
     # Run the worker directly (it inherits the stage env, SPIRA_LC_* included, from the subshell)
