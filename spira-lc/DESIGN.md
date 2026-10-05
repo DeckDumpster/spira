@@ -55,7 +55,7 @@ event under that row's `(state, version)` — a stale view is refused (3), never
 are first moved by `Submit` (REWORK has no such transition, so it is refused and the verdict
 skipped — the shell's behaviour too), and the verdict lands only on SUBMITTED.
 `deliver pr-merged`'s proof is `merge-tree` when the merge commit holds the branch's
-content (lib.sh `content_landed`, ported), else `gh-merged`.
+content (`git_evidence::content_on_base`, the `content-landed` verb's proof), else `gh-merged`.
 
 ## 3. Decisions
 
