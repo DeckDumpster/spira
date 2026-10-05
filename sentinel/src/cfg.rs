@@ -244,7 +244,6 @@ pub struct Cfg {
     pub systemctl: String,
     pub summon: String,
     pub skip_reclaim: bool,
-    pub skip_closed: bool,
     /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
     /// unit test can point one at a fixture; nothing reads them from the environment.
     pub tsd_bin: String,
@@ -338,7 +337,6 @@ impl Cfg {
             "SPIRA_SCOPE_LABEL",
             "SPIRA_WORK_CLOSE_TYPES",
             "SPIRA_BATCH_MAXPAR",
-            "SPIRA_SKIP_CLOSED_CHECK",
             "SPIRA_SKIP_RECLAIM",
         ] {
             raw.insert(k.to_string(), s(k));
@@ -402,7 +400,6 @@ impl Cfg {
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
             summon: or("SPIRA_SUMMON", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
-            skip_closed: c.get("SPIRA_SKIP_CLOSED_CHECK") == Some("1"),
             tsd_bin: "tsd-write".into(),
             lc_bin: "spira-lc".into(),
             landing_bin: "landing-pass".into(),

@@ -46,8 +46,7 @@ refuses to run without it.
 
 ## What stays in lib.sh, and how this crate reaches it
 
-The detectors `sweep` drives — `detect_livelocked`, `detect_landed_but_open`,
-`detect_closed_unlanded_states`, `detect_false_blockers`, `detect_incident_needs_builder`
+The detectors `sweep` drives — `detect_livelocked`, `detect_incident_needs_builder`
 — and the write-side helpers `bead_reopen`, `bump_poison_cleared`, `poison_asked_clear`
 all live in `spira/lib.sh` and stay there: lib.sh is the rewrite programme's own group 4,
 proposed last, and Ryan's standing instruction during the cutover was "leave lib.sh
@@ -78,9 +77,7 @@ already-Rust binary, invoked by bare name on the release PATH, same as `spira-cl
 
 - `LIVELOCK <id> <category> — <reason>` — categories `ask-no-overseer`, `ci-stuck`,
   `unmapped-repo`, `unclaimable`.
-- `STATE <id> <kind> [<extra>] — <evidence>` — kinds `landed-but-open`,
-  `closed-no-branch`, `closed-never-landed <conflict|batch-ready>`,
-  `blocked-by-unlanded <blocker-id>`, `incident-is-code`.
+- `STATE <id> <kind> [<extra>] — <evidence>` — kind `incident-is-code`.
 
 Everything else in this crate is a direct 1:1 argument mapping onto `bd` verbs
 (`src/bd.rs::Bd`), kept behind a trait for the same reason as the lib.sh seam: every
@@ -139,7 +136,7 @@ the bash suites' `STUB_BD` argv-recording technique without a subprocess.
 Every subcommand's argument validation, every `sweep` remedy, and the litter predicate's
 full fail-open table are unit tests (`cargo test -p groomer`) against `FakeBd`/`FakeSeam`
 — CPU-bound, no container, no Dolt server. What genuinely needs a live bead store and real
-git ancestry (branch inheritance on `split-piece`, the STATE scan against a seeded fixture
+git ancestry (branch inheritance on `split-piece`, the retired STATE scan staying retired against a seeded fixture
 database) stays in the repointed bash suites (`test-groomer-split-piece.sh`,
 `test-groomer-state.sh`, `test-groomer-sweep.sh`, `test-groomer-incident-reroute.sh`,
 `test-groomer-poison-triage.sh`) run through `testenv`, now invoking the `groomer` binary
