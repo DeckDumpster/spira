@@ -36,6 +36,10 @@
 # covers: spira/lib.sh UC-landed-audit-reaping-15
 # scar: spira_destroy_branch called git branch -D unconditionally; a branch reclaimed before its commits reached origin/main was silently garbage-collected with no error.
 set -uo pipefail
+# This suite exercises the legacy landstate fence; an installed instance now turns
+# lifecycle_enforce on (sp-6ka75), under which sending consults a lifecycle store this fixture
+# never builds and answers 2 ("cannot tell") for every destroy. Pin it off, as other legacy suites do.
+export SPIRA_LIFECYCLE_ENFORCE=0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
