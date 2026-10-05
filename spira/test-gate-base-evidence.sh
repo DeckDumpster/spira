@@ -101,8 +101,12 @@ want "the branch trial sees the changed file"      "f1.txt"               "$bran
 want "SPIRA_GATE_HOST_CORES is no longer exported" "HOST_CORES=unset" "$branch_env"
 want "SUITES defaults to conf.sh's gate-suites path" "SUITES=/" "$branch_env"
 want "and names gate-suites"                         "gate-suites"          "$branch_env"
-want "BUDGET reaches the branch trial (sp-vq2za: the selector's own budget)" "BUDGET=300" "$branch_env"
-want "BUDGET reaches the base trial too"              "BUDGET=300"           "$base_env"
+# The registered default, never a literal: sp-juboj lowered it 300 -> 140 for the 5-minute gate
+# and a hardcoded 300 here went red on the round that landed it.
+_budget_default="$(sed -n 's/.*SPIRA_GATE_BUDGET:=\([0-9][0-9]*\).*/\1/p' "$(dirname "$0")/conf.d/SPIRA_GATE_BUDGET")"
+[ -n "$_budget_default" ] || { echo "not ok - cannot read SPIRA_GATE_BUDGET's registered default"; exit 1; }
+want "BUDGET reaches the branch trial (sp-vq2za: the selector's own budget)" "BUDGET=$_budget_default" "$branch_env"
+want "BUDGET reaches the base trial too"              "BUDGET=$_budget_default"           "$base_env"
 want "RUN reaches the branch trial, not dropped by env -i" "RUN=$RUN"        "$branch_env"
 
 # --------------------------------------------------------------------------------------
