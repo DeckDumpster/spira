@@ -201,6 +201,14 @@ RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 # resolves to a real file. Pointing it nowhere makes the check a no-op, same as
 # SPIRA_CONF's nonexistent path above — a real map is ambient configuration this suite
 # must not depend on.
+# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`.
+# census puts <home>/../bin first on PATH, so the stub lives in a release-shaped directory
+# whose spira/ is this tree: $LCSTATE/<id> holds the state, and no file is spira-lc's NO_ROW.
+LCHOME="$T/lchome"; LCSTATE="$T/lc-state"; mkdir -p "$LCHOME/bin" "$LCSTATE"
+ln -s "$HERE" "$LCHOME/spira"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$LCHOME/bin/spira-lc"
+chmod +x "$LCHOME/bin/spira-lc"
+
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
     env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
@@ -208,7 +216,7 @@ run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
         SPIRA_DB="$T/fixture.db" \
         SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
         SPIRA_CONF="$T/no-conf" \
-        SPIRA_HOME="$HERE" \
+        SPIRA_HOME="$LCHOME/spira" \
         SPIRA_RUN="$rundir" \
         SPIRA_REPO="${CENSUS_REPO:-$T/norepo}" \
         SPIRA_REPO_MAP="$T/no-repo-map" \
@@ -426,9 +434,11 @@ lack "closed remedy, branch in flight: still suppressed" "sp-recur-fallback-test
 want "closed remedy, branch in flight: annotated closed-not-landed" \
     "[suppressed: remedy closed, not landed]" "$(run_census_fake "$RUN_CLOSED" --with-suppressed)"
 
-# Land it: a commit naming the bead on the base -> unsuppressed.
+# A commit naming the bead on the base is not a landing; the lifecycle record's LANDED is.
 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
     git -C "$CENSUS_REPO" commit --allow-empty -q -m "spira: land sp-inflight"
+lack "naming commit alone: still suppressed" "sp-recur-fallback-test" "$(run_census_fake "$RUN_CLOSED")"
+echo LANDED > "$LCSTATE/sp-inflight"
 landed_out="$(run_census_fake "$RUN_CLOSED")"
 want "landed remedy: class reappears" "sp-recur-fallback-test" "$landed_out"
 lack "landed remedy: no suppression annotation" "[suppressed" "$landed_out"
