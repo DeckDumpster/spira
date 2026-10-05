@@ -11,7 +11,11 @@
 #   - Every path exported by up resolves under STAGE_ROOT (isolation assertion)
 #   - The stage's beads database is usable (bd create/list round-trips)
 #   - The stage git setup is correct: bare remote + working checkout on main
-#   - release stage down removes STAGE_ROOT completely
+#   - release stage down removes STAGE_ROOT completely, and stops the stage's lifecycle server
+#   - release stage up stands up a lifecycle store of its own (sp-880u4): a private Dolt
+#     sql-server built from lifecycle/ the way spira-install builds one, with every SPIRA_LC_*
+#     path under STAGE_ROOT, so no spira-lc call reaches the operator's machine
+#   - release canary-worker claims through that machine and submits (READY -> SUBMITTED)
 #   - release canary runs end-to-end on a stage: bead filed → sentinel pass (with
 #     fake-summon.sh / release canary-worker) → landing pass → commit on origin/main
 #
@@ -24,8 +28,8 @@
 #   - The real SPIRA_DB (before stage eval) is never written to in any test
 #
 # tier: T3
-# covers: release/src/canary.rs release/src/stage.rs
-# scar: unrecorded
+# covers: release/src/canary.rs release/src/stage.rs release/src/stage_lc.rs release/src/lifecycle_store.rs
+# scar: sp-880u4
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -37,6 +41,16 @@ tl_subshell_safe
 isnt()   { [ "$2" != "$3" ] && ok "$1" || bad "$1" "did not want [$2] got [$3]"; }
 exists() { [ -e "$2" ] && ok "$1" || bad "$1" "expected file/dir: $2"; }
 isexec() { [ -x "$2" ] && ok "$1" || bad "$1" "expected executable: $2"; }
+
+# lc_field <id> <field> — one field of the bead's row in the stage's lifecycle machine
+# (`spira-lc show`, reached through the stage's own SPIRA_LC_* env), empty when no row.
+lc_field() {
+    timeout 10 spira-lc show "$1" 2>/dev/null | python3 -c '
+import sys, json
+try: b = (json.load(sys.stdin) or {}).get("bead") or {}
+except Exception: b = {}
+print(b.get(sys.argv[1]) or "")' "$2" 2>/dev/null
+}
 
 # ─── T1: stage up creates expected structure ──────────────────────────────────
 printf '\nT1: stage up creates expected structure\n'
@@ -64,6 +78,14 @@ printf '\nT1: stage up creates expected structure\n'
     exists "repo checkout"         "$STAGE_ROOT/repo/.git"
     exists "SPIRA_RUN/worktree"    "$SPIRA_RUN/worktree"
     exists "stage db dir"          "$SPIRA_DB"
+
+    # The stage's own lifecycle machine (sp-880u4): reachable, as spira_lc, with the schema.
+    is "SPIRA_LC_USER=spira_lc" "spira_lc" "${SPIRA_LC_USER:-}"
+    exists "stage lifecycle credential" "${SPIRA_LC_PASSWORD_FILE:-/nonexistent}"
+    isnt "stage lifecycle port is not the operator's 3307" "3307" "${SPIRA_LC_PORT:-3307}"
+    lc_list="$(timeout 10 spira-lc list 2>&1)"; lc_rc=$?
+    is "spira-lc list answers from the stage's machine" "0" "$lc_rc"
+    is "the stage's machine starts empty" "[]" "$(tr -d '[:space:]' <<< "$lc_list")"
 
     # SPIRA_FAYTHS must be exactly "canary"
     is "SPIRA_FAYTHS=canary" "canary" "$SPIRA_FAYTHS"
@@ -98,7 +120,8 @@ printf '\nT2: stage isolation — all paths under STAGE_ROOT\n'
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     trap 'release stage down "$STAGE_ROOT" 2>/dev/null' EXIT
 
-    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH; do
+    for var in SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_SUMMON SPIRA_LAUNCH \
+               SPIRA_LC_PASSWORD_FILE SPIRA_LC_SOCKET SPIRA_LC_DATA_DIR; do
         val="${!var:-}"
         case "$val" in
             "$STAGE_ROOT"/*|"$STAGE_ROOT")
@@ -148,9 +171,15 @@ printf '\nT4: stage down removes STAGE_ROOT\n'
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
     saved_root="$STAGE_ROOT"
+    (exec 3<>"/dev/tcp/127.0.0.1/$SPIRA_LC_PORT") 2>/dev/null \
+        && ok "lifecycle server accepts while the stage is up" \
+        || bad "lifecycle server accepts while the stage is up" "nothing on $SPIRA_LC_PORT"
     release stage down "$STAGE_ROOT"
     [ ! -d "$saved_root" ] && ok "STAGE_ROOT removed after down" \
                             || bad "STAGE_ROOT removed after down" "$saved_root still exists"
+    (exec 3<>"/dev/tcp/127.0.0.1/$SPIRA_LC_PORT") 2>/dev/null \
+        && bad "lifecycle server stopped by down" "still accepting on $SPIRA_LC_PORT" \
+        || ok "lifecycle server stopped by down"
 )
 
 # ─── T5: stage down refuses a non-stage path ─────────────────────────────────
@@ -164,8 +193,8 @@ printf '\nT5: stage down refuses a non-stage path\n'
     rm -rf "$tmp"
 )
 
-# ─── T6: canary-worker.sh claims, commits, closes ────────────────────────────
-printf '\nT6: canary-worker claims and closes a bead\n'
+# ─── T6: canary-worker claims through the machine, commits, submits ──────────
+printf '\nT6: canary-worker claims through the lifecycle machine and submits\n'
 (
     eval "$(release stage up)" \
         || { printf '  FATAL: stage up failed\n'; exit 1; }
@@ -177,19 +206,21 @@ printf '\nT6: canary-worker claims and closes a bead\n'
         --labels "spira,plan" --silent 2>/dev/null | tr -d '[:space:]')"
     [ -n "$bead" ] || { printf '  FATAL: could not create bead\n'; exit 1; }
 
-    # Run the worker directly (it inherits the stage env from the subshell)
-    SPIRA_HOME="$SPIRA_HOME" SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD" \
-    SPIRA_REPO="$SPIRA_REPO" SPIRA_SCOPE_LABEL="$SPIRA_SCOPE_LABEL" PATH="$PATH" \
-        release canary-worker 2>/dev/null
+    # Its lifecycle row, as release canary files it. POSITIVE CONTROL: READY before the
+    # worker, so the SUBMITTED below is the worker's doing.
+    timeout 10 spira-lc create-bead "$bead" >/dev/null 2>&1
+    is "bead's lifecycle row is READY before the worker" "READY" "$(lc_field "$bead" state)"
+
+    # Run the worker directly (it inherits the stage env, SPIRA_LC_* included, from the subshell)
+    release canary-worker 2>"$STAGE_ROOT/worker.err"
     rc=$?
     is "release canary-worker exits 0" "0" "$rc"
+    [ "$rc" = 0 ] || sed 's/^/      worker: /' "$STAGE_ROOT/worker.err" | tail -5
 
-    # Bead must be closed
-    # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    status="$(bd -C "$SPIRA_DB" show "$bead" --json 2>/dev/null \
-        | python3 -c 'import sys,json; d=json.load(sys.stdin); \
-            d=d if isinstance(d,list) else [d]; print(d[0]["status"] if d else "")' 2>/dev/null)"
-    is "bead is closed after worker" "closed" "$status"
+    # The machine, not bd, records the hand-on: claimed (holder) and submitted at the tip.
+    is "bead is SUBMITTED in the stage's machine after the worker" "SUBMITTED" "$(lc_field "$bead" state)"
+    tip="$(git -C "$STAGE_ROOT/remote.git" rev-parse "spira/$bead" 2>/dev/null)"
+    is "the submitted tip is the pushed branch's" "${tip:-<no branch>}" "$(lc_field "$bead" tip)"
 
     # Branch must exist in the remote
     # hermetic-ok: $STAGE_ROOT/remote.git is always a mktemp temp dir created by stage.sh up
