@@ -25,9 +25,9 @@
 #   4. FALSE BLOCKER — an open bead that depends (type=blocks) on the conflict-case bead
 #      above is noted once that blocker is reopened.
 #
-# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): landed()/spira-lc content-landed
-# read git ancestry and merge-tree, which a stub cannot stand in for without becoming a
-# second implementation of git.
+# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): content-on-base and the
+# merge-tree clean check read git ancestry and merge-tree, which a stub cannot stand in for
+# without becoming a second implementation of git. Only `spira-lc state` is stubbed.
 #
 # tier: T2
 # defect: sp-0qp7s
@@ -57,6 +57,16 @@ git -C "$REPO" remote set-head origin main
 # PINNED TO A NON-DEFAULT NAME so the suite cannot pass on an accidentally matching literal.
 REPONAME=statetestrepo
 printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
+
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): strand asks `spira-lc state <id>`, not a
+# commit subject. The stub answers `state` from $LCSTATE/<id> and hands every other verb to
+# the real spira-lc, so only the landed-ness question is pinned.
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE" "$TMP/lcbin"
+REAL_LC="$(command -v spira-lc)"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = state ]; then [ -s "%s/${2:-}" ] && cat "%s/${2:-}"; exit 0; fi\nexec "%s" "$@"\n' \
+    "$LCSTATE" "$LCSTATE" "$REAL_LC" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+PATH="$TMP/lcbin:$PATH"
 
 run_sweep() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
@@ -89,8 +99,9 @@ echo "FIXTURE"
 # ==========================================================================================
 testdb_reset
 
-# Case 1: LANDED-BUT-OPEN — sp-st-lbo's own commit is already on the base.
+# Case 1: LANDED-BUT-OPEN — sp-st-lbo's record is LANDED and its own commit is on the base.
 git -C "$REPO" commit -q --allow-empty -m "sp-st-lbo: implement the thing"
+echo LANDED > "$LCSTATE/sp-st-lbo"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 
