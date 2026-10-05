@@ -126,7 +126,7 @@ impl<'a> PrPass<'a> {
                 self.log(&format!("landing-pass {name}: {id} is superseded — leaving it for the Sending to reap"));
                 continue;
             }
-            if self.git.content_landed(&r.path, br, &base_fq) {
+            if self.git.content_on_base(&r.path, br, &base_fq) {
                 self.log(&format!("landing-pass {name}: {base} already contains every change on {br} — nothing to land"));
                 // OFF (production): the CONTENT record and nothing else — spira-lc is never run
                 // (f031f6dee). ON: the Delivered event, best-effort additive; a machine that

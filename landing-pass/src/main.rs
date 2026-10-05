@@ -8,16 +8,10 @@
 //!                            the real-sender suites' way in, no whole pass)
 //!   landing-pass ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<dir> <base>]
 //!                            `spira_ask_rebase_loop` alone (sp-31hjr)
-//!   landing-pass mark <id> <state> <tip> [reason] [extra]
-//!                            `land_mark` alone (sp-cnnt6) — reads only $SPIRA_RUN, no
-//!                            lib.sh seam, so every other crate's own land_mark call can
-//!                            shell to this instead of sourcing bash.
-//!   landing-pass state <id>  `land_state` alone (sp-cnnt6), same reasoning.
 
 use landing_pass::cli::{self, Cmd, Reason};
 use landing_pass::halt::{self, HaltArgs, HaltCtx, RealHalt};
 use landing_pass::land_verify;
-use landing_pass::landstate;
 use landing_pass::model::{RunRecord, StatusFile};
 use landing_pass::pass::Pass;
 use landing_pass::ports::{Beads, Lib};
@@ -54,16 +48,11 @@ fn main() -> ExitCode {
         Cmd::Halt { reason, dry_run } => halt_cmd(reason, dry_run),
         Cmd::Noverdict { id, branch, repo, reason, outcome } => noverdict_cmd(&id, &branch, &repo, &reason, &outcome),
         Cmd::AskRebaseLoop(args) => ask_rebase_loop_cmd(&args),
-        Cmd::Mark { id, state, tip, reason, extra } => mark_cmd(&id, &state, &tip, &reason, &extra),
-        Cmd::State { id } => state_cmd(&id),
-        Cmd::Landed { id, repo } => landed_cmd(&id, &repo),
         Cmd::LandSubject { id } => land_subject_cmd(&id),
         Cmd::PrMerged { repo, branch } => pr_merged_cmd(&repo, &branch),
         Cmd::ConflictNote(args) => conflict_note_cmd(&args),
         Cmd::OtherBeads { repo, branch, base, files } => other_beads_cmd(&repo, &branch, &base, &files),
         Cmd::IsWorkType { ty } => is_work_type_cmd(&ty),
-        Cmd::CitedCommit { id, repo, base } => cited_commit_cmd(&id, &repo, &base),
-        Cmd::CloseOnLand { id, sha } => close_on_land_cmd(&id, &sha),
     };
     ExitCode::from(code as u8)
 }
@@ -92,7 +81,7 @@ fn pr() -> i32 {
     };
     // sp-ivfu3: this used to default to the literal `/tmp/spira` whenever `$SPIRA_RUN`
     // itself was unset — `run_dir()` (below) is the same in-process `spira_config`
-    // resolution `mark`/`state` already use instead, with a named refusal, never a
+    // resolution `run_dir` resolves instead, with a named refusal, never a
     // guessed path, when it cannot resolve at all.
     let run = match run_dir() {
         Ok(r) => r,
@@ -355,10 +344,9 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
     0
 }
 
-/// `$SPIRA_RUN` alone — never the lib.sh seam. `mark`/`state` are the hot path every other
-/// crate's own land_mark/land_state call becomes (sp-cnnt6): shelling to bash just to read
-/// one already-exported variable would reintroduce the per-call cost this wave exists to
-/// cut (wave4-decomposition.md's own cost note).
+/// `$SPIRA_RUN` alone — never the lib.sh seam: shelling to bash just to read one
+/// already-exported variable would reintroduce the per-call cost wave 4 existed to cut
+/// (wave4-decomposition.md's own cost note).
 ///
 /// `$SPIRA_RUN` when it is exported; otherwise resolved in-process the way conf.sh itself
 /// would, so a bare environment — a unit's own (`SPIRA_RELEASE` + `PATH` only), the shape
@@ -406,43 +394,11 @@ fn harness_home(env: &BTreeMap<String, String>) -> Option<PathBuf> {
     exe.ancestors().skip(1).take(4).map(|a| a.join("spira")).find(|p| has_lib(p))
 }
 
-fn mark_cmd(id: &str, state: &str, tip: &str, reason: &str, extra: &str) -> i32 {
-    let run = match run_dir() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("landing-pass mark: {e}");
-            return 2;
-        }
-    };
-    if landstate::land_mark(&run, id, state, tip, reason, extra) {
-        0
-    } else {
-        1
-    }
-}
-
-fn state_cmd(id: &str) -> i32 {
-    let run = match run_dir() {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("landing-pass state: {e}");
-            return 2;
-        }
-    };
-    match landstate::land_state(&run, id) {
-        Some(s) => {
-            print!("{s}");
-            0
-        }
-        None => 1,
-    }
-}
-
 // ── family R (sp-81t4d, "wave 4.17" — landed verification) ──────────────────────────────
 //
 // None of these need the full pass context (repositories, the gate/queue tooling): each
 // resolves only what it reads, the same `$SPIRA_HOME`-then-resolve-in-process rule
-// `run_dir` already follows for `mark`/`state` (law-a-binary-resolves-the-config-it-reads).
+// `run_dir` already follows (law-a-binary-resolves-the-config-it-reads).
 
 /// `$SPIRA_HOME` when exported, else [`harness_home`]'s own three rungs — never a refusal
 /// just because a unit's bare environment did not export it.
@@ -479,27 +435,6 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
         submitted_label: get("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),
     })
-}
-
-/// `landing-pass landed <id> <repo>`: lib.sh `landed`/`landed_sha` alone. Prints the
-/// landing sha on a found exit; exit 1 not found; exit 2 cannot tell (an unresolvable land
-/// ref, OR `$SPIRA_HOME` itself could not be resolved — both are the same named refusal,
-/// never folded into "not landed").
-fn landed_cmd(id: &str, repo: &str) -> i32 {
-    let Ok(home) = resolve_home() else { return 2 };
-    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), &home);
-    let Some((base, local)) = spira_config::repos::landrefs(&reg, repo) else { return 2 };
-    let mut refs = vec![base];
-    if let Some(l) = local {
-        refs.push(l);
-    }
-    match land_verify::landed(&RealGit, Path::new(repo), id, &refs) {
-        Some(sha) => {
-            print!("{sha}");
-            0
-        }
-        None => 1,
-    }
 }
 
 /// `landing-pass land-subject <id>`: lib.sh `land_subject` alone. A bead that cannot be
@@ -556,34 +491,6 @@ fn is_work_type_cmd(ty: &str) -> i32 {
     }
 }
 
-/// `landing-pass cited-commit <id> <repo> <base>`: lib.sh `bead_cited_commit_on_base`
-/// alone. Prints "<sha> <rule>" on a found exit; exit 1 not found (including a bead or
-/// `$SPIRA_HOME` that could not be read at all — there is nothing to cite without notes).
-fn cited_commit_cmd(id: &str, repo: &str, base: &str) -> i32 {
-    let Ok(home) = resolve_home() else { return 1 };
-    let Ok(beads) = resolve_beads(&home) else { return 1 };
-    let Some(row) = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next()) else { return 1 };
-    match land_verify::bead_cited_commit_on_base(&RealGit, Path::new(repo), base, id, &row.notes) {
-        Some((sha, rule)) => {
-            print!("{sha} {rule}");
-            0
-        }
-        None => 1,
-    }
-}
-
-/// `landing-pass close-on-land <id> [sha]`: lib.sh `bead_close_on_land` alone. Always
-/// exits 0 — every caller (including lib.sh's own shim) already discards this function's
-/// exit code (`|| true`), so there is no exit-code contract to preserve beyond "ran".
-fn close_on_land_cmd(id: &str, sha: &str) -> i32 {
-    let Ok(home) = resolve_home() else { return 0 };
-    let Ok(beads) = resolve_beads(&home) else { return 0 };
-    let row = beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
-    let out = Reporter::stdout(None);
-    land_verify::close_on_land(&RealGit, &out, &home, &beads.submitted_label, row.as_ref(), id, sha);
-    0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,8 +506,8 @@ mod tests {
     fn run_dir_resolves_in_process_when_spira_run_is_unset() {
         // law-a-binary-resolves-the-config-it-reads: a bare environment — a unit's own
         // (SPIRA_RELEASE + PATH only) — must still get a real answer from `run_dir`, not a
-        // refusal. The production defect this guards: aeon's own `landing-pass mark` call
-        // silently did nothing when its process environment lacked $SPIRA_RUN.
+        // refusal. The production defect this guards: a landing-pass call silently did
+        // nothing when its process environment lacked $SPIRA_RUN.
         let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = testkit::TempDir::new("landing-pass-run-dir");
         let home = dir.join("home");
@@ -636,45 +543,5 @@ mod tests {
         // override and the default ("prod") instance — asserted exactly, so this proves
         // resolution ran, not a lucky guess at some other path.
         assert_eq!(run, xdg_data.join("spira").join("run"));
-    }
-
-    #[test]
-    fn state_reads_back_a_record_through_the_resolved_run_dir() {
-        // The same fallback, exercised through state_cmd end to end: with $SPIRA_RUN
-        // unset, a record planted at the path `run_dir` resolves to is still read back.
-        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = testkit::TempDir::new("landing-pass-run-dir-state");
-        let home = dir.join("home");
-        fs::create_dir_all(&home).unwrap();
-        fs::write(home.join("lib.sh"), "# fixture\n").unwrap();
-        // sp-1cdgq-2: a missing conf.d is now a named registry error, so any fixture
-        // whose SPIRA_HOME runs real config resolution needs the directory to exist.
-        fs::create_dir_all(home.join("conf.d")).unwrap();
-        let xdg_data = dir.join("xdg-data");
-        let xdg_config = dir.join("xdg-config");
-        fs::create_dir_all(&xdg_config).unwrap();
-        let run = xdg_data.join("spira").join("run");
-        fs::create_dir_all(run.join("landstate")).unwrap();
-        fs::write(run.join("landstate").join("sp-x"), "LANDED deadbeef 1700000000 spira").unwrap();
-
-        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
-            ["SPIRA_RUN", "SPIRA_HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "SPIRA_TOML", "HOME"].iter().map(|k| (*k, std::env::var_os(k))).collect();
-        std::env::remove_var("SPIRA_RUN");
-        std::env::set_var("SPIRA_HOME", &home);
-        std::env::set_var("XDG_DATA_HOME", &xdg_data);
-        std::env::set_var("XDG_CONFIG_HOME", &xdg_config);
-        std::env::remove_var("SPIRA_TOML");
-        std::env::set_var("HOME", dir.join("userhome"));
-
-        let rc = state_cmd("sp-x");
-
-        for (k, v) in saved {
-            match v {
-                Some(v) => std::env::set_var(k, v),
-                None => std::env::remove_var(k),
-            }
-        }
-
-        assert_eq!(rc, 0);
     }
 }

@@ -224,8 +224,8 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
         None => {
             let msg = format!("commit naming {bead_id} not found on origin/main after {}s", elapsed.as_secs());
             log(&format!("FAIL: {msg}"));
-            let landstate = std::fs::read_to_string(Path::new(&get("SPIRA_RUN")).join("landing.status")).unwrap_or_else(|_| "(none)".into());
-            file_incident(prod, "canary: commit not found on base branch", &format!("Stage canary failed: {msg}\n\nbead_id: {bead_id}\nstage: {}\n\nlanding.status:\n{landstate}", stage_root.display()));
+            let landing_status = std::fs::read_to_string(Path::new(&get("SPIRA_RUN")).join("landing.status")).unwrap_or_else(|_| "(none)".into());
+            file_incident(prod, "canary: commit not found on base branch", &format!("Stage canary failed: {msg}\n\nbead_id: {bead_id}\nstage: {}\n\nlanding.status:\n{landing_status}", stage_root.display()));
             Err(msg)
         }
         Some(commit) => {

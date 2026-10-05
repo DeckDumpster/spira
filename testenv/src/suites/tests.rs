@@ -740,8 +740,8 @@ fn lint_counts_every_violation_on_one_line_and_still_reports_the_others() {
 
 /// The operator's switch (lifecycle_enforce, 2026-09-28) decides whether spira-lc may be
 /// touched. `testenv suites` touches it in NEITHER mode: no subcommand runs spira-lc, reads
-/// SPIRA_LC_BIN or the switch, and the one lifecycle fact it reads (LANDED, for hygiene) is
-/// `$LANDSTATE/<id>`, which lib.sh land_mark writes whichever way the switch is set.
+/// SPIRA_LC_BIN or the switch; its one landed question (target hygiene) is answered from git
+/// alone (`landed.rs`), never from the lifecycle record or a landing ledger.
 #[test]
 fn suites_never_touches_spira_lc_in_either_lifecycle_mode() {
     for (name, src) in [

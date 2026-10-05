@@ -18,15 +18,14 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
-
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-publish
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up qpublish || { echo "test-queue-publish: could not build a fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-publish: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-queue-publish.sh"
@@ -143,13 +142,15 @@ land() {
     printf '%s\n' "$content" > "$REPO/$file"
     git -C "$REPO" add "$file"
     git -C "$REPO" commit -q -m "$id: the work"
-    local tip; tip="$(git -C "$REPO" rev-parse "work-$id")"; LAST_TIP="$tip"
+    local tip; tip="$(git -C "$REPO" rev-parse "work-$id")"
+    LAST_TIP="$tip"
     git -C "$REPO" checkout -qb "round-$id" local/main
     git -C "$REPO" merge -q --no-ff -m "spira: land $id" "work-$id"
     local head; head="$(git -C "$REPO" rev-parse "round-$id")"
     git -C "$REPO" checkout -q main
     git -C "$REPO" branch -D "round-$id" "work-$id" >/dev/null 2>&1
     mk_bins "$head"
+    lcfix_seed "$id" CERTIFIED "$tip"
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
@@ -376,6 +377,7 @@ printf 'five\n' > "$REPO/five.txt"
 git -C "$REPO" add five.txt
 git -C "$REPO" commit -q -m "sp-pub5: the work"
 HEAD5="$(git -C "$REPO" rev-parse round-sp-pub5)"
+lcfix_seed sp-pub5 CERTIFIED "$HEAD5"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub5 >/dev/null 2>&1
 mk_bins "$HEAD5"
@@ -408,6 +410,7 @@ printf 'six\n' > "$REPO/six.txt"
 git -C "$REPO" add six.txt
 git -C "$REPO" commit -q -m "sp-pub6: the work"
 HEAD6="$(git -C "$REPO" rev-parse round-sp-pub6)"
+lcfix_seed sp-pub6 CERTIFIED "$HEAD6"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub6 >/dev/null 2>&1
 
@@ -425,6 +428,7 @@ printf 'seven\n' > "$REPO/seven.txt"
 git -C "$REPO" add seven.txt
 git -C "$REPO" commit -q -m "sp-pub7: the work"
 HEAD7="$(git -C "$REPO" rev-parse round-sp-pub7)"
+lcfix_seed sp-pub7 CERTIFIED "$HEAD7"
 git -C "$REPO" checkout -q main
 git -C "$REPO" branch -D round-sp-pub7 >/dev/null 2>&1
 

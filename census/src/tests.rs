@@ -371,8 +371,8 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
     assert_eq!(f.stdout_joined(), "7 sp-reopen-unrecorded (12 detections)");
 }
 
-/// sp-oqf8c: `Real::landed` asks the lifecycle record (`spira-lc state`), never
-/// `landing-pass landed`. Stubs for both sit in the release's `bin/` (the parent of
+/// sp-oqf8c: `Real::landed` asks the lifecycle record (`spira-lc state`), never the retired
+/// landing-pass subject oracle. Stubs for both sit in the release's `bin/` (the parent of
 /// `home`, which `child_path_env` puts first on PATH); the landing-pass stub always says
 /// "landed", so only a reader of spira-lc gets the CERTIFIED, no-row and cannot-tell rows right.
 #[test]

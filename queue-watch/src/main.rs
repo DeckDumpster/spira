@@ -11,7 +11,7 @@
 //! Common flags: --run DIR (SPIRA_RUN), --db DIR (SPIRA_DB), --home DIR (SPIRA_HOME, where
 //! forge.sh lives), --config FILE (spira.toml; default search: SPIRA_TOML,
 //! $XDG_CONFIG_HOME/spira, /etc/spira — no $SPIRA_REPO tier). The certified pool is read
-//! via SPIRA_LC_BIN (spira-lc), never a landstate directory scan.
+//! via SPIRA_LC_BIN (spira-lc), the one record.
 //!
 //! Runs as a watchd `daemon` row, so a reader latches on with `watchd tail queue-watch`
 //! instead of hand-rolling a pipeline over the queue's log.

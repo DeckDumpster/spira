@@ -227,7 +227,7 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
                     break;
                 }
                 tip = p.git.rev_parse(path, br).unwrap_or_default();
-                if p.git.content_landed(path, br, &w.base_fq) {
+                if p.git.content_on_base(path, br, &w.base_fq) {
                     outcome = Landed::Nothing;
                     break;
                 }

@@ -23,7 +23,6 @@
 mod audit;
 mod cfg;
 mod check4;
-mod check5;
 mod detect;
 mod dispatch;
 mod fresh;

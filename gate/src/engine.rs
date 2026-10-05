@@ -1288,14 +1288,16 @@ impl<'w, W: World> Trial<'w, W> {
         self.w.checkout(repo, tree, rev, want)
     }
 
-    /// EJECTED SUITES: the first line of `<bead>.ejected`.
+    /// EJECTED SUITES: the first line of `$SPIRA_RUN/ejected/<bead>` — the suites a
+    /// withdrawal is known to have reddened (spira-claim reopen writes it). Its own
+    /// directory, not the retired landstate ledger's (sp-2c1n0).
     fn ejected(&self, ctx: &Ctx) -> String {
         if self.s.bead.is_empty() {
             return String::new();
         }
-        let ls = ctx.var("LANDSTATE");
-        let ls = if ls.is_empty() { "/nonexistent" } else { ls };
-        let ej = PathBuf::from(format!("{ls}/{}.ejected", self.s.bead));
+        let run = ctx.var("SPIRA_RUN");
+        let run = if run.is_empty() { "/nonexistent" } else { run };
+        let ej = PathBuf::from(format!("{run}/ejected/{}", self.s.bead));
         self.w
             .read(&ej)
             .and_then(|c| c.lines().next().map(str::to_string))

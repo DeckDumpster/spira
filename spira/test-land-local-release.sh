@@ -24,10 +24,12 @@ command -v release >/dev/null 2>&1 || { echo "FAIL: release is not on PATH"; exi
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-land-local-release
 TMP="$(mktemp -d)"
-trap 'testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up llocrel || { echo "test-land-local-release: could not build a fixture database"; exit 1; }
+lcfix_up || { echo "test-land-local-release: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-land-local-release.sh"
@@ -195,6 +197,7 @@ testdb_reset
 seed sp-lrel1
 PRE_MAIN="$(localmain)"
 HEAD1="$(mk_round round-1 one.txt v1)"
+lcfix_seed sp-lrel1 CERTIFIED "$HEAD1"
 
 out="$(run_q land-local fixq --head "$HEAD1" --members "sp-lrel1:$HEAD1" --worktree "$(bins_wt "$HEAD1")")"; rc=$?
 [ "$rc" -ne 0 ] && ok "1: exit non-zero with no corpus for the round's tree" \
@@ -222,6 +225,7 @@ want "2: MANIFEST records the round head commit" "commit $HEAD1" "$(cat "$RELEAS
 want "2: the installed unit now runs spira-releases/<sha>" "ExecStart=$RELEASES/$HEAD1/bin/fakebin" "$(unit_text)"
 want "2: systemd was reloaded"           "daemon-reload" "$(cat "$SC_LOG" 2>/dev/null)"
 is   "2: the bead is closed"             closed "$(field sp-lrel1 status)"
+is   "2: the lifecycle row is LANDED"    LANDED "$(lcfix_state sp-lrel1)"
 want "2: close reason declares landed"   "OUTCOME: landed" "$(field sp-lrel1 close_reason)"
 
 # ============================================================================
@@ -230,6 +234,7 @@ echo "3 — a second round lands its own, different corpus"
 # ============================================================================
 seed sp-lrel3
 HEAD2="$(mk_round round-2 two.txt v2)"
+lcfix_seed sp-lrel3 CERTIFIED "$HEAD2"
 mk_bins "$HEAD2" v2-binary
 
 out="$(run_q land-local fixq --head "$HEAD2" --members "sp-lrel3:$HEAD2" --worktree "$(bins_wt "$HEAD2")")"; rc=$?
@@ -340,6 +345,7 @@ echo "8 — no release in force: the release step is skipped, loudly"
 rm -f "$RELEASES/current"
 seed sp-lrel8
 HEAD8="$(mk_round round-8 eight.txt v8)"
+lcfix_seed sp-lrel8 CERTIFIED "$HEAD8"
 mk_bins "$HEAD8" v8-binary
 UNIT_BEFORE="$(unit_text)"
 
@@ -361,6 +367,7 @@ echo "9 — a failed build leaves current alone, keeps the landing, exits non-ze
 ln -s "$HEAD1" "$RELEASES/current"
 seed sp-lrel9
 HEAD9="$(mk_round round-9 nine.txt v9)"
+lcfix_seed sp-lrel9 CERTIFIED "$HEAD9"
 mk_bins "$HEAD9" not-the-declared-binary otherbin   # the round built something, not fakebin
 
 out="$(run_q land-local fixq --head "$HEAD9" --members "sp-lrel9:$HEAD9" --worktree "$(bins_wt "$HEAD9")")"; rc=$?
@@ -373,6 +380,7 @@ is   "9: current is still the previous release" "$HEAD1" "$(current_name)"
     || bad "9: nothing is named by the failed sha" "$RELEASES/$HEAD9 exists"
 is   "9: local/main is at the landed head (never reverted)" "$HEAD9" "$(localmain)"
 is   "9: the landing stays recorded — the bead is closed" closed "$(field sp-lrel9 status)"
+is   "9: the lifecycle row is LANDED"    LANDED "$(lcfix_state sp-lrel9)"
 
 # ============================================================================
 echo
@@ -383,6 +391,7 @@ echo "10 — sp-pg3c6: an empty commit (no code change) lands and activates clea
 # keyed on trees and commits throughout, never on diff size — this is the end-to-end proof.
 seed sp-lrel10
 HEAD10="$(mk_empty_round round-10)"
+lcfix_seed sp-lrel10 CERTIFIED "$HEAD10"
 PARENT10="$(git -C "$REPO" rev-parse "${HEAD10}^")"
 is "10: the fixture commit is genuinely empty (tree == parent's tree)" \
    "$(git -C "$REPO" rev-parse "${PARENT10}^{tree}")" "$(git -C "$REPO" rev-parse "${HEAD10}^{tree}")"

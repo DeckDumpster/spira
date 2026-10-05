@@ -201,22 +201,22 @@ RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 # resolves to a real file. Pointing it nowhere makes the check a no-op, same as
 # SPIRA_CONF's nonexistent path above — a real map is ambient configuration this suite
 # must not depend on.
-# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`.
-# census puts <home>/../bin first on PATH, so the stub lives in a release-shaped directory
-# whose spira/ is this tree: $LCSTATE/<id> holds the state, and no file is spira-lc's NO_ROW.
-LCHOME="$T/lchome"; LCSTATE="$T/lc-state"; mkdir -p "$LCHOME/bin" "$LCSTATE"
-ln -s "$HERE" "$LCHOME/spira"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$LCHOME/bin/spira-lc"
-chmod +x "$LCHOME/bin/spira-lc"
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
+# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
+LCSTATE="$T/lcstate"; mkdir -p "$LCSTATE"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$T/spira-lc-stub"
+chmod +x "$T/spira-lc-stub"
 
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
     local rundir="$1"; shift
     env SPIRA_NOW="$CENSUS_FIXED_HOST_EPOCH" \
+        SPIRA_LC_BIN="$T/spira-lc-stub" \
         SPIRA_BD="$FAKE_BD" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_MAECHEN_REMEDY_LABEL=maechen-remedy \
         SPIRA_CONF="$T/no-conf" \
-        SPIRA_HOME="$LCHOME/spira" \
+        SPIRA_HOME="$HERE" \
         SPIRA_RUN="$rundir" \
         SPIRA_REPO="${CENSUS_REPO:-$T/norepo}" \
         SPIRA_REPO_MAP="$T/no-repo-map" \

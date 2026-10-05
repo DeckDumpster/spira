@@ -28,8 +28,8 @@ pub trait Git {
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool;
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool;
-    /// lib.sh `content_landed`: the base already holds every change on the branch.
-    fn content_landed(&self, repo: &Path, branch: &str, base: &str) -> bool;
+    /// lib.sh `content_on_base`: the base already holds every change on the branch.
+    fn content_on_base(&self, repo: &Path, branch: &str, base: &str) -> bool;
     /// `rev-list --count <range>`; None when it cannot be taken.
     fn count(&self, repo: &Path, range: &str) -> Option<u64>;
     fn fetch(&self, repo: &Path, remote: &str);

@@ -440,7 +440,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: {br} is labelled {} — leaving it for the cutover round", self.s.cutover_label));
             return Screen::Done(Flow::Next);
         }
-        if self.git.content_landed(&repo.path, br, &w.base_fq) {
+        if self.git.content_on_base(&repo.path, br, &w.base_fq) {
             self.log(&format!("{} already contains every change on {br} — nothing to land", w.base));
             return Screen::Done(Flow::Next);
         }
@@ -860,7 +860,7 @@ impl<'a> Pass<'a> {
                 self.log(&format!("CHECK6 {id}: an aeon took {br} while this pass ran — leaving its rebase to it"));
                 continue;
             }
-            if self.git.content_landed(&repo.path, br, &w.base_fq) {
+            if self.git.content_on_base(&repo.path, br, &w.base_fq) {
                 self.log(&format!("CHECK6 {id}: {} now contains every change on {br} — nothing left to rebase", w.base));
                 continue;
             }

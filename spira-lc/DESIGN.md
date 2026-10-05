@@ -34,6 +34,13 @@ it existed).
 | `deliver pr-merged <repo> <id> <branch> <sha>` · `pr-closed <id>` · `push-delivered <id> <sha>` · `push-requeued <id> <tip>` · `push-returned <id>` | `lc_deliver_*` | 0 applied · 1 skipped (no delivery row / wrong state, logged) · 2/3 as `event`; lib.sh `log` lines on stdout |
 | `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
 
+**Two verbs touch no lifecycle state and ignore the switch.** `content-landed <repo> <branch> <base>`
+(0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
+submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the branch through
+`sending`; best-effort, always 0). The first replaces lib.sh's bash merge-tree check; the second
+is what every landing path calls to close a landed bead (sending's seam directly; the queue still
+through lib.sh's one-line shim until sp-du6dl), in place of the landing pass's own subcommand.
+
 **The switch is read before anything else.** `lifecycle_enforce` (`SPIRA_LIFECYCLE_ENFORCE`,
 else `spira.lifecycle_enforce`, else off — spira-config's one resolver). Off, every caller
 verb answers exactly what the shell function answered off — 2 for events/state/certify, an
@@ -48,7 +55,7 @@ event under that row's `(state, version)` — a stale view is refused (3), never
 are first moved by `Submit` (REWORK has no such transition, so it is refused and the verdict
 skipped — the shell's behaviour too), and the verdict lands only on SUBMITTED.
 `deliver pr-merged`'s proof is `merge-tree` when the merge commit holds the branch's
-content (lib.sh `content_landed`, ported), else `gh-merged`.
+content (`git_evidence::content_on_base`, the `content-landed` verb's proof), else `gh-merged`.
 
 ## 3. Decisions
 

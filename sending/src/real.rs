@@ -232,6 +232,15 @@ impl World for Real {
     fn label_add(&self, id: &str, label: &str) {
         self.seam(Op::LabelAdd, &[id, label]);
     }
+    fn lc_landed(&self, id: &str) -> bool {
+        // Bounded like every other subprocess here: a hung record answers "not landed".
+        Command::new("timeout")
+            .args(["5", "spira-lc", "state", id])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "LANDED")
+    }
     fn content_on_base(&self, id: &str, proof: &str) {
         let _ = Command::new("spira-lc")
             .args(["content-on-base", id, proof, "sending"])

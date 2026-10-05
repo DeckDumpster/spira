@@ -12,22 +12,11 @@ fn deliberate_causes_list() {
     assert!(!admission_exempt("unrecorded"));
 }
 
-#[test]
-fn land_state_parsing() {
-    assert_eq!(parse_land_state("CERTIFIED deadbeef 1700000000"), Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }));
-    assert_eq!(parse_land_state("RED deadbeef 1700000000 some-reason"), Some(LandState { state: "RED".into(), tip: "deadbeef".into() }));
-    // No reason at all (3 fields): still parses the two fields bead_reopen reads.
-    assert_eq!(parse_land_state("CERTIFIED deadbeef 1700000000\n"), Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }));
-    assert_eq!(parse_land_state(""), None);
-    assert_eq!(parse_land_state("   "), None);
-}
-
 // ---------------------------------------------------------------------------------------
 // a fake World: every call recorded, nothing touches a subprocess or a filesystem
 
 #[derive(Default)]
 struct Fake {
-    land_state: Option<LandState>,
     bd_reopen_fails: bool,
     release_fails: bool,
     note_fails: bool,
@@ -44,13 +33,6 @@ impl Fake {
 }
 
 impl World for Fake {
-    fn land_state(&mut self, id: &str) -> Option<LandState> {
-        self.log(format!("land_state {id}"));
-        self.land_state.clone()
-    }
-    fn land_mark_withdrawn(&mut self, id: &str, tip: &str, reason: &str) {
-        self.log(format!("land_mark_withdrawn {id} {tip} {reason}"));
-    }
     fn write_ejected(&mut self, id: &str, suites: &str) {
         self.log(format!("write_ejected {id} {suites}"));
     }
@@ -98,7 +80,6 @@ fn happy_path_every_step_in_order() {
     assert_eq!(
         *w.calls.borrow(),
         vec![
-            "land_state sp-a",
             "bd_reopen sp-a",
             "remove_submitted_label sp-a spira-submitted",
             "release_claim sp-a",
@@ -108,52 +89,11 @@ fn happy_path_every_step_in_order() {
 }
 
 #[test]
-fn certified_landstate_is_withdrawn_before_anything_else() {
-    let mut w = Fake { land_state: Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }), ..Default::default() };
-    let rc = run(&opts("sp-a", "gate-red"), &mut w);
-    assert_eq!(rc, 0);
-    assert_eq!(w.calls.borrow()[0], "land_state sp-a");
-    assert_eq!(w.calls.borrow()[1], "land_mark_withdrawn sp-a deadbeef gate-red");
-    // withdrawal precedes the reopen itself (lib.sh's own ordering).
-    assert!(w.calls.borrow().iter().position(|c| c.starts_with("land_mark_withdrawn")).unwrap() < w.calls.borrow().iter().position(|c| c.starts_with("bd_reopen")).unwrap());
-}
-
-#[test]
-fn non_certified_landstate_is_never_touched() {
-    for state in ["RED", "LANDED", "WITHDRAWN", "EJECTED"] {
-        let mut w = Fake { land_state: Some(LandState { state: state.into(), tip: "deadbeef".into() }), ..Default::default() };
-        run(&opts("sp-a", "some-cause"), &mut w);
-        assert!(!w.has_any_withdraw(), "state {state} must not be withdrawn");
-    }
-}
-
-impl Fake {
-    fn has_any_withdraw(&self) -> bool {
-        self.calls.borrow().iter().any(|c| c.starts_with("land_mark_withdrawn"))
-    }
-}
-
-#[test]
-fn no_landstate_record_skips_the_withdrawal_check() {
-    let mut w = Fake { land_state: None, ..Default::default() };
-    run(&opts("sp-a", "gate-red"), &mut w);
-    assert!(!w.has_any_withdraw());
-}
-
-#[test]
-fn tip_defaults_to_none_when_empty() {
-    let mut w = Fake { land_state: Some(LandState { state: "CERTIFIED".into(), tip: String::new() }), ..Default::default() };
-    run(&opts("sp-a", "gate-red"), &mut w);
-    assert!(w.has("land_mark_withdrawn sp-a none gate-red"));
-}
-
-#[test]
-fn suites_appends_to_the_withdraw_reason_and_writes_the_sidecar() {
-    let mut w = Fake { land_state: Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }), ..Default::default() };
+fn suites_write_the_sidecar() {
+    let mut w = Fake::default();
     let mut o = opts("sp-a", "batch-eject");
     o.suites = "test-x.sh".into();
     run(&o, &mut w);
-    assert!(w.has("land_mark_withdrawn sp-a deadbeef batch-eject suites=test-x.sh"));
     assert!(w.has("write_ejected sp-a test-x.sh"));
 }
 
@@ -165,19 +105,17 @@ fn no_suites_means_no_sidecar_write() {
 }
 
 #[test]
-fn work_close_converted_is_exempt_stays_certified_keeps_label() {
-    let mut w = Fake { land_state: Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }), ..Default::default() };
+fn work_close_converted_is_exempt_keeps_label() {
+    let mut w = Fake::default();
     run(&opts("sp-a", "work-close-converted"), &mut w);
-    assert!(!w.has_any_withdraw(), "work-close-converted must stay CERTIFIED");
     assert!(!w.calls.borrow().iter().any(|c| c.starts_with("remove_submitted_label")), "the label survives the conversion");
 }
 
 #[test]
 fn eject_is_deliberate_but_not_exempt() {
-    let mut w = Fake { land_state: Some(LandState { state: "CERTIFIED".into(), tip: "deadbeef".into() }), ..Default::default() };
+    let mut w = Fake::default();
     run(&opts("sp-a", "eject"), &mut w);
-    assert!(w.has_any_withdraw(), "eject still needs WITHDRAWN");
-    assert!(w.has("remove_submitted_label sp-a spira-submitted"), "and the label stripped");
+    assert!(w.has("remove_submitted_label sp-a spira-submitted"), "the label is stripped");
 }
 
 #[test]
@@ -253,28 +191,23 @@ fn script(dir: &std::path::Path, name: &str, body: &str) -> String {
 
 const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\nSTDIN '; cat; printf '\n'; } >> @LOG@"#;
 
-fn live(tag: &str, bd_body: &str, lp_body: &str) -> (Live, testkit::TempDir) {
+fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-reopen-{tag}"));
-    std::fs::create_dir_all(dir.join("run/landstate")).unwrap();
+    std::fs::create_dir_all(dir.join("run")).unwrap();
     let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
-    let lp = script(&dir, "landing-pass", &lp_body.replace("@LOG@", &dir.join("lp.log").to_string_lossy()));
     let l = Live {
         store: Store { bd, db: Some("/fake/db".into()), lc: "true".into(), timeout: Duration::from_secs(10) },
         run_dir: dir.join("run"),
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: "harness".into(),
-        landing_pass: lp,
     };
     (l, dir)
 }
 
 #[test]
-fn live_certified_reopen_withdraws_sidecar_reopens_strips_label_releases_notes() {
-    let lp_body = format!(
-        "{RECORD}\ncase \"$1\" in\n  state) printf 'CERTIFIED deadbeef 1700000000' ;;\nesac\n"
-    );
-    let (mut w, dir) = live("e2e", RECORD, &lp_body);
+fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
+    let (mut w, dir) = live("e2e", RECORD);
     let o = Opts {
         id: "sp-a".into(),
         cause: "batch-eject".into(),
@@ -284,12 +217,11 @@ fn live_certified_reopen_withdraws_sidecar_reopens_strips_label_releases_notes()
     };
     assert_eq!(run(&o, &mut w), 0);
 
-    let lp_log = std::fs::read_to_string(dir.join("lp.log")).unwrap();
-    let lp_argv: Vec<&str> = lp_log.lines().filter(|l| l.starts_with("ARGV")).collect();
-    assert_eq!(lp_argv, vec!["ARGV [state] [sp-a]", "ARGV [mark] [sp-a] [WITHDRAWN] [deadbeef] [batch-eject suites=test-x.sh]"], "{lp_log}");
-
-    let ejected = std::fs::read_to_string(dir.join("run/landstate/sp-a.ejected")).unwrap();
+    // The sidecar lives in its own directory, created on demand: nothing creates the retired
+    // landstate ledger any more (sp-2c1n0), and nothing here may write into it again.
+    let ejected = std::fs::read_to_string(dir.join("run/ejected/sp-a")).unwrap();
     assert_eq!(ejected, "test-x.sh", "no trailing newline, exactly printf '%s'");
+    assert!(!dir.join("run/landstate").exists(), "reopen recreated the retired landstate ledger");
 
     let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
     let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
@@ -308,13 +240,9 @@ fn live_certified_reopen_withdraws_sidecar_reopens_strips_label_releases_notes()
 }
 
 #[test]
-fn live_no_certified_record_skips_landing_pass_mark_and_the_sidecar() {
-    let lp_body = format!("{RECORD}\ncase \"$1\" in\n  state) exit 1 ;;\nesac\n");
-    let (mut w, dir) = live("noop", RECORD, &lp_body);
+fn live_without_suites_writes_no_sidecar() {
+    let (mut w, dir) = live("noop", RECORD);
     let o = Opts { id: "sp-b".into(), cause: "gate-red".into(), note: String::new(), suites: String::new(), submitted_label: "spira-submitted".into() };
     assert_eq!(run(&o, &mut w), 0);
-
-    let lp_log = std::fs::read_to_string(dir.join("lp.log")).unwrap();
-    assert_eq!(lp_log.lines().filter(|l| l.starts_with("ARGV")).count(), 1, "state was checked, mark never called: {lp_log}");
-    assert!(!dir.join("run/landstate/sp-b.ejected").exists());
+    assert!(!dir.join("run/ejected/sp-b").exists());
 }

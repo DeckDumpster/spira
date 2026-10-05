@@ -437,10 +437,10 @@ impl<'a> Sentinel<'a> {
         ));
     }
 
-    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes CHECK 5 and
-    /// the groomer's STATE sweeps prove from git log / bd status, read instead from the row
-    /// `spira-lc list` already gave this pass. Advisory only, run alongside the legacy checks
-    /// so the two can be compared before either is retired (design sp-pswer.2).
+    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes the retired
+    /// CHECK 5 and the groomer's STATE sweeps proved from git log / bd status, read instead
+    /// from the row `spira-lc list` already gave this pass (design sp-pswer.2). The legacy
+    /// checks were deleted at the cutover (sp-jnwbn); this is the only one left.
     pub fn check5_lc(&self, snap: &Snapshot, rows: &[LcRow]) {
         let work_types = self.cfg.work_types.clone();
         let mut lines = landed_but_open(snap, rows, &work_types);
@@ -455,7 +455,7 @@ impl<'a> Sentinel<'a> {
         }
         self.h.print(&lines.join("\n"));
         self.log(&format!(
-            "CHECK5-LC: {} state drift line(s) from spira-lc, alongside CHECK 5's own",
+            "CHECK5-LC: {} state drift line(s) from spira-lc",
             lines.len()
         ));
         self.act(&format!("surfaced {} CHECK5-LC line(s)", lines.len()));

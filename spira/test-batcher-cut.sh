@@ -42,7 +42,7 @@
 #                       excluded from the round pool, not batched.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* spira/conf.sh spira/lib.sh spira/bead.sh spira/chamber/batcher.fayth spira/chamber/batcher.md spira/testlib/lc-fixture.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 ROOT="$(cd "$HERE/.." && pwd -P)"
@@ -52,9 +52,11 @@ ROOT="$(cd "$HERE/.." && pwd -P)"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-batcher-cut
-TMP="$(mktemp -d)"; trap 'testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; chmod -R u+w "$TMP" 2>/dev/null; rm -rf "$TMP"' EXIT INT TERM
 testdb_up batchercut || { echo "test-batcher-cut: could not build fixture database"; exit 1; }
+lcfix_up || { echo "test-batcher-cut: could not build a lifecycle fixture"; exit 1; }
 
 # ── the batcher binary (law-absence-needs-a-positive-control: no binary, no suite) ──
 for _t in batcher tsd-write queue; do
@@ -249,6 +251,7 @@ certified_rows() {
         [ -f "$f" ] || continue
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
+        grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
     done
     printf ']\n'
@@ -256,7 +259,11 @@ certified_rows() {
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
-    cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    cut)
+        members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
+        for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
+        exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
@@ -275,7 +282,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH/lc-stub-bin:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -336,6 +343,12 @@ plant_open() {
 
 certify() {   # certify <id> <tip-sha> [epoch]
     printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LANDSTATE/$1"
+    [ -f "$RUN/lc-taken" ] && { grep -vx "$1" "$RUN/lc-taken" > "$RUN/lc-taken.n" || true; mv "$RUN/lc-taken.n" "$RUN/lc-taken"; }
+}
+
+lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine
+    lcfix_seed "$1" CERTIFIED "$2"
+    lcfix_sql -q "UPDATE bead SET updated_at=${3:-$(date +%s)} WHERE bead_id='$1'" >/dev/null 2>&1
 }
 
 echo "test-batcher-cut.sh"
@@ -365,7 +378,6 @@ is   "A: open-batch members carries sp-caaa1:tip" "sp-caaa1:$tip_a" "$(open_fiel
 is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" in spira/queue/*) echo 1;; *) echo 0;; esac)"
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
-is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
 is   "A: open-batch batch_id is the batch branch spira-lc cut" "$(open_field branch)" "$(open_field batch_id)"
 is   "A: open-batch version is 1 (one member)"                 "1"                    "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
@@ -423,11 +435,9 @@ nowant "B: no judgement/double-red language — this was resolved mechanically" 
 want   "B: attribution names the owner"  "red test-b.sh → owner sp-cbbb2" "$out_b"
 want   "B: only the owner's suite re-runs on the survivors" "suites=test-b.sh" \
        "$(cat "$RUN"/batch-results/"$REPONAME"-*/spool/req/v1.req 2>/dev/null)"
-is     "B: sp-cbbb2 landstate EJECTED"    "EJECTED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
 is     "B: sp-cbbb2 reopened for rework (open)" "open" "$(status_of sp-cbbb2)"
 nowant "B: sp-cbbb2 no longer submitted — a reopen is rework (sp-1346p)" "spira-submitted" "$(labels_of sp-cbbb2)"
 want   "B: ejection note names every suite it turned red" "test-b.sh" "$(notes_of sp-cbbb2)"
-is     "B: sp-cbbb3 (the bystander) landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb3")"
 is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_field members)"
 nowant "B: open-batch does not carry the ejected member" "sp-cbbb2" "$(open_field members)"
 is     "B: forge pr-create called (once more than before this case)" "$((prcreate_before_b + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -457,7 +467,6 @@ want   "G: the red is marked flaky"          "red test-b.sh → flaky" "$out_g"
 nowant "G: nobody is ejected"                "ejected"               "$out_g"
 want   "G: the round proceeds to its PR"     "PR "                   "$out_g"
 is     "G: forge pr-create called once more" "$((prcreate_before_g + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "G: sp-cgflk BATCHED"                 "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgflk")"
 if command -v tsd-write >/dev/null 2>&1; then
     want "G: the flake is recorded" '"outcome":"flaky"' "$(tail -1 "$RUN/tsd/round-attribution.jsonl" 2>/dev/null)"
 fi
@@ -485,8 +494,6 @@ want   "H: reports the base red, naming the suite" "red test-a.sh → base" "$ou
 want   "H: reports filing an Ops incident"          "filed sp-inc"  "$out_h"
 nowant "H: nobody is ejected"                       "ejected"       "$out_h"
 is     "H: the round proceeds to its PR"  "$((prcreate_before_h + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "H: sp-chbas BATCHED — not ejected, the base is at fault" \
-       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chbas")"
 want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$INCIDENT_LOG")"
 rm -f "$(open_batch_file)"
 
@@ -520,7 +527,6 @@ rm -f "$QUEUEDIR/$REPONAME/base-moved"
 out_c="$(STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
 nowant "C: sp-cccc3 no longer submitted — reopened for rebase (sp-1346p)" "spira-submitted" "$(labels_of sp-cccc3)"
-is   "C: sp-cccc3 landstate RED" "RED"  "$(cut -d' ' -f1 < "$LANDSTATE/sp-cccc3")"
 is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-conflict$' "$REQUEUE_SPY")"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
@@ -584,7 +590,6 @@ want   "D: after landing, the prepared round opens a PR" "opened" "$out_d3"
 is     "D: the prepared round opened without re-running the corpus" "0" "$(grep -c '^argv:' "$D_ARGV")"
 is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
-is     "D: express member BATCHED once opened" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
 is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
 # =============================================================================
@@ -619,8 +624,7 @@ is "E: no suites given is refused, not filed" "1" "$([ -z "$(printf '%s\n' "$out
 # =============================================================================
 # CASE F — spira-lc wiring (sp-o7nbr.4): BATCHED at a fresh cut and a stack both call
 # spira-lc, and the open-batch record carries batch_id/version exactly when spira-lc
-# applied. The machine is the subject, so these cuts run with SPIRA_LIFECYCLE_ENFORCE=1;
-# OFF runs no spira-lc at all (batcher-cut/src/io.rs unit tests). POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
+# applied. POSITIVE CONTROL last: a planted refusal (rc=3) proves the call is additive —
 # the PR still opens and batch_id/version stay unset, never blocking the round.
 # =============================================================================
 echo
@@ -637,7 +641,7 @@ tip_f="$(git -C "$REPO" rev-parse spira/sp-cfff6)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cfff6"
 certify sp-cfff6 "$tip_f"
 
-SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 branch_f="$(open_field branch)"; head_f="$(open_field head)"; base_f="$(open_field base)"
 want "F: cut calls spira-lc create-bead for the member" "create-bead sp-cfff6" "$(cat "$LC_LOG")"
 want "F: cut calls spira-lc cut naming the same batch-id, head and base as the open-batch record" \
@@ -656,7 +660,7 @@ tip_g="$(git -C "$REPO" rev-parse spira/sp-cggg7)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-cggg7"
 certify sp-cggg7 "$tip_g"
 
-SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
+PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" cut_repo >/dev/null
 nowant "F: preparing the next round never calls spira-lc stack" "stack " "$(cat "$LC_LOG")"
 nowant "F: preparing the next round never calls spira-lc cut" "cut " "$(cat "$LC_LOG")"
 is   "F: open-batch batch_id unchanged by a prepared round" "$branch_f" "$(open_field batch_id)"
@@ -677,12 +681,11 @@ tip_h="$(git -C "$REPO" rev-parse spira/sp-chhh8)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-chhh8"
 certify sp-chhh8 "$tip_h"
 
-out_f_refused="$(SPIRA_LIFECYCLE_ENFORCE=1 PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
+out_f_refused="$(PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$LC_LOG" SPIRA_LC_STUB_RC=3 cut_repo)"
 want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_refused"
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
-is   "F: PLANTED REFUSAL — member still lands BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chhh8")"
 
 # =============================================================================
 # CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and
@@ -710,7 +713,7 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH/lc-stub-bin:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -910,13 +913,12 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
     SPIRA_QUEUE_BATCH_WAIT="${SPIRA_QUEUE_BATCH_WAIT_OVERRIDE:-999999}" \
     SPIRA_RELEASES="$LRELEASES" \
-    SPIRA_LC_STACKS_DIR="${SPIRA_LC_STACKS_DIR:-}" \
     STUB_INSTALL_BINS="${STUB_INSTALL_BINS:-}" \
         batcher cut locland --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
@@ -931,17 +933,16 @@ git -C "$RUN/worktree/sp-claa1" add -A
 git -C "$RUN/worktree/sp-claa1" commit -q -m "sp-claa1: work"
 tip_l1="$(git -C "$LREPO" rev-parse spira/sp-claa1)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-claa1"
-certify sp-claa1 "$tip_l1"
+lc_certify sp-claa1 "$tip_l1"
 
 out_l1="$(cut_local)"
 want   "L1: refuses — no --with-bins corpus for this head" "no --with-bins" "$out_l1"
 nowant "L1: never reports landing locally"                  "landed locally" "$out_l1"
 is     "L1: local/main is untouched"          "$localmain_pre" "$(git -C "$LREPO" rev-parse local/main)"
-is     "L1: sp-claa1 stays CERTIFIED — refused, not ejected" \
-       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-claa1")"
+is     "L1: sp-claa1 stays CERTIFIED — refused, not ejected" "CERTIFIED" "$(lcfix_state sp-claa1)"
 
 # L2 — the --with-bins corpus is present: lands locally, no push, no PR, no open-batch file.
-rm -f "$LANDSTATE/sp-claa1"
+lcfix_seed sp-claa1 REWORK "$tip_l1"
 plant sp-clbb2 express
 git -C "$LREPO" worktree add -q -b spira/sp-clbb2 "$RUN/worktree/sp-clbb2" trunk
 printf 'l2\n' > "$RUN/worktree/sp-clbb2/l2.txt"
@@ -949,7 +950,7 @@ git -C "$RUN/worktree/sp-clbb2" add -A
 git -C "$RUN/worktree/sp-clbb2" commit -q -m "sp-clbb2: work"
 tip_l2="$(git -C "$LREPO" rev-parse spira/sp-clbb2)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-clbb2"
-certify sp-clbb2 "$tip_l2"
+lc_certify sp-clbb2 "$tip_l2"
 
 prcreate_before_l2="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_l2="$(STUB_INSTALL_BINS=1 cut_local)"
@@ -963,7 +964,7 @@ head_l2="$(printf '%s\n' "$out_l2" | sed -n 's/.*landed locally at \([0-9a-f]\{7
 is     "L2: local/main fast-forwards to the round's own merge head" "$head_l2" "$(git -C "$LREPO" rev-parse local/main)"
 is     "L2: the round head descends from the member's own tip" "0" "$(git -C "$LREPO" merge-base --is-ancestor "$tip_l2" "$head_l2"; echo $?)"
 is     "L2: no open-batch file under queue.local" "0" "$([ -f "$QUEUEDIR/locland/open" ] && echo 1 || echo 0)"
-is     "L2: sp-clbb2 landstate LANDED" "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-clbb2")"
+is     "L2: sp-clbb2 is LANDED on the lifecycle machine" "LANDED" "$(lcfix_state sp-clbb2)"
 if command -v tsd-write >/dev/null 2>&1; then
     want "L2: TSD batch-round row records verdict=landed_local" '"verdict":"landed_local"' \
         "$(tail -1 "$RUN/tsd/batch-round.jsonl" 2>/dev/null)"
@@ -986,12 +987,12 @@ git -C "$RUN/worktree/sp-cnaa1" add -A
 git -C "$RUN/worktree/sp-cnaa1" commit -q -m "sp-cnaa1: work"
 tip_n="$(git -C "$LREPO" rev-parse spira/sp-cnaa1)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cnaa1"
-certify sp-cnaa1 "$tip_n"
+lc_certify sp-cnaa1 "$tip_n"
 
 out_n="$(SPIRA_QUEUE_BATCH_WAIT_OVERRIDE=31536000 STUB_INSTALL_BINS=1 cut_local)"
 nowant "N: never reports no-trigger — a pool of one is enough" "no round cut: no trigger" "$out_n"
 want   "N: reports landing locally"                             "landed locally"          "$out_n"
-is     "N: sp-cnaa1 landstate LANDED"                            "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cnaa1")"
+is     "N: sp-cnaa1 is LANDED on the lifecycle machine"          "LANDED" "$(lcfix_state sp-cnaa1)"
 
 # =============================================================================
 # CASE M — stacked dependents (sp-lno75, design stacked-dependents-2026-09-28): a round that
@@ -1005,35 +1006,6 @@ is     "N: sp-cnaa1 landstate LANDED"                            "LANDED" "$(cut
 # =============================================================================
 echo
 echo "M. stacked dependents: closure, topological order, every member reaches LANDED:"
-
-LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
-cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
-#!/usr/bin/env bash
-certified_rows() {
-    local f id st tip ep sep=''
-    printf '['
-    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
-        [ -f "$f" ] || continue
-        read -r st tip ep < "$f"
-        [ "$st" = CERTIFIED ] || continue
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
-    done
-    printf ']\n'
-}
-case "${1:-}" in
-    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;
-    show)
-        f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
-        stack="{}"
-        [ -f "$f" ] && stack="$(cat "$f")"
-        printf '{"bead":{"state":"CERTIFIED","version":"3","stack":%s}}\n' "$stack"
-        exit 0
-        ;;
-    *) exit 0 ;;
-esac
-LCSTACKSTUB
-chmod +x "$SH/spira-lc-stack-stub.sh"
-mkdir -p "$SH/lc-stack-stub-bin" && ln -sf ../spira-lc-stack-stub.sh "$SH/lc-stack-stub-bin/spira-lc"
 
 # A -> B -> C: a straight chain, each bead's branch built on the previous bead's own tip, the
 # same shape a real stacked worktree gets once bead 3 (aeon base = landing ref + stack) lands.
@@ -1058,25 +1030,23 @@ git -C "$RUN/worktree/sp-cmcc3" commit -q -m "sp-cmcc3: c"
 tip_mc="$(git -C "$LREPO" rev-parse spira/sp-cmcc3)"
 git -C "$LREPO" worktree remove -f "$RUN/worktree/sp-cmcc3"
 
-printf '{"sp-cmaa1":"%s"}\n' "$tip_ma" > "$LC_STACKS/sp-cmbb2"
-printf '{"sp-cmbb2":"%s"}\n' "$tip_mb" > "$LC_STACKS/sp-cmcc3"
 
 # Certified in the order C, A, B — certified_at deliberately reversed against dependency
 # order, so a sort on order_key alone (no stack awareness) would try to merge C first.
 plant sp-cmcc3; plant sp-cmaa1; plant sp-cmbb2
-certify sp-cmcc3 "$tip_mc" 100
-certify sp-cmaa1 "$tip_ma" 200
-certify sp-cmbb2 "$tip_mb" 300
+lc_certify sp-cmcc3 "$tip_mc" 100
+lc_certify sp-cmaa1 "$tip_ma" 200
+lc_certify sp-cmbb2 "$tip_mb" 300
+lcfix_sql -q "UPDATE bead SET stack='{\"sp-cmaa1\":\"$tip_ma\"}', stack_depth=1 WHERE bead_id='sp-cmbb2'" >/dev/null 2>&1
+lcfix_sql -q "UPDATE bead SET stack='{\"sp-cmbb2\":\"$tip_mb\"}', stack_depth=1 WHERE bead_id='sp-cmcc3'" >/dev/null 2>&1
 
-# Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
-# this case runs ON.
-out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 LC_STUB_DIR="$SH/lc-stack-stub-bin" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+out_m="$(STUB_INSTALL_BINS=1 cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
-is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \
-       "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmaa1")"
-is     "M: sp-cmbb2 landstate LANDED"                             "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmbb2")"
-is     "M: sp-cmcc3 landstate LANDED"                             "LANDED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cmcc3")"
+is     "M: sp-cmaa1 is LANDED (the closed-over prerequisite, never dropped as EMPTY)" \
+       "LANDED" "$(lcfix_state sp-cmaa1)"
+is     "M: sp-cmbb2 is LANDED"                                    "LANDED" "$(lcfix_state sp-cmbb2)"
+is     "M: sp-cmcc3 is LANDED"                                    "LANDED" "$(lcfix_state sp-cmcc3)"
 head_m="$(git -C "$LREPO" rev-parse local/main)"
 # Merged prerequisite-first: the round's own land-subject merge commits appear in the order
 # A, B, C along local/main's first-parent history, not the certification order C, A, B.

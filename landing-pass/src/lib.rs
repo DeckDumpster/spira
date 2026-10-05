@@ -7,7 +7,6 @@ pub mod cli;
 pub mod gateq;
 pub mod halt;
 pub mod land_verify;
-pub mod landstate;
 pub mod lifecycle;
 pub mod model;
 pub mod order;

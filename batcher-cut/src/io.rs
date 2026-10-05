@@ -3,9 +3,9 @@
 //! so every decision the batcher makes is a fixture `core`'s replay tests can drive without a
 //! container, git or the wall clock.
 //!
-//! Where an operation already has a tested, correct shell implementation (land_mark, a bead
+//! Where an operation already has a tested, correct shell implementation (a bead
 //! reopen, the priority sort), this seam shells out to lib.sh rather than re-deriving the
-//! same bd/landstate/event-log side effects a second time in Rust.
+//! same bd/event-log side effects a second time in Rust.
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -51,10 +51,6 @@ pub struct Env {
     pub queue_bin: PathBuf,
     /// The `rebase-stale` program (by name on the launcher's PATH).
     pub rebase_stale_bin: PathBuf,
-    /// The `landing-pass` program (by name on the launcher's PATH): owns the landstate
-    /// ledger's one writer (sp-cnnt6, "wave 4.16") — `land_mark` below shells to its
-    /// `mark` subcommand with `$SPIRA_RUN` passed explicitly, never the lib.sh seam.
-    pub landing_pass_bin: PathBuf,
     /// The round's slot budget for concurrent attribution (DESIGN.md §4.2):
     /// SPIRA_BATCHER_ROUND_SLOTS, else maxpar + 4.
     pub round_slots: Option<u32>,
@@ -119,7 +115,7 @@ pub fn registry(env: &Env) -> spira_config::repos::Registry {
 }
 
 // ---------------------------------------------------------------------------------------
-// lib.sh dispatch — reuse the tested shell functions for bd/landstate mutations rather than
+// lib.sh dispatch — reuse the tested shell functions for bd mutations rather than
 // re-deriving their side effects (release_claim, the requeue event, the TSD dual-write).
 // ---------------------------------------------------------------------------------------
 
@@ -134,12 +130,6 @@ where
     // bin/+spira/ on the CHILD's PATH, never only inherited — see inbox-triage's scar.
     cmd.envs(spira_config::release_env::child_path_env_for_process());
     run(&mut cmd, &format!("lib.sh {func}"))
-}
-
-pub fn land_mark(env: &Env, id: &str, state: &str, tip: &str, reason: &str) {
-    let mut cmd = Command::new(&env.landing_pass_bin);
-    cmd.env("SPIRA_RUN", &env.run).args(["mark", id, state, tip, reason]);
-    let _ = run(&mut cmd, "landing-pass mark");
 }
 
 /// The queue's own merge subject for `id` — "spira: land <id>", or with " — <title>"
@@ -179,7 +169,7 @@ pub fn rebase_stale(env: &Env, repo_name: &str, id: &str) -> i32 {
 // spira-lc: the lifecycle machine, the only source of bead and delivery state here.
 // `lc_probe` refuses the cut if the machine is unreachable; the cut/stack calls after it stay
 // best-effort and additive (a CAS refusal is reported on stderr and leaves batch_id/version
-// unset, never blocking the PR or land_mark).
+// unset, never blocking the PR).
 
 fn lcq(env: &Env, args: &[&str]) -> Result<String, String> {
     let bin = env.lc_bin.as_ref().ok_or_else(|| "no spira-lc program".to_string())?;
@@ -286,7 +276,7 @@ fn bd_show(env: &Env, ids: &[String]) -> Result<serde_json::Value, String> {
 /// repository, and (law-batcher-earns-the-round-by-parity) the batcher's own check that a
 /// CERTIFIED record's tip is still the branch's live tip: a branch that moved since
 /// certification is not this bead's member until it is re-certified at the new tip, whatever
-/// batch.sh did or did not do to landstate first.
+/// batch.sh did or did not do first.
 fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
     let out = run(
         Command::new("git").arg("-C").arg(&repo.path).args(["for-each-ref", "--format=%(refname:short) %(objectname)", "refs/heads/spira/*"]),
@@ -759,12 +749,11 @@ pub fn conflict_streak_clear(env: &Env, id: &str) {
 }
 
 /// Ejects a certified member set aside for a base conflict in consecutive rounds: reopened
-/// for rebase and its landstate written WITHDRAWN, so it can only rejoin by recertifying.
-pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, tip: &str, rounds: u32, files: &[String]) {
+/// for rebase, so it can only rejoin by recertifying.
+pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, files: &[String]) {
     let listed = if files.is_empty() { "unknown".to_string() } else { files.join(", ") };
     let reason = format!("set aside for conflict with {} in {rounds} consecutive rounds; conflicting files: {listed}", repo.base);
     bead_reopen(env, id, "rebase-conflict", &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."));
-    land_mark(env, id, "WITHDRAWN", tip, &reason);
     conflict_streak_clear(env, id);
 }
 
@@ -1023,16 +1012,13 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
 
 /// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
 /// CERTIFIED, withdraws that certification — bead_reopen's own contract) with a note naming
-/// every suite it turned red, then record the landstate EJECTED the same way the retired verdict.sh's own
-/// CI-side ejection does, so the funnel (cockpit, census) counts a local and a CI ejection the
-/// same way. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
+/// every suite it turned red, with a distinct cause so census can tell a local ejection from a CI one. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
 /// so census.sh can tell the two apart.
 ///
 /// The suites also go to bead_reopen's fourth argument, which writes the `<id>.ejected`
 /// sidecar, as the retired verdict.sh's own ejection did (sp-p3srm): the gate's re-entry check reads it
-/// first, and unlike the EJECTED landstate row it survives the row being overwritten
-/// (REBASED, WITHDRAWN) before the bead's next gate.
-pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[String], first_fails: &[(String, String)]) {
+/// first.
+pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], first_fails: &[(String, String)]) {
     let suites_csv = suites.join(",");
     let note = format!(
         "Ejected by the merge queue's local attribution (pre-PR): spira/{id} turned red on: {}.{}",
@@ -1040,7 +1026,6 @@ pub fn eject_member(env: &Env, repo_name: &str, id: &str, tip: &str, suites: &[S
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
-    land_mark(env, id, "EJECTED", tip, &suites_csv);
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
         use std::io::Write;
         let _ = writeln!(f, "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}", now());
@@ -1478,7 +1463,7 @@ pub fn file_land_unverified_incident(env: &Env, repo: &Repo, head: &str, detail:
 }
 
 // ---------------------------------------------------------------------------------------
-// TSD: append this round's record. Best-effort, like land_mark's own TSD write — an
+// TSD: append this round's record. Best-effort — an
 // unbuilt or missing tsd-write binary means the row stays unwritten, never that the round
 // itself fails.
 // ---------------------------------------------------------------------------------------
@@ -2058,14 +2043,6 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn a_landstate_row_is_not_a_certified_bead() {
-        let d = scratch("landstate-inert");
-        fs::create_dir_all(d.join("landstate")).unwrap();
-        fs::write(d.join("landstate/sp-x"), "CERTIFIED xxxx 1790000000\n").unwrap();
-        assert!(read_certified(&env(&d, Some(fake_lc(&d, "[]")))).unwrap().is_empty());
-    }
-
-    #[test]
     fn runs_spira_lc_and_records_the_batch() {
         let d = scratch("cut");
         let e = env(&d, Some(fake_lc(&d, r#"[]"#)));
@@ -2180,29 +2157,17 @@ mod eject_tests {
     fn an_ejected_member_carries_its_suites_to_the_sidecar_and_the_row() {
         let d = testkit::TempDir::new("batcher-cut-eject");
         // A lib.sh that records each call's argv, one call per line, fields tab-separated.
-        // land_mark is NOT here (sp-cnnt6, "wave 4.16") — landing-pass owns that write now,
-        // a stand-in landing-pass binary below records it instead.
         let log = d.join("calls");
         let rec = |f: &str| format!("{f}() {{ (IFS=$'\\t'; printf '{f}\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display());
         fs::write(d.join("lib.sh"), rec("bead_reopen")).unwrap();
-        let mut e = super::lifecycle_tests_env(&d);
-        let landing_pass = d.join("landing-pass");
-        testkit::write_exe(
-            &landing_pass,
-            &format!(
-                "#!/bin/sh\n{{ printf 'land_mark'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> '{}'\n",
-                log.display()
-            ),
-        );
-        e.landing_pass_bin = landing_pass;
-        eject_member(&e, "spira", "sp-m2", "abc", &["test-a.sh".into(), "test-b.sh".into()], &[("test-a.sh".into(), "FAIL widget".into())]);
+        let e = super::lifecycle_tests_env(&d);
+        eject_member(&e, "spira", "sp-m2", &["test-a.sh".into(), "test-b.sh".into()], &[("test-a.sh".into(), "FAIL widget".into())]);
         let calls = fs::read_to_string(&log).unwrap();
         let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
-        assert_eq!(lines.len(), 2, "{calls}");
+        assert_eq!(lines.len(), 1, "{calls}");
         assert_eq!(lines[0][..3], ["bead_reopen", "sp-m2", "queue-eject-local"]);
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
         assert!(lines[0][3].contains("test-a.sh: FAIL widget"), "the reason names the suite's first FAIL line: {}", lines[0][3]);
-        assert_eq!(lines[1], ["land_mark", "mark", "sp-m2", "EJECTED", "abc", "test-a.sh,test-b.sh"]);
         let _ = fs::remove_dir_all(&d);
     }
 }
@@ -2216,23 +2181,17 @@ mod conflict_streak_tests {
         let d = testkit::TempDir::new("batcher-cut-streak");
         let log = d.join("calls");
         fs::write(d.join("lib.sh"), format!("bead_reopen() {{ (IFS=$'\\t'; printf 'bead_reopen\\t%s\\n' \"$*\") >> '{}'; }}\n", log.display())).unwrap();
-        let mut e = super::lifecycle_tests_env(&d);
-        let landing_pass = d.join("landing-pass");
-        testkit::write_exe(
-            &landing_pass,
-            &format!("#!/bin/sh\n{{ printf 'land_mark'; for a in \"$@\"; do printf '\\t%s' \"$a\"; done; printf '\\n'; }} >> '{}'\n", log.display()),
-        );
-        e.landing_pass_bin = landing_pass;
+        let e = super::lifecycle_tests_env(&d);
         let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
 
         assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 1, "the first cut only sets it aside");
         assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 2);
-        withdraw_for_conflict(&e, &repo, "sp-a", "t1", 2, &["x.rs".into(), "y.sh".into()]);
+        withdraw_for_conflict(&e, &repo, "sp-a", 2, &["x.rs".into(), "y.sh".into()]);
         let calls = fs::read_to_string(&log).unwrap();
         let lines: Vec<Vec<&str>> = calls.lines().map(|l| l.split('\t').collect()).collect();
-        assert_eq!(lines.len(), 2, "{calls}");
-        assert_eq!(lines[1][..5], ["land_mark", "mark", "sp-a", "WITHDRAWN", "t1"]);
-        assert!(lines[1][5].contains("2 consecutive rounds") && lines[1][5].contains("x.rs, y.sh"), "{calls}");
+        assert_eq!(lines.len(), 1, "{calls}");
+        assert_eq!(lines[0][..3], ["bead_reopen", "sp-a", "rebase-conflict"]);
+        assert!(lines[0][3].contains("2 consecutive rounds") && lines[0][3].contains("x.rs, y.sh"), "{calls}");
         assert_eq!(conflict_streak_bump(&e, "sp-a", "t1"), 1, "withdrawal clears the count");
         assert_eq!(conflict_streak_bump(&e, "sp-a", "t2"), 1, "a new tip starts over");
         conflict_streak_clear(&e, "sp-a");
@@ -2492,7 +2451,6 @@ pub(crate) fn lifecycle_tests_env(dir: &Path) -> Env {
         round_vm: dir.join("round-vm"),
         queue_bin: dir.join("queue"),
         rebase_stale_bin: dir.join("rebase-stale"),
-        landing_pass_bin: dir.join("landing-pass"),
         round_slots: None,
         poll_secs: 1,
         maxpar: 1,

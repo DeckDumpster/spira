@@ -14,19 +14,18 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
+. "$HERE/testlib/lc-fixture.sh"
 
 echo "test-queue-step-eject-race.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-queue-step-eject-race: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"
 RUN="$TMP/run"
 SH="$TMP/spira"
 REPONAME=fixq-race
-LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 FORGE_LOG="$TMP/forge.log"
 BD_LOG="$TMP/bd.log"
@@ -34,7 +33,7 @@ SLEEP_FILE="$TMP/sleep-seconds"; printf '3\n' > "$SLEEP_FILE"
 
 git init -q -b main "$REPO"
 git -C "$REPO" commit -q --allow-empty -m init
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 
@@ -81,7 +80,7 @@ RMAP="$TMP/repo-map"
 printf '%s | %s | queue | main | | |\n' "$REPONAME" "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="$STUBBIN:$PATH" HOME="$TMP" \
+    env -i $(lcfix_env) PATH="$STUBBIN:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
         SPIRA_RUN="$RUN" \
@@ -108,7 +107,7 @@ TIP="aabbcc1100000000000000000000000000000001"
     printf 'opened=%s\n' "$(date +%s)"
     printf 'branch=spira/queue/racetest\n'
 } > "$QUEUEDIR/$REPONAME/open"
-printf 'BATCHED %s %s\n' "$TIP" "$(date +%s)" > "$LANDSTATE/sp-race"
+lcfix_seed sp-race IN_DELIVERY "$TIP"
 
 LOCKFILE="$QUEUEDIR/$REPONAME/lock"
 # _lock_free — a THIRD process's own flock attempt: 0 (free, and now released again
@@ -146,15 +145,10 @@ STEP_RC=$?
 want "eject names the lock as the reason" "holds the lock" "$EJECT_OUT"
 is   "step itself completes (its own lock take succeeded)" "0" "$STEP_RC"
 
-# CONSISTENT LANDSTATE: exactly one actor could have changed sp-race's landstate —
-# step's verdict saw "pending" and made no state change, and eject never got the
-# lock — so it must still read BATCHED, not RED (eject's own write), not corrupted
-# (e.g. truncated by two writers), and not silently doubled.
-st="$(awk '{print $1}' "$LANDSTATE/sp-race" 2>/dev/null || true)"
-is "landstate is still BATCHED — untouched by the loser, unchanged by the winner" \
-   "BATCHED" "$st"
-is "landstate file has exactly one line (no interleaved/double write)" \
-   "1" "$(wc -l < "$LANDSTATE/sp-race" | tr -d ' ')"
+# Exactly one actor could have changed sp-race's lifecycle row: step's verdict saw
+# "pending" and made no change, and eject never got the lock.
+is "lifecycle row is still IN_DELIVERY at its tip — untouched by the loser, unchanged by the winner" \
+   "IN_DELIVERY $TIP" "$(lcfix_state sp-race) $(lcfix_tip sp-race)"
 
 echo
 echo "once the lock is free, the same eject genuinely succeeds:"
@@ -163,7 +157,6 @@ else bad "lock is free again after step finished" "still held"; fi
 
 OUT2="$(run eject sp-race "$REPONAME")"; RC2=$?
 is "eject now exits 0" "0" "$RC2"
-st2="$(awk '{print $1}' "$LANDSTATE/sp-race" 2>/dev/null || true)"
-is "landstate is now RED — the winner (this time, eject) actually acted" "RED" "$st2"
+is "lifecycle row is now REWORK — the winner (this time, eject) actually acted" "REWORK" "$(lcfix_state sp-race)"
 
 tl_summary

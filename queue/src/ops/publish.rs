@@ -98,7 +98,7 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
         let _ = std::fs::remove_file(&red_file);
     }
 
-    let members = match range_members(w, &path, &c.s.landstate, &forge_sha, &head_sha) {
+    let members = match range_members(w, &path, &forge_sha, &head_sha) {
         Ok(m) => m,
         Err(e) => {
             w.err(format!("queue.sh publish: cannot read {forge_sha}..{head_sha}: {e} — refusing"));
@@ -157,10 +157,10 @@ pub fn publish_with(w: &World, repo: Option<&str>, lock_held: bool) -> i32 {
     OK
 }
 
-/// The members of forge..head: from the land commits, landstate for tips only.
-pub fn range_members(w: &World, path: &std::path::Path, landstate: &std::path::Path, forge: &str, head: &str) -> Result<Vec<Member>, String> {
+/// The members of forge..head: from the land commits, the lifecycle rows for tips only.
+pub fn range_members(w: &World, path: &std::path::Path, forge: &str, head: &str) -> Result<Vec<Member>, String> {
     let commits = w.git.log_range(path, &format!("{forge}..{head}"))?;
-    let states: BTreeMap<_, _> = records::all_land_states(landstate).unwrap_or_default().into_iter().collect();
+    let states: BTreeMap<_, _> = w.lc.bead_rows(Some("LANDED")).unwrap_or_default().into_iter().map(|r| (r.bead_id.clone(), r)).collect();
     let in_range = |t: &str| {
         crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t) && w.git.is_ancestor(path, t, head) && !w.git.is_ancestor(path, t, forge)
     };

@@ -295,7 +295,6 @@ pub fn run(
                     detail
                 ),
             );
-            seam.land_mark(id, "RED", &old_tip, &format!("no-rebase@{land_sha}"));
             return Report {
                 exit: Exit::Conflict,
                 stdout: None,
@@ -352,7 +351,6 @@ pub fn run(
                 info.landref
             ),
         );
-        seam.land_mark(id, "RED", &old_tip, &format!("no-rebase@{land_sha}"));
         return Report {
             exit: Exit::GateRed,
             stdout: None,

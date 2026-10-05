@@ -190,8 +190,8 @@ fi
 if [ -z "$reason" ] && [ -n "${SPIRA_RUN:-}" ]; then
     # Refuse write shapes only, mirroring the \$SPIRA_PROD rule below: reads, script
     # execution and mentions of the path in prose (a heredoc body, a quoted string) are
-    # permitted (sp-ozym9; law-a-matcher-reads-code-not-prose). \$SPIRA_RUN/landstate is
-    # no longer fenced: the lifecycle cutover deletes the ledger (sp-2c1n0, sp-j7l3q).
+    # permitted (sp-ozym9; law-a-matcher-reads-code-not-prose). The retired landing
+    # ledger is no longer fenced: the lifecycle cutover deleted it (sp-2c1n0, sp-j7l3q).
     case "$cmd" in
         *">${SPIRA_RUN}/queue"*|*"> ${SPIRA_RUN}/queue"*|\
         *">>${SPIRA_RUN}/queue"*|*">> ${SPIRA_RUN}/queue"*)

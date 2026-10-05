@@ -57,9 +57,9 @@
 3 queue-watch/src/io.rs
 1 queue-watch/src/main.rs
 6 queue/src/ops/helpers.rs
-8 queue/src/real.rs
+7 queue/src/real.rs
 2 rebase-stale/src/resolve.rs
-5 rebase-stale/src/seam.rs
+4 rebase-stale/src/seam.rs
 2 reconciler-alert/src/io.rs
 4 reconciler-flow/src/io.rs
 1 reconciler-flow/src/main.rs
@@ -93,7 +93,6 @@
 3 spira-ctrl/src/main.rs
 3 spira-lc/src/bd.rs
 2 spira-lc/src/bd_facts.rs
-1 spira-lc/src/callers.rs
 1 spira-lc/src/classify_cmd.rs
 1 spira-lc/src/client.rs
 2 spira-lc/src/git_evidence.rs
@@ -178,11 +177,9 @@
 5 spira/test-certify.sh
 2 spira/test-chamber-core-check.sh
 1 spira/test-chamber-repo-labels.sh
-27 spira/test-check5-invariant.sh
 5 spira/test-closed-strand.sh
 2 spira/test-cockpit-bd-contract.sh
 3 spira/test-cockpit-funnel.sh
-3 spira/test-cockpit-queue-section.sh
 2 spira/test-cockpit-remote.sh
 3 spira/test-cockpit-unlanded.sh
 4 spira/test-cockpit-unsent.sh
@@ -209,7 +206,7 @@
 5 spira/test-groom-escalation-check.sh
 4 spira/test-groomer-incident-reroute.sh
 9 spira/test-groomer-split-piece.sh
-10 spira/test-groomer-state.sh
+9 spira/test-groomer-state.sh
 3 spira/test-groomer-sweep.sh
 12 spira/test-incident.sh
 2 spira/test-install-aeons.sh
@@ -273,7 +270,6 @@
 4 spira/test-sending-closed-reap.sh
 1 spira/test-sending-mode-filter.sh
 11 spira/test-sending.sh
-3 spira/test-sentinel-check5-subsumed.sh
 7 spira/test-set-state-semantics.sh
 1 spira/test-skew-check-release.sh
 1 spira/test-skew-foreign.sh
@@ -304,7 +300,7 @@
 4 spira/verify-landed.sh
 1 spira/warden-trigger.sh
 1 spira/wiki-commit.sh
-8 strand/src/detectors.rs
+5 strand/src/detectors.rs
 1 strand/src/probe.rs
 1 suite-select/src/io.rs
 1 supervise/src/main.rs

@@ -35,7 +35,7 @@ sending [--dry-run] [--no-fetch] [--status-from <file>] [--skip-queue|--queue-on
 `sending --dry-run` or `sending <bead-id>` by hand (watchtower's escalations say so).
 
 **Scope.** Every repository `spira_repos` names; `--skip-queue` drops queue/queue.local
-repositories (their landed members are reaped at landing by `bead_close_on_land`),
+repositories (their landed members are reaped at landing by `spira-lc close-on-land`),
 `--queue-only` keeps only those. A flag partitions repositories, never a repository's
 branches. A repository with no path, no checkout, or an unresolvable land ref is a `SKIP`
 line — loudly, never swept against a ref that does not exist.
@@ -46,11 +46,11 @@ computed. Otherwise, in order (the forge is asked only after every local check s
 
 | disposition | when | action |
 |---|---|---|
-| SEND content-landed | `content_landed(br, base)` | evidence (below), verified reap, close-on-land |
+| SEND content-landed | `content_on_base(br, base)` | evidence (below), verified reap, close-on-land |
 | KEEP superseded-unsafe | a `supersedes` edge, commits of its own, merges cleanly | keep the branch, free its worktree |
 | REAP superseded-safe | a `supersedes` edge, and conflicts (or carries nothing) | verified reap |
 | REAP squash-merged | closed/submitted, a MERGED PR whose head is the branch tip | verified reap, close-on-land |
-| SEND ff / REAP non-code-delivers / REAP open-zero-ahead | zero ahead and an ancestor | unreachable in practice (content_landed answered first); kept for a base that moves between reads |
+| SEND ff / REAP non-code-delivers / REAP open-zero-ahead | zero ahead and an ancestor | unreachable in practice (content_on_base answered first); kept for a base that moves between reads |
 | KEEP cherry-unapplied | a landing record names the bead but `git cherry` finds an unapplied commit | keep |
 | SEND other-pr | a landing record names the bead and every commit is patch-equivalent upstream | verified reap, close-on-land |
 | KEEP unlanded | a bead exists | keep |
@@ -75,7 +75,7 @@ holder witnesses say nobody is home, is removed through `spira_destroy_worktree`
 
 - `sweep.rs` — the dispositions and both passes, over a `World` (ports.rs).
 - `git.rs` — every git question, read-only except `fetch` and the archive `update-ref`:
-  `content_landed`, `landed` (a landing record: `spira: land <id>` or `<id>:` subjects on
+  `content_on_base`, `landed` (a landing record: `spira: land <id>` or `<id>:` subjects on
   the land refs), `cherry`, worktree porcelain.
 - `real.rs` / `seam.rs` — the world: lib.sh through the seam, `gh` for the one forge
   question, `spira-lc` by bare name.
@@ -91,7 +91,7 @@ through bash — as it did when one bash process ran the whole sweep. **Since sp
 repositories, family U), base (`spira_landref`/`spira_landrefs`/`ref_remote`, family W),
 bead (`bdjson show`, family A/B), status (`spira_db_reachable` + `spira_bead_status` in one
 call — the one bd question `reap::holder_witnesses` cannot answer itself), close-on-land
-(`bead_close_on_land`, family R), label-add/label-remove (`bdq label add|remove`, family
+(`spira-lc close-on-land`, family R), label-add/label-remove (`bdq label add|remove`, family
 A). Witness, send, destroy-worktree and prune are gone from this seam: `World for Real`
 calls `reap.rs` in-process for all four now. lib.sh's own output (`log` lines) is still
 passed through in order for the ops that remain.
@@ -141,7 +141,7 @@ passed through in order for the ops that remain.
   `send_disposition`/`send_branch` directly; those are unit tests now
   (`every_branch_gets_the_shells_disposition`, `mid_send_hold_queue_and_failure`).
 - **Kept as it was:** a HELD or CERTIFIED/BATCHED answer at the mid-send recheck still
-  lets `bead_close_on_land` run for a landed arm (the work did land; only the ref stays),
+  lets `spira-lc close-on-land` run for a landed arm (the work did land; only the ref stays),
   and the content-landed evidence is written before a delete that may then be refused.
 - **Intended differences, named:** (1) OFF mode writes the `content-landed` label (§2);
   (2) the reap log's caller chain names `sending.seam.sh` where it named `sending.sh`;

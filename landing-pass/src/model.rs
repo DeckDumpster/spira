@@ -267,36 +267,6 @@ impl BeadRow {
     }
 }
 
-/// `$SPIRA_RUN/landstate/<id>`: "<STATE> <tip|none> <epoch> [reason…]", no newline.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LandState {
-    pub state: String,
-    pub tip: String,
-    pub at: u64,
-    pub reason: String,
-}
-
-impl LandState {
-    /// `read -r st tip at reason` over the record with its newlines removed.
-    pub fn parse(text: &str) -> Option<LandState> {
-        let flat: String = text.chars().filter(|c| *c != '\n').collect();
-        let t = flat.trim_start();
-        let mut it = t.splitn(2, char::is_whitespace);
-        let state = it.next().unwrap_or("").to_string();
-        if state.is_empty() {
-            return None;
-        }
-        let rest = it.next().unwrap_or("").trim_start();
-        let mut it = rest.splitn(2, char::is_whitespace);
-        let tip = it.next().unwrap_or("").to_string();
-        let rest = it.next().unwrap_or("").trim_start();
-        let mut it = rest.splitn(2, char::is_whitespace);
-        let at = it.next().unwrap_or("").parse().unwrap_or(0);
-        let reason = it.next().unwrap_or("").trim().to_string();
-        Some(LandState { state, tip, at, reason })
-    }
-}
-
 /// The gate's four outcomes (conf.sh).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GateOutcome {

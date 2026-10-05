@@ -184,8 +184,7 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 **Systemd units:**
 
 - `spira-sentinel[-<inst>].timer` → `.service` runs `sentinel` every 2 min. Type=oneshot,
-  TimeoutStartSec=900. The live drop-in sets
-  `Environment=SPIRA_SKIP_CLOSED_CHECK=1`.
+  TimeoutStartSec=900. CHECK 5 and its skip switch are gone.
 - `spira-summon[-<inst>].timer` → `.service` runs `sentinel --summon-only` every 15 s.
   TimeoutStartSec=60.
 - Every aeon unit's `ExecStopPost=<systemd-run> --user --collect --quiet <sentinel>
@@ -210,7 +209,7 @@ environment has no effect.
 - `--setenv` for `PATH HOME SPIRA_HOME SPIRA_RUN SPIRA_DB SPIRA_REPO SPIRA_REPO_MAP
   SPIRA_HOME_REPO SPIRA_BD SPIRA_GH SPIRA_POISON_AT SPIRA_REQUEUE_AT SPIRA_RECLAIM_AT
   SPIRA_ASK_LABEL SPIRA_SCOPE_LABEL SPIRA_WORK_CLOSE_TYPES`, in that order, plus **new**
-  `SPIRA_SKIP_CLOSED_CHECK` and `SPIRA_SKIP_RECLAIM` when they are set (§9, B1).
+  `SPIRA_SKIP_RECLAIM` when it is set (§9, B1).
 
 `spira-landing` runs `landing-pass land` (the PATH-resolved program: a transient unit has no launcher PATH). It is launched the same way with:
 
@@ -647,7 +646,7 @@ cost 302 s against a 60 s pass budget (§5).
    - `decide n 0 0 "" 1:1:1 1`. If it says `clear`, Unhold poison and progress
      `CHECK4 <id>: stale poison cleared — <n> attempt(s), below threshold <P>`.
 
-**CHECK 5 — closed but not landed** (audit; skipped under `SPIRA_SKIP_CLOSED_CHECK=1`).
+**CHECK 5 — closed but not landed** (audit — DELETED; lifecycle LANDED supersedes it).
 
 1. **Incidents.** Open or in-progress snapshot rows carrying `$SPIRA_INCIDENT_LABEL`,
    keyed by their `ref:<hash>` label.
@@ -672,7 +671,7 @@ cost 302 s against a 60 s pass budget (§5).
    env and body.
 9. **Summary lines**, identical to today's.
 
-**CHECK5-LC — the ON-path replacement, alongside CHECK 5, never instead of it** (audit;
+**CHECK5-LC — the ON-path replacement, now standing alone** (audit;
 design sp-pswer.2: "design ON-path replacement for CHECK5 / groomer STATE sweeps"). CHECK 5
 and lib.sh's three groomer STATE sweeps (`detect_landed_but_open`,
 `detect_closed_unlanded_states`, `detect_false_blockers`) all prove the same three drifts —
@@ -684,9 +683,9 @@ never a bare bd close), so the row's own terminal-ness is the same fact CHECK 5 
 `git log` walk proving, and comparing it against `bd`'s status is a lookup, not a walk.
 
 Only when `lifecycle_enforce` is ON (`lc_rows()`, the same one read CHECK 2/2c already share
-this pass), run unconditionally in `Lifecycle::On` right after CHECK 5, never gating CHECK
-5's own call — `spira/test-legacy-state-checks-ungated.sh` (sp-pswer.1) fails the build the
-day anyone tries. `lifecycle.rs`'s `landed_but_open` / `closed_unlanded` / `false_blockers`:
+this pass), run in `Lifecycle::On` right after CHECK 4. Until the cutover it ran beside CHECK
+5 and never gated it (sp-pswer.1); sp-jnwbn deleted CHECK 5 and the groomer's three STATE
+sweeps, and `spira/test-landstate-checks-deleted.sh` now fails the build if either returns. `lifecycle.rs`'s `landed_but_open` / `closed_unlanded` / `false_blockers`:
 
 1. **landed-but-open** — a work bead `bd` shows open/in_progress whose `spira-lc` row is
    `LANDED`. `STATE-LC <id> landed-but-open — spira-lc row is LANDED; close it`.
@@ -702,7 +701,7 @@ day anyone tries. `lifecycle.rs`'s `landed_but_open` / `closed_unlanded` / `fals
 Detect, never repair — the same posture as CHECK 2c's `INCONSISTENT` lines, for the same
 reason: this is the side-by-side comparison the epic's scope needs before either legacy path
 is retired, not a fourth writer racing `bd_close_on_land`. Summary: `CHECK5-LC: <n> state
-drift line(s) from spira-lc, alongside CHECK 5's own`; act `surfaced <n> CHECK5-LC line(s)`;
+drift line(s) from spira-lc`; act `surfaced <n> CHECK5-LC line(s)`;
 silent when `<n>` is 0.
 
 **CHECK 6b — the Sending** (audit).
@@ -885,7 +884,7 @@ Line numbers are against this branch's base, `7ce25b21b`.
 | 6 | `systemd/spira-summon.service:11` | `ExecStart=@SPIRA_PROD@/sentinel.sh --summon-only` | `ExecStart=@SPIRA_PROD_ROOT@/bin/sentinel --summon-only` |
 | 7 | `systemd/spira-summon.service:6` | `Documentation=file://@SPIRA_HOME@/sentinel.sh` | `Documentation=file://@SPIRA_PROD_ROOT@/sentinel/DESIGN.md` |
 | 8 | `spira/lib.sh:2570-2573` (`summon_refill_argv`) | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "$SPIRA_HOME/sentinel.sh"` | `printf -- '--property=ExecStopPost=%s --user --collect --quiet %s --summon-only' "$bin" "${SPIRA_SENTINEL_BIN:-$(spira_bin sentinel 2>/dev/null)}"`. Not `${…:?}`: that would kill summon_fayth's shell mid-summon. The binary finds its harness from its own path (§2.7), so no `--setenv` is needed. |
-| 9 | `~/.config/systemd/user/spira-sentinel-prod.service.d/skip-check5-until-lifecycle-cutover.conf` | `Environment=SPIRA_SKIP_CLOSED_CHECK=1` | unchanged, but note it **starts taking effect** with this binary (§9, B1). Today CHECK 5 runs in the audit worker regardless: 979 `CHECK5` lines in `run/audit.log`, the last at 03:58Z 2026-09-29. |
+| 9 | `~/.config/systemd/user/spira-sentinel-prod.service.d/skip-check5-until-lifecycle-cutover.conf` | `Environment=SPIRA_SKIP_CLOSED_CHECK=1` | unchanged, but note it **starts taking effect** with this binary (§9, B1). Today CHECK 5 runs in the audit worker regardless: 979 `CHECK5` lines in `run/audit.log`, the last at 03:58Z 2026-09-29. Since sp-jnwbn CHECK 5 is deleted and the drop-in is dead weight; remove it. |
 
 Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 
@@ -924,8 +923,8 @@ named unit tests.
 | 21 | `test-sentinel-pass.sh` | repoint. The `--unit=spira-audit … sentinel.sh --audit` assertion becomes `… <binary> --audit`. The rest are `tests::*` (whole passes against the fake runner) |
 | 22 | `test-summon-fast-path.sh:342` | `*"--property=ExecStopPost=$T/bin/mock-summon-noop --user --collect --quiet $T/sentinel.sh --summon-only"*)` → `… --quiet $SPIRA_SENTINEL_BIN --summon-only"*)` |
 | 23 | `test-poison.sh` | reduce to the "stays end-to-end" rows of spira-claim/DESIGN.md §4, run against the binary |
-| 24 | `test-check5-invariant.sh` | repoint `--audit` |
-| 25 | `test-sentinel-check5-subsumed.sh` | repoint `--audit` |
+| 24 | `test-check5-invariant.sh` | repoint `--audit` (deleted with CHECK 5, sp-jnwbn) |
+| 25 | `test-sentinel-check5-subsumed.sh` | repoint `--audit` (deleted with CHECK 5, sp-jnwbn) |
 | 26 | `test-closed-strand.sh` | repoint |
 | 27 | `test-loop-readonly.sh` | repoint: run `$CURRENT/bin/sentinel` |
 | 28 | `test-strand-truncated.sh` | repoint |
@@ -963,6 +962,8 @@ About 30 suites carry `# covers: … spira/sentinel.sh`. That changes to
     It filed and resolved incidents all along: 979 CHECK5 lines in the live audit.log.
   - With this binary CHECK 5 really stops while the drop-in stands.
   - If the operator wants CHECK 5 running until the cutover, delete the drop-in.
+  - Superseded by sp-jnwbn: a unit re-render deleted the drop-in on 2026-10-04 and CHECK 5
+    resumed, so CHECK 5 and `SPIRA_SKIP_CLOSED_CHECK` are deleted outright.
 - **B2. STATE and every CHECK 2, 4 and 5 input come from the pass's one snapshot, not from
   live per-check queries.**
   - The values are as of pass start, seconds older than before.

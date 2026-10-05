@@ -183,7 +183,6 @@ fn env_for(o: &Opts, home: PathBuf, run: PathBuf) -> Env {
         round_vm: o.round_vm.clone().unwrap_or_else(default_round_vm),
         queue_bin: PathBuf::from("queue"),
         rebase_stale_bin: PathBuf::from("rebase-stale"),
-        landing_pass_bin: PathBuf::from("landing-pass"),
         round_slots: env::var("SPIRA_BATCHER_ROUND_SLOTS").ok().and_then(|v| v.trim().parse().ok()).filter(|n: &u32| *n > 0),
         poll_secs: env::var("SPIRA_BATCHER_POLL_SECS").ok().and_then(|v| v.trim().parse().ok()).unwrap_or(2),
         // Batcher-parity (sp-myi6w): the Concierge's own proven values, not testenv-batch.sh's
@@ -277,7 +276,7 @@ fn handle_base_conflicts(
         } else {
             let rounds = io::conflict_streak_bump(env_, &m.id, &m.tip);
             if rounds >= batcher::core::CONFLICT_EJECT_ROUNDS {
-                io::withdraw_for_conflict(env_, repo, &m.id, &m.tip, rounds, &base_files);
+                io::withdraw_for_conflict(env_, repo, &m.id, rounds, &base_files);
             }
         }
     }
@@ -325,7 +324,7 @@ impl drive::RoundOps for LiveOps<'_> {
             .iter()
             .filter_map(|s| io::suite_first_fail(Path::new(&self.evidence), s).map(|l| (s.clone(), l)))
             .collect();
-        io::eject_member(self.env, &self.repo.name, &member.id, &member.tip, suites, &fails);
+        io::eject_member(self.env, &self.repo.name, &member.id, suites, &fails);
         println!("{}", ejected_event(&Ejection { id: member.id.clone(), suites: suites.to_vec() }).text);
     }
 
@@ -799,7 +798,7 @@ fn open_round_pr(
     let pr_n = io::forge_pr_create(repo, &batch_br, &base_branch, &title, &body)?;
 
     // spira-lc's own OPEN-batch lifecycle. Best-effort and additive, never blocking the PR or
-    // the land_mark loop below. A refusal leaves batch_id/version unset on the record, so
+    // the write below. A refusal leaves batch_id/version unset on the record, so
     // queue verdict's own land/settle wiring finds nothing to CAS against later.
     let member_pairs: Vec<(String, String)> = merged.iter().map(|m| (m.id.clone(), m.tip.clone())).collect();
     let lc_version = io::lc_cut_batch(env_, &repo.name, &batch_br, batch_head, base_sha, &member_pairs);
@@ -819,9 +818,6 @@ fn open_round_pr(
             version: lc_version.unwrap_or_default(),
         },
     )?;
-    for m in merged {
-        io::land_mark(env_, &m.id, "BATCHED", &m.tip, "");
-    }
     io::write_local_verdict(env_, &repo.name, "green", "");
     println!("{}", opened_event(&prr).text);
     println!("batcher {}: PR {} opened — {} member(s) ({})", repo.name, pr_n, merged.len(), batch_br);
@@ -1075,7 +1071,6 @@ mod base_conflict_handling {
         fs::write(d.join("lib.sh"), format!("f() {{ echo \"$@\" >> '{0}'; }}\nbead_reopen() {{ f reopen \"$@\"; }}\nbump_requeue() {{ f bump \"$@\"; }}\n", log.display())).unwrap();
         let mut e = io::lifecycle_tests_env(&d);
         testkit::write_exe(&e.rebase_stale_bin, &format!("#!/bin/sh\necho rebase \"$@\" >> '{}'\nexit 3\n", log.display()));
-        testkit::write_exe(&e.landing_pass_bin, &format!("#!/bin/sh\necho landing-pass \"$@\" >> '{}'\n", log.display()));
         e.run = d.to_path_buf();
         let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
         let sorted = vec![member("sp-a", &a), member("sp-c", &c)];

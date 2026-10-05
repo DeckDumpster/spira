@@ -16,13 +16,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
-
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-owner-mail
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up owner-mail || { echo "test-queue-owner-mail: could not build fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-owner-mail: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"
@@ -30,7 +29,6 @@ REMOTE="$TMP/remote.git"
 RUN="$TMP/run"
 SH="$TMP/spira"
 REPONAME=fixture-repo
-LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 
 git init -q --bare -b main "$REMOTE"
@@ -39,7 +37,7 @@ git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
@@ -98,7 +96,7 @@ tip="$(git -C "$REPO" rev-parse "spira/sp-ownm1")"
 stamp="20260927T000100Z"
 batch_br="spira/queue/$stamp"
 git -C "$REPO" branch -f "$batch_br" "$tip" >/dev/null
-printf 'BATCHED %s %s\n' "$tip" "$(date +%s)" > "$LANDSTATE/sp-ownm1"
+lcfix_seed sp-ownm1 IN_DELIVERY "$tip"
 
 # No owner= line at all: the default, cooperative ownership every automatic path already
 # shares (no concierge claim in effect) — the "owner" this suite's title refers to.
@@ -115,6 +113,7 @@ before="$(concierge_unread)"; before="${before:-0}"
 queue eject sp-ownm1 "$REPONAME" >/dev/null 2>&1
 rc=$?
 wantrc "eject exits zero" 0 "$rc"
+is "the ejected bead's lifecycle row is REWORK" "REWORK" "$(lcfix_state sp-ownm1)"
 
 seen=0
 deadline=$(( $(date +%s) + 10 ))

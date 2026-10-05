@@ -72,9 +72,9 @@ fn suspects_that_touch_the_covered_paths_come_first_in_round_order() {
     let members = ids(&["m1", "m2", "m3"]);
     let mut changed = BTreeMap::new();
     changed.insert("m1".to_string(), ids(&["doc/x.md"]));
-    changed.insert("m2".to_string(), ids(&["spira/lib.sh#land_mark"]));
+    changed.insert("m2".to_string(), ids(&["spira/lib.sh#bead_reopen"]));
     changed.insert("m3".to_string(), ids(&["queue/src/ops/land.rs"]));
-    let covers = ids(&["queue/src/*", "spira/lib.sh#land_mark"]);
+    let covers = ids(&["queue/src/*", "spira/lib.sh#bead_reopen"]);
     // m2's path carries a '#' only to prove the glob side strips it, not the path side.
     assert_eq!(suspect_order("test-q.sh", Some(&covers), &members, &changed), ids(&["m3", "m1", "m2"]));
     changed.insert("m2".to_string(), ids(&["spira/lib.sh"]));

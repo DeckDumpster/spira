@@ -138,7 +138,6 @@ fn ctx() -> Ctx {
         ("SPIRA_RELEASE", "/rel"),
         // The box's own tool tail (sp-c7b85) — cargo, for the tree builds a gate step runs.
         ("SPIRA_PATH", "/box/.cargo/bin"),
-        ("LANDSTATE", "/run/landstate"),
     ] {
         vars.insert(k.to_string(), v.to_string());
     }
@@ -1568,12 +1567,8 @@ fn ejected_suites_come_from_the_ejected_file() {
     let f = Fake::new();
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a.ejected"),
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-x.sh,test-y.sh\nignored\n".into(),
-    );
-    f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a"),
-        "EJECTED tip 1 test-z.sh\n".into(),
     );
     assert_eq!(f.run(), PASS);
     assert_eq!(
@@ -1590,13 +1585,11 @@ fn ejected_suites_come_from_the_ejected_file() {
 }
 
 #[test]
-fn an_ejected_landstate_row_names_no_suites() {
+fn a_sidecar_under_the_retired_landstate_ledger_is_not_read() {
+    // sp-2c1n0: the ledger is deleted; a stale `<id>.ejected` left under it forces nothing.
     let f = Fake::new();
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
-    f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a"),
-        "EJECTED tip 1 test-z.sh unattr\n".into(),
-    );
+    f.files.borrow_mut().insert(PathBuf::from(format!("{RUN}/landstate/sp-a.ejected")), "test-z.sh\n".into());
     f.run();
     assert_eq!(f.env_of(0, "SPIRA_GATE_EJECTED_SUITES"), "");
 }
@@ -2038,7 +2031,7 @@ fn returned(f: Fake, suites: &str) -> Fake {
     }
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a.ejected"),
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
         format!("{suites}\n"),
     );
     for s in suites.split(',') {
@@ -2247,7 +2240,7 @@ fn a_named_suite_no_longer_on_the_tree_is_said_and_not_run() {
     let f = unit_fake(&["gate/src/x.rs"]);
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a.ejected"),
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-gone.sh,../evil.sh\n".into(),
     );
     assert_eq!(f.run(), PASS);
@@ -2269,7 +2262,7 @@ fn the_batchers_ejected_sidecar_drives_the_rerun() {
         .insert(MERGE_SHA.into(), (0, "fences ok".into()));
     f.set_var("SPIRA_GATE_BEAD", "sp-a");
     f.files.borrow_mut().insert(
-        PathBuf::from("/run/landstate/sp-a.ejected"),
+        PathBuf::from(format!("{RUN}/ejected/sp-a")),
         "test-b.sh\n".into(),
     );
     f.files.borrow_mut().insert(

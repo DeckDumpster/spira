@@ -10,7 +10,7 @@
 //! worktrees out from under their aeons. Landed therefore means BOTH: the tip is an
 //! ancestor (so the work, if any, is not outstanding), AND the landing ref holds a commit
 //! actually naming this bead — `law-aeon-commits-name-their-bead`'s own convention, the
-//! same two subject shapes `landing-pass`'s own `land_verify::landed` trusts: the queue's
+//! same two subject shapes the retired landing-pass subject oracle trusted: the queue's
 //! merge subject (`spira: land <id>`, `land_subject`'s output) or a bead's own commit
 //! (`<id>:` — the colon must follow immediately, never a body mention).
 

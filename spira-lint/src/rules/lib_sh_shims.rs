@@ -18,7 +18,7 @@
 //!   - an inline interpreter script (`python3 -c`, `perl -e`);
 //!   - two or more invocations of an external command that is neither a known delegate
 //!     binary nor a sibling function defined in the same file — in practice, raw `git`
-//!     plumbing repeated more than once (`content_landed`'s ancestor-then-merge-tree
+//!     plumbing repeated more than once (the retired bash content check's ancestor-then-merge-tree
 //!     proof is the motivating case).
 //!
 //! This is a heuristic over the file's own very consistent style — `name() {` at column
@@ -396,18 +396,18 @@ mod tests {
     }
 
     /// The positive control: a planted real-bodied function — two raw `git` calls chained
-    /// on a condition, exactly `content_landed`'s own shape — must fail.
+    /// on a condition, exactly the retired bash content check's own shape — must fail.
     #[test]
     fn a_planted_real_bodied_function_is_caught() {
         let t = TempDir::new("planted");
         t.write(
             "spira/lib.sh",
-            "content_landed() {\n    local repo=\"$1\" br=\"$2\" base=\"$3\"\n    git -C \"$repo\" merge-base --is-ancestor \"$br\" \"$base\" && return 0\n    git -C \"$repo\" rev-parse \"$base\" >/dev/null\n}\n",
+            "content_on_base_check() {\n    local repo=\"$1\" br=\"$2\" base=\"$3\"\n    git -C \"$repo\" merge-base --is-ancestor \"$br\" \"$base\" && return 0\n    git -C \"$repo\" rev-parse \"$base\" >/dev/null\n}\n",
         );
         t.write(ALLOW_FILE, "");
         let got = run(&t, &["spira/lib.sh"]).unwrap();
         assert_eq!(got.len(), 1);
-        assert!(got[0].contains("content_landed"), "{got:?}");
+        assert!(got[0].contains("content_on_base_check"), "{got:?}");
         assert!(got[0].contains("no allow-list entry"), "{got:?}");
     }
 
@@ -453,8 +453,8 @@ mod tests {
     #[test]
     fn nested_and_non_lib_files_are_out_of_scope() {
         let t = TempDir::new("scope");
-        t.write("spira/sub/lib.sh", "content_landed() {\n    git a\n    git b\n}\n");
-        t.write("spira/other.sh", "content_landed() {\n    git a\n    git b\n}\n");
+        t.write("spira/sub/lib.sh", "content_on_base_check() {\n    git a\n    git b\n}\n");
+        t.write("spira/other.sh", "content_on_base_check() {\n    git a\n    git b\n}\n");
         assert_eq!(run(&t, &["spira/sub/lib.sh", "spira/other.sh"]), Err(LintError::EmptyScope));
     }
 }

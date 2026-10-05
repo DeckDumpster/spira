@@ -301,7 +301,6 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("queue step", &["czar"]),
     ("queue eject", &["czar"]),
     ("queue abandon", &["czar"]),
-    ("landing-pass mark", &["czar"]),
     ("landing-pass halt", &["czar"]),
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),

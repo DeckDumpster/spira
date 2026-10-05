@@ -139,6 +139,14 @@ git init -q -b main "$LREPO"
 git -C "$LREPO" config user.email t@t; git -C "$LREPO" config user.name t
 git -C "$LREPO" remote add origin "$TMP/unused.git"
 git -C "$LREPO" commit -q --allow-empty -m base
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): drift.sh asks `spira-lc state <bead>`.
+# The stub answers from $LCSTATE/<id> (no file: SUBMITTED, known and not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE" "$TMP/lcbin"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+PATH="$TMP/lcbin:$PATH"
+
 land_base() {
     git -C "$LREPO" update-ref refs/remotes/origin/main HEAD
     git -C "$LREPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
@@ -160,11 +168,6 @@ path = "spira-bins-prune.timer"   # trailing comment
 reason = "interim prune"
 bead = "sp-local-prune"
 TOML
-# "landed" is the lifecycle record's LANDED state (sp-oqf8c): a stub spira-lc answers
-# `state <id>` from $LCSTATE/<id>, so a commit naming the bead is no longer the evidence.
-LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lcbin"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] && [ -s "%s/$2" ] && cat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
-chmod +x "$TMP/lcbin/spira-lc"
 ldrift() {
     env -i PATH="$TMP/lcbin:$PATH" HOME="$TMP/home" SPIRA_CONF=/nonexistent \
         SPIRA_LOCAL_UNITS="$LMANIFEST" SPIRA_REPO="$LREPO" \

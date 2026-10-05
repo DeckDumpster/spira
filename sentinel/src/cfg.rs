@@ -46,8 +46,8 @@ pub struct Context {
 /// Where the lifecycle machine's records are the truth, or the legacy ones are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lifecycle {
-    /// `lifecycle_enforce` off (production today): bd status/labels, landstate files and the
-    /// bd events trail. The sentinel never calls spira-lc, and nothing it starts can.
+    /// `lifecycle_enforce` off (production today): bd status/labels and the bd events trail
+    /// (the landing ledger is deleted, sp-2c1n0). The sentinel never calls spira-lc, and nothing it starts can.
     Off,
     /// `lifecycle_enforce` on: spira-lc is authoritative; an unreachable machine is an error.
     On,
@@ -244,7 +244,6 @@ pub struct Cfg {
     pub systemctl: String,
     pub summon: String,
     pub skip_reclaim: bool,
-    pub skip_closed: bool,
     /// Spira tools, invoked by bare name on the launcher's PATH (sp-gypjk). Plain fields so a
     /// unit test can point one at a fixture; nothing reads them from the environment.
     pub tsd_bin: String,
@@ -338,7 +337,6 @@ impl Cfg {
             "SPIRA_SCOPE_LABEL",
             "SPIRA_WORK_CLOSE_TYPES",
             "SPIRA_BATCH_MAXPAR",
-            "SPIRA_SKIP_CLOSED_CHECK",
             "SPIRA_SKIP_RECLAIM",
         ] {
             raw.insert(k.to_string(), s(k));
@@ -402,7 +400,6 @@ impl Cfg {
             systemctl: or("SPIRA_SYSTEMCTL", "systemctl"),
             summon: or("SPIRA_SUMMON", "systemd-run"),
             skip_reclaim: c.get("SPIRA_SKIP_RECLAIM") == Some("1"),
-            skip_closed: c.get("SPIRA_SKIP_CLOSED_CHECK") == Some("1"),
             tsd_bin: "tsd-write".into(),
             lc_bin: "spira-lc".into(),
             landing_bin: "landing-pass".into(),

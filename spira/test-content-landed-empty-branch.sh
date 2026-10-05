@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
 #
 # test-content-landed-empty-branch.sh — a branch with zero commits ahead of the base
-#   must not be reported as landed by content_landed.
+#   must not be reported as landed by spira-lc content-landed.
 #
 #   ./test-content-landed-empty-branch.sh
 #
-# THE ORIGINAL DEFECT (sp-qc4kn): content_landed's is-ancestor check came before the
+# THE ORIGINAL DEFECT (sp-qc4kn): spira-lc content-landed's is-ancestor check came before the
 # ahead>0 guard, so it returned 0 for empty branches (ahead=0, is-ancestor), causing
 # the Sending to reap them and the bead to cycle without an attempt being charged.
 #
 # REVISED BEHAVIOR (sp-bf31a): ancestor branches are landed by definition — moving the
-# is-ancestor check before the ahead=0 guard makes content_landed return 0 for all
+# is-ancestor check before the ahead=0 guard makes spira-lc content-landed return 0 for all
 # ancestor branches, including empty ones. The Sending reaps them; CHECK 5 reopens the
 # bead when no commit on the base names it (the normal reopening path). This is correct:
 # a closed bead with an empty branch never had work done, so it should be reopened.
 #
-# THREE CASES, all against content_landed directly:
+# THREE CASES, all against spira-lc content-landed directly:
 #
 #   1. POSITIVE CONTROL — ancestry alone returns 0 for an empty branch (fixture is correct).
-#   2. EMPTY BRANCH     — content_landed returns 0 for an ancestor branch (sp-bf31a).
+#   2. EMPTY BRANCH     — spira-lc content-landed returns 0 for an ancestor branch (sp-bf31a).
 #   3. SQUASH-MERGED    — a branch whose content reached the base as a squash commit
-#      still returns 0 from content_landed (commits ahead, merge-tree same).
+#      still returns 0 from spira-lc content-landed (commits ahead, merge-tree same).
 #
-# sending.sh's OWN use of content_landed — reaping an ahead=0 ancestor branch exactly as
+# sending.sh's OWN use of spira-lc content-landed — reaping an ahead=0 ancestor branch exactly as
 # it reaps a genuine content-landed one — is test-sending.sh's sp-cl0 row now (sp-rg46a);
-# this file no longer builds a sending.sh fixture just to re-confirm the same content_landed
+# this file no longer builds a sending.sh fixture just to re-confirm the same spira-lc content-landed
 # answer sending.sh reads.
 #
 # tier: T2
@@ -66,18 +66,18 @@ else
 fi
 
 echo
-echo "empty branch — content_landed returns 0 for an ancestor branch (sp-bf31a):"
-if content_landed "$REPO" "spira/sp-empty" "origin/main"; then
-    ok "content_landed returns 0 for an ancestor branch (ancestor implies landed)"
+echo "empty branch — spira-lc content-landed returns 0 for an ancestor branch (sp-bf31a):"
+if spira-lc content-landed "$REPO" "spira/sp-empty" "origin/main"; then
+    ok "spira-lc content-landed returns 0 for an ancestor branch (ancestor implies landed)"
 else
-    bad "content_landed must return 0 for an ancestor branch" "it returned non-zero"
+    bad "spira-lc content-landed must return 0 for an ancestor branch" "it returned non-zero"
 fi
 
 # --------------------------------------------------------------------------------------
-# CASE 3 — SQUASH-MERGED: content_landed must return 0 (commits ahead, content on base).
+# CASE 3 — SQUASH-MERGED: spira-lc content-landed must return 0 (commits ahead, content on base).
 # --------------------------------------------------------------------------------------
 echo
-echo "squash-merged — content_landed still returns 0 when content is already on the base:"
+echo "squash-merged — spira-lc content-landed still returns 0 when content is already on the base:"
 
 git -C "$REPO" worktree add -q -b "spira/sp-sq" "$TMP/wt-sp-sq" origin/main
 printf 'squashed\n' > "$TMP/wt-sp-sq/sq.txt"
@@ -102,10 +102,10 @@ else
     bad "squash fixture" "branch should have commits ahead of origin/main"
 fi
 
-if content_landed "$REPO" "spira/sp-sq" "origin/main"; then
-    ok "content_landed returns 0 for squash-merged branch (content already on base)"
+if spira-lc content-landed "$REPO" "spira/sp-sq" "origin/main"; then
+    ok "spira-lc content-landed returns 0 for squash-merged branch (content already on base)"
 else
-    bad "content_landed should return 0 for squash-merged" "it returned non-zero"
+    bad "spira-lc content-landed should return 0 for squash-merged" "it returned non-zero"
 fi
 
 echo

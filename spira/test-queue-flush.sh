@@ -11,11 +11,11 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
+. "$HERE/testlib/lc-fixture.sh"
 
 echo "test-queue-flush.sh"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-queue-flush: could not build a lifecycle fixture"; exit 1; }
 
 # A copy of the harness with the round cutter replaced by one that reports how it was
 # called. batch.sh's own pre-cut sweep is retired (sp-uwhx0, queue.forge has no live repo)
@@ -44,7 +44,7 @@ git -C "$TMP/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m b
 RMAP="$TMP/repo-map"
 
 run() {
-    env -i PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
+    env -i $(lcfix_env) PATH="$TMP/bin:$TMP/spira:$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent SPIRA_RUN="$TMP/run" \
         SPIRA_REPO_MAP="$RMAP" SPIRA_QUEUE_BATCH_WAIT=1800 SPIRA_FORGE="$TMP/spira/forge-fake.sh" \
         SPIRA_HOME="$TMP/spira" queue "$@" 2>&1
