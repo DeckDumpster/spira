@@ -65,7 +65,7 @@
 1 reconciler-flow/src/main.rs
 8 reconciler/src/main.rs
 2 release/src/build.rs
-13 release/src/canary.rs
+8 release/src/canary.rs
 4 release/src/git.rs
 1 release/src/install.rs
 1 release/src/intake.rs
@@ -168,7 +168,7 @@
 5 spira/test-branch-guard.sh
 3 spira/test-branch-sweep.sh
 2 spira/test-cadence-tool.sh
-5 spira/test-canary.sh
+4 spira/test-canary.sh
 1 spira/test-census-burst.sh
 4 spira/test-census-events.sh
 2 spira/test-census-tz-boundary.sh
