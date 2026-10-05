@@ -172,17 +172,19 @@ fn lc_state(id: &str) -> Option<String> {
 
 /// lib.sh `spira_holder_witnesses <id>`: `Some(why)` when somebody may be home, `None` when
 /// nobody is. The claim is the lifecycle row's: WORKING is somebody home, any other state is
-/// the claim gone (sp-mve9i — bd's `in_progress` is not read). THE POSITIVE CONTROL: a
-/// machine that did not answer, or that has no row for a bead with a branch to destroy,
-/// cannot say the claim is gone, and the wrong one of those must never read as permission —
-/// so either counts as "somebody may be home", not as absence.
+/// the claim gone (sp-mve9i — bd's `in_progress` is not read), and no row is no claim at all
+/// (a rowless bead can never be claimed). THE POSITIVE CONTROL: a machine that did not answer
+/// cannot say the claim is gone, and that must never read as permission — so it counts as
+/// "somebody may be home", not as absence.
 pub fn holder_witnesses(run: &Path, id: &str, lc: &dyn ClaimProbe) -> Option<String> {
     if holder_alive(run, id) {
         return Some("a live process holds it".to_string());
     }
     match lc.probe(id) {
         Err(_) => Some("the lifecycle machine did not answer, so the claim witness proves nothing".to_string()),
-        Ok(None) => Some("no lifecycle row, so nothing proves the claim is gone".to_string()),
+        // No row: the machine answered that it has none, and a bead with no lifecycle row can
+        // never be claimed — nobody is home (as for a branch whose bead never existed).
+        Ok(None) => None,
         Ok(Some(row)) if row.working() => Some("WORKING — the lease has not been released".to_string()),
         Ok(Some(_)) => None,
     }
@@ -717,8 +719,10 @@ mod tests {
         assert_eq!(holder_witnesses(&run, "sp-w3", &open()), None);
         // Past the builder, the claim is gone whatever bd's status still says.
         assert_eq!(holder_witnesses(&run, "sp-w4", &FakeBd { state: Some("SUBMITTED".into()) }), None);
-        // No row: the machine cannot say the claim is gone.
-        assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }).as_deref(), Some("no lifecycle row, so nothing proves the claim is gone"));
+        // No row: a bead the machine has no row for can never be claimed (lifecycle_row's
+        // doc), so nobody can be home — as a branch with no bead at all never had a claim.
+        // The machine answered; only an unanswered probe is the positive control.
+        assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }), None);
     }
 
 }
