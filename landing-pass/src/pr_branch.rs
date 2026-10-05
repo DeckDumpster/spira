@@ -104,7 +104,7 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
     }
 
     // ── re-read before landing: a race with reopen/reclaim since the scan ─────────────────
-    let cur_st = c.beads.land_state(id);
+    let cur_st = c.beads.bead_lc_state(id);
     if !crate::model::handed_on(&cur_st) {
         (c.log)(&format!("bead is now {cur_st} (was closed at scan time) — not landing {br}"));
         return 4;
@@ -368,7 +368,7 @@ mod tests {
                 })
                 .collect())
         }
-        fn land_state(&self, id: &str) -> String {
+        fn bead_lc_state(&self, id: &str) -> String {
             self.status.borrow().get(id).cloned().unwrap_or_else(|| "SUBMITTED".into())
         }
         fn ask_open(&self, _label: &str, _subject: &str) -> bool {

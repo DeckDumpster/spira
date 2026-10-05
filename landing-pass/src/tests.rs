@@ -35,7 +35,7 @@ fn lc_word(bd_word: &str) -> String {
 #[derive(Default)]
 struct FakeBeads {
     rows: RefCell<HashMap<String, BeadRow>>,
-    /// Lifecycle state seen by a re-read (`land_state`), when it differs from the scan.
+    /// Lifecycle state seen by a re-read (`bead_lc_state`), when it differs from the scan.
     reread: RefCell<HashMap<String, String>>,
     fail: Cell<bool>,
 }
@@ -48,7 +48,7 @@ impl Beads for FakeBeads {
         let r = self.rows.borrow();
         Ok(ids.iter().filter_map(|i| r.get(i).cloned()).collect())
     }
-    fn land_state(&self, id: &str) -> String {
+    fn bead_lc_state(&self, id: &str) -> String {
         if let Some(s) = self.reread.borrow().get(id) {
             return lc_word(s);
         }

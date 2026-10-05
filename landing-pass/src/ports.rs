@@ -13,7 +13,7 @@ pub trait Beads {
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String>;
     /// The bead's lifecycle state (spira-lc), re-read live: `-` when the machine holds no
     /// row or cannot be read. [`crate::model::handed_on`] says whether it may land.
-    fn land_state(&self, id: &str) -> String;
+    fn bead_lc_state(&self, id: &str) -> String;
     /// lib.sh `ask_already_open <subject>` (sp-31hjr, family C): true when an OPEN ask
     /// already carries `subject` in its title. `label` is `SPIRA_ASK_LABEL`.
     fn ask_open(&self, label: &str, subject: &str) -> bool;

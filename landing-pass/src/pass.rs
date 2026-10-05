@@ -108,13 +108,13 @@ impl<'a> Pass<'a> {
     }
 
     /// The bead's lifecycle state, re-read live (sp-mve9i: never bd's status).
-    pub(crate) fn land_state(&self, id: &str) -> String {
-        self.beads.land_state(id)
+    pub(crate) fn bead_lc_state(&self, id: &str) -> String {
+        self.beads.bead_lc_state(id)
     }
 
     /// (handed on, the state it was read in) — a re-read before acting on a scan-time row.
     fn handed_on_now(&self, id: &str) -> (bool, String) {
-        let st = self.land_state(id);
+        let st = self.bead_lc_state(id);
         (crate::model::handed_on(&st), st)
     }
 

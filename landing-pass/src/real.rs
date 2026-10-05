@@ -674,7 +674,7 @@ impl Beads for RealBeads {
         self.join_states(&mut out)?;
         Ok(out)
     }
-    fn land_state(&self, id: &str) -> String {
+    fn bead_lc_state(&self, id: &str) -> String {
         let Ok(bin) = self.lc() else { return "-".into() };
         match spira_config::lc_state::row_with(&bin, id) {
             Ok(Some(r)) if !r.state.is_empty() => r.state,
@@ -1294,7 +1294,7 @@ mod lifecycle_join_tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].state, "WORKING");
         assert!(!rows[0].handed_on(), "bd's hand-close decided it");
-        assert_eq!(b.land_state("sp-w"), "WORKING");
+        assert_eq!(b.bead_lc_state("sp-w"), "WORKING");
         // A scan reads `spira-lc list` once; a bead it holds no row for is `-`.
         let rows = b.show(&["sp-w".to_string(), "sp-x".to_string(), "sp-y".to_string()]).unwrap();
         let st: Vec<(&str, bool)> = rows.iter().map(|r| (r.state.as_str(), r.handed_on())).collect();
@@ -1308,6 +1308,6 @@ mod lifecycle_join_tests {
         let mut b = beads(&d);
         b.lc_bin = Some(d.join("no-such-spira-lc"));
         assert!(b.show(&["sp-w".to_string(), "sp-x".to_string()]).is_err());
-        assert_eq!(b.land_state("sp-w"), "-");
+        assert_eq!(b.bead_lc_state("sp-w"), "-");
     }
 }
