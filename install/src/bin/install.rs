@@ -784,6 +784,12 @@ fn main() -> ExitCode {
         eprintln!("install: phase units failed — could not create the operator mailbox (mail ensure operator)");
         return ExitCode::from(2);
     }
+    if !opts.dry {
+        if let Err(e) = bootstrap::ensure_reader_mailboxes() {
+            eprintln!("install: phase units failed — {e}");
+            return ExitCode::from(2);
+        }
+    }
 
     let manifest = match bootstrap::manifest_from_env(&instance) {
         Ok(m) => m,

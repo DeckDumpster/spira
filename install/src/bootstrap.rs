@@ -63,6 +63,37 @@ pub fn units_repo(mapped: Option<String>, derived: String, is_git: impl Fn(&Path
     }
 }
 
+/// The mailbox names `SPIRA_MAIL_READERS` registers (`name=command` entries, whitespace-
+/// separated): the environment, else the same config resolution every binary uses.
+pub fn reader_mailboxes() -> Result<Vec<String>, String> {
+    let raw = match nonempty_env("SPIRA_MAIL_READERS") {
+        Some(v) => v,
+        None => {
+            let home = resolve_home(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), argv0_path().as_deref())?;
+            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+            spira_config::resolve::resolve_key(&env_map, Path::new(&home), "SPIRA_MAIL_READERS").unwrap_or_default()
+        }
+    };
+    Ok(parse_reader_mailboxes(&raw))
+}
+
+fn parse_reader_mailboxes(raw: &str) -> Vec<String> {
+    raw.split_whitespace().filter_map(|e| e.split('=').next()).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect()
+}
+
+/// `mail ensure <name>` for every registered reader mailbox (sp-xp0u2). A fresh install made
+/// them; an upgrade's re-render (units-install alone) never did, so `mail-health` found
+/// `concierge: no such mailbox` after every upgrade and spira-notify failed 3.
+pub fn ensure_reader_mailboxes() -> Result<(), String> {
+    for name in reader_mailboxes()? {
+        let ok = Command::new("timeout").args(["5", "mail", "ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
+        if !ok {
+            return Err(format!("could not create the {name} mailbox (mail ensure {name})"));
+        }
+    }
+    Ok(())
+}
+
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
@@ -82,16 +113,43 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
         spira_config::resolve::lc_credential_default(&env_map)
     });
+    // sp-xp0u2: an upgrade's re-render (the PREDECESSOR's deploy.sh: `env -i <orig env>
+    // SPIRA_HOME=<release> ... units-install`) carries none of these, and reading them from
+    // the environment alone rendered `StandardOutput=append:/<name>.log` — every long-running
+    // unit failed 209/STDOUT and the deploy rolled back. The environment wins; otherwise the
+    // same config resolution every other binary uses; a run dir that still resolves empty is
+    // a refusal, never a render.
+    let resolved = |key: &str| -> String {
+        nonempty_env(key).unwrap_or_else(|| {
+            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+            spira_config::resolve::resolve_key(&env_map, Path::new(&home), key).unwrap_or_default()
+        })
+    };
+    // SPIRA_RUN's default is procedural (conf.sh), so a bare key lookup can come back empty;
+    // `resolve_run_dir` is the run-dir resolution every other binary uses.
+    let run = nonempty_env("SPIRA_RUN").unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        spira_config::resolve::resolve_run_dir(&env_map, Path::new(&home))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| resolved("SPIRA_RUN"))
+    });
+    if run.is_empty() {
+        return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
+    }
+    let db = resolved("SPIRA_DB");
+    let repo_map = resolved("SPIRA_REPO_MAP");
+    let dolt_data = resolved("SPIRA_DOLT_DATA");
+    let testdb_data = resolved("SPIRA_TESTDB_DATA");
     Ok(HostValues {
         home,
         lc_password_file,
         repo,
-        run: env_var("SPIRA_RUN"),
-        db: env_var("SPIRA_DB"),
-        repo_map: env_var("SPIRA_REPO_MAP"),
+        run,
+        db,
+        repo_map,
         cockpit,
-        dolt_data: env_var("SPIRA_DOLT_DATA"),
-        testdb_data: env_var("SPIRA_TESTDB_DATA"),
+        dolt_data,
+        testdb_data,
         dolt,
         prod: env_var("SPIRA_PROD"),
         instance: instance.to_string(),
@@ -382,5 +440,55 @@ mod stale_release_tests {
         assert_eq!(units_repo(Some("/h/not-git".into()), "/r/rel".into(), git), "/r/rel", "a mapped path that is not a checkout is not used");
         assert_eq!(units_repo(None, "/r/rel".into(), git), "/r/rel", "no map: the derivation, as before");
         assert_eq!(units_repo(Some(String::new()), "/r/rel".into(), git), "/r/rel");
+    }
+}
+
+#[cfg(test)]
+mod host_from_env_tests {
+    use super::*;
+
+    /// sp-xp0u2: an upgrade's re-render reaches units-install with SPIRA_HOME pointing into
+    /// the release and NO SPIRA_RUN in the environment (the predecessor's deploy.sh re-renders
+    /// under `env -i <orig env>`). The run dir must still resolve to a real directory — before
+    /// the fix it rendered empty, and every unit logged to `append:/<name>.log`.
+    #[test]
+    fn run_resolves_from_config_when_the_environment_carries_none() {
+        let t = testkit::TempDir::new("host-env-run");
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        let fake_home = t.path().join("home");
+        std::fs::create_dir_all(&fake_home).unwrap();
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", Some(home.to_str().unwrap())),
+            ("SPIRA_RUN", None),
+            ("SPIRA_REPO", None),
+            ("SPIRA_TOML", None),
+            ("SPIRA_CONF", None),
+            ("XDG_CONFIG_HOME", None),
+            ("XDG_DATA_HOME", None),
+            ("HOME", Some(fake_home.to_str().unwrap())),
+        ]);
+        let host = host_from_env("prod").expect("host values resolve");
+        assert!(!host.run.is_empty(), "SPIRA_RUN rendered empty");
+        assert_ne!(host.run, "/", "SPIRA_RUN rendered as the filesystem root");
+        assert!(Path::new(&host.run).is_absolute(), "run dir {} is not absolute", host.run);
+    }
+
+    #[test]
+    fn an_explicit_spira_run_still_wins() {
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        let _env = testkit::env(&[("SPIRA_HOME", Some(home.to_str().unwrap())), ("SPIRA_RUN", Some("/explicit/run")), ("SPIRA_REPO", None)]);
+        assert_eq!(host_from_env("prod").expect("host values resolve").run, "/explicit/run");
+    }
+}
+
+#[cfg(test)]
+mod reader_mailbox_tests {
+    use super::parse_reader_mailboxes;
+
+    #[test]
+    fn names_come_from_each_entry_before_its_command() {
+        assert_eq!(parse_reader_mailboxes("concierge=inbox-append.sh"), vec!["concierge"]);
+        assert_eq!(parse_reader_mailboxes(" a=x.sh\nb=y.sh  c "), vec!["a", "b", "c"]);
+        assert!(parse_reader_mailboxes("").is_empty());
     }
 }
