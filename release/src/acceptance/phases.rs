@@ -171,6 +171,16 @@ impl Run<'_> {
         Cmd::new("git").arg("-C").arg(Self::s(&self.o.a.scratch_repo)).args(args.iter().copied())
     }
 
+    /// Bring the scratch checkout up to its origin before installing a predecessor. Phase A
+    /// lands the probe and pushes to the scratch origin, so the checkout it leaves behind is
+    /// behind, and a predecessor's install rightly refuses ("checkout is N commit(s) behind
+    /// origin/main") — exactly as an operator's would until they pulled (sp-xp0u2: local
+    /// acceptance 2026-10-05, phases B and D both failed on it once phase A's probe landed).
+    fn sync_scratch(&mut self, label: &str) {
+        let rc = self.h.run(&self.git(&["pull", "--ff-only", "--quiet"])).rc;
+        self.is0(&format!("{label}: scratch checkout fast-forwarded to its origin"), rc);
+    }
+
     fn systemctl(&self, args: &[&str]) -> Out {
         self.h.run(&Cmd::new("systemctl").arg("--user").args(args.iter().copied()))
     }
@@ -582,6 +592,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
                     r.ok(&format!("phase B: prev tarball downloaded: {}", tb.file_name().unwrap_or_default().to_string_lossy()));
                     r.stage_release_source(&tb, pt);
                     r.install_tarball(&tb);
+                    r.sync_scratch("phase B");
                     let prc = r.install_sh();
                     r.is0(&format!("phase B: install.sh ({pt}) exits 0"), prc);
                     // A failed install leaves the database down; deploy.sh would then read as an
@@ -694,6 +705,7 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
     if let Some(tb) = &aged {
         r.install_tarball(tb);
     }
+    r.sync_scratch("phase D");
     let arc = if r.o.releases().join("current").is_dir() { r.install_sh() } else { 1 };
     r.is0(&format!("phase D: install.sh ({pt}, aged) exits 0"), arc);
     let (ready_path, ready) = r.ready_sh();

@@ -285,6 +285,7 @@ tinstall_render() {    # tinstall_render <fixture> <home> -> rendered text (memo
     if [ -z "${_TINSTALL_RENDER_CACHE[$key]+x}" ]; then
         local out rc
         out="$(env -i PATH="$PATH" HOME="$home" \
+            SPIRA_RUN="$home/run" \
             SPIRA_HOME="$fixture/spira" SPIRA_REPO="$fixture" \
             SPIRA_CONF=/nonexistent \
             SPIRA_WATCHERS="$fixture/spira/watchers" \
