@@ -127,6 +127,31 @@ esac
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 
+# THE ONE SOURCE OF CONFIG (per Ryan 2026-10-05): every process reads the spira.toml SPIRA_TOML
+# names and nothing else — no environment override, no default. Each suite gets its own copy
+# of the complete fixture (every key declared); a suite sets what it is about with tl_config,
+# never `export SPIRA_X=`, which no process reads any more.
+# Layers: the checked-in complete fixture (every key declared) as the base, then this suite's
+# own override file, which holds ONLY what the suite changes.
+_TL_CONF_BASE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)/spira-config/tests/fixtures/complete.toml"
+[ -f "$_TL_CONF_BASE" ] || { echo "testlib: no complete fixture at $_TL_CONF_BASE" >&2; exit 1; }
+_TL_CONF_DIR="$(mktemp -d "${TMPDIR:-/tmp}/tl-conf.XXXXXX")"
+_TL_CONF_OVERRIDE="$_TL_CONF_DIR/$(basename "${BASH_SOURCE[1]:-$0}" .sh).override.toml"
+printf '[spira]\n' > "$_TL_CONF_OVERRIDE"
+export SPIRA_TOML="$_TL_CONF_BASE:$_TL_CONF_OVERRIDE"
+
+# tl_config KEY=value ... — declare config in this suite's override file (SPIRA_FOO -> spira.foo,
+# COCKPIT_FOO -> spira.cockpit_foo). Refuses on a key the schema does not know.
+tl_config() {
+    local kv k v d
+    for kv in "$@"; do
+        k="${kv%%=*}"; v="${kv#*=}"
+        d="spira.$(printf '%s' "${k#SPIRA_}" | tr '[:upper:]' '[:lower:]')"
+        spira-config set "$d" "$v" "$_TL_CONF_OVERRIDE" >/dev/null \
+            || { echo "tl_config: cannot declare $k" >&2; return 1; }
+    done
+}
+
 _tl_init() {
     [ "$_TL_INITED" = 1 ] && return 0
     _TL_INITED=1

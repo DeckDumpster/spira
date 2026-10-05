@@ -160,8 +160,12 @@ SPIRA_CONF_KEYS=" $(echo $SPIRA_CONF_KEYS) "
 # spira_toml_file -> the ONE config file: $SPIRA_TOML, or empty when it is unset or not a file.
 # No XDG/HOME/etc search, no legacy spira.conf, no conversion (per Ryan 2026-10-05).
 spira_toml_file() {
-    [ -n "${SPIRA_TOML:-}" ] && [ -f "$SPIRA_TOML" ] && printf '%s' "$SPIRA_TOML"
-    return 0
+    # A file, or base:override layers (later ones override earlier ones' keys) — every one
+    # must exist.
+    local f IFS=:
+    [ -n "${SPIRA_TOML:-}" ] || return 0
+    for f in $SPIRA_TOML; do [ -f "$f" ] || return 0; done
+    printf '%s' "$SPIRA_TOML"
 }
 
 # _spira_fayth_paths -> every "*.fayth" file under the chamber in force, one per line.
@@ -174,10 +178,10 @@ _spira_fayth_paths() {
     done
 }
 
-# spira_toml_resolve / spira_toml_write_target -> the one file, $SPIRA_TOML. Reads and
-# writes go to the same file; nothing is converted or redirected.
+# spira_toml_resolve -> $SPIRA_TOML; spira_toml_write_target -> its LAST layer (a suite's
+# override file; in production, the one file). Nothing is converted or redirected.
 spira_toml_resolve() { spira_toml_file; }
-spira_toml_write_target() { spira_toml_file; }
+spira_toml_write_target() { local t; t="$(spira_toml_file)"; [ -n "$t" ] && printf '%s' "${t##*:}"; }
 
 # _spira_config_write set <target> <SPIRA_KEY> <value> | unset <target> <SPIRA_KEY> — the one
 # place a [spira] key's dotted path is derived and `spira-config <verb>` is invoked, shared by

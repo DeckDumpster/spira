@@ -175,12 +175,11 @@ fn resolve_process(
 ) -> Result<Resolved, String> {
     // ONE SOURCE: the file $SPIRA_TOML names. Unset or missing is a refusal, never "no config".
     // From the env this call was HANDED, like every other input — never the process's own.
-    let toml_path = env
+    let spec = env
         .get("SPIRA_TOML")
         .filter(|p| !p.is_empty())
-        .map(std::path::PathBuf::from)
-        .filter(|p| p.is_file())
-        .ok_or_else(|| "SPIRA_TOML is not set to an existing spira.toml — the one source of config; refusing".to_string())?;
+        .ok_or_else(|| "SPIRA_TOML is not set — it names the one source of config (a file, or base:override); refusing".to_string())?;
+    let toml_path = std::path::PathBuf::from(spec);
     let doc = Some(crate::load(&toml_path)?);
     let conf_d = default_conf_d(home);
     run(ResolveInput {

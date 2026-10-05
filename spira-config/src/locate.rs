@@ -54,12 +54,12 @@ pub fn locate(explicit: Option<PathBuf>) -> LocateOutcome {
     // tier, no legacy spira.conf, no shipped example — an unset or missing pin is NotFound,
     // and every caller refuses on it.
     match env::var("SPIRA_TOML") {
-        Ok(p) if !p.is_empty() => {
-            let p = PathBuf::from(p);
-            if p.is_file() {
-                LocateOutcome::Found(p)
-            } else {
-                LocateOutcome::NotFound { tried: vec![p] }
+        Ok(spec) if !spec.is_empty() => {
+            // A file, or base:override layers — every one must exist.
+            let layers: Vec<PathBuf> = spec.split(':').filter(|p| !p.is_empty()).map(PathBuf::from).collect();
+            match layers.iter().find(|p| !p.is_file()) {
+                Some(missing) => LocateOutcome::NotFound { tried: vec![missing.clone()] },
+                None => LocateOutcome::Found(PathBuf::from(spec)),
             }
         }
         _ => LocateOutcome::NotFound { tried: Vec::new() },

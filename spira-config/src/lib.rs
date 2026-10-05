@@ -116,8 +116,41 @@ pub fn discover(explicit: Option<PathBuf>) -> Option<PathBuf> {
 /// Reads and [`validate`]s the document at `path` — the one place a caller turns a resolved
 /// path into a [`SpiraToml`], instead of pairing its own `fs::read_to_string` with `validate`.
 pub fn load(path: &Path) -> Result<SpiraToml, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    validate(&text).map_err(|e| format!("{}: {e}", path.display()))
+    load_layered(&path.to_string_lossy())
+}
+
+/// THE ONE SOURCE, LAYERED (per Ryan 2026-10-05): `spec` is one file, or a `:`-separated list.
+/// The first is the complete base; each later file overrides only the keys it declares. Each
+/// layer is parsed once; the layers' tables are unioned key by key (a later layer's leaf
+/// replaces the earlier one, nested tables merge); the result is validated once. Every listed
+/// file must exist. Callers never see layers — they get one [`SpiraToml`].
+fn load_layered(spec: &str) -> Result<SpiraToml, String> {
+    let mut merged = toml::map::Map::new();
+    let mut any = false;
+    for p in spec.split(':').filter(|p| !p.is_empty()) {
+        any = true;
+        let text = std::fs::read_to_string(p).map_err(|e| format!("{p}: {e}"))?;
+        let toml::Value::Table(layer) = text.parse::<toml::Value>().map_err(|e| format!("{p}: {e}"))? else {
+            return Err(format!("{p}: not a TOML table"));
+        };
+        union_into(&mut merged, layer);
+    }
+    if !any {
+        return Err("no config file named".to_string());
+    }
+    validate_value(toml::Value::Table(merged)).map(|(doc, _)| doc).map_err(|e| format!("{spec}: {e}"))
+}
+
+/// `over`'s keys into `base`: a nested table merges, anything else replaces.
+fn union_into(base: &mut toml::map::Map<String, toml::Value>, over: toml::map::Map<String, toml::Value>) {
+    for (k, v) in over {
+        match (base.get_mut(&k), v) {
+            (Some(toml::Value::Table(b)), toml::Value::Table(o)) => union_into(b, o),
+            (_, v) => {
+                base.insert(k, v);
+            }
+        }
+    }
 }
 
 /// The one variable a launcher builds PATH from (brain `runtime-is-a-release-2026-09-29`):
@@ -664,7 +697,13 @@ pub fn require_id_prefix(doc: &SpiraToml) -> Result<(), String> {
 /// A `[spira]` key's registry `MAX=` is enforced here too: this function deserializes the
 /// TOML directly and never runs the shipped schema against the document.
 pub fn validate_with_warnings(text: &str) -> Result<(SpiraToml, Vec<String>), String> {
-    let mut root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    let root: toml::Value = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+    validate_value(root)
+}
+
+/// The checks and the typed deserialize, on an already-parsed document — one parse per layer,
+/// never a text round trip after a merge.
+fn validate_value(mut root: toml::Value) -> Result<(SpiraToml, Vec<String>), String> {
     let mut warnings = Vec::new();
     if let Some(spira) = root.get_mut("spira").and_then(|v| v.as_table_mut()) {
         // BEFORE the generic strip: a batcher_bin that is not the batcher switched the cuts
@@ -1066,6 +1105,44 @@ pub fn set_paths_in_file(file: &std::path::Path, pairs: &[(&str, &str)]) -> Resu
 
 #[cfg(test)]
 mod tests {
+
+    // ---- layered config (one source, base:override) ----
+    fn layer(dir: &std::path::Path, name: &str, text: &str) -> String {
+        let p = dir.join(name);
+        std::fs::write(&p, text).unwrap();
+        p.display().to_string()
+    }
+
+    #[test]
+    fn an_override_changes_only_its_own_keys() {
+        let d = testkit::TempDir::new("spira-config-layer-keys");
+        let base = layer(d.path(), "base.toml", "[spira]\nid_prefix = \"sp\"\nlanes_max_live = 2\n");
+        let over = layer(d.path(), "t.override.toml", "[spira]\nlanes_max_live = 5\n");
+        let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
+        let m = spira_string_map(&doc);
+        assert_eq!(m.get("LANES_MAX_LIVE").map(String::as_str), Some("5"), "the override wins");
+        assert_eq!(m.get("ID_PREFIX").map(String::as_str), Some("sp"), "the base fills the rest");
+    }
+
+    #[test]
+    fn nested_tables_merge_key_by_key() {
+        let d = testkit::TempDir::new("spira-config-layer-nested");
+        let base = layer(d.path(), "base.toml", "[repo.alpha]\npath = \"/a\"\nmode = \"queue.local\"\nbase = \"local/main\"\n");
+        let over = layer(d.path(), "o.toml", "[repo.alpha]\npath = \"/b\"\n");
+        let doc = load(std::path::Path::new(&format!("{base}:{over}"))).unwrap();
+        let rows = repos::rows_from_toml(&doc);
+        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.path.as_str()), Some("/b"));
+        assert_eq!(rows.iter().find(|r| r.name == "alpha").map(|r| r.base.as_str()), Some("local/main"), "unset keys keep the base's value");
+    }
+
+    #[test]
+    fn a_missing_layer_is_refused_naming_it() {
+        let d = testkit::TempDir::new("spira-config-layer-missing");
+        let base = layer(d.path(), "base.toml", "[spira]\n");
+        let gone = d.path().join("gone.toml").display().to_string();
+        let err = load(std::path::Path::new(&format!("{base}:{gone}"))).unwrap_err();
+        assert!(err.contains("gone.toml"), "{err}");
+    }
     use super::*;
 
     #[test]
