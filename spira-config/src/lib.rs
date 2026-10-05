@@ -31,6 +31,7 @@ pub mod lc_state;
 pub mod lifecycle_row;
 pub mod locate;
 pub mod nonwork;
+pub mod process;
 pub mod registry;
 pub mod release_env;
 pub mod release_skew;
@@ -77,18 +78,6 @@ pub fn find_under(dir: &Path) -> Option<PathBuf> {
 /// `spira.toml` or `repo-map`).
 pub fn toml_path_at(dir: &Path) -> PathBuf {
     dir.join(FILE_NAME)
-}
-
-/// The conventional `repo-map` filename, checked at `conf_dir` (if given) then as
-/// `<home>/repo-map.example` — the same lookup conf.sh's `_spira_repo_map_candidate` makes
-/// for a root other than this process's own `SPIRA_HOME`. `None` when neither exists.
-pub fn repo_map_candidate(conf_dir: Option<&Path>, home: &Path) -> Option<PathBuf> {
-    const REPO_MAP: &str = "repo-map";
-    conf_dir
-        .map(|d| d.join(REPO_MAP))
-        .into_iter()
-        .chain(std::iter::once(home.join(format!("{REPO_MAP}.example"))))
-        .find(|c| c.is_file())
 }
 
 /// `spira-config convert --conf <conf> --home <home> --out <out> [--repo-map <repo_map>]
@@ -897,6 +886,14 @@ pub fn get_path(doc: &SpiraToml, path: &str) -> Option<String> {
 /// exactly the "is this key spoken for" test `resolve` needs to tell apart from "unset,
 /// consult the derived default".
 pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
+    spira_value_map(doc, false)
+}
+
+/// Every DECLARED `[spira]` value as a string — an explicitly empty string or list is
+/// declared (""), only an absent field is not. `include_secrets`: `resolve` reads the whole
+/// document (a value it cannot see is a value it would refuse as undeclared); the shell
+/// export ([`spira_string_map`]) still leaves secret-shaped keys out.
+pub fn spira_value_map(doc: &SpiraToml, include_secrets: bool) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     let Some(spira) = &doc.spira else {
         return out;
@@ -906,7 +903,7 @@ pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
         return out;
     };
     for (key, val) in map {
-        if is_secret_shaped(&key) {
+        if !include_secrets && is_secret_shaped(&key) {
             continue;
         }
         let shell_val = match val {
@@ -915,7 +912,7 @@ pub fn spira_string_map(doc: &SpiraToml) -> BTreeMap<String, String> {
             serde_json::Value::Bool(b) => b.to_string(),
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::Array(items) => {
-                if items.is_empty() {
+                if items.is_empty() && !include_secrets {
                     continue;
                 }
                 items
@@ -1675,4 +1672,29 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), "before");
         std::fs::remove_dir_all(&dir).ok();
     }
+}
+
+/// The complete fixture `spira.toml` (`tests/fixtures/complete.toml`: every key declared, with
+/// fixture paths) — what a test resolves against now that nothing is defaulted. `SPIRA_<KEY>`
+/// pairs in `declare` are written as `spira.<key>`, the only place a value can come from.
+#[cfg(test)]
+pub(crate) fn fixture_doc(declare: &std::collections::BTreeMap<String, String>) -> SpiraToml {
+    let mut d = validate(include_str!("../tests/fixtures/complete.toml")).expect("the complete fixture validates");
+    for (k, v) in declare {
+        if let Some(rest) = k.strip_prefix("SPIRA_") {
+            if let Ok(n) = set_path(&d, &format!("spira.{}", rest.to_ascii_lowercase()), v) {
+                d = n;
+            }
+        }
+    }
+    d
+}
+
+/// [`fixture_doc`] written to `<dir>/spira.toml`, its path returned: for a test that resolves
+/// through a process-level entry point, which reads only the file `SPIRA_TOML` names.
+#[cfg(test)]
+pub(crate) fn fixture_toml_file(dir: &std::path::Path, declare: &std::collections::BTreeMap<String, String>) -> PathBuf {
+    let p = dir.join(FILE_NAME);
+    serialize_and_write(&p, &fixture_doc(declare)).expect("the fixture writes");
+    p
 }

@@ -205,7 +205,7 @@ pub fn now_keys() -> Kv {
                     push(&mut out, &format!("SP_AEON{i}_{k}"), v.to_string());
                 }
             }
-            let tl: i64 = std::env::var("SPIRA_COCKPIT_TRACE_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+            let tl: i64 = std::env::var("COCKPIT_TRACE_LINES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
             if tl > 0 {
                 let tail = aeon::trace::trace_tail(&log_path, &mark, tl as usize);
                 let lines: Vec<&str> = tail.lines().map(sanitize_line).collect();

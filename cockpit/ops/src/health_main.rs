@@ -187,7 +187,7 @@ fn build_inputs(run: &str) -> (FrameInputs<'static>, String) {
             .unwrap_or_default()
     };
     let snap_stale_s = env_nonempty("SPIRA_SNAP_STALE_S").and_then(|s| s.parse().ok()).unwrap_or(60);
-    let trace_lines = env_nonempty("SPIRA_COCKPIT_TRACE_LINES").and_then(|s| s.parse().ok()).unwrap_or(2);
+    let trace_lines = env_nonempty("COCKPIT_TRACE_LINES").and_then(|s| s.parse().ok()).unwrap_or(2);
 
     let inputs = FrameInputs {
         // 'static is a lie we immediately own up to: content is leaked intentionally for the

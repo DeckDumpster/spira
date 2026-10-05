@@ -711,23 +711,23 @@ mod tests {
         assert_eq!(field(&rows, "nope", Column::Path), "");
     }
 
-    /// sp-z3eyk: conf.sh resolves the repo map but never exports it, so queue's own
-    /// environment lacks it (queue: sp-z3eyk). The registry must still find it, resolved in-process.
+    /// The repo map is the one spira.toml declares (spira.repo_map) — never discovered from
+    /// XDG, a legacy spira.conf or a shipped example (per Ryan 2026-10-05).
     #[test]
-    fn registry_env_resolves_the_map_conf_sh_never_exports() {
+    fn registry_env_takes_the_declared_map() {
         let t = testkit::TempDir::new("repos-registry-env");
-        let xdg = t.path().join("xdg");
-        std::fs::create_dir_all(xdg.join("spira")).unwrap();
-        std::fs::write(xdg.join("spira/repo-map"), "spira|/nowhere|local|local/main\n").unwrap();
-        std::fs::write(xdg.join("spira/spira.conf"), "").unwrap();
+        let map = t.path().join("my-repo-map");
+        std::fs::write(&map, "spira|/nowhere|local|local/main\n").unwrap();
+        let toml = crate::fixture_toml_file(t.path(), &[("SPIRA_REPO_MAP".to_string(), map.display().to_string())].into_iter().collect());
         let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
         let mut env = std::collections::BTreeMap::new();
         env.insert("HOME".to_string(), t.path().display().to_string());
-        env.insert("XDG_CONFIG_HOME".to_string(), xdg.display().to_string());
         env.insert("SPIRA_REPO".to_string(), t.path().display().to_string());
-        env.insert("SPIRA_CONF".to_string(), xdg.join("spira/spira.conf").display().to_string());
+        env.insert("SPIRA_TOML".to_string(), toml.display().to_string());
+        let repo = std::path::PathBuf::from(env.get("SPIRA_REPO").unwrap());
+        if let Err(e) = crate::resolve::resolve_for_process(&home, &repo, &env) { panic!("resolve: {e}"); }
         let out = registry_env(env, &home);
-        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(xdg.join("spira/repo-map").to_str().unwrap()), "{out:?}");
+        assert_eq!(out.get("SPIRA_REPO_MAP").map(String::as_str), Some(map.to_str().unwrap()), "{out:?}");
     }
 
     /// `SPIRA_REPO_MAP`/`SPIRA_HOME_REPO`/`SPIRA_REPO` still win when the environment

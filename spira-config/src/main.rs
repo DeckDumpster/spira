@@ -89,13 +89,9 @@ use spira_config::{
 fn describe_locate_failure(outcome: &LocateOutcome) -> String {
     match outcome {
         LocateOutcome::Found(p) => unreachable!("describe_locate_failure called on Found({p:?})"),
+        LocateOutcome::NotFound { tried } if tried.is_empty() => "SPIRA_TOML is not set — it names the one spira.toml".to_string(),
         LocateOutcome::NotFound { tried } => format!(
-            "no spira.toml found; tried: {}",
-            tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
-        ),
-        LocateOutcome::LegacyOnly { conf, tried } => format!(
-            "{} exists but no spira.toml — run `spira-config convert` first; tried: {}",
-            conf.display(),
+            "SPIRA_TOML names {}, which is not a file",
             tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", ")
         ),
     }
@@ -110,10 +106,6 @@ fn cmd_locate() -> ExitCode {
         outcome @ LocateOutcome::NotFound { .. } => {
             eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
             ExitCode::from(1)
-        }
-        outcome @ LocateOutcome::LegacyOnly { .. } => {
-            eprintln!("spira-config locate: {}", describe_locate_failure(&outcome));
-            ExitCode::from(2)
         }
     }
 }
