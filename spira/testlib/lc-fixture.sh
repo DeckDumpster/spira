@@ -66,12 +66,17 @@ lcfix_env() {
 }
 
 # lcfix_seed <id> <STATE> [tip] [since-epoch]
+# An upsert, not REPLACE: REPLACE is a DELETE plus an INSERT, and a bead a `spira-lc cut`
+# already put in a batch has delivery/batch_member rows whose foreign keys refuse that
+# DELETE — so a re-seed of a batched bead silently left it IN_DELIVERY. A seed that does
+# not take says so on stderr and returns non-zero.
 lcfix_seed() {
     local id="$1" state="$2" tip="${3:-}" since="${4:-}"
-    local tipv="NULL" sincev="NULL"
+    local tipv="NULL" sincev="NULL" out
     [ -n "$tip" ] && tipv="'$tip'"
     [ -n "$since" ] && sincev="$since"
-    lcfix_sql -q "REPLACE INTO bead (bead_id, state, tip, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,'[]',1,$sincev,0)" >/dev/null 2>&1
+    out="$(lcfix_sql -q "INSERT INTO bead (bead_id, state, tip, holds, version, since, updated_at) VALUES ('$id','$state',$tipv,'[]',1,$sincev,0) ON DUPLICATE KEY UPDATE state=VALUES(state), tip=VALUES(tip), holds=VALUES(holds), version=version+1, since=VALUES(since), updated_at=VALUES(updated_at)" 2>&1)" \
+        || { echo "lc-fixture: seeding $id $state failed: $out" >&2; return 1; }
 }
 
 lcfix_state() { lcfix_sql -q "SELECT state FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | sed -n 2p; }

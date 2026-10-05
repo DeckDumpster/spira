@@ -182,7 +182,6 @@
 5 spira/test-closed-strand.sh
 2 spira/test-cockpit-bd-contract.sh
 3 spira/test-cockpit-funnel.sh
-3 spira/test-cockpit-queue-section.sh
 2 spira/test-cockpit-remote.sh
 3 spira/test-cockpit-unlanded.sh
 4 spira/test-cockpit-unsent.sh

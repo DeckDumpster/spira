@@ -67,6 +67,9 @@ chmod +x "$SH/forge-fake.sh"
 cat > "$SH/bd-stub.sh" <<'BDSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${BD_LOG:?}"
+# A comment body arrives on stdin (`comment <id> --stdin`): record it too, so a case can
+# assert what the comment says, not only that one was posted.
+case " $* " in *" --stdin "*) cat >> "$BD_LOG"; printf '\n' >> "$BD_LOG" ;; esac
 # The queue binary reads `bd -C <db> show <id> --json` rows (an exit 0 with no row is
 # "cannot resolve"), so show answers one JSON row per id asked for.
 [ "${1:-}" = -C ] && shift 2
@@ -206,7 +209,9 @@ lcfix_seed sp-ej-suites CERTIFIED "$TIP03"
 out="$(run eject sp-ej-suites --reason 'suite reds' --suites 'test-x.sh,test-y.sh')"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 with --suites" || bad "exit 0 with --suites" "rc=$rc out=$out"
 is   "REWORK on spira-lc with --suites" "REWORK" "$(lcfix_state sp-ej-suites)"
-want "the suites are named for recertification" "test-x.sh,test-y.sh" "$(cat "$BD_LOG")"
+want "the reopen is recorded as a judged eject" "eject-red" "$(cat "$BD_LOG")"
+want "the comment names the suites recertification must force" \
+    "Recertification will force these suites regardless of SPIRA_CERTIFY_SUITES: test-x.sh,test-y.sh" "$(cat "$BD_LOG")"
 
 echo
 echo "eject: CERTIFIED, unbatched bead — an unrelated open batch does not block it:"
