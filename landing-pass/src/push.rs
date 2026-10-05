@@ -98,8 +98,8 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
             GateOutcome::NoVerdict => p.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out),
             _ => {
                 let (st_closed, st) = {
-                    let st = p.land_status(id);
-                    (st == "closed", st)
+                    let st = p.land_state(id);
+                    (crate::model::handed_on(&st), st)
                 };
                 if !st_closed {
                     p.out.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
@@ -122,8 +122,8 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
         p.out.log(&format!("CHECK6 {id}: gate PASS on {br} in {name} — this tree had already passed, so no suite ran"));
     }
     p.files.clear_noverdict(br);
-    let st = p.land_status(id);
-    if st != "closed" {
+    let st = p.land_state(id);
+    if !crate::model::handed_on(&st) {
         p.out.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not landing {br}"));
         return Flow::Next;
     }

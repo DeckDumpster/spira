@@ -28,6 +28,13 @@ pub struct Fake {
     pub files: RefCell<std::collections::BTreeMap<PathBuf, String>>,
     pub stdout: RefCell<Vec<String>>,
     pub stderr: RefCell<Vec<String>>,
+    /// Every remedy bd holds (`covers:*`), as bd's JSON — bd's own status included.
+    pub remedies: RefCell<String>,
+    /// What covers.py / covers_closed.py were fed.
+    pub covers_in: RefCell<String>,
+    pub covers_closed_in: RefCell<String>,
+    /// `spira-lc list`'s rows.
+    pub lc: RefCell<Result<Vec<spira_config::lc_state::Row>, String>>,
 }
 
 impl Default for Fake {
@@ -51,11 +58,21 @@ impl Default for Fake {
             files: RefCell::new(Default::default()),
             stdout: RefCell::new(Vec::new()),
             stderr: RefCell::new(Vec::new()),
+            remedies: RefCell::new("[]".into()),
+            covers_in: RefCell::new(String::new()),
+            covers_closed_in: RefCell::new(String::new()),
+            lc: RefCell::new(Ok(Vec::new())),
         }
     }
 }
 
 impl Fake {
+    fn set_lc(&self, rows: &[(&str, &str)]) {
+        *self.lc.borrow_mut() = Ok(rows
+            .iter()
+            .map(|(id, st)| spira_config::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() })
+            .collect());
+    }
     fn set(&self, k: &str, v: &str) {
         self.env.borrow_mut().insert(k.to_string(), v.to_string());
     }
@@ -109,10 +126,12 @@ impl World for Fake {
     fn merge_py(&self, _all_time: &str, _since_wm: &str) -> String {
         self.merge_out.borrow().clone()
     }
-    fn covers_py(&self, _bdq_json: &str, _fold_map: &str) -> String {
+    fn covers_py(&self, bdq_json: &str, _fold_map: &str) -> String {
+        *self.covers_in.borrow_mut() = bdq_json.to_string();
         self.covers_out.borrow().clone()
     }
-    fn covers_closed_py(&self, _bdq_json: &str, _fold_map: &str) -> String {
+    fn covers_closed_py(&self, bdq_json: &str, _fold_map: &str) -> String {
+        *self.covers_closed_in.borrow_mut() = bdq_json.to_string();
         self.covers_closed_out.borrow().clone()
     }
     fn handwritten_py(&self, _tabular: &str) -> String {
@@ -121,8 +140,11 @@ impl World for Fake {
     fn deliberate_py(&self, _tabular: &str) -> String {
         self.deliberate_out.borrow().clone()
     }
-    fn bd_list_json(&self, _status: &str, _label_pattern: &str) -> String {
-        "[]".to_string()
+    fn bd_list_all_json(&self, _label_pattern: &str) -> String {
+        self.remedies.borrow().clone()
+    }
+    fn lc_rows(&self) -> Result<Vec<spira_config::lc_state::Row>, String> {
+        self.lc.borrow().clone()
     }
     fn git_branch_exists_matching(&self, _repo: &str, pattern: &str) -> bool {
         self.branches.borrow().iter().any(|b| pattern.contains(b))
@@ -391,4 +413,44 @@ fn real_landed_reads_the_lifecycle_record_not_the_landing_pass_oracle() {
     assert_eq!(r.lc_landed("sp-c"), 1, "CERTIFIED is not landed, whatever landing-pass says");
     assert_eq!(r.lc_landed("sp-n"), 1, "no row (spira-lc NO_ROW) is not landed");
     assert_eq!(r.lc_landed("sp-x"), 2, "the record cannot answer: cannot tell");
+}
+
+/// sp-mve9i: a remedy is open or closed by its lifecycle row, never by bd's status (design
+/// §3.4). A remedy still WORKING whose bd row someone closed by hand still suppresses its
+/// class; one SUBMITTED whose bd row was reopened by hand is a closed remedy, checked for a
+/// landing; a remedy with no lifecycle row is neither, and says so.
+#[test]
+fn remedies_are_split_by_the_lifecycle_row_not_bd_status() {
+    let f = Fake::default();
+    f.clean_clock();
+    f.set_events(None, "rows");
+    f.set_count("rows", "4 6 sp-recur-suite-red\n");
+    *f.remedies.borrow_mut() = r#"[{"id":"sp-w","status":"closed","labels":["covers:a"]},
+        {"id":"sp-s","status":"open","labels":["covers:b"]},
+        {"id":"sp-n","status":"open","labels":["covers:c"]}]"#
+        .into();
+    f.set_lc(&[("sp-w", "WORKING"), ("sp-s", "SUBMITTED")]);
+    run(&f, false);
+    let ids = |j: &str| -> Vec<String> {
+        let v: Vec<serde_json::Value> = serde_json::from_str(j).unwrap_or_default();
+        v.iter().map(|r| r["id"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(ids(&f.covers_in.borrow()), vec!["sp-w"], "open remedies");
+    assert_eq!(ids(&f.covers_closed_in.borrow()), vec!["sp-s"], "closed remedies");
+    assert!(f.stderr.borrow().iter().any(|l| l.contains("sp-n") && l.contains("no lifecycle row")), "{:?}", f.stderr.borrow());
+}
+
+/// A lifecycle machine that cannot answer suppresses nothing and says why: no remedy is
+/// split by a guess.
+#[test]
+fn an_unreachable_lifecycle_machine_suppresses_nothing() {
+    let f = Fake::default();
+    f.clean_clock();
+    f.set_events(None, "rows");
+    f.set_count("rows", "4 6 sp-recur-suite-red\n");
+    *f.remedies.borrow_mut() = r#"[{"id":"sp-w","status":"open","labels":["covers:a"]}]"#.into();
+    *f.lc.borrow_mut() = Err("spira-lc list exited 2".into());
+    run(&f, false);
+    assert_eq!(f.covers_in.borrow().trim(), "[]");
+    assert!(f.stderr.borrow().iter().any(|l| l.contains("lifecycle") && l.contains("not suppressing")), "{:?}", f.stderr.borrow());
 }

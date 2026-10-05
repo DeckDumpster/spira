@@ -110,8 +110,8 @@ impl<'a> PrPass<'a> {
                 self.log(&format!("landing-pass {name}: {id} not in bead db — skipped"));
                 continue;
             };
-            if bead.status != "closed" {
-                self.log(&format!("landing-pass {name}: {id} not landed — its bead is {}", bead.status));
+            if !bead.handed_on() {
+                self.log(&format!("landing-pass {name}: {id} not landed — its bead is {}", bead.state));
                 continue;
             }
             let bead_path = self.repos.iter().find(|x| x.name == bead.repo).map(|x| x.path.as_path());

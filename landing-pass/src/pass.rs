@@ -107,40 +107,23 @@ impl<'a> Pass<'a> {
         self.lc_state.get_or_init(|| self.lc.probe()).clone()
     }
 
-    pub(crate) fn land_status(&self, id: &str) -> String {
-        let st = self.beads.land_status(id);
-        if st != "closed" && self.s.lifecycle_enforce && self.lc.submitted().is_ok_and(|m| m.contains_key(id)) {
-            return "closed".into();
-        }
-        st
+    /// The bead's lifecycle state, re-read live (sp-mve9i: never bd's status).
+    pub(crate) fn land_state(&self, id: &str) -> String {
+        self.beads.land_state(id)
     }
 
-    fn status_closed(&self, id: &str) -> (bool, String) {
-        let st = self.land_status(id);
-        (st == "closed", st)
+    /// (handed on, the state it was read in) — a re-read before acting on a scan-time row.
+    fn handed_on_now(&self, id: &str) -> (bool, String) {
+        let st = self.land_state(id);
+        (crate::model::handed_on(&st), st)
     }
 
-    /// `bd show` rows, with the lifecycle machine's SUBMITTED-at-the-branch-tip rows read as
-    /// closed: under `lifecycle_enforce` the label is a projection, never the source.
-    pub(crate) fn show_rows(&self, repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
-        let mut rows = self.beads.show(ids)?;
-        if !self.s.lifecycle_enforce {
-            return Ok(rows);
-        }
-        let submitted = match self.lc.submitted() {
-            Ok(m) => m,
-            Err(why) => {
-                self.log(&crate::lifecycle::unreachable_line(&why, "no bead reads as submitted this pass"));
-                return Ok(rows);
-            }
-        };
-        for r in rows.iter_mut().filter(|r| r.status != "closed") {
-            let Some(tip) = submitted.get(&r.id) else { continue };
-            if self.git.rev_parse(repo, &format!("spira/{}", r.id)).as_deref() == Some(tip.as_str()) {
-                r.status = "closed".into();
-            }
-        }
-        Ok(rows)
+    /// `bd show` rows joined to their lifecycle states. A store or machine that cannot be
+    /// read is said loudly: nothing reads as handed on this pass.
+    pub(crate) fn show_rows(&self, _repo: &std::path::Path, ids: &[String]) -> Result<Vec<BeadRow>, String> {
+        self.beads.show(ids).inspect_err(|why| {
+            self.log(&crate::lifecycle::unreachable_line(why, "no bead reads as handed on this pass"));
+        })
     }
 
     /// Record a gate outcome as a lifecycle event (enforce only); a refusal is loud, and the
@@ -412,8 +395,8 @@ impl<'a> Pass<'a> {
             return Screen::Done(Flow::Next);
         }
         let bead = w.beads.get(id);
-        let st = bead.map(|b| b.status.as_str()).unwrap_or("");
-        if st != "closed" {
+        let st = bead.map(|b| b.state.as_str()).unwrap_or("");
+        if !crate::model::handed_on(st) {
             let shown = if st.is_empty() { "-" } else { st };
             if self.procs.holder_alive(id) {
                 self.log(&format!("CHECK6 {id}: {br} not landed — its bead is {shown}, held by a live aeon"));
@@ -422,7 +405,7 @@ impl<'a> Pass<'a> {
             }
             return Screen::Retry;
         }
-        let bead = bead.expect("closed implies present");
+        let bead = bead.expect("handed on implies present");
 
         // A branch lands only in the repository its BEAD names.
         let bead_path = self.repos.iter().find(|r| r.name == bead.repo).map(|r| r.path.clone());
@@ -519,7 +502,7 @@ impl<'a> Pass<'a> {
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
                 }
                 _ => {
-                    let (closed, st) = self.status_closed(id);
+                    let (closed, st) = self.handed_on_now(id);
                     if !closed {
                         self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not reopening {br}"));
                         return Flow::Next;
@@ -547,7 +530,7 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: certification PASS on {br} in {name} — this tree had already passed"));
         }
         self.files.clear_noverdict(br);
-        let (closed, st) = self.status_closed(id);
+        let (closed, st) = self.handed_on_now(id);
         if !closed {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
             return Flow::Next;
@@ -696,7 +679,7 @@ impl<'a> Pass<'a> {
         }
         let ready = |b: &str| {
             let id = b.trim_start_matches("spira/");
-            w.beads.get(id).map(|x| x.status == "closed").unwrap_or(false) && !self.procs.holder_alive(id)
+            w.beads.get(id).is_some_and(|x| x.handed_on()) && !self.procs.holder_alive(id)
         };
         self.out.add_branches(fresh.len() as u64);
         let mut added: Vec<String> = Vec::new();
@@ -761,7 +744,7 @@ impl<'a> Pass<'a> {
         let name = &w.repo.name;
         if basefail_fix_decision(bead.external_ref.as_deref(), name, &g.out) {
             let suite = bead.external_ref.as_deref().unwrap_or("").trim_start_matches(&format!("basefail:{name}:")).to_string();
-            let (closed, _) = self.status_closed(id);
+            let (closed, _) = self.handed_on_now(id);
             if closed {
                 self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
                 if !self.lc_certify(id, tip, "pass", "base-fix") {

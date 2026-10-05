@@ -178,10 +178,11 @@ impl Settings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BeadRow {
     pub id: String,
-    /// bd's status, except a bead carrying the submitted label reads `closed` (sp-qsona).
-    pub status: String,
-    /// bd's own status, unmapped (the prune asks about this one).
-    pub raw_status: String,
+    /// The bead's lifecycle state, from spira-lc — `-` when the machine holds no row for it.
+    /// bd's status and the retired submitted label are never read for it (sp-mve9i, design
+    /// bead-lifecycle-state-machine §3.4: bd holds content, spira-lc holds state).
+    #[serde(default = "no_state")]
+    pub state: String,
     pub repo: String,
     pub labels: Vec<String>,
     pub superseded: bool,
@@ -195,6 +196,16 @@ pub struct BeadRow {
     /// snapshot with no `notes` key deserializes to an empty list, not a parse error.
     #[serde(default)]
     pub notes: Vec<String>,
+}
+
+fn no_state() -> String {
+    "-".into()
+}
+
+/// Whether a lifecycle state means the builder has handed the bead on — SUBMITTED onward —
+/// which is what bd `closed` (or the submitted label) meant to every landing decision.
+pub fn handed_on(state: &str) -> bool {
+    state != "-" && spira_config::lc_state::past_builder(state)
 }
 
 /// `bd show`'s `notes` field, normalized to one string per note: a plain string splits on
@@ -218,19 +229,18 @@ fn normalize_notes(v: Option<&serde_json::Value>) -> Vec<String> {
 }
 
 impl BeadRow {
-    /// Parse one element of `bd show --json`. `None` when it carries no id.
-    pub fn from_json(v: &serde_json::Value, home_repo: &str, submitted_label: &str) -> Option<BeadRow> {
+    /// Parse one element of `bd show --json`: bd's content only. `None` when it carries no
+    /// id. The state is `-` until the store's reader joins the lifecycle row onto it.
+    pub fn from_json(v: &serde_json::Value, home_repo: &str) -> Option<BeadRow> {
         let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
         if id.is_empty() {
             return None;
         }
-        let raw_status = v.get("status").and_then(|x| x.as_str()).unwrap_or("-").to_string();
         let labels: Vec<String> = v
             .get("labels")
             .and_then(|x| x.as_array())
             .map(|a| a.iter().filter_map(|l| l.as_str().map(String::from)).collect())
             .unwrap_or_default();
-        let status = if labels.iter().any(|l| l == submitted_label) { "closed".to_string() } else { raw_status.clone() };
         let repo = labels
             .iter()
             .find_map(|l| l.strip_prefix("repo:").map(String::from))
@@ -259,7 +269,12 @@ impl BeadRow {
             .map(String::from);
         let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
         let notes = normalize_notes(v.get("notes"));
-        Some(BeadRow { id, status, raw_status, repo, labels, superseded, closed_at, priority, external_ref, title, notes })
+        Some(BeadRow { id, state: no_state(), repo, labels, superseded, closed_at, priority, external_ref, title, notes })
+    }
+
+    /// The builder has handed this bead on (its lifecycle row is SUBMITTED onward).
+    pub fn handed_on(&self) -> bool {
+        handed_on(&self.state)
     }
 
     pub fn has_label(&self, l: &str) -> bool {
