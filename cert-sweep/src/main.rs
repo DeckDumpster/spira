@@ -1,7 +1,7 @@
 //! cert-sweep — continuous certification of the landing ref's tip (DESIGN.md).
 //!
 //!   cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR]
-//!                   [--subset-div N] [--maxpar N] [--priority N] [--max-beads N]
+//!                   [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N]
 //!                   [--branch REF] [--repo-name NAME] [--reruns N]
 //!   cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]
 //!
@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cert_sweep::{
     bead_body, bead_title, bisect, culprit_body, culprit_title, filing_kind, first_fail_line, judge, open_duplicate, parse_members, parse_result_file,
-    parse_testenv_stdout, pick_subset, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
+    parse_testenv_stdout, pick_subset, runner_verdict, record, red_body, Culprit, Event, Judgement, Member, Outcome, Row, Verdict, EVENT_FAMILY, FAMILY,
 };
 use serde_json::Value;
 
@@ -28,7 +28,7 @@ extern "C" {
 }
 const LOCK_EX: i32 = 2;
 
-const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
+const USAGE: &str = "usage: cert-sweep pass --mode full|subset --tree DIR [--repo DIR] [--base REF] [--run DIR] [--subset-div N] [--deadline SECS] [--maxpar N] [--priority N] [--max-beads N] [--branch REF] [--repo-name NAME]\n   or: cert-sweep seed --results-dir DIR --commit SHA --round LABEL [--run DIR]";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -210,9 +210,13 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
     let start = now();
     let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };
 
-    let outcomes = rt.run(&tip, &picks, start)?.0;
+    let (outcomes, text) = rt.run(&tip, &picks, start)?;
     if outcomes.is_empty() {
-        let e = Event::SweepFault { mode: mode.into(), round, why: "the runner returned no results".into() };
+        let why = match runner_verdict(&text) {
+            Some(v) => format!("the runner returned no results: {v}"),
+            None => "the runner returned no results".into(),
+        };
+        let e = Event::SweepFault { mode: mode.into(), round, why };
         emit(&run, &e);
         return Ok(ExitCode::from(1));
     }
@@ -407,7 +411,11 @@ fn run_on_vm(f: &Flags, run: &Path, repo: &str, tip: &str, picks: &[String], sta
 fn run_on_host(f: &Flags, repo: &str, tip: &str, picks: &[String]) -> Result<(Vec<Outcome>, String), String> {
     let branch = flag(f, "branch").unwrap_or("cert-sweep/tip");
     git(repo, &["branch", "-f", branch, tip])?;
-    let mut child = Command::new("testenv")
+    let mut cmd = Command::new("testenv");
+    if let Some(d) = flag(f, "deadline") {
+        cmd.args(["--deadline", d]);
+    }
+    let mut child = cmd
         .args(["--suites", "-", branch, flag(f, "repo-name").unwrap_or("spira")])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -187,3 +187,10 @@ fn the_first_fail_line_is_the_first_one() {
     assert_eq!(first_fail_line("ok\n  FAIL: one\nFAIL: two\n").as_deref(), Some("FAIL: one"));
     assert_eq!(first_fail_line("nothing"), None);
 }
+
+#[test]
+fn a_runner_verdict_line_is_found_and_absence_is_none() {
+    let out = "building\nVERDICT FAULT rc=2 ran=0 reason=deadline-build\n";
+    assert_eq!(runner_verdict(out), Some("VERDICT FAULT rc=2 ran=0 reason=deadline-build"));
+    assert_eq!(runner_verdict("nothing here\n"), None);
+}
