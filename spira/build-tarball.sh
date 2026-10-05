@@ -322,6 +322,16 @@ for c in data.get("compat", []):
 _COMPAT_PY
 )
 
+    # MODEL-BIN (sp-zf4q3): the one release directory the model's restricted PATH names
+    # (aeon/src/restrict.rs) — only the binaries a model may run, each linked to ../bin/,
+    # so no tool in bin/ that calls bd is reachable by name from inside an aeon's session.
+    # The list is spira_config::release_env::MODEL_BINS; keep the two identical.
+    for _model_bin in work; do
+        [ -f "$stage/bin/$_model_bin" ] || continue
+        mkdir -p "$stage/model-bin"
+        ln -s "../bin/$_model_bin" "$stage/model-bin/$_model_bin"
+    done
+
     # Write MANIFEST — commit, timestamp, repo identity, and sha256 per binary (and per
     # compat symlink under bin/, which sha256sum dereferences, so its hash is simply the
     # real binary's; spira/ symlinks are not separately hashed — spira/ as a whole is the
@@ -337,6 +347,11 @@ _COMPAT_PY
         [ -L "$_alias_path" ] || continue
         local _h; _h="$(sha256sum "$_alias_path" | awk '{print $1}')"
         printf 'bin/%s %s\n' "$(basename "$_alias_path")" "$_h" >> "$stage/MANIFEST"
+    done
+    for _alias_path in "$stage/model-bin/"*; do
+        [ -L "$_alias_path" ] || continue
+        local _h; _h="$(sha256sum "$_alias_path" | awk '{print $1}')"
+        printf 'model-bin/%s %s\n' "$(basename "$_alias_path")" "$_h" >> "$stage/MANIFEST"
     done
     # vendor/bin/aerc (sp-41so3), when spira/build-aerc.sh built one above — recorded the
     # same way bin/*'s own binaries are, so install's own copy (install_aerc) is checking

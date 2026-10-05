@@ -35,6 +35,73 @@
 
 use std::path::{Path, PathBuf};
 
+/// The release directory holding ONLY the binaries a model may run (sp-zf4q3): a sibling of
+/// `bin/`, and the one release directory the model's restricted PATH names
+/// (`aeon::restrict`). `bin/` itself also holds ~40 tools that call `bd` themselves (bdq,
+/// mail, spira-claim, bead, sentinel, queue, ...), so naming it gave the model a route to
+/// the database. Every entry is a relative symlink `<name> -> ../bin/<name>`, made by the
+/// release builders (`release::build`, `spira/build-tarball.sh`, testenv's stage script)
+/// and checked by `release verify` and acceptance phase A ([`model_bin_problems`]).
+pub const MODEL_BIN_DIR: &str = "model-bin";
+
+/// What `MODEL_BIN_DIR` holds: every binary a model may run, and nothing else.
+pub const MODEL_BINS: &[&str] = &["work"];
+
+/// The one exit from the aeon's refusal to start a restricted session in a release with no
+/// `model-bin/`: set it to a directory you have CONSIDERED and that holds only what a model
+/// may run, and the aeon uses that directory as the model's release PATH entry instead.
+/// It is an explicit act, never a fallback: unset, a missing `model-bin/` refuses.
+pub const MODEL_BIN_OVERRIDE_ENV: &str = "SPIRA_MODEL_BIN_CONSIDERED";
+
+/// Every way `<release>/model-bin` departs from its contract, for a release whose `bin/`
+/// holds at least one of [`MODEL_BINS`]: each such binary must be reachable and executable
+/// through `model-bin/<name>`, and `model-bin/` must hold nothing outside [`MODEL_BINS`].
+/// Empty for a release that ships none of them (a repository other than the harness).
+pub fn model_bin_problems(release: &Path) -> Vec<String> {
+    let bin = release.join("bin");
+    let wanted: Vec<&str> = MODEL_BINS.iter().copied().filter(|b| std::fs::symlink_metadata(bin.join(b)).is_ok()).collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let dir = release.join(MODEL_BIN_DIR);
+    let mut problems = Vec::new();
+    for b in &wanted {
+        let p = dir.join(b);
+        let exe = std::fs::metadata(&p).map(|m| m.is_file() && std::os::unix::fs::PermissionsExt::mode(&m.permissions()) & 0o111 != 0).unwrap_or(false);
+        if !exe {
+            problems.push(format!("{MODEL_BIN_DIR}/{b}: missing or not executable (bin/{b} is shipped, so the model's PATH needs it)"));
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(&dir) {
+        let mut extra: Vec<String> = rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| !MODEL_BINS.contains(&n.as_str())).collect();
+        extra.sort();
+        for n in extra {
+            problems.push(format!("{MODEL_BIN_DIR}/{n}: not a model binary — {MODEL_BIN_DIR}/ holds only {}", MODEL_BINS.join(", ")));
+        }
+    }
+    problems
+}
+
+/// Links `<release>/model-bin/<name> -> ../bin/<name>` for every [`MODEL_BINS`] entry
+/// present in `<release>/bin`. Creates nothing when none is (a non-harness repository).
+/// Returns the names linked.
+pub fn link_model_bin(release: &Path) -> Result<Vec<String>, String> {
+    let bin = release.join("bin");
+    let present: Vec<&str> = MODEL_BINS.iter().copied().filter(|b| bin.join(b).is_file()).collect();
+    if present.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = release.join(MODEL_BIN_DIR);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    for b in &present {
+        let link = dir.join(b);
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::os::unix::fs::symlink(format!("../bin/{b}"), &link).map_err(|e| format!("cannot symlink {MODEL_BIN_DIR}/{b} -> ../bin/{b}: {e}"))?;
+        }
+    }
+    Ok(present.iter().map(|s| s.to_string()).collect())
+}
+
 /// Ascends from `exe`'s own directory to the nearest ancestor holding a `spira/conf.sh` —
 /// this binary's own release root (`<release>` such that `<release>/bin` holds `exe` and
 /// `<release>/spira/conf.sh` exists). The identical search `inbox-triage::find_spira_dir`

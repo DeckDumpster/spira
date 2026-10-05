@@ -267,6 +267,12 @@ fn fx(name: &str) -> Fx {
     // execed by name off PATH by every test built on Fx, so an ETXTBSY from a concurrent
     // fork elsewhere in the binary would not be an isolated flake.
     testkit::write_exe(&work_stub, "#!/bin/sh\nexit 0\n");
+    // The release's model-bin/ (sp-zf4q3): the only directory the model's PATH may name,
+    // holding `work` and nothing else — a sibling of bin/, linked the way the release
+    // builder links it.
+    let model_bin = dir.join(spira_config::release_env::MODEL_BIN_DIR);
+    std::fs::create_dir_all(&model_bin).unwrap();
+    std::os::unix::fs::symlink("../bin/work", model_bin.join("work")).unwrap();
     let w: W = Arc::new(Mutex::new(World::default()));
     Fx { _dir: dir, home, run, repo, bin, w }
 }
@@ -524,6 +530,38 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     assert!(task.contains("**You have no `bd`.**"));
     assert!(ledger_lines(&o).last().unwrap().contains("status=submitted"));
     assert!(!w.labels["sp-r"].contains("spira-submitted"), "no bd-close reinterpretation on the restricted path");
+}
+
+/// sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never bin/ —
+/// the directory that merely holds `work` also holds ~40 tools that call bd themselves.
+#[test]
+fn the_restricted_path_names_model_bin_and_never_the_full_bin_dir() {
+    let f = fx("enf-model-bin");
+    seed(&f, "sp-mb");
+    let extra: Vec<(&str, &str)> = Vec::new();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    let path = o.seen[0].env.get("PATH").cloned().unwrap_or_default();
+    let model_bin = f.bin.parent().unwrap().join(spira_config::release_env::MODEL_BIN_DIR);
+    let dirs: Vec<&str> = path.split(':').collect();
+    assert!(dirs.contains(&model_bin.to_str().unwrap()), "PATH must name model-bin: {path}");
+    assert!(!dirs.contains(&f.bin.to_str().unwrap()), "PATH must never name the full bin dir: {path}");
+}
+
+/// sp-zf4q3: a release with no model-bin/ refuses the session (fail-closed), naming the
+/// override, rather than falling back to the full bin dir.
+#[test]
+fn a_release_without_model_bin_refuses_the_session() {
+    let f = fx("enf-no-model-bin");
+    seed(&f, "sp-nmb");
+    std::fs::remove_dir_all(f.bin.parent().unwrap().join(spira_config::release_env::MODEL_BIN_DIR)).unwrap();
+    let extra: Vec<(&str, &str)> = Vec::new();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    assert!(o.seen.is_empty(), "no session may start without model-bin");
+    assert!(o.log.contains(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV), "the refusal names its override: {}", o.log);
 }
 
 #[test]

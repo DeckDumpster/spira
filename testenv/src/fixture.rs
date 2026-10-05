@@ -98,6 +98,8 @@ pub const IMAGE_PATH: &str =
 /// the binaries `bin/` must hold. Every top-level entry of the tree is linked in beside `bin/`
 /// (a release is `git archive` of its commit plus `bin/`); `target/` is not part of a release.
 /// A binary the build did not produce is a refusal naming it, never a partial `bin/`.
+/// `model-bin/work -> ../bin/work` (sp-zf4q3) mirrors the release builder: the only
+/// directory an enforced aeon's model may have on PATH.
 pub const STAGE_SCRIPT: &str = r#"set -eu
 r="$1"; a="$2"; w="$3"; shift 3
 rm -rf "$r"
@@ -110,6 +112,11 @@ done
 for b in "$@"; do
     [ -x "$a/$b" ] || { echo "testenv: stage: $b was not built into $a" >&2; exit 1; }
     ln -s "$a/$b" "$r/bin/$b"
+done
+for b in work; do
+    [ -e "$r/bin/$b" ] || continue
+    mkdir -p "$r/model-bin"
+    ln -s "../bin/$b" "$r/model-bin/$b"
 done
 "#;
 

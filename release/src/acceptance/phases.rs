@@ -483,6 +483,10 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     if releases.join("current").is_dir() {
         let m = missing_release_bins(&releases.join("current"));
         r.check("phase A: all native binaries present and executable", m.is_empty(), || format!("missing: {m}"));
+        // sp-zf4q3: the model's PATH names model-bin/ only; a tarball without it would
+        // leave every enforced aeon refusing its session.
+        let mb = spira_config::release_env::model_bin_problems(&releases.join("current"));
+        r.check("phase A: model-bin/ holds work and nothing else", mb.is_empty(), || mb.join("; "));
     }
     let install_rc = if releases.join("current").is_dir() { r.install_sh() } else { 1 };
     r.is0("phase A: install.sh exits 0", install_rc);
