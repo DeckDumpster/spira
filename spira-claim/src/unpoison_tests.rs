@@ -853,3 +853,9 @@ fn on_unreachable_machine_is_a_loud_fail() {
     assert!(out.contains("lifecycle_enforce is on, so the machine must answer"), "{out}");
     assert_eq!(f.writes(), 0);
 }
+
+#[test]
+fn reopen_sets_status_open_so_an_in_progress_bead_is_ready_again() {
+    let a = crate::unpoison::reopen_status_args("sp-a");
+    assert_eq!(a, ["update", "sp-a", "--status", "open", "--assignee", ""]);
+}

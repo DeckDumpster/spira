@@ -843,6 +843,12 @@ impl World for Live {
 // `Live`'s private `bd`/`bd_ok`/`land` helpers directly, the same split `deadlocked`
 // already draws ("the write is unpoison's Live, reused rather than duplicated").
 
+/// `bd reopen` only acts on a closed bead; a refused handoff reopens one still in_progress,
+/// which `bd ready` excludes, so the status is set explicitly as well.
+pub(crate) fn reopen_status_args(id: &str) -> [&str; 6] {
+    ["update", id, "--status", "open", "--assignee", ""]
+}
+
 impl crate::reopen::World for Live {
     fn land_state(&mut self, id: &str) -> Option<crate::reopen::LandState> {
         let r = self.land(&["state", id]).ok()?;
@@ -865,7 +871,8 @@ impl crate::reopen::World for Live {
     }
 
     fn bd_reopen(&mut self, id: &str) -> Result<(), String> {
-        self.bd_ok(&["reopen", id], None).map(|_| ())
+        let reopened = self.bd_ok(&["reopen", id], None);
+        self.bd_ok(&reopen_status_args(id), None).map(|_| ()).or(reopened.map(|_| ()))
     }
 
     fn remove_submitted_label(&mut self, id: &str, label: &str) {
