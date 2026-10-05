@@ -156,7 +156,6 @@ After each `done` line: `_tsd_aeon_session` (native since sp-27d3d — wave 4.34
 | `$SPIRA_RUN/<bead>.lapsed` | w/r/rm | `<quiet_s>\t<last>` written by the heartbeat, consumed by teardown |
 | `$SPIRA_RUN/<bead>.thrash` | w/r/rm | last action, written by the heartbeat, consumed by teardown |
 | `$SPIRA_RUN/<bead>.slain` | r | written by slay.sh |
-| `$SPIRA_RUN/<bead>.operator-wait` | r/rm | written by mail; honoured only if it holds this session's `SESSION_EPOCH` |
 | `$SPIRA_RUN/worktree/<bead>` | w | the worktree (the sanctioned root) |
 | `$SPIRA_RUN/aeon-empty-gh/` | w | empty `GH_CONFIG_DIR` for the session |
 | `$SPIRA_MAIL/aeon-<bead>/{new,cur,tmp}` | w/rm | per-claim mailbox |
@@ -229,7 +228,7 @@ anything runs (`spira_config::check_lifecycle_switch_env`); one that says on is 
 aeon.sh exported them: `SPIRA_AEON`, `BEADS_ACTOR=aeon-<name>`, `GIT_{AUTHOR,COMMITTER}_{NAME,EMAIL}`,
 `SPIRA_INCIDENT_REPO`, `BEAD_ID`, `SPIRA_MAIL`, `SPIRA_MAIL_FROM=<Fayth> <<fayth>@spira>`,
 `SPIRA_WORK`, `SPIRA_FAYTH`, `SPIRA_CZAR_CLASS`/`SPIRA_CZAR_TRIGGER_BEAD` (czar),
-`TESTDB_*` (own fixture only; inherited ones are unset), `SESSION_EPOCH`,
+`TESTDB_*` (own fixture only; inherited ones are unset),
 `GH_CONFIG_DIR=$SPIRA_RUN/aeon-empty-gh`, `GIT_SSH_COMMAND=<refusal>`,
 `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS=/bin/false`; `GH_TOKEN`/`GITHUB_TOKEN` removed.
 
@@ -380,7 +379,7 @@ own process group, so its trap ran with 143 and skipped the verdict block — sa
 | 6 | open ask blocker | decision-blocked | free | unjudged-decision-blocked | decision-blocked |
 | 7 | session rc 124, nothing committed | timeout | free | unjudged-timeout | timeout |
 | 8 | harness requeue cause | requeue-<c> | free | <c> | requeue |
-| 9 | own operator-wait marker | operator-wait | free | unjudged-operator-wait | operator-wait |
+| 9 | the bead's lifecycle row carries an `ask` hold (placed this session by `work ask`/`work blocked`; the claim refuses a held bead) | operator-wait | free | unjudged-operator-wait | operator-wait |
 | 10 | lifecycle-verified or submitted label | submitted | free | - | submitted |
 | 11 | yield headless | yield-headless | charge | - | yield-headless |
 | 12 | session never started | pre-session | charge | - | pre-session |
@@ -391,20 +390,12 @@ Inputs are gathered lazily in the same order (a later marker is not consumed whe
 earlier row matched). The side effects per note key (release, `bump_requeue`, notes,
 `bump_lapsed`, `write_lapse_record`, `capacity_pause_set`) and every note text are aeon.sh's.
 
-### 4.4 Closed-bead branch (gate status, `gate-run.sh --status <branch> <repo>`)
+### 4.4 Closed-bead branch — retired (sp-v62vn)
 
-0 recorded PASS → note; 2 still running → note; 1 FAIL → (not queued) note / (queued, no
-own commit ahead) log only / (queued, own commit) `bead_reopen cert-gate-red`, st=open;
-3/4/5 (none/stale/died) → note, or (queued with own commit, not already CERTIFIED at this
-tip) `defer_self_cert` note. Then the submitted conversion (§4.5), the closed operator-wait
-marker, pidfile removal, mailbox removal, `done` line, exit.
-
-### 4.5 Submitted conversion
-
-A closed bead whose persona is not graph-only, whose model was **not** restricted, whose
-type is a work type (`bead_is_work_type`) and which carries no `delivers:` label: superseded
-→ close stands; no commit naming it ahead of the base → close stands; else
-`bead_reopen work-close-converted` + `label add spira-submitted`, st=submitted.
+Every session runs restricted and hands its bead on only through the work verbs, which the
+disposition (§4.3) reads as `submitted`; teardown has no "the model closed the bead" branch,
+no closed operator-wait marker and no submitted conversion (§4.5 retired with it). After the
+disposition: pidfile removal, mailbox removal, `done` line, exit.
 
 ### 4.6 Verdict block (after the session, in order)
 

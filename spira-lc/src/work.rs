@@ -369,13 +369,19 @@ fn gate(verb: &str, rest: &[String]) -> Result<(), (i32, String)> {
     permitted(&op_key(verb, &call.args), call.actor.as_deref())
 }
 
-/// One thing a lane verb does: a bd call, a harness tool, or — after a `bead.sh file` for a
-/// persona — the lifecycle row for the id it printed.
+/// One thing a lane verb does: a bd call, a harness tool, — after a `bead.sh file` for a
+/// persona — the lifecycle row for the id it printed, or — after a bound session's
+/// question reached the operator — the `ask` hold on the asking session's own bead.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Step {
     Bd { args: Vec<String>, stdin: Option<String> },
     Tool { program: &'static str, args: Vec<String>, stdin: Option<String> },
     CreateRow,
+    /// `Hold { Ask, OperatorQuestion }` on `bead`: the bead waits on the operator's answer
+    /// (only a `Reply` or `AskWithdrawn` lifts it), and aeon's teardown reads the hold to
+    /// release the session operator-wait, uncharged (sp-v62vn follow-up: it replaced the
+    /// `<bead>.operator-wait` marker `mail` wrote, which a restricted model cannot run).
+    AskHold { bead: String, question: String },
 }
 
 fn s(x: &str) -> String {
@@ -606,10 +612,19 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
             if let Some(c) = get(&f, "--class") {
                 args.extend([s("--class"), c.to_string()]);
             }
+            let own = cited.as_deref() == Some(bound) && is_bead_id(bound);
             if let Some(b) = cited {
                 args.extend([s("--bead"), b]);
             }
-            Ok(vec![Step::Tool { program: "mail", args, stdin: Some(body) }])
+            let mut steps = vec![Step::Tool { program: "mail", args, stdin: Some(body) }];
+            // A bound session's question about its OWN bead is a wait on the operator: that
+            // bead is held once the question is delivered (the mail goes first, so a hold
+            // never stands without a question behind it). A question citing another bead —
+            // the groomer's "Close <id>?" — is not this session's wait, and holds nothing.
+            if kind == "question" && own {
+                steps.push(Step::AskHold { bead: bound.to_string(), question: subject.to_string() });
+            }
+            Ok(steps)
         }
         tool => {
             let Some(&(_, program)) = TOOLS.iter().find(|(v, _)| *v == tool) else {
@@ -697,6 +712,16 @@ fn cmd_lane(bound: &str, verb: &str, rest: &[String], conn: &Conn) -> (i32, Stri
                 // mail, by name; SPIRA_MAIL_SH is the harness-wide binary-override seam.
                 let prog = if program == "mail" { std::env::var("SPIRA_MAIL_SH").unwrap_or_else(|_| s("mail")) } else { s(program) };
                 crate::bd::tool(&prog, &args, stdin.as_deref(), actor, TOOL_SECS)
+            }
+            Step::AskHold { bead, question } => {
+                let hold = BeadEventKind::Hold { kind: HoldKind::Ask, cause: HoldCause::OperatorQuestion, detail: Some(question) };
+                match apply_bead_event(conn, &bead, actor, hold) {
+                    (0, _) => (0, format!("question delivered; {bead} is held (ask) until the operator answers\n")),
+                    (code, e) => (
+                        code,
+                        format!("the question WAS delivered (do not ask again), but the ask hold on {bead} was not applied: {e}"),
+                    ),
+                }
             }
             Step::CreateRow => {
                 let new_id = out.trim().to_string();
@@ -899,6 +924,27 @@ mod tests {
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "note", "--default", "d"], "ops")).is_err());
         assert!(plan("ask", "-", &call(&["--subject", "q", "--kind", "fyi", "--default", "d", "--from", "Ryan"], "ops")).is_err(), "the sender is the broker's");
         assert_eq!(display_name("batcher"), "Judge");
+    }
+
+    /// sp-v62vn follow-up: a restricted model asks through `work ask`; a question from a
+    /// bound session also places the `ask` hold on the bound bead's row — the record aeon's
+    /// teardown reads to release the session operator-wait (the marker mail wrote is gone).
+    #[test]
+    fn a_bound_question_holds_the_bound_bead_after_the_mail() {
+        let p = plan("ask", "sp-me1", &call(&["--subject", "May I?", "--kind", "question", "--default", "no"], "builder")).unwrap();
+        assert_eq!(p.len(), 2, "{p:?}");
+        assert!(matches!(&p[0], Step::Tool { program: "mail", .. }), "the question is delivered first: {p:?}");
+        assert_eq!(p[1], Step::AskHold { bead: s("sp-me1"), question: s("May I?") });
+        let p = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--bead", "sp-me1"], "builder")).unwrap();
+        assert_eq!(p.last(), Some(&Step::AskHold { bead: s("sp-me1"), question: s("q") }), "citing its own bead explicitly");
+        // No hold for a question about another bead (the groomer's "Close <id>?"), for an
+        // fyi, nor for an unbound caller (nothing of its own to wait on).
+        let other = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "question", "--default", "d", "--bead", "sp-other"], "groomer")).unwrap();
+        assert!(!other.iter().any(|x| matches!(x, Step::AskHold { .. })), "{other:?}");
+        let fyi = plan("ask", "sp-me1", &call(&["--subject", "q", "--kind", "fyi", "--default", "d"], "builder")).unwrap();
+        assert!(!fyi.iter().any(|x| matches!(x, Step::AskHold { .. })), "{fyi:?}");
+        let unbound = plan("ask", "-", &call(&["--subject", "q", "--kind", "question", "--default", "d"], "archivist")).unwrap();
+        assert!(!unbound.iter().any(|x| matches!(x, Step::AskHold { .. })), "{unbound:?}");
     }
 
     // ---- tools ----

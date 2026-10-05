@@ -194,10 +194,6 @@ pub fn send(bd: &dyn Bd, env: &Env, args: &SendArgs, body: String) -> Result<Sen
     if is_operator {
         repeat::repeat_stamp(repeat_guard.take().unwrap());
 
-        if (args.kind == "question" || args.kind == "decision") && env.bead_id.is_some() {
-            let marker = env.run_dir.join(format!("{}.operator-wait", env.bead_id.as_ref().unwrap()));
-            let _ = fs::write(marker, env.session_epoch.clone().unwrap_or_default());
-        }
         if (args.kind == "question" || args.kind == "decision") && !x_bead.is_empty() {
             let _ = index_record(&env.index_file, &mailbox, &format!("{msgid}@spira"), &x_bead, args.kind, args.default);
         }

@@ -787,7 +787,6 @@ impl<'a> Run<'a> {
 
         // ---- the groom log, before ----
         self.s.session_epoch = self.now();
-        self.d.env.set("SESSION_EPOCH", &self.s.session_epoch.to_string());
         if self.fayth.groom_escalation_check {
             self.s.groom_lines_before = std::fs::read_to_string(self.run_dir().join("groom.log")).map(|t| t.lines().count()).unwrap_or(0);
         }

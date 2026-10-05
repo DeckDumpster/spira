@@ -222,7 +222,9 @@ impl Exec for FakeExec {
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("show") && args.len() == 2 {
             let w = self.0.lock().unwrap();
-            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": []}, "delivery": null}).to_string());
+            // The row's holds are the same ones `spira-lc holds` answers (one kind a line).
+            let holds: Vec<String> = w.holds.get(&args[1]).map(|h| h.lines().map(str::trim).filter(|h| !h.is_empty()).map(String::from).collect()).unwrap_or_default();
+            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": holds}, "delivery": null}).to_string());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -998,6 +1000,34 @@ fn a_committed_but_still_open_session_still_charges_a_real_attempt() {
     assert!(!w.seam_calls.iter().any(|c| c.0 == "thrash_streak_bump"), "committed work is not a no-progress exit: {:?}", w.seam_calls);
     assert!(!w.bd_calls.iter().any(|c| c.contains(&"--defer".to_string())), "a real attempt is not held for a backoff: {:?}", w.bd_calls);
     assert_eq!(w.status["sp-p"], "open");
+}
+
+/// sp-v62vn follow-up: a restricted session asks the operator through `work ask`, whose
+/// broker places an `ask` hold on the bound bead's lifecycle row. No marker file, no
+/// SESSION_EPOCH: the claim refused any non-wait hold (blocking_holds), so an ask hold on
+/// the row at teardown was placed by this session — it is released operator-wait, free.
+#[test]
+fn a_session_whose_bead_gets_an_ask_hold_via_work_ask_is_released_operator_wait() {
+    let f = fx("operator-wait");
+    seed(&f, "sp-ow");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, w, _| {
+        let id = spec.env.get("SPIRA_WORK_BEAD_ID").unwrap().clone();
+        // Work committed, so the disposition would otherwise be a charged Unlanded.
+        std::fs::write(spec.cwd.join("f"), "partial work\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", &format!("{id} — partial, waiting on the operator")]);
+        // `work ask --kind question`: the broker's Hold{Ask} on the bound bead's row.
+        w.lock().unwrap().holds.insert(id, "ask".into());
+        crate::run::append(&spec.log, "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{}}]}}\n{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"num_turns\":1}\n");
+        0
+    });
+    let o = go(&f, "spira,plan", &[], Mode::Claim, BTreeMap::new(), act);
+    assert!(l_done(&o).contains("status=operator-wait"), "{}\n{}", o.ledger, o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.notes.iter().any(|(_, n)| n.contains("asked the operator") && n.contains("No attempt charged")), "{:?}", w.notes);
+    assert!(!w.notes.iter().any(|(_, n)| n.starts_with("Unlanded")), "not charged: {:?}", w.notes);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-ow", "unjudged-operator-wait"]), "{:?}", w.seam_calls);
+    assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim"), "released: {:?}", w.seam_calls);
+    assert!(!f.run.join("sp-ow.operator-wait").exists());
 }
 
 #[test]

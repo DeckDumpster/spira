@@ -201,7 +201,7 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
 }
 
 /// Did the session's builder hand its bead on by closing it — the legacy close path the
-/// verdict fences and teardown's closed branch judge (sp-mve9i)? Read from the bead's
+/// verdict fences (sp-mve9i; teardown's own closed branch is deleted, sp-v62vn)? Read from the bead's
 /// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
 ///
 /// A restricted session (every session the aeon launches) hands its bead on only through the work verbs
