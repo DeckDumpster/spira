@@ -216,8 +216,13 @@ pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str, s
 /// `ready-count`'s rows under the machine: bd's label predicate over the claimable set, with
 /// a deferred bead held as `bd ready` holds it.
 pub fn count_matching(rows: &[ReadyRow], inc: &[String], exc: &[String]) -> u64 {
+    matching(rows, inc, exc).len() as u64
+}
+
+/// The rows [`count_matching`] counts: `ready-count --json` hands a reader the set itself.
+pub fn matching<'a>(rows: &'a [ReadyRow], inc: &[String], exc: &[String]) -> Vec<&'a ReadyRow> {
     let now = now_epoch();
-    rows.iter().filter(|r| !is_deferred(r, now) && labels_match(r, inc, exc)).count() as u64
+    rows.iter().filter(|r| !is_deferred(r, now) && labels_match(r, inc, exc)).collect()
 }
 
 fn now_epoch() -> i64 {

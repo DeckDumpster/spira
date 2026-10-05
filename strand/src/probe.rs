@@ -95,8 +95,19 @@ fn split_labels(s: &str) -> Vec<String> {
     s.split(',').map(str::trim).filter(|x| !x.is_empty()).map(str::to_string).collect()
 }
 
-/// The claimable set under one partition's predicate.
+/// The claimable set under one partition's predicate. lifecycle_enforce on: spira-claim's
+/// `ready-count --json`, the one ready set the summoner counts and an aeon claims from (the
+/// machine's READY/REWORK rows) — never bd's ready query nor the sentinel's bd-ready snapshot,
+/// whose status and assignee no claim writes (sp-7g5q6). A refusal is `Err`, never empty.
 pub fn ready(cfg: &Config, labels: &str, exclude: &[String]) -> Result<HashSet<String>, String> {
+    if cfg.lifecycle_enforce {
+        let excl = exclude.join(",");
+        let o = run("timeout", &["60", cfg.claim_bin.as_str(), "ready-count", labels, &excl, "--json"], None, &[]);
+        if !o.ok {
+            return Err(format!("spira-claim ready-count {labels}: {}", o.stderr.trim()));
+        }
+        return Ok(parse_beads(&o.stdout).map_err(|e| format!("spira-claim ready-count {labels}: {e}"))?.into_iter().map(|b| b.id).collect());
+    }
     let need = split_labels(labels);
     if let Some(p) = cfg.ready_snapshot.as_ref() {
         if let Ok(raw) = fs::read_to_string(p) {
@@ -343,32 +354,12 @@ pub fn fayth_free(cfg: &Config, fayth: &str, pool: Option<i64>, exclude: Option<
 /// key itself is retired, so the literal is the contract).
 pub const WAIT_LABEL: &str = "spira-waiting-operator"; // literal-ok: retired key's default
 
-/// Beads the ghost check must not reclaim because they are legitimately waiting.
-///
-/// `lifecycle_enforce` off: the beads carrying [`WAIT_LABEL`], read off the store the pass
-/// already loaded — spira-lc is never run. On: the spira-lc `wait` holds, and an absent or
-/// non-executable binary, a failed call or an unparseable reply is an `Err` (the caller's
-/// "cannot tell"), never an empty set that would let the ghost check reclaim a held bead.
-pub fn wait_held(cfg: &Config, beads: &[Bead]) -> Result<HashSet<String>, String> {
-    if !cfg.lifecycle_enforce {
-        return Ok(beads.iter().filter(|b| b.has(WAIT_LABEL)).map(|b| b.id.clone()).collect());
-    }
-    let unreachable = |why: String| {
-        format!("lifecycle_enforce is on and spira-lc is unreachable ({why}) — cannot read the wait holds")
-    };
-    let bin = cfg.lc_bin.as_str();
-    let o = run("timeout", &["30", bin, "list", "--hold", "wait"], None, &[]);
-    if !o.ok {
-        return Err(unreachable(format!("list --hold wait: {}", o.stderr.trim())));
-    }
-    let v: serde_json::Value = serde_json::from_str(&o.stdout).map_err(|e| unreachable(format!("unparseable reply: {e}")))?;
-    Ok(v.as_array()
-        .cloned()
-        .unwrap_or_default()
-        .iter()
-        .filter_map(|r| r.get("bead_id").and_then(|x| x.as_str()).map(str::to_string))
-        .filter(|s| !s.is_empty())
-        .collect())
+/// Beads the ghost check must not reclaim because they are legitimately waiting: the beads
+/// carrying [`WAIT_LABEL`], read off the store the pass already loaded. The ghost rule runs
+/// with lifecycle_enforce off only, so this is never asked under the machine — whose wait
+/// holds CHECK 2's own reaper honours (sp-7g5q6).
+pub fn wait_held(beads: &[Bead]) -> HashSet<String> {
+    beads.iter().filter(|b| b.has(WAIT_LABEL)).map(|b| b.id.clone()).collect()
 }
 
 // ------------------------------------------------------------------------------------------

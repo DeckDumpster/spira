@@ -477,8 +477,12 @@ pass writes them. The audit worker writes none: the old one crashed with
   `status ≠ closed` and type not `epic`/`event` — the whole open plan backlog, wherever a
   bead is parented. Logged as `open=`.
 - `plan_ready`: rows in the ready snapshot whose labels ⊇ {scope?, `plan`} and are disjoint
-  from {`spira-poison`, ask}.
-- `plan_inprog`: `status == in_progress` and labels ⊇ {scope?, `plan`}.
+  from {`spira-poison`, ask}. lifecycle_enforce on: `spira-claim ready-count "<scope,>plan"
+  "spira-poison,<ask>"` — the machine's ready set, the one an aeon claims from; a refusal is
+  unknown (`?`), never 0 (sp-7g5q6). CHECK 3's recount asks the same.
+- `plan_inprog`: `status == in_progress` and labels ⊇ {scope?, `plan`}. lifecycle_enforce on:
+  the machine's WORKING rows (the pass's one `spira-lc list`) whose bead carries those labels
+  — bd's in_progress is written by no claim (sp-7g5q6).
 - `live`: as §2.5.
 
 Under SKIP_RECLAIM all four are 0 and empty.

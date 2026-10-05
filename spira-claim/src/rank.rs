@@ -11,6 +11,10 @@ use serde_json::Value;
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 pub struct ReadyRow {
     pub id: String,
+    /// Content only: carried so a ready set handed to a display (the cockpit's NEXT rows)
+    /// names each bead without a second read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     #[serde(default, deserialize_with = "lenient_i64")]
     pub priority: Option<i64>,
     #[serde(default)]
