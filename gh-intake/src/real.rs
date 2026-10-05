@@ -129,7 +129,9 @@ impl Bd for RealBd {
         if !out.status.success() {
             return false;
         }
-        let _ = spira_config::lifecycle_row::after_create("gh-intake", &String::from_utf8_lossy(&out.stdout));
+        if let Err(e) = spira_config::lifecycle_row::after_create("gh-intake", &String::from_utf8_lossy(&out.stdout)) {
+            eprintln!("gh-intake: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+        }
         true
     }
 

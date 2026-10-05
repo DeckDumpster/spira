@@ -169,7 +169,9 @@ impl World for Real {
         }
         let status = child.wait().map_err(|e| format!("bd create: {e}"))?;
         if status.success() {
-            let _ = spira_config::lifecycle_row::after_create("maechen-trigger", &created);
+            if let Err(e) = spira_config::lifecycle_row::after_create("maechen-trigger", &created) {
+            eprintln!("maechen-trigger: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+        }
             Ok(())
         } else {
             let mut msg = String::new();
