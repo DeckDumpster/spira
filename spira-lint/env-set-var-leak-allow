@@ -7,9 +7,7 @@ aeon/src/conf.rs
 batcher-cut/src/main.rs
 broker/src/main.rs
 cockpit-collect/src/io.rs
-cockpit-collect/src/probes/mod.rs
 cockpit-collect/src/probes/queue.rs
-cockpit-collect/src/probes/ratelim.rs
 cockpit-collect/src/probes/unsent.rs
 cockpit-collect/src/supervisor.rs
 cockpit/ops/src/conf.rs

@@ -201,7 +201,7 @@ mod tests {
     fn no_logs_renders_all_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-ratelim-empty");
-        std::env::set_var("SPIRA_RUN", run.path());
+        let _env = crate::test_support::set_run(run.path());
         let kv = ratelim_keys();
         assert!(kv.iter().all(|(_, v)| v == "?"));
         assert_eq!(kv.len(), KEYS.len());
