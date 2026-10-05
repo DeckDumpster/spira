@@ -481,39 +481,102 @@ tl_summary() {
 
 # lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
 # aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
-# reads a bead's state from its lifecycle row, never bd status (sp-mve9i), so the fixture's
-# bd story is told to it in lifecycle terms: `show <id>` answers $SPIRA_RUN/lc-row/<id>
-# ("<STATE> [reason] [tip]") when the suite wrote one, else the bead's bd row translated —
-# closed (the builder's close is its submit) → SUBMITTED, in_progress → WORKING (holder =
-# assignee), anything else → READY; no bd row → exit 1 (no lifecycle row). Every other verb
-# goes to the real spira-lc further down PATH, exactly as before the stub.
+# reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn
+# (no off mode) it also CLAIMS through the machine: its ready set is `spira-lc list` (through
+# spira-claim fayth-ready --json) and its claim is a Claim event. So the fixture's bd story is
+# told to it in lifecycle terms, a row per non-epic bd bead:
+#   $SPIRA_RUN/lc-row/<id> ("<STATE> [reason] [tip]"), when the suite wrote one;
+#   else bd closed (the builder's close is its submit) → SUBMITTED;
+#   else a claim this stand-in applied ($SPIRA_RUN/lc-claim/<id>, the holder) → WORKING;
+#   else bd in_progress → WORKING (holder = assignee); anything else → READY.
+# A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
+# Verbs: `show <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), and
+# `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
+# exit 3, refused — a bead another aeon holds is never taken over) and records the holder;
+# Release/HolderDead drop that claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
+# Hold, ...) applies without changing the row. Every other verb goes to the real spira-lc
+# further down PATH, exactly as before the stub.
 lc_aeon_mirror() {
     local dir="${1:?lc_aeon_mirror needs a directory}"
     mkdir -p "$dir"
     cat > "$dir/spira-lc" <<'STUB'
 #!/usr/bin/env bash
-if [ "${1:-}" = show ] && [ -n "${2:-}" ]; then
-    if [ -f "${SPIRA_RUN:-/nonexistent}/lc-row/$2" ]; then
-        read -r st rs tip < "$SPIRA_RUN/lc-row/$2"
-        printf '{"bead":{"bead_id":"%s","state":"%s","reason":"%s","tip":"%s","holds":[]},"delivery":null}\n' "$2" "$st" "${rs:-}" "${tip:-}"
-        exit 0
-    fi
-    BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" show "$2" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
-import json, sys
+case "${1:-}" in
+    show|list|event|create-bead) ;;
+    *) for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done; exit 2 ;;
+esac
+[ "$1" = create-bead ] && exit 0
+src="$(BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null | sed -n '/^[[{]/,$p')"
+printf '%s' "$src" | python3 -c '
+import json, os, sys
+args = sys.argv[1:]
+verb = args[0]
+run = os.environ.get("SPIRA_RUN") or "/nonexistent"
 try:
-    d = json.load(sys.stdin)
+    beads = json.loads(sys.stdin.read() or "[]")
 except ValueError:
-    sys.exit(1)
-d = d[0] if isinstance(d, list) and d else d
-if not isinstance(d, dict) or not d.get("id"):
-    sys.exit(1)
-st = {"closed": "SUBMITTED", "in_progress": "WORKING"}.get(d.get("status") or "open", "READY")
-holder = (d.get("assignee") or None) if st == "WORKING" else None
-print(json.dumps({"bead": {"bead_id": d["id"], "state": st, "holder": holder, "holds": []}, "delivery": None}))'
-    exit "${PIPESTATUS[2]}"
-fi
-for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
-exit 2
+    sys.exit(2)
+if isinstance(beads, dict):
+    beads = [beads]
+ask = os.environ.get("SPIRA_ASK_LABEL", "")
+def read(path):
+    try:
+        return open(path).read().strip()
+    except OSError:
+        return None
+def row(b):
+    i = b["id"]
+    labels = b.get("labels") or []
+    r = {"bead_id": i, "state": "READY", "reason": "", "tip": "", "holder": None, "lease_until": None,
+         "version": 0, "holds": (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])}
+    pinned, claim = read(os.path.join(run, "lc-row", i)), read(os.path.join(run, "lc-claim", i))
+    if pinned:
+        f = pinned.split()
+        r["state"] = f[0]
+        r["reason"] = f[1] if len(f) > 1 else ""
+        r["tip"] = f[2] if len(f) > 2 else ""
+        if f[0] == "WORKING":
+            r["holder"] = claim
+    elif b.get("status") == "closed":
+        r["state"] = "SUBMITTED"
+    elif claim:
+        r["state"], r["holder"] = "WORKING", claim
+    elif b.get("status") == "in_progress":
+        r["state"], r["holder"] = "WORKING", (b.get("assignee") or None)
+    return r
+rows = {b["id"]: row(b) for b in beads
+        if isinstance(b, dict) and b.get("id") and b.get("issue_type") not in ("epic", "event")}
+if verb == "list":
+    want = args[2] if len(args) > 2 and args[1] == "--state" else None
+    print(json.dumps([r for r in rows.values() if want is None or r["state"] == want]))
+elif verb == "show":
+    r = rows.get(args[1] if len(args) > 1 else "")
+    if r is None:
+        sys.exit(1)
+    print(json.dumps({"bead": r, "delivery": None}))
+elif verb == "event":
+    i = args[2] if len(args) > 2 else ""
+    opt = {args[k]: args[k + 1] for k in range(3, len(args) - 1) if args[k].startswith("--")}
+    kind, actor = opt.get("--kind", ""), opt.get("--actor", "")
+    r = rows.get(i)
+    if r is None:
+        sys.exit(1)
+    claims = os.path.join(run, "lc-claim")
+    if "Claim" in kind:
+        if r["state"] not in ("READY", "REWORK"):
+            sys.exit(3)
+        os.makedirs(claims, exist_ok=True)
+        open(os.path.join(claims, i), "w").write(actor)
+        pinned = os.path.join(run, "lc-row", i)
+        if os.path.exists(pinned):
+            os.remove(pinned)
+    elif "Release" in kind or "HolderDead" in kind:
+        if os.path.exists(os.path.join(claims, i)):
+            os.remove(os.path.join(claims, i))
+    elif "Submit" in kind:
+        os.makedirs(os.path.join(run, "lc-row"), exist_ok=True)
+        open(os.path.join(run, "lc-row", i), "w").write("SUBMITTED\n")
+' "$@"
 STUB
     chmod +x "$dir/spira-lc"
 }
