@@ -234,7 +234,11 @@ BID="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" create "persona-model bead laun
 [ -n "$BID" ] || { printf 'test-persona-model: could not create bead\n' >&2; exit 1; }
 
 rm -f "$T/claude-argv"
-aeon builder
+# The claim ranks by the fayth's own predicate (spira-claim fayth-ready reads
+# $SPIRA_CHAMBER/<fayth>.fayth), so this one call points SPIRA_CHAMBER at the fixture chamber;
+# $TOML is touched first so it stays newer than the fayth and auto-convert leaves it alone.
+touch "$TOML"
+SPIRA_CHAMBER="$SH/chamber" aeon builder
 want "bead-claim launch path's --model came from persona.builder.model" \
      "toml-override-model" "$(cat "$T/claude-argv" 2>/dev/null || true)"
 nowant "bead-claim launch path did not use the fayth's own FAYTH_MODEL" \
