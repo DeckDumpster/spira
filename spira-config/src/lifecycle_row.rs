@@ -47,7 +47,22 @@ pub fn ensure_row_with(enforce: bool, bin: &str, id: &str) -> Result<bool, Strin
 }
 
 pub fn ensure_row(id: &str) -> Result<bool, String> {
-    ensure_row_with(crate::lifecycle_enforce(None), &lc_bin(), id)
+    ensure_row_retrying(crate::lifecycle_enforce(None), &lc_bin(), id, ROW_ATTEMPTS, 250)
+}
+
+const ROW_ATTEMPTS: u32 = 3;
+
+/// `create-bead` is idempotent, so a transient failure is retried before it is reported.
+pub fn ensure_row_retrying(enforce: bool, bin: &str, id: &str, attempts: u32, backoff_ms: u64) -> Result<bool, String> {
+    let mut last = ensure_row_with(enforce, bin, id);
+    for n in 1..attempts {
+        if last.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(backoff_ms * u64::from(n)));
+        last = ensure_row_with(enforce, bin, id);
+    }
+    last
 }
 
 /// Call after a successful `bd create` whose stdout is `created_stdout`. A failure is
@@ -96,6 +111,15 @@ mod tests {
         std::fs::remove_file(t.path().join("calls")).unwrap();
         assert_eq!(ensure_row_with(false, &bin, "sp-y"), Ok(false));
         assert!(!t.path().join("calls").exists(), "off made a spira-lc call");
+    }
+
+    #[test]
+    fn a_failing_create_bead_is_retried_then_reported() {
+        let t = testkit::TempDir::new("lcrow-retry");
+        let bin = stub(t.path(), 3);
+        assert!(ensure_row_retrying(true, &bin, "sp-r", 3, 0).is_err());
+        let calls = std::fs::read_to_string(t.path().join("calls")).unwrap();
+        assert_eq!(calls.lines().count(), 3);
     }
 
     #[test]
