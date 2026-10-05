@@ -321,7 +321,7 @@ pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
     }
     let open = crate::deadline::output(
         "rowless open beads",
-        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--json", "--limit", "0", "--brief"]),
+        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--exclude-type", "epic,event", "--json", "--limit", "0", "--brief"]),
     )
     .ok()
     .filter(|o| o.status.success())
@@ -372,6 +372,11 @@ mod tests {
             }
             Reading::Unknown => panic!("both stores answered"),
         }
+        let argv = t.path().join("argv");
+        cfg.bd = write("bd-rec", &format!("echo \"$@\" > {}; echo '[]'", argv.display()));
+        let _ = rowless_beads(&cfg);
+        let seen = std::fs::read_to_string(&argv).unwrap();
+        assert!(seen.contains("--exclude-type epic,event"), "epics are out of scope: {seen}");
         cfg.lc_bin = write("lc-down", "exit 1");
         assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
     }
