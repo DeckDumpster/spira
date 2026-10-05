@@ -40,11 +40,8 @@ struct World {
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
     /// test that never mentions stacking at all).
     stack_answer: Option<String>,
-    /// Makes the `env SPIRA_RUN=… landing-pass mark …` exec call this test's fixture
-    /// synthesizes fail, so a test can prove the caller logs it rather than discarding it
-    /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
-    /// every other test's "every exec succeeds" assumption unchanged.
-    fail_landing_pass_mark: bool,
+    /// Makes the `spira-lc content-on-base` exec call refuse.
+    fail_content_on_base: bool,
 }
 
 type W = Arc<Mutex<World>>;
@@ -187,12 +184,8 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
-        if prog == "env"
-            && args.iter().any(|a| a == "landing-pass")
-            && args.iter().any(|a| a == "mark")
-            && self.0.lock().unwrap().fail_landing_pass_mark
-        {
-            return Out::fail(1, "landing-pass mark: stub refusal");
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
+            return Out::fail(1, "spira-lc content-on-base: stub refusal");
         }
         Out::ok("")
     }
@@ -1196,6 +1189,63 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
     let w = o.w.lock().unwrap();
     assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen"), "{:?}\n{}", w.seam_calls, o.log);
     assert!(!o.log.contains("REOPENED"), "{}", o.log);
+}
+
+#[test]
+fn a_close_behind_base_with_its_content_already_there_records_content_on_base() {
+    let f = fx("a_close_behind_base_with_its_content_already_there_records_content_on_base");
+    seed(&f, "sp-m");
+    let mut a = BTreeMap::new();
+    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
+    let repo = f.repo.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-m".into(), "closed".into());
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
+        "{:?}",
+        w.exec_calls
+    );
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(!o.log.contains("FAILED"), "a successful event logs nothing alarming: {}", o.log);
+}
+
+#[test]
+fn a_failed_content_on_base_event_is_logged_loudly_not_discarded() {
+    let f = fx("a_failed_content_on_base_event_is_logged_loudly_not_discarded");
+    seed(&f, "sp-m");
+    let mut a = BTreeMap::new();
+    a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
+    let repo = f.repo.clone();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
+        std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
+        git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
+        let mut w = w.lock().unwrap();
+        w.status.insert("sp-m".into(), "closed".into());
+        w.fail_content_on_base = true;
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
+    let w = o.w.lock().unwrap();
+    assert!(
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
+        "{:?}",
+        w.exec_calls
+    );
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(o.log.contains("spira-lc content-on-base merge-tree:"), "{}", o.log);
+    assert!(o.log.contains("FAILED"), "{}", o.log);
+    assert!(o.log.contains("stub refusal"), "{}", o.log);
 }
 
 #[test]

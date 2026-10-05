@@ -1,6 +1,6 @@
-//! The impure boundary to the rest of the harness: repo resolution, the bead store, landstate
+//! The impure boundary to the rest of the harness: repo resolution, the bead store
 //! and the certification gate. Production shells to lib.sh / the queue binary — the same tested
-//! functions the bash called, so their side effects (release_claim, WITHDRAWN on reopen, the
+//! functions the bash called, so their side effects (release_claim, the
 //! requeue event, the TSD dual-write) are not re-derived here. Tests use a recording fake.
 
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,6 @@ pub trait Seam {
     fn bead_status(&self, id: &str) -> BeadStatus;
     fn reopen(&self, id: &str, cause: &str, note: &str);
     fn bump_requeue(&self, id: &str, reason: &str);
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn note(&self, id: &str, text: &str);
     /// `queue submit <branch> <repo>` — the gate's verdict and its combined output.
     fn submit(&self, branch: &str, repo_name: &str) -> (Gate, String);
@@ -54,13 +53,7 @@ pub struct LibSeam {
     pub bd: String,
     /// The queue binary: `queue`, by name on the launcher's PATH (sp-gypjk).
     pub queue_bin: PathBuf,
-    /// The landing-pass binary: `landing-pass`, by name on the launcher's PATH, same
-    /// reasoning as `queue_bin` (sp-cnnt6, "wave 4.16").
-    pub landing_pass_bin: PathBuf,
-    /// `$SPIRA_RUN`, passed explicitly to `landing-pass mark` rather than left to this
-    /// process's own ambient environment — the EXEC-BOUNDARY trap this wave keeps naming:
-    /// a binary that needs config must get it explicitly, not by hoping a caller already
-    /// exported it.
+    /// `$SPIRA_RUN`, passed explicitly rather than left to this process's own ambient environment.
     pub run: PathBuf,
     db_ok: OnceCell<bool>,
 }
@@ -72,7 +65,6 @@ impl LibSeam {
             db,
             bd,
             queue_bin: PathBuf::from("queue"),
-            landing_pass_bin: PathBuf::from("landing-pass"),
             run,
             db_ok: OnceCell::new(),
         }
@@ -215,13 +207,6 @@ impl Seam for LibSeam {
 
     fn bump_requeue(&self, id: &str, reason: &str) {
         let _ = self.lib("bump_requeue", &[id, reason], None);
-    }
-
-    /// landing-pass owns the landstate ledger's one writer now (sp-cnnt6, "wave 4.16"):
-    /// `landing-pass mark`, with `$SPIRA_RUN` passed explicitly — never the lib.sh seam,
-    /// which this family dropped.
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        let _ = Command::new(&self.landing_pass_bin).env("SPIRA_RUN", &self.run).args(["mark", id, state, tip, reason]).status();
     }
 
     fn note(&self, id: &str, text: &str) {

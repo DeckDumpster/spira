@@ -251,6 +251,7 @@ certified_rows() {
         [ -f "$f" ] || continue
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
+        grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
     done
     printf ']\n'
@@ -258,7 +259,11 @@ certified_rows() {
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
-    cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    cut)
+        members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
+        for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
+        exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
@@ -338,6 +343,7 @@ plant_open() {
 
 certify() {   # certify <id> <tip-sha> [epoch]
     printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LANDSTATE/$1"
+    [ -f "$RUN/lc-taken" ] && { grep -vx "$1" "$RUN/lc-taken" > "$RUN/lc-taken.n" || true; mv "$RUN/lc-taken.n" "$RUN/lc-taken"; }
 }
 
 lc_certify() {   # lc_certify <id> <tip-sha> [epoch] — a CERTIFIED row on the real machine
@@ -372,7 +378,6 @@ is   "A: open-batch members carries sp-caaa1:tip" "sp-caaa1:$tip_a" "$(open_fiel
 is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" in spira/queue/*) echo 1;; *) echo 0;; esac)"
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
-is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
 is   "A: open-batch batch_id is the batch branch spira-lc cut" "$(open_field branch)" "$(open_field batch_id)"
 is   "A: open-batch version is 1 (one member)"                 "1"                    "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
@@ -430,11 +435,9 @@ nowant "B: no judgement/double-red language — this was resolved mechanically" 
 want   "B: attribution names the owner"  "red test-b.sh → owner sp-cbbb2" "$out_b"
 want   "B: only the owner's suite re-runs on the survivors" "suites=test-b.sh" \
        "$(cat "$RUN"/batch-results/"$REPONAME"-*/spool/req/v1.req 2>/dev/null)"
-is     "B: sp-cbbb2 landstate EJECTED"    "EJECTED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb2")"
 is     "B: sp-cbbb2 reopened for rework (open)" "open" "$(status_of sp-cbbb2)"
 nowant "B: sp-cbbb2 no longer submitted — a reopen is rework (sp-1346p)" "spira-submitted" "$(labels_of sp-cbbb2)"
 want   "B: ejection note names every suite it turned red" "test-b.sh" "$(notes_of sp-cbbb2)"
-is     "B: sp-cbbb3 (the bystander) landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cbbb3")"
 is     "B: open-batch carries only the bystander" "sp-cbbb3:$tip_b3" "$(open_field members)"
 nowant "B: open-batch does not carry the ejected member" "sp-cbbb2" "$(open_field members)"
 is     "B: forge pr-create called (once more than before this case)" "$((prcreate_before_b + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
@@ -464,7 +467,6 @@ want   "G: the red is marked flaky"          "red test-b.sh → flaky" "$out_g"
 nowant "G: nobody is ejected"                "ejected"               "$out_g"
 want   "G: the round proceeds to its PR"     "PR "                   "$out_g"
 is     "G: forge pr-create called once more" "$((prcreate_before_g + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "G: sp-cgflk BATCHED"                 "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgflk")"
 if command -v tsd-write >/dev/null 2>&1; then
     want "G: the flake is recorded" '"outcome":"flaky"' "$(tail -1 "$RUN/tsd/round-attribution.jsonl" 2>/dev/null)"
 fi
@@ -492,8 +494,6 @@ want   "H: reports the base red, naming the suite" "red test-a.sh → base" "$ou
 want   "H: reports filing an Ops incident"          "filed sp-inc"  "$out_h"
 nowant "H: nobody is ejected"                       "ejected"       "$out_h"
 is     "H: the round proceeds to its PR"  "$((prcreate_before_h + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "H: sp-chbas BATCHED — not ejected, the base is at fault" \
-       "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chbas")"
 want   "H: the incident names the base-red reason" "local-round-red" "$(cat "$INCIDENT_LOG")"
 rm -f "$(open_batch_file)"
 
@@ -527,7 +527,6 @@ rm -f "$QUEUEDIR/$REPONAME/base-moved"
 out_c="$(STUB_RED_SUITES="" cut_repo)"
 is   "C: sp-cccc3 is reopened"   "open" "$(status_of sp-cccc3)"
 nowant "C: sp-cccc3 no longer submitted — reopened for rebase (sp-1346p)" "spira-submitted" "$(labels_of sp-cccc3)"
-is   "C: sp-cccc3 landstate RED" "RED"  "$(cut -d' ' -f1 < "$LANDSTATE/sp-cccc3")"
 is   "C: bump_requeue stamped merge-conflict" "1" "$(grep -c '^sp-cccc3 merge-conflict$' "$REQUEUE_SPY")"
 nowant "C: no PR opened for the conflicting-only round" "PR " "$out_c"
 
@@ -591,7 +590,6 @@ want   "D: after landing, the prepared round opens a PR" "opened" "$out_d3"
 is     "D: the prepared round opened without re-running the corpus" "0" "$(grep -c '^argv:' "$D_ARGV")"
 is     "D: exactly one new PR" "$((prcreate_before + 1))" "$(grep -c '^pr-create' "$FORGE_LOG")"
 want   "D: open-batch members carries the express member" "sp-cddd4:$tip_d" "$(open_field members)"
-is     "D: express member BATCHED once opened" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
 is     "D: prepared record consumed" "0" "$([ -f "$QUEUEDIR/$REPONAME/prepared" ] && echo 1 || echo 0)"
 
 # =============================================================================
@@ -688,7 +686,6 @@ want "F: PLANTED REFUSAL — cut still reports the PR opening" "PR " "$out_f_ref
 want "F: PLANTED REFUSAL — the refusal is logged" "spira-lc cut refused for" "$out_f_refused"
 is   "F: PLANTED REFUSAL — open-batch batch_id stays unset" "" "$(open_field batch_id)"
 is   "F: PLANTED REFUSAL — open-batch version stays unset"  "" "$(open_field version)"
-is   "F: PLANTED REFUSAL — member still lands BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-chhh8")"
 
 # =============================================================================
 # CASE G — land mode (sp-o1jm6): find_repo accepts queue.local, never just queue, and

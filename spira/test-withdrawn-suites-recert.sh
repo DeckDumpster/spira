@@ -97,7 +97,6 @@ rm -f "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WOR
     export SPIRA_RUN="$RUN" SPIRA_CONF=/nonexistent SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     # shellcheck disable=SC1090
     . "$SH/lib.sh"
-    mkdir -p "$RUN/landstate"
     bead_reopen sp-wsx batch-eject "reproduced failure" "test-x.sh" >/dev/null 2>&1
 )
 [ "$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)" = "test-x.sh" ] \

@@ -154,6 +154,10 @@ pub trait BdProbe {
     fn probe(&self, id: &str) -> (bool, String);
 }
 
+fn is_queued_state(state: &str) -> bool {
+    matches!(state, "CERTIFIED" | "IN_DELIVERY")
+}
+
 /// `spira-lc state <id>` by bare name (an actual binary, not a bash function): `Some(state)`
 /// on exit 0, `None` otherwise (lifecycle off, no binary, DB down, not yet classified —
 /// every one of those must be able to make this call LESS restrictive, never more, so a
@@ -405,14 +409,9 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     }
     // CERTIFIED/BATCHED GUARD. No caller bypass: even the Sending must not race verdict.sh's
     // LANDED write.
-    let ls_file = run.join("landstate").join(id);
-    if let Ok(content) = std::fs::read_to_string(&ls_file) {
-        if let Some(state) = content.split_whitespace().next() {
-            if state == "CERTIFIED" || state == "BATCHED" {
-                reaplog(reaplog_path, "REFUSED", id, &format!("branch {br} — landstate is {state}; not deleting a queued branch"));
-                return Err(DestroyBranchErr::CertifiedQueued);
-            }
-        }
+    if let Some(state) = lc_state(id).filter(|s| is_queued_state(s)) {
+        reaplog(reaplog_path, "REFUSED", id, &format!("branch {br} — lifecycle state is {state}; not deleting a queued branch"));
+        return Err(DestroyBranchErr::CertifiedQueued);
     }
     if let Some(held) = holder_witnesses(run, id, bd) {
         reaplog(reaplog_path, "REFUSED", id, &format!("branch {br} — {held}"));
@@ -655,16 +654,9 @@ mod tests {
     // ---- destroy_branch --------------------------------------------------------------------
 
     #[test]
-    fn destroy_branch_refuses_a_certified_landstate_even_with_a_caller_bypass() {
-        let run = tempdir();
-        let repo = tempdir();
-        init_repo(&repo);
-        git(&repo, &["branch", "spira/sp-cert"]);
-        std::fs::create_dir_all(run.join("landstate")).unwrap();
-        std::fs::write(run.join("landstate").join("sp-cert"), "CERTIFIED deadbeef\n").unwrap();
-        let res = destroy_branch(&run, &run.join("reap.log"), "sp-cert", "spira/sp-cert", &repo, "why", "caller-bypass", None, &open());
-        assert!(matches!(res, Err(DestroyBranchErr::CertifiedQueued)));
-        assert!(Git(&repo).branch_exists("spira/sp-cert"));
+    fn only_certified_and_in_delivery_are_queued_states() {
+        assert!(is_queued_state("CERTIFIED") && is_queued_state("IN_DELIVERY"));
+        assert!(!is_queued_state("WORKING") && !is_queued_state("LANDED") && !is_queued_state(""));
     }
 
     #[test]

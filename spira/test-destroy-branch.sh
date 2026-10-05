@@ -176,29 +176,32 @@ else
 fi
 
 # ======================================================================================
-# CERTIFIED / BATCHED LANDSTATE — a branch in the merge queue is never destroyed, caller
+# CERTIFIED / IN_DELIVERY LIFECYCLE STATE — a branch in the merge queue is never destroyed, caller
 # bypass or not: batch.sh selects by ref, and deleting it drops the branch from the next
 # batch with no log line. Gap: UC-landed-audit-reaping-15.
 # ======================================================================================
 echo
-echo "queued landstate (fence must refuse, no bypass possible):"
+echo "queued lifecycle state (fence must refuse, no bypass possible):"
 
-mkdir -p "$SPIRA_RUN/landstate"
+LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lc-bin"
+printf '#!/bin/sh\n[ "$1" = state ] && [ -f "%s/$2" ] && cat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lc-bin/spira-lc"
+chmod +x "$TMP/lc-bin/spira-lc"
+PATH="$TMP/lc-bin:$PATH"
 
 make_branch sp-db4
-printf 'CERTIFIED deadbeef\n' > "$SPIRA_RUN/landstate/sp-db4"
+printf 'CERTIFIED\n' > "$LCSTATE/sp-db4"
 out4="$(spira_destroy_branch sp-db4 spira/sp-db4 "$REPO" "test: certified" caller-bypass 2>&1)"
 rc4=$?
 is "CERTIFIED refuses even with a caller bypass" 1 "$rc4"
 if branch_exists spira/sp-db4; then ok "CERTIFIED branch still exists"; else bad "CERTIFIED branch still exists" "spira/sp-db4 was deleted"; fi
-want "reaplog names the landstate" "landstate is CERTIFIED" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
+want "reaplog names the lifecycle state" "lifecycle state is CERTIFIED" "$(cat "$SPIRA_REAPLOG" 2>/dev/null)"
 
 make_branch sp-db5
-printf 'BATCHED deadbeef\n' > "$SPIRA_RUN/landstate/sp-db5"
-out5="$(spira_destroy_branch sp-db5 spira/sp-db5 "$REPO" "test: batched" caller-bypass 2>&1)"
+printf 'IN_DELIVERY\n' > "$LCSTATE/sp-db5"
+out5="$(spira_destroy_branch sp-db5 spira/sp-db5 "$REPO" "test: in delivery" caller-bypass 2>&1)"
 rc5=$?
-is "BATCHED refuses even with a caller bypass" 1 "$rc5"
-if branch_exists spira/sp-db5; then ok "BATCHED branch still exists"; else bad "BATCHED branch still exists" "spira/sp-db5 was deleted"; fi
+is "IN_DELIVERY refuses even with a caller bypass" 1 "$rc5"
+if branch_exists spira/sp-db5; then ok "IN_DELIVERY branch still exists"; else bad "IN_DELIVERY branch still exists" "spira/sp-db5 was deleted"; fi
 
 # ======================================================================================
 # LIVE HOLDER WITNESS — a live process (a hold, or an in_progress lease via the status

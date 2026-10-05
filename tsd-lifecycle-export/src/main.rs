@@ -1,7 +1,7 @@
 // tsd-lifecycle-export — the one writer of run/tsd/'s `bead-stage` family (design
 // reconciler-time-series-2026-09-27 §2/§2a). Three modes, one schema:
 //
-//   tsd-lifecycle-export legacy    [--since <ISO8601>]   bd events + landstate/, ongoing tail
+//   tsd-lifecycle-export legacy    [--since <ISO8601>]   bd events, ongoing tail
 //   tsd-lifecycle-export backfill  [--since <ISO8601>]   the same, one-time, back to a date
 //   tsd-lifecycle-export lifecycle                       spira_lifecycle.event, post-cutover
 //
@@ -80,7 +80,7 @@ fn sql_str(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-// ── legacy / backfill: bd's audit `events` table + landstate/'s current files ─────────────
+// ── legacy / backfill: bd's audit `events` table ─────────────
 
 fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
     let run = spira_run()?;
@@ -99,8 +99,7 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let landstates = read_current_landstates(&run, &fresh);
-    let rows = fold_legacy(&fresh, &landstates, mode, cp.next_seq);
+    let rows = fold_legacy(&fresh, &BTreeMap::new(), mode, cp.next_seq);
     write_rows(&run, &rows)?;
     write_checkpoint(&cp_path, &new_cp)
 }
@@ -121,25 +120,6 @@ fn fetch_bd_events(since: &str) -> Result<Vec<BdAuditEvent>, String> {
         return Err(format!("bd sql: {}", String::from_utf8_lossy(&out.stderr)));
     }
     serde_json::from_slice(&out.stdout).map_err(|e| format!("parsing bd sql --json output: {e}"))
-}
-
-/// Reads every fresh event's bead's *current* landstate ledger file, if one exists — never
-/// the whole directory, since only beads this run actually touches matter.
-fn read_current_landstates(run: &Path, events: &[BdAuditEvent]) -> BTreeMap<String, (lifecycle::classify::LandState, Option<String>)> {
-    let dir = run.join("landstate");
-    let mut out = BTreeMap::new();
-    let mut seen = std::collections::BTreeSet::new();
-    for ev in events {
-        if !seen.insert(ev.issue_id.clone()) {
-            continue;
-        }
-        if let Ok(text) = std::fs::read_to_string(dir.join(&ev.issue_id)) {
-            if let Some(parsed) = lifecycle::classify::parse_landstate(text.trim()) {
-                out.insert(ev.issue_id.clone(), parsed);
-            }
-        }
-    }
-    out
 }
 
 // ── lifecycle: spira_lifecycle.event, post-cutover ────────────────────────────────────────

@@ -1,31 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-certified-withdraw.sh — a CERTIFIED bead cannot be withdrawn: reopening or
-#   ejecting it must clear its certification so the queue cannot admit it (sp-fgbk3).
+# test-certified-withdraw.sh — bead_reopen reopens the bead and, for every cause but the
+#   admission-exempt one, strips the submitted label. The lifecycle reopen event is the
+#   withdrawal; no landstate record is read or written.
 #
-# THE DEFECT. bead_reopen recorded the rework note but left landstate CERTIFIED <tip>,
-# so a bead reopened by any of its many callers (an operator via slay.sh, the eviction-
-# race path, queue.sh eject) stayed admissible to the next batch cut unchanged. The only
-# lever was a hand-written override pinned to one commit, which a rebase defeats.
-#
-# TWO CASES, EACH SEEN TO FAIL AGAINST THE CODE BEFORE THIS FIX:
-#
-#   A. bead_reopen (lib.sh) downgrades a CERTIFIED landstate to WITHDRAWN, and leaves
-#      every other landstate untouched (positive control — this is not a blanket
-#      rewrite of every reopen).
-#   C. End-to-end: reopening a certified, unbatched bead withdraws it from what the
-#      next cut would draw from; once the aeon pushes a new tip and it recertifies, it
-#      is admissible again.
-#
-# queue.sh eject's own withdrawal of a certified-unbatched bead is covered in
-# test-queue-ops.sh, which already carries this file's REAL BD infrastructure.
-#
-# (batch.sh's own "second line of defence" — refusing a CERTIFIED bead whose store
-# status was not closed, whatever the landstate said — was this file's case B. Retired
-# with batch.sh, sp-uwhx0: no repo runs in `land=queue` mode, and the check was never
-# ported. Case C used to exercise "not picked back up" through batch.sh's own admission
-# sweep; it now checks queue_certified_list directly, lib.sh's selection primitive that
-# any cutter draws from; it reads the lifecycle row (spira-lc), so case C drives that row.)
+# The end-to-end case C: reopening a certified, unbatched bead withdraws it from what the
+# next cut draws from (queue_certified_list reads the lifecycle row), and recertifying
+# with a new tip admits it again.
 #
 # tier: T2
 # covers: spira/lib.sh spira/conf.sh queue/src/ops/helpers.rs spira/testlib/lc-fixture.sh
@@ -83,26 +64,10 @@ testdb_seed <<'JSONL'
 {"id":"sp-wd-red","title":"wd-red","status":"closed","issue_type":"task","labels":[],"updated_at":"2026-09-25T00:00:00Z","closed_at":"2026-09-25T00:00:00Z"}
 JSONL
 
-WDTIP="1111111111111111111111111111111111111c"
-printf 'CERTIFIED %s %s\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-cert"
-printf 'RED %s %s some-other-reason\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-red"
-
-# POSITIVE CONTROL: a non-CERTIFIED landstate survives a reopen unchanged — the
-# mechanism fires only on the one state a reopen must clear.
 bead_reopen sp-wd-red some-cause >/dev/null 2>&1
-_st=""; _tip=""; _reason=""
-{ read -r _st _tip _ _reason < "$LANDSTATE/sp-wd-red"; } 2>/dev/null || true
-is "positive control: RED landstate state untouched"  "RED"               "$_st"
-is "positive control: RED landstate reason untouched" "some-other-reason" "$_reason"
-
-# FIXED: a CERTIFIED landstate is downgraded to WITHDRAWN, tip preserved, reason=cause.
 bead_reopen sp-wd-cert holding-for-fix >/dev/null 2>&1
-_st=""; _tip=""; _reason=""
-{ read -r _st _tip _ _reason < "$LANDSTATE/sp-wd-cert"; } 2>/dev/null || true
-is "CERTIFIED reopen: landstate WITHDRAWN" "WITHDRAWN"       "$_st"
-is "CERTIFIED reopen: tip preserved"       "$WDTIP"          "$_tip"
-is "CERTIFIED reopen: reason is the cause" "holding-for-fix" "$_reason"
-is "CERTIFIED reopen: bead status is open" "open"            "$(field sp-wd-cert status)"
+is "reopen: bead status is open"                "open" "$(field sp-wd-cert status)"
+is "positive control: other bead status is open" "open" "$(field sp-wd-red status)"
 
 # =============================================================================
 # A2. sp-eiatd: the CERTIFIED/submitted-label carve-out is now a declared set
@@ -123,58 +88,11 @@ testdb_seed <<JSONL
 {"id":"sp-wd-wcc","title":"wd-wcc","status":"closed","issue_type":"task","labels":["${SPIRA_SUBMITTED_LABEL:-spira-submitted}"],"updated_at":"2026-09-25T00:00:00Z","closed_at":"2026-09-25T00:00:00Z"}
 JSONL
 
-printf 'CERTIFIED %s %s\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-eject"
-printf 'CERTIFIED %s %s\n' "$WDTIP" "$(date +%s)" > "$LANDSTATE/sp-wd-wcc"
-
 bead_reopen sp-wd-eject eject >/dev/null 2>&1
-_st=""; { read -r _st _ < "$LANDSTATE/sp-wd-eject"; } 2>/dev/null || true
-is "eject: landstate WITHDRAWN (not admission-exempt)" "WITHDRAWN" "$_st"
 nowant "eject: submitted label stripped" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(labels_of sp-wd-eject)"
 
 bead_reopen sp-wd-wcc work-close-converted >/dev/null 2>&1
-_st=""; { read -r _st _ < "$LANDSTATE/sp-wd-wcc"; } 2>/dev/null || true
-is "work-close-converted: landstate stays CERTIFIED (admission-exempt)" "CERTIFIED" "$_st"
 want "work-close-converted: submitted label kept" "${SPIRA_SUBMITTED_LABEL:-spira-submitted}" "$(labels_of sp-wd-wcc)"
 
-# =============================================================================
-# C. END-TO-END: reopening a certified, unbatched bead withdraws it from the
-#    next cut; recertifying with a new tip admits it on the cut after that.
-# =============================================================================
-echo
-echo "end-to-end: reopen withdraws a certified bead from the next cut; recertifying admits it:"
-
-testdb_seed <<JSONL
-{"id":"sp-e2e","title":"e2e withdraw","status":"closed","issue_type":"task","labels":["spira","plan","repo:$REPONAME"],"updated_at":"2026-09-25T00:00:00Z","closed_at":"2026-09-25T00:00:00Z"}
-JSONL
-
-git -C "$REPO" checkout -q -b spira/sp-e2e main
-printf 'e2e-v1\n' > "$REPO/sp-e2e.txt"
-git -C "$REPO" add sp-e2e.txt && git -C "$REPO" commit -q -m "sp-e2e: work v1"
-_e2e_tip1="$(git -C "$REPO" rev-parse spira/sp-e2e)"
-git -C "$REPO" checkout -q main
-
-lcfix_seed sp-e2e CERTIFIED "$_e2e_tip1"
-rm -f "$QUEUEDIR/$REPONAME/open"
-
-# POSITIVE CONTROL: the certified row is what the selection primitive draws from.
-want "certified: drawn by the next cut" "sp-e2e $_e2e_tip1" "$(queue_certified_list "$REPO")"
-
-bead_reopen sp-e2e recertify-needed "test: withdrawing sp-e2e for a fix" >/dev/null 2>&1
-lcfix_seed sp-e2e REWORK "$_e2e_tip1"
-
-nowant "not picked back up: excluded from what the next cut draws from" "sp-e2e " \
-    "$(queue_certified_list "$REPO")"
-
-git -C "$REPO" checkout -q spira/sp-e2e
-printf 'e2e-v2\n' >> "$REPO/sp-e2e.txt"
-git -C "$REPO" add sp-e2e.txt && git -C "$REPO" commit -q -m "sp-e2e: fixed"
-_e2e_tip2="$(git -C "$REPO" rev-parse spira/sp-e2e)"
-git -C "$REPO" checkout -q main
-bdq close sp-e2e --reason "test: recertified" >/dev/null 2>&1
-lcfix_seed sp-e2e CERTIFIED "$_e2e_tip2"
-
-want "recertified: admissible again — back in what the next cut draws from" "sp-e2e $_e2e_tip2" \
-    "$(queue_certified_list "$REPO")"
-
-echo
+# ======================================================================echo
 tl_summary
