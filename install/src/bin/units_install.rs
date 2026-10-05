@@ -266,6 +266,15 @@ fn main() -> ExitCode {
         return ExitCode::from(1);
     }
 
+    // Every registered reader mailbox exists before units that read them start (sp-xp0u2:
+    // an upgrade re-renders through here alone and never made them).
+    if mode.is_none() {
+        if let Err(e) = bootstrap::ensure_reader_mailboxes() {
+            eprintln!("units-install: {e}");
+            return ExitCode::from(1);
+        }
+    }
+
     // Path collisions, landref currency and live aeons — refuse before touching anything,
     // unless overridden.
     if nonempty_env("SPIRA_INSTALL_FORCE").is_none() {

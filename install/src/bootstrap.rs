@@ -63,6 +63,37 @@ pub fn units_repo(mapped: Option<String>, derived: String, is_git: impl Fn(&Path
     }
 }
 
+/// The mailbox names `SPIRA_MAIL_READERS` registers (`name=command` entries, whitespace-
+/// separated): the environment, else the same config resolution every binary uses.
+pub fn reader_mailboxes() -> Result<Vec<String>, String> {
+    let raw = match nonempty_env("SPIRA_MAIL_READERS") {
+        Some(v) => v,
+        None => {
+            let home = resolve_home(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), argv0_path().as_deref())?;
+            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+            spira_config::resolve::resolve_key(&env_map, Path::new(&home), "SPIRA_MAIL_READERS").unwrap_or_default()
+        }
+    };
+    Ok(parse_reader_mailboxes(&raw))
+}
+
+fn parse_reader_mailboxes(raw: &str) -> Vec<String> {
+    raw.split_whitespace().filter_map(|e| e.split('=').next()).map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect()
+}
+
+/// `mail ensure <name>` for every registered reader mailbox (sp-xp0u2). A fresh install made
+/// them; an upgrade's re-render (units-install alone) never did, so `mail-health` found
+/// `concierge: no such mailbox` after every upgrade and spira-notify failed 3.
+pub fn ensure_reader_mailboxes() -> Result<(), String> {
+    for name in reader_mailboxes()? {
+        let ok = Command::new("mail").args(["ensure", &name]).status().map(|s| s.success()).unwrap_or(false);
+        if !ok {
+            return Err(format!("could not create the {name} mailbox (mail ensure {name})"));
+        }
+    }
+    Ok(())
+}
+
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
@@ -440,5 +471,17 @@ mod host_from_env_tests {
         let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
         let _env = testkit::env(&[("SPIRA_HOME", Some(home.to_str().unwrap())), ("SPIRA_RUN", Some("/explicit/run")), ("SPIRA_REPO", None)]);
         assert_eq!(host_from_env("prod").expect("host values resolve").run, "/explicit/run");
+    }
+}
+
+#[cfg(test)]
+mod reader_mailbox_tests {
+    use super::parse_reader_mailboxes;
+
+    #[test]
+    fn names_come_from_each_entry_before_its_command() {
+        assert_eq!(parse_reader_mailboxes("concierge=inbox-append.sh"), vec!["concierge"]);
+        assert_eq!(parse_reader_mailboxes(" a=x.sh\nb=y.sh  c "), vec!["a", "b", "c"]);
+        assert!(parse_reader_mailboxes("").is_empty());
     }
 }
