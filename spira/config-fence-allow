@@ -210,7 +210,6 @@ spira/test-strand-truncated.sh
 spira/test-submitted-lands.sh
 spira/test-superseded.sh
 spira/test-thrash-teardown.sh
-spira/test-tsd-producers.sh
 spira/test-unclaimable.sh
 spira/test-uninstall.sh
 spira/test-units-lint.sh
