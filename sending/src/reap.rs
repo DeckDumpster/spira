@@ -12,7 +12,7 @@
 //! repeated here. In short: only paths under `$SPIRA_RUN/worktree/` may be removed; two
 //! liveness witnesses are required (a live process, and the bead's own status, the latter
 //! proved reachable before its absence counts); salvage runs first and its failure aborts
-//! the removal; the content fence asks `content_landed`, never a tip comparison; and every
+//! the removal; the content fence asks `content_on_base`, never a tip comparison; and every
 //! decision is logged to the reap log, naming the bead and the calling program.
 //!
 //! lib.sh functions this module does NOT absorb, because they belong to families that have
@@ -395,7 +395,7 @@ pub enum DestroyBranchErr {
 /// (`"sending"`, `"slain"`, `"archived"`, or any other value a future caller uses) means the
 /// caller has already verified safety by its own means and the content fence is skipped;
 /// empty applies it. CONTENT, NOT ANCESTRY: the fence asks the same question the Sending's
-/// own selector asks (`content_landed`), never `merge-base --is-ancestor`, or the two sides
+/// own selector asks (`content_on_base`), never `merge-base --is-ancestor`, or the two sides
 /// contradict on an empty-commit branch.
 #[allow(clippy::too_many_arguments)]
 pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn BdProbe) -> Result<(), DestroyBranchErr> {
@@ -433,7 +433,7 @@ pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo:
     // answer to it).
     if caller.is_empty() {
         if let Some(base) = base {
-            if g.verify(base).is_some() && !g.content_landed(br, base) {
+            if g.verify(base).is_some() && !g.content_on_base(br, base) {
                 let msg = format!("branch {br} — content not on {base}, refusing to destroy unlanded work ({why})");
                 reaplog(reaplog_path, "REFUSED", id, &msg);
                 return Err(DestroyBranchErr::Refused(msg));

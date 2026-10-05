@@ -282,7 +282,7 @@ fn every_branch_gets_the_shells_disposition() {
         assert!(exists(&fx, &format!("spira/{id}")), "{id}");
     }
     assert!(f.calls.borrow().iter().all(|c| c.starts_with("bead ") || c.starts_with("gh ")), "{:?}", f.calls.borrow());
-    // The forge is asked only after content_landed and the supersede check both said no,
+    // The forge is asked only after content_on_base and the supersede check both said no,
     // and only for a closed-or-submitted bead.
     assert!(f.called("gh spira/sp-sq") && !f.called("gh spira/sp-cl1") && !f.called("gh spira/sp-supsafe") && !f.called("gh spira/sp-unlanded"));
     assert_eq!(fx.sq_tip, f.prs["spira/sp-sq"]);
@@ -337,7 +337,7 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
 }
 
 #[test]
-fn content_landed_evidence_is_a_machine_event_on_and_the_label_off() {
+fn content_on_base_evidence_is_a_machine_event_on_and_the_label_off() {
     // OFF (production today): the `content-landed` label CHECK 5's exemption reads — the
     // gap this port closes. Only for a branch that carried commits (sp-cl1), never for a
     // zero-ahead one (sp-cl0), whose own merge commit is the evidence.

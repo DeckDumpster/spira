@@ -35,7 +35,7 @@
 #      writes the label but no landstate/$id (sending.sh).
 #
 # None of these reopen the bead — the closed-work-bead close path now runs only through
-# bead_close_on_land (lib.sh), so a violation here is a landing-pass bug, not a verdict to
+# spira-lc close-on-land, so a violation here is a landing-pass bug, not a verdict to
 # retry. CHECK 5 reports it to Ops and leaves the bead exactly as it found it.
 #
 # defect: sp-qsona

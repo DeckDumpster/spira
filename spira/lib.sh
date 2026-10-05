@@ -55,13 +55,12 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # conf.sh peel — wave4-decomposition.md). Every function below either IS log/die, or IS a
 # shim: the family-by-family move named in that plan has landed, in-process callers read
 # the owning crate directly, and a bash caller that still types the OLD name by habit —
-# `repo_root`, `land_mark`, `content_landed`, `bdq`, whatever — reaches the same logic one
+# `repo_root`, `land_mark`, `bdq`, whatever — reaches the same logic one
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
 # `ready_count` (and the bare `READY_ARGS` array); `fayth_free`; aeon.sh's own bead-machine
-# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `content_landed`/
-# `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
+# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
 # with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
 # family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
 # own inputs — see that allow file for the reasoning on each, not repeated here.
@@ -1398,61 +1397,15 @@ land_subject() {
     landing-pass land-subject "$1"
 }
 
-# content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
-# <branch> makes, 1 if it does not.
-#
-# ANCESTRY IS NOT THE ONLY WAY WORK LANDS, AND ON A SQUASHING REPOSITORY IT IS NEVER THE WAY.
-# A squash merge replays the branch's whole diff as ONE NEW COMMIT with a new SHA and a
-# parentage the branch does not appear in, so the branch's own commits are not ancestors of
-# the base and never will be. Every SHA-based test therefore answers "not landed" about work
-# that is demonstrably on the base — and then the rebase that follows CONFLICTS, precisely
-# because the base already holds those changes. The harness read that pair as a branch in
-# trouble and reopened a finished bead with "does not rebase onto <base>", which was true and
-# meant the opposite of what it was taken to mean. It repeats forever, because nothing about
-# the situation changes between passes.
-#
-# So ask the question that actually matters: would merging this branch into the base change
-# anything? `merge-tree --write-tree` performs the three-way merge in memory and prints the
-# resulting tree; when that tree IS the base's own tree, the merge is a no-op and the content
-# is already there. This is deliberately not the rebase's question — a rebase replays commit
-# by commit and can conflict on an intermediate patch whose end state is fine, which is
-# exactly the false alarm.
-#
-# It answers NO when the merge conflicts (non-zero exit) and NO when the merged tree differs,
-# both of which mean the branch really does carry something the base lacks. That is what makes
-# it safe for a caller that DELETES on the answer: it cannot say "landed" about a branch with
-# work outstanding. `landing-pass landed` is a different question — whether a commit on the base
-# names the BEAD — and is not a substitute here, because a branch may carry commits beyond the
-# one that landed.
-#
-# NO PIPE. `git ... | head -1` under pipefail returns 141 when head closes the pipe first, so
-# the check would fail exactly when merge-tree succeeded (law-no-grep-q-under-pipefail).
-# Capture whole, then trim.
-content_landed() {
-    local repo="$1" br="$2" base="$3" merged basetree ahead
-    ahead="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null)" || return 1
-    # ANCESTOR BRANCHES ARE LANDED: their every commit is already reachable from base,
-    # so merging changes nothing. Check before the ahead=0 guard so a superseded branch
-    # that was fast-forwarded into the successor's history returns 0 here rather than
-    # falling through to the Sending's KEEP path (law-absence-needs-a-positive-control).
-    git -C "$repo" merge-base --is-ancestor "$br" "$base" 2>/dev/null && return 0
-    [ "${ahead:-0}" -gt 0 ] 2>/dev/null || return 1
-    merged="$(git -C "$repo" merge-tree --write-tree "$base" "$br" 2>/dev/null)" || return 1
-    merged="${merged%%$'\n'*}"
-    [ -n "$merged" ] || return 1
-    basetree="$(git -C "$repo" rev-parse "$base^{tree}" 2>/dev/null)" || return 1
-    [ "$merged" = "$basetree" ]
-}
-
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
 #
-# The second reading of "already landed", and the one that survives what content_landed
-# cannot: a squash that merged and was then amended on the base. The content differs, so the
+# The second reading of "already landed", and the one that survives what
+# `spira-lc content-landed` cannot: a squash that merged and was then amended on the base. The content differs, so the
 # merge test says no, and re-landing the branch would revert whoever amended it.
 #
 # THIS IS EVIDENCE FOR NOT REOPENING, NEVER EVIDENCE FOR DELETING. A merged pull request says
 # the work was accepted; it does not say the ref holds nothing else. A caller about to destroy
-# a branch must use content_landed, which is exact and local. This one reaches the network, so
+# a branch must use `spira-lc content-landed`, which is exact and local. This one reaches the network, so
 # it belongs behind a cheap check that has already failed — never on the common path. Ported
 # to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::pr_merged`.
 pr_merged() {
@@ -1653,8 +1606,7 @@ detect_landed_but_open() {
 # detect_closed_unlanded_states -> one STATE line per closed work bead, across every
 # partition this host watches (fayth_partitions — every persona's, not the caller's own),
 # that carries none of CHECK 5's recognised landing signals (supersedes, spira-dropped,
-# delivers:, content-landed) and that `landing-pass landed` cannot prove via the base's own commit
-# graph. Two shapes:
+# delivers:, content-landed) and whose lifecycle record is not LANDED. Two shapes:
 #
 #   STATE <id> closed-no-branch          — no branch: label (or the label names a ref that
 #                                           was never pushed): nothing was ever committed.
@@ -2257,8 +2209,8 @@ spira_destroy_branch() {
 # (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2. Ported to Rust
 # (sp-9envm); see `sending::reap::reap_landed_branch`. Still resolves the land ref and its
 # remote itself (through the unchanged `spira_landref`/family-W seam the `sending` binary
-# already has, not through bash), so `bead_close_on_land` — the production hot path for
-# every landing, still bash — keeps working unchanged.
+# already has, not through bash), so `spira-lc close-on-land`, the production hot path for
+# every landing, keeps working unchanged.
 spira_reap_landed_branch() {
     local _err; _err="$(sending reap-landed-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
     local _rc=$?
@@ -2484,31 +2436,12 @@ bead_is_decision_type() {
     esac
 }
 
-# bead_close_on_land — the only place a work bead is closed for a landed reason.
-#
-# A builder's own close of a work bead is converted back to open carrying
-# SPIRA_SUBMITTED_LABEL instead of staying closed (aeon.sh, at session teardown, once the
-# close has already happened — not a PreToolUse hook refusing the tool call); this
-# closes it for real once the commit is actually on the base, citing the sha. Called from
-# every LANDED land_mark site, right beside gh_issue_closeout.
-#
-# Idempotent both ways: a bead already closed is left alone, and a bead never marked
-# submitted (an older-style direct close, or a non-code type) is left alone too — this is
-# not the only path that closes a bead, only the landing path for the new one.
-#
-# REAPS THE BRANCH AND WORKTREE HERE TOO (sp-jci6o), the same verified deletion sending.sh
-# uses (spira_reap_landed_branch), so a bead closed by any landing path — push, pr, hold or
-# queue — loses its worktree and branch the moment it is known landed rather than waiting
-# for the next per-pass Sending scan to rediscover it by ancestry. Best-effort: the caller's
-# own repo:/branch: labels resolve the branch, spira_destroy_branch's content fence refuses
-# if that branch's diff is somehow not on the repository's base, and either kind of miss is
-# still caught by the Sending, which remains the backstop for everything this cannot reach.
-#
-# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::close_on_land`. Every
-# caller already discards this function's exit code (`|| true`), so the shim's own `|| true`
-# below is belt-and-suspenders, not a behaviour change.
-bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
-    landing-pass close-on-land "$1" "${2:-}" || true
+# bead_close_on_land <bead-id> <landed-sha> — close a submitted work bead whose work landed,
+# citing the sha, and reap its branch (`spira-lc close-on-land`; best-effort, always 0). Kept
+# only because the queue crate's seam still types this name (sp-du6dl moves it); every other
+# caller reaches spira-lc directly. Not the landing pass's subcommand any more (sp-oqf8c.3).
+bead_close_on_land() {
+    spira-lc close-on-land "$1" "${2:-}" || true
 }
 
 # _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan

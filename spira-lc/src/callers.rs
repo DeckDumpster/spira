@@ -405,7 +405,7 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         // own ancestry: a squash merge rewrites every SHA the branch carried.
         "pr-merged" if args.len() >= 5 => {
             let (repo, id, br, sha) = (a(1), a(2), a(3), a(4));
-            let proof = if content_landed(std::path::Path::new(&repo), &br, &sha) { "merge-tree" } else { "gh-merged" };
+            let proof = if crate::git_evidence::content_on_base(std::path::Path::new(&repo), &br, &sha) { "merge-tree" } else { "gh-merged" };
             (id, "PR_OPEN", DeliveryEventKind::Delivered { merge_sha: sha, proof: proof.into() })
         }
         "pr-closed" if args.len() >= 2 => (a(1), "PR_OPEN", DeliveryEventKind::Returned { reason: ReturnedReason::PrClosedUnmerged }),
@@ -470,30 +470,6 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         stdout.push_str(&log_line(&format!("lc: {id} delivery event refused or unreachable ({actor}, exit {rc})")));
     }
     Answer::out(rc, stdout)
-}
-
-/// lib.sh `content_landed`: 0 when <base> already holds every change <branch> makes —
-/// an ancestor, or a branch whose three-way merge into the base is the base's own tree.
-pub fn content_landed(repo: &std::path::Path, br: &str, base: &str) -> bool {
-    let git = |args: &[&str]| -> Option<String> {
-        let o = std::process::Command::new("git").arg("-C").arg(repo).args(args).stderr(std::process::Stdio::null()).output().ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
-    };
-    let Some(ahead) = git(&["rev-list", "--count", &format!("{base}..{br}")]).and_then(|s| s.trim().parse::<u64>().ok()) else {
-        return false;
-    };
-    if git(&["merge-base", "--is-ancestor", br, base]).is_some() {
-        return true;
-    }
-    if ahead == 0 {
-        return false;
-    }
-    let Some(merged) = git(&["merge-tree", "--write-tree", base, br]) else { return false };
-    let merged = merged.lines().next().unwrap_or("").to_string();
-    if merged.is_empty() {
-        return false;
-    }
-    git(&["rev-parse", &format!("{base}^{{tree}}")]).map(|t| t.trim() == merged).unwrap_or(false)
 }
 
 // ---- certification onto events (lifecycle-cert.sh) -----------------------------------

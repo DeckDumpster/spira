@@ -212,19 +212,19 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
-# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`.
-# census puts <home>/../bin first on PATH, so the stub lives in a release-shaped directory
-# whose spira/ is this tree: $LCSTATE/<id> holds the state, and no file is spira-lc's NO_ROW.
-LCHOME="$TMP/lchome"; LCSTATE="$TMP/lc-state"; mkdir -p "$LCHOME/bin" "$LCSTATE"
-ln -s "$HERE" "$LCHOME/spira"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$LCHOME/bin/spira-lc"
-chmod +x "$LCHOME/bin/spira-lc"
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
+# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$TMP/spira-lc-stub"
+chmod +x "$TMP/spira-lc-stub"
 
 run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$LCHOME/spira" \
+        SPIRA_HOME="$HERE" \
         SPIRA_REPO="$FIXTURE_REPO" \
         "$CENSUS" "$@" 2>/dev/null
 }

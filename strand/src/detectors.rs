@@ -14,9 +14,9 @@
 //! directly (a test suite, `attempts.sh`) keeps working unchanged.
 //!
 //! GIT AND `spira-lc` ARE REACHED AS SUBPROCESSES, BY NAME ON PATH, never re-derived:
-//! "landed" is the lifecycle record's LANDED state (`spira-lc state <id>`). `content_landed`
-//! and the plain merge-tree clean check have no CLI door yet, so they run the same `git`
-//! commands lib.sh's own (still-bash) `content_landed` runs — no new logic, just moved.
+//! "landed" is the lifecycle record's LANDED state (`spira-lc state <id>`). Content-on-base is
+//! the Sending's own proof (`sending::git::Git::content_on_base`, the same answer as
+//! `spira-lc content-landed`), called in-process; the plain merge-tree clean check runs `git`.
 //! `detect_invalid_closed`'s statute-phrase predicates live in one file shared with aeon's
 //! close-time fence (`close-reason-flags.py`, its own header: "both callers exec() this
 //! file so the two cannot disagree") — this pipes the same embedded script into `python3`
@@ -67,8 +67,8 @@ fn list_beads(cfg: &Config, args: &[&str]) -> Vec<Bead> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// git plumbing content_landed / merge-tree need (no CLI door onto either exists yet —
-// lib.sh's own `content_landed` is still bash for the same reason).
+// git plumbing the detectors need. The content-on-base proof itself is the Sending's own
+// (`sending::git::Git::content_on_base`), not a copy here.
 // ──────────────────────────────────────────────────────────────────────────────
 
 fn git_branch_exists(repo: &Path, branch: &str) -> bool {
@@ -91,29 +91,8 @@ fn git_rev_list_count(repo: &Path, range: &str) -> Option<u64> {
     String::from_utf8_lossy(&o.stdout).trim().parse().ok()
 }
 
-fn git_is_ancestor(repo: &Path, a: &str, b: &str) -> bool {
-    Command::new("git")
-        .current_dir(repo)
-        .args(["merge-base", "--is-ancestor", a, b])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-fn git_rev_parse(repo: &Path, rev: &str) -> Option<String> {
-    let o = Command::new("git").current_dir(repo).args(["rev-parse", rev]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
-    (!s.is_empty()).then_some(s)
-}
-
 /// `git merge-tree --write-tree <base> <branch>`'s exit status alone — a plain "would this
-/// merge without conflict", distinct from [`content_landed`]'s tree-equality question.
+/// merge without conflict", distinct from `content_on_base`'s tree-equality question.
 fn merge_tree_clean(repo: &Path, base: &str, branch: &str) -> bool {
     Command::new("git")
         .current_dir(repo)
@@ -124,32 +103,6 @@ fn merge_tree_clean(repo: &Path, base: &str, branch: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-/// lib.sh `content_landed <repo> <branch> <base>`, unchanged (still bash there — no CLI
-/// door exists onto it yet): an ancestor branch is landed outright; otherwise a clean
-/// merge whose resulting tree equals the base's own tree means the content is already there.
-fn content_landed(repo: &Path, branch: &str, base: &str) -> bool {
-    let Some(ahead) = git_rev_list_count(repo, &format!("{base}..{branch}")) else { return false };
-    if git_is_ancestor(repo, branch, base) {
-        return true;
-    }
-    if ahead == 0 {
-        return false;
-    }
-    let Some(merged) = merge_tree_write_tree(repo, base, branch) else { return false };
-    let Some(basetree) = git_rev_parse(repo, &format!("{base}^{{tree}}")) else { return false };
-    merged == basetree
-}
-
-fn merge_tree_write_tree(repo: &Path, base: &str, branch: &str) -> Option<String> {
-    let o = Command::new("git").current_dir(repo).args(["merge-tree", "--write-tree", base, branch]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    if !o.status.success() {
-        return None;
-    }
-    let out = String::from_utf8_lossy(&o.stdout);
-    let first = out.lines().next().unwrap_or("").to_string();
-    (!first.is_empty()).then_some(first)
 }
 
 /// Whether the lifecycle record has the bead LANDED (`spira-lc state`). A missing row or an
@@ -317,7 +270,7 @@ pub fn detect_closed_unlanded_states(cfg: &Config) -> String {
         if base.is_empty() {
             continue;
         }
-        if content_landed(repo_path, &br, &base) {
+        if sending::git::Git(repo_path).content_on_base(&br, &base) {
             continue;
         }
         if merge_tree_clean(repo_path, &base, &br) {

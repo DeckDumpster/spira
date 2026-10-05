@@ -52,8 +52,9 @@ impl Git<'_> {
         self.ok(&["merge-tree", "--write-tree", base, br])
     }
 
-    /// lib.sh content_landed: <base> already holds every change <br> makes.
-    pub fn content_landed(&self, br: &str, base: &str) -> bool {
+    /// <base> already holds every change <br> makes: an ancestor, or a merge whose tree is the
+    /// base's own (the proof that survives a squash). Same answer as `spira-lc content-landed`.
+    pub fn content_on_base(&self, br: &str, base: &str) -> bool {
         let Some(ahead) = self.ahead(base, br) else { return false };
         if self.is_ancestor(br, base) {
             return true;
