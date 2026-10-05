@@ -18,7 +18,7 @@
 #
 # defect: sp-pswer.1 sp-jnwbn
 # tier: T1
-# covers: sentinel/src/pass.rs sentinel/src/cfg.rs sentinel/src/lifecycle.rs groomer/src/sweep.rs groomer/src/seam.rs
+# covers: sentinel/src/pass.rs sentinel/src/cfg.rs sentinel/src/lifecycle.rs groomer/src/sweep.rs groomer/src/seam.rs spira/lib.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
@@ -63,6 +63,11 @@ sbody="$(rust_sweep_body "$ROOT/groomer/src/sweep.rs")"
 want "sweep() was extracted" "pub fn sweep(" "$sbody"
 for fn in detect_landed_but_open detect_closed_unlanded_states detect_false_blockers; do
     nowant "groomer/src does not reach $fn" "$fn" "$(cat "$ROOT"/groomer/src/*.rs)"
+    # sp-mve9i: strand's subcommands are gone, so lib.sh keeps no shim onto them either.
+    nowant "lib.sh defines no $fn shim" "$fn() {" "$(cat "$ROOT/spira/lib.sh")"
+done
+for sub in detect-landed-but-open detect-closed-unlanded-states detect-false-blockers; do
+    nowant "lib.sh calls no strand $sub" "strand $sub" "$(cat "$ROOT/spira/lib.sh")"
 done
 for kind in landed-but-open closed-never-landed closed-no-branch blocked-by-unlanded; do
     nowant "groomer/src names no $kind remedy" "$kind" "$(cat "$ROOT"/groomer/src/*.rs)"
