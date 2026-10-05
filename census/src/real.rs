@@ -160,6 +160,8 @@ impl World for Real {
         let out = Command::new("spira-lc").args(["state", id]).envs(envs).stdin(Stdio::null()).stderr(Stdio::null()).output();
         match out {
             Ok(o) if o.status.success() => i32::from(String::from_utf8_lossy(&o.stdout).trim() != "LANDED"),
+            // rc 1 is spira-lc's NO_ROW: the record holds no row, so nothing says it landed.
+            Ok(o) if o.status.code() == Some(1) => 1,
             _ => 2,
         }
     }

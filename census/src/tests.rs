@@ -374,7 +374,7 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
 /// sp-oqf8c: `Real::landed` asks the lifecycle record (`spira-lc state`), never
 /// `landing-pass landed`. Stubs for both sit in the release's `bin/` (the parent of
 /// `home`, which `child_path_env` puts first on PATH); the landing-pass stub always says
-/// "landed", so only a reader of spira-lc gets the CERTIFIED and unknown rows right.
+/// "landed", so only a reader of spira-lc gets the CERTIFIED, no-row and cannot-tell rows right.
 #[test]
 fn real_landed_reads_the_lifecycle_record_not_the_landing_pass_oracle() {
     let root = testkit::TempDir::new("census-landed");
@@ -384,10 +384,11 @@ fn real_landed_reads_the_lifecycle_record_not_the_landing_pass_oracle() {
     testkit::write_exe(bin.join("landing-pass"), "#!/bin/sh\necho deadbeef; exit 0\n");
     testkit::write_exe(
         bin.join("spira-lc"),
-        "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-l) echo LANDED ;; sp-c) echo CERTIFIED ;; *) exit 1 ;; esac\n",
+        "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-l) echo LANDED ;; sp-c) echo CERTIFIED ;; sp-n) exit 1 ;; *) exit 2 ;; esac\n",
     );
     let r = crate::real::Real::new(root.join("spira"));
     assert_eq!(r.landed("sp-l"), 0, "LANDED in the lifecycle record is landed");
     assert_eq!(r.landed("sp-c"), 1, "CERTIFIED is not landed, whatever landing-pass says");
-    assert_eq!(r.landed("sp-x"), 2, "no record: cannot tell");
+    assert_eq!(r.landed("sp-n"), 1, "no row (spira-lc NO_ROW) is not landed");
+    assert_eq!(r.landed("sp-x"), 2, "the record cannot answer: cannot tell");
 }
