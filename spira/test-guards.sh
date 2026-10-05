@@ -70,13 +70,7 @@ args=("$@")
 [ "${args[0]:-}" = "-C" ] && args=("${args[@]:2}")
 sub="${args[0]:-}"
 case "$sub" in
-    create)
-        if [ -n "${STUB_TESTDATA_MARKER:-}" ]; then
-            for a in "${args[@]}"; do
-                case "$a" in *"$STUB_TESTDATA_MARKER"*) echo "appears to be test data"; exit 1 ;; esac
-            done
-        fi
-        exit 0 ;;
+    create)   exit 0 ;;
     show)     cat "$FIXDIR/${args[1]:-}.show.json" 2>/dev/null || echo '{}'; exit 0 ;;
     comments) cat "$FIXDIR/${args[1]:-}.comments.json" 2>/dev/null || echo '[]'; exit 0 ;;
     *) exit 0 ;;
@@ -318,73 +312,22 @@ nowant "sp-ozym9/override-bypasses-queue-write-block" '"decision":"block"' "$out
 
 # ===========================================================================
 echo
-echo "UC-safety-fences-03 — bd create test-data / unmapped-repo heuristic (stub bd, no testdb):"
+echo "UC-safety-fences-03 — aeon session: no bd create rule — no aeon persona has bd (sp-j7l3q):"
 # ===========================================================================
+# Ryan 2026-10-05: the model's PATH holds only `work` (sp-zf4q3) and every persona's bead
+# operations are `work` verbs (sp-st0mm); the fence's old test-data / unmapped-repo /
+# unclaimable heuristic is gone for every persona, the builder included.
 BDCREATE_DB="$TMP/prod-db"
-FAKE_REPO_MAP="$TMP/repo-map"
-printf 'spira | /dev/null | push\nbrain | /dev/null | push\n' > "$FAKE_REPO_MAP"
-
-fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout, using the stub bd's --dry-run fallback
+fence_bd() {  # fence_bd <cmd> [ENV..] -> fence stdout with a production SPIRA_DB in scope
     local cmd="$1"; shift
     bash_payload "$cmd" | env -i PATH="$PATH" HOME="$TMP" \
-        SPIRA_AEON=test-aeon SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" \
-        SPIRA_REPO_MAP="$FAKE_REPO_MAP" "$@" \
+        SPIRA_AEON=test-aeon SPIRA_DB="$BDCREATE_DB" SPIRA_BD="$STUB_BD" "$@" \
         bash "$FENCE" 2>/dev/null
 }
-
-# D2: the positive control, A1 and A2 were the same command run three times — one row now.
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"")"
-want "UC-safety-fences-03/test-data-title-blocked" '"decision":"block"' "$out"
-want "UC-safety-fences-03/test-data-title-names-override" "SPIRA_BD_CREATE_OVERRIDE" "$out"
-
-out="$(fence_bd "SPIRA_DB=/tmp/some-testdb bd -C $BDCREATE_DB create \"test bead\" -l \"plan,repo:fixture-repo\"")"
-want "UC-safety-fences-03/inline-SPIRA_DB-does-not-bypass" '"decision":"block"' "$out"
-
-# sp-j7l3q (Ryan 2026-10-04, sp-nkr42): the bd rules are off the builder's path — it has no bd —
-# and stay on for the grooming personas, which file with bd by design.
 out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=builder)"
 nowant "sp-j7l3q/builder-bd-rules-removed" '"decision":"block"' "$out"
-out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan\"" SPIRA_FAYTH=groomer)"
-want "sp-j7l3q/groomer-keeps-bd-create-fence" '"decision":"block"' "$out"
-
-out="$(fence_bd "bd -C $BDCREATE_DB create \"Implement config reload\" -l \"plan,repo:spira\"")"
-nowant "UC-safety-fences-03/real-title-mapped-repo-allowed" '"decision":"block"' "$out"
-
-out="$(fence_bd "bd -C /tmp/other-testdb create \"test bead\" -l \"plan\"")"
-nowant "UC-safety-fences-03/non-prod-db-path-allowed" '"decision":"block"' "$out"
-
-out="$(fence_bd "SPIRA_BD_CREATE_OVERRIDE=1 bd -C $BDCREATE_DB create \"test bead\" -l \"plan,repo:fixture-repo\"")"
-nowant "UC-safety-fences-03/override-var-bypasses" '"decision":"block"' "$out"
-
-out="$(fence_bd "bd -C $BDCREATE_DB create \"Add lane detection\" -l \"plan,repo:fixture-repo\"")"
-want "UC-safety-fences-03/unmapped-repo-real-title-blocked" '"decision":"block"' "$out"
-want "UC-safety-fences-03/unmapped-repo-names-override" "SPIRA_BD_CREATE_OVERRIDE" "$out"
-
-# Claimability judge (bead judge-create): scope without a partition label is refused, the
-# partition list is in the message; a partition label or no-loop passes. Needs a built bead.
-BEAD_BIN_DIR="$HERE/../target/debug"
-if [ -x "$BEAD_BIN_DIR/bead" ]; then
-    fence_bd_j() { fence_bd "$1" PATH="$BEAD_BIN_DIR:$PATH" SPIRA_SCOPE_LABEL=spira SPIRA_NO_LOOP_LABEL=no-loop; }
-    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -t task -l \"spira,checkpoint,repo:spira\"")"
-    want "unclaimable-create-blocked" '"decision":"block"' "$out"
-    want "unclaimable-create-lists-partitions" "add one of:" "$out"
-    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -l \"spira,plan,repo:spira\"")"
-    nowant "partitioned-create-allowed" '"decision":"block"' "$out"
-    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Implement checkpoint\" -l \"spira,checkpoint,no-loop,repo:spira\"")"
-    nowant "no-loop-create-allowed" '"decision":"block"' "$out"
-    out="$(fence_bd_j "bd -C $BDCREATE_DB create \"Note\" -t event -l \"spira,checkpoint,repo:spira\"")"
-    nowant "non-claimable-type-allowed" '"decision":"block"' "$out"
-else
-    echo "  SKIP claimability judge: no bead binary built"
-fi
-
-# The fallback arm: title fails the direct test/debug/tmp/temp regex, so aeon-fence.sh asks
-# bd itself via --dry-run; the stub answers "appears to be test data" for the marker word.
-# Single-word title: the guard's own title parser is whitespace-based and captures only the
-# first token of a quoted multi-word title (a real truncation defect, filed as sp-o5qm1 and
-# not exercised here — a multi-word title would silently test the wrong string).
-out="$(fence_bd "bd -C $BDCREATE_DB create \"sneakytestfixture\" -l \"plan\"" STUB_TESTDATA_MARKER=sneakytestfixture)"
-want "UC-safety-fences-03/dry-run-fallback-flags-test-data" '"decision":"block"' "$out"
+out="$(fence_bd "bd -C $BDCREATE_DB create \"test-land-state\" -l \"plan,repo:fixture-repo\"" SPIRA_FAYTH=groomer)"
+nowant "sp-j7l3q/no-persona-bd-create-rule" '"decision":"block"' "$out"
 
 # ===========================================================================
 echo
