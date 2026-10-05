@@ -67,7 +67,8 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
 REPONAME=fixture-repo
-LCSTUB="$RUN/lc-stub";  # the stub spira-lc's CERTIFIED pool, one file per bead; QUEUEDIR="$RUN/queue"
+# LCSTUB: the stub spira-lc's CERTIFIED pool, one file per bead.
+LCSTUB="$RUN/lc-stub"; QUEUEDIR="$RUN/queue"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
