@@ -2348,3 +2348,31 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
 }
+
+#[test]
+fn rowless_open_bead_is_surfaced_and_backfilled() {
+    let (w, r, sink, clock) = audit_world("rowless");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(r#"[{"id":"sp-nr","status":"open","issue_type":"task"},{"id":"sp-has","status":"open","issue_type":"task"}]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            ok(r#"[{"bead_id":"sp-has","state":"READY","holds":[],"version":"1"}]"#)
+        } else {
+            None
+        }
+    });
+    run_mode(
+        &w, &r, &sink, &clock, Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1"), ("SPIRA_LIFECYCLE_ENFORCE", "1")],
+        Some(&[]),
+    );
+    assert!(sink.has("STATE-LC sp-nr rowless"), "{}", sink.text());
+    assert!(!sink.has("STATE-LC sp-has rowless"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-nr"]), 1);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-has"]), 0);
+}

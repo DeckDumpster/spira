@@ -66,6 +66,25 @@ branch reaches `{base_branch}` from there is described above, and none of it nee
 /// `./spira/testenv.sh`, the container helper, instead: sp-4vq2q).
 pub const TESTENV: &str = "testenv";
 
+/// The chamber's tool placeholders. The model's PATH holds only `work` (sp-st0mm), so each
+/// is the `work` verb that reaches the same tool through the spira-lc broker — `{{GROOM}}
+/// close <id>` is `work groom close <id>`, run by the broker under the persona's own allow
+/// row. Unconditional: the chamber is written for these verbs, and with `lifecycle_enforce`
+/// off `work` refuses every verb, so a lane persona there has no bead tool at all.
+pub fn tool_tokens() -> Vec<(&'static str, String)> {
+    vec![
+        ("SOP", "work sop".to_string()),
+        ("INCIDENT", "work incident".to_string()),
+        ("ASK", "work ask".to_string()),
+        ("GROOM", "work groom".to_string()),
+        ("DEP", "work dep-add".to_string()),
+    ]
+}
+
+/// Tokens never rendered while `lifecycle_enforce` is on: the bd database path and the
+/// harness's home — the model reaches neither (sp-st0mm), so no persona prompt names them.
+pub const WITHHELD_UNDER_ENFORCE: &[&str] = &["DB", "SPIRA_HOME"];
+
 /// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
 /// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
 /// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
@@ -405,7 +424,28 @@ A merge conflict is not an escalation — do not close the bead and do not ask a
     )
 }
 
-pub fn already_done_brief(base: &str, bead_id: &str, work: &str, db: &str) -> String {
+pub fn already_done_brief(lifecycle_enforce: bool, base: &str, bead_id: &str, work: &str, db: &str) -> String {
+    // With lifecycle_enforce on the model has no `bd` (sp-st0mm): the record is the
+    // supersede *request* `work superseded-by` files, confirmed by the groomer or operator.
+    let record = if lifecycle_enforce {
+        "2. Once confirmed on the base, **request the supersede**:
+
+       work superseded-by <successor-id>
+
+That holds the bead and asks for confirmation; once confirmed, the sentinel, landing pass and
+cleanup checks all recognise this bead as retired and skip it correctly. A close reason alone
+is not read by any of them."
+            .to_string()
+    } else {
+        format!(
+            "2. Once confirmed on the base, **run `bd supersede`**:
+
+       bd -C {db} supersede {bead_id} --with <successor-id>
+
+That records the relation so the sentinel, landing pass, and cleanup checks all recognise this
+bead as retired and skip it correctly. A close reason alone is not read by any of them."
+        )
+    };
     format!(
         "## If you find the work is already done
 
@@ -422,12 +462,7 @@ The machine-readable path:
 
        git -C {work} log --format='%s' -n ${{SPIRA_VERDICT_WINDOW:-400}} {base} | grep <successor-id>
 
-2. Once confirmed on the base, **run `bd supersede`**:
-
-       bd -C {db} supersede {bead_id} --with <successor-id>
-
-That records the relation so the sentinel, landing pass, and cleanup checks all recognise this
-bead as retired and skip it correctly. A close reason alone is not read by any of them."
+{record}"
     )
 }
 
@@ -971,9 +1006,68 @@ mod tests {
     fn close_and_already_done_blocks() {
         assert!(close_brief("local/main", "/w", "").contains("    # local/main is a local ref already in this checkout; no fetch needed\n    git -C /w rebase local/main"));
         assert!(close_brief("origin/main", "/w", "origin").contains("    git -C /w fetch origin\n"));
-        assert!(already_done_brief("origin/main", "sp-a", "/w", "/db").contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
+        assert!(already_done_brief(false, "origin/main", "sp-a", "/w", "/db").contains("-n ${SPIRA_VERDICT_WINDOW:-400} origin/main | grep"));
+        let on = already_done_brief(true, "origin/main", "sp-a", "/w", "/db");
+        assert!(on.contains("work superseded-by <successor-id>") && !on.contains("bd "), "{on}");
         assert!(rebase_brief("b", "o/m", "/w", "").contains("conflicts in: unknown"));
         assert!(dirty_brief(&["a".into(), "b c".into()]).contains("```\n  a\n  b c\n```"));
         assert_eq!(dirty_brief(&[]), "");
+    }
+
+    /// sp-st0mm: no aeon model runs `bd`. Every persona prompt an aeon (or the archivist)
+    /// is summoned with names bead operations only as `work` verbs — never a raw `bd`
+    /// command, `bdq`, `bead.sh`, `mail.sh`, nor the `{{DB}}` path that only bd uses. The
+    /// Concierge's own prompt is the operator's session and keeps its tools.
+    #[test]
+    fn no_aeon_persona_prompt_names_a_bd_reaching_command() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+        let raw_bd = regex::Regex::new(r"(?m)(^|[^A-Za-z0-9_./-])bd\s+(-C\b|[a-z][a-z-]*)").unwrap();
+        let mut seen = 0;
+        let mut bad = Vec::new();
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let p = e.unwrap().path();
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            if !name.ends_with(".md") || name == "concierge.md" || !p.is_file() {
+                continue;
+            }
+            seen += 1;
+            let text = std::fs::read_to_string(&p).unwrap();
+            for (n, line) in text.lines().enumerate() {
+                let hit = raw_bd.find(line).map(|m| m.as_str().trim().to_string()).or_else(|| {
+                    ["bdq", "bead.sh", "mail.sh", "{{DB}}", "{{SPIRA_HOME}}"].iter().find(|t| line.contains(*t)).map(|t| t.to_string())
+                });
+                if let Some(h) = hit {
+                    bad.push(format!("{name}:{}: {h:?} in: {line}", n + 1));
+                }
+            }
+        }
+        assert!(seen >= 9, "positive control: the chamber's persona prompts were read ({seen})");
+        // A tool placeholder a prompt uses must expand to a `work` verb, never the binary it
+        // once named (mail, groomer, bead.sh, sop, incident.sh) — none is on the model's PATH.
+        let tokens = tool_tokens();
+        for k in ["ASK", "GROOM", "DEP", "SOP", "INCIDENT"] {
+            let v = tokens.iter().find(|(t, _)| *t == k).map(|(_, v)| v.as_str());
+            assert!(matches!(v, Some(v) if v.starts_with("work ")), "{{{{{k}}}}} expands to {v:?}, not a work verb");
+        }
+        // The archivist's own filler (archivist/src/run.rs) renders {{NOTIFY}}.
+        let arc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../archivist/src/run.rs")).unwrap();
+        assert!(arc.contains("(\"NOTIFY\", \"work ask\")"), "the archivist's {{{{NOTIFY}}}} must be `work ask`");
+        assert!(bad.is_empty(), "persona prompts that still reach bd:\n{}", bad.join("\n"));
+    }
+
+    #[test]
+    fn the_tool_placeholders_are_work_verbs() {
+        for (k, v) in tool_tokens() {
+            assert!(v.starts_with("work "), "{{{{{k}}}}} is {v:?}");
+        }
+    }
+
+    #[test]
+    fn the_bd_detector_sees_a_raw_command_and_spares_prose() {
+        let raw_bd = regex::Regex::new(r"(?m)(^|[^A-Za-z0-9_./-])bd\s+(-C\b|[a-z][a-z-]*)").unwrap();
+        assert!(raw_bd.is_match("    bd -C /db note sp-a \"x\""));
+        assert!(raw_bd.is_match("run `bd show <id>` first"));
+        assert!(!raw_bd.is_match("that one asked `bd` a question"));
+        assert!(!raw_bd.is_match("work note \"x\""));
     }
 }

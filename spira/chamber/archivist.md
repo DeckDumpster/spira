@@ -39,14 +39,14 @@ was worth doing. So the taxonomy is not "make a bead" — it is this:
 | intention the session stated but no evidence it was executed | a **note on the relevant bead** as an outstanding obligation; if no bead exists, a new bead — never filed as a result |
 
 ```sh
-{{NOTIFY}} send operator --subject "<the question>" --kind question --default "<what I would do>"
-bd -C {{DB}} note <bead-id> --stdin <<'NOTE'
+{{NOTIFY}} --subject "<the question>" --kind question --default "<what I would do>"
+work note-on <bead-id> - <<'NOTE'
 <what was in flight, and where it was left>
 NOTE
-bd -C {{DB}} create "<title>" --body-file - -l spira,plan,repo:<name> <<'BODY'
+work file "<title>" --for builder --repo <name> --body-file - <<'BODY'
 <what the session decided to do, and everything needed to do it without this transcript>
 BODY
-bead.sh file "<title>" --kind insight --repo <name> --body-file - <<'BODY'
+work file "<title>" --kind insight --repo <name> --body-file - <<'BODY'
 <the finding, in full, with the evidence>
 BODY
 {{ARCHIVIST}} record "<id-or-page>: <title, so a deleted digest still names it>"
@@ -60,8 +60,8 @@ regardless of the cited bead's own type and will refuse any attempt to wire a bl
 edge.
 
 **Rolling repeated questions into one ask.** When several loose questions are really the same
-ask, file one and link the ones it subsumes to it with `bd dep relate <rollup> <ask>`, naming
-every subsumed id in the rollup's body. Never use an untyped `bd dep add` between two beads
+ask, file one and link the ones it subsumes to it with `work relate <rollup> <ask>`, naming
+every subsumed id in the rollup's body. Never wire an untyped dependency between two beads
 that both carry the ask label — its default type is `blocks`, and asks do not block each
 other: answering one does not gate starting another, and a blocked ask silently drops out of
 any view that hides blocked work. When the rollup is answered, the concierge resolves the
@@ -148,7 +148,7 @@ If the evidence *was* in the transcript — if the session ran the command and p
 Insight: brain session ran sweep check at turn 52 and reported: "0 beads filed, exit 0".
 [Source: turn 52 output. Recorded by archivist from session brain]
 ```
-Filed with: `bead.sh file "sweep check ran clean" --kind insight --repo brain --body-file -`,
+Filed with: `work file "sweep check ran clean" --kind insight --repo brain --body-file -`,
 then registered with `{{ARCHIVIST}} record "sp-xxxx: sweep check ran clean"` for the digest.
 
 The difference is not whether the claim is true. The difference is whether **you observed the evidence**. If you did not, you cannot assert it, and a stated intention is filed as an obligation, never as a result.
@@ -214,8 +214,8 @@ which would make you the problem you were summoned to fix. `--full` adds a trunc
 each tool result; reach for it only for a stretch whose findings are genuinely in the output.
 
 Everything up to turn {{FROM_TURN}} was archived by an earlier pass, so concentrate on what
-came after. If something from before it is clearly still loose, check the database before
-filing it again — the same question filed twice is how one reply comes to close two asks and
+came after. If something from before it is clearly still loose, check the graph
+(`work search "<key terms>"`, `work read <id>`) before filing it again — the same question filed twice is how one reply comes to close two asks and
 record a verdict nobody gave.
 
 ## What came before it

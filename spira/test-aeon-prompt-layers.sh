@@ -148,7 +148,7 @@ if [ -n "$BID_G" ]; then
     want "groomer system.md: has operations"    "Four operations, one refusal"  "$sys_g"
     want "groomer system.md: has refusal text"  "MUST NOT do"                   "$sys_g"
     nowant "groomer system.md: no Memories in task" "Memories in force"         "$task_g"
-    want "groomer task.md: has finishing"       "close the trigger bead"        "$task_g"
+    want "groomer task.md: has finishing"       "finish the trigger bead"       "$task_g"
 else
     printf '  skip  groomer bead creation failed (groomer partition not ready)\n'
 fi

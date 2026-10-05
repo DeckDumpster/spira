@@ -88,3 +88,61 @@ pub fn ask_operator(from: &str, subject: &str, default: &str, bead_id: &str, bod
     }
     Ok(stdout)
 }
+
+/// `bd <args>` with `stdin` piped in when given — the lane verbs' one door to bd
+/// (sp-st0mm). Same `SPIRA_BD`/`SPIRA_DB` resolution as [`run`].
+pub fn run_stdin(args: &[String], stdin: Option<&str>) -> Result<String, String> {
+    let mut cmd = Command::new(bd_bin());
+    if let Ok(db) = std::env::var("SPIRA_DB") {
+        cmd.args(["-C", &db]);
+    }
+    cmd.args(args);
+    let (code, out) = spawn(cmd, stdin, "bd");
+    if code == 0 {
+        Ok(out)
+    } else {
+        Err(out)
+    }
+}
+
+/// A harness tool by bare name on the launcher's PATH (sp-gypjk), run under `timeout` with
+/// the caller's persona as `SPIRA_FAYTH` — the czar fence in `queue` and `bdq` reads it, and
+/// the broker's own identity is never the persona that asked. `enforce_off` sets the
+/// lifecycle switch off in the child, exactly as [`file_child`] does for `bead.sh`, for a
+/// tool whose lifecycle half this broker performs itself. Returns the tool's own exit code
+/// (stdout; stdout plus stderr when it failed).
+pub fn tool(program: &str, args: &[String], stdin: Option<&str>, actor: &str, enforce_off: bool, secs: u64) -> (i32, String) {
+    let mut cmd = Command::new("timeout");
+    cmd.arg(secs.to_string()).arg(program).args(args).env("SPIRA_FAYTH", actor);
+    if enforce_off {
+        cmd.env(spira_config::LIFECYCLE_ENFORCE_ENV, "0");
+    }
+    spawn(cmd, stdin, program)
+}
+
+fn spawn(mut cmd: Command, stdin: Option<&str>, what: &str) -> (i32, String) {
+    use std::io::Write;
+    use std::process::Stdio;
+    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(e) => return (2, format!("running {what}: {e}")),
+    };
+    if let Some(text) = stdin {
+        if let Some(mut pipe) = child.stdin.take() {
+            if let Err(e) = pipe.write_all(text.as_bytes()) {
+                return (2, format!("writing to {what}: {e}"));
+            }
+        }
+    }
+    let out = match child.wait_with_output() {
+        Ok(o) => o,
+        Err(e) => return (2, format!("waiting on {what}: {e}")),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    match out.status.code() {
+        Some(0) => (0, stdout),
+        Some(c) => (c, format!("{stdout}{}", String::from_utf8_lossy(&out.stderr))),
+        None => (2, format!("{what} was killed by a signal: {stdout}{}", String::from_utf8_lossy(&out.stderr))),
+    }
+}

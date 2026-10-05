@@ -231,6 +231,10 @@ impl Seam for RealSeam {
         }
         c.current_dir(spec.cwd)
             .env("SPIRA_MAIL_FROM", spec.mail_from)
+            // The persona `work` sends to the broker (sp-st0mm): the archivist is bound to no
+            // bead, so it runs only lane verbs, under its own row of the broker's allow table.
+            .env("SPIRA_WORK_ACTOR", "archivist")
+            .env_remove("SPIRA_FAYTH")
             .stdin(Stdio::piped())
             .stdout(log)
             .stderr(log_err);

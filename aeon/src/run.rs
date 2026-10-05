@@ -890,33 +890,37 @@ impl<'a> Run<'a> {
         let scope = self.conf.s("SPIRA_SCOPE_LABEL");
         let home = self.home().display().to_string();
         let home_repo = self.conf.repos.home_repo().to_string();
+        let mut single = vec![
+            ("BEAD_ID", bead.clone()),
+            ("BRANCH", self.s.branch.clone()),
+            ("REPO", wdisp.clone()),
+            ("REPO_NAME", self.s.repo_name.clone()),
+            ("HOME_REPO", home_repo),
+            ("LANDING", landing),
+            ("DB", db.clone()),
+            ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
+            ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
+            // Tools by bare name (sp-gypjk): the aeon's environment carries the
+            // launcher's PATH, whose first entries are the release's bin/ and spira/.
+            ("SUITES", format!("{} suites", brief::TESTENV)),
+            ("TESTENV", brief::TESTENV.into()),
+            ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
+            ("SPIRA_HOME", home.clone()),
+            ("RUN", self.run_dir().display().to_string()),
+            ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
+            ("REMEDY_LABEL", self.conf.s("SPIRA_MAECHEN_REMEDY_LABEL")),
+            ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
+        ];
+        // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the
+        // model has no bd-reaching tool (sp-st0mm).
+        single.extend(brief::tool_tokens());
+        // Under enforce the model has no bd and no path into the release (sp-st0mm, sp-zf4q3):
+        // no prompt names the database or the harness's home, so neither is handed over.
+        if self.enforce {
+            single.retain(|(k, _)| !brief::WITHHELD_UNDER_ENFORCE.contains(k));
+        }
         let tokens = Tokens {
-            single: vec![
-                ("BEAD_ID", bead.clone()),
-                ("BRANCH", self.s.branch.clone()),
-                ("REPO", wdisp.clone()),
-                ("REPO_NAME", self.s.repo_name.clone()),
-                ("HOME_REPO", home_repo),
-                ("LANDING", landing),
-                ("DB", db.clone()),
-                ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
-                ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
-                // Tools by bare name (sp-gypjk): the aeon's environment carries the
-                // launcher's PATH, whose first entries are the release's bin/ and spira/.
-                ("SOP", "sop".into()),
-                ("INCIDENT", "incident.sh".into()),
-                ("ASK", "mail".into()),
-                ("SUITES", format!("{} suites", brief::TESTENV)),
-                ("TESTENV", brief::TESTENV.into()),
-                ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
-                ("GROOM", "groomer".into()),
-                ("DEP", "bead.sh dep add".into()),
-                ("SPIRA_HOME", home.clone()),
-                ("RUN", self.run_dir().display().to_string()),
-                ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
-                ("REMEDY_LABEL", self.conf.s("SPIRA_MAECHEN_REMEDY_LABEL")),
-                ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
-            ],
+            single,
             bead: body,
             park: blocks[0].clone(),
             fixture: blocks[1].clone(),
@@ -929,7 +933,7 @@ impl<'a> Run<'a> {
         task.push_str(&brief::dirty_brief(dirty));
         task.push_str(resume);
         task.push_str(slain);
-        task.push_str(&brief::already_done_brief(&self.s.base, &bead, &wdisp, &db));
+        task.push_str(&brief::already_done_brief(self.enforce, &self.s.base, &bead, &wdisp, &db));
         task.push_str(&brief::close_brief(&self.s.base, &wdisp, &self.s.base_remote));
         task.push_str(rebase);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);

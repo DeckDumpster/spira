@@ -163,7 +163,9 @@ pub fn archive(seam: &dyn Seam, cfg: &Env, arc: &Path, sid: &str, tp: &Path, at:
             ("WHY", why),
             ("LINEAGE", lineage.as_str()),
             ("ARCHIVIST", "archivist"),
-            ("NOTIFY", "mail"),
+            // `work ask` through the spira-lc broker, never `mail` itself: the model reaches
+            // nothing that calls bd (sp-st0mm).
+            ("NOTIFY", "work ask"),
             ("WIKI", wiki_text.as_str()),
         ],
     );
