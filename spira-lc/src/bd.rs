@@ -42,6 +42,27 @@ pub fn repo_label(bead_id: &str) -> Result<Option<String>, String> {
     Ok(labels.iter().filter_map(|l| l.as_str()).find_map(|l| l.strip_prefix("repo:").map(str::to_string)))
 }
 
+/// The live [`crate::callers::Bd`]: bd itself, resolved as [`run`] resolves it.
+pub struct LiveBd;
+
+impl crate::callers::Bd for LiveBd {
+    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String> {
+        run(&["unclaim", id, "--if-assignee", actor]).map(|_| ())
+    }
+    fn issue_type(&mut self, id: &str) -> Result<String, String> {
+        let out = run(&["show", id, "--json"])?;
+        let parsed: serde_json::Value = serde_json::from_str(out.trim()).map_err(|e| format!("bd show --json: {e}"))?;
+        let doc = match &parsed {
+            serde_json::Value::Array(a) => a.first().cloned().unwrap_or(serde_json::Value::Null),
+            v => v.clone(),
+        };
+        doc.get("issue_type").and_then(|t| t.as_str()).map(str::to_string).ok_or_else(|| format!("bd show {id}: no issue_type"))
+    }
+    fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
+        run(&["close", id, "--reason", reason]).map(|_| ())
+    }
+}
+
 pub fn note(bead_id: &str, text: &str) -> Result<String, String> {
     run(&["note", bead_id, text])
 }

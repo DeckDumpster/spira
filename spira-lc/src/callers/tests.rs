@@ -466,3 +466,92 @@ fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
     assert_eq!(go(&mut f, "deliver", &["push-delivered", "sp-r", "abc"]).code, NO_ROW);
     assert_eq!(f.events.len(), n, "no event for a bead that is not CERTIFIED");
 }
+
+// ---- unclaim / close-epic (sp-hyo5e): the bd halves, routed through the machine ---------
+
+#[derive(Default)]
+struct FakeBd {
+    /// bead id -> (issue_type, assignee)
+    rows: BTreeMap<String, (String, Option<String>)>,
+    closed: Vec<(String, String)>,
+    down: bool,
+}
+
+impl Bd for FakeBd {
+    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String> {
+        match self.rows.get_mut(id) {
+            Some((_, a)) if a.as_deref() == Some(actor) => {
+                *a = None;
+                Ok(())
+            }
+            Some((_, a)) => Err(format!("held by {a:?}")),
+            None => Err("no such issue".into()),
+        }
+    }
+    fn issue_type(&mut self, id: &str) -> Result<String, String> {
+        if self.down {
+            return Err("bd down".into());
+        }
+        self.rows.get(id).map(|r| r.0.clone()).ok_or_else(|| "no such issue".into())
+    }
+    fn close(&mut self, id: &str, reason: &str) -> Result<(), String> {
+        self.closed.push((id.into(), reason.into()));
+        Ok(())
+    }
+}
+
+#[test]
+fn unclaim_releases_the_row_and_bds_claim_under_the_holders_name() {
+    let mut f = Fake::default();
+    f.bead("sp-u", BeadState::Working).holder = Some("aeon-1".into());
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-u".into(), ("task".into(), Some("aeon-1".into())));
+    assert_eq!(unclaim(&v(&["sp-u", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.state("sp-u"), "READY");
+    assert_eq!(f.events.last().unwrap().5, r#""Release""#);
+    assert_eq!(bd.rows["sp-u"].1, None, "bd's claim mutex is cleared");
+}
+
+#[test]
+fn unclaim_never_robs_another_holder_and_ignores_the_machines_refusal() {
+    // The machine has already moved past WORKING (Release is illegal): not surfaced.
+    let mut f = Fake::default();
+    f.bead("sp-s", BeadState::Submitted);
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-s".into(), ("task".into(), Some("aeon-1".into())));
+    assert_eq!(unclaim(&v(&["sp-s", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.state("sp-s"), "SUBMITTED");
+    // Reclaimed by another aeon in between: bd's CAS refuses, the new holder keeps it.
+    bd.rows.insert("sp-s".into(), ("task".into(), Some("aeon-2".into())));
+    let a = unclaim(&v(&["sp-s", "aeon-1"]), true, &mut f, &mut bd);
+    assert_eq!(a.code, NO_ROW);
+    assert_eq!(bd.rows["sp-s"].1.as_deref(), Some("aeon-2"));
+}
+
+#[test]
+fn unclaim_with_the_switch_off_reads_no_machine_but_still_releases_bd() {
+    let mut f = Fake { down: true, ..Default::default() };
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-o".into(), ("task".into(), Some("aeon-1".into())));
+    assert_eq!(unclaim(&v(&["sp-o", "aeon-1"]), false, &mut f, &mut bd).code, APPLIED);
+    assert_eq!(f.calls, 0, "switch off: the machine is never asked");
+    assert_eq!(bd.rows["sp-o"].1, None);
+    assert_eq!(unclaim(&v(&["sp-o"]), false, &mut f, &mut bd).code, CANNOT_TELL, "no actor: usage");
+    assert_eq!(unclaim(&v(&["sp-o", ""]), false, &mut f, &mut bd).code, CANNOT_TELL, "empty actor: usage");
+}
+
+#[test]
+fn close_epic_closes_only_an_epic() {
+    let mut bd = FakeBd::default();
+    bd.rows.insert("sp-e".into(), ("epic".into(), None));
+    bd.rows.insert("sp-w".into(), ("task".into(), None));
+    assert_eq!(close_epic(&v(&["sp-e", "Pilgrimage complete"]), &mut bd).code, APPLIED);
+    assert_eq!(bd.closed, vec![("sp-e".to_string(), "Pilgrimage complete".to_string())]);
+    let a = close_epic(&v(&["sp-w", "x"]), &mut bd);
+    assert_eq!(a.code, REFUSED, "a work bead is never closed through bd");
+    assert!(a.stderr.contains("not an epic"));
+    assert_eq!(bd.closed.len(), 1);
+    bd.down = true;
+    assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut bd).code, CANNOT_TELL);
+    assert_eq!(close_epic(&v(&["sp-e"]), &mut bd).code, CANNOT_TELL, "no reason: usage");
+}

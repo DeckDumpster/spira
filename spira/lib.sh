@@ -594,10 +594,11 @@ lc_claim_bead() {
         "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
 }
 
-# lc_release_bead <id> <actor> — best-effort Release. Called on every release_own_claim, so
-# it fires from states where Release is illegal (SUBMITTED, DONE, ...) as often as from
-# WORKING; those refusals are expected, not errors, and are never surfaced to the caller —
-# the row is already exactly where it should be.
+# lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
+# is `spira-lc unclaim` now (sp-hyo5e), which applies the same Release. Like it, this fires
+# from states where Release is illegal (SUBMITTED, DONE, ...) as often as from WORKING;
+# those refusals are expected, not errors, and are never surfaced to the caller — the row
+# is already exactly where it should be.
 lc_release_bead() {
     local id="$1" actor="$2" row state version
     row="$(lc_bead_row "$id")" || return 0
@@ -623,10 +624,12 @@ lc_bead_verified() {
 
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
-# Sets status back to open and clears the assignee in one update call. `bd assign <id> ""`
-# refuses to overwrite another actor's LIVE in_progress claim, so if a supervisor reclaimed
-# the bead and handed it to another aeon between our fence check and this call, the assign
-# step fails safely and the bead is left with the new holder.
+# ONE CALL, THROUGH THE MACHINE (sp-hyo5e): `spira-lc unclaim` applies the lifecycle Release
+# (switch on; best-effort, refusals from past-WORKING states are the row already being right)
+# and releases bd's claim mutex with `bd unclaim --if-assignee <me>` — the compare-and-swap
+# inverse of the aeon's `bd update --claim`. If a supervisor reclaimed the bead and handed it
+# to another aeon between our fence check and this call, bd refuses and the bead is left with
+# the new holder. Nothing in shell writes a claim or a status around the machine any more.
 #
 # THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
@@ -638,8 +641,7 @@ lc_bead_verified() {
 release_own_claim() {
     local id="$1" me="${BEADS_ACTOR:-aeon-${SPIRA_AEON:-}}"
     [ -n "$me" ] && [ "$me" != "aeon-" ] || return 1
-    lc_release_bead "$id" "$me"
-    bdq update "$id" --status open --assignee "" >/dev/null 2>&1
+    spira-lc unclaim "$id" "$me" >/dev/null 2>&1
 }
 
 # park_unmapped <id> <repo-name> — repo-map has no checkout for the bead's repo:<repo-name>.

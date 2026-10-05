@@ -135,7 +135,8 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
         println!("{f}");
     }
     eprintln!(
-        "lifecycle-guard: REFUSED — {} finding(s) reach the landstate ledger or a landed oracle. \
+        "lifecycle-guard: REFUSED — {} finding(s) reach a bead's state around the lifecycle machine \
+         (the landstate ledger, a landed oracle, a bd lifecycle write or status read). \
          The lifecycle machine is the only route to a bead's state (design \
          bead-lifecycle-state-machine §3.6(3)), and this gate has no allow-list. Exits: (1) read \
          or change the state through spira-lc (show / list / state / the lifecycle verbs) instead; \

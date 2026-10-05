@@ -49,7 +49,11 @@ export SPIRA_CONF="$TMP/no-such-conf"
 export SPIRA_DB="$TMP/no-such-db"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN" "$TMP/bin"
 LCSTATE="$TMP/lc-state"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] && [ -s "%s/$2" ] && cat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/bin/spira-lc"
+# The stub answers `state` from the fixture; every other verb (T3's `close-epic`, sp-hyo5e)
+# is the tree's own spira-lc, found on PATH before the stub shadows it.
+REAL_LC="$(command -v spira-lc 2>/dev/null || true)"
+printf '#!/usr/bin/env bash\nif [ "$1" = state ]; then [ -s "%s/$2" ] && cat "%s/$2"; exit; fi\n[ -n "%s" ] && exec "%s" "$@"\nexit 2\n' \
+    "$LCSTATE" "$LCSTATE" "$REAL_LC" "$REAL_LC" > "$TMP/bin/spira-lc"
 chmod +x "$TMP/bin/spira-lc"; mkdir -p "$LCSTATE"
 PATH="$TMP/bin:$PATH"
 

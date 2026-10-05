@@ -70,12 +70,19 @@ printf '' > "$SPIRA_REPO_MAP"   # empty; amend does not need it
 run_bead() { SPIRA_HOME="$SPIRA_HOME" SPIRA_MAIL="$SPIRA_MAIL" SPIRA_RUN="$SPIRA_RUN" \
              bead.sh "$@"; }
 
-# File a bead in the fixture db, then claim it manually.
-BID2="$(bdq create "Test amend bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
-[ -n "$BID2" ] || { bad "bead.sh amend: could not file test bead" ""; tl_summary; exit 1; }
-
-bdq update "$BID2" --claim >/dev/null 2>&1 || true
+# The amended beads are FIXTURE STATE, declared as data — one held in_progress by an aeon,
+# one open — never claimed or closed through bd around the lifecycle machine (sp-hyo5e).
+# Neither carries the builder's partition label, so (d)'s aeon cannot claim them.
+fixture_beads() {   # fixture_beads <status-of-sp-amend2> <status-of-sp-amend3>
+    testdb_seed <<JSONL
+{"id":"sp-amend2","title":"Test amend bead","status":"$1","assignee":"aeon-builder","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL:-spira}","repo:fixture"],"updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"id":"sp-amend3","title":"Test no-aeon bead","status":"$2","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL:-spira}","repo:fixture"],"updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+JSONL
+}
+fixture_beads in_progress open || { bad "bead.sh amend: could not seed the test beads" ""; tl_summary; exit 1; }
+BID2=sp-amend2
+is "the fixture holds the amended bead in_progress" in_progress \
+    "$(bdq show "$BID2" --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["status"])' 2>/dev/null)"
 
 FAKE_PID=$$
 FAKE_PF="$SPIRA_RUN/aeon-builder-$BID2.pid"
@@ -98,9 +105,7 @@ rm -rf "$SPIRA_MAIL/aeon-$BID2"
 echo
 echo "bead.sh amend — open bead with no live aeon (c)"
 
-BID3="$(bdq create "Test no-aeon bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
-[ -n "$BID3" ] || { bad "bead.sh amend (c): could not file test bead" ""; tl_summary; exit 1; }
+BID3=sp-amend3
 
 amend3_rc=0
 run_bead amend "$BID3" --note "No aeon watching" >/dev/null 2>&1 || amend3_rc=$?
@@ -111,8 +116,7 @@ is     "SEEN GREEN (c): no mailbox created"  "" \
 # ==========================================================================
 # (d) mailbox created while the aeon runs, removed after the aeon exits
 # ==========================================================================
-bdq close "$BID2" --reason "test cleanup" >/dev/null 2>&1 || true
-bdq close "$BID3" --reason "test cleanup" >/dev/null 2>&1 || true
+fixture_beads closed closed   # out of (d)'s way: its stub agent works the first in_progress bead
 
 echo
 echo "(d) mailbox seen during the run, then gone after the aeon exits"

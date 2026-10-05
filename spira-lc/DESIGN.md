@@ -34,6 +34,14 @@ it existed).
 | `deliver pr-merged <repo> <id> <branch> <sha>` · `pr-closed <id>` · `push-delivered <id> <sha>` · `push-requeued <id> <tip>` · `push-returned <id>` | `lc_deliver_*` | 0 applied · 1 skipped (no delivery row / wrong state, logged) · 2/3 as `event`; lib.sh `log` lines on stdout |
 | `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
 
+**Two verbs carry bd's half of a claim or an epic, and run whatever the switch says** (sp-hyo5e —
+nothing in shell writes a claim, a status or a close around the machine any more):
+
+| verb | replaces | exit |
+|---|---|---|
+| `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | the machine's `Release` (switch on, best-effort: a refusal from past WORKING is the row already right), then always `bd unclaim <id> --if-assignee <actor>` — the CAS inverse of the aeon's `bd update --claim`, which bd's candidate set (`--status open --no-assignee`) still reads. 0 released · 1 bd kept the claim (another holder) · 2 usage |
+| `close-epic <id> <reason>` | pilgrimage.sh's `bdq close` | `bd close` only when bd's `issue_type` is `epic` (a grouping, never claimed, no lifecycle row). 0 closed · 2 cannot tell / usage · 3 refused (not an epic) |
+
 **Two verbs touch no lifecycle state and ignore the switch.** `content-landed <repo> <branch> <base>`
 (0 base holds every change the branch makes · 1 not · 2 usage) and `close-on-land <id> [sha]` (closes a
 submitted, unclosed work bead citing the sha, marks the ledger LANDED, reaps the branch through

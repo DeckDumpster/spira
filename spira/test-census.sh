@@ -229,7 +229,12 @@ run_census_fixture() {
         "$CENSUS" "$@" 2>/dev/null
 }
 
-B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1
+# The remedy's closed bd row is FIXTURE STATE, declared as data (an upsert of the same row),
+# never a bd close driven around the lifecycle machine (sp-hyo5e). The annotation asserted
+# below is the proof census read it as closed.
+testdb_seed <<JSONL
+{"id":"$remedy_id","title":"Fix sp-recur-remedy-class","status":"closed","closed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","issue_type":"task","priority":2,"labels":["spira","plan","${REMEDY_LABEL}","covers:sp-recur-remedy-class"]}
+JSONL
 # A closed remedy with NO branch is orphaned (sp-c3q60) — that decision path is
 # table-tested (fake bd, real throwaway git) in test-census-pipeline.sh. This fixture
 # gives it a branch to represent the in-flight case.

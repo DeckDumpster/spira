@@ -63,6 +63,14 @@ fn main() {
             };
             std::process::exit(close_on_land::run(&args[1..], &mut record))
         }
+        // The claim's two halves and an epic's close (sp-hyo5e): bd's half runs whatever the
+        // switch says, so these are routed before the caller verbs' all-or-nothing switch.
+        Some("unclaim") => {
+            let enforce = spira_config::lifecycle_enforce(None);
+            let ans = callers::unclaim(&args[1..], enforce, &mut Live { conn: None }, &mut bd::LiveBd);
+            std::process::exit(emit(&args[1..], ans))
+        }
+        Some("close-epic") => std::process::exit(emit(&args[1..], callers::close_epic(&args[1..], &mut bd::LiveBd))),
         Some("content-landed") if args.len() == 4 => {
             std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
         }
@@ -197,7 +205,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | unclaim <bead-id> <actor> | close-epic <bead-id> <reason> | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
         ),
     }
 }

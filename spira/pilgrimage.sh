@@ -254,7 +254,9 @@ cmd_check() {
         # Marker first, then close: `bd epic status` reports only open epics, so a close
         # that lands without the marker would take the transition with it.
         kv_set "$(landed_key "$id")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-        bdq close "$id" --reason "Pilgrimage complete: all $total child beads closed. Subscribers notified: ${subs:-none}." >/dev/null 2>&1
+        # Through spira-lc (sp-hyo5e): the one door for a bd close, which refuses anything but
+        # an epic — a pilgrimage IS an epic, a grouping with no lifecycle row of its own.
+        spira-lc close-epic "$id" "Pilgrimage complete: all $total child beads closed. Subscribers notified: ${subs:-none}." >/dev/null 2>&1
         printf '%s\n' "$subject"
         acted=$((acted+1))
     done < <(pilgrimages)

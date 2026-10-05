@@ -43,9 +43,21 @@ pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-comm
 /// The finding classes the landing gate refuses (`lifecycle-guard --gate`, gate.steps): the
 /// landstate ledger and the landed oracles, whose removal completes the cutover (sp-2c1n0) —
 /// after it, the lifecycle machine is the only route to "is this bead landed", and any
-/// reintroduction is a red. Every other class is still reported by a plain run (and counted
-/// on the gate's one summary line) and joins this list in the commit that clears it.
-pub const GATE_CLASSES: &[Class] = &[Class::LandstateCall, Class::LandstatePath];
+/// reintroduction is a red — and every way around the machine to a bead's state (sp-hyo5e):
+/// a bd/bdq lifecycle write, directly or through a wrapper, a verb the analyser cannot
+/// resolve, and a bd status read feeding a decision. Each was cleared by routing it through
+/// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list. The rest — the
+/// credential rule (over-broad: it flags every `spira-lc` CLI call and comment) and bd named
+/// in a brief — are still reported by a plain run, counted on the gate's one summary line,
+/// and join this list in the commit that clears them.
+pub const GATE_CLASSES: &[Class] = &[
+    Class::LandstateCall,
+    Class::LandstatePath,
+    Class::DirectWrite,
+    Class::WrapperWrite,
+    Class::DynamicVerb,
+    Class::LifecycleRead,
+];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or
 /// deletes a state path — see this bead's guardrail against touching legacy lifecycle paths.

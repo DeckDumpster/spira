@@ -234,7 +234,7 @@ fn gate_mode_passes_a_clean_tree_with_its_fence_line() {
     let (code, out, err) = gate(&fixture("gate_clean"));
     assert_eq!(code, Some(0), "stdout:\n{out}\nstderr:\n{err}");
     assert!(out.contains("fence: lifecycle-guard checked 2 files"), "{out}");
-    assert!(out.contains("not yet refused at the gate: direct-write=1"), "{out}");
+    assert!(out.contains("not yet refused at the gate: credential=1"), "{out}");
     assert!(!out.contains("planted.sh") && !err.contains("REFUSED"), "{out}{err}");
 }
 
@@ -302,4 +302,44 @@ fn spira_lc_beyond_its_migration_reader_is_held_to_the_rule() {
     let findings = run("spira_lc_beyond_classifier", None);
     assert_eq!(classes(&findings), vec!["landstate-path"], "{findings:#?}");
     assert_eq!(findings[0]["file"], "spira-lc/src/answer.rs");
+}
+
+/// sp-hyo5e: the gate refuses every way around the lifecycle machine, not only the ledger —
+/// a direct bd write, a write through a wrapper, a verb it cannot resolve and a bd status read
+/// feeding a decision. Each class is named in the refusal; none is merely counted.
+#[test]
+fn gate_mode_refuses_a_planted_write_around_the_machine() {
+    let (code, out, err) = gate(&fixture("gate_bd_write"));
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    for (line, class) in [
+        ("aeon.sh:5: [direct-write]", "bdq update --status"),
+        ("aeon.sh:7: [wrapper-write]", "release"),
+        ("aeon.sh:7: [wrapper-write]", "bdq reopen"),
+        ("aeon.sh:8: [direct-write]", "bd close"),
+        ("aeon.sh:10: [dynamic-verb]", "cannot be resolved"),
+        ("aeon.sh:11: [lifecycle-read]", "bd show"),
+    ] {
+        assert!(out.lines().any(|l| l.starts_with(line) && l.contains(class)), "no {line} … {class}:\n{out}");
+    }
+    assert!(!out.contains("not yet refused at the gate: direct-write"), "{out}");
+    assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
+    assert!(err.contains("REFUSED") && err.contains("no allow-list"), "{err}");
+}
+
+/// sp-hyo5e: a verb held in an array is the array's first word when every assignment agrees,
+/// with its appends' flags still seen; a forwarder that pipes bd through a filter still leaves
+/// the verb to its call site (and is not itself an unresolvable verb); an array filled at run
+/// time stays dynamic.
+#[test]
+fn array_held_verbs_and_filtering_forwarders_are_resolved() {
+    let findings = run("array_verb", None);
+    let at = |line: u64| -> Vec<&str> {
+        findings.iter().filter(|f| f["line"] == line).map(|f| f["class"].as_str().unwrap()).collect()
+    };
+    assert_eq!(at(4), Vec::<&str>::new(), "the forwarder's own \"$@\": {findings:#?}");
+    assert_eq!(at(7), Vec::<&str>::new(), "READY resolves to `ready`: {findings:#?}");
+    assert_eq!(at(10), vec!["direct-write"], "WRITE resolves to `update … --status`: {findings:#?}");
+    assert_eq!(at(11), Vec::<&str>::new(), "bdjson show is a read: {findings:#?}");
+    assert_eq!(at(12), vec!["wrapper-write"], "bdjson close: {findings:#?}");
+    assert_eq!(at(15), vec!["dynamic-verb"], "a run-time fill stays dynamic: {findings:#?}");
 }

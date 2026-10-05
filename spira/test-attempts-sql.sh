@@ -195,13 +195,15 @@ is "bump_poison_cleared does not write a label" "0" \
    "$(grep -c 'bdq label add\|bump_counter' <<<"$body_bpc" || true)"
 
 echo
-echo "attempts_of against real bd events (positive controls, real claims):"
+echo "attempts_of against real bd events (positive controls):"
 
 seed sp-ev1
 is "a fresh bead with no status changes has 0 attempts" "0" "$(num "$(attempts_of sp-ev1)")"
 
 seed sp-ev2
-bdq update sp-ev2 --status in_progress >/dev/null 2>&1
+# Seeded like b1..b8, not driven through bd's status (nothing writes a status around the
+# lifecycle machine, sp-hyo5e); the value is the shape bd's own status_changed row carries.
+seedn sp-ev2 status_changed '{"status":"in_progress"}' 1
 is "one in_progress transition is one attempt (fresh-bead/one case, ex test-timeout.sh)" \
    "1" "$(num "$(attempts_of sp-ev2)")"
 

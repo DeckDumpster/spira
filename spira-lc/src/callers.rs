@@ -558,5 +558,68 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
     Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
 }
 
+/// The bd half a claim verb needs: the claim mutex (`bd update --claim`'s inverse) and an
+/// epic's own close. Behind a trait so the compositions below are unit-testable without bd.
+pub trait Bd {
+    /// `bd unclaim <id> --if-assignee <actor>` — Ok when the claim was released.
+    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String>;
+    /// The bead's bd `issue_type` (`task`, `epic`, ...).
+    fn issue_type(&mut self, id: &str) -> Result<String, String>;
+    /// `bd close <id> --reason <reason>`.
+    fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
+}
+
+/// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
+/// `release_own_claim`, sp-hyo5e). One route for both halves of a claim:
+///
+/// 1. the machine's `Release` (switch on only; best-effort — it fires from SUBMITTED, DONE
+///    and every other state where Release is illegal as often as from WORKING, and those
+///    refusals are the row already being where it should be, so they are not surfaced);
+/// 2. bd's claim mutex, always: `bd unclaim --if-assignee <actor>`, the compare-and-swap
+///    inverse of the aeon's `bd update --claim`. The candidate set (`MACHINE_READY_ARGS`:
+///    `--status open --no-assignee`) and the claim itself are still bd's, so a claim left
+///    standing strands the bead from every later claim. The CAS is the safety property: a
+///    supervisor that reclaimed the bead and handed it to another aeon between our fence and
+///    this call makes bd refuse, and the new holder keeps it.
+///
+/// Exit: 0 released · 1 bd refused (not this actor's claim, or no such bead) · 2 usage.
+pub fn unclaim(args: &[String], enforce: bool, m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let (Some(id), Some(actor)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) else {
+        return usage("unclaim <bead-id> <actor>");
+    };
+    if enforce {
+        let _ = with_row(m, id, actor, |_| Ok(BeadEventKind::Release));
+    }
+    match bd.unclaim(id, actor) {
+        Ok(()) => Answer::code(APPLIED),
+        Err(e) => Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: bd kept the claim on {id}: {}\n", e.trim()), ..Default::default() },
+    }
+}
+
+/// `close-epic <id> <reason>` — close an EPIC bead in bd (pilgrimage.sh's completion close,
+/// sp-hyo5e). An epic is a grouping, never a lifecycle bead: it is excluded from every claim
+/// (`--exclude-type epic`), so it has no READY..LANDED path and bd's open/closed is its only
+/// state. This verb is the one door for that close, and it refuses anything that is not an
+/// epic — a work bead's end is the machine's `done`/delivery, never a bd close.
+///
+/// Exit: 0 closed · 2 cannot tell (bd unreadable, or the close failed) · 3 refused (not an epic).
+pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
+    let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1)) else {
+        return usage("close-epic <bead-id> <reason>");
+    };
+    match bd.issue_type(id) {
+        Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: cannot read {id}: {}\n", e.trim()), ..Default::default() },
+        Ok(t) if t != "epic" => Answer {
+            code: REFUSED,
+            stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
+            ..Default::default()
+        },
+        Ok(_) => match bd.close(id, reason) {
+            Ok(()) => Answer::code(APPLIED),
+            Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: bd close {id} failed: {}\n", e.trim()), ..Default::default() },
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests;

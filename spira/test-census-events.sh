@@ -163,15 +163,16 @@ nowant "landing requeue path: sp-requeue-merge-conflict absent" "sp-requeue-merg
 
 # ======================================================================================
 echo
-echo "caller-side: bdq reclaim + bump_reclaim ghost (the strand.sh reclaim path)"
+echo "caller-side: bump_reclaim ghost (the strand reclaim path)"
 # ======================================================================================
-# strand.sh calls bdq reclaim --id then bump_reclaim ghost. Seeding in_progress lets the
-# reclaim succeed; the bump_reclaim call that follows is what census reads.
+# strand's check reclaims the bead (strand/src/check.rs, its own bd call) and then records
+# bump_reclaim ghost; the recorded event is what census reads, so that is all this drives —
+# the reclaim itself is strand's, never re-enacted here around the lifecycle machine
+# (sp-hyo5e).
 testdb_reset
 testdb_seed <<'JSONL'
 {"id":"sp-f2","title":"strand test","status":"in_progress","issue_type":"task","labels":["spira"],"updated_at":"2026-09-12T00:00:00Z"}
 JSONL
-bdq reclaim --id "sp-f2" --older-than 1s >/dev/null 2>&1 || true
 reclaim_event "sp-f2" ghost >/dev/null 2>&1
 
 out="$(census_out)"

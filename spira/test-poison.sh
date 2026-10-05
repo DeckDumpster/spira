@@ -306,21 +306,17 @@ JSONL
 # cover, kept so that the fix is shown not to be a swap.
 #
 # sp-attempt-N labels are no longer written (sp-lzt); sentinel CHECK4 reads attempt counts
-# from status_changed events. cycle() creates the events by transitioning each bead to
-# in_progress and back N times, matching POISON_AT=3 for orphan/kid and POISON_AT-1 for young.
+# from status_changed events. cycle() seeds N in_progress events per bead — matching
+# POISON_AT=3 for orphan/kid and POISON_AT-1 for young — as SQL rows like seedn's, never by
+# driving bd's status around the lifecycle machine (sp-hyo5e): the count is the subject.
 POISON_SEED=$(cat <<JSONL
 {"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-kid","title":"a child of the root epic","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-root","type":"parent-child"}]}
 {"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 )
-cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
-    local id="$1" n="$2" i=0
-    while [ "$i" -lt "$n" ]; do
-        B update "$id" --status in_progress >/dev/null 2>&1
-        B update "$id" --status open >/dev/null 2>&1
-        i=$((i+1))
-    done
+cycle() {   # cycle <id> <n> — n status_changed(in_progress) events, seeded (seedn, below)
+    seedn "$1" status_changed '{"status":"in_progress"}' "$2"
 }
 seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sql
     local id="$1" et="$2" nv="$3" n="${4:-1}" i=0 uuid
@@ -418,7 +414,8 @@ want "the note says the holder keeps its claim" "releases on its own exit path" 
      "$(flat "$(B show sp-orphan 2>/dev/null)")"
 
 # ...and once the holder lets go, CHECK 7 declines to summon for it.
-release() { B update sp-orphan --status open >/dev/null 2>&1; B update sp-orphan --assignee "" >/dev/null 2>&1; }
+# The holder lets go the way an aeon does (release_own_claim -> spira-lc unclaim, sp-hyo5e).
+release() { spira-lc unclaim sp-orphan aeon-holder >/dev/null 2>&1; }
 release; out="$(sentinel)"
 want "CHECK 7 declines to summon for a poisoned bead" "t: nothing ready in its partition" "$out"
 rmpoison sp-orphan
@@ -482,9 +479,8 @@ testdb_seed <<JSONL
 JSONL
 mklc sp-thrash sp-real
 for i in 1 2 3; do
-    B update sp-thrash --status in_progress >/dev/null 2>&1
+    cycle sp-thrash 1
     seedn sp-thrash requeued thrash 1
-    B update sp-thrash --status open >/dev/null 2>&1
 done
 cycle sp-real 3
 out="$(sentinel)"
