@@ -84,6 +84,18 @@ esac
 STUB
 chmod +x "$STUB_BD"
 
+# STUB SPIRA-LC. Whether a trigger bead is still open is its lifecycle row (sp-mve9i,
+# design §3.4), never bd status: `list` answers LC_LIST_OUTPUT (default: no rows).
+STUB_LC="$T/stub-lc"
+cat > "$STUB_LC" <<'STUB'
+#!/usr/bin/env bash
+case "${1:-}" in
+    list) printf '%s\n' "${LC_LIST_OUTPUT:-[]}"; exit 0 ;;
+    *)    exit 2 ;;
+esac
+STUB
+chmod +x "$STUB_LC"
+
 FAIL_BD="$T/fail-bd"
 cat > "$FAIL_BD" <<'STUB'
 #!/usr/bin/env bash
@@ -133,6 +145,8 @@ run_trigger() {
         SPIRA_BD="${SPIRA_BD_OVERRIDE:-$STUB_BD}" \
         BD_LOG_PATH="$BD_LOG" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
+        SPIRA_LC_BIN="$STUB_LC" \
+        LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$RUNDIR" \
         SPIRA_REPO="$TESTREPO" \
@@ -301,10 +315,11 @@ echo "DEDUP: open trigger bead — no second bead is filed"
 # conditions would otherwise be met; the dedup alone prevents filing.
 printf '0\n' > "$WATERMARK_FILE"
 BD_LIST_OUTPUT='[{"id":"sp-test","title":"Maechen pass"}]'
+LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"READY"}]'
 SPIRA_MAECHEN_MAX_GAP_SECONDS=0
 SPIRA_MAECHEN_LANDING_INTERVAL=0
 out="$(run_trigger)"; rc=$?
-unset BD_LIST_OUTPUT SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_LANDING_INTERVAL
+unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_LANDING_INTERVAL
 is     "dedup exits 0"               0           "$rc"
 nowant "dedup does not create"       "create"    "$(cat "$BD_LOG")"
 want   "dedup logs skipping"         "skipping"  "$out"
@@ -323,7 +338,22 @@ echo "DEDUP: the list query includes in_progress, not just open (sp-mp9s)"
 # asserts the fix directly — the list call must ask for "open,in_progress" — without a real
 # database to exercise the filter (law-prefer-the-real-dependency's read is now the argv,
 # not a status transition an in-memory stub cannot honour anyway).
-want   "dedup list call requests --status open,in_progress" "--status open,in_progress" "$(cat "$BD_LOG")"
+# sp-mve9i: the open/in-progress question is now the lifecycle row's, so the bd query is
+# content only (`--all`), and a CLAIMED trigger bead — WORKING — still blocks a second pass,
+# while one the machine has seen handed on does not.
+want   "dedup list call lists content, no bd status filter" "list --all --label" "$(cat "$BD_LOG")"
+nowant "dedup list call never filters on bd status" "--status" "$(cat "$BD_LOG")"
+printf '0\n' > "$WATERMARK_FILE"
+BD_LIST_OUTPUT='[{"id":"sp-test","title":"Maechen pass"}]'
+SPIRA_MAECHEN_MAX_GAP_SECONDS=0
+SPIRA_MAECHEN_LANDING_INTERVAL=0
+LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"WORKING"}]'
+out="$(run_trigger)"
+nowant "a claimed (WORKING) trigger bead still blocks a second pass" "create" "$(cat "$BD_LOG")"
+LC_LIST_OUTPUT='[{"bead_id":"sp-test","state":"SUBMITTED"}]'
+out="$(run_trigger)"
+want   "a trigger bead handed on (SUBMITTED) no longer blocks" "create" "$(cat "$BD_LOG")"
+unset BD_LIST_OUTPUT LC_LIST_OUTPUT SPIRA_MAECHEN_MAX_GAP_SECONDS SPIRA_MAECHEN_LANDING_INTERVAL
 
 # ==========================================================================================
 echo

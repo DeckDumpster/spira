@@ -126,6 +126,10 @@ else
             || date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)"
 
     lc_fix_init "$TMP/lcfix"
+    # Both were handed on by their builders and neither has landed: that is their lifecycle
+    # row, which is what the collector reads (sp-mve9i), not bd's `closed`.
+    lc_bead SUBMITTED sp-old "$(git -C "$ALPHA" rev-parse spira/sp-old)" 0
+    lc_bead SUBMITTED sp-new "$(git -C "$ALPHA" rev-parse spira/sp-new)" 0
     testdb_reset
     testdb_seed <<JSONL2
 {"id":"sp-epic","title":"epic","status":"open","issue_type":"epic","labels":["$SCOPE"],"updated_at":"$PAST"}

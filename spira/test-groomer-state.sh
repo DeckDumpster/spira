@@ -8,8 +8,9 @@
 # straight from git/landstate: landed-but-open (close), closed-no-branch (spira-dropped),
 # closed-never-landed conflict|batch-ready (reopen), then blocked-by-unlanded notes over
 # whatever got reopened. The 2026-10-04 lifecycle cutover deleted them: lifecycle LANDED
-# supersedes them, and the sentinel's CHECK5-LC reports the same three drifts from the
-# spira-lc rows. The landed-but-open sweep had closed the cutover bead (sp-sa8pn) itself.
+# supersedes them (the sentinel's CHECK5-LC, which reported the same drifts from the spira-lc
+# rows, went with sp-mve9i: bd status is inert, so there is nothing for the row to disagree
+# with). The landed-but-open sweep had closed the cutover bead (sp-sa8pn) itself.
 #
 # THE CASE. The exact fixture the old sweep acted on — an open bead whose commit is on the
 # base, a closed bead with no branch: label, two closed beads whose branches never landed
