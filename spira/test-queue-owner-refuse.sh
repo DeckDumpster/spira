@@ -14,13 +14,12 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
-
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-owner-refuse
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up owner-refuse || { echo "test-queue-owner-refuse: could not build fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-owner-refuse: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"
@@ -28,7 +27,6 @@ REMOTE="$TMP/remote.git"
 RUN="$TMP/run"
 SH="$TMP/spira"
 REPONAME=fixture-repo
-LANDSTATE="$RUN/landstate"
 QUEUEDIR="$RUN/queue"
 
 git init -q --bare -b main "$REMOTE"
@@ -37,7 +35,7 @@ git -C "$REPO" commit -q --allow-empty -m base
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$QUEUEDIR/$REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/" 2>/dev/null
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 # mail is a compiled binary now (sp-ooh1k), not a script beside these, and "$HERE/mail" is
@@ -92,7 +90,7 @@ setup_open_batch() {
     stamp="20260927T000000Z"
     batch_br="spira/queue/$stamp"
     git -C "$REPO" branch -f "$batch_br" "$tip" >/dev/null
-    printf 'BATCHED %s %s\n' "$tip" "$(date +%s)" > "$LANDSTATE/sp-ownf1"
+    lcfix_seed sp-ownf1 IN_DELIVERY "$tip"
     {
         printf 'pr=77\nhead=%s\nbase=%s\nmembers=sp-ownf1:%s\nopened=%s\nbranch=%s\nowner=concierge\n' \
             "$tip" "$base_sha" "$tip" "$(date +%s)" "$batch_br"
@@ -100,7 +98,7 @@ setup_open_batch() {
 }
 
 teardown_open_batch() {
-    rm -f "$(batch_file)" "$LANDSTATE/sp-ownf1"
+    rm -f "$(batch_file)"
     git -C "$REPO" worktree remove -f "$bwt" 2>/dev/null || true
     git -C "$REPO" branch -D "$(member_branch)" "$batch_br" 2>/dev/null || true
     git -C "$REPO" worktree prune 2>/dev/null || true
@@ -124,7 +122,7 @@ want    "refusal names the owner"                     "claimed by concierge" "$o
 want    "refusal names the override"                  "SPIRA_QUEUE_OWNER_OVERRIDE=1" "$out"
 is      "open record is unchanged"                    "$record_before" "$(cat "$(batch_file)")"
 is      "batch branch tip is unchanged"                "$branch_sha_before" "$(git -C "$REPO" rev-parse "$batch_br")"
-is      "landstate is unchanged (still BATCHED)"       "BATCHED" "$(awk '{print $1; exit}' "$LANDSTATE/sp-ownf1")"
+is      "lifecycle row is unchanged (still IN_DELIVERY)" "IN_DELIVERY" "$(lcfix_state sp-ownf1)"
 
 teardown_open_batch
 
@@ -143,7 +141,7 @@ rc2=$?
 
 wantrc "owner eject exits zero"           0 "$rc2"
 is     "open record is removed (last member ejected)" "0" "$([ -f "$(batch_file)" ] && echo 1 || echo 0)"
-is     "landstate becomes RED"            "RED" "$(awk '{print $1; exit}' "$LANDSTATE/sp-ownf1")"
+is     "lifecycle row returns to REWORK"  "REWORK" "$(lcfix_state sp-ownf1)"
 
 teardown_open_batch
 
@@ -162,6 +160,7 @@ rc3=$?
 wantrc "refused abandon exits non-zero"   1 "$rc3"
 want   "abandon refusal names the owner"      "claimed by concierge" "$out3"
 want   "abandon refusal names the override"   "SPIRA_QUEUE_OWNER_OVERRIDE=1" "$out3"
+is     "abandon refused: lifecycle row is unchanged" "IN_DELIVERY" "$(lcfix_state sp-ownf1)"
 is     "open record is unchanged (abandon refused)" "$record_before3" "$(cat "$(batch_file)")"
 
 teardown_open_batch
