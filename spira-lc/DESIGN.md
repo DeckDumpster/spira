@@ -39,7 +39,7 @@ nothing in shell writes a claim, a status or a close around the machine any more
 
 | verb | replaces | exit |
 |---|---|---|
-| `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | the machine's `Release` (switch on, best-effort: a refusal from past WORKING is the row already right), then always `bd unclaim <id> --if-assignee <actor>` — the CAS inverse of the aeon's `bd update --claim`, which bd's candidate set (`--status open --no-assignee`) still reads. 0 released · 1 bd kept the claim (another holder) · 2 usage |
+| `unclaim <id> <actor>` | `release_own_claim`'s `lc_release_bead` + `bdq update --status open --assignee ""` | switch on: the machine's `Release` when the row is WORKING under `<actor>`, refused when another holder has it, success when the claim is already over; bd is not written (the row is the claim). Switch off: `bd unclaim <id> --if-assignee <actor>`. 0 released · 1 another holder, or no such bead · 2 cannot tell, usage |
 | `close-epic <id> <reason>` | pilgrimage.sh's `bdq close` | `bd close` only when bd's `issue_type` is `epic` (a grouping, never claimed, no lifecycle row). 0 closed · 2 cannot tell / usage · 3 refused (not an epic) |
 
 **Two verbs touch no lifecycle state and ignore the switch.** `content-landed <repo> <branch> <base>`

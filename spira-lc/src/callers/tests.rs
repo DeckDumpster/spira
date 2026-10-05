@@ -501,7 +501,7 @@ impl Bd for FakeBd {
 }
 
 #[test]
-fn unclaim_releases_the_row_and_bds_claim_under_the_holders_name() {
+fn unclaim_releases_the_row_under_the_holders_name_and_never_writes_bd() {
     let mut f = Fake::default();
     f.bead("sp-u", BeadState::Working).holder = Some("aeon-1".into());
     let mut bd = FakeBd::default();
@@ -509,23 +509,23 @@ fn unclaim_releases_the_row_and_bds_claim_under_the_holders_name() {
     assert_eq!(unclaim(&v(&["sp-u", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
     assert_eq!(f.state("sp-u"), "READY");
     assert_eq!(f.events.last().unwrap().5, r#""Release""#);
-    assert_eq!(bd.rows["sp-u"].1, None, "bd's claim mutex is cleared");
+    assert_eq!(bd.rows["sp-u"].1.as_deref(), Some("aeon-1"), "bd's assignee is content: the row is the claim");
 }
 
 #[test]
-fn unclaim_never_robs_another_holder_and_ignores_the_machines_refusal() {
-    // The machine has already moved past WORKING (Release is illegal): not surfaced.
+fn unclaim_never_robs_another_holder_and_a_claim_already_over_is_success() {
     let mut f = Fake::default();
-    f.bead("sp-s", BeadState::Submitted);
     let mut bd = FakeBd::default();
-    bd.rows.insert("sp-s".into(), ("task".into(), Some("aeon-1".into())));
+    f.bead("sp-s", BeadState::Submitted);
     assert_eq!(unclaim(&v(&["sp-s", "aeon-1"]), true, &mut f, &mut bd).code, APPLIED);
-    assert_eq!(f.state("sp-s"), "SUBMITTED");
-    // Reclaimed by another aeon in between: bd's CAS refuses, the new holder keeps it.
-    bd.rows.insert("sp-s".into(), ("task".into(), Some("aeon-2".into())));
-    let a = unclaim(&v(&["sp-s", "aeon-1"]), true, &mut f, &mut bd);
-    assert_eq!(a.code, NO_ROW);
-    assert_eq!(bd.rows["sp-s"].1.as_deref(), Some("aeon-2"));
+    assert!(f.events.is_empty(), "past WORKING: nothing to release, no event");
+    // Reaped and handed to another aeon in between: refused, the new holder keeps it.
+    f.bead("sp-h", BeadState::Working).holder = Some("aeon-2".into());
+    let a = unclaim(&v(&["sp-h", "aeon-1"]), true, &mut f, &mut bd);
+    assert_eq!(a.code, NO_ROW, "{}", a.stderr);
+    assert_eq!(f.state("sp-h"), "WORKING");
+    assert!(f.events.is_empty());
+    assert_eq!(unclaim(&v(&["sp-none", "aeon-1"]), true, &mut f, &mut bd).code, NO_ROW);
 }
 
 #[test]

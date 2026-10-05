@@ -11,7 +11,10 @@
 //! `Store::bd`); the epic functions already exist as `select`/`epics` (DESIGN.md §2) — this
 //! bead only adds their lib.sh shims.
 
-use crate::rank::ReadyRow;
+use std::collections::HashMap;
+
+use crate::rank::{LifecycleRow, ReadyRow};
+use lifecycle::bead::{BeadState, HoldKind};
 use spira_claim::READY_ARGS_BASE;
 
 /// `ready_raw_args`: READY_ARGS without the `SPIRA_SCOPE_LABEL` restriction, one argv
@@ -26,20 +29,28 @@ pub fn ready_raw_args(no_loop_label: &str) -> Vec<String> {
     v
 }
 
-/// `MACHINE_READY_ARGS` (lib.sh): `bd list` over open beads with no blocker judgment — the
-/// candidate set `select --blockers machine` filters when lifecycle_enforce is on.
-pub fn machine_ready_args(scope_label: &str, no_loop_label: &str) -> Vec<String> {
-    let mut v: Vec<String> =
-        ["list", "--status", "open", "--no-assignee", "--exclude-type", "epic,event", "--limit", "0"].iter().map(|s| s.to_string()).collect();
-    if !scope_label.is_empty() {
-        v.push("--label".into());
-        v.push(scope_label.to_string());
-    }
-    if !no_loop_label.is_empty() {
-        v.push("--exclude-label".into());
-        v.push(no_loop_label.to_string());
-    }
-    v
+/// The lifecycle half of "ready": the READY and REWORK rows carrying no hold but `wait`,
+/// which [`rank::claimable`] judges through the bead's blockers. bd's status and assignee
+/// are never read: the row is the claim.
+pub fn lifecycle_ready_ids(lc: &HashMap<String, LifecycleRow>) -> Vec<String> {
+    let mut ids: Vec<String> = lc
+        .values()
+        .filter(|r| matches!(r.state, BeadState::Ready | BeadState::Rework) && r.holds.iter().all(|h| *h == HoldKind::Wait))
+        .map(|r| r.bead_id.clone())
+        .collect();
+    ids.sort();
+    ids
+}
+
+/// The bd-content half: a work type, inside every scope label, carrying no no-loop label.
+pub fn in_scope(r: &ReadyRow, scope_label: &str, no_loop_label: &str) -> bool {
+    !matches!(r.issue_type.as_deref(), Some("epic") | Some("event"))
+        && labels_match(r, &split_csv(scope_label), &split_csv(no_loop_label))
+}
+
+/// bd's own `--label` / `--exclude-label` reading: every `inc` label present, no `exc` one.
+pub fn labels_match(r: &ReadyRow, inc: &[String], exc: &[String]) -> bool {
+    inc.iter().all(|l| r.labels.contains(l)) && !exc.iter().any(|l| r.labels.contains(l))
 }
 
 /// `READY_ARGS` itself (lib.sh:434): the base five tokens, `--label <scope>` when a scope
@@ -169,7 +180,7 @@ fn is_deferred(row: &ReadyRow, now: i64) -> bool {
 pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitted: &str) -> Vec<(String, u64)> {
     let shared: Vec<&str> = [queue_wait, submitted].into_iter().filter(|s| !s.is_empty()).collect();
     let mut counts: Vec<(String, u64)> = parts.iter().map(|p| (p.name.clone(), 0)).collect();
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let now = now_epoch();
     for row in rows {
         if is_deferred(row, now) {
             continue;
@@ -186,6 +197,31 @@ pub fn bucket(rows: &[ReadyRow], parts: &[FaythPart], queue_wait: &str, submitte
         }
     }
     counts
+}
+
+/// One fayth's own rows by [`bucket`]'s predicate: what `fayth-ready` counts is exactly
+/// what `fayth-ready --json` hands an aeon to claim from.
+pub fn partition<'a>(rows: &'a [ReadyRow], part: &FaythPart, queue_wait: &str, submitted: &str) -> Vec<&'a ReadyRow> {
+    let shared: Vec<&str> = [queue_wait, submitted].into_iter().filter(|s| !s.is_empty()).collect();
+    let now = now_epoch();
+    rows.iter()
+        .filter(|row| !is_deferred(row, now))
+        .filter(|row| {
+            let labels: Vec<&str> = row.labels.iter().map(String::as_str).collect();
+            bucket_match(&labels, &part.inc, &part.exc, &shared, &part.name)
+        })
+        .collect()
+}
+
+/// `ready-count`'s rows under the machine: bd's label predicate over the claimable set, with
+/// a deferred bead held as `bd ready` holds it.
+pub fn count_matching(rows: &[ReadyRow], inc: &[String], exc: &[String]) -> u64 {
+    let now = now_epoch();
+    rows.iter().filter(|r| !is_deferred(r, now) && labels_match(r, inc, exc)).count() as u64
+}
+
+fn now_epoch() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
 #[cfg(test)]

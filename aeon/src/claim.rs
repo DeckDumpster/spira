@@ -74,8 +74,8 @@ pub struct Selector<'a> {
     /// spira_config::repos (sp-o88bx, "wave 4.12") in-process, instead of the
     /// `_aeon_repo_info` bash seam this used to shell into.
     pub repos: &'a spira_config::repos::Registry,
-    /// `lifecycle_enforce`: the ready set already came from `MACHINE_READY_ARGS` (run.rs), so
-    /// `select` must judge blockers the same way — `--blockers machine`.
+    /// `lifecycle_enforce`: `select` judges blockers by the machine's rows too
+    /// (`--blockers machine`), the rule the ready set was built with.
     pub machine: bool,
 }
 
@@ -220,6 +220,45 @@ pub fn claim_loop(
         }
     }
     (None, logs)
+}
+
+/// One attempt's answer, spira-lc's own exit codes: 0 applied, 3 refused, else cannot tell.
+pub const LC_APPLIED: i32 = 0;
+pub const LC_REFUSED: i32 = 3;
+
+/// The lifecycle claim loop: one Claim event per ranked candidate until one applies. The row
+/// is the claim, so a refusal is the bead no longer READY/REWORK — another aeon won it — and
+/// the next candidate is tried. Returns the claimed id, the log lines, and whether every
+/// attempt was "cannot tell" (a machine that never answered is not an idle queue).
+pub fn lc_claim_loop(
+    ids: &[String],
+    resumable: &[String],
+    tier: Option<&str>,
+    who: &str,
+    mut attempt: impl FnMut(&str) -> i32,
+) -> (Option<String>, Vec<String>, bool) {
+    let mut logs = Vec::new();
+    let mut answered = false;
+    for id in ids {
+        match attempt(id) {
+            LC_APPLIED => {
+                if resumable.iter().any(|r| r == id) {
+                    logs.push(format!("{who}: resuming {id} ({}) — it already has work on its branch", tier.unwrap_or("top rank")));
+                } else {
+                    logs.push(format!("{who}: claiming {id} (epic-first rank)"));
+                }
+                return (Some(id.clone()), logs, false);
+            }
+            LC_REFUSED => {
+                answered = true;
+                logs.push(format!(
+                    "{who}: the lifecycle machine refused ranked candidate {id} (no longer READY/REWORK, or its stack exceeds stack_max_depth) — trying the next ranked candidate"
+                ));
+            }
+            rc => logs.push(format!("{who}: the lifecycle machine could not be reached for ranked candidate {id} (rc={rc}) — trying the next ranked candidate")),
+        }
+    }
+    (None, logs, !ids.is_empty() && !answered)
 }
 
 #[cfg(test)]
@@ -419,5 +458,36 @@ mod tests {
         assert_eq!(claim_retry(&bd, &bd::args(&["ready"]), 2, Duration::ZERO), Err("claim_retry: query failed after 2 attempt(s): e2".into()));
         let ok = ClaimBd { answers: Mutex::new(vec![Out::ok("")]), seen: Mutex::new(vec![]) };
         assert_eq!(claim_retry(&ok, &bd::args(&["ready"]), 2, Duration::ZERO), Ok(String::new()), "a clean empty result is not an error");
+    }
+
+    #[test]
+    fn lc_claim_loop_takes_the_first_applied_and_never_steals_a_refused_one() {
+        let ids = vec!["sp-held".to_string(), "sp-down".into(), "sp-ok".into(), "sp-never".into()];
+        let mut tried = Vec::new();
+        let (c, logs, unreachable) = lc_claim_loop(&ids, &["sp-ok".into()], Some("P1/P2"), "builder/ifrit", |id| {
+            tried.push(id.to_string());
+            match id {
+                "sp-held" => LC_REFUSED,
+                "sp-down" => 2,
+                _ => LC_APPLIED,
+            }
+        });
+        assert_eq!(c.as_deref(), Some("sp-ok"));
+        assert!(!unreachable);
+        assert_eq!(tried, vec!["sp-held", "sp-down", "sp-ok"], "stops at the first applied claim");
+        assert!(logs[0].contains("refused ranked candidate sp-held"), "{logs:?}");
+        assert!(logs[1].contains("could not be reached for ranked candidate sp-down (rc=2)"), "{logs:?}");
+        assert_eq!(logs[2], "builder/ifrit: resuming sp-ok (P1/P2) — it already has work on its branch");
+    }
+
+    #[test]
+    fn lc_claim_loop_that_never_heard_the_machine_is_not_idle() {
+        let ids = vec!["sp-a".to_string(), "sp-b".into()];
+        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| 2);
+        assert!(c.is_none() && unreachable);
+        let (c, _, unreachable) = lc_claim_loop(&ids, &[], None, "b/x", |_| LC_REFUSED);
+        assert!(c.is_none() && !unreachable, "refusals are an answer: idle");
+        let (c, _, unreachable) = lc_claim_loop(&[], &[], None, "b/x", |_| unreachable!());
+        assert!(c.is_none() && !unreachable);
     }
 }

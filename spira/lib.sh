@@ -352,30 +352,11 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-# READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
-# three is named in this bead's scope, each still has live bash callers outside family F
-# (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
-# fleet-status.sh calls ready_count; detect_unclaimable_ready called ready_raw_args here
-# too, until wave 4.28 (sp-fbqsv) ported it — its own fallback now calls
-# `store::ready_raw_args` in-process, the Rust mirror of this same function), and routing
-# them through a `spira-claim` subprocess at lib.sh
-# SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
-# `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
-# call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
-# satisfied on the Rust side alone — `spira_claim::READY_ARGS_BASE`, which cockpit-collect
-# now links in-process instead of keeping its own copy (`probes/queue.rs`). `fayth_ready`/
-# `fayth_exclude`/`bulk_ready_by_fayth`'s OWN Rust ports (below) build their own ready
-# query independently, in spira-claim/src/ready.rs — a second, Rust-only copy of this
-# predicate's SHAPE, not a bash caller asking two different functions the same question.
-
-# MACHINE_READY_ARGS — READY_ARGS's own candidate set, widened past bd's own blocker filter
-# (spira-claim/DESIGN.md §5 item 11). `bd ready` hides a bead whose blocker is CERTIFIED but
-# not yet LANDED, because bd's status field only knows open/closed; `bd list` applies the
-# same predicate with no blocker judgment at all, leaving that call to `spira-claim select
-# --blockers machine`. Read only when lifecycle_enforce is on (aeon/src/run.rs ready_args()).
-MACHINE_READY_ARGS=(list --status open --no-assignee --exclude-type epic,event --limit 0)
-[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
-[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+# READY_ARGS and ready_raw_args stay bash: drain.sh and aeon's seam read the array directly,
+# and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
+# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. With lifecycle_enforce
+# on, neither decides what is ready: spira-claim's counts and an aeon's ready set come from
+# the lifecycle machine's rows (spira-claim `ready-count`, `fayth-ready [--json]`).
 
 ready_raw_args() {
     local args=(ready --limit 0 --exclude-type epic,event -u)
@@ -386,19 +367,10 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
+# ready_count <labels> [<exclude-labels>] — spira-claim's count, so with lifecycle_enforce on
+# it counts the lifecycle machine's claimable rows, the set an aeon claims from.
 ready_count() {
-    local out rc _errtmp
-    _errtmp="$(mktemp)"
-    out="$(bdq "${READY_ARGS[@]}" --label "$1" --exclude-label "$2" --json 2>"$_errtmp")"
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        printf 'ready_count: query failed: %s\n' "$(head -1 "$_errtmp" 2>/dev/null)" >&2
-        rm -f "$_errtmp"
-        printf '0'
-        return 1
-    fi
-    rm -f "$_errtmp"
-    printf '%s' "$out" | json_only | json_count
+    _spira_claim ready-count "$1" "${2:-}"
 }
 
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
@@ -560,17 +532,14 @@ lc_event_bead() {
 }
 
 # lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
-# <stack-max-depth>] -> 0 applied, 3 refused (the sp-zw9ot fixture: a bead already
-# IN_DELIVERY, or genuinely held by a live holder; also DepthExceeded when stack-depth
-# exceeds stack-max-depth), 2 cannot tell. The trailing three args are the caller's own
-# already-computed stack proposal (aeon.sh's `stack_proposal`, design stacked-dependents-
-# 2026-09-28 §1) — this function only forwards them, exactly like `lease_until`; omitted,
-# they default to `{}`/0/0, which is today's unstacked claim.
+# <stack-max-depth>] -> 0 applied, 3 refused, 2 cannot tell. THE CLAIM: the row is the only
+# record of who holds the bead, and Claim applies only to READY or REWORK, so a bead another
+# aeon holds is refused here, never taken over — a dead holder's row goes back to READY
+# through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
+# DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
+# caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
 #
-# HOLDERDEAD BEFORE CLAIM. A row this aeon can see is WORKING only because a prior holder
-# died without releasing — the fayth predicate already excludes any bead bd itself shows
-# as claimed, so a live holder never reaches here. A CAS HolderDead(WORKING->READY) clears
-# it; Claim is illegal from WORKING (lifecycle/src/bead.rs), so this is the only path back.
+# An applied claim writes the `claimed` events row the attempt counters fold.
 lc_claim_bead() {
     local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
@@ -583,15 +552,11 @@ lc_claim_bead() {
     fi
     IFS=$'\t' read -r state version _ _ <<< "$row"
     [ -n "$state" ] || return 2
-    if [ "$state" = WORKING ]; then
-        lc_event_bead "$id" WORKING "$version" "$holder" '"HolderDead"'
-        rc=$?
-        [ "$rc" -eq 0 ] || return "$rc"
-        row="$(lc_bead_row "$id")" || return 2
-        IFS=$'\t' read -r state version _ _ <<< "$row"
-    fi
     lc_event_bead "$id" "$state" "$version" "$holder" \
         "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
+    rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    _bump_write_event "$id" claimed "$holder"
 }
 
 # lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
@@ -624,12 +589,10 @@ lc_bead_verified() {
 
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
-# ONE CALL, THROUGH THE MACHINE (sp-hyo5e): `spira-lc unclaim` applies the lifecycle Release
-# (switch on; best-effort, refusals from past-WORKING states are the row already being right)
-# and releases bd's claim mutex with bd's own unclaim under --if-assignee <me> — the
-# compare-and-swap inverse of the aeon's claim. If a supervisor reclaimed the bead and handed it
-# to another aeon between our fence check and this call, bd refuses and the bead is left with
-# the new holder. Nothing in shell writes a claim or a status around the machine any more.
+# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. With lifecycle_enforce on it releases the
+# lifecycle row only if <me> still holds it — a bead reaped and handed to another aeon in
+# between keeps its new holder — and writes nothing to bd, whose assignee nobody reads. Off,
+# it is bd's own `unclaim --if-assignee <me>`, the same compare-and-swap.
 #
 # THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
