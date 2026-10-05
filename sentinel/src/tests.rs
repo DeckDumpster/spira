@@ -339,6 +339,12 @@ fn skip_reclaim_skips_the_db_check() {
 fn full_pass_reads_the_store_once_and_exports_it() {
     let (w, r, sink, clock) = setup("full");
     r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
+    r.on(|s| {
         if s.prog == "strand" {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
@@ -659,6 +665,12 @@ fn summon_only_gates_then_reads_ready_once() {
     );
 
     let (w, r, sink, clock) = setup("summon2");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
     // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
     // directly, reading the SAME SPIRA_READY_CACHE export_snapshot (above) already wrote.
