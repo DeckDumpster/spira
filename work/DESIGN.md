@@ -36,6 +36,7 @@ target, and run unbound too (the archivist has no bead; it sends `-` in the boun
 | `close-other <id> --evidence T` | `groomer close` |
 | `file "<t>" (--for P --repo R \| --kind K [--repo R]) [--priority N] [--parent ID] [--body-file F]` | `bead.sh file`, plus the lifecycle row for work |
 | `groom\|incident\|sop\|queue\|landing-pass\|strand <sub> ...`, `census [--with-suppressed]` | the harness tool, `<sub>` from the allow table |
+| `fence <class>` | `czar-fence.sh`'s answer (0 act, 1 shadow) from the installation's own `SPIRA_CZAR_STAGE_<CLASS>` |
 
 **Who may run what** is one table, `ALLOW` in `spira-lc/src/work.rs`; an operation absent
 from it is refused for everyone. The persona is the `--actor` the client appends from its own

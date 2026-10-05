@@ -35,6 +35,7 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "file-followup" => cmd_file(bead_id, rest, "file-followup", conn),
         "split" => cmd_file(bead_id, rest, "split", conn),
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
+        "fence" => cmd_fence(rest),
         other if LANE_VERBS.contains(&other) => cmd_lane(bead_id, other, rest, conn),
         other => (
             CANNOT_TELL,
@@ -224,7 +225,7 @@ fn cmd_superseded_by(bead_id: &str, args: &[String], conn: &Conn) -> (i32, Strin
 /// bead the client is bound to; these name their target (or none) themselves.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand",
+    "sop", "census", "queue", "landing-pass", "strand", "fence",
 ];
 
 const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by"];
@@ -304,6 +305,7 @@ pub const ALLOW: &[(&str, &[&str])] = &[
     ("landing-pass halt", &["czar"]),
     ("strand report", &["czar", "groomer"]),
     ("strand detect-livelocked", &["groomer"]),
+    ("fence", &["czar"]),
 ];
 
 /// A request's own arguments with the client's reserved trailer split off: `... [--stdin
@@ -626,6 +628,32 @@ pub fn plan(verb: &str, bound: &str, call: &Call) -> Result<Vec<Step>, (i32, Str
     }
 }
 
+/// `work fence <class>` — `czar-fence.sh`'s answer, given here so the czar needs no path
+/// into the release: `act` exits 0, `shadow` (the default, and the answer when the stage
+/// cannot be read) exits 1, anything else exits 2. The stage is this installation's own
+/// `SPIRA_CZAR_STAGE_<CLASS>`, resolved by the broker — never the caller's environment.
+pub fn fence_answer(class: &str, stage: Option<&str>) -> (i32, String) {
+    if class.is_empty() || !class.chars().all(|c| c.is_ascii_lowercase() || c == '-') {
+        return (2, format!("czar-fence: class {class:?} is not a czar class"));
+    }
+    let var = format!("SPIRA_CZAR_STAGE_{}", class.to_ascii_uppercase().replace('-', "_"));
+    match stage.unwrap_or("shadow") {
+        "act" => (0, format!("czar-fence: {class} is act")),
+        "shadow" => (1, format!("czar-fence: {class} is shadow — mutation refused ({var}=act to enable)")),
+        other => (2, format!("czar-fence: unknown stage {other} in {var} (shadow or act)")),
+    }
+}
+
+fn cmd_fence(rest: &[String]) -> (i32, String) {
+    let call = split_reserved(rest);
+    let [class] = call.args.as_slice() else {
+        return usage("fence", "want <class>");
+    };
+    let var = format!("SPIRA_CZAR_STAGE_{}", class.to_ascii_uppercase().replace('-', "_"));
+    let stage = spira_config::resolve::key_for_process(&var).ok();
+    fence_answer(class, stage.as_deref())
+}
+
 /// `groom split-piece <original-id> "<title>" [flags]`: the tail reaches `bd create`, so it
 /// is held to the create flags a piece needs — never `-C`/`--db` or anything else bd takes.
 fn split_piece_args(a: &[String]) -> Result<(), (i32, String)> {
@@ -885,6 +913,18 @@ mod tests {
         assert_eq!(plan("queue", "-", &call(&["eject", "sp-a1", "--red"], "czar")).unwrap(), vec![tool("queue", &["eject", "sp-a1", "--red"])]);
         assert_eq!(plan("strand", "-", &call(&["detect-livelocked"], "groomer")).unwrap(), vec![tool("strand", &["detect-livelocked"])]);
         assert_eq!(plan("sop", "-", &call(&["show", "x"], "ops")).unwrap(), vec![tool("sop", &["show", "x"])]);
+    }
+
+    #[test]
+    fn fence_answers_like_czar_fence_sh() {
+        assert_eq!(fence_answer("ci-red", Some("act")).0, 0);
+        let (code, msg) = fence_answer("ci-red", None);
+        assert_eq!(code, 1, "unreadable stage is shadow");
+        assert!(msg.contains("SPIRA_CZAR_STAGE_CI_RED=act"), "{msg}");
+        assert_eq!(fence_answer("ci-red", Some("loud")).0, 2);
+        assert_eq!(fence_answer("../x", Some("act")).0, 2);
+        assert_eq!(gate("fence", &v(&["ci-red", "--actor", "groomer"])).unwrap_err().0, REFUSED);
+        assert!(gate("fence", &v(&["ci-red", "--actor", "czar"])).is_ok());
     }
 
     #[test]

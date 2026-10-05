@@ -914,6 +914,11 @@ impl<'a> Run<'a> {
         // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the
         // model has no bd-reaching tool (sp-st0mm).
         single.extend(brief::tool_tokens());
+        // Under enforce the model has no bd and no path into the release (sp-st0mm, sp-zf4q3):
+        // no prompt names the database or the harness's home, so neither is handed over.
+        if self.enforce {
+            single.retain(|(k, _)| !brief::WITHHELD_UNDER_ENFORCE.contains(k));
+        }
         let tokens = Tokens {
             single,
             bead: body,

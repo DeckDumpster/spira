@@ -44,12 +44,13 @@ pub const BOUND_VERBS: &[&str] = &["show", "note", "submit", "done", "blocked", 
 /// this client's — a client-side check is one the caller could skip.
 pub const LANE_VERBS: &[&str] = &[
     "ask", "read", "list", "search", "note-on", "label-add", "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident",
-    "sop", "census", "queue", "landing-pass", "strand",
+    "sop", "census", "queue", "landing-pass", "strand", "fence",
 ];
 
 pub const VERBS: &[&str] = &[
     "show", "note", "submit", "done", "blocked", "file-followup", "split", "superseded-by", "ask", "read", "list", "search", "note-on", "label-add",
     "label-remove", "dep-add", "relate", "reopen", "close-other", "file", "groom", "incident", "sop", "census", "queue", "landing-pass", "strand",
+    "fence",
 ];
 
 /// The tokens the client appends itself; a caller typing one could otherwise name another

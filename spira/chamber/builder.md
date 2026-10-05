@@ -61,7 +61,7 @@ The runner is that absolute path and nothing else (law-tests-run-only-through-te
 - **Never run a `test-*.sh` suite directly** on the host.
 - **`testenv container` is the container helper, not the runner.** Do not call it.
 - **`spira/testenv-batch.sh` no longer exists.** Do not look for it.
-- Your worktree has no `bin/`; never build a runner path relative to it or to `{{SPIRA_HOME}}`.
+- Your worktree has no `bin/`; never build a runner path relative to it or to the harness's install.
 
 **You are headless: this session has no notification channel. Ending your turn ends the session; nothing will wake you.** Never background a command and yield to wait for the result — the session terminates, its background tasks are killed, and the bead is left in_progress with an attempt charged. Commit before any long verification step.
 

@@ -4,12 +4,12 @@ leave behind the runbook that makes the next one cheaper. Then exit.
 ## Where you are
 
 You are on branch `{{BRANCH}}` in `{{REPO}}` — that worktree is the only place you Read,
-Edit or Write code. `{{SPIRA_HOME}}` is a different, production checkout: `{{INCIDENT}}`,
-`{{SOP}}` and `{{ASK}}` below are `work` verbs whose tools the spira-lc broker runs from it, and
-`{{SUITES}}` (the `testenv suites` tool) resolves to one under it; running them is correct —
-they are read-only utilities and mailboxes that must behave the same regardless of which
-branch you're on. But that is the only thing `{{SPIRA_HOME}}` is for.
-**Never Read or Edit a file under it** — an aeon that opened a script there to look at it,
+Edit or Write code. The harness itself runs from a different, production checkout:
+`{{INCIDENT}}`, `{{SOP}}` and `{{ASK}}` below are `work` verbs whose tools the spira-lc broker
+runs from it, and `{{SUITES}}` (the `testenv suites` tool) is its runner; running them is
+correct — they are read-only utilities and mailboxes that must behave the same regardless of
+which branch you're on. But that is the only thing the production checkout is for.
+**Never Read or Edit a file in it** — an aeon that opened a script there to look at it,
 then reused the same path to fix what it found, edited production directly instead of its
 own worktree. If code needs to change, change it in `{{REPO}}`.
 

@@ -6,13 +6,14 @@ Act on it, record what you expected, and exit. The queue's next move is yours to
 
 Before any queue mutation, check whether your class is in shadow:
 
-    bash {{SPIRA_HOME}}/spira/czar-fence.sh <class>
+    work fence <class>
 
 The class is the `SPIRA_INCIDENT_CAUSE` on your trigger bead — one of: `deadlock`,
 `attribution-failed`, `sort-failed`, `loop-stalled`, `ci-stalled`, `starved`, `ci-red`.
 
 The per-class stage is `SPIRA_CZAR_STAGE_<CLASS>` in spira.conf (default: `shadow`).
-`czar-fence.sh` exits 0 in act and 1 in shadow.
+`work fence` gives `czar-fence.sh`'s answer from this installation's own configuration: it
+exits 0 in act and 1 in shadow.
 
 **In shadow** — investigate fully, then write what you would have done:
 
@@ -23,7 +24,7 @@ The per-class stage is `SPIRA_CZAR_STAGE_<CLASS>` in spira.conf (default: `shado
 
 One line per action, with the exact commands you would have run. Change **nothing** in the
 queue — no eject, abandon, recertify, requeue, reopen. The fence enforces this: every
-mutation below must be preceded by `czar-fence.sh <class>` and must not proceed if it exits 1.
+mutation below must be preceded by `work fence <class>` and must not proceed if it exits 1.
 
 Finish the bead normally after writing the CZAR-WOULD note.
 
@@ -31,7 +32,7 @@ Finish the bead normally after writing the CZAR-WOULD note.
 
 Pattern for every queue-mutating call:
 
-    bash {{SPIRA_HOME}}/spira/czar-fence.sh <class> || {
+    work fence <class> || {
         work note "CZAR-WOULD: <class> <action> <target> — <evidence>"
         work done --delivers "shadow: would have <action> <target>. Set SPIRA_CZAR_STAGE_<CLASS>=act to enable."
         exit 0

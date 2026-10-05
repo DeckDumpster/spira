@@ -81,6 +81,10 @@ pub fn tool_tokens() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Tokens never rendered while `lifecycle_enforce` is on: the bd database path and the
+/// harness's home — the model reaches neither (sp-st0mm), so no persona prompt names them.
+pub const WITHHELD_UNDER_ENFORCE: &[&str] = &["DB", "SPIRA_HOME"];
+
 /// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
 /// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
 /// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
@@ -1030,7 +1034,7 @@ mod tests {
             let text = std::fs::read_to_string(&p).unwrap();
             for (n, line) in text.lines().enumerate() {
                 let hit = raw_bd.find(line).map(|m| m.as_str().trim().to_string()).or_else(|| {
-                    ["bdq", "bead.sh", "mail.sh", "{{DB}}"].iter().find(|t| line.contains(*t)).map(|t| t.to_string())
+                    ["bdq", "bead.sh", "mail.sh", "{{DB}}", "{{SPIRA_HOME}}"].iter().find(|t| line.contains(*t)).map(|t| t.to_string())
                 });
                 if let Some(h) = hit {
                     bad.push(format!("{name}:{}: {h:?} in: {line}", n + 1));
@@ -1038,6 +1042,16 @@ mod tests {
             }
         }
         assert!(seen >= 9, "positive control: the chamber's persona prompts were read ({seen})");
+        // A tool placeholder a prompt uses must expand to a `work` verb, never the binary it
+        // once named (mail, groomer, bead.sh, sop, incident.sh) — none is on the model's PATH.
+        let tokens = tool_tokens();
+        for k in ["ASK", "GROOM", "DEP", "SOP", "INCIDENT"] {
+            let v = tokens.iter().find(|(t, _)| *t == k).map(|(_, v)| v.as_str());
+            assert!(matches!(v, Some(v) if v.starts_with("work ")), "{{{{{k}}}}} expands to {v:?}, not a work verb");
+        }
+        // The archivist's own filler (archivist/src/run.rs) renders {{NOTIFY}}.
+        let arc = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../archivist/src/run.rs")).unwrap();
+        assert!(arc.contains("(\"NOTIFY\", \"work ask\")"), "the archivist's {{{{NOTIFY}}}} must be `work ask`");
         assert!(bad.is_empty(), "persona prompts that still reach bd:\n{}", bad.join("\n"));
     }
 
