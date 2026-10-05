@@ -51,37 +51,43 @@ export SPIRA_TOML="$T/no-such.toml"
 # shellcheck disable=SC1090
 . "$HERE/lib.sh"
 
-# fayth_ready (wave 4.25, sp-obhv6) is now a one-line shim onto `spira-claim fayth-ready`,
-# which calls bd directly rather than the bash `ready_count` function — a bash-level
-# override of `ready_count` is no longer in that path at all. A fake `$SPIRA_BD` that
-# records its own argv, one layer lower, replaces it (same technique
-# test-sentinel-store-reads.sh and test-builder-qa-proposed.sh use): `observed_label` reads
-# the `--label` token off the LAST captured bd call, and `set_mock_ready N` controls how
-# many rows the fake bd hands back, standing in for `ready_count`'s own count.
-LABELS_FILE="$T/observed-bd-args"
+# fayth_ready (wave 4.25, sp-obhv6) is a one-line shim onto `spira-claim fayth-ready`, and
+# its ready set is the lifecycle machine's READY rows (sp-v62vn: there is no off mode, so no
+# `bd ready` call whose --label argv this suite could read). The fixture is a STORE instead:
+# `set_store <json>` sets the beads a fake `$SPIRA_BD` serves to every `list`, a spira-lc
+# stand-in (testlib lc_mirror_bd) makes each open one a READY row, and spira-claim's own
+# predicate decides which persona's ready set it lands in — so each row below asserts what
+# a persona's predicate TAKES, not the query string it built.
+STORE_FILE="$T/store.json"
 FAKE_BD="$T/fake-bd"
-MOCK_READY_FILE="$T/mock-ready"
 cat > "$FAKE_BD" <<EOF
 #!/bin/sh
-printf '%s\n' "\$*" >> "$LABELS_FILE"
-n="\$(cat "$MOCK_READY_FILE" 2>/dev/null || echo 0)"
-python3 -c 'import json,sys; print(json.dumps(list(range(int(sys.argv[1])))))' "\$n"
+case " \$* " in *" list "*) cat "$STORE_FILE" 2>/dev/null || echo '[]' ;; *) echo '[]' ;; esac
 EOF
 chmod +x "$FAKE_BD"
 export SPIRA_BD="$FAKE_BD"
 export SPIRA_DB="/fake/db"
-set_mock_ready() { printf '%s' "$1" > "$MOCK_READY_FILE"; }
-observed_label() { tail -1 "$LABELS_FILE" 2>/dev/null | sed -n 's/.*--label \([^ ]*\).*/\1/p'; }
-set_mock_ready 0
+lc_mirror_bd "$T/lc"
+export PATH="$T/lc:$PATH"
+# bead_json <id> <comma-labels> — one open task bead carrying exactly those labels.
+bead_json() {
+    local l; l="$(printf '%s' "$2" | python3 -c 'import json,sys; print(json.dumps([x for x in sys.stdin.read().split(",") if x]))')"
+    printf '{"id":"%s","title":"fixture","status":"open","issue_type":"task","priority":1,"labels":%s}' "$1" "$l"
+}
+set_store() { printf '[%s]\n' "$1" > "$STORE_FILE"; }
+set_store ""
 
 # Stub aeon_count so no running aeons are reported: fayth_free would otherwise see a
 # live slot and return 0, blocking the summon path before ready_count is called.
 aeon_count() { printf '0'; }
 
 # Stub SPIRA_SUMMON so summon_fayth does not attempt to start a systemd unit.
+# It records each call, so a row can tell "summoned" from "nothing ready".
 MOCK_SUMMON="$T/summon"
-printf '#!/bin/sh\nexit 0\n' > "$MOCK_SUMMON"
+SUMMONED="$T/summoned"
+printf '#!/bin/sh\necho summoned >> "%s"\nexit 0\n' "$SUMMONED" > "$MOCK_SUMMON"
 chmod +x "$MOCK_SUMMON"
+summons() { grep -c . "$SUMMONED" 2>/dev/null || true; }
 export SPIRA_SUMMON="$MOCK_SUMMON"
 
 # ==========================================================================================
@@ -104,22 +110,29 @@ nowant "ops FAYTH_LABELS is not the builder's spira,plan" "spira,plan" " $ops_la
 want "ops FAYTH_LABELS contains its own partition"     "incident"   "$ops_labels"
 
 # ==========================================================================================
-# summon_fayth — ops uses ITS OWN predicate, not the builder's
+# fayth_ready / summon_fayth — ops uses ITS OWN predicate, not the builder's
 # ==========================================================================================
-set_mock_ready 1; rm -f "$LABELS_FILE"
+builder_labels="$(fayth_get builder FAYTH_LABELS)"
+INCIDENT_BEAD="$(bead_json sp-fy-inc "$ops_labels")"
+PLAN_BEAD="$(bead_json sp-fy-plan "$builder_labels")"
+
+# POSITIVE CONTROL: ops's own incident bead is in ops's ready set, and summons ops.
+set_store "$INCIDENT_BEAD"; rm -f "$SUMMONED"
+is "ops's ready set holds its own incident bead" "1" "$(fayth_ready ops 2>/dev/null)"
 summon_fayth ops >/dev/null 2>&1 || true
-observed="$(observed_label)"
-nowant "ops did NOT ask for spira,plan beads" "spira,plan" " $observed "
-want "ops asked for its own incident beads" "incident"   "$observed"
+is "ops is summoned for its own incident bead" "1" "$(summons)"
+
+set_store "$PLAN_BEAD"; rm -f "$SUMMONED"
+is "ops does NOT take the builder's plan bead" "0" "$(fayth_ready ops 2>/dev/null)"
+summon_fayth ops >/dev/null 2>&1 || true
+is "and ops is not summoned for it" "0" "$(summons)"
 
 # ==========================================================================================
-# summon_fayth — builder uses ITS OWN predicate
+# fayth_ready — builder uses ITS OWN predicate
 # ==========================================================================================
-set_mock_ready 1; rm -f "$LABELS_FILE"
-summon_fayth builder >/dev/null 2>&1 || true
-observed="$(observed_label)"
-is "builder asked for its own partition beads" \
-   "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" "$observed"
+is "builder's ready set holds its own plan bead" "1" "$(fayth_ready builder 2>/dev/null)"
+set_store "$INCIDENT_BEAD"
+is "builder does NOT take ops's incident bead" "0" "$(fayth_ready builder 2>/dev/null)"
 
 # ==========================================================================================
 # positive control — old single-predicate approach misses ops work
@@ -129,14 +142,13 @@ is "builder asked for its own partition beads" \
 #   if [ "$ready" -gt 0 ]; then             # gates ALL personas, including ops
 #       for f in $FAYTHS; do summon_fayth "$f"; done
 #   fi
-set_mock_ready 0
-plan_ready="$(ready_count "spira,plan" "")"
+# Over a store holding only ops's incident bead, the builder's predicate reads 0 — and ops
+# must still be summoned on its own predicate.
+set_store "$INCIDENT_BEAD"; rm -f "$SUMMONED"
+plan_ready="$(ready_count "$builder_labels" "")"
 is "old code: plan_ready=0 (no plan work)" "0" "$plan_ready"
-
-set_mock_ready 1; rm -f "$LABELS_FILE"
 summon_fayth ops >/dev/null 2>&1 || true
-observed="$(observed_label)"
-want "ops predicate was asked even when plan_ready=0" "incident" "$observed"
+is "ops is summoned on its own predicate even when plan_ready=0" "1" "$(summons)"
 
 # ==========================================================================================
 # A quota-recording mock: the CPUQuota=70%/90% rows this fixture used to carry moved to
@@ -155,12 +167,14 @@ chmod +x "$MOCK_QUOTA"
 # started under an express grant cannot claim a non-express bead.
 export SPIRA_SUMMON="$MOCK_QUOTA"
 
-set_mock_ready 1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+set_store "$PLAN_BEAD"; rm -f "$ARGS_FILE"
 summon_fayth builder 1 >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 nowant "no require-label: SPIRA_REQUIRE_LABEL is absent from args" "SPIRA_REQUIRE_LABEL" "$args"
 
-set_mock_ready 1; rm -f "$ARGS_FILE" "$LABELS_FILE"
+# The express grant counts only beads carrying the express label (summon.rs: ready-count
+# "<FAYTH_LABELS>,express"), so this store's plan bead carries it.
+set_store "$(bead_json sp-fy-express "$builder_labels,express")"; rm -f "$ARGS_FILE"
 summon_fayth builder 1 express >/dev/null 2>&1 || true
 args="$(cat "$ARGS_FILE" 2>/dev/null)"
 want "express grant: SPIRA_REQUIRE_LABEL=express appears in args" \

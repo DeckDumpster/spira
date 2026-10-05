@@ -161,10 +161,6 @@ claimed() {
         i=$((i+1))
     done
 }
-status_of() { bdjson show "$1" | python3 -c '
-import sys,json
-d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
-print(d[0].get("status","") if d else "")' 2>/dev/null; }
 num() { local v="$1"; printf '%d' "${v:-0}"; }
 # reclaims_of (lib.sh) was retired at sp-8itaf — zero live callers (the production
 # accessor is now strand::check::reclaims_of, Rust). _counter_events_query, the shared
@@ -208,22 +204,29 @@ is "three events poison" yes "$(poisons sp-c2)"
 # store in test-unpoison.sh.
 
 echo
-echo "the release (real bd):"
+echo "the release (real lifecycle store):"
 
 # THE DISCRIMINATING FACT, seen both ways. The claim records the aeon's own name (BEADS_ACTOR
 # =aeon-<instance>); the teardown, release_own_claim -> `spira-lc unclaim` (sp-hyo5e), must
-# name that same actor or bd's compare-and-swap can never match. The claim is the fixture's.
-testdb_reset
-testdb_seed <<'JSONL'
-{"id":"sp-r1","title":"a claimed bead","status":"in_progress","assignee":"aeon-cindy","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
-JSONL
-is "the fixture holds the bead under the aeon's name" in_progress "$(status_of sp-r1)"
+# name that same actor or the machine's holder check can never match. The claim is the
+# lifecycle row's — the one claim there is (sp-v62vn: bd's status and assignee are nobody's
+# claim, and unclaim writes nothing there) — so this block stands up a real spira-lc store
+# (testlib/lc-fixture.sh) and seeds the row WORKING under the aeon's name.
+# shellcheck disable=SC1091
+. "$HERE/testlib/lc-fixture.sh"
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || bail "lc-fixture: the lifecycle store did not come up"
+lcfix_seed sp-r1 WORKING || bail "lc-fixture: could not seed sp-r1"
+lcfix_sql -q "UPDATE bead SET holder='aeon-cindy', lease_until=$(( $(date +%s) + 3600 )) WHERE bead_id='sp-r1'" >/dev/null \
+    || bail "lc-fixture: could not set sp-r1's holder"
+lc_holder() { lcfix_sql -q "SELECT IFNULL(holder,'') FROM bead WHERE bead_id='$1'" -r csv 2>/dev/null | sed -n 2p; }
+is "the fixture holds the bead under the aeon's name" "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
 if BEADS_ACTOR=aeon-builder release_own_claim sp-r1; then r=0; else r=1; fi
-is "releasing as the fayth fails"        1           "$r"
-is "and leaves the bead held"            in_progress "$(status_of sp-r1)"
+is "releasing as the fayth fails"        1                    "$r"
+is "and leaves the bead held"            "WORKING aeon-cindy" "$(lcfix_state sp-r1) $(lc_holder sp-r1)"
 
 if BEADS_ACTOR=aeon-cindy release_own_claim sp-r1; then r=0; else r=1; fi
-is "releasing as the aeon succeeds"      0    "$r"
-is "and the bead is claimable again"     open "$(status_of sp-r1)"
+is "releasing as the aeon succeeds"      0       "$r"
+is "and the bead is claimable again"     "READY" "$(lcfix_state sp-r1)"
 tl_summary

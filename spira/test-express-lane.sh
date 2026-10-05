@@ -190,8 +190,12 @@ printf 'SUMMONED:%s\n' "$fayth" >> "${SUMMONED_FILE:?}"
 exit 0
 MOCK
 chmod +x "$SH/mock-summon"
+# The pass's ready set is spira-claim's, over the lifecycle machine's READY rows (sp-v62vn:
+# the only mode); the stand-in (testlib lc_mirror_bd) answers spira-lc `list` from this
+# REAL bd store — an open bead is a READY row — ahead of the tree's spira-lc on PATH.
+lc_mirror_bd "$TMP/lc"
 sentinel_run() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
+    PATH="$TMP/lc:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${TESTDB_BD}" \
         SPIRA_SUMMON="$SH/mock-summon" SUMMONED_FILE="$SUMMONED" SPIRA_CONF=/nonexistent \
         sentinel --summon-pass
 }
