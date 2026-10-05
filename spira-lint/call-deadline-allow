@@ -143,7 +143,7 @@
 3 spira/test-aeon-chamber-overlay.sh
 2 spira/test-aeon-dirty-commit.sh
 4 spira/test-aeon-eviction-race.sh
-7 spira/test-aeon-gate-close-silent.sh
+4 spira/test-aeon-gate-close-silent.sh
 4 spira/test-aeon-gate-unfinished-attempts.sh
 6 spira/test-aeon-lifecycle-cutover.sh
 12 spira/test-aeon-prod-dirty.sh
@@ -152,7 +152,7 @@
 6 spira/test-aeon-resume.sh
 3 spira/test-aeon-slain-attempts.sh
 7 spira/test-aeon-sweep.sh
-3 spira/test-aeon-teardown-e2e.sh
+2 spira/test-aeon-teardown-e2e.sh
 2 spira/test-aeon-wiki-concurrent.sh
 9 spira/test-aeon-wiki-dirty.sh
 4 spira/test-aeon-worktree-collision.sh
