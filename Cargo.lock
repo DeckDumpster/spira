@@ -684,6 +684,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "testkit",
  "tree-sitter",
  "tree-sitter-bash",
  "walkdir",

@@ -1,7 +1,7 @@
 use crate::finding::{Class, Finding};
 use crate::rules::{
     landstate_path_allowed, Rules, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS, FORBIDDEN_UPDATE_FLAGS,
-    READ_VERBS,
+    ORACLE_SUBCOMMANDS, READ_VERBS,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -140,14 +140,19 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     // straight to something that (transitively) resolves to bd/bdq. The verb lives at the
     // call site, not in the wrapper, so it can only be judged there.
     let mut forward_target: HashMap<String, String> = HashMap::new(); // wrapper name -> bd|bdq
+    // Calls grouped by scope once: filtering every call per function definition was
+    // quadratic, ~20 s over the harness tree at the gate's opt-level 0 (sp-ts2qr).
+    let mut calls_by_scope: HashMap<&ScopeId, Vec<&CallSite>> = HashMap::new();
+    for c in &all_calls {
+        calls_by_scope.entry(&c.scope).or_default().push(c);
+    }
     for (name, defs) in &func_defs {
         for file_idx in defs {
             let scope = ScopeId {
                 file_idx: *file_idx,
                 function: Some(name.clone()),
             };
-            let body_calls: Vec<&CallSite> =
-                all_calls.iter().filter(|c| c.scope == scope).collect();
+            let body_calls: &[&CallSite] = calls_by_scope.get(&scope).map(|v| v.as_slice()).unwrap_or(&[]);
             if body_calls.len() == 1 {
                 let call = body_calls[0];
                 let forwards_all_args = call.args.iter().any(|a| {
@@ -318,24 +323,39 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     // Direct calls into the landstate ledger: land_mark/landed/landed_sha, the shell half of
     // this bead's read barrier. Independent of the bd/bdq call graph above — these are lib.sh
     // functions, never bd/bdq itself, and every call site outside the allow-list is a finding.
+    // The same reach through the binary: `landing-pass mark|state|landed|cited-commit|
+    // close-on-land` (sp-ts2qr), by any path to it.
     for call in &all_calls {
-        if !matches!(call.callee.as_str(), "land_mark" | "landed" | "landed_sha") {
+        let oracle = oracle_subcommand(call);
+        if oracle.is_none() && !matches!(call.callee.as_str(), "land_mark" | "landed" | "landed_sha") {
             continue;
         }
         let rel = &parsed[call.scope.file_idx].rel_path;
         if landstate_path_allowed(rel) {
             continue;
         }
+        let (callee, detail) = match oracle {
+            Some(verb) => (
+                format!("landing-pass {verb}"),
+                format!(
+                    "landing-pass {verb} is the landstate ledger / landed oracle; read it through spira-lc show/list instead"
+                ),
+            ),
+            None => (
+                call.callee.clone(),
+                format!(
+                    "{} is a direct call into the landstate ledger; read it through spira-lc show/list instead",
+                    call.callee
+                ),
+            ),
+        };
         findings.push(Finding {
             class: Class::LandstateCall,
             file: rel.clone(),
             line: call.line,
             function: call.scope.function.clone(),
-            callee: Some(call.callee.clone()),
-            detail: format!(
-                "{} is a direct call into the landstate ledger; read it through spira-lc show/list instead",
-                call.callee
-            ),
+            callee: Some(callee),
+            detail,
         });
     }
 
@@ -382,6 +402,32 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     }
 
     Ok(ShellScan { findings })
+}
+
+/// The oracle subcommand `call` invokes, when its command is landing-pass (a bare name or any
+/// path ending in it, `$VAR/bin/landing-pass` included) and its first argument is literally
+/// one of [`ORACLE_SUBCOMMANDS`]. A prefix `env [VAR=…]… `, `command ` or `exec ` is looked
+/// through, as aeon's `env SPIRA_RUN=… landing-pass mark …` was written.
+fn oracle_subcommand(call: &CallSite) -> Option<&'static str> {
+    let words: Vec<String> = std::iter::once(strip_quotes(&call.callee))
+        .chain(call.args.iter().map(|a| match a {
+            Arg::Literal(s) | Arg::Dynamic(s) => s.clone(),
+        }))
+        .collect();
+    let mut i = 0;
+    while i < words.len() && matches!(words[i].as_str(), "env" | "command" | "exec") {
+        i += 1;
+        while i < words.len() && (words[i].starts_with('-') || words[i].contains('=')) {
+            i += 1;
+        }
+    }
+    if words.get(i)?.rsplit('/').next() != Some("landing-pass") {
+        return None;
+    }
+    // The verb must be a literal: a dynamic one is not an oracle call this pass can name.
+    // words[k] is args[k - 1], so the word after the command (words[i + 1]) is args[i].
+    let verb = call.args.get(i)?.literal()?;
+    ORACLE_SUBCOMMANDS.iter().copied().find(|v| *v == verb)
 }
 
 fn collect_funcs(
@@ -543,35 +589,30 @@ fn capture_target(node: Node, source: &[u8]) -> Option<String> {
 
 /// Second pass over a whole file: for every call that captured its output into a variable,
 /// look for that variable being read inside a `test_command`/`case_statement` anywhere in the
-/// same file, and promote it to `in_conditional` if so.
+/// same file, and promote it to `in_conditional` if so. The file's conditional variables are
+/// collected in one walk — one walk per captured call was most of a gate's run (sp-ts2qr).
 fn resolve_captured_conditionals(root: Node, source: &[u8], calls: &mut [CallSite]) {
+    if !calls.iter().any(|c| c.captured_into.is_some()) {
+        return;
+    }
+    let mut cond_vars: HashSet<String> = HashSet::new();
+    vars_used_in_conditionals(root, source, false, &mut cond_vars);
     for call in calls.iter_mut() {
-        if let Some(var) = call.captured_into.clone() {
-            if var_used_in_conditional(root, source, &var) {
-                call.in_conditional = true;
-            }
+        if call.captured_into.as_ref().is_some_and(|v| cond_vars.contains(v)) {
+            call.in_conditional = true;
         }
     }
 }
 
-fn var_used_in_conditional(node: Node, source: &[u8], var: &str) -> bool {
-    fn walk(node: Node, source: &[u8], var: &str, in_cond: bool) -> bool {
-        let now_cond = in_cond || node.kind() == "test_command" || node.kind() == "case_statement";
-        if now_cond
-            && matches!(node.kind(), "variable_name" | "special_variable_name")
-            && node.utf8_text(source).unwrap_or_default() == var
-        {
-            return true;
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if walk(child, source, var, now_cond) {
-                return true;
-            }
-        }
-        false
+fn vars_used_in_conditionals(node: Node, source: &[u8], in_cond: bool, out: &mut HashSet<String>) {
+    let now_cond = in_cond || node.kind() == "test_command" || node.kind() == "case_statement";
+    if now_cond && matches!(node.kind(), "variable_name" | "special_variable_name") {
+        out.insert(node.utf8_text(source).unwrap_or_default().to_string());
     }
-    walk(node, source, var, false)
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        vars_used_in_conditionals(child, source, now_cond, out);
+    }
 }
 
 /// A source/`.` target is usually written against the caller's own directory

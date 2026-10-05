@@ -210,3 +210,96 @@ fn the_reader_fence_sees_a_landstate_read_in_a_scoped_shape() {
     let findings = run("landstate_rust_path", None);
     assert!(findings.iter().any(|f| f["class"] == "landstate-path"), "{findings:#?}");
 }
+
+fn gate(dir: &std::path::Path) -> (Option<i32>, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_lifecycle-guard"))
+        .arg("--gate")
+        .arg(dir)
+        .output()
+        .expect("run lifecycle-guard --gate");
+    (
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+/// sp-ts2qr: the landing gate's fence. A clean tree passes with the gate's fence line (a
+/// count > 0, gate/DESIGN.md "Every fence proves it checked"); a test's planted violation
+/// under tests/fixtures/ is data, not code; a legacy bd write — a class not yet refused at the
+/// gate — is counted on one summary line and does not fail it; a comment or a string that
+/// says "landed (" is not a call.
+#[test]
+fn gate_mode_passes_a_clean_tree_with_its_fence_line() {
+    let (code, out, err) = gate(&fixture("gate_clean"));
+    assert_eq!(code, Some(0), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("fence: lifecycle-guard checked 2 files"), "{out}");
+    assert!(out.contains("not yet refused at the gate: direct-write=1"), "{out}");
+    assert!(!out.contains("planted.sh") && !err.contains("REFUSED"), "{out}{err}");
+}
+
+/// The same tree without --gate scans everything it is pointed at, fixtures included.
+#[test]
+fn a_plain_run_still_scans_fixture_directories() {
+    let findings = run("gate_clean", None);
+    assert!(
+        findings.iter().any(|f| f["file"] == "tests/fixtures/planted.sh" && f["class"] == "landstate-call"),
+        "{findings:#?}"
+    );
+}
+
+/// A reintroduced oracle — through the binary, the ledger's files, or the Rust API — is a
+/// red, and the refusal names its exits (law-a-refusal-names-its-exit): the machine's route,
+/// correcting the rule on the branch, and the operator's ungated landing.
+#[test]
+fn gate_mode_refuses_a_reintroduced_oracle_and_names_its_exits() {
+    let (code, out, err) = gate(&fixture("gate_violation"));
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.contains("check.sh:4: [landstate-call]") && out.contains("landing-pass landed"), "{out}");
+    assert!(out.contains("check.sh:5: [landstate-path]"), "{out}");
+    assert!(out.contains("src/lib.rs:2: [landstate-call]") && out.contains("land_state"), "{out}");
+    assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
+    for exit in ["REFUSED", "3 finding(s)", "spira-lc", "lifecycle-guard/", "SPIRA_LAND_UNGATED=<reason>", "no allow-list"] {
+        assert!(err.contains(exit), "the refusal does not name {exit:?}: {err}");
+    }
+}
+
+/// A fence that checked nothing refuses instead of passing silent.
+#[test]
+fn gate_mode_refuses_a_tree_with_nothing_to_check() {
+    let tmp = testkit::TempDir::new("lg-gate-empty");
+    let dir = tmp.path().to_path_buf();
+    std::fs::create_dir_all(dir.join("tests/fixtures")).unwrap();
+    std::fs::write(dir.join("tests/fixtures/x.sh"), "#!/bin/bash\nlanded a b\n").unwrap();
+    let (code, out, err) = gate(&dir);
+    assert_eq!(code, Some(2), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(err.contains("checked 0 files"), "{err}");
+}
+
+#[test]
+fn landing_pass_oracle_subcommands_are_landstate_calls() {
+    let findings = run("landstate_oracle_cmd", None);
+    let calls: Vec<(u64, &str)> = findings
+        .iter()
+        .filter(|f| f["class"] == "landstate-call")
+        .map(|f| (f["line"].as_u64().unwrap(), f["callee"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            (4, "landing-pass mark"),
+            (5, "landing-pass cited-commit"),
+            (6, "landing-pass close-on-land"),
+        ],
+        "{findings:#?}"
+    );
+}
+
+/// The machine boundary is the lifecycle crate and spira-lc's one migration reader, not the
+/// whole of spira-lc: a second, ledger-backed answer inside spira-lc is a finding too.
+#[test]
+fn spira_lc_beyond_its_migration_reader_is_held_to_the_rule() {
+    let findings = run("spira_lc_beyond_classifier", None);
+    assert_eq!(classes(&findings), vec!["landstate-path"], "{findings:#?}");
+    assert_eq!(findings[0]["file"], "spira-lc/src/answer.rs");
+}

@@ -513,7 +513,10 @@ structure: **the gate cannot PASS a trial in which a fence it ran was silent.**
   (`"$SPIRA_SELECT_BIN" gate …`, sp-wx2tw), is no `bash` word; the `$SPIRA_LINT_BIN` word is `spira-lint`
   plus each rule in `LINT_RULE_FENCES` that the word's `--only` (if any) includes:
   `plan-matrix`, `lockfile-lint`, `tier-budget-allowlist`, `tier-budget-area-allowlist`,
-  `tier-budget-areas`.
+  `tier-budget-areas`; the `$SPIRA_GUARD_BIN` word is `lifecycle-guard` (sp-ts2qr: the
+  tree's lifecycle analyser, `step "$SPIRA_GUARD_BIN" --gate .`, refusing any reach into the
+  landstate ledger or a landed oracle with no allow-list; brain design
+  bead-lifecycle-state-machine §3.6(3)).
 * **The check** (`fence::silent`), after the branch trial exits 0 and before the re-entry
   proof: any expected fence with no line, or whose largest reported `n` is 0, makes the
   verdict **NO_VERDICT `reason=fence-silent` `suite=<the first such fence>`**, the message
