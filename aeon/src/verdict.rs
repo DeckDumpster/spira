@@ -168,6 +168,36 @@ impl Run<'_> {
         self.d.sink.out(&util::log_line(self.now(), msg));
     }
 
+    /// A guard refusing a restricted session's submission: the row it handed on goes back to
+    /// REWORK. A restricted session never closes in bd, so `bead_reopen` alone (bd status, the
+    /// submitted label) left the row SUBMITTED and the batcher would deliver refused work. The
+    /// verdict is the guard's, recorded as the certifier's PolicyViolation red on the submitted tip.
+    fn lc_rework(&self, id: &str) {
+        let o = self.d.exec.exec("spira-lc", &s(&["show", id]), None, None);
+        let v: serde_json::Value = if o.success() { serde_json::from_slice(o.stdout.as_bytes()).unwrap_or_default() } else { serde_json::Value::Null };
+        let b = &v["bead"];
+        let txt = |k: &str| match &b[k] { serde_json::Value::String(x) => x.clone(), serde_json::Value::Number(n) => n.to_string(), _ => String::new() };
+        let (state, tip, version) = (txt("state"), txt("tip"), txt("version"));
+        if state != "SUBMITTED" || tip.is_empty() || version.is_empty() {
+            self.log(&format!("{}: {id} lifecycle row not returned to REWORK (state={state:?}, tip={tip:?}, version={version:?})", self.f()));
+            return;
+        }
+        let kind = serde_json::json!({"GateRed": {"tip": tip, "reason": "policy-violation"}}).to_string();
+        let r = self.d.exec.exec("spira-lc", &s(&["event", "bead", id, "--expect", &state, "--version", &version, "--actor", self.f(), "--kind", &kind]), None, None);
+        if !r.success() {
+            self.log(&format!("{}: {id} lifecycle row not returned to REWORK: spira-lc refused the event", self.f()));
+        }
+    }
+
+    /// `bead_reopen`, plus the lifecycle half when the session handed on by submitting.
+    fn refuse(&mut self, submitted: bool, cause: &str, note: &str) {
+        self.bead_reopen(cause, note);
+        if submitted {
+            let id = self.s.bead.clone();
+            self.lc_rework(&id);
+        }
+    }
+
     fn requeue(&mut self, cause: &str, why: String) {
         self.s.requeue_cause = Some(cause.to_string());
         self.s.requeue_why = why;
@@ -221,6 +251,9 @@ impl Run<'_> {
         // The close is the lifecycle row's, never bd's status (design §3.4, sp-mve9i).
         let lc = self.lc_bead(&id);
         let mut closed = decide::builder_closed(restricted, lc.as_ref());
+        // A restricted session hands on by `work submit`, never a bd close: the guards below
+        // judge that hand-on too, or every one of them is dead code (every session is restricted).
+        let submitted = decide::builder_submitted(restricted, lc.as_ref());
         let st = decide::ledger_word(lc.as_ref());
         let superseded = row.as_ref().is_some_and(|r| r.superseded());
         let delivers = row.as_ref().map(|r| r.delivers()).unwrap_or_default();
@@ -264,7 +297,7 @@ impl Run<'_> {
 
         // ---- own-worktree dirty guard ----
         let work = self.s.work.clone().unwrap_or_default();
-        if closed && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
+        if (closed || submitted) && committed && !self.conf.set_nonempty("SPIRA_ALLOW_PROD_DIRTY") {
             let dirty = self.d.git.git(&work, &["status", "--porcelain", "--untracked-files=no"]).stdout.trim_end().to_string();
             if !dirty.is_empty() {
                 let spd_base = if let Some(b) = spira_config::repos::landref(&self.conf.repos, &work.display().to_string()) {
@@ -285,7 +318,7 @@ impl Run<'_> {
                     n.push_str(&format!("\n\nPaths byte-for-byte identical to {spd_base} (hand-applied, not genuinely new):\n  {ids}\nRemedy: git -C {w} checkout -- {ids}"));
                 }
                 n.push_str("\n\nOverride (only when the modification is intentional and will be committed separately): SPIRA_ALLOW_PROD_DIRTY=1");
-                self.bead_reopen(PROD_DIRTY, &n);
+                self.refuse(submitted, PROD_DIRTY, &n);
                 closed = false;
                 let first5 = names.iter().take(5).map(|s| format!("{s} ")).collect::<String>();
                 self.log(&format!("{f}: {id} REOPENED — own worktree dirty: {first5}"));
@@ -309,13 +342,13 @@ impl Run<'_> {
         }
 
         // ---- close-reason fence (law-no-close-reason-admits-unfinished) ----
-        if closed && committed {
+        if (closed || submitted) && committed {
             let cr = bd::show(self.d.bd, &id).and_then(|r| r.close_reason).unwrap_or_default();
             if !cr.is_empty() && !self.conf.set_nonempty("SPIRA_CLOSE_REASON_OVERRIDE") {
                 let o = self.d.exec.exec("close-reason-flags.py", &s(&[&cr]), None, None);
                 let hit = if o.success() { o.text() } else { String::new() };
                 if !hit.is_empty() {
-                    self.bead_reopen(UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
+                    self.refuse(submitted, UNFINISHED_REASON, &format!("Reopened by aeon.sh: close reason contains a statute phrase (\"{hit}\") that says the work is not done (law-no-close-reason-admits-unfinished). A remainder is a bead, not a sentence in the close reason. Two endings: (a) file the remainder with bead.sh, cite its id in the reason, then close; (b) groomer depends-on-fix {id} --fix <blocker-bead> if a fix is already in flight (law-a-bug-with-a-fix-in-flight-depends-on-it)."));
                     self.ts_print(&format!("{f}: {id} REOPENED — close reason contains statute phrase: {hit}. Override: SPIRA_CLOSE_REASON_OVERRIDE=<why>"));
                     closed = false;
                     self.requeue(UNFINISHED_REASON, format!("Close reason contained a statute phrase (\"{hit}\"). File the remainder as a bead, cite its id in the reason, then re-close."));
@@ -325,7 +358,7 @@ impl Run<'_> {
 
         // ---- the groom escalation rule ----
         let mut groom_silent = false;
-        if self.fayth.groom_escalation_check && closed && !superseded {
+        if self.fayth.groom_escalation_check && (closed || submitted) && !superseded {
             let text = std::fs::read_to_string(self.run_dir().join("groom.log")).unwrap_or_default();
             let new: String = text.lines().skip(self.s.groom_lines_before).map(|l| format!("{l}\n")).collect();
             let new = new.trim_end_matches('\n').to_string();
@@ -337,8 +370,9 @@ impl Run<'_> {
                 let aj = if aj.is_empty() { "[]".to_string() } else { aj };
                 let unproven = trace::groom_claims_verified(&new, &aj, self.s.session_epoch);
                 if !unproven.is_empty() {
-                    self.bead_reopen("no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
+                    self.refuse(submitted, "no-groom-ask", &format!("Reopened and poisoned: groom log claimed ESCALATED for {unproven} but no ask bead was filed in this session naming those beads. A log claim is not an escalation. File the ask via mail send operator --kind question, then re-run the pass."));
                     let _ = self.d.bd.bd(&s(&["label", "add", &id, "spira-poison"]));
+                    let _ = self.d.exec.exec("spira-lc", &s(&["hold", &id, "poison", &format!("groom log claimed ESCALATED for {unproven} with no ask bead"), &f]), None, None);
                     self.ts_print(&format!("{f}: {id} REOPENED and POISONED — groom log claimed ESCALATED for {unproven} but no ask bead found in this session"));
                     groom_silent = true;
                     if committed {

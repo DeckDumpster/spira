@@ -18,11 +18,9 @@
 # itself lives in the verdict's closed branch (aeon verdict.rs, `closed && committed`), and
 # since sp-v62vn every session is restricted and hands its bead on only through the work
 # verbs, so decide::builder_closed is false for every session and the guard is reached by none.
-# The own-dirty and override cases asserted that unreachable path and are deleted, not
-# rewritten; UC-aeon-execution-16 is marked uncovered in docs/test-plan/aeon-execution.toml
-# with that reason. What stays reachable is sp-nqtrg's subject: a dirty shared checkout never
-# stops a session's hand-on — the bead reads SUBMITTED in the lifecycle row, beside a clean
-# baseline that reads the same.
+# The guard now judges the restricted hand-on too (decide::builder_submitted): own-dirty is
+# refused back to rework with the paths and override named; the override lets it stand; a
+# dirty shared checkout (sp-nqtrg) and a clean baseline both read SUBMITTED.
 #
 # Driven through the REAL aeon.sh against a real bd on a throwaway fixture, with a shim
 # standing in for the model (law-prefer-the-real-dependency). SPIRA_REPO is a separate git
@@ -130,6 +128,11 @@ git add f && git -c user.email=a@a -c user.name=aeon commit -qm "$id: the work"
 
 # Optionally leave extra dirt in the worktree or in SPIRA_REPO.
 case "$(cat "$TMP/shim-dirty" 2>/dev/null)" in
+    own-dirty)
+        # Stage a further change in the worktree WITHOUT committing it.
+        printf 'staged leftover\n' >> f
+        git add f
+        ;;
     repo-dirty)
         # Dirty SPIRA_REPO (the shared harness checkout), not the bead worktree.
         # This is the condition that was wrongly causing bead requeues before sp-nqtrg.
@@ -147,12 +150,35 @@ not_reopened() {  # not_reopened <case-name> <bead-id>
     is "$1: the session's hand-on stands (SUBMITTED)" "SUBMITTED" "$(lc_row_state "$2")"
 }
 
+latest_note() {   # latest_note <bead-id>
+    bd -C "$SPIRA_DB" show "$1" --json 2>/dev/null \
+        | python3 -c '
+import sys,json
+d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
+print(d[0].get("notes","") if d else "")' 2>/dev/null
+}
+
 # Helper: poison a bead so later aeon runs skip it (isolates cases from each other).
 poison_bead() {
     bd -C "$SPIRA_DB" label add "$1" spira-poison >/dev/null 2>&1 || true
 }
 
 # ============================================================
+echo
+echo "CASE 0 (positive control): OWN WORKTREE dirty — the submission is refused, back to rework:"
+echo "-----------------------------------------------------------------------"
+printf 'own-dirty' > "$TMP/shim-dirty"
+b1="$(bd -C "$SPIRA_DB" create --title "test: own worktree dirty" --type task \
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+[ -n "$b1" ] || { bad "case 0 bead created" "(bead-create failed)"; true; }
+unset SPIRA_ALLOW_PROD_DIRTY
+aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+nowant "own-dirty: the hand-on is refused (not SUBMITTED)" "SUBMITTED" "$(lc_row_state "$b1")"
+note1="$(latest_note "$b1")"
+want "own-dirty: note names the modified path" "f" "$note1"
+want "own-dirty: note names the override variable" "SPIRA_ALLOW_PROD_DIRTY" "$note1"
+poison_bead "$b1"
+
 echo
 echo "CASE 1: SPIRA_REPO dirty, own worktree clean — the hand-on stands (regression for sp-nqtrg):"
 echo "-----------------------------------------------------------------------"
@@ -179,6 +205,16 @@ unset SPIRA_ALLOW_PROD_DIRTY
 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
 not_reopened "clean" "$b3"
 poison_bead "$b3"
+
+echo
+echo "CASE 3: own worktree dirty with SPIRA_ALLOW_PROD_DIRTY=1 — the hand-on stands (override):"
+echo "-----------------------------------------------------------------------"
+printf 'own-dirty' > "$TMP/shim-dirty"
+b4="$(bd -C "$SPIRA_DB" create --title "test: own dirty with override" --type task \
+        -l "${SPIRA_SCOPE_LABEL:+$SPIRA_SCOPE_LABEL,}${SPIRA_PLAN_LABEL:-plan},repo:fixture" 2>/dev/null | grep -oE 'sp-[a-z0-9-]+')"
+[ -n "$b4" ] || { bad "case 3 bead created" "(bead-create failed)"; true; }
+SPIRA_ALLOW_PROD_DIRTY=1 aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || true
+not_reopened "override (despite dirty worktree)" "$b4"
 
 echo
 tl_summary

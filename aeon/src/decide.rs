@@ -214,6 +214,13 @@ pub fn builder_closed(restricted: bool, row: Option<&spira_config::lc_state::Row
     !restricted && row.is_some_and(|r| r.past_builder())
 }
 
+/// A restricted session handed its bead on by `work submit`: the row stands SUBMITTED. The
+/// close guards (prod-dirty, close-reason, groom escalation) judge this hand-on as they judge an
+/// unrestricted close; without it they never ran, since every session is restricted.
+pub fn builder_submitted(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
+    restricted && row.is_some_and(|r| r.state == "SUBMITTED")
+}
+
 /// The status word the aeon ledger has always recorded (`done … status=<word>`), from the
 /// lifecycle row: `?` when there is none.
 pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
@@ -438,6 +445,19 @@ pub fn rapid_recur_streak(lines: &[&str]) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_restricted_submission_is_judged_by_the_close_guards() {
+        let row = |st: &str| spira_config::lc_state::Row { bead_id: "sp-x".into(), state: st.into(), ..Default::default() };
+        // Every session is restricted: its hand-on is SUBMITTED, never a bd close.
+        assert!(builder_submitted(true, Some(&row("SUBMITTED"))));
+        assert!(!builder_closed(true, Some(&row("SUBMITTED"))));
+        assert!(!builder_submitted(true, Some(&row("WORKING"))));
+        assert!(!builder_submitted(true, Some(&row("REWORK"))));
+        assert!(!builder_submitted(true, None));
+        // An unrestricted session is judged by its close, not here.
+        assert!(!builder_submitted(false, Some(&row("SUBMITTED"))));
+    }
+
     use super::*;
 
     #[test]
