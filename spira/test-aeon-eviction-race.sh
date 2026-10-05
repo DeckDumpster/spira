@@ -82,17 +82,10 @@ BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-eviction-race: aeon is not on PATH" >&2; exit 1; }
 
-# spira-lc stub: `show` answers the lifecycle row the shim recorded in $SPIRA_RUN/lc-row.
-cat > "$BIN/spira-lc" <<'STUB'
-#!/usr/bin/env bash
-case "$1" in
-    show) if [ -f "$SPIRA_RUN/lc-row/$2" ]; then read -r st rs tip < "$SPIRA_RUN/lc-row/$2"
-          printf '{"bead":{"bead_id":"%s","state":"%s","reason":"%s","tip":"%s","version":"1"},"delivery":null}\n' "$2" "$st" "$rs" "$tip"
-          else printf '{"bead":{"bead_id":"%s","state":"WORKING","version":"1"},"delivery":null}\n' "$2"; fi ;;
-    *) exit 0 ;;
-esac
-STUB
-chmod +x "$BIN/spira-lc"
+# The lifecycle machine (testlib lc_aeon_mirror): the aeon's ready set (`list`), its claim
+# (a Claim event — sp-v62vn: the only claim there is) and `show`, which answers the row the
+# shim pins in $SPIRA_RUN/lc-row ("<STATE> <reason> <tip>") once it has written one.
+lc_aeon_mirror "$BIN"
 export PATH="$BIN:$PATH"
 
 # The shim commits, records a batch-ejected REWORK row at the real (post-commit) tip, then

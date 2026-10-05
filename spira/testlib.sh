@@ -492,7 +492,8 @@ tl_summary() {
 # A `spira-poison` label is a poison hold, the ask label ($SPIRA_ASK_LABEL) an ask hold.
 # Verbs: `show <id>` (no bd row → exit 1), `list [--state S]`, `create-bead` (0), and
 # `event bead <id> ... --actor A --kind K`: Claim applies only to a READY/REWORK row (else
-# exit 3, refused — a bead another aeon holds is never taken over) and records the holder;
+# exit 3, refused — a bead another aeon holds is never taken over) and records the holder
+# (and appends "<id> <actor>" to $SPIRA_RUN/lc-claims.log, so a suite can ask who claimed);
 # Release/HolderDead drop that claim; Submit writes lc-row SUBMITTED; any other kind (Renew,
 # Hold, ...) applies without changing the row. Every other verb goes to the real spira-lc
 # further down PATH, exactly as before the stub.
@@ -567,6 +568,7 @@ elif verb == "event":
             sys.exit(3)
         os.makedirs(claims, exist_ok=True)
         open(os.path.join(claims, i), "w").write(actor)
+        open(os.path.join(run, "lc-claims.log"), "a").write("%s %s\n" % (i, actor))
         pinned = os.path.join(run, "lc-row", i)
         if os.path.exists(pinned):
             os.remove(pinned)

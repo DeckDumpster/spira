@@ -292,29 +292,24 @@ exit 0
 SHIM
 chmod +x "$BIN/claude"
 
-( SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+# THE AEON CLAIMS THROUGH THE MACHINE (sp-v62vn: no off mode): its ready set is spira-lc
+# `list` and its claim a Claim event, so its runs get the stateful stand-in (testlib
+# lc_aeon_mirror) ahead of the suite's read-only lc_mirror_bd. It logs every applied claim
+# in $SPIRA_RUN/lc-claims.log, and reads the shim's bd close as the builder's submit.
+lc_aeon_mirror "$TMP/lc-aeon"
+( PATH="$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such2.conf" \
   aeon --home "$AEON_HOME" builder > "$TMP/aeon-out" 2>&1 )
 
-# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
-# the landing pass closes a work bead directly, so "claimed and finished" reads as
-# open+submitted, not in_progress or closed.
-e1_status="$(bd -C "$SPIRA_DB" show sp-e1-rework --json 2>/dev/null | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(d.get("status"))' 2>/dev/null)"
-e1_labels="$(bd -C "$SPIRA_DB" show sp-e1-rework --json 2>/dev/null | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(",".join(d.get("labels") or []))' 2>/dev/null)"
-unrelated_status="$(bd -C "$SPIRA_DB" show sp-unrelated-p0 --json 2>/dev/null | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(d.get("status"))' 2>/dev/null)"
-is "aeon.sh claimed and finished the started epic's reworked child, not the unrelated P0 head" \
-    "open" "$e1_status"
-want "sp-e1-rework: carrying the submitted label (its work was done)" ",spira-submitted," ",$e1_labels,"
-is "the unrelated P0 bead was left alone, still ready and unclaimed" "open" "$unrelated_status"
+# WHICH BEAD THE AEON TOOK is the claim the machine recorded: the holder of sp-e1-rework's
+# Claim, and nobody's on the unrelated P0 head. (The old reading — bd status reopened to
+# open plus spira-submitted by the teardown's bd-close conversion, sp-qsona — is gone with
+# sp-v62vn: every session runs restricted, and a restricted session's bd close is inert.)
+is "aeon.sh claimed the started epic's reworked child, not the unrelated P0 head" \
+    "yes" "$(grep -q '^sp-e1-rework ' "$AEON_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
+want "and its session was handed that bead" "work sp-e1-rework " "$(cat "$TMP/prompt" 2>/dev/null)"
+is "the unrelated P0 bead was left alone, never claimed" \
+    "no" "$(grep -q '^sp-unrelated-p0 ' "$AEON_RUN/lc-claims.log" 2>/dev/null && echo yes || echo no)"
 want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/aeon-out")"
 
 # ==========================================================================================
@@ -354,7 +349,7 @@ STUB
 chmod +x "$BIN2/spira-claim"
 
 AEON_RUN2="$TMP/aeonrun2"; mkdir -p "$AEON_RUN2"
-( PATH="$BIN2:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
+( PATH="$BIN2:$TMP/lc-aeon:$PATH" SPIRA_HOME="$AEON_HOME" SPIRA_RUN="$AEON_RUN2" SPIRA_DB="$SPIRA_DB" SPIRA_REPO_MAP="$AEON_REPO_MAP" \
   SPIRA_CONF="$TMP/no-such3.conf" \
   aeon --home "$AEON_HOME" builder > "$TMP/aeon-out2" 2>&1 )
 t8_rc=$?

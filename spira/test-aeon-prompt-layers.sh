@@ -54,6 +54,10 @@ command -v aeon >/dev/null 2>&1 \
     || { printf 'test-aeon-prompt-layers: aeon is not on PATH\n' >&2; exit 1; }
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
+# The lifecycle machine (testlib lc_aeon_mirror): since sp-v62vn the aeon's ready set is
+# `spira-lc list` and its claim a Claim event; the stand-in tells the fixture's bd story in
+# lifecycle terms, ahead of the tree's spira-lc on PATH.
+lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 export SPIRA_AGENT="$BIN/claude" TMP
 
 # The stub records its argv and stdin, then emits a minimal success event.
