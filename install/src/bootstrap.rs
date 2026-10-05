@@ -125,7 +125,14 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
             spira_config::resolve::resolve_key(&env_map, Path::new(&home), key).unwrap_or_default()
         })
     };
-    let run = resolved("SPIRA_RUN");
+    // SPIRA_RUN's default is procedural (conf.sh), so a bare key lookup can come back empty;
+    // `resolve_run_dir` is the run-dir resolution every other binary uses.
+    let run = nonempty_env("SPIRA_RUN").unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+        spira_config::resolve::resolve_run_dir(&env_map, Path::new(&home))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| resolved("SPIRA_RUN"))
+    });
     if run.is_empty() {
         return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
     }
