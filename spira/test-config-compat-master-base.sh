@@ -198,8 +198,10 @@ git -C "$V_REPO" worktree remove -f "$V_BWT" 2>/dev/null || true
     printf 'branch=spira/queue/vtest\n'
 } > "$V_QUEUEDIR/$V_REPONAME/open"
 lcfix_seed sp-vbase CERTIFIED "$V_MEMBER_TIP"
-V_LC_VERSION="$(spira-lc cut vtest-1 --repo "$V_REPONAME" --head "$V_BATCH_HEAD" --base "$V_BASE_SHA" \
-    --members "sp-vbase:$V_MEMBER_TIP" --actor queue.sh 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))')"
+V_CUT="$(spira-lc cut vtest-1 --repo "$V_REPONAME" --head "$V_BATCH_HEAD" --base "$V_BASE_SHA" \
+    --members "sp-vbase:$V_MEMBER_TIP" --actor queue.sh 2>&1)"
+want "verdict fixture: the batch is cut on spira-lc" "version" "$V_CUT"
+V_LC_VERSION="$(printf '%s' "$V_CUT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
 { printf 'batch_id=vtest-1\n'; printf 'version=%s\n' "$V_LC_VERSION"; } >> "$V_QUEUEDIR/$V_REPONAME/open"
 printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 
