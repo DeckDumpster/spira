@@ -51,8 +51,10 @@ chmod +x "$MOCK_INC"
 # Run --czar-outcome-check in an explicit minimal environment. SPIRA_PATH is forwarded
 # so that conf.sh's PATH rebuild (which reads SPIRA_PATH) does not lose the bd-embedded
 # shim that testdb_up prepended.
+# A trigger's state is its lifecycle row (sp-mve9i); this world's machine mirrors the store.
+lc_mirror_bd "$TMP/lc"
 wt_co() {   # wt_co [VAR=val ...]
-    env -i PATH="$PATH" HOME="$TMP" \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_RUN="$TMP/run" \
         SPIRA_DB="$SPIRA_DB" \

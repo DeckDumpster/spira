@@ -30,8 +30,11 @@ testdb_require test-bead-lint
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up bead_lint || { printf 'test-bead-lint: could not build fixture database\n' >&2; exit 1; }
 
+# The partition check applies to a bead awaiting dispatch — its lifecycle state, not bd
+# status (sp-mve9i): this world's machine mirrors the store (open READY, closed LANDED).
+lc_mirror_bd "$TMP/lc"
 run_lint() {              # run_lint <args...> -> sets LINT_OUT and LINT_RC from ONE call
-    LINT_OUT="$(SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
+    LINT_OUT="$(SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
         SPIRA_HOME="$HERE" SPIRA_CONF="$TMP/no.conf" \
         SPIRA_NO_LOOP_LABEL="no-loop" SPIRA_ASK_LABEL="needs-op-test" \
         SPIRA_ALARM_LABEL="incident-test" \

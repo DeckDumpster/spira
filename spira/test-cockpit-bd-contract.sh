@@ -39,9 +39,12 @@ testdb_up bdcontract || { echo "test-cockpit-bd-contract: could not build a fixt
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 RUN="$TMP/run"; mkdir -p "$RUN"
+# SP_POISON is the lifecycle machine's poison holds (sp-mve9i); this world's machine mirrors
+# the real store (spira-poison label → poison hold, closed → LANDED), read through real bd.
+lc_mirror_bd "$TMP/lc"
 run_probe() {    # run_probe <subcommand> [env KEY=val ...]
     local sub="$1"; shift
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd-embedded}" \
         SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder \
