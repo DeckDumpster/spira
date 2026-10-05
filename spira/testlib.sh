@@ -299,6 +299,28 @@ STUB
     chmod +x "$LC_FIX/spira-lc"
     SPIRA_LC_BIN="$LC_FIX/spira-lc"
 }
+# A spira-lc for landing-pass suites, installed by name into <bindir> (already first on the
+# suite's PATH) so the pass's lifecycle probe answers. `list` reads rows like lc_fix_init's;
+# every verb is logged to <fixdir>/calls.log, and `touch <fixdir>/refuse` makes writes exit 3.
+lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
+    local bindir="${1:?lc_path_stub needs a bin dir}" fix="${2:?lc_path_stub needs a fixture dir}"
+    LC_FIX="$fix"; mkdir -p "$bindir" "$fix/bead" "$fix/delivery" "$fix/show"; : > "$fix/calls.log"
+    cat > "$bindir/spira-lc" <<STUB
+#!/usr/bin/env bash
+LC_FIX="$fix"
+printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
+join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
+case "\$1" in
+    list)
+        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; else join "\$LC_FIX/bead/\${3:-}"/*; fi ;;
+    show) [ -f "\$LC_FIX/show/\$2" ] && cat "\$LC_FIX/show/\$2" || exit 1 ;;
+    *) [ -f "\$LC_FIX/refuse" ] && exit 3; exit 0 ;;
+esac
+STUB
+    chmod +x "$bindir/spira-lc"
+}
+# lc_called <fixdir> <verb> <bead> — did the pass send <verb> for <bead>?
+lc_called() { grep -q "^$2 $3\b" "$1/calls.log" 2>/dev/null; }
 lc_bead() {      # lc_bead <STATE> <id> <tip> <since>
     mkdir -p "$LC_FIX/bead/$1"
     printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"

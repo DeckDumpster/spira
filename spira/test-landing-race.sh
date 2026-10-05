@@ -51,6 +51,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 # conf.sh travels with lib.sh. lib.sh resolves every path through it and refuses to run
 # without it, so a fixture harness that copies one and not the other fails at source time —

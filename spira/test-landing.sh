@@ -65,6 +65,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 # conf.sh travels with lib.sh — lib.sh refuses to run without it, and a harness that copies
 # one and not the other fails at source time, which reads as landing being broken.

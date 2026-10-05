@@ -63,6 +63,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
