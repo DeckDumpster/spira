@@ -27,7 +27,7 @@ pub trait World {
     /// check reads git branches from.
     fn repo_root(&self) -> Option<String>;
     /// `landed <id>` -> its exit code (0 landed, 1 not landed, 2 unknown).
-    fn landed(&self, id: &str) -> i32;
+    fn lc_landed(&self, id: &str) -> i32;
 
     // ---- the census/*.py pipeline, unchanged, run as subprocesses exactly as bash ran them ----
     /// `count.py < tabular>` -> Ok("<beads> <events> <class>" lines) or Err when the

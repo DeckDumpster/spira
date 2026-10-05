@@ -350,14 +350,14 @@ impl<'a> Sweep<'a> {
                         self.w.label_add(id, "content-landed");
                     }
                 }
-                self.landed(c, id, br, "SENT");
+                self.send_landed(c, id, br, "SENT");
             }
             Disp::SendOtherPr => {
                 if dry {
                     self.say(&format!("WOULD  {id}  send branch {br} (commit on {lr} names it)"));
                     return;
                 }
-                self.landed(c, id, br, "SENT");
+                self.send_landed(c, id, br, "SENT");
             }
             Disp::ReapSupersededSafe => {
                 if dry {
@@ -371,7 +371,7 @@ impl<'a> Sweep<'a> {
                     self.say(&format!("WOULD  {id}  reap squash-merged branch {br} (PR merged at this tip)"));
                     return;
                 }
-                self.landed(c, id, br, "REAPED");
+                self.send_landed(c, id, br, "REAPED");
             }
         }
     }
@@ -400,7 +400,7 @@ impl<'a> Sweep<'a> {
 
     /// send_landed: send, then close a submitted work bead at the land ref's sha — in pr and
     /// hold mode this sweep is the first place that sees the work land.
-    fn landed(&mut self, c: &Ctx, id: &str, br: &str, verb: &str) {
+    fn send_landed(&mut self, c: &Ctx, id: &str, br: &str, verb: &str) {
         if self.branch(c, id, br, verb, "sending").is_err() {
             return;
         }

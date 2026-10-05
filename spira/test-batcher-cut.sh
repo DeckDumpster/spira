@@ -18,7 +18,7 @@
 #                       survivors re-run only that suite, and the PR opens without it.
 #   C. stale member    — an express-certified member whose branch conflicts with the base
 #                       itself (not just batch accumulation) is reopened for rebase at once
-#                       (section F), landstate RED, bump_requeue stamped.
+#                       (section F), returned on the lifecycle record, bump_requeue stamped.
 #   D. stacking        — with case A's batch PR still open, certified members (one express)
 #                       are built and proven into a prepared round on that PR's head without
 #                       touching the open PR; once it lands the prepared round opens with no
@@ -37,7 +37,7 @@
 #                       Ops incident, never attributed suite by suite and never a harness fault
 #                       that drops the round unreported; a hung round-vm.sh is killed at the
 #                       configured wall bound.
-#   N. batcher parity (sp-7qk8u) — a CERTIFIED landstate record whose bead is open and not
+#   N. batcher parity (sp-7qk8u) — a CERTIFIED lifecycle row whose bead is open and not
 #                       spira-submitted (the shape an ejected-then-recertified bead is in) is
 #                       excluded from the round pool, not batched.
 #
@@ -67,7 +67,8 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"; RUN="$TMP/run"; SH="$TMP/spira"
 REPONAME=fixture-repo
-LANDSTATE="$RUN/landstate"; QUEUEDIR="$RUN/queue"
+# LCSTUB: the stub spira-lc's CERTIFIED pool, one file per bead.
+LCSTUB="$RUN/lc-stub"; QUEUEDIR="$RUN/queue"
 
 git init -q --bare -b main "$REMOTE"
 git init -q -b main "$REPO"
@@ -79,7 +80,7 @@ git -C "$REPO" add -A && git -C "$REPO" commit -q -m base
 git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
-mkdir -p "$RUN/worktree" "$SH" "$LANDSTATE" "$QUEUEDIR/$REPONAME"
+mkdir -p "$RUN/worktree" "$SH" "$LCSTUB" "$QUEUEDIR/$REPONAME"
 
 # A REAL COPY OF lib.sh (and its own conf.sh), same as every other batch.sh suite: the IO
 # seam shells out to lib.sh's own land_mark/bead_reopen/bump_requeue/repo_root/repo_land/
@@ -247,7 +248,7 @@ log="${SPIRA_LC_STUB_LOG:?}"
 certified_rows() {
     local f id st tip ep sep=''
     printf '['
-    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+    for f in "${SPIRA_RUN:-/nonexistent}"/lc-stub/*; do
         [ -f "$f" ] || continue
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
@@ -264,7 +265,7 @@ case "${1:-}" in
         for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
         exit "${SPIRA_LC_STUB_RC:-0}" ;;
     stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
-    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: the stub's CERTIFIED rows
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
 esac
@@ -342,7 +343,7 @@ plant_open() {
 }
 
 certify() {   # certify <id> <tip-sha> [epoch]
-    printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LANDSTATE/$1"
+    printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LCSTUB/$1"
     [ -f "$RUN/lc-taken" ] && { grep -vx "$1" "$RUN/lc-taken" > "$RUN/lc-taken.n" || true; mv "$RUN/lc-taken.n" "$RUN/lc-taken"; }
 }
 
@@ -401,7 +402,7 @@ branch_case_a="$(open_field branch)"
 # CASE B — concurrent attribution (sp-hvtgs, law-a-round-takes-certified-tips as amended
 # 2026-09-27): sp-cbbb2's tree carries breaks-test-b.sh, so test-b.sh is red on every tree
 # that holds it. The batcher's own reruns (plain, base, without each member) name sp-cbbb2
-# its owner; it is ejected — bead reopened, landstate EJECTED, note naming every suite it
+# its owner; it is ejected — bead reopened, returned on the lifecycle record, note naming every suite it
 # turned red — and only test-b.sh re-runs on the survivors: green, so the PR opens WITHOUT
 # the ejected member but WITH its innocent bystander (the positive control for "only the
 # named member is dropped, not the whole round").
@@ -508,7 +509,7 @@ is "C: positive control — requeue spy silent before this case" "0" "$(grep -c 
 # Case C is about a DIFFERENT member's base conflict in isolation: retire every earlier
 # case's member record first, so nothing left CERTIFIED merges into case C's round and
 # opens a PR it is not testing for.
-rm -f "$LANDSTATE/sp-cbbb2" "$LANDSTATE/sp-cgflk" "$LANDSTATE/sp-chbas"
+rm -f "$LCSTUB/sp-cbbb2" "$LCSTUB/sp-cgflk" "$LCSTUB/sp-chbas"
 plant sp-cccc3 express
 git -C "$REPO" worktree add -q -b spira/sp-cccc3 "$RUN/worktree/sp-cccc3" main
 printf 'branch-version\n' > "$RUN/worktree/sp-cccc3/conflict.txt"
@@ -573,7 +574,7 @@ is     "D: open-batch record untouched" "$open_before" "$(cat "$(open_batch_file
 is     "D: open PR's local branch untouched" "$branch_ref_before" "$(git -C "$REPO" rev-parse "$branch_case_a")"
 is     "D: open PR's remote branch untouched (never force-pushed)" "$remote_ref_before" "$(git -C "$REMOTE" rev-parse "$branch_case_a")"
 is     "D: forge pr-create not called" "$prcreate_before" "$(grep -c '^pr-create' "$FORGE_LOG")"
-is     "D: express member not BATCHED while the PR is open" "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cddd4")"
+is     "D: express member not BATCHED while the PR is open" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cddd4")"
 
 : > "$D_ARGV"
 out_d2="$(STUB_ARGV_LOG="$D_ARGV" cut_repo)"
@@ -665,7 +666,7 @@ nowant "F: preparing the next round never calls spira-lc stack" "stack " "$(cat 
 nowant "F: preparing the next round never calls spira-lc cut" "cut " "$(cat "$LC_LOG")"
 is   "F: open-batch batch_id unchanged by a prepared round" "$branch_f" "$(open_field batch_id)"
 is   "F: open-batch version unchanged by a prepared round"  "1"         "$(open_field version)"
-rm -f "$LANDSTATE/sp-cggg7" "$QUEUEDIR/$REPONAME/prepared"
+rm -f "$LCSTUB/sp-cggg7" "$QUEUEDIR/$REPONAME/prepared"
 
 # POSITIVE CONTROL: spira-lc refusing (rc=3, e.g. a member not CERTIFIED there) does not
 # block the round — the PR still opens, batch_id/version are simply left unset, same as
@@ -773,7 +774,7 @@ rm -f "$(open_batch_file)"
 plant sp-cjjjj express
 base_now="$(git -C "$REPO" rev-parse origin/main)"
 # THE BRANCH MUST EXIST for certified_pool to admit it (repo_branch_ids scopes the
-# landstate directory to this repo's own refs/heads/spira/* — see io.rs). Its tip is the
+# certified pool to this repo's own refs/heads/spira/* — see io.rs). Its tip is the
 # CURRENT base itself: exactly the "reset to an old main" / "no commits of its own" shape
 # the bead names, an ancestor of the round head before any merge is attempted.
 git -C "$REPO" branch -f spira/sp-cjjjj "$base_now"
@@ -783,7 +784,7 @@ prcreate_before_j="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_j="$(STUB_RED_SUITES="" cut_repo)"
 want "J: reports the member set aside as EMPTY, not a member" "EMPTY sp-cjjjj: tip is already in the round — not a member" "$out_j"
 nowant "J: no PR opens crediting a no-op tip" "PR " "$out_j"
-is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cjjjj")"
+is   "J: sp-cjjjj stays CERTIFIED, never marked BATCHED" "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cjjjj")"
 is   "J: forge pr-create not called for the empty round" "$prcreate_before_j" "$(grep -c '^pr-create' "$FORGE_LOG")"
 
 # =============================================================================
@@ -856,7 +857,7 @@ nowant "K3: never reported as a harness fault"                          "harness
 is     "K3: no PR opened for a round whose workspace failed to build" \
     "$prcreate_before_g3" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "K3: sp-cgcc3 stays CERTIFIED — attributed, not silently dropped" \
-    "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-cgcc3")"
+    "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-cgcc3")"
 want   "K3: reports filing an Ops incident" "filed sp-inc" "$out_g3"
 want   "K3: the incident names the workspace-build reason" \
     "workspace-build" "$(cat "$INCIDENT_LOG")"
@@ -1055,17 +1056,17 @@ is     "M: merged in topological order A, B, C" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
 # =============================================================================
-# CASE N — batcher parity (sp-7qk8u): landstate CERTIFIED alone is not enough to admit a
+# CASE N — batcher parity (sp-7qk8u): a CERTIFIED row alone is not enough to admit a
 # member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
 # again, not spira-submitted — the same admission batch.sh's own _certified_list already
-# refuses ("CERTIFIED landstate but bead status=open; refusing admission"). Upstream landed the filter (sp-1346p); this pins it.
+# refuses ("CERTIFIED but bead status=open; refusing admission"). Upstream landed the filter (sp-1346p); this pins it.
 # =============================================================================
 echo
-echo "N. batcher parity: CERTIFIED landstate but bead status=open (not spira-submitted) is excluded:"
+echo "N. batcher parity: CERTIFIED row but bead status=open (not spira-submitted) is excluded:"
 # sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
 # cases and their branches persist in $REPO — retire them first so this round is only
 # sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).
-rm -f "$(open_batch_file)" "$LANDSTATE/sp-cjjjj" "$LANDSTATE/sp-cgcc3" "$LANDSTATE/sp-cgdd4"
+rm -f "$(open_batch_file)" "$LCSTUB/sp-cjjjj" "$LCSTUB/sp-cgcc3" "$LCSTUB/sp-cgdd4"
 plant_open sp-ciiii express
 git -C "$REPO" worktree add -q -b spira/sp-ciiii "$RUN/worktree/sp-ciiii" main
 printf 'i\n' > "$RUN/worktree/sp-ciiii/i.txt"
@@ -1080,8 +1081,8 @@ out_n="$(STUB_RED_SUITES="" cut_repo)"
 nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
 is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
-is     "N: sp-ciiii landstate stays CERTIFIED — untouched, not re-ejected" \
-       "CERTIFIED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-ciiii")"
+is     "N: sp-ciiii stub row stays CERTIFIED — untouched, not re-ejected" \
+       "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
 
 tl_summary
