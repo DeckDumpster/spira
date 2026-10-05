@@ -36,7 +36,7 @@ while IFS= read -r _line; do
     _mb="${_mb%"${_mb##*[![:space:]]}"}"
     [ -z "$_mb" ] && continue
 
-    age="$(mail unread-age "$_mb" 2>/dev/null)" || { err=1; continue; }
+    age="$(mail unread-age "$_mb")" || { err=1; continue; }  # stderr reaches the journal: "could not check" must say why (sp-xp0u2)
 
     sf="${_state_dir}/${_mb}"
 
