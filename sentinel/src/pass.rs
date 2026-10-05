@@ -464,12 +464,12 @@ impl<'a> Sentinel<'a> {
                 self.h.set_env("SPIRA_LIST_SNAPSHOT", &p.to_string_lossy());
             }
         }
-        if let Some(ready) = &snap.ready {
+        if snap.ready.is_some() {
             if let Some(p) = self.temp_file("ready-snapshot", &snap.ready_raw) {
                 self.h.set_env("SPIRA_READY_SNAPSHOT", &p.to_string_lossy());
             }
             if self.mode == Mode::Pass {
-                self.export_ready_cache(ready);
+                self.export_ready_cache();
             }
         }
     }
