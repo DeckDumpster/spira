@@ -228,8 +228,9 @@ for i in (d if isinstance(d, list) else [d]):
 want "the first LANDED-case bead was filed" "sp-" "${_ld_id:-none found}"
 testdb_restate "${_ld_id:-}" closed || true      # fixture data; the mirror's closed is LANDED
 > "$ILOG"
-_ld_out="$(printf 'landed second payload\n' | inc 2>/dev/null)"
-_ld_new="$(printf '%s\n' "$_ld_out" | awk 'NF{l=$0} END{print l}')"
+printf 'landed second payload\n' | inc >/dev/null 2>&1
+# The intake's log names the bead it filed: "filed <id> for <ref> — recurrence of <old> ...".
+_ld_new="$(sed -n 's/.*incident: filed \([^ ]*\) for .*recurrence of.*/\1/p' "$ILOG" | tail -1)"
 is "a LANDED incident's recurrence leaves two beads (the closed one and a fresh one)" "2" "$(count_all 'incident:the-test-sweep')"
 is "exactly one of them is open" "1" "$(count_open 'incident:the-test-sweep')"
 is "the fresh bead is a different bead" "yes" "$([ -n "$_ld_new" ] && [ "$_ld_new" != "${_ld_id:-}" ] && echo yes || echo no)"
