@@ -8,10 +8,11 @@
 #   ./test-park-unmapped.sh
 #
 # THE ORDER MATTERS. Labels must land before the claim is released: the moment
-# release_own_claim clears the assignee and reopens the bead, `bd ready` can offer it to the
-# next summon — and if the ask/overseer labels are not on it yet, a second aeon claims the
-# same unmapped-repo bead in the gap. A stubbed bd records argv in call order so this suite
-# can assert on it directly, never on wall-clock timing.
+# release_own_claim hands the lifecycle row back (`spira-lc unclaim`, sp-hyo5e; under
+# sp-v62vn the only release there is), the bead is READY and the next summon can offer it —
+# and if the ask/overseer labels are not on it yet, a second aeon claims the same
+# unmapped-repo bead in the gap. A stubbed bd and a stubbed spira-lc record argv into ONE
+# log in call order, so this suite can assert on it directly, never on wall-clock timing.
 #
 # defect: sp-4l0d, sp-nlhy, sp-foi7
 # tier: T1
@@ -38,6 +39,14 @@ printf '%s\n' "$*" >> "$CALLS"
 exit 0
 STUB
 chmod +x "$TMP/bin/bd"
+# spira-lc writes to the same log, prefixed, so the release's position among the bd writes
+# is a line number like theirs.
+cat > "$TMP/bin/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+printf 'spira-lc %s\n' "$*" >> "$CALLS"
+exit 0
+STUB
+chmod +x "$TMP/bin/spira-lc"
 
 # ======================================================================================
 echo
@@ -62,15 +71,17 @@ calls="$(cat "$CALLS")"
 has "ask label ($SPIRA_ASK_LABEL) is applied" "label add sp-typo1 $SPIRA_ASK_LABEL" "$calls"
 has "overseer label is applied"               "label add sp-typo1 overseer"        "$calls"
 has "a note is left on the bead"              "note sp-typo1"                      "$calls"
-# Through spira-lc unclaim (sp-hyo5e), which reaches this same stubbed bd: bd's own
-# compare-and-swap release, under the aeon's own name.
-has "the claim is released (bd unclaim under the aeon's name)" \
-    "unclaim sp-typo1 --if-assignee aeon-tester" "$calls"
+has "the ask hold is put on the lifecycle row"  "spira-lc hold sp-typo1 ask"        "$calls"
+# Through spira-lc unclaim (sp-hyo5e): the machine releases the row only if this aeon still
+# holds it — under the aeon's own name, never the fayth's. bd is not written (sp-v62vn).
+has "the claim is released (spira-lc unclaim under the aeon's name)" \
+    "spira-lc unclaim sp-typo1 aeon-tester" "$calls"
 
 ask_line="$(grep -n "label add sp-typo1 $SPIRA_ASK_LABEL" "$CALLS" | head -1 | cut -d: -f1)"
 overseer_line="$(grep -n "label add sp-typo1 overseer" "$CALLS" | head -1 | cut -d: -f1)"
 note_line="$(grep -n "note sp-typo1" "$CALLS" | head -1 | cut -d: -f1)"
-release_line="$(grep -n "unclaim sp-typo1 --if-assignee" "$CALLS" | head -1 | cut -d: -f1)"
+hold_line="$(grep -n "spira-lc hold sp-typo1 ask" "$CALLS" | head -1 | cut -d: -f1)"
+release_line="$(grep -n "spira-lc unclaim sp-typo1 " "$CALLS" | head -1 | cut -d: -f1)"
 
 [ "${ask_line:-0}" -lt "${release_line:-999}" ] && ok "ask label lands before the release" \
     || bad "ask label lands before the release" "ask at line $ask_line, release at $release_line"
@@ -78,6 +89,8 @@ release_line="$(grep -n "unclaim sp-typo1 --if-assignee" "$CALLS" | head -1 | cu
     || bad "overseer label lands before the release" "overseer at line $overseer_line, release at $release_line"
 [ "${note_line:-0}" -lt "${release_line:-999}" ] && ok "note lands before the release" \
     || bad "note lands before the release" "note at line $note_line, release at $release_line"
+[ "${hold_line:-0}" -lt "${release_line:-999}" ] && ok "ask hold lands before the release" \
+    || bad "ask hold lands before the release" "hold at line $hold_line, release at $release_line"
 
 echo
 echo "case 2 — the note names the repo and the repo-map, not a generic message:"
