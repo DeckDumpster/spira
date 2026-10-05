@@ -147,10 +147,7 @@ out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
-case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in
-    BATCHED*) ok "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" ;;
-    *) bad "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" "got: $(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" ;;
-esac
+want "batcher cut: the open-batch record carries sp-mbase" "sp-mbase" "$(grep '^members=' "$B_QUEUEDIR/$B_REPONAME/open" 2>/dev/null)"
 B_BATCH_BRANCH="$(grep '^branch=' "$B_QUEUEDIR/$B_REPONAME/open" 2>/dev/null | cut -d= -f2)"
 if [ -n "$B_BATCH_BRANCH" ] \
    && git -C "$B_REPO" merge-base --is-ancestor master "refs/heads/$B_BATCH_BRANCH" 2>/dev/null; then
