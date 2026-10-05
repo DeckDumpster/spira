@@ -196,7 +196,12 @@ impl Loom {
             })?
         };
 
-        let (mut rows, dropped_closed) = beads::drop_closed(rows);
+        // The state half (design §3.4): one bounded `spira-lc list`, off the async runtime.
+        let lc = tokio::task::spawn_blocking(|| spira_config::lc_state::list().ok().map(spira_config::lc_state::index))
+            .await
+            .ok()
+            .flatten();
+        let (mut rows, dropped_closed) = beads::drop_closed(rows, lc.as_ref());
         let edges = beads::take_edges(&mut rows);
         let live: HashSet<&str> = rows.iter().filter_map(|r| r["id"].as_str()).collect();
         let (edges, dropped_edges) = beads::drawable_edges(edges, &live);

@@ -6,6 +6,7 @@
 use super::{push, Kv};
 use crate::io;
 use serde_json::Value;
+use spira_config::lc_state;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 /// A label set that, if fully contained in a bead's labels, marks it a "stopper" — never
@@ -15,14 +16,19 @@ pub type LabelSet = HashSet<String>;
 
 pub struct Bead {
     pub id: String,
-    pub status: String,
+    /// The lifecycle row's state (READY/REWORK/WORKING for every bead in the universe):
+    /// bd holds content, spira-lc holds state (design §3.4, sp-mve9i).
+    pub state: String,
+    /// The lifecycle row's holds; a poison or ask hold stops a bead like the old labels did.
+    pub holds: Vec<String>,
     pub labels: HashSet<String>,
     /// ids this bead is blocked BY (open `blocks` dependencies pointing at it).
     pub blocked_by: HashSet<String>,
 }
 
-fn is_stopper(labels: &HashSet<String>, ask: &str, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
-    if labels.contains(ask) || labels.contains("spira-poison") {
+fn is_stopper(b: &Bead, ask: &str, suspended: &[LabelSet], live: &[LabelSet]) -> bool {
+    let labels = &b.labels;
+    if labels.contains(ask) || labels.contains("spira-poison") || b.holds.iter().any(|h| h == "poison" || h == "ask") {
         return true;
     }
     if suspended.iter().any(|s| s.iter().all(|l| labels.contains(l))) {
@@ -34,7 +40,7 @@ fn is_stopper(labels: &HashSet<String>, ask: &str, suspended: &[LabelSet], live:
     false
 }
 
-/// The BFS itself: seeds are in_progress beads, or open beads with no open blocker, both
+/// The BFS itself: seeds are WORKING beads, or claimable (READY/REWORK) beads with no open blocker, both
 /// excluding stoppers. A downstream bead becomes reachable once every one of its open
 /// blockers already is. Returns `(reachable_count, total_work_count)`.
 pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelSet], live: &[LabelSet]) -> (usize, usize) {
@@ -67,11 +73,11 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
         if !all_ids.contains(&b.id) {
             continue;
         }
-        if is_stopper(&b.labels, ask, suspended, live) {
+        if is_stopper(b, ask, suspended, live) {
             continue;
         }
         let blockers_empty = blocker_of.get(&b.id).map(|s| s.is_empty()).unwrap_or(true);
-        if b.status == "in_progress" || (b.status == "open" && blockers_empty) {
+        if lc_state::is_working(&b.state) || (lc_state::is_claimable(&b.state) && blockers_empty) {
             seeds.insert(b.id.clone());
         }
     }
@@ -84,7 +90,7 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
                 continue;
             }
             let dn_bead = by_id[&dn];
-            if is_stopper(&dn_bead.labels, ask, suspended, live) {
+            if is_stopper(dn_bead, ask, suspended, live) {
                 continue;
             }
             let all_blockers_reachable = blocker_of.get(&dn).map(|s| s.iter().all(|b| reachable.contains(b))).unwrap_or(true);
@@ -100,13 +106,15 @@ pub fn reachable_bfs(beads: &[Bead], ask: &str, scope: &str, suspended: &[LabelS
 pub fn reachable_keys() -> Kv {
     let mut out = Kv::new();
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
-    let mut args = vec!["list", "--status", "open,in_progress", "--limit", "0"];
+    // The universe is every work bead the machine has as claimable or WORKING (what bd's
+    // `open,in_progress` meant); bd supplies only its labels and edges.
+    let mut args = vec!["list", "--all", "--limit", "0"];
     if !scope.is_empty() {
         args.push("--label");
         args.push(&scope);
     }
     let raw = io::bdjson(&args);
-    let Some(rows) = io::bd_rows(raw) else {
+    let Some((rows, lc)) = io::bd_rows(raw).zip(super::lc::state_index()) else {
         push(&mut out, "SP_REACHABLE", "?");
         push(&mut out, "SP_STRANDED", "?");
         return out;
@@ -153,11 +161,23 @@ pub fn reachable_keys() -> Kv {
         }
     }
 
-    let beads: Vec<Bead> = rows
+    let beads = beads_of(&rows, &lc);
+    let (reach, total) = reachable_bfs(&beads, &ask, &scope, &suspended, &live);
+    push(&mut out, "SP_REACHABLE", reach.to_string());
+    push(&mut out, "SP_STRANDED", (total - reach).to_string());
+    out
+}
+
+/// bd rows joined to their lifecycle rows: a bead enters the universe only while the machine
+/// has it claimable or WORKING. A bead with no lifecycle row is not in it — it can never be
+/// claimed, so it is neither reachable nor stranded work (CHECK-ROWLESS reports it).
+pub fn beads_of(rows: &[Value], lc: &HashMap<String, lc_state::Row>) -> Vec<Bead> {
+    rows
         .iter()
         .filter_map(|b| {
             let id = b.get("id").and_then(Value::as_str)?.to_string();
-            let status = b.get("status").and_then(Value::as_str).unwrap_or("").to_string();
+            let row = lc.get(&id).filter(|r| r.claimable() || r.working())?;
+            let (state, holds) = (row.state.clone(), row.holds.clone());
             let labels: HashSet<String> = b.get("labels").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(String::from).collect()).unwrap_or_default();
             let blocked_by: HashSet<String> = b
                 .get("dependencies")
@@ -172,24 +192,25 @@ pub fn reachable_keys() -> Kv {
                         .collect()
                 })
                 .unwrap_or_default();
-            Some(Bead { id, status, labels, blocked_by })
+            Some(Bead { id, state, holds, labels, blocked_by })
         })
-        .collect();
-
-    let (reach, total) = reachable_bfs(&beads, &ask, &scope, &suspended, &live);
-    push(&mut out, "SP_REACHABLE", reach.to_string());
-    push(&mut out, "SP_STRANDED", (total - reach).to_string());
-    out
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn bead(id: &str, status: &str, labels: &[&str], blocked_by: &[&str]) -> Bead {
+    fn bead(id: &str, state: &str, labels: &[&str], blocked_by: &[&str]) -> Bead {
+        let state = match state {
+            "open" => "READY",
+            "in_progress" => "WORKING",
+            other => other,
+        };
         Bead {
             id: id.to_string(),
-            status: status.to_string(),
+            state: state.to_string(),
+            holds: Vec::new(),
             labels: labels.iter().map(|s| s.to_string()).collect(),
             blocked_by: blocked_by.iter().map(|s| s.to_string()).collect(),
         }
@@ -251,6 +272,31 @@ mod tests {
         ];
         let (reach, _total) = reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]); // literal-ok: fixture/fallback
         assert!(reach >= 1);
+    }
+
+    /// sp-mve9i: the universe and the seeds are the lifecycle row's, not bd's status: a bd
+    /// "closed" bead the machine sent back to REWORK is reachable work, a bd "open" bead the
+    /// machine has LANDED is not work at all, and a poison hold stops a bead.
+    #[test]
+    fn the_universe_and_seeds_come_from_the_lifecycle_rows() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"a","status":"closed","labels":["plan"]},
+                {"id":"b","status":"open","labels":["plan"]},
+                {"id":"c","status":"open","labels":["plan"]},
+                {"id":"d","status":"open","labels":["plan"]}]"#,
+        )
+        .unwrap();
+        let lc: HashMap<String, lc_state::Row> = [("a", "REWORK", ""), ("b", "LANDED", ""), ("c", "READY", "poison")]
+            .iter()
+            .map(|(id, st, h)| {
+                let holds = if h.is_empty() { vec![] } else { vec![h.to_string()] };
+                (id.to_string(), lc_state::Row { bead_id: id.to_string(), state: st.to_string(), holds, ..Default::default() })
+            })
+            .collect();
+        let beads = beads_of(&rows, &lc);
+        let ids: Vec<&str> = beads.iter().map(|b| b.id.as_str()).collect();
+        assert_eq!(ids, vec!["a", "c"]);
+        assert_eq!(reachable_bfs(&beads, "needs-ryan", "plan", &[], &[]), (1, 2)); // literal-ok: fixture/fallback
     }
 
     #[test]

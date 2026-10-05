@@ -9,13 +9,18 @@
 use crate::incident::{self, Finding};
 use crate::log::{log, parse_iso_utc};
 use serde::Deserialize;
+use spira_config::lc_state;
+use std::collections::HashMap;
 use std::process::Command;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TriggerBead {
     pub id: String,
-    #[serde(default)]
-    pub status: String,
+    /// The bead's lifecycle state (`spira-lc list`), joined in after the bd read: a czar
+    /// trigger is work the czar persona claims, so its state is the machine's, never bd's
+    /// `status` (design §3.4, sp-mve9i). Empty when the machine has no row for it.
+    #[serde(skip)]
+    pub state: String,
     #[serde(default)]
     pub external_ref: String,
     #[serde(default)]
@@ -59,9 +64,8 @@ pub fn classify(
     for (reference, mut group) in by_ref {
         group.sort_by_key(|(_, ct, _)| ct.unwrap_or(0));
         let (newest, newest_ct, _) = group.last().cloned().unwrap();
-        let status = newest.status.as_str();
-
-        if status == "open" || status == "in_progress" {
+        // Not yet handed on by the czar (READY/REWORK/WORKING): the old open/in_progress.
+        if !newest.state.is_empty() && !lc_state::past_builder(&newest.state) {
             if let Some(ct) = newest_ct {
                 if now_s - ct >= unc_secs {
                     findings.push(Outcome::Unclaimed {
@@ -75,7 +79,8 @@ pub fn classify(
 
         for i in 0..group.len() {
             let (bead, _, cla) = &group[i];
-            if bead.status != "closed" {
+            // The czar handed it on: the old `closed`. No row is no state, never "closed".
+            if !lc_state::past_builder(&bead.state) {
                 continue;
             }
             let cla = match cla {
@@ -119,6 +124,26 @@ impl Default for Cfg {
 /// `bd -C $db list --label <label> --all --json --limit 0 --brief` — a read failure (bad
 /// db, `bd` missing) yields an empty list, matching the bash's `|| _co_raw=""` -> `'[]'`.
 pub fn query_beads(bd_bin: &str, db: &str, label: &str) -> Vec<TriggerBead> {
+    let beads = query_bd(bd_bin, db, label);
+    match lc_state::list() {
+        Ok(rows) => join_states(beads, &lc_state::index(rows)),
+        Err(e) => {
+            // A state that cannot be read is not read: no finding this pass.
+            log(&format!("watchtower: czar-outcome-check cannot read lifecycle state ({e}) — skipped"));
+            Vec::new()
+        }
+    }
+}
+
+/// Each bead's lifecycle state, by id.
+pub fn join_states(mut beads: Vec<TriggerBead>, lc: &HashMap<String, lc_state::Row>) -> Vec<TriggerBead> {
+    for b in &mut beads {
+        b.state = lc.get(&b.id).map(|r| r.state.clone()).unwrap_or_default();
+    }
+    beads
+}
+
+fn query_bd(bd_bin: &str, db: &str, label: &str) -> Vec<TriggerBead> {
     let out = Command::new(bd_bin)
         .args(["-C", db, "list", "--label", label, "--all", "--json", "--limit", "0", "--brief"])
         .output();
@@ -188,10 +213,17 @@ pub fn run(now: i64, bd_bin: &str, db: &str, home_repo: &str, incident_sh: &str,
 mod tests {
     use super::*;
 
+    /// The fixtures name the old bd words; each stands for the lifecycle state it meant.
     fn bead(id: &str, status: &str, reference: &str, created: &str, closed: &str) -> TriggerBead {
+        let state = match status {
+            "open" => "READY",
+            "in_progress" => "WORKING",
+            "closed" => "DONE",
+            other => other,
+        };
         TriggerBead {
             id: id.to_string(),
-            status: status.to_string(),
+            state: state.to_string(),
             external_ref: reference.to_string(),
             created_at: created.to_string(),
             closed_at: closed.to_string(),
@@ -199,6 +231,30 @@ mod tests {
     }
 
     const NOW: i64 = 1_700_100_000;
+
+    /// sp-mve9i: a trigger's state is its lifecycle row's. bd may say closed while the czar
+    /// still holds it (WORKING): that is unclaimed-or-pending work, not a closure; and a
+    /// bead the machine has no row for is neither.
+    #[test]
+    fn the_trigger_state_is_the_lifecycle_row_not_bd_status() {
+        let raw: Vec<TriggerBead> = serde_json::from_str(&format!(
+            r#"[{{"id":"sp-a","status":"closed","external_ref":"incident:queue-x","created_at":"{}","closed_at":"{}"}},
+                {{"id":"sp-b","status":"open","external_ref":"incident:queue-y","created_at":"{}"}}]"#,
+            minsago(60),
+            minsago(50),
+            minsago(60)
+        ))
+        .unwrap();
+        let lc: HashMap<String, lc_state::Row> =
+            [("sp-a".to_string(), lc_state::Row { bead_id: "sp-a".into(), state: "WORKING".into(), ..Default::default() })].into();
+        let beads = join_states(raw, &lc);
+        assert_eq!(beads[0].state, "WORKING");
+        assert_eq!(beads[1].state, "");
+        assert_eq!(
+            classify(NOW, 30, 10, &beads),
+            vec![Outcome::Unclaimed { id: "sp-a".into(), external_ref: "incident:queue-x".into() }]
+        );
+    }
     fn minsago(m: i64) -> String {
         crate::log::fmt_iso(NOW - m * 60)
     }

@@ -196,7 +196,7 @@ fn run_canary_in(stage_root: &Path, env: &[(String, String)], prod: &ProdEnv, o:
     let _ = sentinel_cmd.status();
 
     let bead_status = bd_status(&bd, &db, &bead_id);
-    if bead_status.as_deref() != Some("closed") {
+    if !spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Canary, bead_status.as_deref().unwrap_or("")) {
         let msg = format!("sentinel pass did not close the bead: status={}", bead_status.as_deref().unwrap_or(""));
         log(&format!("FAIL: {msg}"));
         file_incident(prod, "canary: pipeline bead not closed", &format!("The sentinel pass completed but the bead {bead_id} is {}.\n\nStage: {}", bead_status.as_deref().unwrap_or("?"), stage_root.display()));
