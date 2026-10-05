@@ -6,15 +6,30 @@ id = "UC-landed-audit-reaping-01"
 tier = "T2"
 statement = "`landed <id> <repo>` and CHECK 5's cached walk find a commit naming the bead anywhere in the base's full history. There is no depth window, and a match in the body counts as well as one in the subject."
 
+[use_case.uncovered]
+reason = "lifecycle cutover: landed-ness is the spira-lc LANDED state, not a commit search; the shell callers of the subject/notes oracle are gone and its suite (test-landed-search.sh) deleted. landing-pass's own oracle subcommands are deleted by sp-2c1n0"
+date = "2026-10-04"
+bead = "sp-oqf8c"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-02"
 tier = "T2"
 statement = "The search matches the bead id as a whole token. `sp-a9g` must not be satisfied by a commit naming `sp-a9gk`."
 
+[use_case.uncovered]
+reason = "lifecycle cutover: landed-ness is the spira-lc LANDED state, not a commit search; the shell callers of the subject/notes oracle are gone and its suite (test-landed-search.sh) deleted. landing-pass's own oracle subcommands are deleted by sp-2c1n0"
+date = "2026-10-04"
+bead = "sp-oqf8c"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-03"
 tier = "T1"
 statement = "When the land refs are unresolvable, the answer is \"cannot tell\": `landed` returns rc 2 and CHECK 5 logs \"not judging\". Neither may reopen."
+
+[use_case.uncovered]
+reason = "lifecycle cutover: landed-ness is the spira-lc LANDED state, not a commit search; the shell callers of the subject/notes oracle are gone and its suite (test-landed-search.sh) deleted. landing-pass's own oracle subcommands are deleted by sp-2c1n0"
+date = "2026-10-04"
+bead = "sp-oqf8c"
 
 [[use_case]]
 id = "UC-landed-audit-reaping-04"

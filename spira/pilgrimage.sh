@@ -86,25 +86,24 @@ subs_of() {   # subs_of <epic-id> -> comma-separated addresses; empty means sile
 landed_key() { printf 'spira.landed.%s' "$1"; }
 
 # pilgrimage_branches_landed <epic-id> -> 0 if every child's live push-mode branch is
-# in landstate as LANDED, 1 (with a log line) if any is not.
+# LANDED in the lifecycle record (`spira-lc state`), 1 (with a log line) if any is not.
 #
 # THE ASSERTION THIS GUARDS AGAINST: sp-qj8n demonstrated that landing.sh could push and
 # merge a branch without writing its LANDED entry to landstate — marker commits lost, the
 # branch present in the repo, the bead closed, and the epic then closing over work that
 # was never confirmed to have reached the base. The assertion: a branch still present in
 # a push-mode repo must carry a LANDED entry. If it does not, the epic is deferred until
-# the next landing pass, which either writes the entry or pushes the branch that is somehow
+# the next landing pass, which either records LANDED or pushes the branch that is somehow
 # still there off the base by other means.
 #
 # WHY ONLY PUSH-MODE REPOS. A pr-mode repo's branches are landed by GitHub, not by
-# landing.sh, so there is no landstate entry to check. A hold-mode branch waits for a
+# landing.sh, so there is no LANDED record to check. A hold-mode branch waits for a
 # human. Only push-mode branches go through land_mark LANDED, so only those have an entry
 # to assert against.
 #
 # WHY ONLY LIVE BRANCHES. A branch reaped long ago left no trace in the repo. The landing
-# that reaped it wrote LANDED to landstate, and a wiped SPIRA_RUN is a legitimate operation
-# (landstate is advisory, the database is authoritative). So the absence of a branch from
-# the repo is not a problem; the presence of one without a LANDED entry is.
+# that reaped it recorded LANDED, so the absence of a branch from the repo is not a
+# problem; the presence of one without a LANDED record is.
 pilgrimage_branches_landed() {
     local epic="$1" child repo_name repo ls_state ok=1
     while IFS= read -r child; do
@@ -224,11 +223,11 @@ cmd_check() {
         kv_get "$(landed_key "$id")" >/dev/null && continue   # already announced
 
         # ASSERT: every live push-mode branch belonging to this epic must appear in
-        # landstate as LANDED. A child branch present in a push-mode repo without a
+        # the lifecycle record as LANDED. A child branch present in a push-mode repo without a
         # LANDED entry means landing.sh did not confirm the land — the sp-qj8n defect.
         # Defer until the next landing pass writes the entry.
         if ! pilgrimage_branches_landed "$id"; then
-            log "$id: deferring — not all child branches are in landstate as LANDED"
+            log "$id: deferring — not all child branches are LANDED in the lifecycle record"
             continue
         fi
 
