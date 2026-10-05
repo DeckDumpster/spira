@@ -91,7 +91,7 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
             if bead_id.is_empty() || class.is_empty() {
                 continue;
             }
-            match w.landed(bead_id) {
+            match w.lc_landed(bead_id) {
                 1 => {
                     let has_branch = repo.as_deref().map(|r| w.git_branch_exists_matching(r, &format!("*{bead_id}*"))).unwrap_or(false);
                     if has_branch {

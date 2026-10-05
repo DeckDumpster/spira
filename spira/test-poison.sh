@@ -236,7 +236,7 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+        PATH="$SH:$PATH" \
             command sentinel --audit 2>&1
     )"
     normal_out="$(
@@ -246,7 +246,7 @@ sentinel() {
         SPIRA_LAUNCH="$TMP/launch" SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_SUMMON="$TMP/launch" \
         SPIRA_SKIP_RECLAIM=1 \
-        SPIRA_SKIP_CLOSED_CHECK=1 PATH="$SH:$PATH" \
+        PATH="$SH:$PATH" \
             command sentinel 2>&1
     )"
     printf '%s\n%s\n' "$audit_out" "$normal_out"
@@ -271,10 +271,6 @@ status_of() { B show "$1" --json 2>/dev/null | python3 -c '
 import json, sys
 d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
 print(d[0].get("status") or "")'; }
-assignee_of() { B show "$1" --json 2>/dev/null | python3 -c '
-import json, sys
-d = json.load(sys.stdin); d = d if isinstance(d, list) else [d]
-print(d[0].get("assignee") or "")'; }
 # THE POISON HOLD, READ FROM THE REAL SPIRA-LC (sp-i2m7y) — not the bd label, which CHECK 4
 # no longer writes at all.
 poisoned()    { lcheld "$1"; }
@@ -306,21 +302,17 @@ JSONL
 # cover, kept so that the fix is shown not to be a swap.
 #
 # sp-attempt-N labels are no longer written (sp-lzt); sentinel CHECK4 reads attempt counts
-# from status_changed events. cycle() creates the events by transitioning each bead to
-# in_progress and back N times, matching POISON_AT=3 for orphan/kid and POISON_AT-1 for young.
+# from status_changed events. cycle() seeds N in_progress events per bead — matching
+# POISON_AT=3 for orphan/kid and POISON_AT-1 for young — as SQL rows like seedn's, never by
+# driving bd's status around the lifecycle machine (sp-hyo5e): the count is the subject.
 POISON_SEED=$(cat <<JSONL
 {"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 {"id":"sp-kid","title":"a child of the root epic","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z","dependencies":[{"issue_id":"sp-kid","depends_on_id":"sp-root","type":"parent-child"}]}
 {"id":"sp-young","title":"below the threshold","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
 )
-cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
-    local id="$1" n="$2" i=0
-    while [ "$i" -lt "$n" ]; do
-        B update "$id" --status in_progress >/dev/null 2>&1
-        B update "$id" --status open >/dev/null 2>&1
-        i=$((i+1))
-    done
+cycle() {   # cycle <id> <n> — n status_changed(in_progress) events, seeded (seedn, below)
+    seedn "$1" status_changed '{"status":"in_progress"}' "$2"
 }
 seedn() {   # seedn <id> <event_type> <new_value> <n> — n raw events via bd sql
     local id="$1" et="$2" nv="$3" n="${4:-1}" i=0 uuid
@@ -392,9 +384,14 @@ notpoisoned "an epic is never poisoned" sp-epic
 # --------------------------------------------------------------------------------------
 # A POISONED BEAD KEEPS ITS CLAIM, AND STOPS BEING SUMMONED FOR.
 #
-# The lease is a REAL one taken by `bd ready --claim`, because what is under test is that
-# the valve does not cut it: unclaiming here would pull the lease out from under a session
-# still writing, and the aeon releases on its own exit path anyway.
+# The lease is a REAL one taken the way an aeon takes it — lib.sh's lc_claim_bead, the
+# lifecycle Claim event (sp-860zj: the row is the claim; bd's status and assignee are no
+# one's) — because what is under test is that the valve does not cut it: unclaiming here
+# would pull the lease out from under a session still writing, and the aeon releases on its
+# own exit path anyway. Never a `bd ready --claim` driven around the lifecycle machine
+# (sp-voip5; it held the bead in bd alone, which nothing reads under the machine, so the
+# release below released nothing — sp-7g5q6). The bd row stays open: content only. Three
+# prior attempts are seeded; the claim's own `claimed` events row is the fourth.
 # --------------------------------------------------------------------------------------
 seed_held() {
     seed
@@ -403,23 +400,30 @@ seed_held() {
 JSONL
     mklc sp-orphan
     cycle sp-orphan 3
-    BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
+    ( SPIRA_HOME="$SH" SPIRA_RUN="$RUN"; . "$SH/lib.sh" && lc_claim_bead sp-orphan aeon-holder "$(( $(date +%s) + 3600 ))" ) >/dev/null 2>&1
 }
+# lc_row_of <id> -> "<state> <holder>" off the real spira-lc row.
+lc_row_of() { "$LC_BIN" show "$1" 2>/dev/null | python3 -c '
+import json, sys
+try: b = json.load(sys.stdin).get("bead") or {}
+except Exception: b = {}
+print("%s %s" % (b.get("state") or "", b.get("holder") or ""))'; }
 
 seed_held
-is "the fixture starts with the bead held" "in_progress" "$(status_of sp-orphan)"
-is "and by a named holder"                 "aeon-holder" "$(assignee_of sp-orphan)"
+is "the fixture starts with the bead held, by a named holder" "WORKING aeon-holder" "$(lc_row_of sp-orphan)"
 out="$(sentinel)"
 ispoisoned "a held bead at the threshold is still poisoned" sp-orphan
-is   "but it is not unclaimed under its holder" "in_progress" "$(status_of sp-orphan)"
-is   "and the holder is untouched"              "aeon-holder" "$(assignee_of sp-orphan)"
+is   "but it is not unclaimed: the holder is untouched" "WORKING aeon-holder" "$(lc_row_of sp-orphan)"
 flat() { tr -s ' \n\t' ' ' <<<"$1"; }
 want "the note says the holder keeps its claim" "releases on its own exit path" \
      "$(flat "$(B show sp-orphan 2>/dev/null)")"
 
 # ...and once the holder lets go, CHECK 7 declines to summon for it.
-release() { B update sp-orphan --status open >/dev/null 2>&1; B update sp-orphan --assignee "" >/dev/null 2>&1; }
-release; out="$(sentinel)"
+# The holder lets go the way an aeon does (release_own_claim -> spira-lc unclaim, sp-hyo5e).
+release() { spira-lc unclaim sp-orphan aeon-holder >/dev/null 2>&1; }
+release
+is   "the holder's release puts the row back"   "READY " "$(lc_row_of sp-orphan)"
+out="$(sentinel)"
 want "CHECK 7 declines to summon for a poisoned bead" "t: nothing ready in its partition" "$out"
 rmpoison sp-orphan
 release; out="$(SPIRA_POISON_AT=99 sentinel)"
@@ -482,9 +486,8 @@ testdb_seed <<JSONL
 JSONL
 mklc sp-thrash sp-real
 for i in 1 2 3; do
-    B update sp-thrash --status in_progress >/dev/null 2>&1
+    cycle sp-thrash 1
     seedn sp-thrash requeued thrash 1
-    B update sp-thrash --status open >/dev/null 2>&1
 done
 cycle sp-real 3
 out="$(sentinel)"

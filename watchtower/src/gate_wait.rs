@@ -3,7 +3,7 @@
 //! count, and no row inside it renders `?`, not `0` — "no gate has waited recently" and
 //! "no gate has RUN recently" are opposite facts (law-absence-needs-a-positive-control).
 //!
-//! The cutoff is a STRING comparison: `land_mark` writes `date -u +%Y-%m-%dT%H:%M:%SZ`, and
+//! The cutoff is a STRING comparison: `gate.log` rows carry `date -u +%Y-%m-%dT%H:%M:%SZ`, and
 //! fixed-width ISO-8601 UTC timestamps sort lexicographically in chronological order, so no
 //! date parsing is needed here either.
 

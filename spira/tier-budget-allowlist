@@ -110,7 +110,6 @@ test-check5-drop.sh	T1	41.0
 test-check5-hold-no-reopen.sh	T1	41.0
 test-check5-landed-assert.sh	T1	40.5
 test-check5-landed-no-delivers.sh	T1	25.0
-test-check5-landstate.sh	T1	26.0
 test-check5-nopayload.sh	T1	74.0
 test-check5-sweep-delivers.sh	T1	29.5
 test-check5-unmapped-repo.sh	T1	50.5
@@ -253,7 +252,6 @@ test-landing-pr.sh	T1	36.0
 test-landing-queue-early.sh	T1	17.0
 test-landing-race.sh	T1	22.0
 test-landing-rebase.sh	T1	48.0
-test-landing-red-recurring.sh	T1	17.0
 test-landing.sh	T1	68.5
 test-lanes.sh	T1	3.0
 test-layout-guard.sh	T1	3.0
@@ -315,7 +313,6 @@ test-sending-certified-guard.sh	T1	7.5
 test-sending-closed-reap.sh	T1	13.0
 test-sending-content-label.sh	T1	11.5
 test-sending-empty-commit.sh	T1	7.5
-test-sending-landstate-assert.sh	T1	11.5
 test-sending-metrics.sh	T1	2.5
 test-sending-squash-merged.sh	T1	8.0
 test-sending-unlanded-guard.sh	T1	6.0

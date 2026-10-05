@@ -52,8 +52,9 @@ impl Git<'_> {
         self.ok(&["merge-tree", "--write-tree", base, br])
     }
 
-    /// lib.sh content_landed: <base> already holds every change <br> makes.
-    pub fn content_landed(&self, br: &str, base: &str) -> bool {
+    /// <base> already holds every change <br> makes: an ancestor, or a merge whose tree is the
+    /// base's own (the proof that survives a squash). Same answer as `spira-lc content-landed`.
+    pub fn content_on_base(&self, br: &str, base: &str) -> bool {
         let Some(ahead) = self.ahead(base, br) else { return false };
         if self.is_ancestor(br, base) {
             return true;
@@ -75,21 +76,6 @@ impl Git<'_> {
         self.out(&["log", "--format=%s", "-F", grep.as_str(), range.as_str()]).is_some_and(|s| {
             s.lines().any(|l| l.match_indices(id).any(|(i, _)| !l[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-')))
         })
-    }
-
-    /// lib.sh landed: a LANDING RECORD on the land refs names <id> — the queue's own merge
-    /// subject (`spira: land <id>`, optionally ` — <title>`) or the bead's own commit
-    /// (`<id>:`). --grep only narrows; the subject is what is trusted.
-    pub fn landed(&self, id: &str, refs: &[String]) -> bool {
-        if refs.is_empty() {
-            return false;
-        }
-        let grep = format!("--grep={id}");
-        let mut args = vec!["log", "--format=%s", grep.as_str(), "-F"];
-        args.extend(refs.iter().map(String::as_str));
-        let Some(out) = self.out(&args) else { return false };
-        let (land, own) = (format!("spira: land {id}"), format!("{id}:"));
-        out.lines().any(|s| s == land || s.starts_with(&format!("{land} ")) || s.starts_with(&own))
     }
 
     /// `git cherry base br` has a `+` line: a commit unique to <br> with no patch-equivalent

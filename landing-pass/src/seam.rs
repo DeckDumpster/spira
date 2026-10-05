@@ -15,7 +15,7 @@
 ///
 /// `ConflictNote`, `OtherBeads`, `PrMerged`, `LandSubject` and `CloseOnLand` are retired
 /// (sp-81t4d, "wave 4.17": family R, landed verification) — `conflict_reopen_note`,
-/// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and `bead_close_on_land` are all
+/// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and the close-on-land are all
 /// native now (`land_verify.rs`), reached through `RealLib` directly, never this seam.
 /// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
 /// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;
@@ -158,12 +158,12 @@ fn body(op: Op) -> &'static str {
         Op::Push => "__e=\"$(spira_git_push \"$1\" -q \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
         // spira-lc's caller verbs (sp-arpjt; lc-delivery.sh before): their log lines are
         // lib.sh `log` lines, passed through like any other.
-        Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\" || true\nexit 0\n",
-        Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\" || true\nexit 0\n",
-        Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\" || true\nexit 0\n",
+        Op::DeliverDelivered => "spira-lc deliver push-delivered \"$1\" \"$2\"; exit $?\n",
+        Op::DeliverRequeued => "spira-lc deliver push-requeued \"$1\" \"$2\"; exit $?\n",
+        Op::DeliverReturned => "spira-lc deliver push-returned \"$1\" \"$2\"; exit $?\n",
         Op::PruneWorktrees => "spira_prune_worktrees \"$1\" >/dev/null 2>&1\nexit 0\n",
-        Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\" || true\nexit 0\n",
-        Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\" || true\nexit 0\n",
+        Op::DeliverPrMerged => "spira-lc deliver pr-merged \"$1\" \"$2\" \"$3\" \"$4\"; exit $?\n",
+        Op::DeliverPrClosed => "spira-lc deliver pr-closed \"$1\" \"$2\"; exit $?\n",
         Op::ForcePush => "__e=\"$(spira_git_push \"$1\" -q --force-with-lease -u \"$2\" \"$3\" 2>&1 >/dev/null)\"; __rc=$?\nprintf '\\036%s' \"$__e\"\nexit $__rc\n",
     }
 }
@@ -225,6 +225,15 @@ mod tests {
             assert!(s.starts_with("{\n") && s.ends_with("}\n"), "{op:?}");
             assert!(!s.contains('\0'), "{op:?}");
             assert!(s.contains("exit"), "{op:?} must exit inside the braces");
+        }
+    }
+
+    #[test]
+    fn a_delivery_script_exits_with_the_machines_own_status() {
+        for op in [Op::DeliverDelivered, Op::DeliverRequeued, Op::DeliverReturned, Op::DeliverPrMerged, Op::DeliverPrClosed] {
+            let s = script(op);
+            assert!(!s.contains("|| true"), "{op:?} swallows a refusal");
+            assert!(s.contains("exit $?"), "{op:?} must hand the status back");
         }
     }
 

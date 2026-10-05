@@ -207,7 +207,7 @@ echo "case 4 — a squatter whose owning bead is CLOSED and CLEAN is freed, not 
 git -C "$REPO" worktree add -q -b spira/sp-root3 "$SPIRA_RUN/worktree/sp-hold3" main
 seed sp-root3                      # default branch spira/sp-root3, squatted by sp-hold3
 seed sp-hold3
-bd -C "$SPIRA_DB" close sp-hold3 --reason "done" >/dev/null 2>&1
+testdb_restate sp-hold3 closed     # the holder's closed row is fixture data (sp-voip5)
 
 out4="$(detect_branch_collisions 2>/dev/null)"
 want "case 4: sp-root3 detected as a collision before freeing" "COLLISION sp-root3 fixture spira/sp-root3 sp-hold3" "$out4"
@@ -235,7 +235,7 @@ git -C "$REPO" worktree add -q -b spira/sp-root4 "$SPIRA_RUN/worktree/sp-hold4" 
 printf 'uncommitted\n' > "$SPIRA_RUN/worktree/sp-hold4/dirty.txt"
 seed sp-root4
 seed sp-hold4
-bd -C "$SPIRA_DB" close sp-hold4 --reason "done" >/dev/null 2>&1
+testdb_restate sp-hold4 closed     # the holder's closed row is fixture data (sp-voip5)
 
 out5="$(detect_branch_collisions 2>/dev/null)"
 park_out5="$(park_branch_collisions "$out5")"
@@ -253,7 +253,7 @@ echo "case 6 — a closed holder with a LIVE session on its worktree still parks
 git -C "$REPO" worktree add -q -b spira/sp-root5 "$SPIRA_RUN/worktree/sp-hold5" main
 seed sp-root5
 seed sp-hold5
-bd -C "$SPIRA_DB" close sp-hold5 --reason "done" >/dev/null 2>&1
+testdb_restate sp-hold5 closed     # the holder's closed row is fixture data (sp-voip5)
 # holder_alive checks a hold pidfile by pid alone (law-prefer-the-real-dependency's own
 # positive control, mirrored from test-hold.sh): our own pid is certainly alive.
 echo $$ > "$SPIRA_RUN/hold-sp-hold5.pid"

@@ -225,6 +225,15 @@ fn p(p: &Path) -> String {
 }
 
 impl<'a> RealLib<'a> {
+    /// A refused delivery event is a loud line, never a swallowed status.
+    fn deliver_checked(&self, op: Op, values: &[&str], verb: &str, id: &str) {
+        let (rc, _) = self.seam.call(op, values);
+        if rc != 0 {
+            let line = format!("landing-pass: {id}: LIFECYCLE: spira-lc deliver {verb} did not happen (exit {rc})");
+            self.seam.out.log(&line);
+            eprintln!("{line}");
+        }
+    }
     /// lib.sh `ask_already_open <subject>` (sp-31hjr) — the strongest dedupe is "is it
     /// already in front of him", so this asks the database.
     fn ask_already_open(&self, subject: &str) -> bool {
@@ -278,12 +287,6 @@ impl<'a> RealLib<'a> {
 }
 
 impl<'a> Lib for RealLib<'a> {
-    /// In-process now (sp-cnnt6, "wave 4.16"): this crate owns the landstate ledger, so its
-    /// own writes never need the lib.sh seam — only the other five crates' seams do, and
-    /// those shell to `landing-pass mark` instead.
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-        crate::landstate::land_mark(&self.s.run, id, state, tip, reason, "");
-    }
     fn reopen(&self, id: &str, cause: &str, note: &str) {
         self.seam.call(Op::Reopen, &[id, cause, note]);
     }
@@ -482,27 +485,26 @@ impl<'a> Lib for RealLib<'a> {
         crate::land_verify::land_subject(id, &title)
     }
     fn deliver_delivered(&self, id: &str, sha: &str) {
-        self.seam.call(Op::DeliverDelivered, &[id, sha]);
+        self.deliver_checked(Op::DeliverDelivered, &[id, sha], "push-delivered", id);
     }
     fn deliver_requeued(&self, id: &str, tip: &str) {
-        self.seam.call(Op::DeliverRequeued, &[id, tip]);
+        self.deliver_checked(Op::DeliverRequeued, &[id, tip], "push-requeued", id);
     }
     fn deliver_returned(&self, id: &str, reason: &str) {
-        self.seam.call(Op::DeliverReturned, &[id, reason]);
+        self.deliver_checked(Op::DeliverReturned, &[id, reason], "push-returned", id);
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare
-    /// name now, the same way `land_mark` shells to `landing-pass` itself rather than the
-    /// lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
+    /// name now, rather than the lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
     /// through this pass's own `Reporter::raw`, exactly as the seam's own log lines were.
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
         run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
-    /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
+    /// The bash close-on-land — ported natively (sp-81t4d, "wave 4.17": family R; was
     /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
         let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
-        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.run, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
+        crate::land_verify::close_on_land(&RealGit, self.seam.out, &self.s.home, &self.s.submitted_label, row.as_ref(), id, sha);
     }
     fn prune_worktrees(&self, repo: &Path) {
         self.seam.call(Op::PruneWorktrees, &[&p(repo)]);
@@ -526,10 +528,10 @@ impl<'a> Lib for RealLib<'a> {
         self.send_mail("operator", "Landing gate <gate@spira>", &subj, "question", Some(&dflt), id, &body);
     }
     fn deliver_pr_merged(&self, repo: &Path, id: &str, branch: &str, merge_sha: &str) {
-        self.seam.call(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha]);
+        self.deliver_checked(Op::DeliverPrMerged, &[&p(repo), id, branch, merge_sha], "pr-merged", id);
     }
     fn deliver_pr_closed(&self, id: &str, reason: &str) {
-        self.seam.call(Op::DeliverPrClosed, &[id, reason]);
+        self.deliver_checked(Op::DeliverPrClosed, &[id, reason], "pr-closed", id);
     }
     fn force_push(&self, repo: &Path, remote: &str, branch: &str) -> Result<(), String> {
         let (rc, err) = self.seam.call(Op::ForcePush, &[&p(repo), remote, branch]);
@@ -748,7 +750,7 @@ impl Git for RealGit {
         c.args(["merge-base", "--is-ancestor", a, b]);
         git_ok(c)
     }
-    fn content_landed(&self, repo: &Path, branch: &str, base: &str) -> bool {
+    fn content_on_base(&self, repo: &Path, branch: &str, base: &str) -> bool {
         let Some(ahead) = self.count(repo, &format!("{base}..{branch}")) else { return false };
         // An ancestor branch is landed: every commit is already reachable from the base.
         if self.is_ancestor(repo, branch, base) {

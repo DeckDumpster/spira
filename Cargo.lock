@@ -198,6 +198,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
@@ -223,7 +224,6 @@ dependencies = [
  "aeon",
  "bead",
  "serde_json",
- "spira-claim",
  "spira-config",
  "strand",
  "testkit",
@@ -683,6 +683,7 @@ version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
+ "testkit",
  "tree-sitter",
  "tree-sitter-bash",
  "walkdir",

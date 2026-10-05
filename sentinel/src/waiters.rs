@@ -9,51 +9,20 @@
 //! considers a closed dep resolved, but queue mode's CLOSED is not LANDED. The decision is
 //! one pass over the union of the labeled set and the ready set (never release-then-apply,
 //! which could clear for one blocker and reapply for another in the same run).
-//! `close_landed_queue_waiters` closes a labeled bead whose landstate already reads LANDED
+//! `close_landed_queue_waiters` closes a labeled bead whose lifecycle row already reads LANDED
 //! — it never got a branch to land, so the normal close-on-land path never visited it.
 //!
 //! Both are dual-written (bd label AND the spira-lc `wait` hold, sp-ki12s precedent):
 //! `fayth_ready` still reads the label, not the hold, until CHECK 3b's reader cuts over.
 
 use std::collections::HashSet;
-use std::path::Path;
 
 use crate::host::{Io, Spec};
-use crate::cfg::Lifecycle;
 use crate::model::{parse_beads, Bead, LcRow};
 use crate::pass::Sentinel;
 use crate::store;
 
-/// Active queue blockers: landstate files whose first line is `CERTIFIED`/`BATCHED` with a
-/// real commit tip. `tip="none"` (design/diagnosis/superseded) never reaches LANDED by the
-/// queue path and is treated as already satisfied — not a blocker.
-pub fn active_blockers(landstate_dir: &Path) -> HashSet<String> {
-    let mut out = HashSet::new();
-    let Ok(rd) = std::fs::read_dir(landstate_dir) else {
-        return out;
-    };
-    for e in rd.flatten() {
-        let p = e.path();
-        if !p.is_file() {
-            continue;
-        }
-        let Some(id) = p.file_name().map(|n| n.to_string_lossy().into_owned()) else {
-            continue;
-        };
-        let Ok(text) = std::fs::read_to_string(&p) else {
-            continue;
-        };
-        let mut w = text.lines().next().unwrap_or("").split_whitespace();
-        let state = w.next().unwrap_or("");
-        let tip = w.next().unwrap_or("");
-        if matches!(state, "CERTIFIED" | "BATCHED") && !tip.is_empty() && tip != "none" {
-            out.insert(id);
-        }
-    }
-    out
-}
-
-/// ON mode's active blockers: spira-lc rows in CERTIFIED or IN_DELIVERY — the queue pipeline's
+/// Active queue blockers: spira-lc rows in CERTIFIED or IN_DELIVERY — the queue pipeline's
 /// states. A tipless design/diagnosis bead reaches a terminal state, never these.
 pub fn active_blockers_lc(rows: &[LcRow]) -> HashSet<String> {
     rows.iter()
@@ -98,8 +67,7 @@ impl<'a> Sentinel<'a> {
     /// `spira-lc hold <id> <kind> <reason> sentinel` — fire-and-forget, dual-written
     /// alongside the bd label (sp-ki12s precedent): never gated on `self.lc`, unlike the
     /// CAS-based holds in lifecycle.rs, because `spira-lc hold` answers "cannot tell" on its
-    /// own when lifecycle_enforce is off (callers.rs `off()`), the same `|| true` shape
-    /// lib.sh used.
+    /// own, the same `|| true` shape lib.sh used.
     pub fn lc_hold(&self, id: &str, kind: &str, reason: &str) {
         self.h.run(
             Spec::args_owned(
@@ -139,13 +107,10 @@ impl<'a> Sentinel<'a> {
         if label.is_empty() {
             return;
         }
-        let active = match self.lc {
-            Lifecycle::On => match self.lc_rows() {
-                Some(rows) => active_blockers_lc(&rows),
-                None => return,
-            },
-            Lifecycle::Off => active_blockers(&self.cfg.run.join("landstate")),
+        let Some(rows) = self.lc_rows() else {
+            return;
         };
+        let active = active_blockers_lc(&rows);
 
         let labeled: HashSet<String> = {
             let args = vec![
@@ -238,21 +203,11 @@ impl<'a> Sentinel<'a> {
         if ids.is_empty() {
             return;
         }
-        let lc_rows = match self.lc {
-            Lifecycle::On => match self.lc_rows() {
-                Some(r) => Some(r),
-                None => return,
-            },
-            Lifecycle::Off => None,
+        let Some(rows) = self.lc_rows() else {
+            return;
         };
         for id in ids {
-            let landed = match &lc_rows {
-                Some(rows) => rows.iter().any(|r| r.bead_id == id && r.state == "LANDED"),
-                None => std::fs::read_to_string(self.cfg.run.join("landstate").join(&id))
-                    .ok()
-                    .is_some_and(|t| t.split_whitespace().next() == Some("LANDED")),
-            };
-            if landed {
+            if rows.iter().any(|r| r.bead_id == id && r.state == "LANDED") {
                 self.bd().quiet(self.h, &["label", "remove", &id, &label], None);
                 self.lc_unhold(&id, "wait");
                 self.bd().quiet(
@@ -287,17 +242,6 @@ mod tests {
             .remove(0)
     }
 
-    #[test]
-    fn active_blockers_fires_on_certified_or_batched_with_a_real_tip() {
-        let d = testkit::TempDir::new("waiters-active");
-        std::fs::write(d.join("a"), "CERTIFIED abc123 1700\n").unwrap();
-        std::fs::write(d.join("b"), "BATCHED def456 1700\n").unwrap();
-        let got = active_blockers(&d);
-        assert!(got.contains("a") && got.contains("b"));
-        assert_eq!(got.len(), 2);
-        let _ = std::fs::remove_dir_all(&d);
-    }
-
     fn lc_row(id: &str, state: &str) -> LcRow {
         LcRow { bead_id: id.into(), state: state.into(), ..Default::default() }
     }
@@ -314,18 +258,6 @@ mod tests {
         let got = active_blockers_lc(&rows);
         assert_eq!(got, ["cert".to_string(), "deliv".to_string()].into());
         assert!(active_blockers_lc(&[]).is_empty());
-    }
-
-    #[test]
-    fn active_blockers_stays_quiet_on_landed_gated_tipless_or_missing() {
-        let d = testkit::TempDir::new("waiters-quiet");
-        std::fs::write(d.join("landed"), "LANDED abc 1700 spira\n").unwrap();
-        std::fs::write(d.join("gated"), "GATED abc 1700 gate-result:PASS\n").unwrap();
-        std::fs::write(d.join("tipless"), "CERTIFIED none 1700\n").unwrap();
-        std::fs::create_dir(d.join("subdir")).unwrap(); // not a file: must not blow up the scan
-        let got = active_blockers(&d);
-        assert!(got.is_empty(), "{got:?}");
-        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

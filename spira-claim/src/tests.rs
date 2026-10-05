@@ -1030,7 +1030,10 @@ fn enforced_count(ready: &str, lc: &str, recs: &str, verb: &[&str]) -> Outcome {
 const ENFORCE_READY: &str = r#"[{"id":"S","priority":1,"labels":["plan"]},
     {"id":"D","priority":1,"labels":["plan"],"dependencies":[{"issue_id":"D","depends_on_id":"S","type":"blocks"}]},
     {"id":"R","priority":1,"labels":["plan"]}]"#;
-const ENFORCE_RECS: &str = r#"[{"id":"S","status":"open","issue_type":"task","labels":["plan"]}]"#;
+/// bd's content of each bead, by id: the candidates and their blockers both come from here.
+const ENFORCE_RECS: &str = r#"[{"id":"S","status":"open","issue_type":"task","labels":["plan"]},
+    {"id":"D","priority":1,"labels":["plan"],"dependencies":[{"issue_id":"D","depends_on_id":"S","type":"blocks"}]},
+    {"id":"R","priority":1,"labels":["plan"]}]"#;
 
 #[test]
 fn enforced_counts_exclude_submitted_and_blocked_beads_and_keep_one_ready() {
@@ -1054,4 +1057,86 @@ fn enforced_counts_refuse_when_the_lifecycle_machine_cannot_answer() {
     let b = enforced_count(ENFORCE_READY, "not json", ENFORCE_RECS, &["bulk-ready-by-fayth"]);
     assert_ne!(b.code, 0);
     assert_eq!(b.out, "");
+}
+
+// ---- the lifecycle row is the claim (sp-860zj) -------------------------------------------
+//
+// bd's status and assignee are content nobody reads for claimability: the candidate set is
+// the lifecycle machine's READY/REWORK rows. bd below answers its own `list --status open
+// --no-assignee` with W alone (open, unassigned) and holds P in_progress under a dead
+// aeon's name; the machine says the opposite.
+
+const BD_OPEN_UNASSIGNED: &str = r#"[{"id":"W","status":"open","priority":1,"labels":["plan"]}]"#;
+const BD_BOTH: &str = r#"[{"id":"W","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
+    {"id":"P","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
+const LC_W_HELD_P_READY: &str =
+    r#"[{"bead_id":"W","state":"WORKING","holder":"aeon-live","holds":"[]"},{"bead_id":"P","state":"READY","holds":"[]"}]"#;
+
+fn ids_of(json: &str) -> Vec<String> {
+    rank::parse_ready(json).unwrap().into_iter().map(|r| r.id).collect()
+}
+
+#[test]
+fn a_bead_bd_shows_in_progress_is_ready_when_its_lifecycle_row_is_ready() {
+    let one = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["fayth-ready", "probe"]);
+    assert_eq!((one.code, one.out.as_str()), (0, "1"), "{}", one.err);
+    let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    assert_eq!(set.code, 0, "{}", set.err);
+    assert_eq!(ids_of(&set.out), vec!["P".to_string()], "the aeon's ready set is the count's own rows");
+    let bulk = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["bulk-ready-by-fayth"]);
+    assert_eq!(bulk.out, "probe 1\n", "{}", bulk.err);
+    let n = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, BD_BOTH, &["ready-count", "plan", ""]);
+    assert_eq!((n.code, n.out.as_str()), (0, "1"), "{}", n.err);
+}
+
+#[test]
+fn a_bead_bd_shows_open_and_unassigned_is_not_ready_while_its_row_is_working() {
+    let lc = r#"[{"bead_id":"W","state":"WORKING","holder":"aeon-live","holds":"[]"},{"bead_id":"P","state":"SUBMITTED","holds":"[]"}]"#;
+    for verb in [&["fayth-ready", "probe"][..], &["ready-count", "plan", ""][..]] {
+        let o = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, verb);
+        assert_eq!((o.code, o.out.as_str()), (0, "0"), "{verb:?}: {}", o.err);
+    }
+    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    assert_eq!((set.code, ids_of(&set.out)), (0, Vec::<String>::new()), "{}", set.err);
+}
+
+#[test]
+fn a_held_ready_row_is_not_ready_but_a_wait_hold_is_judged_through_its_blockers() {
+    let lc = r#"[{"bead_id":"W","state":"READY","holds":"[\"poison\"]"},{"bead_id":"P","state":"REWORK","holds":"[\"wait\"]"}]"#;
+    let set = enforced_count(BD_OPEN_UNASSIGNED, lc, BD_BOTH, &["fayth-ready", "probe", "--json"]);
+    assert_eq!(ids_of(&set.out), vec!["P".to_string()], "{}", set.err);
+}
+
+// ---- ready-count --json: the ready set a display reads (sp-7g5q6) ------------------------
+//
+// The cockpit's NEXT rows asked bd ready itself; under the machine that set is bd's status
+// and assignee, which nobody claims by any more. `ready-count --json` is the same set the
+// count is, so a display and the summoner cannot disagree.
+
+#[test]
+fn ready_count_json_is_the_machine_set_with_titles_under_enforce() {
+    let bd_both = r#"[{"id":"W","title":"held","status":"open","priority":1,"issue_type":"task","labels":["plan"]},
+    {"id":"P","title":"take me","status":"in_progress","assignee":"aeon-gone","priority":1,"issue_type":"task","labels":["plan"]}]"#;
+    let set = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "spira-poison", "--json"]);
+    assert_eq!(set.code, 0, "{}", set.err);
+    let rows = rank::parse_ready(&set.out).unwrap();
+    assert_eq!(rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec!["P"]);
+    assert_eq!(rows[0].title.as_deref(), Some("take me"));
+    let none = enforced_count(BD_OPEN_UNASSIGNED, LC_W_HELD_P_READY, bd_both, &["ready-count", "plan", "plan", "--json"]);
+    assert_eq!((none.code, ids_of(&none.out)), (0, Vec::<String>::new()), "{}", none.err);
+    let refused = enforced_count(BD_OPEN_UNASSIGNED, "not json", bd_both, &["ready-count", "plan", "", "--json"]);
+    assert_eq!((refused.code, refused.out.as_str()), (1, ""), "a machine that cannot answer is no empty queue");
+}
+
+#[test]
+fn ready_count_json_off_is_bds_ready_query_and_refuses_a_non_json_reply() {
+    let bd = sh(r#"case "$*" in *"ready"*"--label plan"*) echo '[{"id":"a","title":"A","labels":["plan"]}]';; *) echo '[]';; esac"#);
+    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None), ("SPIRA_SCOPE_LABEL", None), ("SPIRA_NO_LOOP_LABEL", None)]);
+    let o = run(&["ready-count", "plan", "spira-poison", "--json"], "");
+    assert_eq!((o.code, ids_of(&o.out)), (0, vec!["a".to_string()]), "{}", o.err);
+    drop(_env);
+    let bd = sh("echo 'schema version mismatch'");
+    let _env = testkit::env(&[("SPIRA_BD", Some(bd.as_str())), ("SPIRA_DB", None)]);
+    let o = run(&["ready-count", "plan", "", "--json"], "");
+    assert_eq!((o.code, o.out.as_str()), (1, ""), "{}", o.err);
 }

@@ -35,6 +35,14 @@ bin SPIRA_TESTENV_BIN testenv
 # these but is itself now retired (sp-8fsql): its subject, spira/gh-intake.sh, is deleted,
 # and the property it scanned for is structural in the gh-intake crate that replaced it.
 step "$SPIRA_LINT_BIN"
+# The lifecycle barrier (sp-ts2qr; brain design bead-lifecycle-state-machine §3.6(3), §3.8(2)):
+# the tree's own lifecycle-guard, over the whole gate tree, refuses any path that reaches the
+# landstate ledger or a landed oracle — the lifecycle machine (spira-lc) is the only route.
+# There is no allow-list and no flag that makes one; a finding's exits are named in its refusal
+# (law-a-refusal-names-its-exit). Built from the tree, so a branch that sharpens a rule is
+# judged by it. Prints `fence: lifecycle-guard checked <n> files` (gate/src/fence.rs).
+bin SPIRA_GUARD_BIN lifecycle-guard
+step "$SPIRA_GUARD_BIN" --gate .
 step bash spira/build-fence.sh
 # README is rendered from spira/boundary; the suite selector runs test-boundary.sh only when a
 # boundary file is touched, so a change to what ships would otherwise land with a stale README.

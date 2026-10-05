@@ -242,7 +242,7 @@ if [ "$MODE" = drop-empty ]; then
         [[ "$ans" =~ ^[Yy]$ ]] || { printf 'Aborted.\n'; exit 1; }
 
         # Through the chokepoint (sp-9envm), not a raw `git branch -D`: an EMPTY branch is
-        # the safe case (0 commits ahead, so content_landed's ancestor check holds
+        # the safe case (0 commits ahead, so spira-lc content-landed's ancestor check holds
         # trivially), but "safe in practice" is not a reason to skip the holder-witness
         # check and the reap-log entry every OTHER deletion gets. Empty caller applies the
         # content fence as a second, independent confirmation.

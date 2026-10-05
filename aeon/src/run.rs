@@ -350,15 +350,32 @@ impl<'a> Run<'a> {
         None
     }
 
-    /// `lifecycle_enforce` off: `bd ready` — bd's own blocker-open/closed judgment. On: `bd
-    /// list` (`MACHINE_READY_ARGS`), widened past that judgment, because bd has no notion of
-    /// a blocker that is CERTIFIED but not LANDED — `select`'s `--blockers machine` (below)
-    /// is what actually decides claimability then (design stacked-dependents-2026-09-28 §1).
+    /// `lifecycle_enforce` off: bd's ready query, narrowed to this fayth.
     fn ready_args(&self) -> Vec<String> {
-        let base = if self.enforce { &self.snap.machine_ready_args } else { &self.snap.ready_args };
-        let mut a = base.clone();
+        let mut a = self.snap.ready_args.clone();
         a.extend(s(&["--label", &self.fayth.labels, "--exclude-label", &self.snap.claim_exclude]));
         a
+    }
+
+    /// The ready set, as JSON. Enforce on: spira-claim's `fayth-ready --json`, the lifecycle
+    /// machine's claimable rows in this fayth's partition — the rows CHECK 7 counted when it
+    /// summoned this aeon; bd supplies only their content. Off: bd's ready query.
+    fn ready_set(&self, tries: u32, delay: Duration) -> Result<String, String> {
+        if !self.enforce {
+            return claim::claim_retry(self.d.bd, &self.ready_args(), tries, delay);
+        }
+        let tries = tries.max(1);
+        let mut last = Out::default();
+        for i in 1..=tries {
+            last = self.d.seam.call("_aeon_ready_set", &[]);
+            if last.success() {
+                return Ok(util::json_only(&last.stdout));
+            }
+            if i < tries {
+                (self.d.sleep)(delay);
+            }
+        }
+        Err(format!("fayth-ready: query failed after {tries} attempt(s): {}", last.first_err_line()))
     }
 
     /// `spira-claim stack <id>` — the stack this claim would carry, or an empty, unstacked
@@ -379,6 +396,13 @@ impl<'a> Run<'a> {
 
     fn dry_run(&self) -> i32 {
         self.log(&format!("{}: dry run — candidates:", self.f()));
+        if self.enforce {
+            let rows: serde_json::Value = self.ready_set(1, Duration::ZERO).ok().and_then(|j| serde_json::from_str(&j).ok()).unwrap_or_default();
+            for r in rows.as_array().into_iter().flatten().take(10) {
+                self.d.sink.out(r["id"].as_str().unwrap_or("?"));
+            }
+            return 0;
+        }
         let o = self.d.bd.bd(&self.ready_args());
         for l in util::strip_bd_hints(&o.stdout).lines().take(10) {
             self.d.sink.out(l);
@@ -386,11 +410,61 @@ impl<'a> Run<'a> {
         0
     }
 
+    /// The lifecycle claim: a Claim event per ranked candidate, carrying its stack proposal,
+    /// until one applies. bd is read afterwards for the bead's content only. Ok(None): idle.
+    fn lc_claim(&mut self, ids: &[String], resumable: &[String], tier: Option<&str>, who: &str) -> Result<Option<claim::Claimed>, i32> {
+        let holder = format!("aeon-{}", self.s.aeon);
+        let until = (self.now() + self.fayth.lease_seconds()).to_string();
+        let mut stacks = std::collections::BTreeMap::new();
+        let (won, logs, unreachable) = claim::lc_claim_loop(ids, resumable, tier, who, |id| {
+            let p = self.stack_proposal(id, who);
+            let rc = self.sdo(
+                "lc_claim_bead",
+                &s(&[id, &holder, &until, &stack::stack_json(&p.stack), &p.stack_depth.to_string(), &p.stack_max_depth.to_string()]),
+            );
+            stacks.insert(id.to_string(), p.stack);
+            rc
+        });
+        for l in logs {
+            self.log(&l);
+        }
+        let Some(id) = won else {
+            if unreachable {
+                self.log(&format!("{}: claim-error the lifecycle machine answered no claim — not reporting idle for a claim that never completed", self.f()));
+                self.ledger.awake(self.now(), self.f(), "claim-error lifecycle machine unreachable");
+                return Err(1);
+            }
+            return Ok(None);
+        };
+        self.s.stack = stacks.remove(&id).unwrap_or_default();
+        let raw = bd::json(self.d.bd, &["show", &id]);
+        match bd::first_row(&raw) {
+            Some(row) if row.id == id => {
+                let repo = row.label_value("repo:").unwrap_or_default();
+                Ok(Some(claim::Claimed { id, repo, row, raw }))
+            }
+            _ => {
+                self.s.bead = id.clone();
+                self.release();
+                self.log(&format!("{who}: claimed {id}, but bd returned no record of it — released"));
+                self.ledger.awake(self.now(), self.f(), &format!("claim-error no bd record for {id}"));
+                Err(1)
+            }
+        }
+    }
+
+    /// The holds on a just-claimed row that make it unclaimable: the Claim event does not
+    /// read holds, so a hold applied between the ready read and the claim is caught here.
+    fn blocking_holds(&self, id: &str) -> Vec<String> {
+        let o = self.d.exec.exec("spira-lc", &s(&["holds", id]), None, None);
+        o.stdout.lines().map(str::trim).filter(|h| !h.is_empty() && *h != "wait").map(String::from).collect()
+    }
+
     fn claim(&mut self) -> Result<(), i32> {
         self.take_name();
         let tries = self.conf.n("SPIRA_CLAIM_RETRIES", 3).max(1) as u32;
         let delay = Duration::from_secs(self.conf.n("SPIRA_CLAIM_RETRY_DELAY_S", 1).max(0) as u64);
-        let ready = match claim::claim_retry(self.d.bd, &self.ready_args(), tries, delay) {
+        let ready = match self.ready_set(tries, delay) {
             Ok(j) => j,
             Err(e) => {
                 let e = if e.is_empty() { "bd gave no reason".to_string() } else { e };
@@ -411,10 +485,15 @@ impl<'a> Run<'a> {
             }
             Selection::Ranked { ids, resumable, tier } => (ids, resumable, tier),
         };
-        let (claimed, logs) = claim::claim_loop(self.d.bd, &ids, &resumable, tier.as_deref(), &who, tries, delay);
-        for l in logs {
-            self.log(&l);
-        }
+        let claimed = if self.enforce {
+            self.lc_claim(&ids, &resumable, tier.as_deref(), &who)?
+        } else {
+            let (claimed, logs) = claim::claim_loop(self.d.bd, &ids, &resumable, tier.as_deref(), &who, tries, delay);
+            for l in logs {
+                self.log(&l);
+            }
+            claimed
+        };
         let Some(c) = claimed else {
             self.log(&format!("{}: nothing ready to claim", self.f()));
             self.ledger.awake(self.now(), self.f(), "idle");
@@ -433,44 +512,19 @@ impl<'a> Run<'a> {
         }
 
         // Read-after-claim: the predicate and the claim are not atomic.
-        if bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label("spira-poison")) {
+        if self.enforce {
+            let held = self.blocking_holds(&c.id);
+            if !held.is_empty() {
+                self.release();
+                self.log(&format!("{who}: {} carries a {} hold — released immediately after claim (race with the hold)", c.id, held.join(",")));
+                self.ledger_done(0, "hold-raced");
+                return Err(0);
+            }
+        } else if bd::show(self.d.bd, &c.id).is_some_and(|r| r.has_label("spira-poison")) {
             self.release();
             self.log(&format!("{who}: {} carries spira-poison — released immediately after claim (race with the label)", c.id));
             self.ledger_done(0, "poison-raced");
             return Err(0);
-        }
-
-        // ---- lifecycle: lifecycle_enforce alone decides (sp-74gzo) ----
-        if self.enforce {
-            let holder = format!("aeon-{}", self.s.aeon);
-            let until = self.now() + self.fayth.lease_seconds();
-            let proposal = self.stack_proposal(&c.id, &who);
-            self.s.stack = proposal.stack.clone();
-            let rc = self.sdo(
-                "lc_claim_bead",
-                &s(&[
-                    &c.id,
-                    &holder,
-                    &until.to_string(),
-                    &stack::stack_json(&proposal.stack),
-                    &proposal.stack_depth.to_string(),
-                    &proposal.stack_max_depth.to_string(),
-                ]),
-            );
-            if rc != 0 {
-                self.release();
-                if rc == 3 {
-                    self.log(&format!(
-                        "{who}: {} — the lifecycle machine refused this claim (not READY/REWORK, or its stack exceeds stack_max_depth) — released",
-                        c.id
-                    ));
-                    self.ledger_done(0, "lc-claim-refused");
-                } else {
-                    self.log(&format!("{who}: {} — the lifecycle machine could not be reached for this claim — released", c.id));
-                    self.ledger_done(0, "lc-claim-unreachable");
-                }
-                return Err(0);
-            }
         }
 
         // ---- world-stop fence ----
@@ -890,33 +944,38 @@ impl<'a> Run<'a> {
         let scope = self.conf.s("SPIRA_SCOPE_LABEL");
         let home = self.home().display().to_string();
         let home_repo = self.conf.repos.home_repo().to_string();
+        let mut single = vec![
+            ("BEAD_ID", bead.clone()),
+            ("BRANCH", self.s.branch.clone()),
+            ("REPO", wdisp.clone()),
+            ("REPO_NAME", self.s.repo_name.clone()),
+            ("HOME_REPO", home_repo),
+            ("LANDING", landing),
+            ("DB", db.clone()),
+            ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
+            ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
+            // Tools by bare name (sp-gypjk): the aeon's environment carries the
+            // launcher's PATH, whose first entries are the release's bin/ and spira/.
+            ("SUITES", format!("{} suites", brief::TESTENV)),
+            ("TESTENV", brief::TESTENV.into()),
+            ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
+            ("NO_BD", brief::no_bd_brief(self.enforce)),
+            ("SPIRA_HOME", home.clone()),
+            ("RUN", self.run_dir().display().to_string()),
+            ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
+            ("REMEDY_LABEL", self.conf.s("SPIRA_MAECHEN_REMEDY_LABEL")),
+            ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
+        ];
+        // The tool placeholders (ASK, GROOM, INCIDENT, SOP, DEP): `work` verbs, since the
+        // model has no bd-reaching tool (sp-st0mm).
+        single.extend(brief::tool_tokens());
+        // Under enforce the model has no bd and no path into the release (sp-st0mm, sp-zf4q3):
+        // no prompt names the database or the harness's home, so neither is handed over.
+        if self.enforce {
+            single.retain(|(k, _)| !brief::WITHHELD_UNDER_ENFORCE.contains(k));
+        }
         let tokens = Tokens {
-            single: vec![
-                ("BEAD_ID", bead.clone()),
-                ("BRANCH", self.s.branch.clone()),
-                ("REPO", wdisp.clone()),
-                ("REPO_NAME", self.s.repo_name.clone()),
-                ("HOME_REPO", home_repo),
-                ("LANDING", landing),
-                ("DB", db.clone()),
-                ("SPIKE_DIR", self.conf.s("SPIRA_SPIKE_DIR")),
-                ("SPIKE_PATHS", self.conf.s("SPIRA_SPIKE_PATHS")),
-                // Tools by bare name (sp-gypjk): the aeon's environment carries the
-                // launcher's PATH, whose first entries are the release's bin/ and spira/.
-                ("SOP", "sop".into()),
-                ("INCIDENT", "incident.sh".into()),
-                ("ASK", "mail".into()),
-                ("SUITES", format!("{} suites", brief::TESTENV)),
-                ("TESTENV", brief::TESTENV.into()),
-                ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
-                ("GROOM", "groomer".into()),
-                ("DEP", "bead.sh dep add".into()),
-                ("SPIRA_HOME", home.clone()),
-                ("RUN", self.run_dir().display().to_string()),
-                ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),
-                ("REMEDY_LABEL", self.conf.s("SPIRA_MAECHEN_REMEDY_LABEL")),
-                ("SCOPE", if scope.is_empty() { String::new() } else { format!("{scope},") }),
-            ],
+            single,
             bead: body,
             park: blocks[0].clone(),
             fixture: blocks[1].clone(),
@@ -929,7 +988,7 @@ impl<'a> Run<'a> {
         task.push_str(&brief::dirty_brief(dirty));
         task.push_str(resume);
         task.push_str(slain);
-        task.push_str(&brief::already_done_brief(&self.s.base, &bead, &wdisp, &db));
+        task.push_str(&brief::already_done_brief(self.enforce, &self.s.base, &bead, &wdisp, &db));
         task.push_str(&brief::close_brief(&self.s.base, &wdisp, &self.s.base_remote));
         task.push_str(rebase);
         let _ = std::fs::write(self.run_dir().join(format!("{bead}.system.md")), sys);
@@ -1086,11 +1145,14 @@ impl<'a> Run<'a> {
             // §3.5; replaces the work-env.sh wrapper process, sp-zpaq0): same allow-list,
             // now applied in-process rather than through a subprocess and `env -i`.
             self.s.lc_model_restricted = true;
+            // sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never
+            // the bin/ that holds `work` beside ~40 tools that call bd. Fail-closed.
             let path = child.get("PATH").cloned().unwrap_or_default();
-            let Some(work_dir) = restrict::work_bin_dir(&path, |p| is_executable(p)) else {
-                return Err(Abort::Die("work-env: work is not on PATH — the launcher sets PATH to a release".to_string()));
+            let model_bin = match restrict::model_bin_dir(&child, &path, |p| is_executable(p)) {
+                Ok(d) => d,
+                Err(e) => return Err(Abort::Die(format!("work-env: {e}"))),
             };
-            (agent, argv, restrict::restricted_env(&bead, &child, &work_dir))
+            (agent, argv, restrict::restricted_env(&bead, &child, &model_bin))
         } else {
             (agent, argv, child)
         };
@@ -1125,6 +1187,10 @@ impl<'a> Run<'a> {
             seam: self.d.seam,
             git: self.d.git,
             bd: self.d.bd,
+            bd_lease: !self.enforce,
+            exec: self.d.exec,
+            holder: format!("aeon-{}", self.s.aeon),
+            renew_rc: std::sync::Mutex::new(0),
             sink: self.d.sink,
             clock: self.d.clock,
             repos: self.conf.repos.clone(),
@@ -1150,6 +1216,16 @@ pub struct RealBeat<'a> {
     pub seam: &'a dyn Seam,
     pub git: &'a dyn Git,
     pub bd: &'a dyn Bd,
+    /// Enforce off: bd's claim carries the lease, renewed by `bd heartbeat`. On, there is no
+    /// bd claim (`bd heartbeat` on an unclaimed bead fails, which would end the heartbeat
+    /// loop); the lifecycle row's lease is renewed by `spira-lc renew` instead (sp-2jf0a).
+    pub bd_lease: bool,
+    /// `spira-lc renew`'s runner, found by name like every other spira-lc call here.
+    pub exec: &'a dyn Exec,
+    /// The claim's holder — the name `lc_claim` claimed under (`aeon-<name>`).
+    pub holder: String,
+    /// The last renewal's exit, so a refusal is logged once per change, not every beat.
+    pub renew_rc: std::sync::Mutex<i32>,
     pub sink: &'a dyn Sink,
     pub clock: &'a (dyn Fn() -> i64 + Sync),
     /// spira_config::repos (sp-o88bx, "wave 4.12"): the heartbeat's base-ref read
@@ -1182,8 +1258,23 @@ impl Beat for RealBeat<'_> {
         let b = t.as_bytes();
         String::from_utf8_lossy(&b[..b.len().min(n)]).into_owned()
     }
-    fn bd_heartbeat(&self) -> bool {
-        self.bd.bd(&s(&["heartbeat", &self.bead])).success()
+    fn renew(&self, lease_until: i64) -> bool {
+        if self.bd_lease {
+            return self.bd.bd(&s(&["heartbeat", &self.bead])).success();
+        }
+        // Enforce on: the lifecycle row's lease (sp-2jf0a). Never ends the heartbeat — its
+        // lapse and thrash guards must keep watching the session whatever the machine says.
+        // A refusal (reaped and handed on, already submitted, the machine unreachable) is
+        // logged once per change; a holder that stops renewing simply expires.
+        let o = self.exec.exec("spira-lc", &s(&["renew", &self.bead, &self.holder, &lease_until.to_string()]), None, None);
+        let mut last = self.renew_rc.lock().unwrap_or_else(|e| e.into_inner());
+        if o.code != *last {
+            if o.code != 0 {
+                self.log(&format!("{}: lifecycle lease renewal refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+            }
+            *last = o.code;
+        }
+        true
     }
     fn log(&self, msg: &str) {
         self.sink.out(&util::log_line((self.clock)(), msg));

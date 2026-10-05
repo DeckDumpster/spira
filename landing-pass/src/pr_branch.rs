@@ -14,7 +14,6 @@
 use crate::model::RepoRow;
 use crate::ports::{Beads, Git, Lib, Tools};
 use crate::records::Files;
-use crate::util::unix_now;
 use std::path::Path;
 
 pub struct Ctx<'a> {
@@ -31,86 +30,28 @@ pub struct Ctx<'a> {
 /// `base_branch`/`remote` already resolved by the pass's own context load (no per-branch
 /// `qualify_base_ref` re-derivation needed — the base does not move mid-pass).
 #[allow(clippy::too_many_arguments)]
-pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, tip_in: &str, base_fq: &str, repo_row: &RepoRow) -> i32 {
-    let now = unix_now();
-    let mut tip = tip_in.to_string();
+pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, _tip: &str, base_fq: &str, repo_row: &RepoRow) -> i32 {
     let remote = repo_row.base_remote.clone().unwrap_or_else(|| "origin".to_string());
     let base_branch = repo_row.base_branch.clone();
 
-    let refresh: u32;
-    if let Some(sub) = c.files.submitted(id) {
-        if sub.tip == tip && (sub.state != "failed" || now.saturating_sub(sub.at) < 3600) {
-            match sub.state.as_str() {
-                "pr" => {
-                    let behind = !c.git.is_ancestor(repo, base_fq, br);
-                    let n = sub.refreshes;
-                    let mut pr_st: Option<String> = None;
-                    if behind || n == 0 {
-                        pr_st = c.tools.forge_pr_state(repo, br);
-                        match pr_st.as_deref() {
-                            Some("merged") => {
-                                let merge_sha = c.git.rev_parse(repo, base_fq).unwrap_or_else(|| baseref.to_string());
-                                c.lib.deliver_pr_merged(repo, id, br, &merge_sha);
-                                c.files.mark_submitted(id, &tip, "done", now);
-                                (c.log)(&format!("{br}'s pull request is merged in {name} — delivered"));
-                                return 7;
-                            }
-                            Some("closed") => {
-                                c.lib.deliver_pr_closed(id, "pull request closed unmerged");
-                                c.files.mark_submitted(id, &tip, "done", now);
-                                (c.log)(&format!("{br}'s pull request was closed unmerged in {name} — returned"));
-                                return 8;
-                            }
-                            _ => {}
-                        }
-                    }
-                    if !behind {
-                        return 6;
-                    }
-                    // needs_refresh, inline (lib.sh 9213–9247): already covered the ancestor
-                    // fast path above; from here it is the OPEN/refresh-count decision only.
-                    match sub.state.as_str() {
-                        "stale" => {
-                            if !c.git.is_ancestor(repo, baseref, br) {
-                                (c.log)(&format!("{id}: {br} is behind {baseref} and already escalated — leaving it standing"));
-                            }
-                            return 6;
-                        }
-                        "done" => return 6,
-                        _ => {}
-                    }
-                    let st = if n == 0 && pr_st.is_none() { c.tools.forge_pr_state(repo, br) } else { pr_st };
-                    let Some(st) = st.filter(|s| s != "unknown") else {
-                        (c.log)(&format!("{id}: {br} is behind {baseref} but gh will not say whether its pull request is open — not touching it"));
-                        return 6;
-                    };
-                    if st != "open" {
-                        (c.log)(&format!("{id}: {br} is behind {baseref} but its pull request is {st} — nothing to refresh"));
-                        c.files.mark_submitted(id, &tip, "done", now);
-                        return 6;
-                    }
-                    if n >= c.pr_refresh_max {
-                        c.lib.ask_refresh_loop(repo, name, br, id, base_fq, n);
-                        c.files.mark_submitted_refreshed(id, &tip, "stale", now, n);
-                        (c.log)(&format!("{id}: escalated — its pull request will not merge after {n} refresh(es)"));
-                        return 6;
-                    }
-                    refresh = n + 1;
-                    (c.log)(&format!("{id}: {br} is behind {baseref} — rebasing its pull request onto it (refresh {refresh} of {})", c.pr_refresh_max));
-                }
-                "stale" => {
-                    if !c.git.is_ancestor(repo, baseref, br) {
-                        (c.log)(&format!("{id}: {br} is behind {baseref} and already escalated — leaving it standing"));
-                    }
-                    return 6;
-                }
-                _ => return 6,
-            }
-        } else {
-            refresh = 0;
+    let mut refresh = 0u32;
+    match c.tools.forge_pr_state(repo, br).as_deref() {
+        Some("merged") => {
+            let merge_sha = c.git.rev_parse(repo, base_fq).unwrap_or_else(|| baseref.to_string());
+            c.lib.deliver_pr_merged(repo, id, br, &merge_sha);
+            (c.log)(&format!("{br}'s pull request is merged in {name} — delivered"));
+            return 7;
         }
-    } else {
-        refresh = 0;
+        Some("closed") => {
+            c.lib.deliver_pr_closed(id, "pull request closed unmerged");
+            (c.log)(&format!("{br}'s pull request was closed unmerged in {name} — returned"));
+            return 8;
+        }
+        Some("open") if !c.git.is_ancestor(repo, base_fq, br) => {
+            refresh = 1;
+            (c.log)(&format!("{id}: {br} is behind {baseref} — rebasing its pull request onto it"));
+        }
+        _ => {}
     }
 
     // ── rebase ──────────────────────────────────────────────────────────────────────────
@@ -130,12 +71,6 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
             (c.log)(&format!("{br} does not rebase onto {baseref}, but its pull request is merged — landed, not stuck"));
             return 0;
         }
-        let cur_base_sha = c.git.rev_parse(repo, base_fq).unwrap_or_default();
-        let ls = c.files.land_state(id).unwrap_or_default();
-        if ls.state == "RED" && ls.tip == tip {
-            (c.log)("tip unchanged since last RED mark — skipping duplicate bump");
-            return 3;
-        }
         let reopen_note = c.lib.conflict_note(&[&repo.to_string_lossy(), br, base_fq, name, &rb.conflicts, "landing-pass"]);
         let others = c.lib.other_beads(repo, br, base_fq, &rb.conflicts);
         c.lib.bump_requeue(id, "merge-conflict");
@@ -154,18 +89,14 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
                 &format!("conflicts in {}; the next aeon is handed the rebase", if rb.conflicts.is_empty() { "unknown" } else { &rb.conflicts }),
             );
         }
-        let t = c.git.rev_parse(repo, br).unwrap_or_default();
-        c.lib.land_mark(id, "RED", &t, &format!("no-rebase@{cur_base_sha}"));
         return 3;
     }
-    tip = c.git.rev_parse(repo, br).unwrap_or(tip);
 
     // ── confinement ─────────────────────────────────────────────────────────────────────
     let (crc, cout) = c.tools.confine(id, br, repo, base_fq, "");
     if crc == 1 {
         c.lib.reopen(id, "confine-fail", &format!("Reopened by landing-pass: {cout}"));
         (c.log)(cout.lines().next().unwrap_or(""));
-        c.lib.land_mark(id, "RED", &tip, "confine");
         return 2;
     } else if crc != 0 {
         (c.log)(&format!("confine.sh could not evaluate: {}", cout.lines().next().unwrap_or("")));
@@ -181,7 +112,6 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
 
     // ── open or refresh the pull request ───────────────────────────────────────────────
     if land_pr(c, repo, br, id, &remote, &base_branch) {
-        c.files.mark_submitted_refreshed(id, &tip, "pr", now, refresh);
         if refresh > 0 {
             (c.log)(&format!("refreshed {br} onto {baseref} in {name} — rebased and force-pushed"));
         } else {
@@ -189,7 +119,6 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
         }
         0
     } else {
-        c.files.mark_submitted_refreshed(id, &tip, "failed", now, refresh);
         1
     }
 }
@@ -235,7 +164,7 @@ fn pr_number(c: &Ctx, repo: &Path, br: &str) -> Option<u64> {
 
 /// Another open PR whose head already carries every commit on `br` — a parallel duplicate,
 /// catching the sp-pd-ci case (#114 carried all nineteen of #113's commits). Uses
-/// `content_landed`'s merge-tree equivalence (this crate's own primitive for exactly "does
+/// `content_on_base`'s merge-tree equivalence (this crate's own primitive for exactly "does
 /// X already contain every change on Y") rather than bash's per-commit SHA-ancestor loop —
 /// more robust to the candidate branch having been rebased or amended since it diverged
 /// (a named difference from bash's `land_pr`, DESIGN.md). The candidate ref is qualified
@@ -247,7 +176,7 @@ fn duplicate_open_pr(c: &Ctx, repo: &Path, br: &str, remote: &str) -> Option<u64
             continue;
         }
         let candidate_ref = format!("{remote}/{head}");
-        if c.git.content_landed(repo, br, &candidate_ref) {
+        if c.git.content_on_base(repo, br, &candidate_ref) {
             return Some(n);
         }
     }
@@ -282,9 +211,6 @@ mod tests {
         }
     }
     impl Lib for FLib {
-        fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str) {
-            self.rec(format!("land_mark {id} {state} {tip} {reason}"));
-        }
         fn reopen(&self, id: &str, cause: &str, _note: &str) {
             self.rec(format!("reopen {id} {cause}"));
         }
@@ -378,7 +304,7 @@ mod tests {
         fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
             self.ancestors.borrow().iter().any(|(x, y)| x == a && y == b)
         }
-        fn content_landed(&self, _: &Path, _: &str, _: &str) -> bool {
+        fn content_on_base(&self, _: &Path, _: &str, _: &str) -> bool {
             false
         }
         fn count(&self, _: &Path, _: &str) -> Option<u64> {
@@ -563,7 +489,6 @@ mod tests {
         let rc = f.run("spira/sp-a", "sp-a", "t1");
         assert_eq!(rc, 0);
         assert!(f.lib.has("force_push origin spira/sp-a"));
-        assert!(!f.lib.has("land_mark sp-a REBASED"));
         assert!(f.logs.borrow().iter().any(|l| l.contains("opened a pull request")));
     }
 
@@ -574,7 +499,6 @@ mod tests {
         let rc = f.run("spira/sp-a", "sp-a", "t1");
         assert_eq!(rc, 3);
         assert!(f.lib.has("reopen sp-a rebase-conflict"));
-        assert!(f.lib.has("land_mark sp-a RED"));
     }
 
     /// Regression (sp-li2pv, same defect class as sp-cgklh in landing.sh's CHECK6 loop):
@@ -591,7 +515,6 @@ mod tests {
         assert_eq!(rc, 3);
         assert!(f.lib.has("reopen sp-a rebase-conflict"), "the escalation ask is not a substitute for reopening");
         assert!(f.lib.has("ask_rebase_loop"), "and the escalation ask still fires");
-        assert!(f.lib.has("land_mark sp-a RED"));
     }
 
     /// Ported from test-landing-pass.sh TEST 2 (retired with pr-pass-branch.sh, sp-t4y60):
@@ -646,7 +569,6 @@ mod tests {
         let rc = f.run("spira/sp-a", "sp-a", "t1");
         assert_eq!(rc, 2);
         assert!(f.lib.has("reopen sp-a confine-fail"));
-        assert!(f.lib.has("land_mark sp-a RED t1 confine"));
     }
 
     #[test]
@@ -669,8 +591,8 @@ mod tests {
     #[test]
     fn a_duplicate_pull_request_is_noted_and_not_reopened_as_a_second_pr() {
         let f = Fixture::new();
-        // content_landed defaults false in FGit, so make the candidate branch look like it
-        // already carries br's work by overriding content_landed via a second fixture git.
+        // content_on_base defaults false in FGit, so make the candidate branch look like it
+        // already carries br's work by overriding content_on_base via a second fixture git.
         struct DupGit(FGit);
         impl Git for DupGit {
             fn spira_refs(&self, r: &Path) -> Vec<(String, String)> {
@@ -685,7 +607,7 @@ mod tests {
             fn is_ancestor(&self, r: &Path, a: &str, b: &str) -> bool {
                 self.0.is_ancestor(r, a, b)
             }
-            fn content_landed(&self, _: &Path, branch: &str, base: &str) -> bool {
+            fn content_on_base(&self, _: &Path, branch: &str, base: &str) -> bool {
                 branch == "spira/sp-a" && base == "origin/spira/sp-b"
             }
             fn count(&self, r: &Path, x: &str) -> Option<u64> {
@@ -745,56 +667,4 @@ mod tests {
         assert!(f.tools.pr_create_n.get().is_none() || !f.logs.borrow().iter().any(|l| l.contains("opened a pull request")));
     }
 
-    #[test]
-    fn a_submitted_pr_whose_head_now_settles_is_left_alone() {
-        let f = Fixture::new();
-        f.files.mark_submitted("sp-a", "t1", "pr", 1000);
-        f.git.ancestors.borrow_mut().push(("refs/remotes/origin/main".into(), "spira/sp-a".into()));
-        let rc = f.run("spira/sp-a", "sp-a", "t1");
-        assert_eq!(rc, 6);
-        assert!(!f.lib.has("rebase"), "not behind its base — nothing to do this pass");
-    }
-
-    #[test]
-    fn a_submitted_pr_reported_merged_is_delivered() {
-        let f = Fixture::new();
-        f.files.mark_submitted("sp-a", "t1", "pr", 1000);
-        *f.tools.pr_state.borrow_mut() = Some("merged".into());
-        let rc = f.run("spira/sp-a", "sp-a", "t1");
-        assert_eq!(rc, 7);
-        assert!(f.lib.has("deliver_pr_merged sp-a spira/sp-a"));
-    }
-
-    #[test]
-    fn a_submitted_pr_reported_closed_unmerged_is_returned() {
-        let f = Fixture::new();
-        f.files.mark_submitted("sp-a", "t1", "pr", 1000);
-        *f.tools.pr_state.borrow_mut() = Some("closed".into());
-        let rc = f.run("spira/sp-a", "sp-a", "t1");
-        assert_eq!(rc, 8);
-        assert!(f.lib.has("deliver_pr_closed sp-a"));
-    }
-
-    #[test]
-    fn a_refresh_at_the_ceiling_escalates_instead_of_looping_forever() {
-        let f = Fixture::new();
-        f.files.mark_submitted_refreshed("sp-a", "t1", "pr", 1000, 5);
-        *f.tools.pr_state.borrow_mut() = Some("open".into());
-        let rc = f.run("spira/sp-a", "sp-a", "t1");
-        assert_eq!(rc, 6);
-        assert!(f.lib.has("ask_refresh_loop sp-a spira/sp-a 5"));
-        assert_eq!(f.files.submitted("sp-a").unwrap().state, "stale");
-    }
-
-    #[test]
-    fn a_refresh_below_the_ceiling_rebases_again() {
-        let f = Fixture::new();
-        f.files.mark_submitted_refreshed("sp-a", "t1", "pr", 1000, 2);
-        *f.tools.pr_state.borrow_mut() = Some("open".into());
-        f.tools.pr_create_n.set(Some(1));
-        let rc = f.run("spira/sp-a", "sp-a", "t1");
-        assert_eq!(rc, 0);
-        assert!(f.lib.has("rebase spira/sp-a"), "a refresh still rebases onto the moved base");
-        assert_eq!(f.files.submitted("sp-a").unwrap().refreshes, 3);
-    }
 }

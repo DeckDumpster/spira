@@ -2,31 +2,15 @@
 
 use std::fs;
 
-use super::{actor, czar_ok, lifecycle_on, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
+use super::{actor, czar_ok, lc_cas, require_lc, idents, landing_log, owner_refused, read_text, repo_path, resolve, take_lock, title_line, World, FAIL, OK, USAGE};
 use crate::cli::Text;
 use crate::ident::bounded_text;
 use crate::model::{EjectCause, LandMode, Member};
 use crate::ports::ref_branch;
 use crate::records::{self, one_line, write_atomic, Kv};
 
-/// Ask spira-lc for the batch's fresh (state, version) and run `f` against it; rc 1 with no
-/// output when the batch row does not exist there (queue.sh _lc_batch_state_version).
-fn lc_cas<F>(w: &World, batch_id: &str, f: F) -> Result<(), (i32, String)>
-where
-    F: FnOnce(&str, &str) -> Result<(), (i32, String)>,
-{
-    if !w.lc.available() {
-        return Err((2, "no spira-lc program".into()));
-    }
-    match w.lc.batch_state(batch_id) {
-        Some((state, version)) if !state.is_empty() => f(&state, &version),
-        _ => Err((1, String::new())),
-    }
-}
-
 /// A hand eject's walk on spira-lc: Deliver first when the row is still CERTIFIED (Returned is
-/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal:
-/// the landstate is already written.
+/// legal only from IN_DELIVERY), then Returned{batch-ejected} -> REWORK. Reported, never fatal.
 fn lc_return(w: &World, id: &str) {
     let fail = |why: String| w.err(format!("queue.sh eject: spira-lc: {id}: {why} — not returned to REWORK on spira-lc"));
     let Some((mut state, version)) = w.lc.bead_state(id) else { return fail("no lifecycle row".into()) };
@@ -64,15 +48,14 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     if idents(w, "eject", &[("bead id", id), ("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    // --suites is a comma-separated list (queue.sh's contract, and what the .ejected sidecar
-    // and recertification read back): each name is an identifier, the commas are not.
+    // --suites is a comma-separated list (queue.sh's contract, and what recertification
+    // reads back): each name is an identifier, the commas are not.
     if !suites.is_empty() && suites.split(',').try_for_each(|s| idents(w, "eject", &[("suite", s)])).is_err() {
         return FAIL;
     }
     let actor = actor(w);
     let cause = EjectCause::decide(red, suites);
-    let lc_on = lifecycle_on(w);
-    if lc_on && !dry_run && require_lc(w, "eject").is_err() {
+    if !dry_run && require_lc(w, "eject").is_err() {
         return FAIL;
     }
     let Ok(_g) = take_lock(w, "eject", &c, "") else { return FAIL };
@@ -91,11 +74,10 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             return FAIL;
         }
     }
-    let landstate = &c.s.landstate;
 
     let Some(hit) = hit else {
         // Not batched: a CERTIFIED bead is withdrawn the way a reopen withdraws it.
-        let st = records::land_state(landstate, id);
+        let st = w.lc.bead_row(id);
         if st.as_ref().map(|s| s.state.as_str()) != Some("CERTIFIED") {
             w.err(format!("queue.sh eject: {id} is not a member of the open batch for {} and is not CERTIFIED", c.r.name));
             let ids: Vec<&str> = members.iter().map(|m| m.id.as_str()).collect();
@@ -103,46 +85,32 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
             return FAIL;
         }
         if dry_run {
-            let tip = st.map(|s| s.tip).unwrap_or_default();
+            let tip = st.and_then(|s| s.tip).unwrap_or_default();
             w.out(format!("dry-run: {id} is CERTIFIED but not yet batched for {} (tip={tip})", c.r.name));
-            w.out(format!("dry-run: would write WITHDRAWN to {}/{id}", landstate.display()));
-            if !suites.is_empty() {
-                w.out(format!("dry-run: would write suites={suites} to {}/{id}.ejected", landstate.display()));
-            }
-            w.out(format!("dry-run: would reopen bead {id} and clear assignee"));
+            w.out(format!("dry-run: would reopen bead {id}, return it to REWORK on spira-lc and clear assignee"));
             w.out(format!("dry-run: would record cause {}", cause.as_str()));
             w.out(format!("dry-run: would post comment to {id}"));
             return bead_resolves(w, id);
         }
         w.lib.bead_reopen(id, cause.as_str(), suites);
-        if lc_on {
-            lc_return(w, id);
-        }
+        lc_return(w, id);
         let mut comment = format!("Ejected while certified but not yet batched in {}.", c.r.name);
         if !reason.is_empty() {
             comment.push_str(&format!("\n\n{reason}"));
         }
-        comment.push_str("\n\nLandstate written as WITHDRAWN. Recertify the branch before it can rejoin the queue.");
+        comment.push_str("\n\nWithdrawn from the queue. Recertify the branch before it can rejoin.");
         if !suites.is_empty() {
             comment.push_str(&format!("\n\nRecertification will force these suites regardless of SPIRA_CERTIFY_SUITES: {suites}"));
         }
         w.lib.comment(id, &comment);
-        w.out(format!("queue.sh eject: ejected {id} (certified, not yet batched) for {} (landstate=WITHDRAWN)", c.r.name));
+        w.out(format!("queue.sh eject: ejected {id} (certified, not yet batched) for {} (withdrawn)", c.r.name));
         return OK;
     };
 
     if dry_run {
         w.out(format!("dry-run: {id} is in the open batch for {} (tip={})", c.r.name, hit.tip));
-        w.out(format!("dry-run: would write RED to {}/{id}", landstate.display()));
-        if !suites.is_empty() {
-            w.out(format!("dry-run: would write suites={suites} to {}/{id}.ejected", landstate.display()));
-        }
         w.out(format!("dry-run: would record cause {}", cause.as_str()));
-        if lc_on {
-            w.out(format!("dry-run: would return bead {id} to spira-lc via a Returned event"));
-        } else {
-            w.out(format!("dry-run: would reopen bead {id} and clear assignee"));
-        }
+        w.out(format!("dry-run: would return bead {id} to spira-lc via a Returned event"));
         w.out(format!("dry-run: would post comment to {id}"));
         w.out(format!("dry-run: would close PR {pr}"));
         if !survivors.is_empty() {
@@ -153,25 +121,13 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
 
     let why = if reason.is_empty() { "ejected".to_string() } else { reason.clone() };
-    // RED, not EJECTED: EJECTED is the automated attribution state; RED is the operator's.
-    w.lib.land_mark(id, "RED", &hit.tip, &why);
-    if lc_on {
-        // The suites the dry-run promised (queue.sh printed this line and never wrote it).
-        if !suites.is_empty() {
-            let _ = write_atomic(&landstate.join(format!("{id}.ejected")), suites);
-        }
-        // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
-        w.lib.cause_event(id, cause.as_str());
-        // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
-        lc_return(w, id);
-        w.lib.release_claim(id);
-    } else {
-        // Pre-lifecycle (before sp-rlyl0): hand the bead back through bead_reopen — reopen,
-        // submitted label off, assignee cleared, the suites sidecar and the cause row, in
-        // the one function every reopen goes through.
-        w.lib.bead_reopen(id, cause.as_str(), suites);
-    }
-    if lc_on && !batch_id.is_empty() {
+    // The cause row spira-claim classifies: eject (harness) or eject-red (judged). §8 D1.
+    // `bead_reopen` carries the suites a recertification must force.
+    w.lib.cause_event(id, cause.as_str());
+    // The delivery-exit event legal from IN_DELIVERY (sp-rlyl0).
+    lc_return(w, id);
+    w.lib.release_claim(id);
+    if !batch_id.is_empty() {
         let r = bounded_text(&why);
         match lc_cas(w, &batch_id, |s, v| w.lc.eject_member(&batch_id, id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh eject: {id} ejected on spira-lc (returned to CERTIFIED there)")),
@@ -182,11 +138,10 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     if !reason.is_empty() {
         comment.push_str(&format!("\n\n{reason}"));
     }
-    comment.push_str("\n\nLandstate written as RED. Fix the failing issue and re-certify before rejoining the queue.");
+    comment.push_str("\n\nFix the failing issue and re-certify before rejoining the queue.");
     w.lib.comment(id, &comment);
 
     for m in &survivors {
-        w.lib.land_mark(&m.id, "CERTIFIED", &m.tip, "");
         w.out(format!("queue.sh eject: {} returned to CERTIFIED", m.id));
     }
     if !pr.is_empty() && idents(w, "eject", &[("pr", &pr)]).is_ok() {
@@ -201,7 +156,7 @@ pub fn eject(w: &World, id: &str, repo: Option<&str>, reason: &Text, suites: &st
     }
     body.push_str(&format!("\nSurvivors returned to CERTIFIED: {surv}"));
     w.lib.notify(&c.r.name, &format!("{id} ejected (queue.sh eject)"), &body);
-    w.out(format!("queue.sh eject: ejected {id} from {} batch (landstate=RED)", c.r.name));
+    w.out(format!("queue.sh eject: ejected {id} from {} batch", c.r.name));
     OK
 }
 
@@ -227,8 +182,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     let actor = actor(w);
     let Ok(c) = resolve(w, "abandon", repo) else { return FAIL };
     let Ok(path) = repo_path(w, "abandon", &c) else { return FAIL };
-    let lc_on = lifecycle_on(w);
-    if lc_on && !dry_run && require_lc(w, "abandon").is_err() {
+    if !dry_run && require_lc(w, "abandon").is_err() {
         return FAIL;
     }
     let Ok(_g) = take_lock(w, "abandon", &c, "") else { return FAIL };
@@ -251,10 +205,8 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     let archive = c.queue_file(&format!("closed-pr{pr}-{stamp}"));
     let reason_clean = one_line(&reason);
 
-    // RED and EJECTED are verdicts an abandon never overturns.
-    let kept = |id: &str| -> Option<String> {
-        records::land_state(&c.s.landstate, id).map(|s| s.state).filter(|s| s == "RED" || s == "EJECTED")
-    };
+    // A member already returned to REWORK is a verdict an abandon never overturns.
+    let kept = |id: &str| -> Option<String> { w.lc.bead_row(id).map(|r| r.state).filter(|s| s == "REWORK") };
 
     if dry_run {
         w.out(format!("dry-run: would close PR {pr} for {}", c.r.name));
@@ -282,7 +234,7 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
         return OK;
     }
 
-    if lc_on && !batch_id.is_empty() {
+    if !batch_id.is_empty() {
         let r = bounded_text(&reason);
         match lc_cas(w, &batch_id, |s, v| w.lc.abandon_batch(&batch_id, s, v, "queue.sh", &r)) {
             Ok(()) => w.out(format!("queue.sh abandon: {batch_id} abandoned on spira-lc")),
@@ -304,7 +256,6 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
                 audit.push(format!("{}:{st}", m.id));
             }
             None => {
-                w.lib.land_mark(&m.id, "CERTIFIED", &m.tip, "");
                 w.out(format!("queue.sh abandon: {}: returned to CERTIFIED", m.id));
                 audit.push(format!("{}:CERTIFIED", m.id));
             }
@@ -334,19 +285,10 @@ pub fn abandon(w: &World, repo: Option<&str>, reason: &Text, dry_run: bool) -> i
     OK
 }
 
-/// queue_certified_list: every `spira/*` branch whose landstate is CERTIFIED, with the
-/// landstate's tip and epoch.
-fn certified(w: &World, c: &super::Ctx, path: &std::path::Path) -> Vec<(String, String, u64)> {
-    let mut out = Vec::new();
-    for (branch, _) in w.git.branches(path, "refs/heads/spira/") {
-        let Some(id) = branch.strip_prefix("spira/") else { continue };
-        if let Some(ls) = records::land_state(&c.s.landstate, id) {
-            if ls.state == "CERTIFIED" {
-                out.push((id.to_string(), ls.tip, ls.at));
-            }
-        }
-    }
-    out
+/// queue_certified_list: every `spira/*` branch whose lifecycle row is CERTIFIED, with the
+/// row's tip and the epoch it entered CERTIFIED.
+fn certified(w: &World, path: &std::path::Path) -> Vec<(String, String, u64)> {
+    super::helpers::certified_rows(w.lc, &w.git.branches(path, "refs/heads/spira/"))
 }
 
 pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregate: bool, dry_run: bool) -> i32 {
@@ -368,8 +310,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         w.err(format!("queue.sh open-batch: repo is not in queue mode (mode={})", c.r.mode.as_str()));
         return FAIL;
     }
-    let lc_on = lifecycle_on(w);
-    if lc_on && !dry_run && require_lc(w, "open-batch").is_err() {
+    if !dry_run && require_lc(w, "open-batch").is_err() {
         return FAIL;
     }
     let Ok(_g) = take_lock(w, "open-batch", &c, "") else { return FAIL };
@@ -391,7 +332,7 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
     let remote = c.r.ref_remote(&base).unwrap_or_else(|| "origin".into());
     let base_branch = ref_branch(&base).to_string();
 
-    let certs = certified(w, &c, &path);
+    let certs = certified(w, &path);
     let mut skips: Vec<String> = Vec::new();
     let mut cands: Vec<(String, String)> = Vec::new();
     if !members_arg.trim().is_empty() {
@@ -549,16 +490,10 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
 
     let lc_id = format!("{name}-{stamp}");
     let csv = members.iter().map(Member::render).collect::<Vec<_>>().join(",");
-    // Switch OFF: the pre-sp-o7nbr.5 record — no batch_id/version, no spira-lc call.
-    let cut = if !lc_on {
-        Ok(String::new())
-    } else {
-        for m in &members {
-            w.lc.create_bead(&m.id);
-        }
-        w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh")
-    };
-    match cut {
+    for m in &members {
+        w.lc.create_bead(&m.id);
+    }
+    match w.lc.cut(&lc_id, &name, &head, &base_sha, &csv, "queue.sh") {
         Ok(version) if !version.is_empty() => {
             rec.push("batch_id", &lc_id);
             rec.push("version", &version);
@@ -567,9 +502,6 @@ pub fn open_batch(w: &World, repo: Option<&str>, members_arg: &Text, skip_pregat
         }
         Ok(_) => {}
         Err((rc, out)) => w.err(format!("queue.sh open-batch: spira-lc cut refused for {lc_id} (rc={rc}): {out}")),
-    }
-    for m in &members {
-        w.lib.land_mark(&m.id, "BATCHED", &m.tip, "");
     }
     let _ = fs::remove_file(c.s.run.join(format!("queue-stuck-{name}")));
     landing_log(&c.s.run, &format!("QUEUE BATCH {opened} repo={name} members={} gate_seconds=0 verdict=green source=open-batch", members.len()));

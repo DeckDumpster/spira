@@ -234,7 +234,7 @@ hout2="$("$BIN" health --run "$ARUN" 2>&1)"; hrc2=$?
 # assigned, and the queue's log is the only place that says so — read by nobody once the
 # session watching it is gone.
 SRUN="$T/stall-run"; SQ="$SRUN/queue/qs"
-mkdir -p "$SQ" "$SRUN/landstate"
+mkdir -p "$SQ"
 STALL_BRANCH="spira/queue/20260927T150304Z"
 printf 'pr=419\nhead=deadbeef\nmembers=sp-a:%s\nbranch=%s\n' "$TIP_A" "$STALL_BRANCH" > "$SQ/open"
 

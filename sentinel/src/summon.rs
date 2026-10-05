@@ -6,11 +6,10 @@
 //! real OS flock, so two binaries contending for it still serialize correctly.
 
 use crate::cfg::Fayth;
-use crate::cfg::Lifecycle;
 use crate::host::{Io, Spec};
 use crate::model::Bead;
 use crate::pass::{self, Sentinel};
-use crate::store::{self, has_all, has_none};
+use crate::store::{has_all, has_none};
 
 /// ready-bucket.py: a bead counts for a fayth iff its labels ⊇ FAYTH_LABELS, are disjoint
 /// from FAYTH_EXCLUDE_LABELS and from the shared queue-wait/submitted exclusion, and — when
@@ -69,22 +68,17 @@ impl<'a> Sentinel<'a> {
     /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
     /// trusts the cache unconditionally once it exists.
     ///
-    /// ON: the counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
+    /// The counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
     /// aeon's `select --blockers machine` applies — never the `bd ready` set, which counts a
     /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
     /// `fayth_ready` asks again and fails closed.
-    pub fn export_ready_cache(&self, ready: &[Bead]) {
-        let counts = match self.lc {
-            Lifecycle::Off => bucket(ready, &self.ctx.fayths, &self.shared_exclude()),
-            Lifecycle::On => {
-                let bin = self.cfg.claim_bin.clone();
-                let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
-                if !o.ok() {
-                    return;
-                }
-                parse_cache(&o.stdout)
-            }
-        };
+    pub fn export_ready_cache(&self) {
+        let bin = self.cfg.claim_bin.clone();
+        let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
+        if !o.ok() {
+            return;
+        }
+        let counts = parse_cache(&o.stdout);
         if counts.is_empty() && !self.ctx.fayths.is_empty() {
             return;
         }
@@ -93,7 +87,7 @@ impl<'a> Sentinel<'a> {
         }
     }
 
-    /// --summon-only: the gate, the live count, ONE bd ready, then CHECK 7.
+    /// --summon-only: the gate, the live count, ONE bd ready (spira-claim's), then CHECK 7.
     pub fn summon_only(&self) -> i32 {
         // S1 — the world (halt/drain), checked once here as a fast exit ahead of every
         // other cost `summon_fayth` would otherwise pay per fayth; each `summon_fayth`
@@ -122,10 +116,10 @@ impl<'a> Sentinel<'a> {
             "summon-only: live={live} fayths=[{}]",
             self.cfg.fayths_str
         ));
-        if let Ok((_, ready)) = store::read_json(&self.bd(), self.h, &store::ready_args(&self.cfg))
-        {
-            self.export_ready_cache(&ready);
-        }
+        // ONE bd ready: spira-claim's own, inside bulk-ready-by-fayth. Since sp-uqrdn the
+        // sentinel no longer counts from bd itself, so fetching the ready set here as well
+        // was a second, unused call (test-summon-fast-path D, round r-cutover-15).
+        self.export_ready_cache();
         self.ck7_summon_pass();
         crate::temps::cleanup_under(&self.cfg.run);
         self.h.unset_env("SPIRA_READY_CACHE");

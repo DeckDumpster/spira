@@ -53,10 +53,10 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim stack <bead> [--lifecycle F] [--blocker-records F] [--stack-max-depth N]
        spira-claim ready-args [--raw] [--scope-label L] [--noloop-label L]   (READY_ARGS/ready_raw_args, one token a line)
        spira-claim shared-exclude                                            (ready_shared_exclude)
-       spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
+       spira-claim ready-count <labels> [<exclude-labels>] [--json]          (ready_count; prints '0' on a failed query too; --json: the rows)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
-       spira-claim fayth-ready <fayth>                                      (fayth_ready; ditto, plus $SPIRA_READY_CACHE)
+       spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; plus $SPIRA_READY_SNAPSHOT)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
@@ -735,8 +735,12 @@ fn cmd_ready_args(a: &Args, env: &mut Env) -> Outcome {
 /// `ready-count <labels> [<exclude-labels>]`: `ready_count` (lib.sh:459). A failed query
 /// still prints '0' to stdout (the historic contract — every existing caller reads only
 /// stdout), rc 1, the failure on stderr.
+///
+/// `--json` prints the counted rows instead (empty stdout and rc 1 on a failed query): the
+/// one ready set for a reader that shows beads rather than counts them, so nothing outside
+/// spira-claim asks bd for "ready" itself.
 fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
         return Outcome::usage(e);
     }
     let (labels, exclude) = match a.pos.as_slice() {
@@ -744,6 +748,15 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
         [l] => (l.as_str(), ""),
         _ => return Outcome::usage("ready-count needs <labels> [<exclude-labels>]"),
     };
+    if a.has("--json") {
+        return ready_rows_json(a, env, labels, exclude);
+    }
+    if lifecycle_on() {
+        return match machine_claimable(a, env) {
+            Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
+            Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
+        };
+    }
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
@@ -757,6 +770,40 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
             err: format!("spira-claim: ready_count: query failed: {}", first_line(&e)),
         },
     }
+}
+
+/// `ready-count --json`: under the machine, [`machine_claimable`]'s rows matching the
+/// labels; off, bd's ready query with them. Either way a reply that is not a JSON ready set
+/// is a refusal, never an empty queue.
+fn ready_rows_json(a: &Args, env: &Env, labels: &str, exclude: &str) -> Outcome {
+    let refuse = |e: &str| Outcome { code: 1, out: String::new(), err: format!("spira-claim: ready_count: {}", first_line(e)) };
+    let rows = if lifecycle_on() {
+        match machine_claimable(a, env) {
+            Ok(rows) => rows,
+            Err(e) => return refuse(&e),
+        }
+    } else {
+        let st = match store(a, &env.config) {
+            Ok(s) => s,
+            Err(e) => return Outcome::usage(e),
+        };
+        let mut q = ready_args_for(a, env);
+        q.extend(["--label".to_string(), labels.to_string()]);
+        if !exclude.is_empty() {
+            q.extend(["--exclude-label".to_string(), exclude.to_string()]);
+        }
+        let text = match st.ready_json(&q) {
+            Ok(t) if !t.trim().is_empty() => t,
+            Ok(_) => return refuse("query failed: bd returned no JSON"),
+            Err(e) => return refuse(&format!("query failed: {e}")),
+        };
+        match rank::parse_ready(&text) {
+            Ok(rows) => rows,
+            Err(e) => return refuse(&e),
+        }
+    };
+    let mine = ready::matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude));
+    Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()))
 }
 
 /// bd query argv, retried (lib.sh:609 `claim_retry`). Dispatched from `dispatch()` before
@@ -862,14 +909,18 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// lifecycle_enforce on: the open beads a claim could actually take, by the rule `select
-/// --blockers machine` applies — bd's own ready set misses a lifecycle-SUBMITTED bead and a
-/// bead blocked by one. `Err` when the machine cannot answer: a count must refuse, not read 0.
+/// lifecycle_enforce on: the beads a claim could actually take. The candidates are the
+/// machine's READY/REWORK rows; bd is read only for their content (labels, type, priority,
+/// blockers), never for status or assignee — the same rule `select --blockers machine`
+/// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a, &env.config)?;
-    let raw = st.ready_json(&ready::machine_ready_args(&scope_label(a, env), &no_loop_label(a, env)))?;
-    let rows = rank::parse_ready(&raw)?;
     let lc = rank::parse_lifecycle(&st.lifecycle_snapshot()?)?;
+    let ids = ready::lifecycle_ready_ids(&lc);
+    let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
+    let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
+    rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
     let wanted = rank::all_blockers(&rows);
     let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
     let bd = rank::index_rows(recs);
@@ -901,8 +952,11 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
 /// subshell where every label IS exported — sp-xsnid's "the sentinel's own lane count
 /// already said ops has 25" is this fast path, already correct, untouched here), so a
 /// cache hit skips [`spira_config::chamber::fayth_predicate`] entirely, on purpose.
+///
+/// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
+/// claims from is what the sentinel summoned it for.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -923,8 +977,9 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
             err: format!("spira-claim: fayth_ready: no fayth in the chamber: {}", file.display()),
         };
     }
+    let json = a.has("--json");
     if let Ok(cache) = std::env::var("SPIRA_READY_CACHE") {
-        if !cache.is_empty() {
+        if !cache.is_empty() && !json {
             if let Ok(text) = std::fs::read_to_string(&cache) {
                 return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
             }
@@ -942,14 +997,25 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
             Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
         };
         let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
-        let n = ready::bucket(&rows, &[part], &queue_wait_label(env), &submitted_label_f(env)).first().map_or(0, |c| c.1);
-        return Outcome::ok(n.to_string());
+        let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
+        if json {
+            return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
+        }
+        return Outcome::ok(mine.len().to_string());
     }
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
     let args = ready_args_for(a, env);
+    if json {
+        let mut q = args.clone();
+        q.extend(["--label".to_string(), predicate.labels.clone(), "--exclude-label".to_string(), exclude.clone()]);
+        return match st.ready_json(&q) {
+            Ok(t) => Outcome::ok(format!("{}\n", if t.trim().is_empty() { "[]" } else { t.trim() })),
+            Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: fayth_ready: query failed: {}", first_line(&e)) },
+        };
+    }
     match st.ready_count(&args, &predicate.labels, &exclude) {
         Ok(n) => Outcome::ok(n.to_string()),
         Err(e) => Outcome {
@@ -1096,13 +1162,6 @@ fn env_nonempty(k: &str) -> Option<String> {
     std::env::var(k).ok().filter(|s| !s.trim().is_empty())
 }
 
-/// `landing-pass`, by name on PATH, same as `spira-lc` (sp-gypjk) — no conf.sh key ever
-/// named this binary's path, so `SPIRA_LANDING_PASS` is this port's own escape hatch (tests
-/// only), never a bash-exported default to honour.
-fn landing_pass_bin() -> String {
-    env_nonempty("SPIRA_LANDING_PASS").unwrap_or_else(|| "landing-pass".into())
-}
-
 fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
     let mut o = match unpoison_opts(a) {
         Ok(o) => o,
@@ -1140,7 +1199,6 @@ fn cmd_unpoison(a: &Args, env: &Env) -> Outcome {
         asked_dir,
         ask_label,
         beads_actor: env_nonempty("BEADS_ACTOR").unwrap_or_else(|| "harness".into()),
-        landing_pass: landing_pass_bin(),
     };
     let (code, out) = unpoison::run(&o, &mut live);
     Outcome { code, out, err: String::new() }
@@ -1238,7 +1296,6 @@ fn cmd_deadlocked(a: &Args, env: &mut Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor.clone(),
-        landing_pass: landing_pass_bin(),
     };
     let o = deadlock::Opts { apply: a.has("--apply"), actor, enforce };
     let (code, out) = deadlock::run(&o, &candidates, &mut live);
@@ -1458,7 +1515,6 @@ fn cmd_reopen(a: &Args, env: &Env) -> Outcome {
         asked_dir: std::path::PathBuf::new(),
         ask_label: String::new(),
         beads_actor: actor,
-        landing_pass: landing_pass_bin(),
     };
     let o = reopen::Opts { id: id.clone(), cause, note, suites, submitted_label: reopen_submitted_label(env) };
     let rc = reopen::run(&o, &mut live);

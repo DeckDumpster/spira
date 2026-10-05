@@ -16,24 +16,25 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::ports::{Divergence, Git};
-use crate::real::RealGit;
-use crate::records;
+use crate::ports::{Divergence, Git, Lc, World};
+use crate::real::{RealGit, RealLc};
 
-/// `queue_certified_list <repo-path>`: every `spira/*` branch whose landstate (under
-/// `$SPIRA_RUN/landstate`, read exactly as lib.sh addressed it) is CERTIFIED, as
-/// `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the reconciler's
-/// mergeability check, cockpit-collect's "next up" pane) draws from.
+/// `queue_certified_list <repo-path>`: every `spira/*` branch whose lifecycle row is
+/// CERTIFIED, as `(id, tip, epoch)` — the selection primitive any cutter (the batcher, the
+/// reconciler's mergeability check, cockpit-collect's "next up" pane) draws from.
 pub fn certified_list(repo: &Path) -> Vec<(String, String, u64)> {
-    let run = std::env::var("SPIRA_RUN").unwrap_or_default();
-    let landstate = PathBuf::from(format!("{run}/landstate"));
+    let lc = RealLc { bin: Some(PathBuf::from("spira-lc")) };
+    certified_rows(&lc, &RealGit.branches(repo, "refs/heads/spira/"))
+}
+
+/// The CERTIFIED rows whose bead has a `spira/<id>` branch among `branches`.
+pub fn certified_rows(lc: &dyn Lc, branches: &[(String, String)]) -> Vec<(String, String, u64)> {
+    let rows = lc.bead_rows(Some("CERTIFIED")).unwrap_or_default();
     let mut out = Vec::new();
-    for (branch, _) in RealGit.branches(repo, "refs/heads/spira/") {
+    for (branch, _) in branches {
         let Some(id) = branch.strip_prefix("spira/") else { continue };
-        if let Some(ls) = records::land_state(&landstate, id) {
-            if ls.state == "CERTIFIED" {
-                out.push((id.to_string(), ls.tip, ls.at));
-            }
+        if let Some(r) = rows.iter().find(|r| r.bead_id == id) {
+            out.push((id.to_string(), r.tip.clone().unwrap_or_default(), r.since.unwrap_or(0)));
         }
     }
     out
@@ -369,5 +370,37 @@ mod tests {
     fn render_row_pads_priority_and_epoch() {
         let r = RankedRow { express: 0, prio: 2, trans: 1, epoch: 42, id: "sp-a".into(), tip: "deadbeef".into() };
         assert_eq!(render_row(&r), "0 000000002 1 0000000042 sp-a deadbeef");
+    }
+}
+
+/// The close reason a landed member's bead carries (law-closed-is-not-landed).
+pub fn land_close_reason(sha: &str) -> String {
+    let shown = if sha.is_empty() { "unknown" } else { sha };
+    format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown} (law-closed-is-not-landed).\n")
+}
+
+/// Close a landed member's bead and reap its branch, in-process — no landing-pass oracle
+/// and no second ledger: the queue records LANDED on spira-lc (`lc_deliver` / the batch's
+/// `land` cascade), the one record. Idempotent both ways: a bead already `closed`, or one
+/// never marked submitted, is left alone. Best-effort throughout — a failed close is left
+/// submitted for CHECK 5, a missed reap is left for the Sending.
+pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
+    let Ok(rows) = w.bd.show(&[id.to_string()]) else { return };
+    let Some(row) = rows.iter().find(|r| r.id == id) else { return };
+    if row.status.as_deref() == Some("closed") || !row.labels.iter().any(|l| l == submitted_label) {
+        return;
+    }
+    let shown = if sha.is_empty() { "unknown" } else { sha };
+    if !w.lib.bead_close(id, &land_close_reason(sha)) {
+        w.out(format!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"));
+        return;
+    }
+    w.out(format!("land-close {id}: closed at {shown} (submitted -> landed)"));
+    let label = |p: &str| row.labels.iter().find_map(|l| l.strip_prefix(p).map(str::to_string));
+    let (Some(repo), Some(branch)) = (label("repo:"), label("branch:")) else { return };
+    match w.lib.reap_landed_branch(id, &repo, &branch, &format!("landed at {shown}")) {
+        Ok(true) => w.out(format!("land-close {id}: reaped branch {branch}")),
+        Ok(false) => {}
+        Err(e) => w.out(format!("land-close {id}: branch {branch} not reaped: {e} — left for the Sending")),
     }
 }

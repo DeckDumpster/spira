@@ -96,10 +96,7 @@ want "and says PASS"                               "VERDICT=PASS" "$out"
 # --------------------------------------------------------------------------------------
 CLOSED_ID="$(bd -C "$SPIRA_DB" create "commit-cite fixture: closed" --json 2>/dev/null \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-bd -C "$SPIRA_DB" close "$CLOSED_ID" --reason-file - >/dev/null 2>&1 <<'REASON'
-OUTCOME: delivered
-fixture bead, closed on purpose for this suite
-REASON
+testdb_restate "$CLOSED_ID" closed     # closed on purpose: fixture data, not a bd close (sp-voip5)
 commit_citing spira/sp-cc3 "$CLOSED_ID"
 out="$(rungate_real spira/sp-cc3)"; rc=$?
 is   "a citation naming a real CLOSED bead: passes too"  0 "$rc"

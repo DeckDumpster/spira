@@ -16,5 +16,8 @@ path = "src/main.rs"
 spira-config = { path = "../spira-config" }
 aeon = { path = "../aeon" }
 
+[dev-dependencies]
+testkit = { path = "../testkit" }
+
 [profile.release]
 opt-level = "z"

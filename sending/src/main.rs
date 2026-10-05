@@ -202,8 +202,8 @@ fn cmd_witness(mut args: Vec<String>) -> ExitCodeLike {
 
 /// `spira_reap_landed_branch`'s own shim target. Resolves base/remote itself (through
 /// `World::base`, in-process via `spira_config::repos` since sp-o88bx, "wave 4.12")
-/// exactly as the bash original re-derived them, so `bead_close_on_land` — still bash,
-/// still the production hot path for every landing — keeps working unchanged. The
+/// exactly as the bash original re-derived them, so `spira-lc close-on-land`, the
+/// production hot path for every landing, keeps working unchanged. The
 /// push-delete's own diagnostic line goes to STDERR, not
 /// stdout: stdout here is the shim's captured answer (`$SPIRA_REAP_ERR`), and mixing a log
 /// line into it would both corrupt that answer and swallow the line (never printed at all).

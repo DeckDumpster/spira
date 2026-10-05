@@ -100,7 +100,7 @@ impl World for Fake {
     fn repo_root(&self) -> Option<String> {
         self.repo_root.borrow().clone()
     }
-    fn landed(&self, id: &str) -> i32 {
+    fn lc_landed(&self, id: &str) -> i32 {
         self.landed.borrow().get(id).copied().unwrap_or(2)
     }
     fn count_py(&self, tabular: &str) -> Result<String, String> {
@@ -369,4 +369,26 @@ fn plain_class_with_no_remedy_is_unsuppressed() {
     f.set_count("rows", "7 12 sp-reopen-unrecorded\n");
     run(&f, false);
     assert_eq!(f.stdout_joined(), "7 sp-reopen-unrecorded (12 detections)");
+}
+
+/// sp-oqf8c: `Real::landed` asks the lifecycle record (`spira-lc state`), never the retired
+/// landing-pass subject oracle. Stubs for both sit in the release's `bin/` (the parent of
+/// `home`, which `child_path_env` puts first on PATH); the landing-pass stub always says
+/// "landed", so only a reader of spira-lc gets the CERTIFIED, no-row and cannot-tell rows right.
+#[test]
+fn real_landed_reads_the_lifecycle_record_not_the_landing_pass_oracle() {
+    let root = testkit::TempDir::new("census-landed");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(root.join("spira")).unwrap();
+    testkit::write_exe(bin.join("landing-pass"), "#!/bin/sh\necho deadbeef; exit 0\n");
+    testkit::write_exe(
+        bin.join("spira-lc"),
+        "#!/bin/sh\n[ \"$1\" = state ] || exit 2\ncase \"$2\" in sp-l) echo LANDED ;; sp-c) echo CERTIFIED ;; sp-n) exit 1 ;; *) exit 2 ;; esac\n",
+    );
+    let r = crate::real::Real::new(root.join("spira"));
+    assert_eq!(r.lc_landed("sp-l"), 0, "LANDED in the lifecycle record is landed");
+    assert_eq!(r.lc_landed("sp-c"), 1, "CERTIFIED is not landed, whatever landing-pass says");
+    assert_eq!(r.lc_landed("sp-n"), 1, "no row (spira-lc NO_ROW) is not landed");
+    assert_eq!(r.lc_landed("sp-x"), 2, "the record cannot answer: cannot tell");
 }

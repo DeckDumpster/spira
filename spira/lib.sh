@@ -55,13 +55,12 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # conf.sh peel — wave4-decomposition.md). Every function below either IS log/die, or IS a
 # shim: the family-by-family move named in that plan has landed, in-process callers read
 # the owning crate directly, and a bash caller that still types the OLD name by habit —
-# `repo_root`, `land_mark`, `content_landed`, `bdq`, whatever — reaches the same logic one
+# `repo_root`, `bdq`, whatever — reaches the same logic one
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
 # `ready_count` (and the bare `READY_ARGS` array); `fayth_free`; aeon.sh's own bead-machine
-# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `content_landed`/
-# `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
+# seam (`lc_bead_row` through `park_unmapped`, row I's "aeon half"); `spira_status_seam`/`spira_bead_status`/`spira_db_reachable`/`_tsd_slots_sample`, each
 # with a live bash caller a Rust port has not yet replaced; and conf.sh's own locator
 # family, which cannot shim onto `spira-config` because it is what finds `spira-config`'s
 # own inputs — see that allow file for the reasoning on each, not repeated here.
@@ -353,30 +352,11 @@ fayth_get() {            # fayth_get <fayth> <VAR> [default] -> one field of a f
 # set (no scope filter) so that beads missing the scope label are seen and reported as
 # UNCLAIMABLE. They are excluded from claims, counts and strand reports via READY_ARGS, but
 # the detector's job is to name the condition — exclusion is not a reason to stay silent.
-# READY_ARGS, ready_raw_args, ready_count STAY bash (wave 4.25, sp-obhv6): none of the
-# three is named in this bead's scope, each still has live bash callers outside family F
-# (drain.sh and aeon/src/seam.rs's own bash snippet read `${READY_ARGS[@]}` directly;
-# fleet-status.sh calls ready_count; detect_unclaimable_ready called ready_raw_args here
-# too, until wave 4.28 (sp-fbqsv) ported it — its own fallback now calls
-# `store::ready_raw_args` in-process, the Rust mirror of this same function), and routing
-# them through a `spira-claim` subprocess at lib.sh
-# SOURCE TIME was tried and reverted: it corrupted aeon's own seam snapshot read (every
-# `. lib.sh` the aeon crate's seam performs now pays this at sourcing, not only a lazy
-# call), turning test-aeon-elastic-concurrency.sh red. `READY_ARGS` as ONE CONST is
-# satisfied on the Rust side alone — `spira_claim::READY_ARGS_BASE`, which cockpit-collect
-# now links in-process instead of keeping its own copy (`probes/queue.rs`). `fayth_ready`/
-# `fayth_exclude`/`bulk_ready_by_fayth`'s OWN Rust ports (below) build their own ready
-# query independently, in spira-claim/src/ready.rs — a second, Rust-only copy of this
-# predicate's SHAPE, not a bash caller asking two different functions the same question.
-
-# MACHINE_READY_ARGS — READY_ARGS's own candidate set, widened past bd's own blocker filter
-# (spira-claim/DESIGN.md §5 item 11). `bd ready` hides a bead whose blocker is CERTIFIED but
-# not yet LANDED, because bd's status field only knows open/closed; `bd list` applies the
-# same predicate with no blocker judgment at all, leaving that call to `spira-claim select
-# --blockers machine`. Read only when lifecycle_enforce is on (aeon/src/run.rs ready_args()).
-MACHINE_READY_ARGS=(list --status open --no-assignee --exclude-type epic,event --limit 0)
-[[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
-[[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && MACHINE_READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
+# READY_ARGS and ready_raw_args stay bash: drain.sh and aeon's seam read the array directly,
+# and computing them through a subprocess at source time corrupted the aeon's seam snapshot.
+# On the Rust side the one constant is `spira_claim::READY_ARGS_BASE`. With lifecycle_enforce
+# on, neither decides what is ready: spira-claim's counts and an aeon's ready set come from
+# the lifecycle machine's rows (spira-claim `ready-count`, `fayth-ready [--json]`).
 
 ready_raw_args() {
     local args=(ready --limit 0 --exclude-type epic,event -u)
@@ -387,19 +367,10 @@ READY_ARGS=(ready --limit 0 --exclude-type epic,event -u)
 [[ -n "${SPIRA_SCOPE_LABEL:-}" ]] && READY_ARGS+=(--label "$SPIRA_SCOPE_LABEL")
 [[ -n "${SPIRA_NO_LOOP_LABEL:-}" ]] && READY_ARGS+=(--exclude-label "$SPIRA_NO_LOOP_LABEL")
 
+# ready_count <labels> [<exclude-labels>] — spira-claim's count, so with lifecycle_enforce on
+# it counts the lifecycle machine's claimable rows, the set an aeon claims from.
 ready_count() {
-    local out rc _errtmp
-    _errtmp="$(mktemp)"
-    out="$(bdq "${READY_ARGS[@]}" --label "$1" --exclude-label "$2" --json 2>"$_errtmp")"
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
-        printf 'ready_count: query failed: %s\n' "$(head -1 "$_errtmp" 2>/dev/null)" >&2
-        rm -f "$_errtmp"
-        printf '0'
-        return 1
-    fi
-    rm -f "$_errtmp"
-    printf '%s' "$out" | json_only | json_count
+    _spira_claim ready-count "$1" "${2:-}"
 }
 
 # `_spira_claim`: the exec-boundary shim for the rest of family F (epic_parent_lookup
@@ -480,12 +451,12 @@ ready_shared_exclude() {
 
 # mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
 # beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
-# and close out a labeled bead whose landstate already reads LANDED (it never got a branch
+# and close out a labeled bead whose lifecycle row already reads LANDED (it never got a branch
 # to land, so the normal close-on-land path never visited it). PERMANENT (wave4-decomposition
 # row H): the lifecycle-flip plan keeps this family even once lc.sh's own calls are gone —
 # stacked dependents still read the label. Ported to Rust (sp-fbqsv, "wave 4.28"); see
 # `sentinel::waiters` for the one-pass decision (no release-then-apply flip-flop) and the
-# landstate scan (now in-process, no per-file awk fork).
+# lifecycle read (in-process, `spira-lc`).
 mark_queue_waiters() {
     sentinel --mark-queue-waiters
 }
@@ -498,8 +469,8 @@ close_landed_queue_waiters() {
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
 # bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
-# can claim it: withdraws a CERTIFIED landstate (unless <cause> is admission-exempt — see
-# _census_deliberate_reopen_causes below), writes the <suites> sidecar, reopens, strips the
+# can claim it: withdraws a CERTIFIED lifecycle row (unless <cause> is admission-exempt — see
+# _census_deliberate_reopen_causes below), writes the <suites> sidecar ($SPIRA_RUN/ejected/), reopens, strips the
 # submitted label, releases the claim and records the cause. Ported to spira-claim (wave
 # 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
 # and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
@@ -561,17 +532,14 @@ lc_event_bead() {
 }
 
 # lc_claim_bead <id> <holder> <lease-until-epoch> [<stack-json> <stack-depth>
-# <stack-max-depth>] -> 0 applied, 3 refused (the sp-zw9ot fixture: a bead already
-# IN_DELIVERY, or genuinely held by a live holder; also DepthExceeded when stack-depth
-# exceeds stack-max-depth), 2 cannot tell. The trailing three args are the caller's own
-# already-computed stack proposal (aeon.sh's `stack_proposal`, design stacked-dependents-
-# 2026-09-28 §1) — this function only forwards them, exactly like `lease_until`; omitted,
-# they default to `{}`/0/0, which is today's unstacked claim.
+# <stack-max-depth>] -> 0 applied, 3 refused, 2 cannot tell. THE CLAIM: the row is the only
+# record of who holds the bead, and Claim applies only to READY or REWORK, so a bead another
+# aeon holds is refused here, never taken over — a dead holder's row goes back to READY
+# through the stale-lease reaper's HolderDead, not through the next claimant. Also refused:
+# DepthExceeded, when stack-depth exceeds stack-max-depth. The trailing three args are the
+# caller's own stack proposal, forwarded as given; omitted, an unstacked claim.
 #
-# HOLDERDEAD BEFORE CLAIM. A row this aeon can see is WORKING only because a prior holder
-# died without releasing — the fayth predicate already excludes any bead bd itself shows
-# as claimed, so a live holder never reaches here. A CAS HolderDead(WORKING->READY) clears
-# it; Claim is illegal from WORKING (lifecycle/src/bead.rs), so this is the only path back.
+# An applied claim writes the `claimed` events row the attempt counters fold.
 lc_claim_bead() {
     local id="$1" holder="$2" lease_until="$3" stack="${4:-{\}}" stack_depth="${5:-0}" stack_max_depth="${6:-0}" row state version rc
     # A bead filed by any path that skips row creation (a raw create in the beads CLI — acceptance, and at
@@ -584,21 +552,18 @@ lc_claim_bead() {
     fi
     IFS=$'\t' read -r state version _ _ <<< "$row"
     [ -n "$state" ] || return 2
-    if [ "$state" = WORKING ]; then
-        lc_event_bead "$id" WORKING "$version" "$holder" '"HolderDead"'
-        rc=$?
-        [ "$rc" -eq 0 ] || return "$rc"
-        row="$(lc_bead_row "$id")" || return 2
-        IFS=$'\t' read -r state version _ _ <<< "$row"
-    fi
     lc_event_bead "$id" "$state" "$version" "$holder" \
         "{\"Claim\":{\"holder\":\"$holder\",\"lease_until\":$lease_until,\"stack\":$stack,\"stack_depth\":$stack_depth,\"stack_max_depth\":$stack_max_depth}}"
+    rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+    _bump_write_event "$id" claimed "$holder"
 }
 
-# lc_release_bead <id> <actor> — best-effort Release. Called on every release_own_claim, so
-# it fires from states where Release is illegal (SUBMITTED, DONE, ...) as often as from
-# WORKING; those refusals are expected, not errors, and are never surfaced to the caller —
-# the row is already exactly where it should be.
+# lc_release_bead <id> <actor> — best-effort Release. release_own_claim's own lifecycle half
+# is `spira-lc unclaim` now (sp-hyo5e), which applies the same Release. Like it, this fires
+# from states where Release is illegal (SUBMITTED, DONE, ...) as often as from WORKING;
+# those refusals are expected, not errors, and are never surfaced to the caller — the row
+# is already exactly where it should be.
 lc_release_bead() {
     local id="$1" actor="$2" row state version
     row="$(lc_bead_row "$id")" || return 0
@@ -624,10 +589,10 @@ lc_bead_verified() {
 
 # release_own_claim <id> — an aeon hands back a bead it is still holding.
 #
-# Sets status back to open and clears the assignee in one update call. `bd assign <id> ""`
-# refuses to overwrite another actor's LIVE in_progress claim, so if a supervisor reclaimed
-# the bead and handed it to another aeon between our fence check and this call, the assign
-# step fails safely and the bead is left with the new holder.
+# ONE CALL, THROUGH THE MACHINE: `spira-lc unclaim`. With lifecycle_enforce on it releases the
+# lifecycle row only if <me> still holds it — a bead reaped and handed to another aeon in
+# between keeps its new holder — and writes nothing to bd, whose assignee nobody reads. Off,
+# it is bd's own `unclaim --if-assignee <me>`, the same compare-and-swap.
 #
 # THE NAME IS THE AEON'S, NOT THE FAYTH'S. aeon.sh claims under BEADS_ACTOR="aeon-$AEON",
 # the per-instance name — `aeon-mindy`, not `aeon-builder`. Release sites that derived the
@@ -639,8 +604,7 @@ lc_bead_verified() {
 release_own_claim() {
     local id="$1" me="${BEADS_ACTOR:-aeon-${SPIRA_AEON:-}}"
     [ -n "$me" ] && [ "$me" != "aeon-" ] || return 1
-    lc_release_bead "$id" "$me"
-    bdq update "$id" --status open --assignee "" >/dev/null 2>&1
+    spira-lc unclaim "$id" "$me" >/dev/null 2>&1
 }
 
 # park_unmapped <id> <repo-name> — repo-map has no checkout for the bead's repo:<repo-name>.
@@ -1398,61 +1362,15 @@ land_subject() {
     landing-pass land-subject "$1"
 }
 
-# content_landed <repo> <branch> <baseref> -> 0 if <baseref> already contains every change
-# <branch> makes, 1 if it does not.
-#
-# ANCESTRY IS NOT THE ONLY WAY WORK LANDS, AND ON A SQUASHING REPOSITORY IT IS NEVER THE WAY.
-# A squash merge replays the branch's whole diff as ONE NEW COMMIT with a new SHA and a
-# parentage the branch does not appear in, so the branch's own commits are not ancestors of
-# the base and never will be. Every SHA-based test therefore answers "not landed" about work
-# that is demonstrably on the base — and then the rebase that follows CONFLICTS, precisely
-# because the base already holds those changes. The harness read that pair as a branch in
-# trouble and reopened a finished bead with "does not rebase onto <base>", which was true and
-# meant the opposite of what it was taken to mean. It repeats forever, because nothing about
-# the situation changes between passes.
-#
-# So ask the question that actually matters: would merging this branch into the base change
-# anything? `merge-tree --write-tree` performs the three-way merge in memory and prints the
-# resulting tree; when that tree IS the base's own tree, the merge is a no-op and the content
-# is already there. This is deliberately not the rebase's question — a rebase replays commit
-# by commit and can conflict on an intermediate patch whose end state is fine, which is
-# exactly the false alarm.
-#
-# It answers NO when the merge conflicts (non-zero exit) and NO when the merged tree differs,
-# both of which mean the branch really does carry something the base lacks. That is what makes
-# it safe for a caller that DELETES on the answer: it cannot say "landed" about a branch with
-# work outstanding. `landing-pass landed` is a different question — whether a commit on the base
-# names the BEAD — and is not a substitute here, because a branch may carry commits beyond the
-# one that landed.
-#
-# NO PIPE. `git ... | head -1` under pipefail returns 141 when head closes the pipe first, so
-# the check would fail exactly when merge-tree succeeded (law-no-grep-q-under-pipefail).
-# Capture whole, then trim.
-content_landed() {
-    local repo="$1" br="$2" base="$3" merged basetree ahead
-    ahead="$(git -C "$repo" rev-list --count "$base..$br" 2>/dev/null)" || return 1
-    # ANCESTOR BRANCHES ARE LANDED: their every commit is already reachable from base,
-    # so merging changes nothing. Check before the ahead=0 guard so a superseded branch
-    # that was fast-forwarded into the successor's history returns 0 here rather than
-    # falling through to the Sending's KEEP path (law-absence-needs-a-positive-control).
-    git -C "$repo" merge-base --is-ancestor "$br" "$base" 2>/dev/null && return 0
-    [ "${ahead:-0}" -gt 0 ] 2>/dev/null || return 1
-    merged="$(git -C "$repo" merge-tree --write-tree "$base" "$br" 2>/dev/null)" || return 1
-    merged="${merged%%$'\n'*}"
-    [ -n "$merged" ] || return 1
-    basetree="$(git -C "$repo" rev-parse "$base^{tree}" 2>/dev/null)" || return 1
-    [ "$merged" = "$basetree" ]
-}
-
 # pr_merged <repo> <branch> -> 0 if a pull request whose head is <branch> is MERGED.
 #
-# The second reading of "already landed", and the one that survives what content_landed
-# cannot: a squash that merged and was then amended on the base. The content differs, so the
+# The second reading of "already landed", and the one that survives what
+# `spira-lc content-landed` cannot: a squash that merged and was then amended on the base. The content differs, so the
 # merge test says no, and re-landing the branch would revert whoever amended it.
 #
 # THIS IS EVIDENCE FOR NOT REOPENING, NEVER EVIDENCE FOR DELETING. A merged pull request says
 # the work was accepted; it does not say the ref holds nothing else. A caller about to destroy
-# a branch must use content_landed, which is exact and local. This one reaches the network, so
+# a branch must use `spira-lc content-landed`, which is exact and local. This one reaches the network, so
 # it belongs behind a cheap check that has already failed — never on the common path. Ported
 # to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::pr_merged`.
 pr_merged() {
@@ -1653,8 +1571,7 @@ detect_landed_but_open() {
 # detect_closed_unlanded_states -> one STATE line per closed work bead, across every
 # partition this host watches (fayth_partitions — every persona's, not the caller's own),
 # that carries none of CHECK 5's recognised landing signals (supersedes, spira-dropped,
-# delivers:, content-landed) and that `landing-pass landed` cannot prove via the base's own commit
-# graph. Two shapes:
+# delivers:, content-landed) and whose lifecycle record is not LANDED. Two shapes:
 #
 #   STATE <id> closed-no-branch          — no branch: label (or the label names a ref that
 #                                           was never pushed): nothing was ever committed.
@@ -2257,8 +2174,8 @@ spira_destroy_branch() {
 # (certified-queued or the content fence). Sets SPIRA_REAP_ERR on 1 or 2. Ported to Rust
 # (sp-9envm); see `sending::reap::reap_landed_branch`. Still resolves the land ref and its
 # remote itself (through the unchanged `spira_landref`/family-W seam the `sending` binary
-# already has, not through bash), so `bead_close_on_land` — the production hot path for
-# every landing, still bash — keeps working unchanged.
+# already has, not through bash), so `spira-lc close-on-land`, the production hot path for
+# every landing, keeps working unchanged.
 spira_reap_landed_branch() {
     local _err; _err="$(sending reap-landed-branch ${SPIRA_STATUS_FILE:+--status-from "$SPIRA_STATUS_FILE"} "$1" "$2" "$3" "$4" "${5:-}")"
     local _rc=$?
@@ -2346,14 +2263,9 @@ recut_onto() {
 # _prune_candidates retired with activate.sh (sp-jsnbm): release install-tarball's own
 # prune (release/src/install.rs) replaces it; nothing else called this function.
 
-LANDSTATE="${SPIRA_RUN}/landstate"
-# Reasons written by the batch/queue eviction machinery. Only these warrant the eviction-race
-# reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
-LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
-
-# _tsd_landing_event is RETIRED (sp-cnnt6, "wave 4.16"): its one caller was land_mark, now a
-# shim onto `landing-pass mark`, which does the landing-event dual-write itself, in-process
-# (landing-pass/src/landstate.rs), rather than shelling to tsd-write.
+# The landing ledger under $SPIRA_RUN and its writer/reader shims are DELETED (sp-2c1n0,
+# lifecycle cutover): a bead's delivery state is the lifecycle record alone (`spira-lc state
+# <id>`), and the withdrawn-suites sidecar lives in $SPIRA_RUN/ejected/ (spira-claim reopen).
 
 # _tsd_kv_field is RETIRED (wave 4.35, sp-kelr2, row AC): its one intended caller,
 # session_result_fields, was already dead (row N, retired in wave 4.2's bead 2 — "RETIRE
@@ -2482,33 +2394,6 @@ bead_is_decision_type() {
         *" $t "*) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-# bead_close_on_land — the only place a work bead is closed for a landed reason.
-#
-# A builder's own close of a work bead is converted back to open carrying
-# SPIRA_SUBMITTED_LABEL instead of staying closed (aeon.sh, at session teardown, once the
-# close has already happened — not a PreToolUse hook refusing the tool call); this
-# closes it for real once the commit is actually on the base, citing the sha. Called from
-# every LANDED land_mark site, right beside gh_issue_closeout.
-#
-# Idempotent both ways: a bead already closed is left alone, and a bead never marked
-# submitted (an older-style direct close, or a non-code type) is left alone too — this is
-# not the only path that closes a bead, only the landing path for the new one.
-#
-# REAPS THE BRANCH AND WORKTREE HERE TOO (sp-jci6o), the same verified deletion sending.sh
-# uses (spira_reap_landed_branch), so a bead closed by any landing path — push, pr, hold or
-# queue — loses its worktree and branch the moment it is known landed rather than waiting
-# for the next per-pass Sending scan to rediscover it by ancestry. Best-effort: the caller's
-# own repo:/branch: labels resolve the branch, spira_destroy_branch's content fence refuses
-# if that branch's diff is somehow not on the repository's base, and either kind of miss is
-# still caught by the Sending, which remains the backstop for everything this cannot reach.
-#
-# Ported to Rust (sp-81t4d, "wave 4.17" — family R); see `land_verify::close_on_land`. Every
-# caller already discards this function's exit code (`|| true`), so the shim's own `|| true`
-# below is belt-and-suspenders, not a behaviour change.
-bead_close_on_land() {   # bead_close_on_land <bead-id> <landed-sha>
-    landing-pass close-on-land "$1" "${2:-}" || true
 }
 
 # _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan

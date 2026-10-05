@@ -1,7 +1,7 @@
 use crate::finding::{Class, Finding};
 use crate::rules::{
-    landstate_path_allowed, Rules, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS, FORBIDDEN_UPDATE_FLAGS,
-    READ_VERBS,
+    landstate_path_allowed, Rules, BD_GLOBAL_VALUE_FLAGS, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS,
+    FORBIDDEN_READY_FLAGS, FORBIDDEN_UPDATE_FLAGS, ORACLE_SUBCOMMANDS, READ_VERBS,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -124,6 +124,14 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
         all_calls.extend(calls);
     }
 
+    // Array-held verbs (sp-hyo5e): `bdq "${READY_ARGS[@]}"` names its verb in the array's
+    // assignment, not at the call. Where that is unambiguous tree-wide, judge the call as if
+    // the array were spelled out.
+    let arrays = literal_arrays(&parsed);
+    for call in &mut all_calls {
+        expand_array_arg(call, &arrays);
+    }
+
     // Reachability: for each file, the set of files whose top-level definitions are visible
     // to it once shell execution has inlined every transitively-sourced file.
     let reachable = reachable_sets(parsed.len(), &source_edges);
@@ -140,20 +148,26 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     // straight to something that (transitively) resolves to bd/bdq. The verb lives at the
     // call site, not in the wrapper, so it can only be judged there.
     let mut forward_target: HashMap<String, String> = HashMap::new(); // wrapper name -> bd|bdq
+    // Calls grouped by scope once: filtering every call per function definition was
+    // quadratic, ~20 s over the harness tree at the gate's opt-level 0 (sp-ts2qr).
+    let mut calls_by_scope: HashMap<&ScopeId, Vec<&CallSite>> = HashMap::new();
+    for c in &all_calls {
+        calls_by_scope.entry(&c.scope).or_default().push(c);
+    }
     for (name, defs) in &func_defs {
         for file_idx in defs {
             let scope = ScopeId {
                 file_idx: *file_idx,
                 function: Some(name.clone()),
             };
-            let body_calls: Vec<&CallSite> =
-                all_calls.iter().filter(|c| c.scope == scope).collect();
-            if body_calls.len() == 1 {
-                let call = body_calls[0];
-                let forwards_all_args = call.args.iter().any(|a| {
-                    matches!(a, Arg::Dynamic(t) if t == "$@" || t == "\"$@\"" || t == "$*" || t == "\"$*\"")
-                });
-                if forwards_all_args && (call.callee == "bd" || call.callee == "bdq") {
+            let body_calls: &[&CallSite] = calls_by_scope.get(&scope).map(|v| v.as_slice()).unwrap_or(&[]);
+            // Exactly one bd/bdq call, and it forwards "$@". Other calls in the body are
+            // filters around it (`bdjson() { bdq "$@" --json | json_only; }`): they cannot
+            // change the verb, so the verb is still the call site's to name (sp-hyo5e).
+            let bd_calls: Vec<&&CallSite> =
+                body_calls.iter().filter(|c| c.callee == "bd" || c.callee == "bdq").collect();
+            if let [call] = bd_calls.as_slice() {
+                if forwards_all_args(call) {
                     forward_target.insert(name.clone(), call.callee.clone());
                 }
             }
@@ -200,10 +214,18 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             Class::DirectWrite
         };
 
-        let Some(first) = call.args.first() else {
+        // The verb follows bd's leading global flags (`bd -C "$DB" close …`), not argv[1].
+        let verb_at = verb_index(&call.args);
+        let Some(first) = call.args.get(verb_at) else {
             continue;
         };
+        // A forwarder's own `bdq "$@"`: its verb is judged at each of its call sites (above),
+        // so the body itself is not an unresolvable verb.
+        let forwarder_body = !is_forwarded
+            && call.scope.function.as_ref().is_some_and(|f| forward_target.contains_key(f))
+            && forwards_all_args(call);
         match first {
+            _ if forwarder_body => {}
             Arg::Dynamic(_) => {
                 findings.push(Finding {
                     class: Class::DynamicVerb,
@@ -220,14 +242,16 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             Arg::Literal(verb) => {
                 let flagged = if FORBIDDEN_BARE_VERBS.contains(&verb.as_str()) {
                     Some(verb.clone())
-                } else if verb == "update" {
-                    let flag = call
-                        .args
+                } else if let Some(flags) = match verb.as_str() {
+                    "update" => Some(FORBIDDEN_UPDATE_FLAGS),
+                    "ready" => Some(FORBIDDEN_READY_FLAGS),
+                    _ => None,
+                } {
+                    let flag = call.args[verb_at + 1..]
                         .iter()
-                        .skip(1)
                         .filter_map(|a| a.literal())
-                        .find(|a| FORBIDDEN_UPDATE_FLAGS.contains(a));
-                    flag.map(|f| format!("update {f}"))
+                        .find(|a| flags.contains(a));
+                    flag.map(|f| format!("{verb} {f}"))
                 } else {
                     None
                 };
@@ -318,24 +342,39 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     // Direct calls into the landstate ledger: land_mark/landed/landed_sha, the shell half of
     // this bead's read barrier. Independent of the bd/bdq call graph above — these are lib.sh
     // functions, never bd/bdq itself, and every call site outside the allow-list is a finding.
+    // The same reach through the binary: `landing-pass mark|state|landed|cited-commit|
+    // close-on-land` (sp-ts2qr), by any path to it.
     for call in &all_calls {
-        if !matches!(call.callee.as_str(), "land_mark" | "landed" | "landed_sha") {
+        let oracle = oracle_subcommand(call);
+        if oracle.is_none() && !matches!(call.callee.as_str(), "land_mark" | "landed" | "landed_sha") {
             continue;
         }
         let rel = &parsed[call.scope.file_idx].rel_path;
         if landstate_path_allowed(rel) {
             continue;
         }
+        let (callee, detail) = match oracle {
+            Some(verb) => (
+                format!("landing-pass {verb}"),
+                format!(
+                    "landing-pass {verb} is the landstate ledger / landed oracle; read it through spira-lc show/list instead"
+                ),
+            ),
+            None => (
+                call.callee.clone(),
+                format!(
+                    "{} is a direct call into the landstate ledger; read it through spira-lc show/list instead",
+                    call.callee
+                ),
+            ),
+        };
         findings.push(Finding {
             class: Class::LandstateCall,
             file: rel.clone(),
             line: call.line,
             function: call.scope.function.clone(),
-            callee: Some(call.callee.clone()),
-            detail: format!(
-                "{} is a direct call into the landstate ledger; read it through spira-lc show/list instead",
-                call.callee
-            ),
+            callee: Some(callee),
+            detail,
         });
     }
 
@@ -382,6 +421,154 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
     }
 
     Ok(ShellScan { findings })
+}
+
+/// The oracle subcommand `call` invokes, when its command is landing-pass (a bare name or any
+/// path ending in it, `$VAR/bin/landing-pass` included) and its first argument is literally
+/// one of [`ORACLE_SUBCOMMANDS`]. A prefix `env [VAR=…]… `, `command ` or `exec ` is looked
+/// through, as aeon's `env SPIRA_RUN=… landing-pass mark …` was written.
+fn oracle_subcommand(call: &CallSite) -> Option<&'static str> {
+    let words: Vec<String> = std::iter::once(strip_quotes(&call.callee))
+        .chain(call.args.iter().map(|a| match a {
+            Arg::Literal(s) | Arg::Dynamic(s) => s.clone(),
+        }))
+        .collect();
+    let mut i = 0;
+    while i < words.len() && matches!(words[i].as_str(), "env" | "command" | "exec") {
+        i += 1;
+        while i < words.len() && (words[i].starts_with('-') || words[i].contains('=')) {
+            i += 1;
+        }
+    }
+    if words.get(i)?.rsplit('/').next() != Some("landing-pass") {
+        return None;
+    }
+    // The verb must be a literal: a dynamic one is not an oracle call this pass can name.
+    // words[k] is args[k - 1], so the word after the command (words[i + 1]) is args[i].
+    let verb = call.args.get(i)?.literal()?;
+    ORACLE_SUBCOMMANDS.iter().copied().find(|v| *v == verb)
+}
+
+/// The call hands its caller's whole argv to bd in the verb's position (`bdq "$@" …`,
+/// `bd -C "$DB" "$@"`), so the verb is whatever the caller passes. Only flags and expansions
+/// may precede it: `bdq show "$@"` fixes its own verb and is judged where it is written.
+fn forwards_all_args(call: &CallSite) -> bool {
+    let Some(at) = call.args.iter().position(|a| matches!(a, Arg::Dynamic(t) if t == "$@" || t == "$*")) else {
+        return false;
+    };
+    call.args[..at].iter().all(|a| a.literal().is_none_or(|l| l.starts_with('-')))
+}
+
+/// Every array named in the scanned tree whose contents are known statically: each plain
+/// assignment `NAME=(w …)` (global or `local`/`declare`) spells the same literal first word,
+/// and every other way it is written is an append `NAME+=(…)`. Anything else — an empty or
+/// dynamic first word, two assignments that disagree, an element write `NAME[i]=…`, or a fill
+/// by `mapfile`/`readarray`/`read -a` — leaves the name out, so its expansion stays dynamic.
+/// Names are tree-wide, not per scope: a common name assigned two ways is simply unresolved,
+/// which costs completeness, never soundness. The value is every element of every assignment
+/// and append, the base's first, so a forbidden `update` flag held in an append is still seen.
+fn literal_arrays(parsed: &[ParsedFile]) -> HashMap<String, Vec<Arg>> {
+    #[derive(Default)]
+    struct Seen {
+        bases: Vec<Vec<Arg>>,
+        appends: Vec<Arg>,
+        poisoned: bool,
+    }
+    fn walk(node: Node, source: &[u8], seen: &mut HashMap<String, Seen>) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            match child.kind() {
+                "variable_assignment" => {
+                    if let (Some(name), Some(value)) = (child.child_by_field_name("name"), child.child_by_field_name("value")) {
+                        if name.kind() == "subscript" {
+                            if let Some(n) = name.child_by_field_name("name") {
+                                seen.entry(text_of(n, source)).or_default().poisoned = true;
+                            }
+                        } else if value.kind() == "array" {
+                            let mut c = value.walk();
+                            let elems: Vec<Arg> = value.named_children(&mut c).map(|e| classify_arg(e, source)).collect();
+                            let mut c2 = child.walk();
+                            let append = child.children(&mut c2).any(|t| t.kind() == "+=");
+                            let entry = seen.entry(text_of(name, source)).or_default();
+                            if append {
+                                entry.appends.extend(elems);
+                            } else {
+                                entry.bases.push(elems);
+                            }
+                        } else {
+                            seen.entry(text_of(name, source)).or_default().poisoned = true;
+                        }
+                    }
+                }
+                "command" => {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        if matches!(text_of(name_node, source).as_str(), "mapfile" | "readarray" | "read") {
+                            let mut c = child.walk();
+                            for a in child.children_by_field_name("argument", &mut c) {
+                                seen.entry(strip_quotes(&text_of(a, source))).or_default().poisoned = true;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+            walk(child, source, seen);
+        }
+    }
+    let mut seen: HashMap<String, Seen> = HashMap::new();
+    for pf in parsed {
+        walk(pf.tree.root_node(), pf.text.as_bytes(), &mut seen);
+    }
+    seen.into_iter()
+        .filter_map(|(name, s)| {
+            if s.poisoned || s.bases.is_empty() {
+                return None;
+            }
+            let first = s.bases[0].first()?.literal()?.to_string();
+            if !s.bases.iter().all(|b| b.first().and_then(Arg::literal) == Some(first.as_str())) {
+                return None;
+            }
+            let mut all: Vec<Arg> = s.bases.into_iter().flatten().collect();
+            all.extend(s.appends);
+            Some((name, all))
+        })
+        .collect()
+}
+
+/// `"${NAME[@]}"` / `${NAME[@]}` in a call's verb position (its first argument, or the first
+/// after bd's leading global flags), NAME a [`literal_arrays`] entry: the array's words stand
+/// in its place. An array of global flags is expanded and the verb looked for again after it.
+fn expand_array_arg(call: &mut CallSite, arrays: &HashMap<String, Vec<Arg>>) {
+    for _ in 0..8 {
+        let at = verb_index(&call.args);
+        let Some(Arg::Dynamic(word)) = call.args.get(at) else {
+            return;
+        };
+        let Some(name) = word.strip_prefix("${").and_then(|r| r.strip_suffix("[@]}")) else {
+            return;
+        };
+        let Some(words) = arrays.get(name) else {
+            return;
+        };
+        call.args.splice(at..at + 1, words.iter().cloned());
+    }
+}
+
+/// Where a bd/bdq call's verb sits: past its leading global flags (`-C <dir>`, `--db <path>`,
+/// `--actor <name>`, `--json`, `--db=…`, …; see [`BD_GLOBAL_VALUE_FLAGS`]). Before sp-voip5
+/// the verb was argv[1], so `bd -C "$DB" close …` and `bdq --db … update --status …` went
+/// unseen. An unknown flag is taken as boolean: at worst its value is read as the verb, and a
+/// non-verb word is never a finding. Past the end when the call has no verb (`bd --version`).
+fn verb_index(args: &[Arg]) -> usize {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        let (Arg::Literal(w) | Arg::Dynamic(w)) = arg;
+        if !w.starts_with('-') {
+            break;
+        }
+        i += if BD_GLOBAL_VALUE_FLAGS.contains(&w.as_str()) { 2 } else { 1 };
+    }
+    i
 }
 
 fn collect_funcs(
@@ -543,35 +730,30 @@ fn capture_target(node: Node, source: &[u8]) -> Option<String> {
 
 /// Second pass over a whole file: for every call that captured its output into a variable,
 /// look for that variable being read inside a `test_command`/`case_statement` anywhere in the
-/// same file, and promote it to `in_conditional` if so.
+/// same file, and promote it to `in_conditional` if so. The file's conditional variables are
+/// collected in one walk — one walk per captured call was most of a gate's run (sp-ts2qr).
 fn resolve_captured_conditionals(root: Node, source: &[u8], calls: &mut [CallSite]) {
+    if !calls.iter().any(|c| c.captured_into.is_some()) {
+        return;
+    }
+    let mut cond_vars: HashSet<String> = HashSet::new();
+    vars_used_in_conditionals(root, source, false, &mut cond_vars);
     for call in calls.iter_mut() {
-        if let Some(var) = call.captured_into.clone() {
-            if var_used_in_conditional(root, source, &var) {
-                call.in_conditional = true;
-            }
+        if call.captured_into.as_ref().is_some_and(|v| cond_vars.contains(v)) {
+            call.in_conditional = true;
         }
     }
 }
 
-fn var_used_in_conditional(node: Node, source: &[u8], var: &str) -> bool {
-    fn walk(node: Node, source: &[u8], var: &str, in_cond: bool) -> bool {
-        let now_cond = in_cond || node.kind() == "test_command" || node.kind() == "case_statement";
-        if now_cond
-            && matches!(node.kind(), "variable_name" | "special_variable_name")
-            && node.utf8_text(source).unwrap_or_default() == var
-        {
-            return true;
-        }
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            if walk(child, source, var, now_cond) {
-                return true;
-            }
-        }
-        false
+fn vars_used_in_conditionals(node: Node, source: &[u8], in_cond: bool, out: &mut HashSet<String>) {
+    let now_cond = in_cond || node.kind() == "test_command" || node.kind() == "case_statement";
+    if now_cond && matches!(node.kind(), "variable_name" | "special_variable_name") {
+        out.insert(node.utf8_text(source).unwrap_or_default().to_string());
     }
-    walk(node, source, var, false)
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        vars_used_in_conditionals(child, source, now_cond, out);
+    }
 }
 
 /// A source/`.` target is usually written against the caller's own directory

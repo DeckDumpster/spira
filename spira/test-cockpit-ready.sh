@@ -102,4 +102,40 @@ ref_out="$(run_probe "$BD_REFUSED")"
 want "SP_READY is ? on refusal"   "SP_READY=?"   "$ref_out"
 want "SP_NEXT_N is ? on refusal"  "SP_NEXT_N=?"  "$ref_out"
 want "SP_WAITING is ? on refusal" "SP_WAITING=?" "$ref_out"
+
+# ======================================================================================
+# UNDER lifecycle_enforce THE READY SET IS THE MACHINE'S (sp-7g5q6). The NEXT rows used to
+# ask `bd ready` themselves, which reads bd's status and assignee — fields no claim writes
+# any more. bd below calls sp-ck-held ready and knows nothing of sp-ck-take; the machine
+# says sp-ck-held is WORKING and sp-ck-take is READY. The cockpit must show the machine's.
+
+echo ""
+echo "ready probe: lifecycle_enforce on, the set is spira-claim's machine set:"
+LCBIN="$TMP/lcbin"; mkdir -p "$LCBIN"
+cat > "$LCBIN/spira-lc" <<'LC'
+#!/usr/bin/env bash
+[ "$1" = list ] || exit 2
+printf '%s\n' '[{"bead_id":"sp-ck-held","state":"WORKING","holder":"aeon-1","holds":"[]"},{"bead_id":"sp-ck-take","state":"READY","holds":"[]"}]'
+LC
+chmod +x "$LCBIN/spira-lc"
+BD_LC="$TMP/bd-lc"
+cat > "$BD_LC" <<'BD'
+#!/usr/bin/env bash
+case " $* " in
+  *" ready "*) printf '%s\n' '[{"id":"sp-ck-held","title":"bd calls me ready","status":"open","issue_type":"task","priority":1,"labels":["plan","spira"]}]' ;;
+  *" --id "*) printf '%s\n' '[{"id":"sp-ck-held","title":"bd calls me ready","status":"open","issue_type":"task","priority":1,"labels":["plan","spira"]},{"id":"sp-ck-take","title":"the machine calls me ready","status":"in_progress","issue_type":"task","priority":1,"labels":["plan","spira"]}]' ;;
+  *) printf '[]' ;;
+esac
+BD
+chmod +x "$BD_LC"
+lc_out="$(env -i PATH="$LCBIN:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
+    SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
+    SPIRA_REPO_MAP="$TMP/no-map" SPIRA_FAYTHS=builder SPIRA_SCOPE_LABEL=spira \
+    SPIRA_ASK_LABEL=needs-ryan SPIRA_CI_LABEL=awaiting-ci \
+    SPIRA_LIFECYCLE_ENFORCE=1 SPIRA_BD="$BD_LC" \
+    cockpit-collect probe core 2>/dev/null)"
+is     "SP_READY counts the machine's one READY row"  "SP_READY=1" "$(printf '%s\n' "$lc_out" | grep '^SP_READY=')"
+want   "the machine's READY bead is in NEXT"          "sp-ck-take" "$lc_out"
+nowant "bd's ready bead the machine holds is not"     "sp-ck-held" "$lc_out"
 tl_summary

@@ -101,7 +101,7 @@ nothing changed), then effects in order.
 
 | cmd | mode | lock | effects |
 |---|---|---|---|
-| `submit <br> [repo]` | any | none | queue modes require `spira/*` or `spira-suite-state/*`; branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` + `$SPIRA_QUEUE_DIR/<id>` = `CERTIFIED <tip> <epoch>\n`; push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
+| `submit <br> [repo]` | any | none | queue modes require `spira/*` (sp-lck63: a suite-state edit is a change bead's `spira/<bead>` too); branch must exist. Gate: `gate.sh <br> <repo>` with `SPIRA_GATE_BEAD=<id>` `SPIRA_GATE_SUITES=${SPIRA_CERTIFY_SUITES:-on}`. Red: gate output to stderr, `QUEUE CAUGHT` line, exit gate rc. Green: `QUEUE GATE_COST` line, then queue/queue.local: `land_mark <id> CERTIFIED <tip>` (spira-lc certify; the queue keeps no `$SPIRA_QUEUE_DIR/<id>` record of its own since sp-lck63); push: fetch, `rebase_branch`, push `<br>:<base-branch>`, `land_mark LANDED`, `bead_close_on_land`; pr/hold: `land_mark CERTIFIED`. |
 | `protect [repo]` | queue | none | `forge branch-protect <path> <base-branch>`; receipt `$SPIRA_RUN/queue-protected-<repo>` = `<base-branch>\n`; five fixed stdout lines. |
 | `stats` | — | none | reads `$SPIRA_RUN/landing.log`; five fixed lines (§3.5). |
 | `flush [repo]` | queue | none | `batcher cut <repo>` (by name, on the launcher's PATH — sp-gypjk) with `SPIRA_QUEUE_BATCH_WAIT=0`. `SPIRA_BATCHER_ENABLE=0`: no cut, rc 0 (the operator cuts rounds; replaces `batcher_bin = "/bin/true"`). Ran `batch.sh <repo>`'s pre-cut sweep first, until sp-uwhx0 (batch.sh retirement, below). |
@@ -258,7 +258,6 @@ cost / members; percentage integer.
 | `…/<repo>/publish` | publish, to-forge | publish |
 | `…/<repo>/round-seq` | land-local, rollback-local | land-local |
 | `…/<repo>/divergence-alarmed` | queue, in process (sp-hwjsq, "wave 4.32") | queue, in process |
-| `$SPIRA_QUEUE_DIR/<id>` | — | submit (`CERTIFIED <tip> <epoch>`) |
 | `$SPIRA_RUN/landstate/<id>` | eject, abandon, publish (tips), in-delivery | lib.sh `land_mark` / `bead_reopen` only |
 | `$SPIRA_RUN/landing.log` | stats | submit, abandon, open-batch, publish, land-local `QUEUE UNGATED` (append) |
 | `$SPIRA_RUN/queue-protected-<repo>` | — | protect |

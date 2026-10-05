@@ -193,7 +193,7 @@ impl<'a> Sentinel<'a> {
             // B1: the switches the operator sets on the sentinel's unit reach the worker
             // that actually runs the checks they switch off.
             a.extend(self.lifecycle_setenv());
-            for k in ["SPIRA_SKIP_CLOSED_CHECK", "SPIRA_SKIP_RECLAIM"] {
+            for k in ["SPIRA_SKIP_RECLAIM"] {
                 if !self.cfg.raw(k).is_empty() {
                     a.push(format!("--setenv={k}={}", self.cfg.raw(k)));
                 }
@@ -211,7 +211,7 @@ impl<'a> Sentinel<'a> {
             } else if self.unit_active(&unit) {
                 self.log("CHECK4/5 audit: started underneath this pass — not starting another");
             } else {
-                self.log("CHECK4/5 audit WARN: could not dispatch the audit worker; poison, closed-not-landed, sending and collision checks will not run until this is fixed");
+                self.log("CHECK4/5 audit WARN: could not dispatch the audit worker; poison, lifecycle-state (CHECK5-LC), sending and collision checks will not run until this is fixed");
             }
         }
 

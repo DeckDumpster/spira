@@ -10,27 +10,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
     let repo = w.repo;
     let name = &repo.name;
     let path = &repo.path;
-    let mut tip = p.git.rev_parse(path, br).unwrap_or_default();
-
-    // A hold-mode branch already sent at this tip is left alone (it has no PR to refresh
-    // and no remote to push to).
-    if repo.mode == LandMode::Hold {
-        if let Some(sub) = p.files.submitted(id) {
-            if sub.settles(&tip, p.clock.now()) {
-                return Flow::Next;
-            }
-        }
-    }
-
-    // A known-stuck pair is not re-attempted: has the tip or the base moved since the mark?
-    let cur_base = p.git.rev_parse(path, &w.base_fq).unwrap_or_default();
-    let ls = p.files.land_state(id).unwrap_or_default();
-    let no_rebase_mark = format!("no-rebase@{cur_base}");
-    if ls.state == "RED" && ls.tip == tip && ls.reason == no_rebase_mark {
-        p.out.log(&format!("CHECK6 {id}: tip and base unchanged since last RED mark — skipping repeat rebase attempt"));
-        return Flow::Next;
-    }
-
     let rb = p.lib.rebase(br, &w.base_fq, path, name);
     if !rb.ok {
         // ONLY A CONFLICT MAY REOPEN: the other failures are the pass failing to ask.
@@ -49,13 +28,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
             p.out.log(&format!("CHECK6 {id}: {br} does not rebase onto {}, but its pull request is merged — landed, not stuck", w.base));
             return Flow::Next;
         }
-        if ls.state == "RED" && ls.tip == tip {
-            p.out.log(&format!("CHECK6 {id}: tip unchanged since last RED mark — skipping duplicate bump"));
-            if ls.reason != no_rebase_mark {
-                p.lib.land_mark(id, "RED", &tip, &no_rebase_mark);
-            }
-            return Flow::Next;
-        }
         p.lib.bump_requeue(id, "merge-conflict");
         let n = p.lib.requeues_of(id);
         let n_s = n.max(1).to_string();
@@ -64,7 +36,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
         let others = p.lib.other_beads(path, br, &w.base_fq, &rb.conflicts);
         let rc = p.lib.recut(br, &w.base_fq, path, name);
         if !rc.ok {
-            let prev_class = ls.reason.split('@').next().unwrap_or("");
             if rc.applied > 0 {
                 let conflicts = first_nonempty(&[&rc.conflicts, &rb.conflicts, "unknown"]);
                 p.lib.ask_rebase_loop(&[id, br, name, &n_s, conflicts, &others, &path_s, &w.base_fq]);
@@ -72,10 +43,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     "escalated {id} — re-cut conflicted on {br} after {n_s} attempt(s); {} commit(s) moved to {}",
                     rc.applied, w.base
                 ));
-            } else if ls.state == "RED" && prev_class == "no-rebase" {
-                let at = if ls.at == 0 { "0".to_string() } else { ls.at.to_string() };
-                p.lib.ask_red_recurring(id, br, name, "no-rebase", &at);
-                p.out.progress(&format!("escalated {id} — recurring no-rebase on {br} after {n_s} attempt(s)"));
             } else if n >= p.s.rebase_escalate_at {
                 // The main walk reopens even on escalation, or the ask is about a bead
                 // nothing can ever work.
@@ -92,13 +59,11 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                     &format!("conflicts in {}; the next aeon is handed the rebase", or(&rb.conflicts, "unknown")),
                 );
             }
-            let t = p.git.rev_parse(path, br).unwrap_or_default();
-            p.lib.land_mark(id, "RED", &t, &no_rebase_mark);
             return Flow::Next;
         }
         p.out.log(&format!("CHECK6 {id}: re-cut {br} onto {} ({} commit(s)) — falling through to gate", w.base, rc.applied));
     }
-    tip = p.git.rev_parse(path, br).unwrap_or_default();
+    let tip = p.git.rev_parse(path, br).unwrap_or_default();
     w.judge(br);
 
     // CONFINEMENT BEFORE THE GATE: "is this branch allowed to land at all".
@@ -108,7 +73,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
         p.lib.reopen(id, "confine-fail", &format!("Reopened by sentinel: {cout}"));
         p.out.progress(&format!("reopened {id} — spike branch is not confined to its document"));
         p.out.log(&format!("CHECK6 {id}: {}", head1(&cout)));
-        p.lib.land_mark(id, "RED", &tip, "confine");
         w.unjudge(br);
         return Flow::Next;
     } else if crc != 0 {
@@ -119,11 +83,10 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
     if !p.budget_allows(bead, name, id) {
         return Flow::BudgetCut;
     }
-    let g = p.run_gate(name, br, id, false, &tip);
+    let g = p.run_gate(name, br, id);
     if g.outcome != GateOutcome::Pass {
         let reason = g.reason_or("unspecified");
         p.out.log(&format!("CHECK6 {id}: gate {} on {br} in {name} ({reason})", g.outcome.word()));
-        p.lib.land_mark(id, "GATED", &tip, &format!("{}:{reason}", g.outcome.word()));
         match g.outcome {
             GateOutcome::BaseFail => {
                 p.out.log(&format!(
@@ -150,7 +113,6 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
                 p.lib.reopen(id, "gate-red", &note);
                 p.out.progress(&format!("reopened {id} — failed the gate"));
                 p.lib.event("bead.reopened", id, &format!("reopened {id} — {br} failed {name}'s landing gate"), &tail_lines(&g.out, 3));
-                p.lib.land_mark(id, "RED", &tip, "gate");
                 w.unjudge(br);
             }
         }
@@ -167,14 +129,16 @@ pub(crate) fn push_or_hold(p: &Pass, w: &Walk, br: &str, id: &str, bead: &BeadRo
     }
 
     if repo.mode == LandMode::Hold {
-        p.lib.note(
-            id,
-            &format!(
-                "Gated and held: {br} passed {name}'s landing gate. Spira does not advance {name}'s {}. Merge it by hand when you are ready — nothing else will.",
-                repo.base_branch
-            ),
-        );
-        p.files.mark_submitted(id, &tip, "hold", p.clock.now());
+        let held = format!("Gated and held: {br} ");
+        if !bead.notes.iter().any(|n| n.contains(&held)) {
+            p.lib.note(
+                id,
+                &format!(
+                    "Gated and held: {br} passed {name}'s landing gate. Spira does not advance {name}'s {}. Merge it by hand when you are ready — nothing else will.",
+                    repo.base_branch
+                ),
+            );
+        }
         p.out.log(&format!("gated and held {br} in {name} — nothing here advances {}", w.base));
         return Flow::Next;
     }
@@ -263,7 +227,7 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
                     break;
                 }
                 tip = p.git.rev_parse(path, br).unwrap_or_default();
-                if p.git.content_landed(path, br, &w.base_fq) {
+                if p.git.content_on_base(path, br, &w.base_fq) {
                     outcome = Landed::Nothing;
                     break;
                 }
@@ -288,8 +252,6 @@ fn land(p: &Pass, w: &Walk, br: &str, id: &str, mut tip: String) {
             p.out.progress(&format!("landed {br}"));
             // RECORDED FIRST: everything after can fail; the fact that must survive is that
             // this commit is on the base (law-closed-is-not-landed, one layer in).
-            p.lib.land_mark(id, "LANDED", &tip, name);
-            p.files.drop_ejected(id);
             let head = p.git.tree_head(&w.land).unwrap_or_default();
             if lc {
                 p.lib.deliver_delivered(id, &head);

@@ -267,7 +267,7 @@ impl<'h> Run<'h> {
                     let _ = fs::copy(&f, dir.join(n));
                 }
             }
-            for n in ["landstate", "queue"] {
+            for n in ["queue"] {
                 let _ = fs::copy(run.join(n), dir.join(n));
             }
         }

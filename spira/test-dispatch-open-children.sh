@@ -82,6 +82,14 @@ seed() {
 JSONL
 }
 
+# kid_closed <n> — child sp-kid<n>'s row as closed: FIXTURE STATE, declared as data (an upsert
+# of the same row), never a bd close driven around the lifecycle machine (sp-hyo5e).
+kid_closed() {
+    testdb_seed <<JSONL
+{"id":"sp-kid$1","title":"child $1","status":"closed","closed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","dependencies":[{"issue_id":"sp-kid$1","depends_on_id":"sp-parent","type":"parent-child"}]}
+JSONL
+}
+
 echo "test-dispatch-open-children.sh"
 
 # =====================================================================================
@@ -118,7 +126,7 @@ has   "5: second mark_open_children call leaves label in place" \
 echo
 echo "assertion 6 — one of two children closes: label stays, ALL children must close:"
 # =====================================================================================
-B close sp-kid1 --reason "done" >/dev/null 2>&1
+kid_closed 1
 mark_open_children
 has   "6: one child still open — sp-parent stays labeled" \
       "$LABEL" "$(labels_of sp-parent)"
@@ -127,7 +135,7 @@ has   "6: one child still open — sp-parent stays labeled" \
 echo
 echo "assertions 7-8 — last child closes: label removed, bead is summonable again:"
 # =====================================================================================
-B close sp-kid2 --reason "done" >/dev/null 2>&1
+kid_closed 2
 mark_open_children
 lacks "7: every child closed — label removed from sp-parent" \
       "$LABEL" "$(labels_of sp-parent)"

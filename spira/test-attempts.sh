@@ -149,6 +149,18 @@ seed() {   # seed <id> — one open, claimable bead
 {"id":"$1","title":"a bead","status":"open","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
 JSONL
 }
+# claimed <id> <n> — n claim events (`status_changed` to in_progress), seeded the way
+# test-attempts-sql.sh seeds its fixture: by SQL, never by driving bd's status around the
+# lifecycle machine (sp-hyo5e). What is under test is the count, not the CLI that once
+# produced the rows.
+claimed() {
+    local id="$1" n="$2" i=0 uuid
+    while [ "$i" -lt "$n" ]; do
+        uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+        bdq sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', NOW())" >/dev/null 2>&1
+        i=$((i+1))
+    done
+}
 status_of() { bdjson show "$1" | python3 -c '
 import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
@@ -173,17 +185,14 @@ is "a fresh bead has no requeues"       0 "$(num "$(requeues_of sp-c1)")"
 
 
 # The single-transition case (one in_progress = 1 attempt) is test-attempts-sql.sh's sp-ev2;
-# what stays here is the multi-event, real-CLI-driven complement to that file's SQL-seeded
-# b3/b4 fixture: genuine failure still poisons via events, three in_progress events reach
-# the threshold.
+# what stays here is the multi-event complement to that file's b3/b4 fixture, through the
+# poison threshold: genuine failure still poisons via events, three in_progress events reach
+# it.
 poisons() { local n; n="$(num "$(attempts_of "$1")")"; [ "$n" -ge 3 ] && echo yes || echo no; }
 seed sp-c2
-bdq update sp-c2 --status in_progress >/dev/null 2>&1
-bdq update sp-c2 --status open >/dev/null 2>&1
-bdq update sp-c2 --status in_progress >/dev/null 2>&1
-bdq update sp-c2 --status open >/dev/null 2>&1
+claimed sp-c2 2
 is "two events do not poison yet" no "$(poisons sp-c2)"
-bdq update sp-c2 --status in_progress >/dev/null 2>&1
+claimed sp-c2 1
 is "three events poison" yes "$(poisons sp-c2)"
 
 # `attempts.sh reclassify`/`prune-reclaims` (the sp-attempt-N/sp-reclaim-N-unrecorded LABEL
@@ -201,17 +210,20 @@ is "three events poison" yes "$(poisons sp-c2)"
 echo
 echo "the release (real bd):"
 
-# THE DISCRIMINATING FACT, seen both ways. The claim records BEADS_ACTOR; the teardown must
-# name that same actor or the compare-and-swap can never match.
-seed sp-r1
-BEADS_ACTOR=aeon-cindy bdq update sp-r1 --claim >/dev/null 2>&1
-is "the claim records the aeon, not the fayth" in_progress "$(status_of sp-r1)"
+# THE DISCRIMINATING FACT, seen both ways. The claim records the aeon's own name (BEADS_ACTOR
+# =aeon-<instance>); the teardown, release_own_claim -> `spira-lc unclaim` (sp-hyo5e), must
+# name that same actor or bd's compare-and-swap can never match. The claim is the fixture's.
+testdb_reset
+testdb_seed <<'JSONL'
+{"id":"sp-r1","title":"a claimed bead","status":"in_progress","assignee":"aeon-cindy","issue_type":"task","labels":["spira","plan"],"updated_at":"2026-09-06T00:00:00Z"}
+JSONL
+is "the fixture holds the bead under the aeon's name" in_progress "$(status_of sp-r1)"
 
-if bdq unclaim sp-r1 --if-assignee aeon-builder >/dev/null 2>&1; then r=0; else r=1; fi
+if BEADS_ACTOR=aeon-builder release_own_claim sp-r1; then r=0; else r=1; fi
 is "releasing as the fayth fails"        1           "$r"
 is "and leaves the bead held"            in_progress "$(status_of sp-r1)"
 
-if bdq unclaim sp-r1 --if-assignee aeon-cindy >/dev/null 2>&1; then r=0; else r=1; fi
+if BEADS_ACTOR=aeon-cindy release_own_claim sp-r1; then r=0; else r=1; fi
 is "releasing as the aeon succeeds"      0    "$r"
 is "and the bead is claimable again"     open "$(status_of sp-r1)"
 tl_summary

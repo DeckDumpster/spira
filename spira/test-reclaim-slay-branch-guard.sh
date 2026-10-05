@@ -54,6 +54,14 @@ export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"
 export SPIRA_REPO="$REPO"
+# THE HOME IS NAMED, NEVER INFERRED. slay and `sending destroy-branch` find lib.sh through
+# $SPIRA_HOME, else by walking up from their own canonical exe path. conf.sh sets SPIRA_HOME
+# but never exports it, so without this line the walk is all they have — and it only works
+# when the build target sits inside a checkout (a testenv slot). The gate builds into a
+# tmpfs target symlinked out of the tree, the walk finds no lib.sh, and slay reads that as
+# "no bead <id> — refusing to act" (exit 2) while destroy-branch dies with exit 2: red on
+# every tree, base included. test-sending.sh names SPIRA_HOME="$HERE" the same way.
+export SPIRA_HOME="$HERE"
 export SPIRA_CONF="$TMP/no-such-conf"
 export SPIRA_REPO_MAP="$TMP/repo-map"
 export SPIRA_REAPLOG="$SPIRA_RUN/reap.log"
@@ -146,11 +154,11 @@ land sp-s1
 is "landed branch exists before slay" 0 \
    "$(branch_exists spira/sp-s1; echo $?)"
 
-# Verify landing: content_landed must see this branch as landed.
-if content_landed "$REPO" spira/sp-s1 origin/main; then
-    ok "content_landed sees landed branch as landed (fixture confirmed)"
+# Verify landing: spira-lc content-landed must see this branch as landed.
+if spira-lc content-landed "$REPO" spira/sp-s1 origin/main; then
+    ok "spira-lc content-landed sees landed branch as landed (fixture confirmed)"
 else
-    bad "fixture: landed branch should be seen as landed by content_landed" "returned non-zero"
+    bad "fixture: landed branch should be seen as landed by spira-lc content-landed" "returned non-zero"
 fi
 
 out="$(slay --bead sp-s1 2>&1)"
@@ -178,11 +186,11 @@ tip="$(git -C "$REPO" rev-parse --short spira/sp-s2)"
 
 is "unlanded branch exists before slay"   0  "$(branch_exists spira/sp-s2; echo $?)"
 
-# Confirm the fixture: content_landed sees it as unlanded (so we are testing the right thing).
-if content_landed "$REPO" spira/sp-s2 origin/main; then
-    bad "fixture: unlanded branch should NOT be seen as landed" "content_landed returned 0"
+# Confirm the fixture: spira-lc content-landed sees it as unlanded (so we are testing the right thing).
+if spira-lc content-landed "$REPO" spira/sp-s2 origin/main; then
+    bad "fixture: unlanded branch should NOT be seen as landed" "spira-lc content-landed returned 0"
 else
-    ok "fixture: content_landed correctly sees branch as unlanded"
+    ok "fixture: spira-lc content-landed correctly sees branch as unlanded"
 fi
 
 out="$(slay --bead sp-s2 2>&1)"
@@ -243,7 +251,7 @@ git -C "$REPO" branch -D spira/sp-g2 >/dev/null 2>&1 || true
 # GATE PATH — no bypass on a LANDED branch must be allowed.
 #
 # The gate must not block legitimate deletion of landed work. This is the positive
-# case for the gate itself: content_landed says yes, the gate approves.
+# case for the gate itself: spira-lc content-landed says yes, the gate approves.
 # ======================================================================================
 echo
 echo "gate path — no bypass on landed branch must be allowed:"

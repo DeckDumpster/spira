@@ -27,8 +27,10 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
         return FAIL;
     };
     let mode = c.r.mode;
-    if mode.is_queued() && !(branch.starts_with("spira/") || branch.starts_with("spira-suite-state/")) {
-        w.err(format!("queue.sh submit: {branch}: queue mode requires a branch under spira/ or spira-suite-state/"));
+    // Every change in a queued mode is a bead on spira/<id> with a lifecycle row — a
+    // suite-state edit included (sp-lck63: `testenv suites` files or is handed one).
+    if mode.is_queued() && !branch.starts_with("spira/") {
+        w.err(format!("queue.sh submit: {branch}: queue mode requires a branch under spira/"));
         return FAIL;
     }
     if idents(w, "submit", &[("branch", branch), ("repo", &name)]).is_err() {
@@ -55,10 +57,9 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
 
     match mode {
         LandMode::Queue | LandMode::QueueLocal => {
-            w.lib.land_mark(&id, "CERTIFIED", &tip, "");
-            let entry = c.s.queue_dir.join(&id);
-            if write_atomic(&entry, &format!("CERTIFIED {tip} {}\n", w.clock.now())).is_err() {
-                w.err(format!("queue.sh submit: failed to write queue entry for {branch}"));
+            // The lifecycle row is the one certification record; the queue keeps none of
+            // its own (sp-lck63).
+            if lc_certify(w, &id, &tip).is_err() {
                 return FAIL;
             }
             w.out(format!("queue.sh submit: certified {branch}"));
@@ -84,16 +85,27 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
                 w.err(format!("queue.sh submit: push of {branch} to {base_branch} failed"));
                 return FAIL;
             }
-            w.lib.land_mark(&id, "LANDED", &tip, "");
-            w.lib.bead_close_on_land(&id, &tip);
+            if lc_certify(w, &id, &tip).is_err() || !super::land::lc_deliver(w, &path, &tip, &crate::model::Member { id: id.clone(), tip: tip.clone() }) {
+                return FAIL;
+            }
+            super::helpers::close_on_land(w, &c.s.submitted_label, &id, &tip);
             w.out(format!("queue.sh submit: landed {branch} (push)"));
         }
         LandMode::Pr | LandMode::Hold => {
-            w.lib.land_mark(&id, "CERTIFIED", &tip, "");
+            if lc_certify(w, &id, &tip).is_err() {
+                return FAIL;
+            }
             w.out(format!("queue.sh submit: certified {branch} ({})", mode.as_str()));
         }
     }
     OK
+}
+
+/// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
+fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
+    w.lc.certify(id, tip, "queue-submit", &super::actor(w)).map_err(|(rc, e)| {
+        w.err(format!("queue.sh submit: spira-lc certify refused for {id} (rc={rc}): {e}"));
+    })
 }
 
 pub fn protect(w: &World, repo: Option<&str>) -> i32 {
@@ -132,24 +144,12 @@ pub fn stats(w: &World) -> i32 {
     OK
 }
 
-/// The lifecycle switch for a step or flush (queue-step-all.md, DESIGN.md §10): OFF →
-/// `lc_off = true` and spira-lc is never touched, not even probed; ON → the machine must
-/// answer before anything runs, else a loud refusal (exit 1).
-fn lc_mode(w: &World, label: &str) -> Result<bool, i32> {
-    if super::lifecycle_on(w) {
-        super::require_lc(w, label)?;
-        Ok(false)
-    } else {
-        Ok(true)
-    }
-}
-
 /// The batcher's cut (queue.sh _batch_cut). Used to run batch.sh's own pre-cut sweep first
 /// (orphan-run reaping, closed-red-live mail, DIRTY-PR abandon, stale-certification
 /// reconciliation, the queue-stuck alert) — dead weight since batcher-cut (sp-jzfog) took
 /// over the round itself and no repo runs in `land=queue` mode (sp-uwhx0: batch.sh deleted,
 /// its sweep retired with it, not ported — see queue/DESIGN.md "batch.sh retirement").
-fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
+fn batch_cut(w: &World, c: &Ctx, wait_zero: bool) -> i32 {
     if c.s.batcher_off {
         w.out(format!("queue.sh: SPIRA_BATCHER_ENABLE=0 — the operator cuts rounds; no cut for {}", c.r.name));
         return OK;
@@ -158,7 +158,7 @@ fn batch_cut(w: &World, c: &Ctx, wait_zero: bool, lc_off: bool) -> i32 {
         w.err(format!("queue.sh: no batcher program — cannot cut a round for {}", c.r.name));
         return FAIL;
     };
-    w.scripts.batcher_cut(bin, &c.r.name, wait_zero, lc_off)
+    w.scripts.batcher_cut(bin, &c.r.name, wait_zero)
 }
 
 pub fn is_executable(p: &std::path::Path) -> bool {
@@ -178,8 +178,10 @@ pub fn flush(w: &World, repo: Option<&str>) -> i32 {
     if idents(w, "flush", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    let Ok(lc_off) = lc_mode(w, "flush") else { return FAIL };
-    batch_cut(w, &c, true, lc_off)
+    if super::require_lc(w, "flush").is_err() {
+        return FAIL;
+    }
+    batch_cut(w, &c, true)
 }
 
 /// Routes stderr to stdout (`cmd_publish "$name" 2>&1`).
@@ -221,12 +223,14 @@ pub fn step(w: &World, repo: &str) -> i32 {
     if idents(w, "step", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    let Ok(lc_off) = lc_mode(w, "step") else { return FAIL };
+    if super::require_lc(w, "step").is_err() {
+        return FAIL;
+    }
     match step_lock(w, &c) {
         // The other stepper is doing this work; a skipped step is not a failure.
         StepLock::Busy => OK,
         StepLock::Unopenable => FAIL,
-        StepLock::Held(_g) => step_locked(w, &c, lc_off),
+        StepLock::Held(_g) => step_locked(w, &c),
     }
 }
 
@@ -242,7 +246,9 @@ pub fn step_all(w: &World) -> i32 {
         }
     };
     // One switch for the whole pass: ON and unreachable refuses before any repo is stepped.
-    let Ok(lc_off) = lc_mode(w, "step --all") else { return FAIL };
+    if super::require_lc(w, "step --all").is_err() {
+        return FAIL;
+    }
     let (mut stepped, mut busy, mut unresolved) = (Vec::new(), Vec::new(), Vec::new());
     for name in names {
         let c = match w.lib.context(Some(&name)) {
@@ -263,7 +269,7 @@ pub fn step_all(w: &World) -> i32 {
         w.out(format!("queue.sh step --all: {}", c.r.name));
         match step_lock(w, &c) {
             StepLock::Held(g) => {
-                let _ = step_locked(w, &c, lc_off);
+                let _ = step_locked(w, &c);
                 drop(g);
                 stepped.push(name);
             }
@@ -286,11 +292,11 @@ pub fn step_all(w: &World) -> i32 {
     OK
 }
 
-fn step_locked(w: &World, c: &Ctx, lc_off: bool) -> i32 {
+fn step_locked(w: &World, c: &Ctx) -> i32 {
     // The verdict runs in process (DESIGN-verdict.md); its status is not the step's, as
     // verdict.sh's was not.
-    let _ = super::verdict::pass(w, c, !lc_off);
-    batch_cut(w, c, false, lc_off);
+    let _ = super::verdict::pass(w, c);
+    batch_cut(w, c, false);
     if c.r.mode == LandMode::QueueLocal {
         let merged = Merged(w.io);
         let w2 = World { io: &merged, ..*w };

@@ -129,18 +129,14 @@ printf '\nT3: stage db is usable\n'
 
     # POSITIVE CONTROL: verify the bead IS visible in the stage db
     # hermetic-ok: $SPIRA_DB is the stage database — always a mktemp temp dir from stage.sh up
-    found="$(bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null \
-        | grep -c "$created_id" || true)"
-    [ "${found:-0}" -gt 0 ] && ok "created bead visible in stage db" \
-                             || bad "created bead visible in stage db" "not found"
+    want "created bead visible in stage db" "${created_id:-<no id>}" \
+        "$(bd -C "$SPIRA_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
 
     # The bead must NOT be visible in the real SPIRA_DB (if one is set)
     if [ -n "${_REAL_DB:-}" ] && [ -d "$_REAL_DB" ]; then
         # hermetic-ok: $_REAL_DB is the pre-stage SPIRA_DB, read-only here to verify isolation
-        real_found="$(bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null \
-            | grep -c "$created_id" || true)"
-        [ "${real_found:-0}" -eq 0 ] && ok "stage bead not visible in real db" \
-                                      || bad "stage bead not visible in real db" "leaked: $created_id"
+        nowant "stage bead not visible in real db" "${created_id:-<no id>}" \
+            "$(bd -C "$_REAL_DB" list --limit 0 --label "spira,plan" 2>/dev/null)"
     else
         ok "real db isolation (no real db to check against)"
     fi

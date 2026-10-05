@@ -7,7 +7,6 @@ pub enum Cmd {
     /// `land`: the gated pass.
     Land,
     Halt { reason: Reason, dry_run: bool },
-    SweepRed,
     /// `noverdict <id> <branch> <repo> <reason> <outcome>`: `spira_land_noverdict` alone,
     /// stdin = the gate output (sp-31hjr) — the real-sender suites' way to drive the
     /// native counting/escalation without a whole pass, the same shape as sentinel's
@@ -16,17 +15,6 @@ pub enum Cmd {
     /// `ask-rebase-loop <id> <branch> <repo> <n> <conflicts> <others> [<repo-dir> <base>]`:
     /// `spira_ask_rebase_loop` alone (sp-31hjr).
     AskRebaseLoop(Vec<String>),
-    /// `mark <id> <state> <tip> [reason] [extra]`: lib.sh `land_mark` alone (sp-cnnt6,
-    /// "wave 4.16") — the landstate ledger's one writer. `tip` empty or omitted means
-    /// `none` in the record; `reason` and `extra` default to empty.
-    Mark { id: String, state: String, tip: String, reason: String, extra: String },
-    /// `state <id>`: lib.sh `land_state` alone (sp-cnnt6) — the record's raw bytes with
-    /// newlines stripped, or nothing with exit 1 when it cannot be read.
-    State { id: String },
-    /// `landed <id> <repo>`: lib.sh `landed`/`landed_sha` alone (sp-81t4d, "wave 4.17").
-    /// Prints the landing commit's sha on a found exit (0); exit 1 not found; exit 2
-    /// cannot tell (the land ref does not resolve) — three outcomes, never folded into two.
-    Landed { id: String, repo: String },
     /// `land-subject <id>`: lib.sh `land_subject` alone (sp-81t4d).
     LandSubject { id: String },
     /// `pr-merged <repo> <branch>`: lib.sh `pr_merged` alone (sp-81t4d).
@@ -40,12 +28,6 @@ pub enum Cmd {
     /// `is-work-type <type>`: lib.sh `bead_is_work_type` alone (sp-81t4d). Exit 0 matches,
     /// 1 does not.
     IsWorkType { ty: String },
-    /// `cited-commit <id> <repo> <base>`: lib.sh `bead_cited_commit_on_base` alone
-    /// (sp-81t4d). Prints "<sha> <rule>" on a found exit (0); exit 1 not found.
-    CitedCommit { id: String, repo: String, base: String },
-    /// `close-on-land <id> [sha]`: lib.sh `bead_close_on_land` alone (sp-81t4d). `sha`
-    /// defaults to empty, matching the bash function's own `"${2:-}"`.
-    CloseOnLand { id: String, sha: String },
     Help,
 }
 
@@ -57,26 +39,15 @@ pub enum Reason {
     File(String),
 }
 
-pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | sweep-red | noverdict <id> <branch> <repo> <reason> <outcome> | mark <id> <state> <tip> [reason] [extra] | state <id> | landed <id> <repo> | land-subject <id> | pr-merged <repo> <branch> | conflict-note <repo> <branch> <base> <name> <conflicts> <actor> [rq_n] | other-beads <repo> <branch> <base> <files> | is-work-type <type> | cited-commit <id> <repo> <base> | close-on-land <id> [sha]";
+pub const USAGE: &str = "usage: landing-pass --pass | land | halt [--reason T | --reason-file F|-] [--dry-run] | noverdict <id> <branch> <repo> <reason> <outcome> | land-subject <id> | pr-merged <repo> <branch> | conflict-note <repo> <branch> <base> <name> <conflicts> <actor> [rq_n] | other-beads <repo> <branch> <base> <files> | is-work-type <type>";
 
 /// Err((exit code, message for stderr)).
 pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
     match args.first().map(String::as_str) {
         Some("--pass") | Some("pr") if args.len() == 1 => Ok(Cmd::Pr),
         Some("land") if args.len() == 1 => Ok(Cmd::Land),
-        Some("sweep-red") if args.len() == 1 => Ok(Cmd::SweepRed),
         Some("-h") | Some("--help") => Ok(Cmd::Help),
         Some("halt") => parse_halt(&args[1..]),
-        Some("mark") if (4..=6).contains(&args.len()) => Ok(Cmd::Mark {
-            id: args[1].clone(),
-            state: args[2].clone(),
-            tip: args[3].clone(),
-            reason: args.get(4).cloned().unwrap_or_default(),
-            extra: args.get(5).cloned().unwrap_or_default(),
-        }),
-        Some("mark") => Err((2, "landing-pass mark: usage: mark <id> <state> <tip> [reason] [extra]".to_string())),
-        Some("state") if args.len() == 2 => Ok(Cmd::State { id: args[1].clone() }),
-        Some("state") => Err((2, "landing-pass state: usage: state <id>".to_string())),
         Some("noverdict") if args.len() == 6 => Ok(Cmd::Noverdict {
             id: args[1].clone(),
             branch: args[2].clone(),
@@ -85,8 +56,6 @@ pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
             outcome: args[5].clone(),
         }),
         Some("ask-rebase-loop") if args.len() == 7 || args.len() == 9 => Ok(Cmd::AskRebaseLoop(args[1..].to_vec())),
-        Some("landed") if args.len() == 3 => Ok(Cmd::Landed { id: args[1].clone(), repo: args[2].clone() }),
-        Some("landed") => Err((2, "landing-pass landed: usage: landed <id> <repo>".to_string())),
         Some("land-subject") if args.len() == 2 => Ok(Cmd::LandSubject { id: args[1].clone() }),
         Some("land-subject") => Err((2, "landing-pass land-subject: usage: land-subject <id>".to_string())),
         Some("pr-merged") if args.len() == 3 => Ok(Cmd::PrMerged { repo: args[1].clone(), branch: args[2].clone() }),
@@ -101,12 +70,6 @@ pub fn parse(args: &[String]) -> Result<Cmd, (i32, String)> {
         Some("other-beads") => Err((2, "landing-pass other-beads: usage: other-beads <repo> <branch> <base> <files>".to_string())),
         Some("is-work-type") if args.len() == 2 => Ok(Cmd::IsWorkType { ty: args[1].clone() }),
         Some("is-work-type") => Err((2, "landing-pass is-work-type: usage: is-work-type <type>".to_string())),
-        Some("cited-commit") if args.len() == 4 => Ok(Cmd::CitedCommit { id: args[1].clone(), repo: args[2].clone(), base: args[3].clone() }),
-        Some("cited-commit") => Err((2, "landing-pass cited-commit: usage: cited-commit <id> <repo> <base>".to_string())),
-        Some("close-on-land") if (2..=3).contains(&args.len()) => {
-            Ok(Cmd::CloseOnLand { id: args[1].clone(), sha: args.get(2).cloned().unwrap_or_default() })
-        }
-        Some("close-on-land") => Err((2, "landing-pass close-on-land: usage: close-on-land <id> [sha]".to_string())),
         _ => Err((2, USAGE.to_string())),
     }
 }
@@ -156,7 +119,6 @@ mod tests {
     fn verbs_and_halt_options() {
         assert_eq!(parse(&v(&["--pass"])), Ok(Cmd::Pr));
         assert_eq!(parse(&v(&["land"])), Ok(Cmd::Land));
-        assert_eq!(parse(&v(&["sweep-red"])), Ok(Cmd::SweepRed));
         assert_eq!(
             parse(&v(&["halt", "--reason", "x y", "--dry-run"])),
             Ok(Cmd::Halt { reason: Reason::Text("x y".into()), dry_run: true })
@@ -184,29 +146,20 @@ mod tests {
             Ok(Cmd::AskRebaseLoop(v(&["sp-a", "spira/sp-a", "spira", "3", "foo.sh", ""])))
         );
         assert_eq!(parse(&v(&["ask-rebase-loop", "sp-a"])).unwrap_err().0, 2);
-        assert_eq!(
-            parse(&v(&["mark", "sp-a", "LANDED", "deadbeef"])),
-            Ok(Cmd::Mark { id: "sp-a".into(), state: "LANDED".into(), tip: "deadbeef".into(), reason: "".into(), extra: "".into() })
-        );
-        assert_eq!(
-            parse(&v(&["mark", "sp-a", "RED", "deadbeef", "gate"])),
-            Ok(Cmd::Mark { id: "sp-a".into(), state: "RED".into(), tip: "deadbeef".into(), reason: "gate".into(), extra: "".into() })
-        );
-        assert_eq!(
-            parse(&v(&["mark", "sp-a", "WITHDRAWN", "none", "operator", "suites=a,b"])),
-            Ok(Cmd::Mark { id: "sp-a".into(), state: "WITHDRAWN".into(), tip: "none".into(), reason: "operator".into(), extra: "suites=a,b".into() })
-        );
-        assert_eq!(parse(&v(&["mark", "sp-a", "LANDED"])).unwrap_err().0, 2);
-        assert_eq!(parse(&v(&["mark", "sp-a", "LANDED", "t1", "r", "e", "extra"])).unwrap_err().0, 2);
-        assert_eq!(parse(&v(&["state", "sp-a"])), Ok(Cmd::State { id: "sp-a".into() }));
-        assert_eq!(parse(&v(&["state"])).unwrap_err().0, 2);
-        assert_eq!(parse(&v(&["state", "sp-a", "extra"])).unwrap_err().0, 2);
+    }
+
+    #[test]
+    fn the_landstate_and_landed_oracle_verbs_are_gone() {
+        // sp-2c1n0: the landstate ledger and the subject/notes oracles are deleted; the
+        // lifecycle record (spira-lc) is the one answer. Each name is now an unknown verb.
+        for verb in ["mark", "state", "landed", "cited-commit", "close-on-land", "landstate"] {
+            assert_eq!(parse(&v(&[verb, "sp-a", "x", "y"])).unwrap_err().0, 2, "{verb}");
+            assert!(!USAGE.contains(&format!("| {verb} ")), "{verb} still in USAGE");
+        }
     }
 
     #[test]
     fn family_r_verbs() {
-        assert_eq!(parse(&v(&["landed", "sp-a", "/repo"])), Ok(Cmd::Landed { id: "sp-a".into(), repo: "/repo".into() }));
-        assert_eq!(parse(&v(&["landed", "sp-a"])).unwrap_err().0, 2);
         assert_eq!(parse(&v(&["land-subject", "sp-a"])), Ok(Cmd::LandSubject { id: "sp-a".into() }));
         assert_eq!(parse(&v(&["land-subject"])).unwrap_err().0, 2);
         assert_eq!(parse(&v(&["pr-merged", "/repo", "spira/sp-a"])), Ok(Cmd::PrMerged { repo: "/repo".into(), branch: "spira/sp-a".into() }));
@@ -227,13 +180,5 @@ mod tests {
         assert_eq!(parse(&v(&["other-beads", "/repo"])).unwrap_err().0, 2);
         assert_eq!(parse(&v(&["is-work-type", "bug"])), Ok(Cmd::IsWorkType { ty: "bug".into() }));
         assert_eq!(parse(&v(&["is-work-type"])).unwrap_err().0, 2);
-        assert_eq!(
-            parse(&v(&["cited-commit", "sp-a", "/repo", "origin/main"])),
-            Ok(Cmd::CitedCommit { id: "sp-a".into(), repo: "/repo".into(), base: "origin/main".into() })
-        );
-        assert_eq!(parse(&v(&["cited-commit", "sp-a"])).unwrap_err().0, 2);
-        assert_eq!(parse(&v(&["close-on-land", "sp-a", "deadbeef"])), Ok(Cmd::CloseOnLand { id: "sp-a".into(), sha: "deadbeef".into() }));
-        assert_eq!(parse(&v(&["close-on-land", "sp-a"])), Ok(Cmd::CloseOnLand { id: "sp-a".into(), sha: "".into() }));
-        assert_eq!(parse(&v(&["close-on-land"])).unwrap_err().0, 2);
     }
 }

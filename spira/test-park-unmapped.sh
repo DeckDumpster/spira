@@ -62,13 +62,15 @@ calls="$(cat "$CALLS")"
 has "ask label ($SPIRA_ASK_LABEL) is applied" "label add sp-typo1 $SPIRA_ASK_LABEL" "$calls"
 has "overseer label is applied"               "label add sp-typo1 overseer"        "$calls"
 has "a note is left on the bead"              "note sp-typo1"                      "$calls"
-has "the claim is released (status open, no assignee)" \
-    "update sp-typo1 --status open --assignee" "$calls"
+# Through spira-lc unclaim (sp-hyo5e), which reaches this same stubbed bd: bd's own
+# compare-and-swap release, under the aeon's own name.
+has "the claim is released (bd unclaim under the aeon's name)" \
+    "unclaim sp-typo1 --if-assignee aeon-tester" "$calls"
 
 ask_line="$(grep -n "label add sp-typo1 $SPIRA_ASK_LABEL" "$CALLS" | head -1 | cut -d: -f1)"
 overseer_line="$(grep -n "label add sp-typo1 overseer" "$CALLS" | head -1 | cut -d: -f1)"
 note_line="$(grep -n "note sp-typo1" "$CALLS" | head -1 | cut -d: -f1)"
-release_line="$(grep -n "update sp-typo1 --status open --assignee" "$CALLS" | head -1 | cut -d: -f1)"
+release_line="$(grep -n "unclaim sp-typo1 --if-assignee" "$CALLS" | head -1 | cut -d: -f1)"
 
 [ "${ask_line:-0}" -lt "${release_line:-999}" ] && ok "ask label lands before the release" \
     || bad "ask label lands before the release" "ask at line $ask_line, release at $release_line"
@@ -95,8 +97,8 @@ unset BEADS_ACTOR SPIRA_AEON
 park_unmapped sp-typo2 other-repo
 calls2="$(cat "$CALLS")"
 has  "labels still applied without an actor identity" "label add sp-typo2 $SPIRA_ASK_LABEL" "$calls2"
-if [[ "$calls2" == *"update sp-typo2 --status open --assignee"* ]]; then
-    bad "release is refused without an actor identity" "an update/assign call was still issued"
+if [[ "$calls2" == *"unclaim sp-typo2"* || "$calls2" == *"update sp-typo2 --status"* ]]; then
+    bad "release is refused without an actor identity" "an unclaim/update call was still issued"
 else
     ok "release is refused without an actor identity"
 fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# test-reopen-queue-eject.sh — the .ejected sidecar survives a failed re-certification
-# (sp-px6ng): gate.sh keeps naming the ejecting suites even after a RED overwrites the
-# EJECTED landstate record that used to be their only home.
+# test-reopen-queue-eject.sh — the ejected-suites sidecar survives a failed re-certification
+# (sp-px6ng): gate.sh keeps naming the ejecting suites after the eject. The sidecar lives in
+# $SPIRA_RUN/ejected/<id>; the landing ledger it once sat beside is deleted (sp-2c1n0).
 #
 # WRITER, NOT A HAND COPY OF ITS RULE. Earlier versions of this suite wrote the sidecar
 # with a bare printf and read it back with shell mirroring gate.sh's own if/elif — proving
@@ -80,41 +80,32 @@ is "no eject history: nothing reaches the gate command" "" "$(seen_ejected sp-no
 # ---------------------------------------------------------------------------
 # THE REAL WRITER. verdict.sh's _attr_eject is retired (queue/DESIGN-verdict.md D1); a
 # queue eject of a member that broke a test (`queue eject <id> --red --suites <csv>`) is
-# the writer now, and it writes through exactly these two lib.sh functions (queue/DESIGN.md
-# §2.2 eject, lifecycle OFF — seams R2 and R3): land_mark RED, then bead_reopen with the
-# suites, which writes $LANDSTATE/<id>.ejected. SPIRA_DB points at the throwaway testdb
-# fixture (sp-ej1 seeded open, so the reopen is a harmless no-op); SPIRA_RUN is the
-# fixture's own RUN, so LANDSTATE is the directory gate.sh's subprocess below reads.
+# the writer now: the eject itself is a lifecycle Returned event, and bead_reopen with the
+# suites writes $SPIRA_RUN/ejected/<id>. SPIRA_DB points at the throwaway testdb fixture
+# (sp-ej1 seeded open, so the reopen is a harmless no-op); SPIRA_RUN is the fixture's own
+# RUN, so its ejected/ is the directory gate.sh's subprocess below reads.
 # ---------------------------------------------------------------------------
 _hostmail_before="$(_maildir_count "$HOSTMAIL/concierge")"
 (
     export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_MAIL="$RUN/mail" \
            SPIRA_DB="$SPIRA_DB" SPIRA_BD="$SPIRA_BD"
     . "$HERE/lib.sh"
-    landing-pass mark sp-ej1 RED deadbeef "ejected" >/dev/null 2>&1
     bead_reopen sp-ej1 eject-red "" test-other.sh >/dev/null 2>&1
 )
-is "writer: landstate reads RED after the eject" \
-    "RED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"
 is "writer: the sidecar names the ejecting suite" \
-    "test-other.sh" "$(cat "$RUN/landstate/sp-ej1.ejected" 2>/dev/null)"
+    "test-other.sh" "$(cat "$RUN/ejected/sp-ej1" 2>/dev/null)"
+is "writer: no landing ledger is (re)created (sp-2c1n0)" \
+    "absent" "$([ -e "$RUN/landstate" ] && echo present || echo absent)"
 is "reader: gate.sh's own subprocess is handed the ejected suite" \
     "test-other.sh" "$(seen_ejected sp-ej1)"
 is "host concierge Maildir is untouched by the fixture's eject" \
     "$_hostmail_before" "$(_maildir_count "$HOSTMAIL/concierge")"
 
 # ---------------------------------------------------------------------------
-# THE DEFECT (sp-px6ng): a failed re-certification overwrites the EJECTED landstate
-# record with RED, which used to be the ejected suites' only home. The sidecar
-# the eject also wrote must outlive that overwrite.
+# THE DEFECT (sp-px6ng): a failed re-certification used to overwrite the record that was the
+# ejected suites' only home. The gate run above was that re-certification; the sidecar must
+# outlive it and keep forcing the suite on the next one.
 # ---------------------------------------------------------------------------
-(
-    export HOME="$HOMEDIR" SPIRA_CONF="$SPIRA_CONF_NONE" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB_NONE"
-    . "$HERE/lib.sh"
-    landing-pass mark sp-ej1 RED deadbeef gate
-)
-is "landstate shows RED after the failed re-cert" \
-    "RED" "$(cut -d' ' -f1 < "$RUN/landstate/sp-ej1" 2>/dev/null)"
 is "reader: the ejected suite still reaches gate.sh's subprocess after RED" \
     "test-other.sh" "$(seen_ejected sp-ej1)"
 

@@ -34,6 +34,9 @@ pub struct Conn {
     /// The one live connection, opened on first use and dropped on any failure: after an
     /// error a transaction may still be open, so the next call starts from a fresh session.
     session: Mutex<Option<Wire>>,
+    /// A second connection for plain reads, so a slow `list` never holds the write session
+    /// and every lifecycle write queues behind it.
+    read_session: Mutex<Option<Wire>>,
     /// The socket read/write limit for this connection: the 5 s query cap, or
     /// [`ADMIN_IO_TIMEOUT`] for the admin batch verbs.
     pub io_timeout: std::time::Duration,
@@ -79,7 +82,7 @@ impl Conn {
         let password = password_from(Some(spira_config::resolve::lc_password_file(&env)), std::env::var("SPIRA_LC_PASSWORD").ok(), |p| std::fs::read_to_string(p))
             .map_err(DbError::CannotTell)?;
         let database = std::env::var("SPIRA_LC_DB").unwrap_or_else(|_| "spira_lifecycle".to_string());
-        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
+        Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
     }
 
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
@@ -88,7 +91,7 @@ impl Conn {
 
     /// A single read-only query: the rows of its last result set.
     pub fn query(&self, sql: &str) -> Result<Vec<Value>, DbError> {
-        match self.run_script(sql) {
+        match self.run_script_on(&self.read_session, sql) {
             Ok(sets) => Ok(sets.into_iter().last().unwrap_or_default()),
             Err(ScriptFailure::LostRace) => unreachable!("a plain SELECT never conflicts"),
             Err(ScriptFailure::CannotTell(e)) => Err(DbError::CannotTell(e)),
@@ -99,24 +102,26 @@ impl Conn {
     /// return no rows contribute none). Reuses this `Conn`'s session, pinging first when it
     /// has sat idle so a connection the server closed is replaced instead of failing a write.
     fn run_script(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        let started = std::time::Instant::now();
-        let result = self.run_script_timed(script);
-        crate::slow::record(started.elapsed(), script);
-        result
+        self.run_script_on(&self.session, script)
     }
 
-    fn run_script_timed(&self, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
-        let mut guard = self.session.lock().unwrap_or_else(|e| e.into_inner());
+    /// Times only the statements: the wait for the session lock is queueing, not a slow query.
+    fn run_script_on(&self, session: &Mutex<Option<Wire>>, script: &str) -> Result<Vec<Vec<Value>>, ScriptFailure> {
+        let mut guard = session.lock().unwrap_or_else(|e| e.into_inner());
+        let started = std::time::Instant::now();
         let reusable = guard.take().and_then(|mut w| if w.idle_too_long() && !w.ping() { None } else { Some(w) });
-        let mut wire = match reusable {
-            Some(w) => w,
-            None => self.connect(Some(&self.database))?,
+        let result = match reusable.map(Ok).unwrap_or_else(|| self.connect(Some(&self.database))) {
+            Ok(mut wire) => {
+                let out = wire.exec(script);
+                if out.is_ok() {
+                    *guard = Some(wire);
+                }
+                out
+            }
+            Err(e) => Err(e),
         };
-        let out = wire.exec(script);
-        if out.is_ok() {
-            *guard = Some(wire);
-        }
-        out
+        crate::slow::record(started.elapsed(), script);
+        result
     }
 
     /// Insert one event row in its own transaction. Used both for logical refusals (no row
@@ -257,11 +262,14 @@ impl Conn {
         }
     }
 
-    /// DDL runs on a connection with no default database, because `schema.sql` itself opens with `CREATE DATABASE
-    /// IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;` — the database need not exist
-    /// yet when this is called, which is exactly the state it's called in on a fresh server.
+    /// DDL runs with `SPIRA_LC_DB` selected when that database exists, so a file that names
+    /// no database (`lifecycle/migrations/*.sql`) applies as shipped (sp-vf9iu: 0002-since.sql
+    /// failed "no database selected"). On a fresh server the database does not exist yet and
+    /// selecting it fails the handshake, so it falls back to no default database: `schema.sql`
+    /// itself opens with `CREATE DATABASE IF NOT EXISTS spira_lifecycle; USE spira_lifecycle;`.
     pub fn apply_ddl(&self, sql_text: &str) -> Result<(), DbError> {
-        let result = self.connect(None).and_then(|mut wire| wire.exec(sql_text));
+        let wire = self.connect(Some(&self.database)).or_else(|_| self.connect(None));
+        let result = wire.and_then(|mut wire| wire.exec(sql_text));
         match result {
             Ok(_) => Ok(()),
             Err(ScriptFailure::LostRace) => Err(DbError::CannotTell("DDL reported a serialization conflict".into())),

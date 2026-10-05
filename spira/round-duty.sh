@@ -50,15 +50,9 @@ _rd_asks() {
 }
 
 _rd_certified() {
-    local f s t id n=0
-    for f in "$SPIRA_RUN"/landstate/sp-*; do
-        read -r s t _ < "$f" 2>/dev/null || continue
-        [ "$s" = CERTIFIED ] || continue
-        id="$(basename "$f")"
-        [ "$(git -C "$SPIRA_REPO" rev-parse -q --verify "refs/heads/spira/$id" 2>/dev/null)" = "$t" ] || continue
-        n=$((n + 1))
-    done
-    echo "$n"
+    local n
+    n="$(spira-lc list-state CERTIFIED 2>/dev/null | grep -c .)"
+    echo "${n:-0}"
 }
 
 # Sets _rd_live to the number of live markers; removes and reports each stale one.

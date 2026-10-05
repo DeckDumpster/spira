@@ -1,10 +1,10 @@
 //! The members of a publish range (DESIGN.md §8 D4, sp-bauwt): derived from local/main's
 //! own `spira: land <id>` commits in forge..local — a fact nothing can reap — with the
-//! landstate record consulted only for a member's tip.
+//! lifecycle row consulted only for a member's tip.
 
 use std::collections::BTreeMap;
 
-use crate::model::{LandState, Member, RangeCommit};
+use crate::model::{LcBeadRow, Member, RangeCommit};
 
 /// Parse `git log -z --format=%H%x1f%P%x1f%s <range>` output.
 pub fn parse_log(raw: &str) -> Vec<RangeCommit> {
@@ -32,12 +32,12 @@ pub fn land_id(subject: &str) -> Option<&str> {
 /// Members, oldest land first, one per id (a re-landed id keeps its newest commit).
 ///
 /// `commits` is newest-first (git log's order). A member's tip is, in order of preference:
-/// its LANDED landstate tip when `tip_in_range` says that tip is in the range (the record
-/// land-local wrote); else the land merge's second parent (the member branch it merged);
+/// its LANDED lifecycle-row tip when `tip_in_range` says that tip is in the range (the tip
+/// land-local delivered); else the land merge's second parent (the member branch it merged);
 /// else the land commit itself (a fast-forwarded single-commit round).
 pub fn members(
     commits: &[RangeCommit],
-    landstate: &BTreeMap<String, LandState>,
+    rows: &BTreeMap<String, LcBeadRow>,
     tip_in_range: &dyn Fn(&str) -> bool,
 ) -> Vec<Member> {
     let mut seen = std::collections::BTreeSet::new();
@@ -47,11 +47,11 @@ pub fn members(
         if !seen.insert(id.to_string()) {
             continue;
         }
-        let from_state = landstate
+        let from_state = rows
             .get(id)
-            .filter(|ls| ls.state == "LANDED" && !ls.tip.is_empty() && ls.tip != "none")
-            .map(|ls| ls.tip.clone())
-            .filter(|t| tip_in_range(t));
+            .filter(|r| r.state == "LANDED")
+            .and_then(|r| r.tip.clone())
+            .filter(|t| !t.is_empty() && t != "none" && tip_in_range(t));
         let tip = from_state.unwrap_or_else(|| c.parents.get(1).cloned().unwrap_or_else(|| c.sha.clone()));
         out.push(Member { id: id.to_string(), tip });
     }
@@ -84,10 +84,8 @@ mod tests {
         assert_eq!(land_id("round 122: x"), None);
     }
 
-    // sp-bauwt's own red: two rounds landed while a publish PR was open, then every
-    // landstate record reaped by the landing pass. The members still come from the commits.
     #[test]
-    fn members_survive_a_reaped_landstate() {
+    fn members_survive_missing_lifecycle_rows() {
         let commits = vec![
             c("m3", &["m2", "t3"], "spira: land sp-c — c"),
             c("r2", &["m2"], "round 2: concierge fix"),
@@ -100,10 +98,10 @@ mod tests {
     }
 
     #[test]
-    fn landstate_tip_wins_only_when_in_range() {
+    fn row_tip_wins_only_when_in_range() {
         let commits = vec![c("m1", &["f0", "t1"], "spira: land sp-a")];
         let mut ls = BTreeMap::new();
-        ls.insert("sp-a".to_string(), LandState { state: "LANDED".into(), tip: "real".into(), at: 1, reason: String::new() });
+        ls.insert("sp-a".to_string(), LcBeadRow { bead_id: "sp-a".into(), state: "LANDED".into(), tip: Some("real".into()), since: Some(1) });
         assert_eq!(members(&commits, &ls, &|t| t == "real")[0].tip, "real");
         assert_eq!(members(&commits, &ls, &|_| false)[0].tip, "t1");
         ls.get_mut("sp-a").unwrap().state = "CERTIFIED".into();

@@ -72,7 +72,7 @@ trait World {
     fn census_deliberate_run_sql(&self, since: Option<i64>) -> String;
     fn census_class_fold_map(&self) -> String;
     fn repo_root(&self) -> Option<String>;
-    fn landed(&self, id: &str) -> i32;
+    fn lc_landed(&self, id: &str) -> i32;
 
     fn count_py(&self, tabular: &str) -> Result<String, String>;
     fn merge_py(&self, all_time: &str, since_wm: &str) -> String;

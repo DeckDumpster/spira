@@ -156,6 +156,18 @@ pub fn landed_but_open(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -
         .collect()
 }
 
+/// Open work beads with no `spira_lifecycle` row: they can never be claimed.
+pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
+    let have: HashSet<&str> = rows.iter().map(|r| r.bead_id.as_str()).collect();
+    snap.list
+        .iter()
+        .filter(|b| matches!(b.status.as_str(), "open" | "in_progress"))
+        .filter(|b| work_types.iter().any(|t| t == b.typ()))
+        .filter(|b| !have.contains(b.id.as_str()))
+        .map(|b| b.id.clone())
+        .collect()
+}
+
 /// CHECK5-LC: the closed-unlanded shape `detect_closed_unlanded_states` proves today from the
 /// base's commit graph plus a hand-maintained exclusion list (supersedes, spira-dropped,
 /// delivers:, content-landed) — every entry of which is one of the machine's own terminal
@@ -210,8 +222,13 @@ impl<'a> Sentinel<'a> {
     /// ON mode's one lifecycle read. The machine is authoritative, so an absent binary or a
     /// failed read is LOUD: one `LIFECYCLE UNREACHABLE` line naming why, no lifecycle
     /// decision this pass, and the unit exits 1 once the rest of the pass has run.
-    /// Never called in OFF mode.
+    /// OFF mode has no machine to read: None, quietly — never a read, never LOUD, never exit
+    /// 1. Its callers then decide nothing, as CHECK 4 does when off (sp-uqrdn made the queue
+    /// waiters lifecycle-only, and an unguarded read failed every OFF pass).
     pub fn lc_rows(&self) -> Option<Vec<LcRow>> {
+        if self.lc == crate::cfg::Lifecycle::Off {
+            return None;
+        }
         if let Some(memo) = self.lc_memo.borrow().as_ref() {
             return memo.clone();
         }
@@ -221,11 +238,6 @@ impl<'a> Sentinel<'a> {
     }
 
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
-        debug_assert_eq!(
-            self.lc,
-            crate::cfg::Lifecycle::On,
-            "OFF must never read spira-lc"
-        );
         let bin = self.cfg.lc_bin.clone();
         let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
         if !o.ok() {
@@ -430,10 +442,10 @@ impl<'a> Sentinel<'a> {
         ));
     }
 
-    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes CHECK 5 and
-    /// the groomer's STATE sweeps prove from git log / bd status, read instead from the row
-    /// `spira-lc list` already gave this pass. Advisory only, run alongside the legacy checks
-    /// so the two can be compared before either is retired (design sp-pswer.2).
+    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes the retired
+    /// CHECK 5 and the groomer's STATE sweeps proved from git log / bd status, read instead
+    /// from the row `spira-lc list` already gave this pass (design sp-pswer.2). The legacy
+    /// checks were deleted at the cutover (sp-jnwbn); this is the only one left.
     pub fn check5_lc(&self, snap: &Snapshot, rows: &[LcRow]) {
         let work_types = self.cfg.work_types.clone();
         let mut lines = landed_but_open(snap, rows, &work_types);
@@ -448,10 +460,46 @@ impl<'a> Sentinel<'a> {
         }
         self.h.print(&lines.join("\n"));
         self.log(&format!(
-            "CHECK5-LC: {} state drift line(s) from spira-lc, alongside CHECK 5's own",
+            "CHECK5-LC: {} state drift line(s) from spira-lc",
             lines.len()
         ));
         self.act(&format!("surfaced {} CHECK5-LC line(s)", lines.len()));
+    }
+}
+
+impl<'a> Sentinel<'a> {
+    /// Surface every rowless open work bead and backfill its row (`create-bead` is
+    /// idempotent). A failed backfill is loud and retried next pass.
+    pub fn check_rowless(&self, snap: &Snapshot, rows: &[LcRow]) {
+        let rowless_ids = rowless(snap, rows, &self.cfg.work_types);
+        if rowless_ids.is_empty() {
+            return;
+        }
+        let bin = self.cfg.lc_bin.clone();
+        let mut failed = Vec::new();
+        for id in &rowless_ids {
+            let o = self.h.run(
+                Spec::args_owned(bin.clone(), vec!["create-bead".into(), id.clone()])
+                    .out(Io::Null)
+                    .err(Io::Null),
+            );
+            if !o.ok() {
+                failed.push(id.clone());
+            }
+        }
+        self.h.print(
+            &rowless_ids.iter()
+                .map(|i| format!("STATE-LC {i} rowless — open bead had no spira-lc row; backfilled"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        );
+        self.log(&format!(
+            "CHECK-ROWLESS: {} open bead(s) had no lifecycle row; {} backfill(s) failed{}",
+            rowless_ids.len(),
+            failed.len(),
+            if failed.is_empty() { String::new() } else { format!(": {}", failed.join(" ")) }
+        ));
+        self.act(&format!("backfilled {} rowless bead(s)", rowless_ids.len() - failed.len()));
     }
 }
 
@@ -649,6 +697,14 @@ mod tests {
             .any(|l| l.contains(" b ")));
         let rows_seen_red = vec![lc5_row("a", "LANDED"), lc5_row("b", "LANDED")];
         assert_eq!(landed_but_open(&lc5_snap(), &rows_seen_red, &wt()).len(), 2);
+    }
+
+    #[test]
+    fn rowless_flags_open_work_beads_with_no_row() {
+        let rows = vec![lc5_row("a", "READY")];
+        assert_eq!(rowless(&lc5_snap(), &rows, &wt()), vec!["b", "e", "f"]);
+        let all = vec![lc5_row("a", "READY"), lc5_row("b", "READY"), lc5_row("e", "READY"), lc5_row("f", "READY")];
+        assert!(rowless(&lc5_snap(), &all, &wt()).is_empty());
     }
 
     #[test]

@@ -19,8 +19,7 @@
 //! `fayth_free` stay on the seam — their owning crate is `strand`, not this one, so the
 //! unchanged bash names (now one-line shims) are still the right way to reach them.
 //!
-//! Bead and delivery state is read through `spira-lc` via `self.d.exec`, never this seam;
-//! the cited-on-main mark goes through `landing-pass mark`.
+//! Bead and delivery state is read and written through `spira-lc` via `self.d.exec`, never this seam.
 //!
 //! `_aeon_capacity_paused`, `capacity_reset_at` and `capacity_pause_set` are dropped the
 //! same way (wave 4.26, family K → `capacity.rs`): `run.rs`/`sweep.rs`/`escape.rs`/
@@ -43,7 +42,7 @@ __aeon_args=()
 while IFS= read -r -d '' __aeon_a; do __aeon_args+=("$__aeon_a"); done
 case "$__aeon_fn" in
     _aeon_snapshot|_aeon_rebase|\
-    _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_summon_argv|\
+    _aeon_thrash_meta|_aeon_world_gate|_aeon_fayth_ready|_aeon_ready_set|_aeon_summon_argv|\
     aeon_count|fayth_free|spira_event|release_own_claim|lc_claim_bead|\
     lc_bead_verified|park_unmapped|\
     spira_prune_worktrees|bead_reopen|bump_requeue|\
@@ -70,8 +69,6 @@ _aeon_snapshot() {
     printf '__AEON_READY__\0'
     local __r
     for __r in "${READY_ARGS[@]}"; do printf '%s\0' "$__r"; done
-    printf '__AEON_MACHINE_READY__\0'
-    for __r in "${MACHINE_READY_ARGS[@]}"; do printf '%s\0' "$__r"; done
     printf '__AEON_EXCLUDE__\0'
     printf '%s\0' "$(fayth_exclude "$FAYTH" "${FAYTH_EXCLUDE_LABELS:-}")"
 }
@@ -81,6 +78,9 @@ _aeon_world_gate() {
 }
 _aeon_fayth_ready() {
     fayth_ready "$FAYTH"
+}
+_aeon_ready_set() {
+    _spira_claim fayth-ready "$FAYTH" --json
 }
 _aeon_summon_argv() {
     summon_argv "$FAYTH"
@@ -163,12 +163,8 @@ pub const RETIRED_SNAPSHOT_VARS: &[&str] = &[
 pub struct Snapshot {
     pub env: BTreeMap<String, String>,
     pub vars: BTreeMap<String, String>,
+    /// `READY_ARGS` (lib.sh): bd's ready query, read only with `lifecycle_enforce` off.
     pub ready_args: Vec<String>,
-    /// `MACHINE_READY_ARGS` (lib.sh): `ready_args` widened past bd's own blocker filter — a
-    /// `bd list`, not `bd ready` — read only when `lifecycle_enforce` is on, so a blocker
-    /// that is CERTIFIED but not LANDED still enters the candidate set spira-claim's
-    /// `--blockers machine` is asked to judge (spira-claim/DESIGN.md §5 item 11).
-    pub machine_ready_args: Vec<String>,
     pub claim_exclude: String,
 }
 
@@ -187,12 +183,8 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
                 section = 2;
                 continue;
             }
-            "__AEON_MACHINE_READY__" => {
-                section = 3;
-                continue;
-            }
             "__AEON_EXCLUDE__" => {
-                section = 4;
+                section = 3;
                 continue;
             }
             _ => {}
@@ -214,11 +206,6 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
                     snap.ready_args.push(rec.to_string());
                 }
             }
-            3 => {
-                if !rec.is_empty() {
-                    snap.machine_ready_args.push(rec.to_string());
-                }
-            }
             _ => {
                 if !rec.is_empty() {
                     snap.claim_exclude = rec.to_string();
@@ -226,7 +213,7 @@ pub fn parse_snapshot(raw: &str) -> Result<Snapshot, String> {
             }
         }
     }
-    if section < 4 {
+    if section < 3 {
         return Err("snapshot is incomplete (lib.sh did not source, or the seam died)".into());
     }
     Ok(snap)
@@ -278,13 +265,12 @@ mod tests {
 
     #[test]
     fn snapshot_parses_all_sections() {
-        let raw = "PATH=/bin\0HOME=/h\0__AEON_VARS__\0SPIRA_RUN\0/run\0FAYTH_LABELS\0spira,plan\0__AEON_READY__\0ready\0--limit\0\u{30}\0__AEON_MACHINE_READY__\0list\0--status\0open\0__AEON_EXCLUDE__\0spira-poison,fayth:ops\0";
+        let raw = "PATH=/bin\0HOME=/h\0__AEON_VARS__\0SPIRA_RUN\0/run\0FAYTH_LABELS\0spira,plan\0__AEON_READY__\0ready\0--limit\0\u{30}\0__AEON_EXCLUDE__\0spira-poison,fayth:ops\0";
         let s = parse_snapshot(raw).unwrap();
         assert_eq!(s.env.get("PATH").unwrap(), "/bin");
         assert_eq!(s.vars.get("SPIRA_RUN").unwrap(), "/run");
         assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan");
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
-        assert_eq!(s.machine_ready_args, vec!["list", "--status", "open"]);
         assert_eq!(s.claim_exclude, "spira-poison,fayth:ops");
     }
 
@@ -300,7 +286,7 @@ mod tests {
         let dir = testkit::TempDir::new("aeon-seam");
         let lib = dir.join("lib.sh");
         let mut f = std::fs::File::create(&lib).unwrap();
-        writeln!(f, "READY_ARGS=(ready --limit 0)\nMACHINE_READY_ARGS=(list --status open)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}").unwrap();
+        writeln!(f, "READY_ARGS=(ready --limit 0)\nfayth_exclude() {{ printf 'x:%s:%s' \"$1\" \"$2\"; }}\naeon_count() {{ printf '%s|' \"$@\"; printf '%s' \"$FAYTH_LABELS\"; }}").unwrap();
         std::fs::write(dir.join("b.fayth"), "FAYTH_LABELS=spira,plan\nFAYTH_EXCLUDE_LABELS=p\n").unwrap();
         let mut orig = BTreeMap::new();
         orig.insert("PATH".to_string(), std::env::var("PATH").unwrap_or_default());
@@ -316,7 +302,6 @@ mod tests {
         assert_eq!(s.vars.get("FAYTH_LABELS").unwrap(), "spira,plan,express");
         assert!(!s.vars.contains_key("NOPE"));
         assert_eq!(s.ready_args, vec!["ready", "--limit", "0"]);
-        assert_eq!(s.machine_ready_args, vec!["list", "--status", "open"]);
         assert_eq!(s.claim_exclude, "x:builder:p");
         let _ = std::fs::remove_dir_all(&dir);
     }

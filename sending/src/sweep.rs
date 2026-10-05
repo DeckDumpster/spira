@@ -13,7 +13,7 @@ use crate::ports::{Base, Repo, Sent, World};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scope {
     All,
-    /// The sentinel's per-pass call: queue-mode repos reap at landing (bead_close_on_land).
+    /// The sentinel's per-pass call: queue-mode repos reap at landing (`spira-lc close-on-land`).
     SkipQueue,
     /// The daily straggler sweep: queue-mode repos only.
     QueueOnly,
@@ -91,7 +91,7 @@ pub struct Ctx<'a> {
 pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
     let g = Git(c.repo);
     let lr = c.base.landref.as_str();
-    if g.content_landed(br, lr) {
+    if g.content_on_base(br, lr) {
         return Disp::SendContentLanded;
     }
     let bead = c.w.bead(id);
@@ -119,10 +119,11 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
         }
     }
 
-    // LANDED BY OTHER PR: a landing record names the bead — but that record may be about a
-    // PRIOR push of this branch, so every commit unique to it must already be on the base
-    // (git cherry), or this would delete work under a landed() that is true about the past.
-    if b.is_some() && g.landed(id, &c.base.landrefs) {
+    // LANDED BY OTHER PR: the lifecycle record says the bead LANDED (`spira-lc state`, the one
+    // record — never a commit-subject search) — but that landing may be about a PRIOR push of
+    // this branch, so every commit unique to it must already be on the base (git cherry), or
+    // this would delete work under a LANDED that is true about the past.
+    if b.is_some() && c.w.lc_landed(id) {
         if g.cherry_unapplied(lr, br) {
             return Disp::KeepCherryUnapplied;
         }
@@ -314,7 +315,7 @@ impl<'a> Sweep<'a> {
             }
             Disp::KeepUnlanded => self.say(&format!("KEEP   {id}  unlanded — {} commit(s) not in {lr}", q(g.ahead(lr, br)))),
             Disp::KeepCherryUnapplied => self.say(&format!(
-                "KEEP   {id}  {} commit(s) not in {lr}; landed() names it but git cherry finds unapplied commits — not safe to reap",
+                "KEEP   {id}  {} commit(s) not in {lr}; the lifecycle record says LANDED but git cherry finds unapplied commits — not safe to reap",
                 q(g.ahead(lr, br))
             )),
             Disp::OrphanNoBead => {
@@ -349,14 +350,14 @@ impl<'a> Sweep<'a> {
                         self.w.label_add(id, "content-landed");
                     }
                 }
-                self.landed(c, id, br, "SENT");
+                self.send_landed(c, id, br, "SENT");
             }
             Disp::SendOtherPr => {
                 if dry {
                     self.say(&format!("WOULD  {id}  send branch {br} (commit on {lr} names it)"));
                     return;
                 }
-                self.landed(c, id, br, "SENT");
+                self.send_landed(c, id, br, "SENT");
             }
             Disp::ReapSupersededSafe => {
                 if dry {
@@ -370,7 +371,7 @@ impl<'a> Sweep<'a> {
                     self.say(&format!("WOULD  {id}  reap squash-merged branch {br} (PR merged at this tip)"));
                     return;
                 }
-                self.landed(c, id, br, "REAPED");
+                self.send_landed(c, id, br, "REAPED");
             }
         }
     }
@@ -399,7 +400,7 @@ impl<'a> Sweep<'a> {
 
     /// send_landed: send, then close a submitted work bead at the land ref's sha — in pr and
     /// hold mode this sweep is the first place that sees the work land.
-    fn landed(&mut self, c: &Ctx, id: &str, br: &str, verb: &str) {
+    fn send_landed(&mut self, c: &Ctx, id: &str, br: &str, verb: &str) {
         if self.branch(c, id, br, verb, "sending").is_err() {
             return;
         }

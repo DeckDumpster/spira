@@ -40,13 +40,10 @@ struct World {
     /// (no `claimable` key, so `stack::parse_proposal` reads it as "no stack", same as a
     /// test that never mentions stacking at all).
     stack_answer: Option<String>,
-    /// Makes the `env SPIRA_RUN=… landing-pass mark …` exec call this test's fixture
-    /// synthesizes fail, so a test can prove the caller logs it rather than discarding it
-    /// (sp-cnnt6-2, law-a-binary-resolves-the-config-it-reads). `false` (the default) keeps
-    /// every other test's "every exec succeeds" assumption unchanged.
-    fail_landing_pass_mark: bool,
-    /// What `landing-pass cited-commit` prints; empty means the notes cite nothing on base.
-    cited_commit: String,
+    /// Makes the `spira-lc content-on-base` exec call refuse.
+    fail_content_on_base: bool,
+    /// `spira-lc holds <id>`'s answer, one hold kind a line.
+    holds: BTreeMap<String, String>,
 }
 
 type W = Arc<Mutex<World>>;
@@ -136,6 +133,15 @@ impl Seam for FakeSeam {
             return o.clone();
         }
         match func {
+            // spira-claim `fayth-ready --json`: the lifecycle machine's ready rows. bd's own
+            // status plays no part, so a row bd shows in_progress is offered like any other.
+            "_aeon_ready_set" => {
+                if w.ready_fails {
+                    return Out::fail(1, "spira-claim: fayth_ready: cannot tell\n");
+                }
+                let rows: Vec<serde_json::Value> = w.ready.iter().map(|id| serde_json::from_str::<serde_json::Value>(&row_json(&w, id)).unwrap()[0].clone()).collect();
+                Out::ok(serde_json::Value::Array(rows).to_string())
+            }
             "aeon_count" => Out::ok("0"),
             "fayth_free" => Out::ok("1"),
             "_aeon_rebase" => Out::ok(""),
@@ -189,16 +195,11 @@ impl Exec for FakeExec {
                 _ => Out::ok("{}"),
             };
         }
-        if prog == "landing-pass" && args.first().map(String::as_str) == Some("cited-commit") {
-            let c = self.0.lock().unwrap().cited_commit.clone();
-            return if c.is_empty() { Out::fail(1, "") } else { Out::ok(&c) };
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("holds") {
+            return Out::ok(self.0.lock().unwrap().holds.get(&args[1]).cloned().unwrap_or_default());
         }
-        if prog == "env"
-            && args.iter().any(|a| a == "landing-pass")
-            && args.iter().any(|a| a == "mark")
-            && self.0.lock().unwrap().fail_landing_pass_mark
-        {
-            return Out::fail(1, "landing-pass mark: stub refusal");
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
+            return Out::fail(1, "spira-lc content-on-base: stub refusal");
         }
         Out::ok("")
     }
@@ -267,6 +268,12 @@ fn fx(name: &str) -> Fx {
     // execed by name off PATH by every test built on Fx, so an ETXTBSY from a concurrent
     // fork elsewhere in the binary would not be an isolated flake.
     testkit::write_exe(&work_stub, "#!/bin/sh\nexit 0\n");
+    // The release's model-bin/ (sp-zf4q3): the only directory the model's PATH may name,
+    // holding `work` and nothing else — a sibling of bin/, linked the way the release
+    // builder links it.
+    let model_bin = dir.join(spira_config::release_env::MODEL_BIN_DIR);
+    std::fs::create_dir_all(&model_bin).unwrap();
+    std::os::unix::fs::symlink("../bin/work", model_bin.join("work")).unwrap();
     let w: W = Arc::new(Mutex::new(World::default()));
     Fx { _dir: dir, home, run, repo, bin, w }
 }
@@ -326,7 +333,6 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce
         env: base.clone(),
         vars: vars.clone(),
         ready_args: vec!["ready".into(), "--limit".into(), "0".into()],
-        machine_ready_args: vec!["list".into(), "--status".into(), "open".into()],
         claim_exclude: "spira-poison".into(),
     };
     let env = Env::new(base.clone(), base);
@@ -526,8 +532,40 @@ fn enforce_claims_through_the_machine_and_restricts_the_model() {
     assert!(!w.labels["sp-r"].contains("spira-submitted"), "no bd-close reinterpretation on the restricted path");
 }
 
+/// sp-zf4q3: the model's PATH names the release's model-bin/ (only `work`), never bin/ —
+/// the directory that merely holds `work` also holds ~40 tools that call bd themselves.
 #[test]
-fn a_refused_lifecycle_claim_releases() {
+fn the_restricted_path_names_model_bin_and_never_the_full_bin_dir() {
+    let f = fx("enf-model-bin");
+    seed(&f, "sp-mb");
+    let extra: Vec<(&str, &str)> = Vec::new();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    let path = o.seen[0].env.get("PATH").cloned().unwrap_or_default();
+    let model_bin = f.bin.parent().unwrap().join(spira_config::release_env::MODEL_BIN_DIR);
+    let dirs: Vec<&str> = path.split(':').collect();
+    assert!(dirs.contains(&model_bin.to_str().unwrap()), "PATH must name model-bin: {path}");
+    assert!(!dirs.contains(&f.bin.to_str().unwrap()), "PATH must never name the full bin dir: {path}");
+}
+
+/// sp-zf4q3: a release with no model-bin/ refuses the session (fail-closed), naming the
+/// override, rather than falling back to the full bin dir.
+#[test]
+fn a_release_without_model_bin_refuses_the_session() {
+    let f = fx("enf-no-model-bin");
+    seed(&f, "sp-nmb");
+    std::fs::remove_dir_all(f.bin.parent().unwrap().join(spira_config::release_env::MODEL_BIN_DIR)).unwrap();
+    let extra: Vec<(&str, &str)> = Vec::new();
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, commits_and_closes());
+    assert!(o.seen.is_empty(), "no session may start without model-bin");
+    assert!(o.log.contains(spira_config::release_env::MODEL_BIN_OVERRIDE_ENV), "the refusal names its override: {}", o.log);
+}
+
+#[test]
+fn a_refused_lifecycle_claim_is_another_aeons_bead_and_is_left_alone() {
     let f = fx("enf-refused");
     seed(&f, "sp-z");
     let extra: Vec<(&str, &str)> = Vec::new();
@@ -535,7 +573,91 @@ fn a_refused_lifecycle_claim_releases() {
     a.insert("lc_claim_bead", Out::fail(3, ""));
     let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
-    assert!(ledger_lines(&o)[2].contains("status=lc-claim-refused"));
+    assert_eq!(ledger_lines(&o)[1], "awake builder idle", "{:?}", ledger_lines(&o));
+    assert!(o.log.contains("refused ranked candidate sp-z"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "release_own_claim"), "never release a claim this aeon does not hold");
+}
+
+/// sp-860zj: the lifecycle row is the claim. Under enforce the aeon reads its ready set from
+/// the machine and claims with a Claim event alone — bd's `update --claim` is never run, so
+/// a bead bd shows in_progress under a dead aeon's name is claimed like any READY row.
+#[test]
+fn enforce_claims_with_the_lifecycle_row_alone_and_never_bds_claim() {
+    let f = fx("enf-row");
+    seed(&f, "sp-ip");
+    f.w.lock().unwrap().status.insert("sp-ip".into(), "in_progress".into());
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, commits_and_closes());
+    assert_eq!(ledger_lines(&o)[1], "awake builder sp-ip", "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "_aeon_ready_set"), "the ready set is the machine's");
+    assert!(!w.bd_calls.iter().any(|c| c.iter().any(|a| a == "--claim")), "no bd claim: {:?}", w.bd_calls);
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("ready")), "bd's ready query is not read");
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("heartbeat")), "no bd lease to renew");
+}
+
+/// sp-2jf0a: under enforce the lifecycle row's lease is the claim's, and nothing renewed it
+/// once sp-860zj dropped `bd heartbeat` — the stale-lease reaper cleared every long session.
+/// The heartbeat now renews it on every beat, as the claim's own holder, to a deadline that
+/// advances; and never through bd.
+#[test]
+fn enforce_renews_the_lifecycle_lease_on_every_heartbeat_while_the_session_runs() {
+    let f = fx("enf-renew");
+    seed(&f, "sp-lr");
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let renews = |w: &W| {
+        w.lock().unwrap().exec_calls.iter().filter(|(p, a, _)| p == "spira-lc" && a.first().map(String::as_str) == Some("renew")).map(|(_, a, _)| a.clone()).collect::<Vec<_>>()
+    };
+    // The session outlives three heartbeats, then commits and finishes.
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, stop| {
+        let t0 = std::time::Instant::now();
+        while renews(w).len() < 3 && t0.elapsed() < std::time::Duration::from_secs(20) && stop.signalled().is_none() {
+            crate::run::append(&spec.log, "{\"type\":\"assistant\"}\n");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        commits_and_closes()(spec, w, stop)
+    });
+    let o = go(&f, "spira,plan", &[("FAYTH_HEARTBEAT_SECONDS", "1")], true, Mode::Claim, a, act);
+    assert_eq!(ledger_lines(&o)[1], "awake builder sp-lr", "{}", o.log);
+    let w = o.w.clone();
+    let r = renews(&w);
+    assert!(r.len() >= 3, "the lease was renewed on every beat of a session three beats long: {r:?}\n{}", o.log);
+    let w = w.lock().unwrap();
+    let holder = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").map(|c| c.1[1].clone()).expect("claimed");
+    let mut last = 0i64;
+    for args in &r {
+        assert_eq!((args[1].as_str(), args[2].as_str()), ("sp-lr", holder.as_str()), "renewed as the claim's own holder: {args:?}");
+        let until: i64 = args[3].parse().unwrap();
+        assert!(until >= last, "the deadline never goes back: {r:?}");
+        assert!(until > crate::util::now_epoch() - 60, "a deadline of now + lease, not the claim's: {until}");
+        last = until;
+    }
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("heartbeat")), "no bd lease under enforce");
+}
+
+#[test]
+fn enforce_with_an_unreachable_machine_is_claim_error_not_idle() {
+    let f = fx("enf-down");
+    seed(&f, "sp-d");
+    let mut a = BTreeMap::new();
+    a.insert("lc_claim_bead", Out::fail(2, ""));
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, no_session());
+    assert_eq!(o.code, 1);
+    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error lifecycle machine unreachable");
+}
+
+#[test]
+fn enforce_releases_a_bead_held_between_the_ready_read_and_the_claim() {
+    let f = fx("enf-hold");
+    seed(&f, "sp-h");
+    f.w.lock().unwrap().holds.insert("sp-h".into(), "poison".into());
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, BTreeMap::new(), no_session());
+    assert_eq!(o.code, 0);
+    assert!(ledger_lines(&o)[2].contains("status=hold-raced"), "{:?}", ledger_lines(&o));
+    assert!(o.w.lock().unwrap().seam_calls.iter().any(|c| c.0 == "release_own_claim"));
 }
 
 /// No tool paths to hand in any more (sp-gypjk): spira-lc and work are found by name.
@@ -620,7 +742,8 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
     assert_eq!(o.code, 0, "{}", o.log);
     assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
     let w = o.w.lock().unwrap();
-    assert_eq!(w.status.get("sp-c").map(String::as_str), Some("open"), "the dependent stays held, not requeued as a fault");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim" && c.1[0] == "sp-c"), "the claim is handed back");
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" || c.0 == "bump_requeue"), "the dependent stays held, not requeued as a fault");
     let notes: Vec<&str> = w.notes.iter().filter(|(id, _)| id == "sp-a" || id == "sp-b-prereq").map(|(_, t)| t.as_str()).collect();
     assert_eq!(notes.len(), 2, "both prerequisites get a note: {:?}", w.notes);
     assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
@@ -1167,10 +1290,8 @@ fn a_superseded_close_behind_a_conflicting_base_is_not_reopened() {
 }
 
 #[test]
-fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_pass() {
-    // sp-cnnt6: closed behind base, does not rebase, but the session's own notes cite a
-    // commit already on base — landing-pass (not a lib.sh seam) retires it as LANDED.
-    let f = fx("cited");
+fn a_close_behind_base_with_its_content_already_there_records_content_on_base() {
+    let f = fx("a_close_behind_base_with_its_content_already_there_records_content_on_base");
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
@@ -1178,33 +1299,26 @@ fn a_close_behind_base_citing_a_hand_landed_commit_marks_landed_through_landing_
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "theirs\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
-        w.cited_commit = "deadbeef".into();
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
     let w = o.w.lock().unwrap();
     assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "env"
-            && args.iter().any(|x| x == "landing-pass")
-            && args.iter().any(|x| x == "mark")
-            && args.iter().any(|x| x == "deadbeef")
-            && args.iter().any(|x| x.starts_with("SPIRA_RUN="))),
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
         "{:?}",
         w.exec_calls
     );
-    assert!(o.log.contains("notes cite deadbeef on"), "{}", o.log);
-    assert!(!o.log.contains("FAILED"), "a successful mark logs nothing alarming: {}", o.log);
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(!o.log.contains("FAILED"), "a successful event logs nothing alarming: {}", o.log);
 }
 
 #[test]
-fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
-    // The same scenario, except the exec of `landing-pass mark` itself refuses — proving
-    // the caller no longer discards that result (it used to be `let _ = ...`).
-    let f = fx("cited-mark-fails");
+fn a_failed_content_on_base_event_is_logged_loudly_not_discarded() {
+    let f = fx("a_failed_content_on_base_event_is_logged_loudly_not_discarded");
     seed(&f, "sp-m");
     let mut a = BTreeMap::new();
     a.insert("_aeon_rebase", Out { code: 1, stdout: "f ".into(), stderr: String::new() });
@@ -1212,23 +1326,24 @@ fn a_failed_landing_pass_mark_is_logged_loudly_not_discarded() {
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, _| {
         std::fs::write(spec.cwd.join("f"), "mine\n").unwrap();
         git(&spec.cwd, &["commit", "-qam", "sp-m — hand-landed"]);
-        std::fs::write(repo.join("f"), "theirs\n").unwrap();
-        git(&repo, &["commit", "-qam", "someone else"]);
+        std::fs::write(repo.join("f"), "mine\n").unwrap();
+        git(&repo, &["commit", "-qam", "someone else, same change"]);
         let mut w = w.lock().unwrap();
         w.status.insert("sp-m".into(), "closed".into());
-        w.cited_commit = "deadbeef".into();
-        w.fail_landing_pass_mark = true;
+        w.fail_content_on_base = true;
         0
     });
     let o = go(&f, "spira,plan", &[], false, Mode::Claim, a, act);
     let w = o.w.lock().unwrap();
     assert!(
-        w.exec_calls.iter().any(|(prog, args, _)| prog == "env" && args.iter().any(|x| x == "landing-pass") && args.iter().any(|x| x == "mark")),
+        w.exec_calls.iter().any(|(prog, args, _)| prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && args.get(1).map(String::as_str) == Some("sp-m")),
         "{:?}",
         w.exec_calls
     );
-    assert!(o.log.contains("landing-pass mark LANDED deadbeef cited-on-main FAILED"), "{}", o.log);
-    assert!(o.log.contains("landing-pass mark: stub refusal"), "{}", o.log);
+    assert!(o.log.contains("its content is already on"), "{}", o.log);
+    assert!(o.log.contains("spira-lc content-on-base merge-tree:"), "{}", o.log);
+    assert!(o.log.contains("FAILED"), "{}", o.log);
+    assert!(o.log.contains("stub refusal"), "{}", o.log);
 }
 
 #[test]

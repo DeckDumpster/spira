@@ -1,6 +1,6 @@
 //! Content-on-base evidence for the migration classifier: an ancestry check, then a
-//! merge-tree fallback — the same algorithm `content_landed()` (`spira/lib.sh`) already
-//! uses, ported here because the migration fixture requirement recorded on this bead
+//! merge-tree fallback — the algorithm lib.sh's bash content check (now retired) used,
+//! ported here because the migration fixture requirement recorded on this bead
 //! prohibits reaching for a commit-subject match instead. Three production shapes are
 //! misclassified by exactly that (see `lifecycle::classify`'s own fixtures for the general
 //! form): a subject that never matched `"spira: land <id>"` or `"<id>:..."`, on work that
@@ -18,8 +18,8 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
     Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-/// `git merge-base --is-ancestor <candidate> <base>` — the fact rule 1's "landstate LANDED
-/// whose tip is an ancestor of base" needs, and the fast path in [`content_on_base`] below.
+/// `git merge-base --is-ancestor <candidate> <base>` — the fact the migration classifier's
+/// rule 1 (a legacy LANDED record whose tip is an ancestor of base) needs, and the fast path in [`content_on_base`] below.
 pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
     Command::new("git")
         .arg("-C")
@@ -30,7 +30,7 @@ pub fn is_ancestor(repo: &Path, candidate: &str, base: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Ports `content_landed()`'s two-step proof: ancestor first (cheap, and correct whenever
+/// Ports lib.sh's old bash content check's two-step proof: ancestor first (cheap, and correct whenever
 /// the exact commit is still reachable), then `merge-tree --write-tree` compared against
 /// base's own tree — the check that survives a squash merge or a rebase that rewrote every
 /// hash, because it asks "would merging this change anything?" instead of "is this exact

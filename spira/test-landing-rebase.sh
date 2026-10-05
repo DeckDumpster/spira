@@ -42,6 +42,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE"/*.sh "$HERE"/*.py "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
@@ -333,34 +334,4 @@ is   "escalate path reopens the bead"   open "$(status_of sp-escl)"
 want "and fires the escalation ask"     "rebase loop" "$(cat "$EMITTED")"
 drop_branch sp-escl
 
-# --------------------------------------------------------------------------------------
-# DUPLICATE-BUMP GUARD KEYS ON TIP, NOT BASE SHA (sp-cgklh, law-a-regression-test-must-be-seen-to-fail).
-# A base advance with unchanged branch tip must not produce a second requeued event.
-# Run against the unfixed tree:
-#   FAIL  advancing the base with unchanged branch tip does not re-bump requeue count: wanted [1] got [2]
-# --------------------------------------------------------------------------------------
-echo
-seed; branch sp-dupl shared-dupl.txt "from-dupl"
-printf 'base-dupl-content\n' > "$REPO/shared-dupl.txt"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m "base writes shared-dupl.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-_dupl_tip="$(git -C "$REPO" rev-parse spira/sp-dupl)"
-_dupl_base1="$(git -C "$REPO" rev-parse origin/main)"
-# Simulate first conflict detection: plant RED mark + one requeue event.
-SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
-    bash -c '. "$1/lib.sh" >/dev/null 2>&1
-             landing-pass mark "$2" RED "$3" "no-rebase@$4"
-             bump_requeue "$2" merge-conflict >/dev/null 2>&1' \
-    _ "$SH" "sp-dupl" "$_dupl_tip" "$_dupl_base1"
-# Advance the base without changing the branch tip.
-printf 'unrelated\n' > "$REPO/advance-dupl.txt"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m "advance base"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-landing >/dev/null 2>&1
-_rq="$(SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
-    SPIRA_REPO="$REPO" SPIRA_REPO_MAP="$SH/repo-map" \
-    bash -c '. "$1/lib.sh" >/dev/null 2>&1; printf "%s" "$(requeues_of sp-dupl)"' _ "$SH")"
-is "advancing the base with unchanged branch tip does not re-bump requeue count" "1" "$_rq"
-drop_branch sp-dupl
 tl_summary

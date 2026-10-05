@@ -161,7 +161,9 @@ fn branch_backlog_section(out: &mut Kv) {
             None => fail = true,
         }
 
-        for ns in ["refs/heads/spira/queue/", "refs/heads/spira-suite-state/"] {
+        // The batch PR branches only: a suite-state edit is a bead on spira/<id> like any
+        // other change since sp-lck63, so no `spira-suite-state/*` namespace is protected.
+        for ns in ["refs/heads/spira/queue/"] {
             if let Some(refs) = io::git(rp_path, &["for-each-ref", "--format=%(refname:short)", ns]) {
                 for pb in refs.lines() {
                     if pb.is_empty() {
@@ -589,21 +591,6 @@ fn gate_section(out: &mut Kv, run: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn landed_subject_recognises_land_and_colon_forms() {
-        let subjects = ["spira: land sp-abc \u{2014} title here".to_string(), "sp-xyz: some other commit".to_string()];
-        let lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
-        let landed = |id: &str| {
-            lines.iter().any(|s| {
-                let s = s.trim();
-                s == format!("spira: land {id}") || s.starts_with(&format!("spira: land {id} ")) || s.starts_with(&format!("{id}: "))
-            })
-        };
-        assert!(landed("sp-abc"));
-        assert!(landed("sp-xyz"));
-        assert!(!landed("sp-none"));
-    }
 
     #[test]
     fn a_submitted_bead_awaits_a_round_only_under_queue_local() {

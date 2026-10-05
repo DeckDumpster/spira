@@ -30,6 +30,47 @@ pub fn work_bin_dir(path: &str, exists: impl Fn(&Path) -> bool) -> Option<String
     None
 }
 
+/// The model's release PATH entry (sp-zf4q3): `<release>/model-bin`, which holds only the
+/// binaries a model may run — NEVER the release `bin/` that [`work_bin_dir`] finds, which
+/// also holds ~40 tools that call bd themselves (bdq, mail, spira-claim, bead, sentinel,
+/// queue, ...). The release root is `SPIRA_RELEASE` from the aeon's own environment when
+/// set, else the parent of the directory holding `work` on `path`. FAIL-CLOSED: a release
+/// with no executable `model-bin/work` is an error naming the one exit,
+/// `SPIRA_MODEL_BIN_CONSIDERED=<dir>` (an operator-chosen directory, used as given and
+/// held to the same "holds an executable `work`" check) — never a fallback to `bin/`.
+pub fn model_bin_dir(base: &BTreeMap<String, String>, path: &str, is_exe: impl Fn(&Path) -> bool) -> Result<String, String> {
+    use spira_config::release_env::{MODEL_BIN_DIR, MODEL_BIN_OVERRIDE_ENV};
+    if let Some(dir) = base.get(MODEL_BIN_OVERRIDE_ENV).filter(|v| !v.is_empty()) {
+        if is_exe(&Path::new(dir).join("work")) {
+            return Ok(dir.clone());
+        }
+        return Err(format!("{MODEL_BIN_OVERRIDE_ENV}={dir} holds no executable work — refusing to start the model"));
+    }
+    let release = match base.get(spira_config::RELEASE_ENV).filter(|v| !v.is_empty()) {
+        Some(r) => r.clone(),
+        None => {
+            let Some(work_dir) = work_bin_dir(path, &is_exe) else {
+                return Err(format!(
+                    "work is not on PATH and {} is unset — the launcher sets PATH to a release; or set {MODEL_BIN_OVERRIDE_ENV}=<dir holding only work>",
+                    spira_config::RELEASE_ENV
+                ));
+            };
+            match Path::new(&work_dir).parent() {
+                Some(p) => p.display().to_string(),
+                None => return Err(format!("{work_dir} has no parent release directory; set {MODEL_BIN_OVERRIDE_ENV}=<dir holding only work>")),
+            }
+        }
+    };
+    let dir = format!("{}/{MODEL_BIN_DIR}", release.trim_end_matches('/'));
+    if is_exe(&Path::new(&dir).join("work")) {
+        Ok(dir)
+    } else {
+        Err(format!(
+            "release {release} has no {MODEL_BIN_DIR}/work — refusing to start the model with the full bin/ on PATH (it holds tools that call bd); activate a release built with {MODEL_BIN_DIR}/, or set {MODEL_BIN_OVERRIDE_ENV}=<dir holding only work>"
+        ))
+    }
+}
+
 /// The allow-listed vars carried through unconditionally, always present (empty when the
 /// source is), exactly work-env.sh's `"KEY=$VAR"` tokens (no `${VAR:+…}` guard).
 const UNCONDITIONAL: &[&str] = &["HOME", "SPIRA_LC_SOCKET"];
@@ -69,7 +110,8 @@ fn cargo_bin(base: &BTreeMap<String, String>) -> Option<String> {
 }
 
 /// The child environment the model runs under, given the bead it is bound to, the
-/// aeon's own (unrestricted) child environment, and the resolved directory holding `work`.
+/// aeon's own (unrestricted) child environment, and the model's release PATH entry
+/// ([`model_bin_dir`] — never the release `bin/`).
 pub fn restricted_env(bead_id: &str, base: &BTreeMap<String, String>, work_dir: &str) -> BTreeMap<String, String> {
     let mut env = BTreeMap::new();
     for k in UNCONDITIONAL {
@@ -121,12 +163,74 @@ mod tests {
         assert_eq!(work_bin_dir("::/bin:", found), Some("/bin".to_string()));
     }
 
+    /// Every variable that locates bd, its database, or dolt — none may reach the model.
+    const DB_LOCATORS: &[&str] = &[
+        "SPIRA_DB",
+        "SPIRA_BD",
+        "BEADS_DIR",
+        "BEADS_DB",
+        "BD_DB",
+        "SPIRA_DOLT",
+        "SPIRA_DOLT_PORT",
+        "SPIRA_DOLT_HOST",
+        "DOLT_ROOT_PATH",
+        "DOLT_CLI_PASSWORD",
+        "SPIRA_LC_PASSWORD_FILE",
+        "SPIRA_MODEL_BIN_CONSIDERED",
+    ];
+
     #[test]
     fn bd_and_db_never_appear() {
-        let b = base(&[("SPIRA_DB", "prod-db"), ("SPIRA_BD", "/bin/bd"), ("HOME", "/home/aeon")]);
-        let e = restricted_env("sp-x", &b, "/rel/bin");
-        assert!(!e.contains_key("SPIRA_DB"), "SPIRA_DB must never leak into the restricted env");
-        assert!(!e.contains_key("SPIRA_BD"), "SPIRA_BD must never leak into the restricted env");
+        let mut b = base(&[("HOME", "/home/aeon")]);
+        for k in DB_LOCATORS {
+            b.insert(k.to_string(), "/somewhere/db".to_string());
+        }
+        let e = restricted_env("sp-x", &b, "/rel/model-bin");
+        for k in DB_LOCATORS {
+            assert!(!e.contains_key(*k), "{k} must never leak into the restricted env");
+        }
+        for k in e.keys() {
+            assert!(!k.contains("DOLT") && !k.starts_with("BEADS_D") && !k.ends_with("_DB") && !k.ends_with("_BD"), "{k} looks like a db locator");
+        }
+    }
+
+    fn exe_at(paths: &'static [&'static str]) -> impl Fn(&Path) -> bool {
+        move |p: &Path| paths.iter().any(|q| p == Path::new(q))
+    }
+
+    #[test]
+    fn model_bin_is_the_release_sibling_of_bin_never_bin_itself() {
+        let is = exe_at(&["/rel/bin/work", "/rel/model-bin/work"]);
+        let d = model_bin_dir(&BTreeMap::new(), "/usr/bin:/rel/bin", is).unwrap();
+        assert_eq!(d, "/rel/model-bin");
+        let e = restricted_env("sp-x", &BTreeMap::new(), &d);
+        let path = e.get("PATH").unwrap();
+        assert!(path.split(':').any(|x| x == "/rel/model-bin"), "{path}");
+        assert!(!path.split(':').any(|x| x == "/rel/bin"), "the full bin dir must never be on the model's PATH: {path}");
+    }
+
+    #[test]
+    fn model_bin_prefers_spira_release() {
+        let is = exe_at(&["/other/bin/work", "/rel/model-bin/work"]);
+        let b = base(&[("SPIRA_RELEASE", "/rel/")]);
+        assert_eq!(model_bin_dir(&b, "/other/bin", is).unwrap(), "/rel/model-bin");
+    }
+
+    #[test]
+    fn a_missing_model_bin_refuses_and_names_the_override() {
+        let is = exe_at(&["/rel/bin/work"]);
+        let err = model_bin_dir(&BTreeMap::new(), "/rel/bin", is).unwrap_err();
+        assert!(err.contains("SPIRA_MODEL_BIN_CONSIDERED"), "{err}");
+        let err = model_bin_dir(&BTreeMap::new(), "/usr/bin", exe_at(&[])).unwrap_err();
+        assert!(err.contains("SPIRA_MODEL_BIN_CONSIDERED"), "{err}");
+    }
+
+    #[test]
+    fn the_override_is_used_as_given_and_still_needs_work() {
+        let b = base(&[("SPIRA_MODEL_BIN_CONSIDERED", "/opt/model")]);
+        assert_eq!(model_bin_dir(&b, "/rel/bin", exe_at(&["/opt/model/work"])).unwrap(), "/opt/model");
+        let err = model_bin_dir(&b, "/rel/bin", exe_at(&["/rel/model-bin/work"])).unwrap_err();
+        assert!(err.contains("no executable work"), "{err}");
     }
 
     #[test]

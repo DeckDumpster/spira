@@ -212,8 +212,16 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
+# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
+    "$LCSTATE" "$LCSTATE" > "$TMP/spira-lc-stub"
+chmod +x "$TMP/spira-lc-stub"
+
 run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
@@ -221,7 +229,12 @@ run_census_fixture() {
         "$CENSUS" "$@" 2>/dev/null
 }
 
-B close "$remedy_id" --reason "test: verify closed remedy still suppresses" --force >/dev/null 2>&1
+# The remedy's closed bd row is FIXTURE STATE, declared as data (an upsert of the same row),
+# never a bd close driven around the lifecycle machine (sp-hyo5e). The annotation asserted
+# below is the proof census read it as closed.
+testdb_seed <<JSONL
+{"id":"$remedy_id","title":"Fix sp-recur-remedy-class","status":"closed","closed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","issue_type":"task","priority":2,"labels":["spira","plan","${REMEDY_LABEL}","covers:sp-recur-remedy-class"]}
+JSONL
 # A closed remedy with NO branch is orphaned (sp-c3q60) — that decision path is
 # table-tested (fake bd, real throwaway git) in test-census-pipeline.sh. This fixture
 # gives it a branch to represent the in-flight case.
@@ -232,13 +245,14 @@ lack "closed-unlanded: still suppressed" "sp-recur-remedy-class" "$out5_pre"
 want "closed-unlanded: annotated [suppressed: remedy closed, not landed]" \
     "[suppressed: remedy closed, not landed]" "$(run_census_fixture --with-suppressed)"
 
-# Land the remedy: a landing-record commit naming the bead on the base. landed() trusts
-# only two subject shapes (law-a-matcher-reads-code-not-prose / sp-dgaig); a
-# cross-reference like "fix: <id> closes <class>" is a mention, not a landing record.
+# A commit naming the remedy on the base is not a landing: only the lifecycle record is.
 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
     git -C "$FIXTURE_REPO" commit --allow-empty -q \
     -m "spira: land $remedy_id" 2>/dev/null
+lack "naming commit alone: still suppressed" "sp-recur-remedy-class" "$(run_census_fixture)"
 
+# Land the remedy: the lifecycle record reads LANDED.
+echo LANDED > "$LCSTATE/$remedy_id"
 out5="$(run_census_fixture)"
 want "landed: class reappears" "sp-recur-remedy-class" "$out5"
 lack "landed: no suppression annotation" "[suppressed]" "$out5"

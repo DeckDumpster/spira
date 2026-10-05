@@ -9,12 +9,12 @@
 #
 #   A. NON-CODE DELIVERS, EMPTY BRANCH. A bead that carries a delivers: label (note,
 #      beads, action, etc.) was never expected to commit. Its branch is 0 ahead and an
-#      ancestor of the base. content_landed now returns 0 for any ancestor branch
+#      ancestor of the base. spira-lc content-landed now returns 0 for any ancestor branch
 #      (sp-bf31a), so the branch is reaped via the plain content-landed path — SENT,
 #      not REAPED, since the delivers:-specific arm is never reached.
 #
 #   B. SUPERSEDED BEAD, EMPTY BRANCH. A closed duplicate with a supersedes edge and a
-#      zero-ahead branch. content_landed's ancestor check (sp-bf31a) reaps it the same
+#      zero-ahead branch. spira-lc content-landed's ancestor check (sp-bf31a) reaps it the same
 #      way as shape A, before sending.sh's superseded-specific arm is ever reached — SENT,
 #      not REAPED. Positive control: a superseded bead with n>0 and unique content (no
 #      conflict) is still KEPT.
@@ -64,6 +64,15 @@ in_fixture() {
         "$@"
 }
 
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-2c1n0): the Sending asks `spira-lc state <id>`,
+# never a commit subject. A stub ahead of the real spira-lc on the Sending's PATH answers
+# `state` (sp-btch LANDED — its batch landed it; every other id has no row) and hands every
+# other verb to the real binary.
+REAL_LC="$(command -v spira-lc)"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = state ]; then [ "${2:-}" = sp-btch ] && { echo LANDED; exit 0; }; exit 1; fi\nexec "%s" "$@"\n' \
+    "$REAL_LC" > "$SH/spira-lc"
+chmod +x "$SH/spira-lc"
+
 sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
@@ -77,7 +86,7 @@ sending() {
 # sp-groom: 0 ahead, ancestor (Shape A — non-code delivers)
 # sp-sup0:  0 ahead, ancestor, supersedes sp-sup1 (Shape B — empty superseded)
 # sp-supc:  1 commit unique content, supersedes sp-sup1 (Shape B control — kept)
-# sp-btch:  1 commit, named in batch commit on main (Shape C — landed by other PR)
+# sp-btch:  1 commit, landed by a batch (its lifecycle row LANDED; Shape C — landed by other PR)
 # sp-keep:  1 commit, unique content NOT named on main (positive control — kept)
 # ---------------------------------------------------------------------------
 
@@ -143,25 +152,15 @@ echo "test-sending-closed-reap.sh"
 # shellcheck disable=SC1090
 . "$SH/lib.sh"
 
-if content_landed "$REPO" "spira/sp-groom" "origin/main"; then
-    ok "sp-groom: content_landed correctly returns 0 (ancestor branch, sp-bf31a)"
+if spira-lc content-landed "$REPO" "spira/sp-groom" "origin/main"; then
+    ok "sp-groom: spira-lc content-landed correctly returns 0 (ancestor branch, sp-bf31a)"
 else
-    bad "sp-groom: content_landed must return 0 for an ancestor (0-ahead) branch" "returned non-zero"
+    bad "sp-groom: spira-lc content-landed must return 0 for an ancestor (0-ahead) branch" "returned non-zero"
 fi
-if content_landed "$REPO" "spira/sp-btch" "origin/main"; then
-    bad "sp-btch: content_landed must return non-zero (conflict after base moved)" "returned 0"
+if spira-lc content-landed "$REPO" "spira/sp-btch" "origin/main"; then
+    bad "sp-btch: spira-lc content-landed must return non-zero (conflict after base moved)" "returned 0"
 else
-    ok "sp-btch: content_landed correctly returns non-zero (conflict with post-batch base)"
-fi
-if in_fixture landing-pass landed "sp-btch" "$REPO" 2>/dev/null; then
-    ok "sp-btch: landed() finds the naming commit on origin/main"
-else
-    bad "sp-btch: landed() must return 0 (batch commit on main names it)" "returned non-zero"
-fi
-if in_fixture landing-pass landed "sp-keep" "$REPO" 2>/dev/null; then
-    bad "sp-keep: landed() must return non-zero" "returned 0 — fixture is wrong"
-else
-    ok "sp-keep: landed() correctly returns non-zero (not on main)"
+    ok "sp-btch: spira-lc content-landed correctly returns non-zero (conflict with post-batch base)"
 fi
 
 # ---------------------------------------------------------------------------

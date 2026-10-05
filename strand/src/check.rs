@@ -1,7 +1,7 @@
 //! The two entry points that touch the world: gathering a classification from the live
 //! store (or a saved TSV), `report`, and `check` with its mechanical fixes and escalations.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
@@ -71,7 +71,8 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
     let now = timefmt::now();
     let log_text = cfg.sentinel_log().and_then(|p| fs::read_to_string(p).ok()).unwrap_or_default();
     let run_dir = cfg.run.clone().ok_or("SPIRA_RUN is unknown (not in the environment, no [spira].run)")?;
-    let wait_held = probe::wait_held(cfg, &store.beads)?;
+    // The ghost rule's inputs, read only where it runs (lifecycle_enforce off).
+    let wait_held = if cfg.lifecycle_enforce { HashSet::new() } else { probe::wait_held(&store.beads) };
     let total_live = probe::aeons_live_total(cfg);
     let capacity = probe::capacity(cfg, now);
     let throttle = probe::throttle(cfg);
@@ -85,7 +86,7 @@ pub fn classify_live(cfg: &Config) -> Result<Classified, String> {
         let holders: HashMap<String, bool> = store
             .beads
             .iter()
-            .filter(|b| b.status == crate::model::Status::InProgress && need.iter().all(|l| b.has(l)))
+            .filter(|b| !cfg.lifecycle_enforce && b.status == crate::model::Status::InProgress && need.iter().all(|l| b.has(l)))
             .map(|b| (b.id.clone(), probe::holder_alive(&run_dir, &b.id)))
             .collect();
         let facts = Facts {
@@ -391,56 +392,16 @@ fn act_ghost(cfg: &Config, part: &str, row: &Row) {
     }
 }
 
-/// The switch (DESIGN.md §9) decides which record the claim lives in. Off: the pre-sp-i2m7y
-/// `bd reclaim --id <id> --older-than 1s`, scoped to the row's own partition — liveness was
-/// already observed directly, so no grace window is left to apply. On: the spira-lc
-/// `HolderDead` event. Returns which path ran, for tests.
-fn release_dead_holder(cfg: &Config, part: &str, id: &str) -> &'static str {
-    if cfg.lifecycle_enforce {
-        lc_holder_dead(cfg, id);
-        return "spira-lc";
-    }
+/// The pre-sp-i2m7y `bd reclaim --id <id> --older-than 1s`, scoped to the row's own
+/// partition — liveness was already observed directly, so no grace window is left to apply.
+/// lifecycle_enforce off only: on, there is no ghost row to act on (classify.rs `ghosts`).
+fn release_dead_holder(cfg: &Config, part: &str, id: &str) {
     let mut args = vec!["reclaim", "--id", id, "--older-than", "1s"];
     if part != "-" && !part.is_empty() {
         args.extend(["--label", part]);
     }
     if let Err(e) = probe::bd(cfg, &args, None) {
         warn(&format!("check: {id}: bd reclaim failed: {e}"));
-    }
-    "bd"
-}
-
-/// On only. The step stays best-effort (the rest of the ghost fix still runs), but a
-/// machine that cannot be reached, or refuses, is said out loud: under `lifecycle_enforce`
-/// it is the record of the claim, and a silent miss leaves the bead held by a dead aeon.
-fn lc_holder_dead(cfg: &Config, id: &str) {
-    let loud = |why: &str| warn(&format!("check: {id}: lifecycle_enforce is on and spira-lc HolderDead did not happen ({why}) — the bead stays held"));
-    let bin = cfg.lc_bin.as_str();
-    let o = probe::run("timeout", &["30", bin, "show", id], None, &[]);
-    if !o.ok {
-        return loud(&format!("show: {}", o.stderr.trim()));
-    }
-    let Ok(v) = serde_json::from_str::<serde_json::Value>(&o.stdout) else {
-        return loud("show: unparseable reply");
-    };
-    let bead = &v["bead"];
-    let state = bead["state"].as_str().unwrap_or("");
-    let version = match &bead["version"] {
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::String(s) => s.clone(),
-        _ => String::new(),
-    };
-    if state.is_empty() || version.is_empty() {
-        return loud("show: no bead row");
-    }
-    let o = probe::run(
-        "timeout",
-        &["30", bin, "event", "bead", id, "--expect", state, "--version", &version, "--actor", "strand", "--kind", "\"HolderDead\""],
-        None,
-        &[],
-    );
-    if !o.ok {
-        loud(&format!("event: {}", o.stderr.trim()));
     }
 }
 
@@ -796,13 +757,13 @@ mod tests {
         p.to_string_lossy().into_owned()
     }
 
-    fn cfg(enforce: &str, bd: &str, lc: &str) -> Config {
+    fn cfg(enforce: &str, bd: &str, claim: &str) -> Config {
         Config::resolve(&Env(vec![
             ("SPIRA_LIFECYCLE_ENFORCE", enforce.into()),
             ("SPIRA_BD", bd.into()),
             ("SPIRA_DB", "/fake/db".into()),
         ]))
-        .with_lc(lc)
+        .with_claim(claim)
     }
 
     #[test]
@@ -827,54 +788,48 @@ mod tests {
     }
 
     #[test]
-    fn off_ghost_fix_is_bd_reclaim_and_never_runs_spira_lc() {
+    fn off_ghost_fix_is_bd_reclaim() {
         let d = scratch("off-ghost");
-        let (bdlog, lclog) = (d.join("bd.log"), d.join("lc.log"));
+        let bdlog = d.join("bd.log");
         let bd = recorder(&d, "bd", &bdlog, "");
-        // A real, executable spira-lc: presence alone must not turn anything on.
-        let lc = recorder(&d, "spira-lc", &lclog, "{}");
-        let c = cfg("0", &bd, &lc);
+        let c = cfg("0", &bd, "spira-claim");
         assert!(!c.lifecycle_enforce);
-        assert_eq!(release_dead_holder(&c, "spira,plan", "sp-g"), "bd");
-        assert_eq!(release_dead_holder(&c, "-", "sp-h"), "bd");
+        release_dead_holder(&c, "spira,plan", "sp-g");
+        release_dead_holder(&c, "-", "sp-h");
         let calls = fs::read_to_string(&bdlog).unwrap();
         assert!(calls.contains("-C /fake/db reclaim --id sp-g --older-than 1s --label spira,plan"), "{calls}");
         assert!(calls.contains("-C /fake/db reclaim --id sp-h --older-than 1s\n"), "no partition scope for '-': {calls}");
-        assert!(!lclog.exists(), "spira-lc must never run with lifecycle_enforce off");
     }
 
     #[test]
-    fn off_wait_exemption_is_the_legacy_label_and_never_runs_spira_lc() {
-        let d = scratch("off-wait");
-        let lclog = d.join("lc.log");
-        let lc = recorder(&d, "spira-lc", &lclog, r#"[{"bead_id":"sp-from-lc"}]"#);
-        let c = cfg("", "bd", &lc);
-        assert!(!c.lifecycle_enforce, "set-but-empty is off");
+    fn off_wait_exemption_is_the_legacy_label() {
         let beads = crate::model::parse_beads(
             r#"[{"id":"sp-w","status":"in_progress","labels":["spira-waiting-operator"]},{"id":"sp-x","status":"in_progress","labels":[]}]"#,
         )
         .unwrap();
-        let held = probe::wait_held(&c, &beads).unwrap();
-        assert_eq!(held.into_iter().collect::<Vec<_>>(), vec!["sp-w".to_string()]);
-        assert!(!lclog.exists(), "spira-lc must never run with lifecycle_enforce off");
+        assert_eq!(probe::wait_held(&beads).into_iter().collect::<Vec<_>>(), vec!["sp-w".to_string()]);
     }
 
+    // sp-7g5q6: under the machine, a partition's ready set is spira-claim's — not bd ready,
+    // not the sentinel's bd-ready snapshot — and a refusal is "cannot tell", never empty.
     #[test]
-    fn on_runs_spira_lc_and_unreachable_is_an_error_not_an_empty_set() {
-        let d = scratch("on");
-        let (bdlog, lclog) = (d.join("bd.log"), d.join("lc.log"));
-        let bd = recorder(&d, "bd", &bdlog, "");
-        let lc = recorder(&d, "spira-lc", &lclog, r#"[{"bead_id":"sp-w"}]"#);
-        let c = cfg("1", &bd, &lc);
-        assert!(c.lifecycle_enforce);
-        let held = probe::wait_held(&c, &[]).unwrap();
-        assert!(held.contains("sp-w"));
-        assert_eq!(release_dead_holder(&c, "spira,plan", "sp-g"), "spira-lc");
-        let calls = fs::read_to_string(&lclog).unwrap();
-        assert!(calls.contains("list --hold wait") && calls.contains("show sp-g"), "{calls}");
-        assert!(!bdlog.exists(), "on: the claim is released through the machine, not bd reclaim");
-        let gone = cfg("1", &bd, "/nonexistent/spira-lc");
-        let e = probe::wait_held(&gone, &[]).unwrap_err();
-        assert!(e.contains("lifecycle_enforce is on and spira-lc is unreachable"), "{e}");
+    fn on_the_ready_set_is_spira_claims_and_bd_is_never_asked() {
+        let d = scratch("on-ready");
+        let (bdlog, claimlog) = (d.join("bd.log"), d.join("claim.log"));
+        let bd = recorder(&d, "bd", &bdlog, r#"[{"id":"sp-bd-says"}]"#);
+        let claim = recorder(&d, "spira-claim", &claimlog, r#"[{"id":"sp-machine-says","labels":["spira","plan"]}]"#);
+        let snap = d.join("ready-snapshot");
+        fs::write(&snap, r#"[{"id":"sp-snapshot-says","labels":["spira","plan"]}]"#).unwrap();
+        let mut c = cfg("1", &bd, &claim);
+        c.ready_snapshot = Some(snap);
+        let got = probe::ready(&c, "spira,plan", &["spira-poison".into(), "needs-ryan".into()]).unwrap(); // literal-ok: test fixture
+        assert_eq!(got.into_iter().collect::<Vec<_>>(), vec!["sp-machine-says".to_string()]);
+        assert_eq!(fs::read_to_string(&claimlog).unwrap(), "ready-count spira,plan spira-poison,needs-ryan --json\n"); // literal-ok: test fixture
+        assert!(!bdlog.exists(), "on: bd's ready query is nobody's ready set");
+        let gone = cfg("1", &bd, "/nonexistent/spira-claim");
+        assert!(probe::ready(&gone, "spira,plan", &[]).is_err(), "a refusal is never an empty set");
+        // Positive control: off, the same call is bd's own ready query.
+        let off = cfg("0", &bd, &claim);
+        assert_eq!(probe::ready(&off, "spira,plan", &[]).unwrap().into_iter().collect::<Vec<_>>(), vec!["sp-bd-says".to_string()]);
     }
 }

@@ -120,7 +120,6 @@ impl World {
         let run = dir.join("run");
         let home = dir.join("home");
         std::fs::create_dir_all(&run).unwrap();
-        std::fs::create_dir_all(run.join("landstate")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
         World { dir, run, home }
     }
@@ -253,19 +252,12 @@ pub fn run_mode<'a>(
     );
     let rc = s.run();
     if lc == Lifecycle::Off {
-        // OFF never invokes spira-lc for a lifecycle-gated decision — not directly, and no
-        // child is handed a path to it. The one standing exception (sp-ki12s precedent,
-        // predates the OFF/ON split): mark_queue_waiters/close_landed_queue_waiters/
-        // park_branch_collisions (waiters.rs, detect.rs) dual-write a `hold`/`unhold` verb
-        // call unconditionally, in both lc modes — `spira-lc` itself answers "cannot tell"
-        // from `off()` without touching a socket when the switch is off, exactly the `||
-        // true` shape lib.sh used before any of this was ported, so it costs nothing and
-        // changes nothing in OFF. Every OTHER spira-lc verb (`list`, `show`, `event`, …)
-        // stays gated on `self.lc` and must never appear here.
+        // OFF is the test default: the queue waiters read `spira-lc list` regardless of the switch;
+        // every other verb stays gated on `self.lc`.
         assert_eq!(
-            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold"))),
+            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold" | "list"))),
             0,
-            "OFF called spira-lc for something other than the dual-written hold/unhold: {:#?}",
+            "OFF called spira-lc for something other than the waiters' list/hold/unhold: {:#?}",
             r.lines()
         );
         // ...and OFF is SPIRA_LIFECYCLE_ENFORCE=0 alone: no child is handed a tool path.
@@ -346,6 +338,12 @@ fn skip_reclaim_skips_the_db_check() {
 fn full_pass_reads_the_store_once_and_exports_it() {
     let (w, r, sink, clock) = setup("full");
     r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
+    r.on(|s| {
         if s.prog == "strand" {
             // the snapshot paths reached strand
             assert!(env_of(s, "SPIRA_LIST_SNAPSHOT")
@@ -411,7 +409,6 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         &clock,
         Mode::Pass,
         &[
-            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_LAUNCH", "/stub/launch"),
         ],
         None,
@@ -425,7 +422,7 @@ fn audit_dispatch_argv_and_b1_skip_switches() {
         &format!("--property=StandardOutput=append:{}/audit.log", w.run.display()),
         "--setenv=SPIRA_DB=/db --setenv=SPIRA_REPO= --setenv=SPIRA_REPO_MAP= --setenv=SPIRA_HOME_REPO=spira --setenv=SPIRA_BD=bd --setenv=SPIRA_GH=gh",
         "--setenv=SPIRA_POISON_AT=3 --setenv=SPIRA_REQUEUE_AT=5 --setenv=SPIRA_RECLAIM_AT=5 --setenv=SPIRA_ASK_LABEL=needs-operator --setenv=SPIRA_SCOPE_LABEL=spira --setenv=SPIRA_WORK_CLOSE_TYPES=", // literal-ok: asserts argv built from the fixture
-        "--setenv=SPIRA_SKIP_CLOSED_CHECK=1 /opt/bin/sentinel --audit",
+        "/opt/bin/sentinel --audit",
     ] {
         assert!(l.contains(want), "missing {want:?} in {l}");
     }
@@ -666,6 +663,12 @@ fn summon_only_gates_then_reads_ready_once() {
     );
 
     let (w, r, sink, clock) = setup("summon2");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
     // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
     // directly, reading the SAME SPIRA_READY_CACHE export_snapshot (above) already wrote.
@@ -686,13 +689,10 @@ fn summon_only_gates_then_reads_ready_once() {
         run_mode(&w, &r, &sink, &clock, Mode::SummonOnly, &[], None),
         0
     );
-    assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
-    assert_eq!(r.count(|s| is_bd(s, "list")), 0);
-    let ready = r.find(|s| is_bd(s, "ready")).unwrap();
-    assert!(
-        ready.line().contains("--label spira"),
-        "summon-only reads READY_ARGS"
-    );
+    // The ready set is fetched ONCE, by spira-claim inside bulk-ready-by-fayth: the sentinel
+    // itself no longer reads bd here (it counted nothing from it after sp-uqrdn).
+    assert_eq!(r.count(|s| s.prog == "bd"), 0, "the sentinel makes no bd call of its own");
+    assert_eq!(r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth")), 1);
     assert!(sink.has("summon-only: live=2 fayths=[builder ops]"));
     assert!(sink.has("CHECK7 builder: 1 ready, at concurrency cap"), "{}", sink.text());
     assert!(sink.has("summon-only pass complete — 0 action(s)"));
@@ -1212,6 +1212,76 @@ fn on_check2_reaps_stale_leases_and_2c_reports_desync() {
 }
 
 // ---------------------------------------------------------------------------------------
+// CHECK 3 / 8 under lifecycle_enforce (sp-7g5q6): plan_ready is spira-claim's ready set and
+// in_progress is the machine's WORKING rows — never `bd ready` nor bd's in_progress, which
+// no claim writes any more.
+
+#[test]
+fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() {
+    let (w, r, sink, clock) = setup("on-plan-counts");
+    let lease = NOW + 3_600;
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(&format!(
+                r#"[{{"bead_id":"sp-a","state":"WORKING","holder":"aeon-1","lease_until":"{lease}","holds":"[]","version":"2"}},
+                    {{"bead_id":"sp-b","state":"WORKING","holder":"aeon-2","lease_until":"{lease}","holds":"[]","version":"4"}}]"#
+            ));
+        }
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return ok("0\n");
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    // bd ready says sp-a is ready and bd's status says one bead is in progress; the machine
+    // says both are WORKING and nothing is claimable.
+    assert!(sink.has("state: open=2 plan_ready=0 in_progress=2"), "{}", sink.text());
+    let q = r
+        .find(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count"))
+        .expect("plan_ready asks spira-claim");
+    assert_eq!(q.args, vec!["ready-count", "spira,plan", "spira-poison,needs-operator"]); // literal-ok: asserts argv built from the fixture
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1, "the counts reuse the pass's one lifecycle read");
+    assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 0, "work is running: CHECK 3 has nothing to free");
+    assert!(!sink.has("STARVED"), "{}", sink.text());
+}
+
+#[test]
+fn on_a_starved_plan_recounts_through_spira_claim_never_bd_ready() {
+    let (w, r, sink, clock) = setup("on-starved");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return ok("0\n");
+        }
+        None
+    });
+    exe(&w.home.join("reflect.sh"));
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    assert!(sink.has("state: open=2 plan_ready=0 in_progress=0"), "{}", sink.text());
+    assert_eq!(r.count(|s| is_bd(s, "recompute-blocked")), 1);
+    assert_eq!(
+        r.count(|s| s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count")),
+        2,
+        "the state count and CHECK 3's recount"
+    );
+    assert_eq!(r.count(|s| is_bd(s, "ready") && s.args.iter().any(|a| a == "spira,plan")), 0, "{:#?}", r.lines());
+    assert!(sink.has("STARVED — 2 open, 0 ready, 0 running."), "{}", sink.text());
+}
+
+#[test]
+fn on_a_refused_ready_count_is_unknown_not_zero() {
+    let (w, r, sink, clock) = setup("on-refused");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
+            return Some(crate::host::Out { rc: 1, stdout: "0".into(), stderr: "spira-claim: ready_count: spira-lc list: boom".into() });
+        }
+        None
+    });
+    run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    assert!(sink.has("plan_ready=?"), "{}", sink.text());
+    assert!(!sink.has("STARVED"), "an unknown count is never a starved plan: {}", sink.text());
+}
+
+// ---------------------------------------------------------------------------------------
 // CHECK 4 (audit)
 
 const AUDIT_LIST: &str = r#"[
@@ -1299,7 +1369,6 @@ fn check4_poisons_asks_mails_and_clears() {
             &clock,
             Mode::Audit,
             &[
-                ("SPIRA_SKIP_CLOSED_CHECK", "1"),
                 ("SPIRA_SKIP_RECLAIM", "1"),
                 ("SPIRA_LIFECYCLE_ENFORCE", "1"),
             ],
@@ -1404,8 +1473,11 @@ fn check4_poisons_asks_mails_and_clears() {
     assert_eq!(un.args.last().unwrap(), r#"{"Unhold":{"kind":"Poison"}}"#);
     assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
     assert!(w.run.join("audit.status").exists());
+    // CHECK-ROWLESS runs every pass now that the CHECK 5 off-switch is gone (sp-jnwbn), so
+    // the two open beads with no lifecycle row are backfilled: one more action.
+    assert!(sink.has("ACT backfilled 2 rowless bead(s)"), "{}", sink.text());
     assert!(
-        sink.has("audit pass complete — 2 action(s), 2 progress"),
+        sink.has("audit pass complete — 3 action(s), 2 progress"),
         "{}",
         sink.text()
     );
@@ -1434,7 +1506,6 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         &clock,
         Mode::Audit,
         &[
-            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_SKIP_RECLAIM", "1"),
             ("SPIRA_LIFECYCLE_ENFORCE", "1"),
         ],
@@ -1464,7 +1535,6 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         &clock,
         Mode::Audit,
         &[
-            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_SKIP_RECLAIM", "1"),
             ("SPIRA_LIFECYCLE_ENFORCE", "1"),
         ],
@@ -1476,120 +1546,6 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
     assert!(r
         .find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-p")
         .is_none());
-}
-
-// ---------------------------------------------------------------------------------------
-// CHECK 5 (audit)
-
-#[test]
-fn check5_resolves_proven_landings_and_files_the_rest() {
-    let (w, r, sink, clock) = setup("c5");
-    let hash = crate::check5::ref_hash("sp-l");
-    let list = format!(
-        r#"[{{"id":"sp-epic","status":"open"}},
-            {{"id":"sp-l","status":"closed","issue_type":"task","labels":["spira","plan"]}},
-            {{"id":"sp-n","status":"closed","issue_type":"task","labels":["spira","plan"]}},
-            {{"id":"sp-s","status":"closed","issue_type":"task","labels":["spira","plan"],"close_reason":"Duplicate of x"}},
-            {{"id":"sp-o","status":"closed","issue_type":"task","labels":["spira","plan","repo:elsewhere"]}},
-            {{"id":"inc-1","status":"open","labels":["incident","ref:{hash}"]}}]"#
-    );
-    r.on(move |s| if is_bd(s, "list") { ok(&list) } else { None });
-    r.on(|s| {
-        if s.prog == "git" && s.args.iter().any(|a| a == "--format=%s") {
-            ok("spira: land sp-l — the title\nsomething else\n")
-        } else {
-            None
-        }
-    });
-    for id in ["sp-l", "sp-n", "sp-s", "sp-o"] {
-        std::fs::write(w.run.join(format!("{id}.log")), "").unwrap();
-    }
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[("SPIRA_SKIP_RECLAIM", "1")],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-    let close = r.find(|s| is_bd(s, "close")).expect("resolved");
-    assert_eq!(
-        close.args,
-        vec![
-            "-C",
-            "/db",
-            "close",
-            "--force",
-            "inc-1",
-            "--reason-file",
-            "-"
-        ]
-    );
-    assert!(String::from_utf8(close.stdin.unwrap())
-        .unwrap()
-        .starts_with("sp-l is landed: spira's base (origin/main) names it"));
-    assert!(sink.has("CHECK5: repo:elsewhere is not in repo-map — skipping its closed beads"));
-    let inc = r
-        .find(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file"))
-        .expect("filed");
-    assert_eq!(
-        inc.args[2],
-        "CLOSED NOT LANDED: sp-n has no LANDED record on spira"
-    );
-    assert_eq!(
-        env_of(&inc, "SPIRA_INCIDENT_REF"),
-        Some("closed-not-landed:sp-n")
-    );
-    assert_eq!(
-        env_of(&inc, "SPIRA_INCIDENT_PATH"),
-        Some("closed-not-landed:sp-n")
-    );
-    assert_eq!(
-        env_of(&inc, "SPIRA_INCIDENT_LABELS"),
-        Some("spira,incident")
-    );
-    assert!(String::from_utf8(inc.stdin.unwrap())
-        .unwrap()
-        .starts_with("landstate=none tip=none base=origin/main repo=spira. The landing pass"));
-    assert_eq!(
-        r.count(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file")),
-        1,
-        "sp-s is subsumed"
-    );
-    assert!(sink.has(
-        "CHECK5: 1 closed bead(s) with no LANDED record proven landed by the base's commit graph"
-    ));
-    assert!(sink.has("CHECK5: resolved 1 incident(s) for beads this pass proved landed"));
-    assert_eq!(
-        r.count(|s| s.prog == "git" && s.args.iter().any(|a| a == "--format=%s")),
-        1,
-        "one walk per repository"
-    );
-}
-
-#[test]
-fn check5_cap_bounds_filing() {
-    let (w, r, sink, clock) = setup("c5cap");
-    r.on(|s| {
-        if is_bd(s, "list") {
-            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"a1","status":"closed","issue_type":"bug","labels":["spira","plan"]},{"id":"a2","status":"closed","issue_type":"bug","labels":["spira","plan"]}]"#);
-        }
-        None
-    });
-    for id in ["a1", "a2"] {
-        std::fs::write(w.run.join(format!("{id}.log")), "").unwrap();
-    }
-    run_mode(
-        &w,
-        &r,
-        &sink,
-        &clock,
-        Mode::Audit,
-        &[("SPIRA_SKIP_RECLAIM", "1"), ("SPIRA_CHECK5_MAX_FILE", "1")],
-        Some(&["spira\t/src/spira\torigin/main\t0"]),
-    );
-    assert!(sink.has("CHECK5: filed 1 incident(s), the cap (SPIRA_CHECK5_MAX_FILE=1); 1 more not filed this pass: a2"), "{}", sink.text());
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1664,7 +1620,7 @@ fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
         !sink.has(" f blocked-by-unlanded"),
         "f depends on d, which is not in the unlanded set"
     );
-    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc, alongside CHECK 5's own"));
+    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc"));
 }
 
 #[test]
@@ -1724,6 +1680,44 @@ fn check5_lc_never_runs_off_and_never_gates_the_legacy_check5_call() {
     assert!(
         sink.has("audit pass complete"),
         "the audit pass still completed"
+    );
+}
+
+/// sp-jnwbn: the landstate CHECK 5 (closed-not-landed) is deleted, not switched off — with
+/// no skip switch in the environment (the drop-in a unit re-render deleted on
+/// 2026-10-04), a closed, aeon-worked bead with no landing record files no incident, walks
+/// no base history, and logs no CHECK5 line. Before the deletion this exact world filed an
+/// incident for sp-n ("landstate=none tip=none ...") and walked the base once.
+#[test]
+fn landstate_check5_never_runs_without_its_off_switch() {
+    let (w, r, sink, clock) = setup("c5gone");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            return ok(r#"[{"id":"sp-epic","status":"open"},{"id":"sp-n","status":"closed","issue_type":"task","labels":["spira","plan"]}]"#);
+        }
+        None
+    });
+    std::fs::write(w.run.join("sp-n.log"), "").unwrap();
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1")],
+        Some(&["spira\t/src/spira\torigin/main\t0"]),
+    );
+    assert!(sink.has("audit pass complete"), "{}", sink.text());
+    assert!(!sink.has("CHECK5"), "{}", sink.text());
+    assert_eq!(
+        r.count(|s| s.prog == "bash" && s.args.get(1).map(String::as_str) == Some("file")),
+        0,
+        "no closed-not-landed incident is filed"
+    );
+    assert_eq!(
+        r.count(|s| s.prog == "git" && s.args.iter().any(|a| a == "--format=%s")),
+        0,
+        "no base-history walk"
     );
 }
 
@@ -1835,7 +1829,7 @@ fn sending_7c_7d_count_what_their_seams_report() {
         &sink,
         &clock,
         Mode::Audit,
-        &[("SPIRA_SKIP_CLOSED_CHECK", "1")],
+        &[],
         Some(&["spira\t/src/spira\torigin/main\t0"]),
     );
     assert!(sink.has("ACT sent spira spira/sp-a sp-a"));
@@ -1871,7 +1865,7 @@ fn sending_7c_7d_count_what_their_seams_report() {
         &sink2,
         &clock,
         Mode::Audit,
-        &[("SPIRA_SKIP_CLOSED_CHECK", "1")],
+        &[],
         Some(&["spira\t/src/spira\torigin/main\t0"]),
     );
     assert!(sink2.has("sending: base unchanged — skipped"));
@@ -2084,7 +2078,6 @@ fn on_check4_note_names_the_hold() {
         &clock,
         Mode::Audit,
         &[
-            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
             ("SPIRA_SKIP_RECLAIM", "1"),
             ("SPIRA_LIFECYCLE_ENFORCE", "1"),
         ],
@@ -2095,6 +2088,19 @@ fn on_check4_note_names_the_hold() {
         .unwrap()
         .ends_with("while the hold stands."));
     assert_eq!(r.count(|s| is_bd(s, "label")), 0, "ON writes no bd label");
+}
+
+// sp-uqrdn: the queue waiters read spira-lc only — with lifecycle_enforce OFF they read
+// nothing and decide nothing; an unreachable machine there is not the unit's failure.
+#[test]
+fn off_never_reads_the_machine_and_never_fails_the_unit_for_it() {
+    let (w, r, sink, clock) = setup("offnolc");
+    r.on(|s| if s.prog == "spira-lc" { fail(2) } else { None });
+    let rc = run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "0")], None);
+    assert_eq!(rc, 0, "{}", sink.text());
+    assert!(!sink.has("LIFECYCLE UNREACHABLE"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")), 0);
+    assert!(sink.has("pass complete"));
 }
 
 #[test]
@@ -2152,7 +2158,6 @@ fn on_an_unreachable_machine_is_loud_and_fails_the_unit() {
         Mode::Audit,
         &[
             ("SPIRA_LIFECYCLE_ENFORCE", "1"),
-            ("SPIRA_SKIP_CLOSED_CHECK", "1"),
         ],
         Some(&[]),
     );
@@ -2347,4 +2352,32 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
     assert!(argv.contains(&format!("--setenv=SPIRA_RELEASE={new}")), "{argv}");
     assert!(argv.contains(&format!("--setenv=PATH={new}/bin:")), "{argv}");
     assert!(!argv.contains(&old), "no token may name the caller's release: {argv}");
+}
+
+#[test]
+fn rowless_open_bead_is_surfaced_and_backfilled() {
+    let (w, r, sink, clock) = audit_world("rowless");
+    r.on(|s| {
+        if is_bd(s, "list") {
+            ok(r#"[{"id":"sp-nr","status":"open","issue_type":"task"},{"id":"sp-has","status":"open","issue_type":"task"}]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            ok(r#"[{"bead_id":"sp-has","state":"READY","holds":[],"version":"1"}]"#)
+        } else {
+            None
+        }
+    });
+    run_mode(
+        &w, &r, &sink, &clock, Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1"), ("SPIRA_LIFECYCLE_ENFORCE", "1")],
+        Some(&[]),
+    );
+    assert!(sink.has("STATE-LC sp-nr rowless"), "{}", sink.text());
+    assert!(!sink.has("STATE-LC sp-has rowless"), "{}", sink.text());
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-nr"]), 1);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-has"]), 0);
 }

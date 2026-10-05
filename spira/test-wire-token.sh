@@ -46,7 +46,7 @@ METRICS="$HERE/cockpit-metrics.py"
 # EMITTER. The Sending emits `SENT …` lines — `self.landed(.., "SENT")` for every landed
 # arm, and `format!("SENT {id} …")` for an orphaned worktree.
 # ---------------------------------------------------------------------------------------
-if grep -qF 'self.landed(c, id, br, "SENT")' "$SENDING" && grep -qF 'format!("SENT {id}' "$SENDING"; then
+if grep -qF 'self.send_landed(c, id, br, "SENT")' "$SENDING" && grep -qF 'format!("SENT {id}' "$SENDING"; then
     ok "the Sending emits SENT"
 else
     bad "the Sending emits SENT" "\"SENT\" verb not found in $SENDING — emitter is out of sync"

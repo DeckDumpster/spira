@@ -3,7 +3,7 @@ Description=Sweep queue-mode repositories for stranded branches and worktrees on
 
 [Timer]
 # ONCE A DAY. A queue-mode repo's landed branches are reaped at landing itself
-# (bead_close_on_land), so this is a backstop for what that path missed — a branch held at
+# (the queue's own close, recorded on spira-lc), so this is a backstop for what that path missed — a branch held at
 # the moment of landing, a repo:/branch: label that failed to resolve — not the primary
 # reaper. Offset from midnight so it does not compete with the other daily jobs at :00.
 OnCalendar=*-*-* 04:35:00

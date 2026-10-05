@@ -5,7 +5,7 @@
 #   overrides.sh apply [repo]     (re)apply every declared override that still needs it,
 #                                 retiring any whose bead has landed
 #   overrides.sh list             one line per override: name, bead, state
-#   overrides.sh doctor [repo]    problems doctor should surface (failed / stale-closed)
+#   overrides.sh doctor [repo]    problems doctor should surface (failed / stale-certified)
 #
 # WHAT THIS REPLACES. A hand edit to the production checkout — a brief paragraph, a config
 # cap — used to be held by a user systemd timer running specs outside the harness, invisible
@@ -143,7 +143,7 @@ list_all() {
 }
 
 # doctor [repo] — problems doctor should surface: an override that failed to apply or
-# retire, or whose bead has been closed for over a day without landing (spec still active
+# retire, or whose bead has been CERTIFIED for over a day without landing (spec still active
 # means refresh has not seen a `spira: land <BEAD>` commit yet — worth a human look, not a
 # silent wait). One line per problem on stdout; exit 0 with none, 1 otherwise.
 doctor_report() {
@@ -170,23 +170,22 @@ doctor_report() {
             continue
         fi
 
-        local _ov_closed_age
-        _ov_closed_age="$(bdq show "$BEAD" --json 2>/dev/null | python3 -c '
-import json, sys, datetime
+        # Finished but undelivered, read from the lifecycle machine (sp-hyo5e) — never bd's
+        # status, which is inert for a work bead (design §3.4): CERTIFIED for over a day and
+        # still not landed means the delivery is stuck, and the override is outliving it.
+        local _ov_cert_age
+        _ov_cert_age="$(spira-lc show "$BEAD" 2>/dev/null | python3 -c '
+import json, sys, time
 try:
-    d = json.load(sys.stdin)
-    d = d[0] if isinstance(d, list) else d
-    if d.get("status") != "closed":
+    b = (json.load(sys.stdin) or {}).get("bead") or {}
+    if b.get("state") != "CERTIFIED" or b.get("since") in (None, ""):
         sys.exit(0)
-    closed = d.get("closed_at") or ""
-    c = datetime.datetime.fromisoformat(closed.replace("Z", "+00:00"))
-    now = datetime.datetime.now(datetime.timezone.utc)
-    print(int((now - c).total_seconds()))
+    print(int(time.time()) - int(b["since"]))
 except Exception:
     pass
 ' 2>/dev/null)"
-        if [ -n "$_ov_closed_age" ] && [ "$_ov_closed_age" -gt 86400 ] 2>/dev/null; then
-            printf '%s: %s closed %dh ago but not landed\n' "$name" "$BEAD" "$((_ov_closed_age/3600))"
+        if [ -n "$_ov_cert_age" ] && [ "$_ov_cert_age" -gt 86400 ] 2>/dev/null; then
+            printf '%s: %s certified %dh ago but not landed\n' "$name" "$BEAD" "$((_ov_cert_age/3600))"
             problems=1
         fi
     done

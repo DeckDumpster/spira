@@ -29,13 +29,14 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
         let Ok(text) = std::fs::read_to_string(path) else {
             continue;
         };
-        for (idx, line) in text.lines().enumerate() {
+        let code = mask_rust(&text);
+        for (idx, (line, code_line)) in text.lines().zip(code.lines()).enumerate() {
             let line_no = idx + 1;
-            if line.trim_start().starts_with("//") {
+            if code_line.trim().is_empty() {
                 continue;
             }
             for name in LANDSTATE_CALL_NAMES {
-                if is_call(line, name) {
+                if is_call(code_line, name) {
                     findings.push(Finding {
                         class: Class::LandstateCall,
                         file: rel_path.clone(),
@@ -48,7 +49,9 @@ pub fn scan_rust(files: &[PathBuf], root: &Path) -> Vec<Finding> {
                     });
                 }
             }
-            if is_landstate_fs_read(line) {
+            // The path half reads string literals (the ledger's directory is named in one) but
+            // never a comment: `line` with its comments masked, its literals kept.
+            if is_landstate_fs_read(&strip_comment_tail(line, code_line)) {
                 findings.push(Finding {
                     class: Class::LandstatePath,
                     file: rel_path.clone(),
@@ -96,4 +99,174 @@ fn is_word_byte(b: u8) -> bool {
 fn is_landstate_fs_read(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     lower.contains("landstate") && FS_READ_TOKENS.iter().any(|t| lower.contains(t))
+}
+
+/// `text` with every comment and the contents of every string literal blanked to spaces,
+/// line structure kept, so a call is never matched inside prose: `"never landed (gate-red)"`
+/// or `// landed() used to ...` is not a call. Char literals and lifetimes are left alone
+/// (neither can hold a call). Raw strings (`r"…"`, `r#"…"#`) and nested block comments are
+/// handled; a quote inside a string is honoured through its escape.
+pub fn mask_rust(text: &str) -> String {
+    let b = text.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    let blank = |c: u8| if c == b'\n' { b'\n' } else { b' ' };
+    while i < b.len() {
+        let c = b[i];
+        if c == b'/' && b.get(i + 1) == Some(&b'/') {
+            while i < b.len() && b[i] != b'\n' {
+                out.push(b' ');
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'/' && b.get(i + 1) == Some(&b'*') {
+            let mut depth = 0usize;
+            while i < b.len() {
+                if b[i] == b'/' && b.get(i + 1) == Some(&b'*') {
+                    depth += 1;
+                    out.extend_from_slice(b"  ");
+                    i += 2;
+                } else if b[i] == b'*' && b.get(i + 1) == Some(&b'/') {
+                    depth -= 1;
+                    out.extend_from_slice(b"  ");
+                    i += 2;
+                    if depth == 0 {
+                        break;
+                    }
+                } else {
+                    out.push(blank(b[i]));
+                    i += 1;
+                }
+            }
+            continue;
+        }
+        // Raw string: r"…" / r#"…"# / br"…", not part of a longer identifier.
+        if c == b'r' && (i == 0 || !is_word_byte(b[i - 1]) || (b[i - 1] == b'b' && (i < 2 || !is_word_byte(b[i - 2])))) {
+            let mut j = i + 1;
+            while b.get(j) == Some(&b'#') {
+                j += 1;
+            }
+            if b.get(j) == Some(&b'"') {
+                let hashes = j - i - 1;
+                out.extend_from_slice(&b[i..=j]);
+                i = j + 1;
+                while i < b.len() {
+                    if b[i] == b'"' && b.len() >= i + 1 + hashes && b[i + 1..i + 1 + hashes].iter().all(|&h| h == b'#') {
+                        out.extend_from_slice(&b[i..i + 1 + hashes]);
+                        i += 1 + hashes;
+                        break;
+                    }
+                    out.push(blank(b[i]));
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        // A char literal (`'"'`, `'\\''`, `b'x'`, `'é'`) is copied whole, so a quote inside one
+        // never opens a string; a lifetime (`'a`) has no closing quote and falls through.
+        if c == b'\'' {
+            let end = if b.get(i + 1) == Some(&b'\\') {
+                (i + 3..b.len().min(i + 12)).find(|&j| b[j] == b'\'')
+            } else {
+                let w = std::str::from_utf8(&b[i + 1..b.len().min(i + 5)])
+                    .or_else(|e| std::str::from_utf8(&b[i + 1..i + 1 + e.valid_up_to()]))
+                    .ok()
+                    .and_then(|t| t.chars().next())
+                    .map(char::len_utf8);
+                w.filter(|n| b.get(i + 1 + n) == Some(&b'\'')).map(|n| i + 1 + n)
+            };
+            if let Some(end) = end {
+                out.extend_from_slice(&b[i..=end]);
+                i = end + 1;
+                continue;
+            }
+        }
+        if c == b'"' {
+            out.push(b'"');
+            i += 1;
+            while i < b.len() {
+                if b[i] == b'\\' && i + 1 < b.len() {
+                    out.push(b' ');
+                    out.push(blank(b[i + 1]));
+                    i += 2;
+                    continue;
+                }
+                if b[i] == b'"' {
+                    out.push(b'"');
+                    i += 1;
+                    break;
+                }
+                out.push(blank(b[i]));
+                i += 1;
+            }
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// `line` up to where its masked twin `code_line` starts a `//` comment's blanking — i.e.
+/// the original text with a trailing comment cut off, string literals intact.
+fn strip_comment_tail(line: &str, code_line: &str) -> String {
+    // A position where the original has `//` but the masked line has spaces is a comment.
+    let lb = line.as_bytes();
+    let cb = code_line.as_bytes();
+    let mut i = 0;
+    while i + 1 < lb.len() && i + 1 < cb.len() {
+        if lb[i] == b'/' && lb[i + 1] == b'/' && cb[i] == b' ' && cb[i + 1] == b' ' {
+            // Inside a string literal the masked line is also blank; a string's `//` is only
+            // a comment if no quote in the masked prefix is left open.
+            let quotes = cb[..i].iter().filter(|&&q| q == b'"').count();
+            if quotes % 2 == 0 {
+                return line[..i].to_string();
+            }
+        }
+        i += 1;
+    }
+    line.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masking_blanks_comments_and_string_contents_and_keeps_lines() {
+        let src = "let a = landed(x); // landed(y)\nlet s = \"never landed (gate-red)\";\n/* land_mark(z)\n */ f(r#\"landed(\"q\")\"#);\n";
+        let m = mask_rust(src);
+        assert_eq!(m.lines().count(), src.lines().count());
+        let l: Vec<&str> = m.lines().collect();
+        assert!(is_call(l[0], "landed"), "{m}");
+        assert!(!l[0][15..].contains("landed"), "{m}");
+        assert!(!is_call(l[1], "landed"), "{m}");
+        assert!(!is_call(l[2], "land_mark"), "{m}");
+        assert!(!is_call(l[3], "landed"), "{m}");
+        // A quote in a char literal opens no string: the call after it is still seen, and
+        // a lifetime is not a char literal.
+        let m = mask_rust("let q = b'\"'; let e = '\\''; fn f<'a>(x: &'a str) { landed(x); }\nlet s = \"landed(\";\n");
+        let l: Vec<&str> = m.lines().collect();
+        assert!(is_call(l[0], "landed"), "{m}");
+        assert!(!is_call(l[1], "landed"), "{m}");
+    }
+
+    #[test]
+    fn a_string_does_not_make_a_call_and_a_comment_does_not_make_a_read() {
+        let tmp = testkit::TempDir::new("lg-mask");
+        let dir = tmp.path().to_path_buf();
+        let f = dir.join("m.rs");
+        std::fs::write(
+            &f,
+            "fn a() { eprintln!(\"never landed ({c})\"); }\n\
+             fn b() { let _ = std::fs::read_to_string(p); } // the old landstate read\n\
+             fn c() { let _ = std::fs::read_to_string(run.join(\"landstate\")); }\n\
+             fn d() { landing_pass::landstate::land_state(&run, id); }\n",
+        )
+        .unwrap();
+        let found = scan_rust(&[f], &dir);
+        let got: Vec<(usize, &str)> = found.iter().map(|f| (f.line, f.class.as_str())).collect();
+        assert_eq!(got, vec![(3, "landstate-path"), (4, "landstate-call")]);
+    }
 }

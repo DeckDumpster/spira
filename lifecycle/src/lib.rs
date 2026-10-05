@@ -43,6 +43,9 @@ pub enum Refusal {
     /// reply's message id (`law-a-gate-closes-on-the-reply`), never on marker text alone.
     /// `exit` names the event that does lift it.
     AwaitingReply { event: String, exit: String },
+    /// A holder-only event (`renew`) sent by an actor that does not hold the row: a reaped
+    /// aeon's late renewal must never extend the lease its successor now holds.
+    NotHolder { actor: String, holder: Option<String> },
 }
 
 /// The result of applying one event to one row. `row` is the new row when `applied` is

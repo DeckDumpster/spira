@@ -460,7 +460,7 @@ is reimplemented in Rust, §6):
 |---|---|
 | `aeon_count`, `fayth_free` | capacity (systemd unit list / pidfiles) |
 | `spira_event` | `aeon.claimed` |
-| `release_own_claim` | every release (lifecycle Release + bd unassign) |
+| `release_own_claim` | every release: `spira-lc unclaim` (lifecycle Release + bd `unclaim --if-assignee`, sp-hyo5e) |
 | `lc_claim_bead`, `lc_bead_verified` (the eviction-race `hold` is `spira-lc hold`, run directly since sp-arpjt) | lifecycle machine |
 | `park_unmapped` | unmapped repo |
 | `spira_prune_worktrees` | prune-with-repair before cutting a worktree |

@@ -8,12 +8,10 @@ use super::{push, Kv};
 use crate::io;
 use crate::quoting::epoch_to_age;
 use serde_json::Value;
-use spira_claim::READY_ARGS_BASE as READY_ARGS;
 use std::collections::HashSet;
 
-// The one definition of "a bead an aeon can take" (`lib.sh` `READY_ARGS`) now lives in
-// `spira-claim` (wave 4.25, sp-obhv6) — this probe used to keep its own byte-identical
-// copy of the same five tokens, only for the express-lane count below.
+// The one definition of "a bead an aeon can take" lives in `spira-claim`: the express-lane
+// count below asks its `ready-count` rather than keeping a bd ready query of its own.
 
 pub fn queue_keys() -> Kv {
     let mut out = Kv::new();
@@ -92,10 +90,10 @@ pub fn queue_keys() -> Kv {
     }
 
     let express_label = std::env::var("SPIRA_EXPRESS_LABEL").unwrap_or_else(|_| "express".to_string());
-    let mut args: Vec<&str> = READY_ARGS.to_vec();
-    args.push("--label");
-    args.push(&express_label);
-    let enr = io::bd_rows(io::bdjson(&args)).map(|r| r.len()).unwrap_or(0);
+    // spira-claim's count, the one ready set (sp-7g5q6) — not a bd ready query of our own.
+    let enr = io::run_tool("spira-claim", &["ready-count", &express_label], None)
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
     push(&mut out, "SP_EXPRESS_N", enr.to_string());
 
     // --- Active batch ---

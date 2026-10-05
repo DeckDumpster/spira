@@ -20,7 +20,9 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 
 echo "test-skew-refresh.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+. "$HERE/testlib/lc-fixture.sh"
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT
+lcfix_up || { echo "test-skew-refresh: could not build a lifecycle fixture"; exit 1; }
 
 # ── Fixture: a git remote with two commits, REPO left one behind ─────────────────────────
 ORIGIN="$TMP/origin"
@@ -349,7 +351,7 @@ ln -s spira-bootstrap "$LRELEASES/current"   # production runs a release, not a 
 printf '#!/bin/sh\nexit 0\n' > "$TMP/mock-sc"; chmod +x "$TMP/mock-sc"
 
 run_lq() {
-    env -i PATH="$PATH" \
+    env -i $(lcfix_env) PATH="$PATH" \
         HOME="$TMP/home" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$LSH" PATH="$LSH:$PATH" \
@@ -404,11 +406,13 @@ lbins() {   # lbins <head> <content> -> the round's own release build in its wor
 }
 
 LHEAD1="$(lround r1 f1.txt round1)"
+lcfix_seed sp-lskw1 CERTIFIED "$LHEAD1"
 lbins "$LHEAD1" bin1
 lout1="$(run_lq land-local lfixq --head "$LHEAD1" --members "sp-lskw1:$LHEAD1" --worktree "$(lbins_wt "$LHEAD1")")"; lrc1=$?
 is   "land 1: exits 0"                    "0"      "$lrc1"
 want "land 1: activates the round's release" "activated release $LHEAD1" "$lout1"
 is   "land 1: local/main fast-forwards to the round head" "$LHEAD1" "$(git -C "$LREPO" rev-parse local/main)"
+is   "land 1: the lifecycle row is LANDED" LANDED "$(lcfix_state sp-lskw1)"
 
 echo
 echo "queue.local refresh — matched: checks, deploys nothing:"
@@ -419,6 +423,7 @@ want "refresh (matched): nothing to deploy" "nothing to deploy" "$rout1"
 echo
 echo "queue.local refresh — stray write to local/main: alarms, never resets it:"
 LHEAD2="$(lround r2 f2.txt round2)"
+lcfix_seed sp-lskw2 CERTIFIED "$LHEAD2"
 lbins "$LHEAD2" bin2
 lout2="$(run_lq land-local lfixq --head "$LHEAD2" --members "sp-lskw2:$LHEAD2" --worktree "$(lbins_wt "$LHEAD2")")"; lrc2=$?
 is   "land 2: exits 0"                     "0"      "$lrc2"

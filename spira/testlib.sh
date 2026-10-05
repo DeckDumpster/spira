@@ -105,6 +105,18 @@ export SPIRA_SUMMON_JITTER="${SPIRA_SUMMON_JITTER:-0}"
 # This library never touches PATH — which is also why `suite-select` below (wave 4.36,
 # sp-bobsp: suite-covers.sh retired onto `suite-select header ...`) resolves by bare name
 # rather than a path built from this file's own location.
+# THE STAGED RELEASE CARRIES model-bin/ (sp-jq4wq). An enforced aeon refuses to start the
+# model in a release with no executable model-bin/work (sp-zf4q3). testenv's stage script is
+# compiled into the INSTALLED testenv, and one older than sp-zf4q3 stages no model-bin/, so
+# every aeon session in a suite was refused. The tree's own spira-config makes it with the
+# release builder's helper, idempotent and safe for a batch's suites to race; only a testenv
+# staged release (/tmp/spira-release-*) is ever touched, and only when model-bin/ is absent.
+case "${SPIRA_RELEASE:-}" in
+    /tmp/spira-release-*)
+        [ -e "$SPIRA_RELEASE/model-bin" ] || [ ! -x "$SPIRA_RELEASE/bin/spira-config" ] \
+            || "$SPIRA_RELEASE/bin/spira-config" link-model-bin "$SPIRA_RELEASE" >/dev/null || true
+        ;;
+esac
 _TL_TIER="$(suite-select header tier "${BASH_SOURCE[1]:-$0}")"
 _TL_UC="$(suite-select header uc "${BASH_SOURCE[1]:-$0}")"
 
@@ -299,6 +311,34 @@ STUB
     chmod +x "$LC_FIX/spira-lc"
     SPIRA_LC_BIN="$LC_FIX/spira-lc"
 }
+# A spira-lc for landing-pass suites, installed by name into <bindir> (already first on the
+# suite's PATH) so the pass's lifecycle probe answers. `list` reads rows like lc_fix_init's;
+# every verb is logged to <fixdir>/calls.log, and `touch <fixdir>/refuse` makes writes exit 3.
+lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
+    local bindir="${1:?lc_path_stub needs a bin dir}" fix="${2:?lc_path_stub needs a fixture dir}"
+    LC_FIX="$fix"; mkdir -p "$bindir" "$fix/bead" "$fix/delivery" "$fix/show"; : > "$fix/calls.log"
+    # The two verbs that never touch the lifecycle machine's rows through this stub's
+    # fixture — close-on-land (bd close + reap, sp-2c1n0) and content-landed (git only) —
+    # go to the real spira-lc, the first one on PATH that is not this stub.
+    local real="" c
+    while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
+    cat > "$bindir/spira-lc" <<STUB
+#!/usr/bin/env bash
+LC_FIX="$fix"
+printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
+case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
+join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
+case "\$1" in
+    list)
+        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; else join "\$LC_FIX/bead/\${3:-}"/*; fi ;;
+    show) [ -f "\$LC_FIX/show/\$2" ] && cat "\$LC_FIX/show/\$2" || exit 1 ;;
+    *) [ -f "\$LC_FIX/refuse" ] && exit 3; exit 0 ;;
+esac
+STUB
+    chmod +x "$bindir/spira-lc"
+}
+# lc_called <fixdir> <verb> <bead> — did the pass send <verb> for <bead>?
+lc_called() { grep -q "^$2 $3\b" "$1/calls.log" 2>/dev/null; }
 lc_bead() {      # lc_bead <STATE> <id> <tip> <since>
     mkdir -p "$LC_FIX/bead/$1"
     printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"

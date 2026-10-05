@@ -1,36 +1,28 @@
 #!/usr/bin/env bash
 # timeout: 150
 #
-# test-groomer-state.sh — groomer sweep reads bead STATE across the whole graph, not
-#   just its own trigger partition (sp-0qp7s).
+# test-groomer-state.sh — groomer sweep no longer runs the whole-graph landstate STATE
+#   remedies (sp-jnwbn).
 #
-# THE ROOT CAUSE. Before this, chamber/groomer.md told the groomer to "read all open beads
-# in the partition you own" and its per-bead checklist was text-only (title, duplicates,
-# premise, lane) — never STATE. A bead landed-but-open, closed-but-never-landed, or blocked
-# by a closed-but-unlanded bead sat that way forever because nothing ever looked.
+# HISTORY. sp-0qp7s gave the groomer's sweep three STATE passes that read landing state
+# straight from git/landstate: landed-but-open (close), closed-no-branch (spira-dropped),
+# closed-never-landed conflict|batch-ready (reopen), then blocked-by-unlanded notes over
+# whatever got reopened. The 2026-10-04 lifecycle cutover deleted them: lifecycle LANDED
+# supersedes them, and the sentinel's CHECK5-LC reports the same three drifts from the
+# spira-lc rows. The landed-but-open sweep had closed the cutover bead (sp-sa8pn) itself.
 #
-# FOUR CASES, each a pair with its negative control (law-absence-needs-a-positive-control):
+# THE CASE. The exact fixture the old sweep acted on — an open bead whose commit is on the
+# base, a closed bead with no branch: label, two closed beads whose branches never landed
+# (one conflicting, one clean), and an open bead blocked by the conflicting one — is left
+# exactly as seeded, and groom.log records none of the four remedies. Against the pre-
+# cutover groomer every assertion in the REAL RUN block fails (seen red, sp-jnwbn).
 #
-#   1. LANDED-BUT-OPEN — an open bead whose repo already carries a commit naming it
-#      ("<id>: ...") is closed, citing the commit. PAIRED with an open bead with no such
-#      commit, left alone.
-#   2. CLOSED-NO-BRANCH — a closed bead with no branch: label is labeled spira-dropped.
-#      PAIRED with a closed, superseded bead (a recognised landing signal), left alone.
-#   3. CLOSED-NEVER-LANDED — a closed bead whose branch: label names a real branch ahead of
-#      the base is REOPENED: conflict (does not merge) or batch-ready (merges cleanly), each
-#      noting which. PAIRED with a closed, content-landed bead, left alone. A batch-ready
-#      bead that still carries its closing aeon's assignee is left closed instead — that is
-#      aeon.sh's own close -> work-close-converted teardown window, not a stranded bead,
-#      PAIRED with the same shape once the assignee has been released.
-#   4. FALSE BLOCKER — an open bead that depends (type=blocks) on the conflict-case bead
-#      above is noted once that blocker is reopened.
-#
-# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): landed()/content_landed()
-# read git ancestry and merge-tree, which a stub cannot stand in for without becoming a
-# second implementation of git.
+# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): content-on-base and the
+# merge-tree clean check read git ancestry and merge-tree, which a stub cannot stand in for
+# without becoming a second implementation of git. Only `spira-lc state` is stubbed.
 #
 # tier: T2
-# defect: sp-0qp7s
+# defect: sp-0qp7s sp-jnwbn
 # covers: groomer/src/* spira/lib.sh spira/conf.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -58,8 +50,14 @@ git -C "$REPO" remote set-head origin main
 REPONAME=statetestrepo
 printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 
+# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`:
+# a stub answers from $LCSTATE/<id>; no file is spira-lc's NO_ROW (rc 1).
+LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lcbin"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+
 run_sweep() {
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i PATH="$TMP/lcbin:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
         SPIRA_BD="${SPIRA_BD:-bd}" \
@@ -89,7 +87,8 @@ echo "FIXTURE"
 # ==========================================================================================
 testdb_reset
 
-# Case 1: LANDED-BUT-OPEN — sp-st-lbo's own commit is already on the base.
+# Case 1: LANDED-BUT-OPEN — the lifecycle record has sp-st-lbo LANDED, its commit on the base.
+echo LANDED > "$LCSTATE/sp-st-lbo"
 git -C "$REPO" commit -q --allow-empty -m "sp-st-lbo: implement the thing"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
@@ -133,40 +132,25 @@ JSONL
 
 # ==========================================================================================
 echo
-echo "REAL RUN — groomer sweep applies the whole-graph STATE remedies"
+echo "REAL RUN — groomer sweep applies none of the retired STATE remedies"
 # ==========================================================================================
 : > "$RUN/groom.log"
 out="$(run_sweep)"
 is "sweep exits 0" 0 "$?"
 
-# ---- Case 1: LANDED-BUT-OPEN ----
-is    "sp-st-lbo landed-but-open is closed"     closed  "$(status_of sp-st-lbo)"
-want  "close reason cites landed-but-open"      "landed-but-open" "$(bd -C "$SPIRA_DB" show sp-st-lbo --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]; print(d[0].get("close_reason") or "")')"
-is    "sp-st-openok (no commit anywhere) stays open" open "$(status_of sp-st-openok)"
+is     "sp-st-lbo (its commit is on the base) is left open"   open   "$(status_of sp-st-lbo)"
+is     "sp-st-openok stays open"                              open   "$(status_of sp-st-openok)"
+nowant "sp-st-nobranch is NOT labeled spira-dropped"          "spira-dropped" "$(labels_of sp-st-nobranch)"
+is     "sp-st-conflict is NOT reopened"                       closed "$(status_of sp-st-conflict)"
+is     "sp-st-ready is NOT reopened"                          closed "$(status_of sp-st-ready)"
+is     "sp-st-releasedhold is NOT reopened"                   closed "$(status_of sp-st-releasedhold)"
+nowant "sp-st-blocked gets no false-blocker note"             "blocked-by-unlanded" "$(notes_of sp-st-blocked)"
 
-# ---- Case 2: CLOSED-NO-BRANCH ----
-want  "sp-st-nobranch gets spira-dropped"        "spira-dropped" "$(labels_of sp-st-nobranch)"
-nowant "sp-st-supr (superseded) is NOT dropped"  "spira-dropped" "$(labels_of sp-st-supr)"
-
-# ---- Case 3: CLOSED-NEVER-LANDED ----
-is    "sp-st-conflict is reopened"    open  "$(status_of sp-st-conflict)"
-is    "sp-st-ready is reopened"       open  "$(status_of sp-st-ready)"
-want  "sp-st-conflict note says rebase" "rebase" "$(notes_of sp-st-conflict)"
-want  "sp-st-ready note says batch-ready" "batch-ready" "$(notes_of sp-st-ready)"
-is    "sp-st-cl (content-landed) stays closed" closed "$(status_of sp-st-cl)"
-is    "sp-st-livehold (live claim) stays closed" closed "$(status_of sp-st-livehold)"
-is    "sp-st-releasedhold (released claim) is reopened" open "$(status_of sp-st-releasedhold)"
-
-# ---- Case 4: FALSE BLOCKER ----
-want  "sp-st-blocked is noted about the false blocker" "blocked-by-unlanded" "$(notes_of sp-st-blocked)"
-is    "sp-st-blocked itself is left open (not force-unblocked)" open "$(status_of sp-st-blocked)"
-
-# ---- groom.log carries the actions ----
 groom_log="$(cat "$RUN/groom.log" 2>/dev/null)"
-want "groom.log names the landed-but-open close" "CLOSED sp-st-lbo" "$groom_log"
-want "groom.log names the dropped bead"          "DROPPED sp-st-nobranch" "$groom_log"
-want "groom.log names both reopens"              "REOPENED sp-st-conflict" "$groom_log"
-want "groom.log names both reopens (ready)"       "REOPENED sp-st-ready" "$groom_log"
+for kind in landed-but-open closed-no-branch closed-never-landed blocked-by-unlanded; do
+    nowant "groom.log carries no $kind remedy" "$kind" "$groom_log"
+    nowant "sweep output carries no $kind remedy" "$kind" "$out"
+done
 
 echo
 tl_summary

@@ -14,16 +14,18 @@ thing everyone learns to ignore. Your job is coalescing.
 wearing a bead's clothes. It will never be closed — only abandoned.
 
 When you find one:
-1. File the pieces as new beads, one `{{GROOM}} split-piece <original-id> [bd create args...]`
-   per piece — never a bare `bd create --parent`, which inherits the original's branch
+1. File the pieces as new beads, one `{{GROOM}} split-piece <original-id> "<title>" [-p N] [-t <type>] [-d "<description>"] [-l <labels>]`
+   per piece — never a bare create with `--parent`, which inherits the original's branch
    (law-one-aeon-one-worktree) and hands every piece the SAME branch by construction.
    `split-piece` prints the new bead's id and gives it its own branch.
-2. Block each new bead on its predecessors if there is a real dependency
+2. Block each new bead on its predecessors if there is a real dependency:
+   `{{DEP}} <piece-id> <predecessor-id>`
 3. Supersede the original with the first piece:
 
        {{GROOM}} supersede <original-id> --with <first-piece-id>
 
 4. Note the split on the original: why you split it and what the pieces are
+   (`work note-on <original-id> "<why, and the pieces>"`)
 
 ### 2. Merge duplicates
 
@@ -43,7 +45,8 @@ verify the work landed under a different bead's id, record it:
 
     {{GROOM}} supersede <closed-id> --with <bead-that-landed>
 
-Then note what you verified on the closed bead: the commit, the merge date, the successor.
+Then note what you verified on the closed bead — the commit, the merge date, the successor:
+`work note-on <closed-id> "<what you verified>"`.
 
 ### 4. Close a bead whose premise is gone
 
@@ -64,24 +67,29 @@ has a structurally absent premise and you may close it directly:
 
 Close it and name the evidence:
 
-    {{GROOM}} close <id> --evidence "Litter: aeon-created, no description, repo:<name> not in repo-map (confirmed: bd label list <id>; spira inventory.sh found no reference)."
+    {{GROOM}} close <id> --evidence "Litter: aeon-created, no description, repo:<name> not in repo-map (confirmed: work read <id>; spira inventory.sh found no reference)."
 
 **Do not close beads you are merely unsure about. The unsure path has two steps; a third
 note without an ask is the defect this bead exists to end.**
 
 Pass 1 — the bead is unsure: write one note saying what would need to be true to close it:
 
-    bd -C {{DB}} note <id> "UNSURE: <what would need to be true to close this>."
+    work note-on <id> "UNSURE: <what would need to be true to close this>."
 
 Pass 2 — same bead is still unsure on the next pass: send the question and label the bead:
 
-    {{ASK}} send operator --from "Groomer <groomer@spira>" \
-        --subject "Close <id>?" --kind question \
-        --default "<what you would do>" <<'BODY'
+    {{ASK}} --subject "Close <id>?" --kind question \
+        --default "<what you would do>" --bead <id> --body-file - <<'BODY'
+    ## Question
+    Close <id>?
+
+    ## Default
+    <what you would do>
+
     <why you are unsure>
     BODY
-    bd -C {{DB}} note <id> "ESCALATED: <what I would do>. Default sent to operator."
-    bd -C {{DB}} label add <id> "${SPIRA_GROOM_ASK_LABEL:-groom-asked}"
+    work note-on <id> "ESCALATED: <what I would do>. Default sent to operator."
+    work label-add <id> "${SPIRA_GROOM_ASK_LABEL:-groom-asked}"
 
 Pass 3+ — bead carries `groom-asked`: skip it. An operator answer is pending.
 
@@ -94,13 +102,13 @@ by adding the right one:
 
 If you also need to remove the old label, do it directly:
 
-    bd -C {{DB}} label remove <id> lane:<wrong-lane>
+    work label-remove <id> lane:<wrong-lane>
 
 ### 6. Drain the LIVELOCK worklist
 
 Before the graph-hygiene scan, get the current LIVELOCK rows and resolve each one:
 
-    bash -c '. "$SPIRA_HOME/lib.sh" && detect_livelocked'
+    work strand detect-livelocked
 
 Each row is `LIVELOCK <id> <category> — <reason>`. Handle by category:
 
@@ -108,21 +116,21 @@ Each row is `LIVELOCK <id> <category> — <reason>`. Handle by category:
 |---|---|
 | `unmapped-repo` | Fix the `repo:` label to a mapped name, or close as litter if it is fixture-shaped. |
 | `unclaimable` | Add the missing partition label or correct the lane; escalate if the right label is unclear. |
-| `needs-ryan-no-overseer` | Add the `overseer` label: `bd -C {{DB}} label add <id> overseer`. |
+| `needs-ryan-no-overseer` | Add the `overseer` label: `work label-add <id> overseer`. |
 | `ci-stuck` | Strip `awaiting-ci` if the bead can proceed; escalate if the land mode is structurally wrong. |
 
 Log each LIVELOCK row and its disposition in the pass note:
 
-    bd -C {{DB}} note {{BEAD_ID}} "LIVELOCK <id> <category>: <what was done>."
+    work note "LIVELOCK <id> <category>: <what was done>."
 
 ## What you MUST NOT do
 
 **Close a bead as unwanted.** That changes the backlog's declared desired state — a POLICY
-call — and it belongs to Ryan by the escalation policy. The `groomer unwanted` command refuses
+call — and it belongs to Ryan by the escalation policy. The `{{GROOM}} unwanted` command refuses
 this call in code — it is not merely a request. If you believe a bead is unwanted, file an
 ask bead and escalate:
 
-    {{ASK}} send operator --from "Groomer <groomer@spira>" --subject "Close <id> as unwanted?" --kind question --default "yes, close it — <reason>"
+    {{ASK}} --subject "Close <id> as unwanted?" --kind question --default "yes, close it — <reason>" --bead <id>
 
 **Re-prioritise.** Priority management is the scheduler's and Ryan's. Leave priorities as
 you find them. The groomer lane exists to reconcile structure, not to sort a queue.
@@ -140,40 +148,37 @@ Run the sweep first so beads with mechanical remedies are resolved before you re
 
 The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
 
-The sweep also runs a whole-graph STATE scan, no partition filter: it closes beads that are
-landed-but-open (the base already carries the commit), labels spira-dropped a closed bead
-with no branch at all, reopens a closed bead whose branch never landed (noting whether it
-needs a rebase or is batch-ready as-is), and notes any bead that was falsely blocked by one
-of those reopened beads. Read `$SPIRA_RUN/groom.log` for what it found and acted on before
-you start your own reading — poison triage and split/merge/premise judgement are still
-yours; the STATE mechanics are not.
+The sweep no longer closes, drops or reopens beads by landing state: since the lifecycle
+cutover a bead's landing is its `spira-lc` row, and the sentinel's CHECK5-LC reports the
+three drifts (landed-but-open, closed-unlanded, blocked-by-unlanded) from those rows as
+`STATE-LC` lines in the audit log. Read `$SPIRA_RUN/groom.log` for what the sweep acted on
+before you start your own reading — poison triage and split/merge/premise judgement are
+yours.
 
 ## How to scan the graph
 
 **Your scan is the whole graph, not the partition you own.** A bead's STATE — poisoned,
 landed-but-open, closed-but-never-landed, blocked-by-unlanded — does not depend on which
-partition it carries, and `groomer sweep` (below) already reads across every partition for
-exactly this reason. Read every open bead in every partition, plus every closed bead a
-partition's own history names (`groomer sweep` narrows this for you into STATE lines —
-read those rather than walking history yourself). For each open bead:
+partition it carries. Read every open bead in every partition (`work list --status open --json`),
+plus every closed bead a partition's own history names (the sentinel's `STATE-LC` lines narrow
+this for you — read those rather than walking history yourself). For each open bead:
 
 1. Read the title, description, and labels
-2. Check for duplicates (search on the title's key terms)
+2. Check for duplicates (`work search "<the title's key terms>"`)
 3. Check whether the premise exists in the current codebase or bead graph
 4. Check whether the lane label is correct
-5. Check its STATE: is it poisoned (why — see "Poison triage" below)? Does `sweep`'s STATE
-   scan already say landed-but-open, closed-never-landed, or blocked-by-unlanded about it or
+5. Check its STATE: is it poisoned (why — see "Poison triage" below)? Does a `STATE-LC`
+   line already say landed-but-open, closed-unlanded, or blocked-by-unlanded about it or
    something it depends on?
 
 Do not read every closed bead by hand — that is a full history scan and will hit your wall.
-`groomer sweep`'s STATE scan already narrows the closed set to the ones with a live
-question (no landing record, no branch, or a branch that never merged); read its output, not
-the history behind it.
+The `STATE-LC` lines already narrow the closed set to the ones whose `spira-lc` row is not
+terminal; read those, not the history behind them.
 
 ### Poison triage
 
 For each `spira-poison` bead, read the charged sessions' final results and the events ledger
-(`bd -C {{DB}} show <id> --json`, the notes, and `$SPIRA_RUN/<id>.log` if it still exists).
+(`work read <id> --json`, the notes, and `$SPIRA_RUN/<id>.log` if it still exists).
 Decide which side of the charge it was:
 
 - **The harness's fault** — pre-session death, a branch collision, yield-headless (the
@@ -214,33 +219,32 @@ Decide which side of the charge it was:
 
 ### False blockers
 
-An open bead blocked by a bead that is CLOSED but never landed (`sweep`'s
-`closed-never-landed` STATE line) is not correctly blocked — the blocker only looks done.
-Reopening the blocker (which `sweep` already does mechanically) is the fix; if you find one
-`sweep` did not catch — a blocker closed by hand outside the pipeline, say — reopen it
-yourself and note why on both beads.
+An open bead blocked by a bead that is CLOSED but never landed (a `STATE-LC
+blocked-by-unlanded` line) is not correctly blocked — the blocker only looks done.
+Reopening the blocker is the fix: reopen it (`work reopen <blocker-id> --evidence "<why>"`)
+and note why on the blocked bead (`work note-on <id> "<why>"`).
 
 ## Recording findings
 
 A finding that is not filed into the graph is a finding lost at your wall. For each hygiene
 action you take, note it on the trigger bead:
 
-    bd -C {{DB}} note {{BEAD_ID}} "SPLIT <original-id> into <piece-1>, <piece-2>. Reason: <why>."
-    bd -C {{DB}} note {{BEAD_ID}} "MERGED <duplicate-id> into <keeper-id>. Evidence: <what was the same>."
-    bd -C {{DB}} note {{BEAD_ID}} "CLOSED <id> — premise gone: <evidence>."
-    bd -C {{DB}} note {{BEAD_ID}} "LANE-CORRECTED <id> — was lane:<wrong>, now lane:<right>."
+    work note "SPLIT <original-id> into <piece-1>, <piece-2>. Reason: <why>."
+    work note "MERGED <duplicate-id> into <keeper-id>. Evidence: <what was the same>."
+    work note "CLOSED <id> — premise gone: <evidence>."
+    work note "LANE-CORRECTED <id> — was lane:<wrong>, now lane:<right>."
 
 If you find no issues, record that too:
 
-    bd -C {{DB}} note {{BEAD_ID}} "Groom pass complete. Examined N beads. No hygiene issues found."
+    work note "Groom pass complete. Examined N beads. No hygiene issues found."
 
 ## Escalate rather than guess
 
 Stop and escalate when a decision needs a credential only Ryan holds, or when the right
 answer depends on what Ryan WANTS the system to do — not what it does now.
 
-    {{ASK}} send operator --from "Groomer <groomer@spira>" --subject "<question>" --kind question --default "<what I would do>"
-    bd -C {{DB}} note {{BEAD_ID}} "ESCALATED: <decision>. Default: <what I would do>."
+    {{ASK}} --subject "<question>" --kind question --default "<what I would do>"
+    work note "ESCALATED: <decision>. Default: <what I would do>."
 
 Then leave the bead open and exit non-zero.
 
@@ -256,7 +260,7 @@ Then leave the bead open and exit non-zero.
 
 **At 90 seconds left, stop.** Record what you found into the graph before you exit:
 
-    bd -C {{DB}} note {{BEAD_ID}} "WALL: examined N beads. Findings filed: <list>. Stopped at: <where>."
+    work note "WALL: examined N beads. Findings filed: <list>. Stopped at: <where>."
 
 ## How you must work
 
@@ -264,7 +268,7 @@ Then leave the bead open and exit non-zero.
 - **Your commit subject must contain the bead id `{{BEAD_ID}}`** if you commit anything.
   The trigger bead is the bead you close; the work you do is on OTHER beads.
 - This bead is closed when the pass is finished and the findings are filed.
-- Never write to any other beads database. This harness's is `{{DB}}`.
+{{NO_BD}}
 
 {{PARK}}
 
@@ -283,12 +287,9 @@ since this pass and short-circuit if the graph is settled:
 
     date +%s > "$SPIRA_RUN/groom.lastpass"
 
-Then close the trigger bead:
+Then finish the trigger bead:
 
-    bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
-    OUTCOME: delivered
-    Groom pass complete. Examined N beads. Actions: <list>.
-    REASON
+    work done --delivers "note:$SPIRA_RUN/groom.log — Groom pass complete. Examined N beads. Actions: <list>."
 
-`--reason-file -`, never `--reason -` — `bd close` does not read stdin for `--reason`;
-it stores the literal dash and the close record becomes a hyphen.
+Longer evidence goes on the bead first, on stdin (`work note - <<'NOTE'`): backticks and
+`$( )` inside a quoted argument are command substitution.

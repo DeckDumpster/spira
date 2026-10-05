@@ -308,10 +308,7 @@ d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(d.get("status"))' 2>/dev/null)"
 is "aeon.sh claimed and finished the started epic's reworked child, not the unrelated P0 head" \
     "open" "$e1_status"
-case ",$e1_labels," in
-    *",spira-submitted,"*) ok "sp-e1-rework: carrying the submitted label (its work was done)" ;;
-    *) bad "sp-e1-rework: carrying the submitted label (its work was done)" "labels=[$e1_labels]" ;;
-esac
+want "sp-e1-rework: carrying the submitted label (its work was done)" ",spira-submitted," ",$e1_labels,"
 is "the unrelated P0 bead was left alone, still ready and unclaimed" "open" "$unrelated_status"
 want "the log names the epic-first rank as the reason" "epic-first rank" "$(cat "$TMP/aeon-out")"
 

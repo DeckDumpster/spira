@@ -9,7 +9,8 @@
 #
 #   - lc_claim_bead (lib.sh) moves a READY row to WORKING (Claim), and refuses a row that is
 #     not claimable — the sp-zw9ot fixture: a bead already IN_DELIVERY is refused, unchanged.
-#   - lc_claim_bead clears a dead holder's stale WORKING row (HolderDead) before claiming it.
+#   - lc_claim_bead never takes over a WORKING row (sp-860zj): the row is the claim, and a
+#     holder is cleared only by the stale-lease reaper's HolderDead, never by a claimant.
 #   - lc_release_bead (release_own_claim's own lifecycle half) returns a WORKING row to READY,
 #     and is a harmless no-op past WORKING (SUBMITTED and beyond refuse Release, by design).
 #   - End to end through the real aeon.sh: a claimed bead reads WORKING right up until the
@@ -18,8 +19,8 @@
 #   - Stacked dependents (design stacked-dependents-2026-09-28 §1, sp-s9675.2): a bead
 #     blocked only on a CERTIFIED-but-not-LANDED prerequisite is invisible to bd's own
 #     `ready` (bd has no concept of CERTIFIED, so an open blocker hides it) but is claimed
-#     end to end through aeon's widened `MACHINE_READY_ARGS` + `spira-claim select
-#     --blockers machine` path once `lifecycle_enforce` is on.
+#     end to end through aeon's ready set — the machine's READY rows, `spira-claim
+#     fayth-ready --json` — once `lifecycle_enforce` is on.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as
 # test-lifecycle-container.sh / test-work-container.sh; testenv-batch.sh already provides
@@ -191,15 +192,14 @@ want "sp-zw9ot fixture: late submit did not advance the version" '"version":"1"'
 
 # ===========================================================================
 echo
-echo "lc_claim_bead: a dead holder's stale WORKING row is cleared (HolderDead) then claimed:"
+echo "lc_claim_bead: a WORKING row is refused, never taken over (sp-860zj):"
 # ===========================================================================
-seed_bead "sp-lcdead" WORKING "aeon-dead" 1
-lc_claim_bead "sp-lcdead" "aeon-t2" 999999999
-is "claim over a dead holder: applied (exit 0)" "0" "$?"
-_dead="$(row_json sp-lcdead)"
-want "claim over a dead holder: row is WORKING under the new holder" '"state":"WORKING"' "$_dead"
-want "claim over a dead holder: holder is the new claimant" '"holder":"aeon-t2"' "$_dead"
-want "claim over a dead holder: two transitions applied (HolderDead then Claim)" '"version":"2"' "$_dead"
+seed_bead "sp-lcheld" WORKING "aeon-live" 999999999
+lc_claim_bead "sp-lcheld" "aeon-t2" 999999999
+is "claim over a live holder: refused (exit 3)" "3" "$?"
+_held="$(row_json sp-lcheld)"
+want "claim over a live holder: the holder keeps it" '"holder":"aeon-live"' "$_held"
+want "claim over a live holder: no transition applied" '"version":"0"' "$_held"
 
 # ===========================================================================
 echo
@@ -313,7 +313,7 @@ nowant "bd's own status never reads closed — there is no bd close to reinterpr
 # ===========================================================================
 echo
 echo "Stacked dependents (sp-s9675.2): a dependent blocked only on a CERTIFIED-not-LANDED"
-echo "prerequisite is invisible to bd ready, but claimable through the widened path:"
+echo "prerequisite is invisible to bd ready, but claimable through the machine's ready set:"
 # ===========================================================================
 # SPIRA_LIFECYCLE_ENFORCE is already 1 (set above, for $BID's own restricted-path run).
 
@@ -340,9 +340,10 @@ wantrc "dep add wires the dependent's blocks edge onto the prerequisite" 0 $?
 
 # The prerequisite is CERTIFIED in the lifecycle machine but bd never closes it — bd's own
 # ready/blocker semantics know only open/closed, so it stays a real, open blocker in bd's
-# eyes even once the lifecycle machine has moved past it. Giving it an assignee takes it out
-# of -u/--no-assignee's own candidate set, isolating this scenario to the dependent's claim.
-bd -C "$SPIRA_DB" update "$PREREQ" --status in_progress --assignee aeon-other-actor >/dev/null 2>&1
+# eyes even once the lifecycle machine has moved past it. Its bd assignee is content the
+# claim never reads. Its held bd row is fixture state, declared as data (sp-voip5), not a
+# bd update --status.
+testdb_restate "$PREREQ" in_progress aeon-other-actor
 seed_bead "$PREREQ" CERTIFIED
 seed_bead "$DEP" READY
 
@@ -352,12 +353,13 @@ seed_bead "$DEP" READY
 ready_ids=" $(bdq "${READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
 nowant "bd ready hides the dependent behind its bd-open, CERTIFIED blocker" " $DEP " "$ready_ids"
 
-wide_ids=" $(bdq "${MACHINE_READY_ARGS[@]}" --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
-want "MACHINE_READY_ARGS (bd list, no blocker filter) carries the dependent through" " $DEP " "$wide_ids"
+set_ids=" $(_spira_claim fayth-ready builder --json 2>/dev/null | bead_id_lines | tr '\n' ' ') "
+want "the aeon's ready set (the machine's READY rows) carries the dependent" " $DEP " "$set_ids"
+nowant "the aeon's ready set leaves out the CERTIFIED prerequisite bd shows in_progress" " $PREREQ " "$set_ids"
 
 aeon --home "$SPIRA_HOME" builder >"$TMP/aeon-stack.log" 2>&1
 is "aeon.sh: exits 0 claiming the stacked dependent" "0" "$?"
-is "the dependent, not the prerequisite, was claimed (widened ready + --blockers machine)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
+is "the dependent, not the prerequisite, was claimed (the machine's ready set)" "$DEP" "$(cat "$TMP/last-bead" 2>/dev/null)"
 is "the dependent's own session ran work submit to completion" "0" "$(cat "$TMP/work-submit-rc" 2>/dev/null || echo missing)"
 
 want "the dependent's machine row reads SUBMITTED: it was claimed, then work submit applied" \

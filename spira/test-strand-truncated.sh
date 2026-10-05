@@ -171,7 +171,6 @@ out="$(env -i \
     SPIRA_BD="$TMP/mock-bd" \
     SPIRA_FAYTHS="alpha beta" \
     SPIRA_SKIP_RECLAIM=1 \
-    SPIRA_SKIP_CLOSED_CHECK=1 \
     SPIRA_SENTINEL_PASS_BUDGET_SECS=0 \
     SPIRA_LAND_STALE=999999 \
     SPIRA_SYSTEMCTL="$TMP/stubs2/mock-systemctl" \

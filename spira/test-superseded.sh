@@ -41,6 +41,7 @@ git -C "$REPO" remote add origin "$REMOTE"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin
 mkdir -p "$RUN/worktree" "$SH"
+lc_path_stub "$SH" "$TMP/lcfix"
 
 cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/incident.sh" \
    "$HERE/suite-covers.sh" "$SH/"
@@ -156,7 +157,7 @@ drop_branch sp-pln
 # THE SENDING REAPS THE SUPERSEDED BRANCH.
 #
 # sp-sup's branch is still there after landing (landing skipped it; nothing landed it).
-# Sending should reap it because it is superseded, even though content_landed is false.
+# Sending should reap it because it is superseded, even though spira-lc content-landed is false.
 # --------------------------------------------------------------------------------------
 git -C "$REPO" fetch -q origin
 out="$(sending)"
@@ -250,10 +251,10 @@ drop_branch sp-drysup
 
 # --------------------------------------------------------------------------------------
 # SUPERSEDED ANCESTOR BRANCH (sp-bf31a). A superseded branch with zero commits ahead of
-# the base (is-ancestor) was kept forever before the content_landed fix. With the fix,
-# content_landed returns 0 for ancestor branches, so the Sending reaches the content-
+# the base (is-ancestor) was kept forever before the spira-lc content-landed fix. With the fix,
+# spira-lc content-landed returns 0 for ancestor branches, so the Sending reaches the content-
 # landed path and reaps the branch via SENT (not REAPED — the superseded block is not
-# entered when content_landed returns 0).
+# entered when spira-lc content-landed returns 0).
 # --------------------------------------------------------------------------------------
 seed
 git -C "$REPO" fetch -q origin

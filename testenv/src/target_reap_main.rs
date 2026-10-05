@@ -1,5 +1,5 @@
 //! target-reap [--dry-run] [--worktrees DIR] — remove the target/ of every worktree whose
-//! branch has truly landed (sp-z61hj, then sp-x9kbg twice over; testenv::reap,
+//! bead the lifecycle record has LANDED (sp-z61hj, sp-x9kbg, sp-2c1n0; testenv::reap,
 //! testenv::landed, testenv::busy, spira-config/DESIGN-build-cache.md §2.4).
 //!
 //! Reads SPIRA_RUN (worktrees default to $SPIRA_RUN/worktree). `landing-pass` spawns this
@@ -69,8 +69,12 @@ fn main() -> ExitCode {
         );
         return ExitCode::from(2);
     };
-    let reg = spira_config::repos::Registry::from_env(env, &home);
-    let landed_fn = |id: &str, wt: &Path| landed::landed(&reg, wt, id);
+    // Landed-ness is the lifecycle record's (sp-2c1n0): `spira-lc state <id>` = LANDED,
+    // spira-lc found beside this harness's own release first (census's own rule), or
+    // SPIRA_LC_BIN (a suite's pin).
+    let lc_bin = var("SPIRA_LC_BIN").unwrap_or_else(|| "spira-lc".to_string());
+    let path_env = spira_config::release_env::child_path_env(home.parent(), env.get("PATH").map(String::as_str));
+    let landed_fn = |id: &str, _wt: &Path| landed::lc_landed(&lc_bin, &path_env, id);
     let busy_fn = |wt: &Path| busy::worktree_busy(wt);
 
     let doc = spira_config::discover(None).and_then(|p| spira_config::load(&p).ok());

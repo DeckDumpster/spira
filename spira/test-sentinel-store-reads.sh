@@ -97,8 +97,10 @@ is   "3a POSITIVE CONTROL: no snapshot — bulk_ready_by_fayth asks bd once" "1"
 
 reset_calls
 READY_SNAP="$TMP/ready-snapshot.json"
-_snap_ready_args=(); while IFS= read -r _a; do _snap_ready_args+=("$_a"); done < <(ready_raw_args)
-bdjson "${_snap_ready_args[@]}" > "$READY_SNAP" 2>/dev/null
+# ready_raw_args's first word is always `ready`: spelled here, so the verb is the call's own
+# (lifecycle-guard resolves no run-time-filled array, sp-hyo5e).
+_snap_ready_args=(); while IFS= read -r _a; do _snap_ready_args+=("$_a"); done < <(ready_raw_args | tail -n +2)
+bdjson ready "${_snap_ready_args[@]}" > "$READY_SNAP" 2>/dev/null
 reset_calls
 out_snap="$(SPIRA_READY_SNAPSHOT="$READY_SNAP" bulk_ready_by_fayth 2>/dev/null)"
 calls_snap="$(n_calls)"
@@ -179,8 +181,10 @@ printf 'CERTIFIED abc %s\n' "$(date +%s)" > "$SPIRA_RUN/landstate/sp-blocker"
 rm -f "$SPIRA_RUN/landstate/sp-mq1" "$SPIRA_RUN/landstate/sp-mq2" "$SPIRA_RUN/landstate/sp-mq3" \
       "$SPIRA_RUN/landstate/sp-mq4" "$SPIRA_RUN/landstate/sp-mq5"
 
-_snap_ready_args=(); while IFS= read -r _a; do _snap_ready_args+=("$_a"); done < <(ready_raw_args)
-bdjson "${_snap_ready_args[@]}" > "$READY_SNAP" 2>/dev/null
+# ready_raw_args's first word is always `ready`: spelled here, so the verb is the call's own
+# (lifecycle-guard resolves no run-time-filled array, sp-hyo5e).
+_snap_ready_args=(); while IFS= read -r _a; do _snap_ready_args+=("$_a"); done < <(ready_raw_args | tail -n +2)
+bdjson ready "${_snap_ready_args[@]}" > "$READY_SNAP" 2>/dev/null
 SPIRA_READY_SNAPSHOT="$READY_SNAP" mark_queue_waiters 2>/dev/null
 labels_of() {
     bdjson show "$1" 2>/dev/null | python3 -c '

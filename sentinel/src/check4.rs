@@ -7,7 +7,7 @@ use std::path::Path;
 
 use crate::host::{Io, Spec};
 use crate::lifecycle::{hold_event, unhold_event};
-use crate::model::{Bead, LandState};
+use crate::model::Bead;
 use crate::pass::Sentinel;
 use crate::render::{bead_context, causes};
 use crate::seams;
@@ -453,32 +453,10 @@ impl<'a> Sentinel<'a> {
         self.seam("event", seams::EVENT, Some(b), Io::Null, Io::Null, false);
     }
 
-    /// lib.sh `landed <id> <repo>`: a base subject that lands it, never a mention.
-    pub fn landed(&self, id: &str, repo: &str, refs: &[String]) -> bool {
-        if refs.is_empty() {
-            return false;
-        }
-        let mut a = vec!["log", "--format=%s", "--grep", id, "-F"];
-        a.extend(refs.iter().map(String::as_str));
-        let o = self.git(repo, &a);
-        o.stdout.lines().any(|s| {
-            s == format!("spira: land {id}")
-                || s.starts_with(&format!("spira: land {id} "))
-                || s.starts_with(&format!("{id}:"))
-        })
-    }
-
-    /// The landstate LANDED tip is an ancestor of the base.
-    pub fn landed_by_ancestry(&self, id: &str, repo: &str, base: &str) -> bool {
-        let Ok(t) = std::fs::read_to_string(self.cfg.run.join("landstate").join(id)) else {
-            return false;
-        };
-        match LandState::parse(&t).landed_tip() {
-            Some(tip) if !base.is_empty() => self
-                .git(repo, &["merge-base", "--is-ancestor", tip, base])
-                .ok(),
-            _ => false,
-        }
+    /// The lifecycle machine records the bead LANDED.
+    pub fn lc_landed(&self, id: &str) -> bool {
+        self.lc_rows()
+            .is_some_and(|rows| rows.iter().any(|r| r.bead_id == id && r.state == "LANDED"))
     }
 
     /// The requeue cap for closed-but-unlanded beads: dispatchable_open drops them.
@@ -506,24 +484,10 @@ impl<'a> Sentinel<'a> {
                 continue;
             }
             let r_name = self.repo_of(labels);
-            let r_path = self.repo_root(&r_name);
-            if let Some(p) = &r_path {
-                let refs = self
-                    .ctx
-                    .repo(&r_name)
-                    .map(|r| r.landrefs.clone())
-                    .unwrap_or_default();
-                if self.landed(id, p, &refs) {
-                    self.log(&format!(
-                        "CHECK4-closed {id}: reopens={rq} but already landed — no escalation"
-                    ));
-                    continue;
-                }
-                let base = self.repo_base(&r_name).unwrap_or_default();
-                if self.landed_by_ancestry(id, p, &base) {
-                    self.log(&format!("CHECK4-closed {id}: landed by ancestry (landstate tip on {r_name}) — no escalation"));
-                    continue;
-                }
+            // Landed-ness is the lifecycle record's alone (sp-2c1n0): no commit-subject search.
+            if self.lc_landed(id) {
+                self.log(&format!("CHECK4-closed {id}: lifecycle records LANDED — no escalation"));
+                continue;
             }
             let causes = causes(labels, "requeue");
             let subj = format!("Spira bead {id} — completed and requeued {rq} times, never landed ({causes}) — the harness cannot land it");

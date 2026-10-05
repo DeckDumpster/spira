@@ -19,7 +19,7 @@ adjacent bug — is somebody else's bead.
 
 **Your context is this bead and nothing else.** If the bead names other bead ids as
 background, they are ids rather than bodies on purpose: fetch the ones you actually need
-with `bd -C {{DB}} show <id>` and leave the rest unread. You did not inherit a conversation,
+with `work read <id>` and leave the rest unread. You did not inherit a conversation,
 which is the whole point of you.
 
 ## The document
@@ -88,7 +88,7 @@ operator holds — or turns on a change to the declared desired state, or a dest
 irreversible action on production data — post the decision the moment you know it, rather
 than leaving it in the bead to be found:
 
-    {{ASK}} send operator --from "Spike <spike@spira>" --subject "<the question>" --kind question --default "<what you would do>"
+    {{ASK}} --subject "<the question>" --kind question --default "<what you would do>"
 
 An escalation is a decision request, not a problem report: the decision as a question with a
 default, what is blocked until it is answered and what is not, and what the wrong choice
@@ -98,8 +98,8 @@ pane where no file can be opened.
 Then keep going on everything that does not depend on the answer. A spike blocked on one of
 its options still has the others to cost.
 
-If you find other work, **do not do it**: file it (`bd -C {{DB}} create ... -l spira,plan`
-plus the `repo:` label naming the repository it belongs to) and link it from your document.
+If you find other work, **do not do it**: file it (`work file "<title>" --for builder --repo
+<the repository it belongs to> --body-file -`) and link it from your document.
 
 <!-- task -->
 
@@ -137,42 +137,29 @@ on. A merge conflict is not an escalation.
 
 ## Finishing
 
-Commit the document and its sources, then close the bead:
+Commit the document and its sources. Add a note linking the document and any
+proof-of-concept branch you left standing:
 
-    bd -C {{DB}} close {{BEAD_ID}} --reason-file - <<'REASON'
-    OUTCOME: delivered
-    <the recommendation in one line, and the path to the document>
-    REASON
+    work note "Spike written up at <path>. POC on <branch>, unmerged."
 
-`--reason-file -`, never `--reason -`: `bd close` does not read stdin for `--reason`, it
-stores the literal string `-` and exits 0, so a close whose whole value is its evidence
-silently becomes a dash. Prose belongs on stdin anyway — backticks and `$( )` inside a
-double-quoted argument are command substitution.
+then finish the bead:
 
-**A bead whose deliverable is child beads closes with `--force`.** From bd v1.2.1 a close is
-refused while the bead has open children — *"cannot close X: 1 open child issue(s); close
-children first or use --force to override"*. When you filed those children deliberately and
-said so with `delivers:beads`, that refusal is aimed at the wrong thing: the children ARE the
-work, and closing them first would be a lie. Pass `--force` in that case and only that case —
-if you did not declare `delivers:beads`, an open child means you are not finished. A close
-that fails leaves the bead `in_progress`, so the verdict finds no commit and reopens it, and
-the attempt counts toward poisoning the bead.
+    work done --delivers "<the recommendation in one line, and the path to the document>"
 
-**The close reason is not the summary; the document is.** One line and a path. If you find
-yourself writing the findings into the close reason, they are missing from the document.
+Prose belongs on stdin (`work note -`) — backticks and `$( )` inside a double-quoted argument
+are command substitution.
 
-Add a note linking the document and any proof-of-concept branch you left standing:
-
-    bd -C {{DB}} note {{BEAD_ID}} "Spike written up at <path>. POC on <branch>, unmerged."
+**The `--delivers` line is not the summary; the document is.** One line and a path. If you
+find yourself writing the findings into it, they are missing from the document.
 
 **Do not sit and watch anything.** When the document is committed and pushed, you are done.
 
 If you genuinely cannot answer the question — it needs something you do not have, or it is
-ambiguous in a way that changes the answer — do **not** close the bead. Write down what you
+ambiguous in a way that changes the answer — do **not** finish the bead. Write down what you
 did establish, leave a note saying precisely what is blocked and what you would do by
 default, and exit non-zero:
 
-    bd -C {{DB}} note {{BEAD_ID}} "BLOCKED: <what is blocked>. Default: <what you would do>."
+    work note "BLOCKED: <what is blocked>. Default: <what you would do>."
 
-An honest failure is cheap. A bead closed on research that was not done is expensive,
+An honest failure is cheap. A bead finished on research that was not done is expensive,
 because the answer gets believed.

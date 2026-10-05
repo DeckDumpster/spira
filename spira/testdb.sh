@@ -6,6 +6,7 @@
 #   testdb_up fayth               # creates the database, exports SPIRA_DB
 #   trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 #   testdb_seed <<'JSONL' ... JSONL
+#   testdb_restate sp-x closed    # one existing row's status (and assignee) re-declared as data
 #   testdb_reset                  # back to empty, in ~6ms (embedded) or ~2s (server)
 #
 # WHY NOT A STUB. `.claude/spira/testbin/bd` modelled 16 of bd's 118 subcommands, and its
@@ -308,6 +309,47 @@ testdb_seed() {          # testdb_seed  < JSONL on stdin
     local rc=$?
     rm -f "$f"
     return $rc
+}
+
+# testdb_restate <id> <status> [<assignee>] — re-declare one EXISTING row with a new status
+# (and, when given, assignee; "" clears it) as FIXTURE STATE: the row as `bd show` has it, the
+# status swapped, upserted through testdb_seed. For a row made by the flow under test (bd
+# create, bead.sh file), whose fields a suite does not spell itself. A suite never drives
+# bd's lifecycle verbs (close/update --status/claim/...) around the lifecycle machine to set
+# a fixture up (sp-voip5, lifecycle-guard); this is the data it would otherwise have written.
+testdb_restate() {
+    local _row
+    _row="$(timeout 5 "${SPIRA_BD:-$TESTDB_BD}" -C "$SPIRA_DB" show "$1" --json 2>/dev/null)" \
+        || { echo "testdb_restate: bd show $1 failed" >&2; return 1; }
+    _row="$(printf '%s' "$_row" | python3 -c '
+import json, sys, datetime
+lines = sys.stdin.read().splitlines()
+at = next((i for i, l in enumerate(lines) if l[:1] in ("[", "{")), None)
+if at is None:
+    sys.exit("testdb_restate: no JSON from bd show " + sys.argv[1])
+d = json.loads("\n".join(lines[at:]))
+d = d[0] if isinstance(d, list) else d
+bid, status = sys.argv[1], sys.argv[2]
+# A second ahead: the import is an upsert that keeps a row whose updated_at is not older than
+# the incoming one, and a row the flow under test made this same second would win the tie.
+now = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+keep = ("id", "title", "description", "design", "acceptance_criteria", "notes", "issue_type",
+        "priority", "labels", "assignee", "created_at", "external_ref")
+row = {k: d[k] for k in keep if d.get(k) not in (None, "")}
+row["id"], row["status"], row["updated_at"] = bid, status, now
+if len(sys.argv) > 3:
+    if sys.argv[3]:
+        row["assignee"] = sys.argv[3]
+    else:
+        row.pop("assignee", None)
+if status == "closed":
+    row["closed_at"] = now
+deps = [{"issue_id": bid, "depends_on_id": x["id"], "type": x.get("dependency_type") or x.get("type") or "blocks"}
+        for x in (d.get("dependencies") or []) if isinstance(x, dict) and x.get("id")]
+if deps:
+    row["dependencies"] = deps
+print(json.dumps(row))' "$@")" || return 1
+    printf '%s\n' "$_row" | testdb_seed || { echo "testdb_restate: import failed for $1" >&2; return 1; }
 }
 
 # Borrowers remove only their own private copy; shared dirs belong to the owner.

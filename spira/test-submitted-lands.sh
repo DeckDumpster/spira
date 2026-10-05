@@ -2,9 +2,9 @@
 #
 # test-submitted-lands.sh — a work bead's close becomes open + spira-submitted (sp-qsona), and
 #   in a NON-QUEUE repository that submitted bead must still land and close: aeon close ->
-#   submitted -> landing pass lands it -> bead_close_on_land closes it.
+#   submitted -> landing pass lands it -> spira-lc close-on-land closes it.
 #
-# THE DEFECT THIS REPRODUCES. sp-qsona made bead_close_on_land the only thing that closes a
+# THE DEFECT THIS REPRODUCES. sp-qsona made spira-lc close-on-land the only thing that closes a
 # work bead, called when the work reaches the base. Queue mode reaches it through the batch
 # verdict. Every other mode reaches the base through landing.sh's CHECK 6 (push merges it,
 # pr opens a pull request, hold gates it) — and CHECK 6 skipped, refused to certify and
@@ -68,6 +68,7 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$
 stub confine.sh 'exit 0'
 stub mail    'exit 0'
 stub gh         'exit 1'
+lc_path_stub "$SPIRA_HOME" "$TMP/lcfix"
 gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
 gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }
 gate_pass

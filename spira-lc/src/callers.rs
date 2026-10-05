@@ -74,6 +74,7 @@ pub const VERBS: &[&str] = &[
     "deliver",
     "certify",
     "resubmit",
+    "renew",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -241,6 +242,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
+        "renew" => renew(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
 }
@@ -405,7 +407,7 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         // own ancestry: a squash merge rewrites every SHA the branch carried.
         "pr-merged" if args.len() >= 5 => {
             let (repo, id, br, sha) = (a(1), a(2), a(3), a(4));
-            let proof = if content_landed(std::path::Path::new(&repo), &br, &sha) { "merge-tree" } else { "gh-merged" };
+            let proof = if crate::git_evidence::content_on_base(std::path::Path::new(&repo), &br, &sha) { "merge-tree" } else { "gh-merged" };
             (id, "PR_OPEN", DeliveryEventKind::Delivered { merge_sha: sha, proof: proof.into() })
         }
         "pr-closed" if args.len() >= 2 => (a(1), "PR_OPEN", DeliveryEventKind::Returned { reason: ReturnedReason::PrClosedUnmerged }),
@@ -470,30 +472,6 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         stdout.push_str(&log_line(&format!("lc: {id} delivery event refused or unreachable ({actor}, exit {rc})")));
     }
     Answer::out(rc, stdout)
-}
-
-/// lib.sh `content_landed`: 0 when <base> already holds every change <branch> makes —
-/// an ancestor, or a branch whose three-way merge into the base is the base's own tree.
-pub fn content_landed(repo: &std::path::Path, br: &str, base: &str) -> bool {
-    let git = |args: &[&str]| -> Option<String> {
-        let o = std::process::Command::new("git").arg("-C").arg(repo).args(args).stderr(std::process::Stdio::null()).output().ok()?;
-        o.status.success().then(|| String::from_utf8_lossy(&o.stdout).into_owned())
-    };
-    let Some(ahead) = git(&["rev-list", "--count", &format!("{base}..{br}")]).and_then(|s| s.trim().parse::<u64>().ok()) else {
-        return false;
-    };
-    if git(&["merge-base", "--is-ancestor", br, base]).is_some() {
-        return true;
-    }
-    if ahead == 0 {
-        return false;
-    }
-    let Some(merged) = git(&["merge-tree", "--write-tree", base, br]) else { return false };
-    let merged = merged.lines().next().unwrap_or("").to_string();
-    if merged.is_empty() {
-        return false;
-    }
-    git(&["rev-parse", &format!("{base}^{{tree}}")]).map(|t| t.trim() == merged).unwrap_or(false)
 }
 
 // ---- certification onto events (lifecycle-cert.sh) -----------------------------------
@@ -580,6 +558,120 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
         return Answer::cert(APPLIED, "applied", format!("resubmit tip={tip}"));
     }
     Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
+}
+
+/// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The
+/// Claim sets `lease_until` once; without this the stale-lease reaper clears every session
+/// that outlives lease + reclaim_grace. Like `unclaim`, it acts only on a row WORKING under
+/// `holder`, and sends the event AS the holder, so the machine's own holder check (a
+/// `NotHolder` refusal) backs this read: a reaped aeon's late renewal can never extend the
+/// lease of the aeon the bead was handed to. A holder that stops renewing still expires.
+///
+/// Exit: 0 renewed · 1 not this holder's WORKING row (held by another, past WORKING, no row)
+/// · 2 cannot tell, or usage · 3 refused (a race, or a deadline that does not advance).
+fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(holder), Some(until)) = (
+        args.first().filter(|s| !s.is_empty()),
+        args.get(1).filter(|s| !s.is_empty()),
+        args.get(2).and_then(|s| s.parse::<i64>().ok()),
+    ) else {
+        return usage("renew <bead-id> <holder> <lease-until-epoch>");
+    };
+    let not_held = |why: String| Answer { code: NO_ROW, stderr: format!("spira-lc renew: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(NO_ROW) => return not_held("no lifecycle row".into()),
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version, cur) = (bead_field(&v, "state"), bead_field(&v, "version"), bead_field(&v, "holder"));
+    if state != "WORKING" {
+        return not_held(format!("{state}, not WORKING — no lease to renew"));
+    }
+    if cur != *holder {
+        return not_held(format!("held by {cur:?}, not {holder}"));
+    }
+    let kind = serde_json::to_string(&BeadEventKind::Renew { lease_until: until }).unwrap_or_default();
+    match event(m, "bead", id, &state, &version, holder, &kind) {
+        (APPLIED, _) => Answer::code(APPLIED),
+        (rc, out) => Answer { code: rc, stderr: format!("spira-lc renew: {id}: {}\n", out.trim()), ..Default::default() },
+    }
+}
+
+/// The bd half a verb needs: the switch-off claim mutex and an epic's own close. Behind a
+/// trait so the compositions below are unit-testable without bd.
+pub trait Bd {
+    /// `bd unclaim <id> --if-assignee <actor>` — Ok when the claim was released.
+    fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String>;
+    /// The bead's bd `issue_type` (`task`, `epic`, ...).
+    fn issue_type(&mut self, id: &str) -> Result<String, String>;
+    /// `bd close <id> --reason <reason>`.
+    fn close(&mut self, id: &str, reason: &str) -> Result<(), String>;
+}
+
+/// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
+/// `release_own_claim`).
+///
+/// Switch on, the lifecycle row IS the claim and the only record touched: a row WORKING
+/// under `actor` gets `Release`; a row WORKING under anyone else is refused, because a sweep
+/// that reaped this aeon may already have handed the bead on; a row past WORKING means the
+/// claim is already over. bd is not written — nothing reads its assignee. Switch off, bd's
+/// claim is the claim, released with its own compare-and-swap (`--if-assignee`).
+///
+/// Exit: 0 released, or nothing held · 1 not this actor's claim, or no such bead · 2 cannot
+/// tell, or usage.
+pub fn unclaim(args: &[String], enforce: bool, m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
+    let (Some(id), Some(actor)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) else {
+        return usage("unclaim <bead-id> <actor>");
+    };
+    if !enforce {
+        return match bd.unclaim(id, actor) {
+            Ok(()) => Answer::code(APPLIED),
+            Err(e) => Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: bd kept the claim on {id}: {}\n", e.trim()), ..Default::default() },
+        };
+    }
+    let refuse = |why: String| Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(NO_ROW) => return refuse("no lifecycle row".into()),
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version, holder) = (bead_field(&v, "state"), bead_field(&v, "version"), bead_field(&v, "holder"));
+    if state != "WORKING" {
+        return Answer::code(APPLIED);
+    }
+    if holder != *actor {
+        return refuse(format!("held by {holder:?}, not {actor}"));
+    }
+    match event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&BeadEventKind::Release).unwrap_or_default()).0 {
+        APPLIED => Answer::code(APPLIED),
+        REFUSED => refuse("the release lost a race with another writer".into()),
+        rc => Answer::code(rc),
+    }
+}
+
+/// `close-epic <id> <reason>` — close an EPIC bead in bd (pilgrimage.sh's completion close,
+/// sp-hyo5e). An epic is a grouping, never a lifecycle bead: it is excluded from every claim
+/// (`--exclude-type epic`), so it has no READY..LANDED path and bd's open/closed is its only
+/// state. This verb is the one door for that close, and it refuses anything that is not an
+/// epic — a work bead's end is the machine's `done`/delivery, never a bd close.
+///
+/// Exit: 0 closed · 2 cannot tell (bd unreadable, or the close failed) · 3 refused (not an epic).
+pub fn close_epic(args: &[String], bd: &mut dyn Bd) -> Answer {
+    let (Some(id), Some(reason)) = (args.first().filter(|s| !s.is_empty()), args.get(1)) else {
+        return usage("close-epic <bead-id> <reason>");
+    };
+    match bd.issue_type(id) {
+        Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: cannot read {id}: {}\n", e.trim()), ..Default::default() },
+        Ok(t) if t != "epic" => Answer {
+            code: REFUSED,
+            stderr: format!("spira-lc close-epic: {id} is a {t}, not an epic — a work bead ends through the lifecycle machine, never a bd close\n"),
+            ..Default::default()
+        },
+        Ok(_) => match bd.close(id, reason) {
+            Ok(()) => Answer::code(APPLIED),
+            Err(e) => Answer { code: CANNOT_TELL, stderr: format!("spira-lc close-epic: bd close {id} failed: {}\n", e.trim()), ..Default::default() },
+        },
+    }
 }
 
 #[cfg(test)]

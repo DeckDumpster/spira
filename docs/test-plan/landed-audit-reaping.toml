@@ -6,15 +6,30 @@ id = "UC-landed-audit-reaping-01"
 tier = "T2"
 statement = "`landed <id> <repo>` and CHECK 5's cached walk find a commit naming the bead anywhere in the base's full history. There is no depth window, and a match in the body counts as well as one in the subject."
 
+[use_case.uncovered]
+reason = "the commit-subject landed oracle (the landing pass's `landed` subcommand, CHECK 5's cached walk) has no caller left: census, strand, drift, pilgrimage and round-duty read the lifecycle record's LANDED state (`spira-lc state`) instead, and the suites that drove the oracle (test-landed-search.sh, test-land-commit-contract.sh, test-landed-reap.sh, test-dependents.sh) were deleted with their callers; sp-2c1n0 deletes the subcommand itself"
+date = "2026-10-04"
+bead = "sp-oqf8c"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-02"
 tier = "T2"
 statement = "The search matches the bead id as a whole token. `sp-a9g` must not be satisfied by a commit naming `sp-a9gk`."
 
+[use_case.uncovered]
+reason = "the commit-subject landed oracle (the landing pass's `landed` subcommand, CHECK 5's cached walk) has no caller left: census, strand, drift, pilgrimage and round-duty read the lifecycle record's LANDED state (`spira-lc state`) instead, and the suites that drove the oracle (test-landed-search.sh, test-land-commit-contract.sh, test-landed-reap.sh, test-dependents.sh) were deleted with their callers; sp-2c1n0 deletes the subcommand itself"
+date = "2026-10-04"
+bead = "sp-oqf8c"
+
 [[use_case]]
 id = "UC-landed-audit-reaping-03"
 tier = "T1"
 statement = "When the land refs are unresolvable, the answer is \"cannot tell\": `landed` returns rc 2 and CHECK 5 logs \"not judging\". Neither may reopen."
+
+[use_case.uncovered]
+reason = "the commit-subject landed oracle (the landing pass's `landed` subcommand, CHECK 5's cached walk) has no caller left: census, strand, drift, pilgrimage and round-duty read the lifecycle record's LANDED state (`spira-lc state`) instead, and the suites that drove the oracle (test-landed-search.sh, test-land-commit-contract.sh, test-landed-reap.sh, test-dependents.sh) were deleted with their callers; sp-2c1n0 deletes the subcommand itself"
+date = "2026-10-04"
+bead = "sp-oqf8c"
 
 [[use_case]]
 id = "UC-landed-audit-reaping-04"

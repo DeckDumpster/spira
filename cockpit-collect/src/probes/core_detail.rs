@@ -59,7 +59,10 @@ fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
         if !queue_wait.is_empty() {
             excl = format!("{excl},{queue_wait}");
         }
-        let raw = io::bdjson(&["ready", "--limit", "0", "--exclude-type", "epic,event", "-u", "--label", labels, "--exclude-label", &excl]);
+        // The one ready set (sp-7g5q6): spira-claim's, which under lifecycle_enforce is the
+        // machine's READY/REWORK rows — never bd's own `ready`, whose status and assignee
+        // nobody claims by any more.
+        let raw = io::run_tool("spira-claim", &["ready-count", labels, &excl, "--json"], None);
         match io::bd_rows(raw) {
             None => refused = true,
             Some(part_rows) => {
@@ -455,20 +458,5 @@ mod tests {
             }
         }
         assert_eq!(defect, 2);
-    }
-
-    #[test]
-    fn landed_subject_recognises_land_and_colon_forms() {
-        let subjects = vec!["spira: land sp-abc \u{2014} title here".to_string(), "sp-xyz: some other commit".to_string()];
-        let lines: Vec<&str> = subjects.iter().flat_map(|s| s.lines()).collect();
-        let landed = |id: &str| {
-            lines.iter().any(|s| {
-                let s = s.trim();
-                s == format!("spira: land {id}") || s.starts_with(&format!("spira: land {id} ")) || s.starts_with(&format!("{id}: "))
-            })
-        };
-        assert!(landed("sp-abc"));
-        assert!(landed("sp-xyz"));
-        assert!(!landed("sp-none"));
     }
 }

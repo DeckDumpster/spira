@@ -187,7 +187,6 @@ fn e2e_three_members_one_breaks_a_fast_suite() {
         round_vm: stub,
         queue_bin: root.join("queue"),
         rebase_stale_bin: root.join("rebase-stale"),
-        landing_pass_bin: root.join("landing-pass"),
         round_slots: Some(4),
         poll_secs: 1,
         maxpar: 2,

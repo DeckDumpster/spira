@@ -11,7 +11,7 @@ pub fn is_suite_name(s: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
 }
 
-/// A suite list as the `.ejected` sidecar, an EJECTED landstate row and
+/// A suite list as the `$SPIRA_RUN/ejected/<id>` sidecar and
 /// `SPIRA_GATE_EJECTED_SUITES` write it: comma or whitespace separated. Words in order,
 /// each once, empties dropped. Names are not validated here; see [`is_suite_name`].
 pub fn split_list(list: &str) -> Vec<String> {

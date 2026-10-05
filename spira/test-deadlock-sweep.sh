@@ -122,11 +122,14 @@ seed() {   # seed <id>
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
     printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' "$1" "$_lbl" | testdb_seed
 }
-cycle() {   # cycle <id> <n> — create n status_changed(in_progress) events via bd update
-    local id="$1" n="$2" i=0
+# cycle <id> <n> — n status_changed(in_progress) events, seeded as SQL rows the way
+# test-poison.sh's seedn does: the attempt count is the subject, never driven by bd's status
+# verbs around the lifecycle machine (sp-voip5).
+cycle() {
+    local id="$1" n="$2" i=0 uuid
     while [ "$i" -lt "$n" ]; do
-        bd -C "$SPIRA_DB" update "$id" --status in_progress >/dev/null 2>&1
-        bd -C "$SPIRA_DB" update "$id" --status open >/dev/null 2>&1
+        uuid="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+        bd -C "$SPIRA_DB" sql "INSERT INTO events (id, issue_id, event_type, actor, new_value, created_at) VALUES ('$uuid', '$id', 'status_changed', 'harness', '{\"status\":\"in_progress\"}', NOW())" >/dev/null 2>&1
         i=$((i+1))
     done
 }

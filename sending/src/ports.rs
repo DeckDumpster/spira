@@ -17,7 +17,8 @@ pub struct Repo {
     pub queued: bool,
 }
 
-/// A repository's land ref, the refs `landed()` reads, and the base's own remote.
+/// A repository's land ref, its land refs (the base plus any local landing ref), and the
+/// base's own remote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Base {
     pub landref: String,
@@ -50,7 +51,7 @@ pub trait World {
     fn bead(&self, id: &str) -> Option<Value>;
     /// The mid-send recheck and the verified deletion (spira_reap_landed_branch).
     fn send(&self, id: &str, br: &str, repo: &Path, why: &str, caller: &str) -> Sent;
-    /// bead_close_on_land.
+    /// `spira-lc close-on-land`.
     fn close_on_land(&self, id: &str, sha: &str);
     /// spira_destroy_worktree; true when removed (or nothing to remove).
     fn destroy_worktree(&self, id: &str, w: &Path, repo: &Path, why: &str) -> bool;
@@ -58,6 +59,9 @@ pub trait World {
     fn prune(&self, repo: &Path);
     /// `bdq label add <id> <label>`.
     fn label_add(&self, id: &str, label: &str);
+    /// `spira-lc state <id>` reads LANDED: the lifecycle record says the bead landed. An
+    /// unreadable record or a missing row is not LANDED (cannot prove it landed).
+    fn lc_landed(&self, id: &str) -> bool;
     /// `spira-lc content-on-base <id> <proof> sending` (the machine reads its own switch).
     fn content_on_base(&self, id: &str, proof: &str);
     /// The merged PR's head for `br`, if a PR for it is MERGED (`gh pr view`).

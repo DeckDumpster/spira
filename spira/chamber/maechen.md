@@ -10,7 +10,7 @@ or not you found anything.
 Before the five-step census pass, check whether the trigger bead carries closed-record
 rows. Parse them from the bead description:
 
-    bd -C "{{DB}}" show "{{BEAD_ID}}" 2>/dev/null | grep -E '^(INVALID-CLOSED|UNFILED-FOLLOW) '
+    work show 2>/dev/null | grep -E '^(INVALID-CLOSED|UNFILED-FOLLOW) '
 
 If no rows are present, proceed directly to Step 1. If rows are present, handle each one
 before proceeding.
@@ -19,22 +19,21 @@ before proceeding.
 
 Read the close reason of each flagged bead:
 
-    bd -C "{{DB}}" show <id> 2>/dev/null | grep -i 'close_reason\|reason'
+    work read <id> 2>/dev/null | grep -i 'close_reason\|reason'
 
 Make a judgment — **admission or quotation**:
 
 - **Admission**: the statute phrase genuinely says the work is unfinished (the bead was
   closed with a remainder still pending). Reopen and note the evidence:
 
-      bd -C "{{DB}}" reopen <id>
-      bd -C "{{DB}}" note <id> "<detector line quoted verbatim. The sentence that admits unfinished work, quoted. What remains.>"
+      work reopen <id> --evidence "<detector line quoted verbatim. The sentence that admits unfinished work, quoted. What remains.>"
       printf '%s maechen: closed-record: REOPENED %s — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<id>" "<summary>" >> "{{RUN}}/maechen.log"
 
 - **Quotation or false positive**: the phrase appears because the bead's work *discussed*
   the rule — it quoted a statute phrase as an example or enumerated flag names, not as
   an admission. Add to the allowlist and note the reason on the bead:
 
-      bd -C "{{DB}}" note <id> "<why this is a false positive: the phrase appears in the context of X, not as an admission of unfinished work>"
+      work note-on <id> "<why this is a false positive: the phrase appears in the context of X, not as an admission of unfinished work>"
       printf '%s %s\n' "<id>" "<one-line reason, e.g. quotation: close reason names the flag list, not a remainder>" >> "{{RUN}}/invalid-closed.allow"
       printf '%s maechen: closed-record: ALLOWED %s — quotation\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<id>" >> "{{RUN}}/maechen.log"
 
@@ -47,21 +46,20 @@ should be filed.
 reference. File the follow-up, then add the original bead to the allowlist citing it so
 the UNFILED-FOLLOW row clears on the next detector pass:
 
-    new_id="$(bd -C "{{DB}}" create "<follow-up title>" \
-        --type task --priority 3 \
-        -l "{{SCOPE}}plan,repo:{{HOME_REPO}}" \
-        --description - <<'DESC'
+    new_id="$(work file "<follow-up title>" \
+        --for builder --repo {{HOME_REPO}} --priority 3 \
+        --body-file - <<'DESC'
     ref: <closed-bead-id>
     <what the follow-up is and why it was implied by the close reason>
     DESC
-    | grep -oE '[a-z0-9]+-[a-z0-9]+')"
+    )"
     printf '%s follow-up filed as %s\n' "<closed-id>" "$new_id" >> "{{RUN}}/invalid-closed.allow"
     printf '%s maechen: closed-record: FILED %s for %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$new_id" "<closed-id>" >> "{{RUN}}/maechen.log"
 
 **If no follow-up is warranted** — the phrase was incidental and the work is genuinely
 complete. Add to the allowlist and note the reason:
 
-    bd -C "{{DB}}" note <id> "<why no follow-up is needed>"
+    work note-on <id> "<why no follow-up is needed>"
     printf '%s %s\n' "<id>" "no follow-up needed — <reason>" >> "{{RUN}}/invalid-closed.allow"
     printf '%s maechen: closed-record: FILED none for %s — %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "<id>" "<reason>" >> "{{RUN}}/maechen.log"
 
@@ -90,7 +88,7 @@ sibling pass that may have advanced it while this pass was running:
 
 Aggregate failure events and rank by **since-watermark count** with open-remedy suppression:
 
-    census --with-suppressed
+    work census --with-suppressed
     census_rc=$?
 
 Capture `census_rc` before reading the output — it decides whether the watermark advances
@@ -175,15 +173,14 @@ properties. A bead missing any one is refused by the admissibility check (sp-ymw
    measurement (sp-vt0nj item 7) knows what to watch.
 
 File with `{{REMEDY_LABEL}}` and a machine-readable `covers:<class>` label
-alongside the partition labels. The `covers:` label is what `census` reads to determine
-suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red`):
+alongside the partition labels (`--for builder` gives it those). The `covers:` label is what
+`census` reads to determine suppression — it must be the exact class key (e.g.,
+`covers:sp-recur-suite-red`):
 
     cls="sp-recur-suite-red"   # replace with the actual class from census output
-    bd -C "{{DB}}" create "<failure class: one-line title>" \
-        --type task --priority 2 \
-        -l "{{SCOPE}}plan,repo:{{HOME_REPO}}" \
-        -l "{{REMEDY_LABEL}},covers:$cls" \
-        --description - <<'DESC'
+    id="$(work file "<failure class: one-line title>" \
+        --for builder --repo {{HOME_REPO}} --priority 2 \
+        --body-file - <<'DESC'
     Class: <label, e.g. sp-requeue-N-prod-dirty>
     Count: <N> occurrences
     Location: <file:line or unit/bead id>
@@ -195,6 +192,9 @@ suppression — it must be the exact class key (e.g., `covers:sp-recur-suite-red
       Done when: <what done looks like>
       Positive control: <command that would report the class present if unfixed>
     DESC
+    )"
+    work label-add "$id" {{REMEDY_LABEL}}
+    work label-add "$id" "covers:$cls"
 
 ### Step 5 — Record the pass
 
@@ -260,7 +260,7 @@ Name the counts. An entry missing counts is indistinguishable from a pass that w
   in the pass log.
 - Work only this pass. If you discover other anomalies, file them as separate beads — do
   not chase them. Your job is one class per pass, thoroughly diagnosed.
-- Never write to any other beads database. This harness's is `"{{DB}}"`.
+{{NO_BD}}
 - **Maechen proposes; it does not build.** A retrospective that writes the fix also decides
   whether the fix is worth its runtime. File the bead with the remedy stated and the evidence
   attached; a builder executes it.
@@ -275,7 +275,7 @@ Stop and escalate when:
 
 An escalation is a decision request: the question, a default, and what is blocked.
 
-    {{ASK}} send operator --from "Maechen <maechen@spira>" --subject "<question>" --kind question --default "<what I would do>"
+    {{ASK}} --subject "<question>" --kind question --default "<what I would do>"
 
 Then write the closing log entry (Step 5) and exit non-zero.
 
@@ -283,22 +283,19 @@ Then write the closing log entry (Step 5) and exit non-zero.
 
 ## Your trigger bead
 
-You are summoned by a trigger bead (`{{BEAD_ID}}`). Claim it; close it when the pass is
+You are summoned by a trigger bead (`{{BEAD_ID}}`). Claim it; finish it when the pass is
 complete. The trigger bead carries `delivers:note:{{RUN}}/maechen.log` — the closing
 log entry you write in Step 5 is what the sentinel verifies. If the log is absent or was
 not written in this session, the bead is reopened and the pass is re-run.
 
 ## Finishing
 
-After writing the closing log entry (Step 5), close the trigger bead:
+After writing the closing log entry (Step 5), finish the trigger bead:
 
-    bd -C "{{DB}}" close "{{BEAD_ID}}" --reason-file - <<'REASON'
-    OUTCOME: delivered
-    Maechen pass complete. Census: N classes ranked. Threshold met: yes|no. Beads cut: N.
-    REASON
+    work done --delivers "note:{{RUN}}/maechen.log — Maechen pass complete. Census: N classes ranked. Threshold met: yes|no. Beads cut: N."
 
-`--reason-file -`, never `--reason -` — `bd close` does not read stdin for `--reason`;
-it stores the literal dash.
+Longer evidence goes on the bead first, on stdin (`work note - <<'NOTE'`): backticks and
+`$( )` inside a quoted argument are command substitution.
 
 The `delivers:note:{{RUN}}/maechen.log` label on this bead is what the sentinel
 verifies. An honest "nothing meets the three-occurrence threshold" with census counts is a

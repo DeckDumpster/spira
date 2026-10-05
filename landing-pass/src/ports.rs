@@ -28,8 +28,8 @@ pub trait Git {
     fn branch_exists(&self, repo: &Path, branch: &str) -> bool;
     fn rev_parse(&self, repo: &Path, rev: &str) -> Option<String>;
     fn is_ancestor(&self, repo: &Path, a: &str, b: &str) -> bool;
-    /// lib.sh `content_landed`: the base already holds every change on the branch.
-    fn content_landed(&self, repo: &Path, branch: &str, base: &str) -> bool;
+    /// lib.sh `content_on_base`: the base already holds every change on the branch.
+    fn content_on_base(&self, repo: &Path, branch: &str, base: &str) -> bool;
     /// `rev-list --count <range>`; None when it cannot be taken.
     fn count(&self, repo: &Path, range: &str) -> Option<u64>;
     fn fetch(&self, repo: &Path, remote: &str);
@@ -62,7 +62,6 @@ pub trait Git {
 
 /// The lib.sh seam (DESIGN.md §6). Every call is one fixed script; every value on stdin.
 pub trait Lib {
-    fn land_mark(&self, id: &str, state: &str, tip: &str, reason: &str);
     fn reopen(&self, id: &str, cause: &str, note: &str);
     fn event(&self, kind: &str, id: &str, title: &str, detail: &str);
     fn noverdict(&self, id: &str, branch: &str, repo: &str, reason: &str, outcome: &str, out: &str);

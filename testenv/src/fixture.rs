@@ -98,6 +98,13 @@ pub const IMAGE_PATH: &str =
 /// the binaries `bin/` must hold. Every top-level entry of the tree is linked in beside `bin/`
 /// (a release is `git archive` of its commit plus `bin/`); `target/` is not part of a release.
 /// A binary the build did not produce is a refusal naming it, never a partial `bin/`.
+/// `model-bin/` (sp-zf4q3), the only release directory an enforced aeon's model may have on
+/// PATH, is made by the tree under test's OWN `spira-config link-model-bin` — the very
+/// `release_env::link_model_bin` that `release build` calls — never by a list compiled into
+/// this script (sp-jq4wq): this script runs from the INSTALLED testenv, which may predate
+/// the tree's list, and one that predated sp-zf4q3 staged no `model-bin/` at all. A tree whose
+/// spira-config has no such subcommand (older than sp-jq4wq) answers with its top-level usage
+/// and gets no `model-bin/`; any other failure is a refusal.
 pub const STAGE_SCRIPT: &str = r#"set -eu
 r="$1"; a="$2"; w="$3"; shift 3
 rm -rf "$r"
@@ -111,6 +118,14 @@ for b in "$@"; do
     [ -x "$a/$b" ] || { echo "testenv: stage: $b was not built into $a" >&2; exit 1; }
     ln -s "$a/$b" "$r/bin/$b"
 done
+if [ -x "$r/bin/spira-config" ]; then
+    if ! out="$("$r/bin/spira-config" link-model-bin "$r" 2>&1)"; then
+        case "$out" in
+            *"usage: spira-config <"*) ;;
+            *) echo "testenv: stage: model-bin: $out" >&2; exit 1 ;;
+        esac
+    fi
+fi
 "#;
 
 pub const BASELINE_SCRIPT: &str = ". /workspace/spira/testdb.sh && testdb_up batch_baseline && printf \"TESTDB_NAME=%s\\nTESTDB_DIR=%s\\nTESTDB_BASELINE=%s\\nTESTDB_BD=%s\\nTESTDB_BIN=%s\\nTESTDB_MODE=%s\\n\" \"$TESTDB_NAME\" \"$TESTDB_DIR\" \"${TESTDB_BASELINE:-}\" \"$TESTDB_BD\" \"${TESTDB_BIN:-}\" \"${TESTDB_MODE:-}\"";
@@ -1307,9 +1322,45 @@ mod tests {
         assert!(!r.join("target").exists(), "target/ is not part of a release");
         assert!(r.join("bin/testenv").is_file());
         assert!(r.join("bin/spira-lint").is_file());
+        assert!(!r.join("model-bin").exists(), "no spira-config staged: nothing makes model-bin/");
         let o = run(&["testenv", "work"]);
         assert!(!o.status.success());
         assert!(String::from_utf8_lossy(&o.stderr).contains("work was not built"));
+    }
+
+    /// sp-jq4wq: model-bin/ is the tree under test's own `spira-config link-model-bin` (the
+    /// release builder's helper), run on the staged release; a spira-config too old to know
+    /// it is tolerated, and any other failure of it fails the stage.
+    #[test]
+    fn the_stage_script_makes_model_bin_with_the_trees_own_spira_config() {
+        let d = testkit::TempDir::new("testenv-stage-model-bin");
+        let (w, a, r) = (d.join("w"), d.join("a"), d.join("rel"));
+        for p in [w.join("spira"), a.clone()] {
+            std::fs::create_dir_all(&p).unwrap();
+        }
+        testkit::write_exe(&a.join("work"), "#!/bin/sh\n");
+        let calls = d.join("calls");
+        let stage = |spira_config: &str| {
+            testkit::write_exe(&a.join("spira-config"), spira_config);
+            std::process::Command::new("bash")
+                .args(["-c", STAGE_SCRIPT, "_"])
+                .arg(&r)
+                .arg(&a)
+                .arg(&w)
+                .args(["spira-config", "work"])
+                .output()
+                .unwrap()
+        };
+        let o = stage(&format!("#!/bin/sh\necho \"$@\" >> {}\n", calls.display()));
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        assert_eq!(std::fs::read_to_string(&calls).unwrap(), format!("link-model-bin {}\n", r.display()));
+
+        let o = stage("#!/bin/sh\necho 'usage: spira-config <validate|get|export> ...' >&2\nexit 1\n");
+        assert!(o.status.success(), "an older tree's spira-config is tolerated: {}", String::from_utf8_lossy(&o.stderr));
+
+        let o = stage("#!/bin/sh\necho 'cannot create model-bin: denied' >&2\nexit 1\n");
+        assert!(!o.status.success(), "a real link-model-bin failure fails the stage");
+        assert!(String::from_utf8_lossy(&o.stderr).contains("model-bin: cannot create model-bin: denied"));
     }
 
     #[test]
