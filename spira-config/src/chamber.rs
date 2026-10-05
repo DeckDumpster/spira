@@ -66,10 +66,36 @@ fn extract_label_overlay(resolved: &crate::resolve::Resolved) -> BTreeMap<String
 /// to whatever it would have seen anyway, never a hard failure over a label — the EMPTY
 /// half of that fallback is exactly what [`fayth_predicate`]'s own fail-closed check
 /// exists to catch instead of letting it widen a partition silently.
+///
+/// RESOLVED ONCE PER PROCESS per (home, environment): every [`fayth_get`] asked for it, and one
+/// `sentinel --summon` makes ~200 such lookups — each re-deriving the repo through git and
+/// re-resolving the whole config (~100 ms), 19 s of a pass. A process pins the config it
+/// started with (law-long-lived-processes-pin-their-config).
 fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    let repo = crate::resolve::derive_home_repo(home, &env);
-    crate::resolve::resolve_for_process(home, &repo, &env)
+    memo(&OVERLAY, home, &env, || fayth_label_overlay_uncached(home, &env))
+}
+
+type MemoMap<V> = std::sync::Mutex<std::collections::HashMap<(PathBuf, BTreeMap<String, String>), V>>;
+static OVERLAY: std::sync::OnceLock<MemoMap<BTreeMap<String, String>>> = std::sync::OnceLock::new();
+static CHAMBER: std::sync::OnceLock<MemoMap<PathBuf>> = std::sync::OnceLock::new();
+
+fn memo<V: Clone>(cell: &std::sync::OnceLock<MemoMap<V>>, home: &Path, env: &BTreeMap<String, String>, f: impl FnOnce() -> V) -> V {
+    let m = cell.get_or_init(Default::default);
+    let key = (home.to_path_buf(), env.clone());
+    if let Some(v) = m.lock().ok().and_then(|g| g.get(&key).cloned()) {
+        return v;
+    }
+    let v = f();
+    if let Ok(mut g) = m.lock() {
+        g.insert(key, v.clone());
+    }
+    v
+}
+
+fn fayth_label_overlay_uncached(home: &Path, env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    let repo = crate::resolve::derive_home_repo(home, env);
+    crate::resolve::resolve_for_process(home, &repo, env)
         .map(|r| extract_label_overlay(&r))
         .unwrap_or_default()
 }
@@ -78,7 +104,8 @@ fn fayth_label_overlay(home: &Path) -> BTreeMap<String, String> {
 /// one directory every function here resolves a fayth against. `SPIRA_CHAMBER` is never
 /// exported, so a bare caller only sees it by resolving the config in-process.
 pub fn chamber_dir(home: &Path) -> PathBuf {
-    chamber_dir_with(home, &std::env::vars().collect())
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    memo(&CHAMBER, home, &env, || chamber_dir_with(home, &env))
 }
 
 fn chamber_dir_with(home: &Path, env: &BTreeMap<String, String>) -> PathBuf {
@@ -128,6 +155,17 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
     if !f.is_file() {
         return default.to_string();
     }
+    // ONE bash per (file as it stands, var, default, overlay) per process: a summon asked the
+    // same few fields of the same six fayths ~200 times. The file's mtime is in the key, so an
+    // edited fayth is read again.
+    static GOT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<(PathBuf, Option<std::time::SystemTime>, String, String, BTreeMap<String, String>), String>>> = std::sync::OnceLock::new();
+    let overlay = fayth_label_overlay(home);
+    let mtime = std::fs::metadata(&f).and_then(|m| m.modified()).ok();
+    let key = (f.clone(), mtime, var.to_string(), default.to_string(), overlay.clone());
+    let got = GOT.get_or_init(Default::default);
+    if let Some(v) = got.lock().ok().and_then(|g| g.get(&key).cloned()) {
+        return v;
+    }
     let script =
         r#"f="$1"; var="$2"; def="$3"; . "$f" 2>/dev/null; eval "printf '%s' \"\${$var:-\$def}\"""#;
     let out = Command::new("bash")
@@ -137,12 +175,16 @@ pub fn fayth_get(home: &Path, fayth: &str, var: &str, default: &str) -> String {
         .arg(&f)
         .arg(var)
         .arg(default)
-        .envs(fayth_label_overlay(home))
+        .envs(overlay)
         .output();
-    match out {
+    let v = match out {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
         _ => default.to_string(),
+    };
+    if let Ok(mut g) = got.lock() {
+        g.insert(key, v.clone());
     }
+    v
 }
 
 /// A `.fayth`'s partition predicate, fully evaluated.
