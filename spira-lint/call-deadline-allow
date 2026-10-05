@@ -148,14 +148,14 @@
 6 spira/test-aeon-lifecycle-cutover.sh
 12 spira/test-aeon-prod-dirty.sh
 6 spira/test-aeon-prompt-layers.sh
-9 spira/test-aeon-resume-collision.sh
+5 spira/test-aeon-resume-collision.sh
 6 spira/test-aeon-resume.sh
 3 spira/test-aeon-slain-attempts.sh
 7 spira/test-aeon-sweep.sh
 3 spira/test-aeon-teardown-e2e.sh
 2 spira/test-aeon-wiki-concurrent.sh
 9 spira/test-aeon-wiki-dirty.sh
-6 spira/test-aeon-worktree-collision.sh
+4 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 3 spira/test-aeon-world-stop.sh
 12 spira/test-auron.sh
@@ -191,7 +191,7 @@
 6 spira/test-deadlock-sweep.sh
 3 spira/test-destroy-branch.sh
 1 spira/test-dispatch-open-children.sh
-5 spira/test-epic-claim-order.sh
+2 spira/test-epic-claim-order.sh
 1 spira/test-escape-classify.sh
 3 spira/test-express-lane.sh
 1 spira/test-gate-check-flaky.sh
