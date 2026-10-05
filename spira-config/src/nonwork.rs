@@ -31,6 +31,11 @@ pub enum Kind {
     Epic,
     /// A hold bead naming something waiting on a person (batcher-cut's round hold).
     Hold,
+    /// release canary's synthetic bead, filed in a throwaway stage that runs bd with no
+    /// lifecycle store: the stage's synthetic worker claims and closes it in bd, so bd is the
+    /// only record of what the canary pass did with it. When the stage gains a lifecycle store
+    /// this kind goes and the canary reads `lc_state`.
+    Canary,
 }
 
 /// Which bd statuses a query wants.

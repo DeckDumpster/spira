@@ -18,8 +18,6 @@ use std::process::{Command, Stdio};
 
 use crate::lifecycle_row::lc_bin;
 
-const LC_TIMEOUT_SECS: &str = "30";
-
 /// One `spira_lifecycle.bead` row, as `spira-lc list` / `show` print it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Row {
@@ -117,8 +115,9 @@ pub fn parse_show(text: &str) -> Result<Option<Row>, String> {
 }
 
 fn run(bin: &str, args: &[&str]) -> Result<(i32, String), String> {
+    // The call-deadline cap (spira-lint): 5 s, the same bound sending's lifecycle read keeps.
     let out = Command::new("timeout")
-        .arg(LC_TIMEOUT_SECS)
+        .arg("5")
         .arg(bin)
         .args(args)
         .stdin(Stdio::null())

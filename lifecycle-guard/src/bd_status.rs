@@ -40,7 +40,11 @@ const BD_STATUSES: &str = "open|in_progress|closed|blocked|deferred|tombstone|ho
 
 struct Res {
     status_tok: Regex,
-    compare: Regex,
+    cmp_right: Regex,
+    cmp_left: Regex,
+    cmp_matches: Regex,
+    cmp_contains: Regex,
+    boundary: Regex,
     lit: Regex,
     arm: Regex,
     match_head: Regex,
@@ -63,10 +67,11 @@ fn res() -> &'static Res {
             // are capitalised, and `.status()` is a process's ExitStatus), the key `"status"`,
             // or the short local `st` the aeon and landing-pass use for one.
             status_tok: Regex::new(r#"(?:\b[a-z_]*status[a-z_]*\b(?:\s*[^\s(]|\s*$)|"status"|\bst\b)"#).unwrap(),
-            compare: Regex::new(&format!(
-                r#"(?:(?:==|!=)\s*(?:Some\(\s*)?{lit})|(?:{lit}\s*\)?\s*(?:==|!=))|(?:matches!\(.*{lit})|(?:\[[^\]]*{lit}[^\]]*\]\s*\.contains\()"#
-            ))
-            .unwrap(),
+            cmp_right: Regex::new(&format!(r#"(?:==|!=)\s*(?:Some\(\s*)?{lit}"#)).unwrap(),
+            cmp_left: Regex::new(&format!(r#"{lit}\s*\)?\s*(?:==|!=)"#)).unwrap(),
+            cmp_matches: Regex::new(&format!(r#"matches!\(([^"]*?){lit}"#)).unwrap(),
+            cmp_contains: Regex::new(&format!(r#"\[[^\]]*{lit}[^\]]*\]\s*\.contains\((.*)"#)).unwrap(),
+            boundary: Regex::new(r"&&|\|\||[{;|]|=>|\s=\s").unwrap(),
             lit: Regex::new(&lit).unwrap(),
             arm: Regex::new(&format!(r#"{lit}[\s)|,_a-zA-Z(]*(?:\|[^=]*)?=>"#)).unwrap(),
             match_head: Regex::new(r"\bmatch\b").unwrap(),
@@ -80,6 +85,42 @@ fn res() -> &'static Res {
             assignee_cond: Regex::new(r"(?:\bif\b|\bwhile\b|\bmatch\b|==|!=|is_some|is_none|is_some_and)").unwrap(),
         }
     })
+}
+
+/// A bd status value compared against a status-named operand: the operand is the piece of
+/// the line between the comparison and the nearest boundary before it (`&&`, `||`, `{`, `;`,
+/// a closure's `|`, `=>`, an assignment), so `o.status.success() && pr == "closed"` is a
+/// PR's state, not a bead's. A line that reads the `"status"` key of a JSON row counts any
+/// comparison on it (`get("status")…map(|s| s == "closed")`).
+fn compares_status(r: &Res, n: &str) -> bool {
+    let keyed = n.contains("\"status\"");
+    let operand_is_status = |piece: &str| keyed || r.status_tok.is_match(piece);
+    for m in r.cmp_right.find_iter(n) {
+        let left = &n[..m.start()];
+        let piece = r.boundary.split(left).last().unwrap_or(left);
+        if operand_is_status(piece) {
+            return true;
+        }
+    }
+    for m in r.cmp_left.find_iter(n) {
+        let right = &n[m.end()..];
+        let piece = r.boundary.split(right).next().unwrap_or(right);
+        if operand_is_status(piece) {
+            return true;
+        }
+    }
+    if let Some(c) = r.cmp_matches.captures(n) {
+        if operand_is_status(c.get(1).map_or("", |g| g.as_str())) {
+            return true;
+        }
+    }
+    if let Some(c) = r.cmp_contains.captures(n) {
+        let arg = c.get(1).map_or("", |g| g.as_str());
+        if operand_is_status(arg.split(')').next().unwrap_or(arg)) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Test code decides nothing in production: a file under a `tests/` directory, or named
@@ -168,7 +209,7 @@ pub fn scan_text(rel: &str, text: &str) -> Vec<Finding> {
         if r.other_states.is_match(n) {
             // A line that also names a GitHub run/PR state ("queued", "merged", …) is about
             // that state, not a bead's.
-        } else if has_status && r.compare.is_match(n) {
+        } else if has_status && compares_status(r, n) {
             push("compare", "a bd status compared to decide; read the bead's state from spira-lc (show/list/state) instead".into());
         } else if !heads.is_empty() && r.arm.is_match(n) {
             push("match", "a match arm on a bd status; read the bead's state from spira-lc (show/list/state) instead".into());
