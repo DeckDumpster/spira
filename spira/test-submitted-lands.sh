@@ -191,13 +191,13 @@ echo "4. lifecycle_enforce, push mode — the gate certifies the SUBMITTED row, 
 # and never LANDED. Here gate.sh moves the fixture row to CERTIFIED exactly as the real
 # gate's GatePass does.
 testdb_reset; seed sp-sl-4
-git -C "$REPO" fetch -q origin
-git -C "$REPO" branch -q -f spira/sp-sl-4 origin/main
-git -C "$REPO" worktree add -q "$TMP/wt4" spira/sp-sl-4
+timeout 5 git -C "$REPO" fetch -q origin
+timeout 5 git -C "$REPO" branch -q -f spira/sp-sl-4 origin/main
+timeout 5 git -C "$REPO" worktree add -q "$TMP/wt4" spira/sp-sl-4
 printf 'four\n' > "$TMP/wt4/four.txt"
-git -C "$TMP/wt4" add -A; git -C "$TMP/wt4" commit -qm "sp-sl-4: the work"
-git -C "$REPO" worktree remove --force "$TMP/wt4"
-tip4="$(git -C "$REPO" rev-parse spira/sp-sl-4)"
+timeout 5 git -C "$TMP/wt4" add -A; timeout 5 git -C "$TMP/wt4" commit -qm "sp-sl-4: the work"
+timeout 5 git -C "$REPO" worktree remove --force "$TMP/wt4"
+tip4="$(timeout 5 git -C "$REPO" rev-parse spira/sp-sl-4)"
 rm -rf "$LC_FIX/bead"; lc_bead SUBMITTED sp-sl-4 "$tip4" 1
 stub gate.sh "mkdir -p '$LC_FIX/bead/CERTIFIED'; mv '$LC_FIX/bead/SUBMITTED/sp-sl-4' '$LC_FIX/bead/CERTIFIED/sp-sl-4' 2>/dev/null; sed -i 's/SUBMITTED/CERTIFIED/' '$LC_FIX/bead/CERTIFIED/sp-sl-4'; echo \"gate: VERDICT=PASS reason=stub branch=\$1 repo=\${2:-?}\" >&2; exit 0"
 is   "setup: the bead is open (no model closes it under enforce)" open "$(field sp-sl-4 status)"
