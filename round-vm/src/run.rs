@@ -197,7 +197,14 @@ if [ -n "$registry" ]; then export SPIRA_TESTENV_REGISTRY="$registry"; fi
 set +e
 # THE WORKSPACE'S OWN UNIT TESTS, once per round (per Ryan 2026-10-05: no suite invokes cargo).
 # They run beside the suites, on the build above; a red here makes the round red.
-cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
+# A SCRUBBED ENVIRONMENT: the launcher's SPIRA_RELEASE/SPIRA_REPO/PATH exported above leak
+# into tests that resolve configuration (4 reds on 2026-10-05); the tests get HOME, cargo's own
+# PATH, the build cache and a git identity (a round VM's root has none), nothing else.
+env -i HOME="$HOME" PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/bin:/usr/bin:/bin" \
+    CARGO_HOME="$CARGO_HOME" RUSTC_WRAPPER="$RUSTC_WRAPPER" SCCACHE_IGNORE_SERVER_IO_ERROR=1 \
+    SCCACHE_WEBDAV_ENDPOINT="$SCCACHE_WEBDAV_ENDPOINT" SCCACHE_WEBDAV_KEY_PREFIX="$SCCACHE_WEBDAV_KEY_PREFIX" \
+    GIT_AUTHOR_NAME=round GIT_AUTHOR_EMAIL=round@spira GIT_COMMITTER_NAME=round GIT_COMMITTER_EMAIL=round@spira \
+    cargo test -q --profile release --workspace --no-fail-fast --config profile.release.incremental=false > ~/round-unit-tests.log 2>&1 &
 unit_pid=$!
 if [ -n "$suites" ]; then
     testenv --mode parallel --profile release --suites "$suites" round
@@ -1018,6 +1025,14 @@ mod tests {
     #[test]
     fn remote_script_fails_fast_and_named_with_no_cargo_on_path() {
         use std::process::Command;
+        // REMOTE_SCRIPT resets PATH to fixed system directories; where one of them carries a
+        // cargo (a round VM does), "no cargo on PATH" cannot be arranged here: nothing to judge.
+        if ["/usr/local/bin", "/usr/local/sbin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+            .iter()
+            .any(|d| std::path::Path::new(d).join("cargo").exists())
+        {
+            return;
+        }
         let out = Command::new("bash")
             .arg("-c")
             .arg(REMOTE_SCRIPT)

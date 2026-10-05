@@ -173,6 +173,11 @@ mod tests {
 
     #[test]
     fn unwritable_repo_falls_further_to_xdg() {
+        // A mode-0555 directory does not stop root writing it, so as root this case cannot
+        // tell the fallback from the first choice: nothing to judge.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let home = testkit::TempDir::new("writeback-unwritable-repo-home");
         let repo = testkit::TempDir::new("writeback-unwritable-repo-repo");
         let xdg_parent = testkit::TempDir::new("writeback-unwritable-repo-xdgp");
@@ -187,6 +192,11 @@ mod tests {
 
     #[test]
     fn both_repo_and_xdg_unwritable_falls_to_a_writable_scratch_file() {
+        // A mode-0555 directory does not stop root writing it, so as root this case cannot
+        // tell the fallback from the first choice: nothing to judge.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
         let home = testkit::TempDir::new("writeback-both-unwritable-home");
         let repo = testkit::TempDir::new("writeback-both-unwritable-repo");
         let xdg_parent = testkit::TempDir::new("writeback-both-unwritable-xdgp");
