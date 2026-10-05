@@ -10,6 +10,23 @@ pub const FORBIDDEN_BARE_VERBS: &[&str] =
 /// becomes a lifecycle write when paired with one of these flags.
 pub const FORBIDDEN_UPDATE_FLAGS: &[&str] = &["--status", "--claim"];
 
+/// `ready` is a read, except `ready --claim`, which claims the bead it picks (sp-voip5).
+pub const FORBIDDEN_READY_FLAGS: &[&str] = &["--claim"];
+
+/// bd's global flags that take a separate value word (`bd --help`): `-C <dir>`, `--db <path>`,
+/// … . Every other leading word that starts with `-` is a boolean global (`--json`, `-q`,
+/// `--readonly`, …) or carries its value joined (`--db=…`, `-Cdir`), and is one word. The verb
+/// is the first word after these, so `bd -C "$DB" close …` is judged as `close` (sp-voip5).
+pub const BD_GLOBAL_VALUE_FLAGS: &[&str] = &[
+    "-C",
+    "--directory",
+    "--db",
+    "--database",
+    "--actor",
+    "--dolt-auto-commit",
+    "--mem-profile",
+];
+
 /// Subcommands whose output is a lifecycle read, not a write.
 pub const READ_VERBS: &[&str] = &["show", "list", "status"];
 

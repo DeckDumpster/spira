@@ -1,7 +1,7 @@
 use crate::finding::{Class, Finding};
 use crate::rules::{
-    landstate_path_allowed, Rules, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS, FORBIDDEN_UPDATE_FLAGS,
-    ORACLE_SUBCOMMANDS, READ_VERBS,
+    landstate_path_allowed, Rules, BD_GLOBAL_VALUE_FLAGS, CREDENTIAL_TOKENS, FORBIDDEN_BARE_VERBS,
+    FORBIDDEN_READY_FLAGS, FORBIDDEN_UPDATE_FLAGS, ORACLE_SUBCOMMANDS, READ_VERBS,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -214,7 +214,9 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             Class::DirectWrite
         };
 
-        let Some(first) = call.args.first() else {
+        // The verb follows bd's leading global flags (`bd -C "$DB" close …`), not argv[1].
+        let verb_at = verb_index(&call.args);
+        let Some(first) = call.args.get(verb_at) else {
             continue;
         };
         // A forwarder's own `bdq "$@"`: its verb is judged at each of its call sites (above),
@@ -240,14 +242,16 @@ pub fn scan(files: &[PathBuf], root: &Path, rules: &Rules) -> Result<ShellScan, 
             Arg::Literal(verb) => {
                 let flagged = if FORBIDDEN_BARE_VERBS.contains(&verb.as_str()) {
                     Some(verb.clone())
-                } else if verb == "update" {
-                    let flag = call
-                        .args
+                } else if let Some(flags) = match verb.as_str() {
+                    "update" => Some(FORBIDDEN_UPDATE_FLAGS),
+                    "ready" => Some(FORBIDDEN_READY_FLAGS),
+                    _ => None,
+                } {
+                    let flag = call.args[verb_at + 1..]
                         .iter()
-                        .skip(1)
                         .filter_map(|a| a.literal())
-                        .find(|a| FORBIDDEN_UPDATE_FLAGS.contains(a));
-                    flag.map(|f| format!("update {f}"))
+                        .find(|a| flags.contains(a));
+                    flag.map(|f| format!("{verb} {f}"))
                 } else {
                     None
                 };
@@ -531,18 +535,40 @@ fn literal_arrays(parsed: &[ParsedFile]) -> HashMap<String, Vec<Arg>> {
         .collect()
 }
 
-/// `"${NAME[@]}"` / `${NAME[@]}` as a call's first argument, NAME a [`literal_arrays`] entry:
-/// the array's words stand in its place.
+/// `"${NAME[@]}"` / `${NAME[@]}` in a call's verb position (its first argument, or the first
+/// after bd's leading global flags), NAME a [`literal_arrays`] entry: the array's words stand
+/// in its place. An array of global flags is expanded and the verb looked for again after it.
 fn expand_array_arg(call: &mut CallSite, arrays: &HashMap<String, Vec<Arg>>) {
-    let Some(Arg::Dynamic(first)) = call.args.first() else {
-        return;
-    };
-    let Some(name) = first.strip_prefix("${").and_then(|r| r.strip_suffix("[@]}")) else {
-        return;
-    };
-    if let Some(words) = arrays.get(name) {
-        call.args.splice(0..1, words.iter().cloned());
+    for _ in 0..8 {
+        let at = verb_index(&call.args);
+        let Some(Arg::Dynamic(word)) = call.args.get(at) else {
+            return;
+        };
+        let Some(name) = word.strip_prefix("${").and_then(|r| r.strip_suffix("[@]}")) else {
+            return;
+        };
+        let Some(words) = arrays.get(name) else {
+            return;
+        };
+        call.args.splice(at..at + 1, words.iter().cloned());
     }
+}
+
+/// Where a bd/bdq call's verb sits: past its leading global flags (`-C <dir>`, `--db <path>`,
+/// `--actor <name>`, `--json`, `--db=…`, …; see [`BD_GLOBAL_VALUE_FLAGS`]). Before sp-voip5
+/// the verb was argv[1], so `bd -C "$DB" close …` and `bdq --db … update --status …` went
+/// unseen. An unknown flag is taken as boolean: at worst its value is read as the verb, and a
+/// non-verb word is never a finding. Past the end when the call has no verb (`bd --version`).
+fn verb_index(args: &[Arg]) -> usize {
+    let mut i = 0;
+    while let Some(arg) = args.get(i) {
+        let (Arg::Literal(w) | Arg::Dynamic(w)) = arg;
+        if !w.starts_with('-') {
+            break;
+        }
+        i += if BD_GLOBAL_VALUE_FLAGS.contains(&w.as_str()) { 2 } else { 1 };
+    }
+    i
 }
 
 fn collect_funcs(

@@ -87,13 +87,15 @@ make_bead() {
 }
 # The stub claude never closes its bead, so aeon.sh's cleanup releases it straight back to
 # ready — and being the OLDEST ready bead with this label set, it would be reclaimed ahead
-# of the next section's freshly created one. Close it for real between sections so each
-# aeon() call below is provably claiming and rendering the bead this test just made.
+# of the next section's freshly created one. Take it out of ready between sections so each
+# aeon() call below is provably claiming and rendering the bead this test just made. Its
+# closed row is FIXTURE STATE, declared as data (an upsert of the same row), never a bd
+# close driven around the lifecycle machine (sp-voip5).
 close_bead() {
-    bd -C "$SPIRA_DB" close "$1" --reason-file - >/dev/null 2>&1 <<'REASON'
-OUTCOME: submitted
-Test scaffolding cleanup — not a real session.
-REASON
+    local _now; _now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    testdb_seed <<JSONL
+{"id":"$1","title":"chamber overlay test bead","status":"closed","closed_at":"$_now","updated_at":"$_now","issue_type":"task","labels":["$T_LABEL","repo:fixture"]}
+JSONL
 }
 
 # ==========================================================================================
@@ -182,12 +184,9 @@ want   "lifecycle_enforce=1 tells the model it has no bd" "You have no \`bd\`" "
 want   "and the finishing verb is work submit" "work submit" "$task_f1"
 nowant "and the legacy bd-close instruction is absent" "bd -C $SPIRA_DB close" "$task_f1"
 # The stub model never calls `work submit`, so the bead is left claimed under the lifecycle
-# machine rather than closed through bd — release it the same way aeon.sh's own cleanup
-# would, so it does not linger ready for a later section's make_bead to reclaim.
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$BID_F1" --reason-file - >/dev/null 2>&1 <<'REASON'
-OUTCOME: submitted
-Test scaffolding cleanup — not a real session.
-REASON
+# machine rather than closed through bd — take it out of ready, so it does not linger for a
+# later section's make_bead to reclaim.
+close_bead "$BID_F1"
 unset SPIRA_LIFECYCLE_ENFORCE; PATH="$_PATH_BEFORE_STUB"
 
 # ==========================================================================================

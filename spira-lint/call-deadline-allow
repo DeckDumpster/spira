@@ -141,12 +141,12 @@
 2 spira/seed.sh
 2 spira/test-acceptance-local.sh
 2 spira/test-aeon-base-ref-qualify.sh
-5 spira/test-aeon-chamber-overlay.sh
+3 spira/test-aeon-chamber-overlay.sh
 2 spira/test-aeon-dirty-commit.sh
 4 spira/test-aeon-eviction-race.sh
 7 spira/test-aeon-gate-close-silent.sh
 4 spira/test-aeon-gate-unfinished-attempts.sh
-7 spira/test-aeon-lifecycle-cutover.sh
+6 spira/test-aeon-lifecycle-cutover.sh
 12 spira/test-aeon-prod-dirty.sh
 6 spira/test-aeon-prompt-layers.sh
 9 spira/test-aeon-resume-collision.sh
@@ -159,12 +159,12 @@
 6 spira/test-aeon-worktree-collision.sh
 # literal-ok: a file path, not the world-stop literal itself
 3 spira/test-aeon-world-stop.sh
-13 spira/test-auron.sh
+12 spira/test-auron.sh
 27 spira/test-batch-owner.sh
 5 spira/test-batcher-cut.sh
 1 spira/test-bead-dep-add.sh
 6 spira/test-beads-push-commit.sh
-11 spira/test-branch-collision-park.sh
+8 spira/test-branch-collision-park.sh
 5 spira/test-branch-guard.sh
 3 spira/test-branch-sweep.sh
 2 spira/test-cadence-tool.sh
@@ -183,13 +183,13 @@
 2 spira/test-cockpit-remote.sh
 3 spira/test-cockpit-unlanded.sh
 4 spira/test-cockpit-unsent.sh
-3 spira/test-commit-cite.sh
+2 spira/test-commit-cite.sh
 2 spira/test-concierge.sh
 7 spira/test-config-compat-master-base.sh
 4 spira/test-content-landed-empty-branch.sh
 5 spira/test-cross-repo.sh
 5 spira/test-cutover-deploy.sh
-7 spira/test-deadlock-sweep.sh
+6 spira/test-deadlock-sweep.sh
 3 spira/test-destroy-branch.sh
 1 spira/test-dispatch-open-children.sh
 5 spira/test-epic-claim-order.sh
@@ -208,7 +208,7 @@
 9 spira/test-groomer-split-piece.sh
 9 spira/test-groomer-state.sh
 3 spira/test-groomer-sweep.sh
-12 spira/test-incident.sh
+10 spira/test-incident.sh
 2 spira/test-install-aeons.sh
 2 spira/test-install-dolt-breaker.sh
 3 spira/test-install-dolt-mode.sh

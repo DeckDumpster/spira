@@ -167,10 +167,7 @@ import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(",".join(d.get("labels") or []))' 2>/dev/null)"
 is "winner ($second_id): this aeon fell through to it and closed it (converted to submitted)" "open" "$second_status"
-case ",$second_labels," in
-    *",spira-submitted,"*) ok "winner ($second_id): carrying the submitted label" ;;
-    *) bad "winner ($second_id): carrying the submitted label" "labels=[$second_labels]" ;;
-esac
+want "winner ($second_id): carrying the submitted label" ",spira-submitted," ",$second_labels,"
 want "log: the collision on $first_id is named"      "$first_id"                                    "$(cat "$TMP/out")"
 want "log: the fallback to the next candidate is named" "trying the next ranked candidate"        "$(cat "$TMP/out")"
 want "log: it resumed $second_id, not the general claim head" "resuming $second_id"                  "$(cat "$TMP/out")"

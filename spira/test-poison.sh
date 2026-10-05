@@ -388,18 +388,19 @@ notpoisoned "an epic is never poisoned" sp-epic
 # --------------------------------------------------------------------------------------
 # A POISONED BEAD KEEPS ITS CLAIM, AND STOPS BEING SUMMONED FOR.
 #
-# The lease is a REAL one taken by `bd ready --claim`, because what is under test is that
-# the valve does not cut it: unclaiming here would pull the lease out from under a session
-# still writing, and the aeon releases on its own exit path anyway.
+# The lease is a held bd row (in_progress under a named holder), because what is under test
+# is that the valve does not cut it: unclaiming here would pull the lease out from under a
+# session still writing, and the aeon releases on its own exit path anyway. The hold is
+# FIXTURE STATE, declared as data — never a `bd ready --claim` driven around the lifecycle
+# machine (sp-voip5); the claim's own status_changed event is seeded with the others.
 # --------------------------------------------------------------------------------------
 seed_held() {
     seed
     testdb_seed <<JSONL
-{"id":"sp-orphan","title":"dispatchable, unparented","status":"open","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
+{"id":"sp-orphan","title":"dispatchable, unparented","status":"in_progress","assignee":"aeon-holder","issue_type":"task","labels":["${SPIRA_SCOPE_LABEL}","plan"],"updated_at":"2026-09-04T00:00:00Z"}
 JSONL
     mklc sp-orphan
-    cycle sp-orphan 3
-    BEADS_ACTOR=aeon-holder B ready --claim --limit 0 --label "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}${SPIRA_PLAN_LABEL:-plan}" >/dev/null 2>&1
+    cycle sp-orphan 4
 }
 
 seed_held

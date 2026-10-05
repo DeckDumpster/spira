@@ -90,12 +90,8 @@ else
 fi
 
 _clear_err="$(BD_NON_INTERACTIVE=1 bd -C "$_TMP1/db" list --json 2>&1 || true)"
-if [[ "$_clear_err" != *"circuit breaker"* ]]; then
-    ok "clear passes: bd list no longer hits circuit-breaker fast-fail after removal"
-else
-    bad "clear passes: bd list still reports circuit breaker after file removed" \
-        "output: $_clear_err"
-fi
+nowant "clear passes: bd list no longer hits circuit-breaker fast-fail after removal" \
+    "circuit breaker" "$_clear_err"
 
 rm -rf "$_TMP1"
 trap - EXIT INT TERM

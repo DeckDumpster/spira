@@ -342,7 +342,8 @@ wantrc "dep add wires the dependent's blocks edge onto the prerequisite" 0 $?
 # ready/blocker semantics know only open/closed, so it stays a real, open blocker in bd's
 # eyes even once the lifecycle machine has moved past it. Giving it an assignee takes it out
 # of -u/--no-assignee's own candidate set, isolating this scenario to the dependent's claim.
-bd -C "$SPIRA_DB" update "$PREREQ" --status in_progress --assignee aeon-other-actor >/dev/null 2>&1
+# Its held bd row is fixture state, declared as data (sp-voip5), not a bd update --status.
+testdb_restate "$PREREQ" in_progress aeon-other-actor
 seed_bead "$PREREQ" CERTIFIED
 seed_bead "$DEP" READY
 

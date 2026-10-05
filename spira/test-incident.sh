@@ -177,8 +177,8 @@ for i in (d if isinstance(d, list) else [d]):
     if i.get("external_ref") == target:
         print(i["id"]); break
 ' 'incident:the-test-sweep')"
-[ -n "${_ctr_id:-}" ] && \
-    bd -C "$SPIRA_DB" close "$_ctr_id" --reason "resolved in regression test" >/dev/null 2>&1 || true
+# Its closed row is fixture state, declared as data (sp-voip5), not a bd close.
+testdb_restate "${_ctr_id:-}" closed || true
 > "$ILOG"
 # File the same ref again — should reopen, not create a second bead.
 printf 'second payload\n' | inc >/dev/null
@@ -246,7 +246,7 @@ for i in (d if isinstance(d, list) else [d]):
     if i.get("external_ref") == target:
         print(i["id"]); break
 ' 'incident:the-test-sweep')"
-[ -n "${_bd_id:-}" ] && bd -C "$SPIRA_DB" close "$_bd_id" --reason "resolved, within lookback" >/dev/null 2>&1
+testdb_restate "${_bd_id:-}" closed || true     # fixture data, not a bd close (sp-voip5)
 > "$ILOG"
 printf 'bsd-date second payload\n' | PATH="$DATEDIR:$PATH" inc >/dev/null
 n_bsd_all="$(count_all 'incident:the-test-sweep')"
@@ -444,7 +444,7 @@ except Exception: sys.exit(0)
 for i in (d if isinstance(d, list) else [d]):
     if i.get("external_ref") == target: print(i["id"]); break
 ' "$REF_BOUND")"
-[ -n "${_bound_id:-}" ] || bad "recur-bounded bead was created" "none found"
+want "recur-bounded bead was created" "sp-" "${_bound_id:-none found}"
 # The first recurrence has no prior payload-hash label, so it writes the payload once; the
 # second recurrence's payload is byte-identical, so it must NOT write it again — that is the
 # whole property _recur_note_body exists to enforce. A copy count of exactly 1 (not 0, not 2)

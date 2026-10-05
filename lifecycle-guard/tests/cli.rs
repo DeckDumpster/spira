@@ -343,3 +343,41 @@ fn array_held_verbs_and_filtering_forwarders_are_resolved() {
     assert_eq!(at(12), vec!["wrapper-write"], "bdjson close: {findings:#?}");
     assert_eq!(at(15), vec!["dynamic-verb"], "a run-time fill stays dynamic: {findings:#?}");
 }
+
+/// sp-voip5: the verb follows bd's leading global flags. `bd -C x close y` was read as verb
+/// `-C` and went unseen; `-C`/`--db`/`--actor` take a value word, `--json`/`--actor=…` do
+/// not, an array of flags is looked through, and `ready --claim` is a claim.
+#[test]
+fn verbs_after_leading_global_flags_are_judged() {
+    let findings = run("global_flags", None);
+    let at = |line: u64| -> Vec<&str> {
+        findings.iter().filter(|f| f["line"] == line).map(|f| f["class"].as_str().unwrap()).collect()
+    };
+    let detail = |line: u64| -> String {
+        findings.iter().filter(|f| f["line"] == line).map(|f| f["detail"].as_str().unwrap().to_string()).collect()
+    };
+    assert_eq!(at(3), vec!["direct-write"], "bd -C x close y: {findings:#?}");
+    assert!(detail(3).contains("bd close"), "{findings:#?}");
+    assert_eq!(at(4), vec!["direct-write"], "bdq --db … update --status: {findings:#?}");
+    assert_eq!(at(5), vec!["direct-write"], "bd --actor=me --json reopen: {findings:#?}");
+    assert_eq!(at(6), vec!["direct-write"], "bd ready --claim: {findings:#?}");
+    assert!(detail(6).contains("ready --claim"), "{findings:#?}");
+    assert_eq!(at(7), Vec::<&str>::new(), "a plain ready is a read: {findings:#?}");
+    assert_eq!(at(8), vec!["dynamic-verb"], "a dynamic verb after -C: {findings:#?}");
+    assert_eq!(at(9), Vec::<&str>::new(), "update --title is metadata: {findings:#?}");
+    assert_eq!(at(10), vec!["lifecycle-read"], "bd -C x show in a test: {findings:#?}");
+    assert_eq!(at(12), vec!["direct-write"], "flags held in an array: {findings:#?}");
+    assert_eq!(at(13), Vec::<&str>::new(), "no verb at all: {findings:#?}");
+}
+
+/// sp-voip5: the gate refuses a planted `bd -C x close y` — the shape the old analyser,
+/// reading argv[1] as the verb, let through.
+#[test]
+fn gate_mode_refuses_a_close_behind_a_directory_flag() {
+    let tmp = testkit::TempDir::new("lg-voip5");
+    let dir = tmp.path().to_path_buf();
+    std::fs::write(dir.join("planted.sh"), "#!/bin/bash\nbd -C x close y\n").unwrap();
+    let (code, out, err) = gate(&dir);
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.lines().any(|l| l.starts_with("planted.sh:2: [direct-write]") && l.contains("bd close")), "{out}");
+}

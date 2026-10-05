@@ -149,9 +149,8 @@ kind="$(bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | 
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print("%s|%s" % (d.get("issue_type"), ",".join(sorted(d.get("labels") or []))))' 2>/dev/null)"
-[ "$kind" = "event|alert,alert:sentinel-stalled,flaps:1,overseer" ] \
-    && ok "an event labelled alert/overseer/flaps, and NOT needs-ryan" \
-    || bad "shape" "expected [event|alert,alert:sentinel-stalled,flaps:1,overseer] got [$kind]"
+is "an event labelled alert/overseer/flaps, and NOT needs-ryan" \
+   "event|alert,alert:sentinel-stalled,flaps:1,overseer" "$kind"
 
 auron >/dev/null
 [ "$(n_alert_beads)" = 1 ] && ok "a condition that keeps holding does not open a second bead" \
@@ -181,8 +180,7 @@ lab="$(bd -C "$SPIRA_DB" show "$ID" --json 2>/dev/null | sed -n '/^[[{]/,$p' | p
 import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 print(",".join(sorted(l for l in (d.get("labels") or []) if l.startswith("flaps:"))))' 2>/dev/null)"
-[ "$lab" = "flaps:2" ] && ok "the pane's flaps: label is the count, and there is only one" \
-    || bad "flaps label" "expected [flaps:2] got [$lab]"
+is "the pane's flaps: label is the count, and there is only one" "flaps:2" "$lab"
 
 # `acked` says the operator has SEEN this occurrence. Carrying it into the next one hides
 # exactly what the flap count exists to surface, so a returning condition clears it — while
@@ -197,16 +195,16 @@ import sys, json
 d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
 ls = d.get("labels") or []
 print("%s %s" % ("acked" in ls, any(l.startswith("silent-until:") for l in ls)))' 2>/dev/null)"
-[ "$lab" = "False True" ] \
-    && ok "a returning condition clears acked and leaves silent-until alone" \
-    || bad "acked/silent" "expected [False True] (acked cleared, silence kept) got [$lab]"
+is "a returning condition clears acked and leaves silent-until alone (acked cleared, silence kept)" \
+   "False True" "$lab"
 
 echo
 echo "auron.sh — the operator's own close, and the channel of last resort:"
 
 # Closing it by hand is an acknowledgement. Re-raising it would be a machine arguing with
-# the person it is reporting to.
-bd -C "$SPIRA_DB" close "$ID" --reason "acknowledged" >/dev/null 2>&1
+# the person it is reporting to. The operator's close is fixture state, declared as data
+# (sp-voip5): what is under test is Auron's answer to a closed row, not bd's close verb.
+testdb_restate "$ID" closed
 sed -i 's/\t[0-9]*$/\t0/' "$RUN/auron.state"      # force the hourly refresh window open
 auron >/dev/null; auron >/dev/null
 [ "$(alert_status sentinel-stalled)" = "$ID closed" ] \
@@ -347,9 +345,7 @@ import sys, json
 try: d = json.load(sys.stdin)
 except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))')"
-    [ "$n_open" = 1 ] \
-        && ok "extras: only one probe bead is open after adoption" \
-        || bad "extras" "expected 1 open probe bead, got [$n_open]"
+    is "extras: only one probe bead is open after adoption" 1 "$n_open"
     _expected_total=$(( _extras_before + 3 ))
     [ "$(n_probe_beads)" = "$_expected_total" ] \
         && ok "extras: all beads still exist (closed, not deleted)" \
@@ -467,9 +463,7 @@ import sys, json
 try: d = json.load(sys.stdin)
 except Exception: d = []
 print(len(d if isinstance(d, list) else [d]))')"
-[ "$_rst_n" = 1 ] \
-    && ok "restart: a second pass on the same standing loop does not raise a duplicate" \
-    || bad "restart duplicate" "expected 1 alert bead, got [$_rst_n]"
+is "restart: a second pass on the same standing loop does not raise a duplicate" 1 "$_rst_n"
 
 # Count goes DOWN (daemon-reload): no new alert; baseline resets.
 printf '0\n' > "$TMP/restart-count"
