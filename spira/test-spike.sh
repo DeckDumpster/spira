@@ -81,6 +81,7 @@ mkdir -p "$SPIRA_RUN" "$SPIRA_HOME/chamber"
 # probe — the same one-line symlink trick test-summon-fayth.sh's own `aeon --escape`
 # fixture uses.
 printf '. "%s/lib.sh"\n' "$HERE" > "$SPIRA_HOME/lib.sh"
+ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 # $SPIRA_HOME/aeon is the LAUNCH TARGET `which("aeon", PATH)` resolves to below — a bare
 # "exit 0" stands in for it, since nothing here ever execs it for real. Its "capacity
 # paused" branch is a leftover from when that question was a subprocess call this stub
