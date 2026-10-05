@@ -39,8 +39,11 @@ is "sentinel/src/check5.rs is gone" no "$([ -e "$ROOT/sentinel/src/check5.rs" ] 
 body="$(audit_body "$ROOT/sentinel/src/pass.rs")"
 want   "audit() was extracted"                  "fn audit(" "$body"
 nowant "audit() does not call the landstate check5" "self.check5(" "$body"
-want   "audit() still runs CHECK5-LC"           "check5_lc(" "$body"
-want   "lifecycle.rs still defines check5_lc"   "pub fn check5_lc" "$(cat "$ROOT/sentinel/src/lifecycle.rs")"
+# sp-mve9i: CHECK5-LC is gone too — each of its shapes was bd status disagreeing with the
+# lifecycle row, and bd status is inert for work beads (design §3.4). The rowless control stays.
+nowant "audit() no longer runs CHECK5-LC"        "check5_lc(" "$body"
+nowant "lifecycle.rs no longer defines check5_lc" "pub fn check5_lc" "$(cat "$ROOT/sentinel/src/lifecycle.rs")"
+want   "audit() still runs the rowless control"  "check_rowless(" "$body"
 
 nowant "sentinel reads no SPIRA_SKIP_CLOSED_CHECK" "SPIRA_SKIP_CLOSED_CHECK" \
     "$(cat "$ROOT"/sentinel/src/*.rs)"

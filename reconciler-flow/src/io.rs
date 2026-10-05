@@ -48,13 +48,14 @@ fn u64_field(row: &Value, key: &str) -> u64 {
     row.get(key).and_then(Value::as_u64).unwrap_or(0)
 }
 
-/// The count of beads in the backlog right now: everything not yet closed. Scoped by
+/// The count of beads in the backlog right now: every work bead whose lifecycle row is not
+/// terminal (sp-mve9i: a bead's state is spira-lc's, never bd's `status`). Scoped by
 /// `scope_label` when the harness serves more than one repository, same convention
-/// czar-pass uses for its own detectors.
+/// czar-pass uses for its own detectors; bd supplies only which beads the scope holds.
 pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<u64, String> {
     let mut cmd = Command::new(bd_bin);
     cmd.arg("-C").arg(spira_db).args([
-        "list", "--status", "open,in_progress,blocked,deferred",
+        "list", "--all",
         "--exclude-type", "epic,event", "--brief", "--json", "--limit", "0",
     ]);
     if !scope_label.is_empty() {
@@ -74,7 +75,15 @@ pub fn backlog_count(bd_bin: &str, spira_db: &str, scope_label: &str) -> Result<
     let text = String::from_utf8_lossy(&out.stdout);
     let rows: Vec<Value> = serde_json::from_str(text.trim())
         .map_err(|e| format!("{bd_bin} list: unparsable json: {e}"))?;
-    Ok(rows.len() as u64)
+    let ids: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(Value::as_str).map(str::to_string)).collect();
+    let lc = spira_config::lc_state::list().map_err(|e| format!("lifecycle state unreadable: {e}"))?;
+    Ok(backlog_of(&ids, &spira_config::lc_state::index(lc)))
+}
+
+/// How many of `ids` are still in the backlog: a lifecycle row that is not terminal. A bead
+/// with no row can never be worked, so it is not backlog.
+pub fn backlog_of(ids: &[String], lc: &std::collections::HashMap<String, spira_config::lc_state::Row>) -> u64 {
+    ids.iter().filter(|id| lc.get(*id).is_some_and(|r| !r.terminal())).count() as u64
 }
 
 /// The bead-machine states a bead is still in flight in — after these, it has either landed
@@ -448,4 +457,22 @@ pub fn mail_concierge(mail_sh: &str, subject: &str, body: &str) -> Result<(), St
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod backlog_tests {
+    use super::*;
+    use spira_config::lc_state::Row;
+
+    /// sp-mve9i: the backlog is the beads whose lifecycle row is not terminal.
+    #[test]
+    fn the_backlog_is_the_non_terminal_lifecycle_rows() {
+        let lc = ["READY", "WORKING", "SUBMITTED", "LANDED", "DROPPED"]
+            .iter()
+            .enumerate()
+            .map(|(i, st)| (format!("sp-{i}"), Row { bead_id: format!("sp-{i}"), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let ids: Vec<String> = (0..6).map(|i| format!("sp-{i}")).collect();
+        assert_eq!(backlog_of(&ids, &lc), 3);
+    }
 }

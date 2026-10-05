@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::ports::{Base, Repo, Sent, World};
 use crate::reap;
-use crate::seam::{self, Op, FIELD};
+use crate::seam::{self, Op};
 
 pub struct Real {
     home: PathBuf,
@@ -22,6 +22,9 @@ pub struct Real {
     pub submitted_label: String,
     enforce: bool,
     beads: RefCell<Option<BTreeMap<String, Value>>>,
+    /// The sweep's one `spira-lc list`, keyed by bead id: the claim witness for every bead
+    /// the pass judges (sp-mve9i).
+    claims: RefCell<Option<std::collections::HashMap<String, spira_config::lc_state::Row>>>,
 }
 
 /// A seam call's exit status and answer; lib.sh's own output has already been passed through.
@@ -64,9 +67,9 @@ impl Real {
     }
 
     /// No context seam call at all — just `home`/`status`, for a caller that only needs
-    /// the Base/Status/Bead seams (each self-contained) and never the repository registry.
+    /// the Base/Bead seams (each self-contained) and never the repository registry.
     pub fn minimal(home: PathBuf, status: Option<String>) -> Real {
-        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None), beads: RefCell::new(None) }
+        Real { home, status: status.unwrap_or_default(), settings: BTreeMap::new(), submitted_label: String::new(), enforce: spira_config::lifecycle_enforce(None), beads: RefCell::new(None), claims: RefCell::new(None) }
     }
 
     fn setting(&self, k: &str, default: &str) -> String {
@@ -180,11 +183,13 @@ impl World for Real {
         if !map.is_empty() {
             *self.beads.borrow_mut() = Some(map);
         }
+        if let Ok(rows) = spira_config::lc_state::list_with(&spira_config::lifecycle_row::lc_bin()) {
+            *self.claims.borrow_mut() = Some(spira_config::lc_state::index(rows));
+        }
     }
     fn witness(&self, id: &str) -> Option<String> {
-        if let Some(m) = self.beads.borrow().as_ref() {
-            let status = m.get(id).and_then(|b| b.get("status")).and_then(Value::as_str).unwrap_or_default().to_string();
-            return reap::holder_witnesses(&self.run(), id, &Cached(status));
+        if let Some(m) = self.claims.borrow().as_ref() {
+            return reap::holder_witnesses(&self.run(), id, &Cached(m.get(id).cloned()));
         }
         reap::holder_witnesses(&self.run(), id, self)
     }
@@ -279,27 +284,21 @@ impl World for Real {
     }
 }
 
-/// A status read from the prefetched listing; non-empty rows prove the database answered.
-struct Cached(String);
+/// A row from the prefetched `spira-lc list`: the listing answered, so a bead missing from it
+/// has no row.
+struct Cached(Option<spira_config::lc_state::Row>);
 
-impl reap::BdProbe for Cached {
-    fn probe(&self, _id: &str) -> (bool, String) {
-        (true, self.0.clone())
+impl reap::ClaimProbe for Cached {
+    fn probe(&self, _id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+        Ok(self.0.clone())
     }
 }
 
-impl reap::BdProbe for Real {
-    /// `spira_db_reachable` + `spira_bead_status`, still bash (families A/B are not ported
-    /// yet) — the one bd question `reap::holder_witnesses` cannot answer itself.
-    fn probe(&self, id: &str) -> (bool, String) {
-        let a = self.seam(Op::Status, &[id]);
-        if a.rc != 0 {
-            return (false, String::new());
-        }
-        let f: Vec<&str> = a.text.split(FIELD).collect();
-        let reachable = f.first().copied() == Some("1");
-        let status = f.get(1).map(|s| s.to_string()).unwrap_or_default();
-        (reachable, status)
+impl reap::ClaimProbe for Real {
+    /// `spira-lc show <id>`: the bead's lifecycle row, the one claim question
+    /// `reap::holder_witnesses` cannot answer itself.
+    fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+        spira_config::lc_state::row_with(&spira_config::lifecycle_row::lc_bin(), id)
     }
 }
 

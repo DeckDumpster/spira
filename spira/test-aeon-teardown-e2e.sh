@@ -142,15 +142,17 @@ want   "the note reads No progress, not Unlanded"   "No progress" "$notes_np"
 nowant "the note does not read Unlanded"            "Unlanded"    "$notes_np"
 want   "the note says no attempt was charged"       "No attempt charged" "$notes_np"
 # sp-k7eqd: status=deferred hid expired holds from bd ready forever (27 beads stranded) —
-# the fix leaves status OPEN and relies on a future defer_until to keep bd ready from
-# listing it until the backoff elapses, so it releases itself instead of needing a second
-# actor to flip it back. "held" now means open + defer_until, not status=deferred.
-is     "held for the backoff — status stays open so it releases itself" \
-       "open" "$(field sp-np-1 status)"
+# the fix then left status OPEN with a future defer_until. bd since makes a DATED defer a
+# snooze that wakes to open by itself once the date passes (`bd defer --help`: "A defer WITH
+# a date is a snooze: once --until passes, the next ready-front read returns the issue to
+# open automatically"), and the aeon writes no bd status at all any more (sp-mve9i, design
+# §3.4) — so "held" is bd's own dated snooze, which releases itself with no second actor.
+is     "held for the backoff — bd's dated snooze (deferred until a date), which wakes on its own" \
+       "deferred" "$(field sp-np-1 status)"
 [ -n "$(field sp-np-1 defer_until)" ] && _defer_set=yes || _defer_set=no
 is   "a defer_until is recorded — the hold the next ready query reads" "yes" "$_defer_set"
 np_ready="$(bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --json 2>/dev/null)"
-nowant "held — open + a future defer_until still keeps it off bd ready, not plain open for the next summon" \
+nowant "held — the future defer_until keeps it off bd ready, not plain open for the next summon" \
        '"sp-np-1"' "$np_ready"
 is   "POSITIVE CONTROL — bead not closed, claude rc=1 — aeon exits non-zero" "1" "$rc"
 

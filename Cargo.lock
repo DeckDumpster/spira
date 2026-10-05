@@ -197,6 +197,7 @@ name = "census"
 version = "1.0.0"
 dependencies = [
  "aeon",
+ "serde_json",
  "spira-config",
  "testkit",
 ]
@@ -681,6 +682,7 @@ dependencies = [
 name = "lifecycle-guard"
 version = "1.0.0"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "testkit",

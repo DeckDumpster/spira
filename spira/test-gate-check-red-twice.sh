@@ -36,6 +36,9 @@ testdb_up gate_check_red_twice || { echo "test-gate-check-red-twice: could not b
 B() { "${SPIRA_BD:-bd}" -C "$SPIRA_DB" "$@"; }
 
 TMP="$(mktemp -d)"
+# The open-duplicate check reads the lifecycle state (sp-mve9i); this world's machine
+# mirrors the throwaway store (open beads READY, closed ones LANDED).
+lc_mirror_bd "$TMP/lc"
 trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 
 mkdir -p "$TMP/sbin" "$TMP/run" "$TMP/run/events"
@@ -73,7 +76,7 @@ except Exception:
 }
 
 run_gate_check() {
-    SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
+    SPIRA_LC_BIN="$SPIRA_LC_BIN" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" SPIRA_RUN="$TMP/run" SPIRA_DB="$SPIRA_DB" \
         SPIRA_BD="$SPIRA_BD" \
         PATH="$TMP/sbin:$PATH" \
         SPIRA_REPO_MAP="$TMP/repo-map" SPIRA_CONF="$TMP/no.conf" \

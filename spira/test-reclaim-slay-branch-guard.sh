@@ -50,6 +50,10 @@ TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT; trap 'exit 143' INT 
 testdb_up slaybrachguard || { echo "test-reclaim-slay-branch-guard: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
+# sp-mve9i: the branch guard's claim witness reads the lifecycle row, never bd status; with no
+# lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
+# (testlib.sh lc_socket_mirror) — a machine that does not answer would refuse every slay.
+lc_socket_mirror "$TMP/lcsock"
 
 REPO="$TMP/repo"; REMOTE="$TMP/remote.git"
 export SPIRA_RUN="$TMP/run"; mkdir -p "$SPIRA_RUN/worktree"

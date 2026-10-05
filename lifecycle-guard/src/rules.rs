@@ -63,7 +63,15 @@ pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-comm
 /// reintroduction is a red — and every way around the machine to a bead's state (sp-hyo5e):
 /// a bd/bdq lifecycle write, directly or through a wrapper, a verb the analyser cannot
 /// resolve, and a bd status read feeding a decision. Each was cleared by routing it through
-/// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list. The rest — the
+/// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list.
+///
+/// The Rust bd-status read (`bd-status-read`, sp-mve9i, design §3.4: bd holds content,
+/// spira-lc holds state; `bd_status.rs`) joins this list in the commit that clears its last
+/// findings: spira-claim's select/ready and holder paths (rank.rs, ready.rs, deadlock.rs,
+/// unpoison.rs), which sp-860zj moves to spira-lc, and the incident crate's dedup (incident
+/// beads are work beads; sp-jgjvh). Every other Rust decision was routed
+/// through `spira_config::lc_state` or, for a bead that is not a work bead,
+/// `spira_config::nonwork`; until then the gate counts it on its summary line. The rest — the
 /// credential rule (over-broad: it flags every `spira-lc` CLI call and comment) and bd named
 /// in a brief — are still reported by a plain run, counted on the gate's one summary line,
 /// and join this list in the commit that clears them.

@@ -788,7 +788,9 @@ impl World for Live {
 
     fn open_asks(&mut self) -> Result<Vec<AskRow>, String> {
         let label = self.ask_label.clone();
-        let out = self.bd_ok(&["list", "--status", "open", "--label", &label, "--limit", "0", "--json"], None)?;
+        // An ask is a non-work bead: its bd status is its state (spira_config::nonwork, sp-mve9i).
+        let [flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
+        let out = self.bd_ok(&["list", &flag, &open, "--label", &label, "--limit", "0", "--json"], None)?;
         parse_asks(&out)
     }
 

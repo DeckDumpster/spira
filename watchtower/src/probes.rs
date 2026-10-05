@@ -315,6 +315,12 @@ fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
     Some(rows.iter().filter_map(|r| r.get(key).and_then(|v| v.as_str()).map(String::from)).collect())
 }
 
+/// NAMED EXCEPTION to lifecycle-guard's bd-status-read rule (lifecycle-guard/DESIGN.md,
+/// "The rowless controls"; the Concierge's ruling on sp-mve9i): this is the positive control
+/// for "no bead is rowless". A bead with no lifecycle row has no state but bd's, so the only
+/// way to find one is to ask bd which beads it considers live and look for each in the
+/// machine; reading bd status here audits the machine's coverage and decides nothing about a
+/// bead the machine holds. The rule names this function; nothing else may do this.
 pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
     if !cfg.enforce {
         return Reading::Standing(Vec::new());

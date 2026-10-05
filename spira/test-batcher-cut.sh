@@ -266,7 +266,13 @@ case "${1:-}" in
         exit "${SPIRA_LC_STUB_RC:-0}" ;;
     stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: the stub's CERTIFIED rows
-    show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
+    # read_stack: a bead the machine holds, unstacked; its state and a version for the
+    # batcher's own withdrawal (sp-mve9i: Deliver then Returned takes a member to REWORK).
+    show) st=; [ -f "${SPIRA_RUN:-/nonexistent}/lc-stub/${2:-}" ] && read -r st _ < "${SPIRA_RUN}/lc-stub/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","version":1}}\n' "${2:-}" "$st"; exit 0 ;;
+    event) f="${SPIRA_RUN:-/nonexistent}/lc-stub/${3:-}"
+           case "$*" in *Returned*) [ -f "$f" ] && { read -r _ tip ep < "$f"; printf 'REWORK %s %s\n' "$tip" "$ep" > "$f"; } ;; esac
+           exit 0 ;;
     *) exit 0 ;;
 esac
 LCSTUB
@@ -1056,13 +1062,13 @@ is     "M: merged in topological order A, B, C" \
        "$(git -C "$LREPO" log --first-parent --format=%s "$head_m" | sed -n 's/^spira: land \(sp-cm[a-z0-9]*\).*/\1/p' | tac)"
 
 # =============================================================================
-# CASE N — batcher parity (sp-7qk8u): a CERTIFIED row alone is not enough to admit a
-# member. A bead re-marked CERTIFIED at the same tip right after an eject (sp-pedat) is open
-# again, not spira-submitted — the same admission batch.sh's own _certified_list already
-# refuses ("CERTIFIED but bead status=open; refusing admission"). Upstream landed the filter (sp-1346p); this pins it.
+# CASE N — batcher parity (sp-7qk8u): a bead back with its aeon after an eject (sp-pedat) is
+# not a member. Since sp-mve9i that is its lifecycle row — REWORK, not CERTIFIED — and never
+# bd's status or the retired submitted label (design §3.4): the bead is open in bd here, with
+# no submitted label, exactly as before, and it is the row alone that keeps it out.
 # =============================================================================
 echo
-echo "N. batcher parity: CERTIFIED row but bead status=open (not spira-submitted) is excluded:"
+echo "N. batcher parity: a bead whose lifecycle row is REWORK (ejected, back with its aeon) is excluded:"
 # sp-cjjjj (J), sp-cgcc3 (K3) and sp-cgdd4 (K4) all stay CERTIFIED by design in their own
 # cases and their branches persist in $REPO — retire them first so this round is only
 # sp-ciiii, the way case C already retires case G/H's own leftovers (line 548 above).
@@ -1074,15 +1080,15 @@ git -C "$RUN/worktree/sp-ciiii" add -A
 git -C "$RUN/worktree/sp-ciiii" commit -q -m "sp-ciiii: work"
 tip_n="$(git -C "$REPO" rev-parse spira/sp-ciiii)"
 git -C "$REPO" worktree remove -f "$RUN/worktree/sp-ciiii"
-certify sp-ciiii "$tip_n"
+printf 'REWORK %s %s\n' "$tip_n" "$(date +%s)" > "$LCSTUB/sp-ciiii"
 
 prcreate_before_n="$(grep -c '^pr-create' "$FORGE_LOG")"
 out_n="$(STUB_RED_SUITES="" cut_repo)"
 nowant "N: never reports a PR opening for the excluded-only round" "PR " "$out_n"
 is     "N: forge pr-create not called" "$prcreate_before_n" "$(grep -c '^pr-create' "$FORGE_LOG")"
 is     "N: no open-batch file" "0" "$([ -f "$(open_batch_file)" ] && echo 1 || echo 0)"
-is     "N: sp-ciiii stub row stays CERTIFIED — untouched, not re-ejected" \
-       "CERTIFIED" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
+is     "N: sp-ciiii stub row stays REWORK — untouched, not re-ejected" \
+       "REWORK" "$(cut -d' ' -f1 < "$LCSTUB/sp-ciiii")"
 is     "N: sp-ciiii bead status stays open" "open" "$(status_of sp-ciiii)"
 
 tl_summary

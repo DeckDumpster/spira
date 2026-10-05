@@ -293,14 +293,6 @@ fn repo_branch_tips(repo: &Repo) -> Result<BTreeMap<String, String>, String> {
         .collect())
 }
 
-/// A CERTIFIED record is batchable only while its bead is still waiting for a round: OPEN
-/// and carrying the submitted label. A stale record of a CLOSED bead (an incident, an ask, a
-/// test bead, work already landed) is not a member — the first live cut (2026-09-29) merged
-/// nine such branches, one of them `TEST-DRAIN-DEBUG-DELETE-ME` (sp-1346p).
-pub fn eligible(status: &str, labels: &[&str], submitted_label: &str) -> bool {
-    status == "open" && labels.contains(&submitted_label)
-}
-
 /// A CERTIFIED record is batchable only while its recorded tip is still the branch's live
 /// tip (law-batcher-earns-the-round-by-parity, sp-vafqi). This is the batcher's own second
 /// line of defence: whatever wrote or trusted a stale-but-CERTIFIED record upstream, a tip
@@ -312,6 +304,11 @@ fn tip_current(tip: &str, id: &str, branches: &BTreeMap<String, String>) -> bool
 /// The certified pool for `repo`: every CERTIFIED bead whose tip is still the
 /// live tip of `refs/heads/spira/<id>` in this repo's own checkout, with title/priority/
 /// express filled in from one bulk `bd show`.
+///
+/// Membership is the lifecycle machine's CERTIFIED state alone (sp-mve9i, design §3.4): bd's
+/// status and the retired submitted label decide nothing. The sp-1346p shape — a stale
+/// record of an incident, an ask, a test bead or work already landed — is a row the machine
+/// must not hold CERTIFIED (drop it there), not one this reader second-guesses from bd.
 pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
     let certified = read_certified(env)?;
     let branches = repo_branch_tips(repo)?;
@@ -322,7 +319,6 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
         serde_json::Value::Array(a) => a,
         o => vec![o],
     };
-    let submitted_label = std::env::var("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
     let mut by_id: BTreeMap<String, (Option<u8>, String, bool)> = BTreeMap::new();
     let mut texts: BTreeMap<String, (bool, String)> = BTreeMap::new();
     for it in items {
@@ -332,10 +328,6 @@ pub fn certified_pool(env: &Env, repo: &Repo) -> Result<Vec<Member>, String> {
             .and_then(|l| l.as_array())
             .map(|a| a.iter().filter_map(|x| x.as_str()).collect())
             .unwrap_or_default();
-        let status = it.get("status").and_then(|x| x.as_str()).unwrap_or("");
-        if !eligible(status, &labels, &submitted_label) {
-            continue;
-        }
         let express = labels.contains(&env.express_label.as_str());
         let priority = it.get("priority").and_then(|p| p.as_u64()).map(|p| p.min(9) as u8);
         let title = it.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
@@ -365,10 +357,19 @@ fn base_fix_ids(env: &Env, repo: &Repo, texts: &BTreeMap<String, (bool, String)>
     if let Some(db) = &env.db {
         cmd.current_dir(db);
     }
-    cmd.args(["list", "--json", "--limit", "0", "--status", "open,in_progress,blocked", "--external-contains"]).arg(format!("basefail:{}:", repo.name));
+    // bd lists the base-red beads (content); whether one is still open is its lifecycle
+    // row's — not terminal (sp-mve9i). A base-red bead with no row, or a machine that cannot
+    // answer, accelerates nothing: the lane is never a gate.
+    cmd.args(["list", "--json", "--limit", "0", "--all", "--external-contains"]).arg(format!("basefail:{}:", repo.name));
     let Ok(text) = run(&mut cmd, "bd list basefail") else { return fixes };
     let Ok(serde_json::Value::Array(rows)) = serde_json::from_str::<serde_json::Value>(&text) else { return fixes };
-    let open: Vec<String> = rows.iter().filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string)).collect();
+    let Ok(lc) = lcq(env, &["list"]).and_then(|o| spira_config::lc_state::parse_rows(&o)) else { return fixes };
+    let lc = spira_config::lc_state::index(lc);
+    let open: Vec<String> = rows
+        .iter()
+        .filter_map(|r| r.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        .filter(|id| lc.get(id).is_some_and(|row| !row.terminal()))
+        .collect();
     for (id, (_, body)) in texts {
         if open.iter().any(|b| body.contains(b.as_str())) {
             fixes.insert(id.clone());
@@ -754,7 +755,43 @@ pub fn withdraw_for_conflict(env: &Env, repo: &Repo, id: &str, rounds: u32, file
     let listed = if files.is_empty() { "unknown".to_string() } else { files.join(", ") };
     let reason = format!("set aside for conflict with {} in {rounds} consecutive rounds; conflicting files: {listed}", repo.base);
     bead_reopen(env, id, "rebase-conflict", &format!("spira/{id} was {reason} — withdrawn by the batcher for rebase."));
+    lc_withdraw(env, id);
     conflict_streak_clear(env, id);
+}
+
+/// Takes a member the batcher withdraws out of CERTIFIED on the lifecycle machine (sp-mve9i).
+/// The pool is the machine's CERTIFIED rows alone — bd's reopen no longer keeps a withdrawn
+/// member out of the next round — so the withdrawal is the machine's too, by queue eject's
+/// own route: `Deliver`, then `Returned(batch-ejected)`, to REWORK, where the builder's next
+/// submit starts a fresh trial. A member not CERTIFIED there (resubmitted since, already
+/// returned) is left alone; a refusal is said on stderr and never blocks the round.
+pub fn lc_withdraw(env: &Env, id: &str) {
+    let fail = |why: String| eprintln!("batcher: LIFECYCLE: {id} not returned to REWORK on spira-lc: {why}");
+    let row = match lcq(env, &["show", id]).map(|o| serde_json::from_str::<serde_json::Value>(&o)) {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => return fail(format!("show: unparsed reply: {e}")),
+        Err(e) => return fail(format!("show: {e}")),
+    };
+    let bead = row.get("bead").cloned().unwrap_or_default();
+    let mut state = bead.get("state").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let Some(mut version) = bead.get("version").and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))) else {
+        return fail("show: no version".into());
+    };
+    if state == "CERTIFIED" {
+        let v = version.to_string();
+        if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "CERTIFIED", "--version", &v, "--actor", "batcher", "--kind", "\"Deliver\""]) {
+            return fail(format!("Deliver: {e}"));
+        }
+        state = "IN_DELIVERY".into();
+        version += 1;
+    }
+    if state != "IN_DELIVERY" {
+        return;
+    }
+    let v = version.to_string();
+    if let Err(e) = lcq(env, &["event", "bead", id, "--expect", "IN_DELIVERY", "--version", &v, "--actor", "batcher", "--kind", "{\"Returned\":{\"reason\":\"batch-ejected\"}}"]) {
+        fail(format!("Returned: {e}"));
+    }
 }
 
 /// Suites present at `member_tip` but gone from `base_sha` — reported only for a member set
@@ -1010,8 +1047,8 @@ pub fn result_status(results_dir: &Path, suite: &str) -> Option<bool> {
     }
 }
 
-/// Eject one member from the round before it ever reaches CI: reopen its bead (which, being
-/// CERTIFIED, withdraws that certification — bead_reopen's own contract) with a note naming
+/// Eject one member from the round before it ever reaches CI: reopen its bead and withdraw its
+/// certification on the lifecycle machine ([`lc_withdraw`]) with a note naming
 /// every suite it turned red, with a distinct cause so census can tell a local ejection from a CI one. `queue-eject-local` is a distinct reopen cause from the retired verdict.sh's `queue-eject`,
 /// so census.sh can tell the two apart.
 ///
@@ -1026,6 +1063,7 @@ pub fn eject_member(env: &Env, repo_name: &str, id: &str, suites: &[String], fir
         first_fails.iter().map(|(s, l)| format!(" First FAIL, {s}: {l}")).collect::<String>()
     );
     let _ = lib_call(env, "bead_reopen", [id, "queue-eject-local", note.as_str(), suites_csv.as_str()]);
+    lc_withdraw(env, id);
     if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(env.run.join("landing.log")) {
         use std::io::Write;
         let _ = writeln!(f, "QUEUE LOCAL-EJECT {} repo={repo_name} id={id} suites={suites_csv}", now());
@@ -1178,7 +1216,8 @@ pub fn write_hold(env: &Env, repo: &str, key: &str, bead: &str) -> Result<(), St
     fs::rename(&tmp, &p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
-/// The bead holding this exact round (same members, same tips), while it is not closed. A
+/// The bead holding this exact round (same members, same tips), while it is not closed — a
+/// hold bead, not a work bead, so its bd status is its only state (`nonwork::Kind::Hold`). A
 /// bead that cannot be read keeps the hold: a refusal that cannot check must refuse.
 pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
     let kv = parse_kv(&fs::read_to_string(hold_file(env, repo)).ok()?);
@@ -1189,7 +1228,7 @@ pub fn hold_blocking(env: &Env, repo: &str, key: &str) -> Option<String> {
     let closed = bd_show(env, std::slice::from_ref(&bead))
         .ok()
         .and_then(|v| v.as_array().and_then(|a| a.first().cloned()))
-        .and_then(|b| b.get("status").and_then(|s| s.as_str()).map(|s| s == "closed"))
+        .map(|b| spira_config::nonwork::row_closed(spira_config::nonwork::Kind::Hold, &b))
         .unwrap_or(false);
     (!closed).then_some(bead)
 }
@@ -1895,19 +1934,82 @@ mod pool_parity_tests {
 
         let _ = fs::remove_dir_all(&d);
     }
+    /// A pool fixture: a repo with `spira/<id>` branches, a spira-lc stand-in answering
+    /// `list --state CERTIFIED` (the given certified ids at their live tips), `list` (every
+    /// row in `lc_rows`) and `show`, and a bd stand-in whose `list` honours `--status` the way
+    /// bd does — so a reader that still filtered on bd status would see bd's answer.
+    fn pool_fixture(tag: &str, certified: &[&str], lc_rows: &[(&str, &str)], bd_rows: &[(&str, &str, &str, &str)]) -> (testkit::TempDir, testkit::TempDir, Env, Repo) {
+        let d = tmp_repo(tag);
+        let stubs = testkit::TempDir::new(&format!("batcher-cut-pool-stubs-{tag}"));
+        let mut cert = Vec::new();
+        for id in certified {
+            let tip = branch(&d, id, id);
+            cert.push(format!(r#"{{"bead_id":"{id}","state":"CERTIFIED","tip":"{tip}","updated_at":5}}"#));
+        }
+        let all: Vec<String> = lc_rows.iter().map(|(id, st)| format!(r#"{{"bead_id":"{id}","state":"{st}","holds":[]}}"#)).collect();
+        fs::write(stubs.join("lc-certified"), format!("[{}]", cert.join(","))).unwrap();
+        fs::write(stubs.join("lc-all"), format!("[{}]", all.join(","))).unwrap();
+        let row = |(id, status, ext, body): &(&str, &str, &str, &str)| {
+            format!(r#"{{"id":"{id}","status":"{status}","title":"t {id}","priority":2,"labels":["repo:r"],"external_ref":"{ext}","description":"{body}"}}"#)
+        };
+        for r in bd_rows {
+            fs::write(stubs.join(format!("show-{}", r.0)), row(r)).unwrap();
+        }
+        // `list` is only ever `--external-contains basefail:…`: the base-red rows.
+        let live: Vec<String> = bd_rows.iter().filter(|r| !r.2.is_empty() && r.1 != "closed").map(row).collect();
+        let every: Vec<String> = bd_rows.iter().filter(|r| !r.2.is_empty()).map(row).collect();
+        fs::write(stubs.join("list-live"), format!("[{}]", live.join(","))).unwrap();
+        fs::write(stubs.join("list-all"), format!("[{}]", every.join(","))).unwrap();
+        let sd = stubs.path().display().to_string();
+        testkit::write_exe(
+            stubs.join("spira-lc"),
+            &format!("#!/bin/bash\ncase \"$1 $2\" in \"list --state\") cat {sd}/lc-certified ;; \"list \") cat {sd}/lc-all ;; show*) echo '{{\"bead\":{{\"bead_id\":\"'$2'\"}}}}' ;; esac\n"),
+        );
+        testkit::write_exe(
+            stubs.join("bd"),
+            &format!(
+                "#!/bin/bash\nif [ \"$1\" = show ]; then shift 2; o=; for i in \"$@\"; do [ -f {sd}/show-$i ] && o=\"$o${{o:+,}}$(cat {sd}/show-$i)\"; done; echo \"[$o]\"; exit 0; fi\nfor a in \"$@\"; do [ \"$a\" = --status ] && {{ cat {sd}/list-live; exit 0; }}; done\ncat {sd}/list-all\n"
+            ),
+        );
+        let mut env = super::lifecycle_tests_env(stubs.path());
+        env.lc_bin = Some(stubs.join("spira-lc"));
+        env.bd = stubs.join("bd").display().to_string();
+        let repo = Repo { name: "r".into(), path: d.path().to_path_buf(), base: "main".into(), forge: PathBuf::new(), land: Land::Forge };
+        (d, stubs, env, repo)
+    }
+
+    /// sp-mve9i: the pool is the lifecycle machine's CERTIFIED rows. bd's status — here a
+    /// bd row someone closed by hand, carrying no submitted label — decides nothing.
+    #[test]
+    fn a_certified_bead_is_a_member_whatever_bd_says_its_status_is() {
+        let (_d, _s, env, repo) = pool_fixture("lc-member", &["sp-c1"], &[("sp-c1", "CERTIFIED")], &[("sp-c1", "closed", "", "")]);
+        let ids: Vec<String> = certified_pool(&env, &repo).unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(ids, vec!["sp-c1"]);
+    }
+
+    /// sp-mve9i: a base-red bead is open while its lifecycle row is not terminal — a bd row
+    /// closed by hand on a READY base-red still accelerates its fix, and a bd row left open
+    /// on a LANDED one no longer does.
+    #[test]
+    fn a_base_red_bead_is_open_by_its_lifecycle_row_not_bd_status() {
+        let (_d, _s, env, repo) = pool_fixture(
+            "lc-basefix",
+            &["sp-c1", "sp-c2"],
+            &[("sp-c1", "CERTIFIED"), ("sp-c2", "CERTIFIED"), ("sp-bf1", "READY"), ("sp-bf2", "LANDED")],
+            &[
+                ("sp-c1", "open", "", "fixes sp-bf1"),
+                ("sp-c2", "open", "", "fixes sp-bf2"),
+                ("sp-bf1", "closed", "basefail:r:test-a.sh", ""),
+                ("sp-bf2", "open", "basefail:r:test-b.sh", ""),
+            ],
+        );
+        let fixes: Vec<String> = certified_pool(&env, &repo).unwrap().into_iter().filter(|m| m.base_fix).map(|m| m.id).collect();
+        assert_eq!(fixes, vec!["sp-c1"]);
+    }
 }
 
 #[cfg(test)]
 mod result_path_tests {
-    #[test]
-    fn only_open_submitted_beads_are_batch_members() {
-        let sub = "spira-submitted";
-        assert!(eligible("open", &["repo:spira", sub], sub));
-        assert!(!eligible("closed", &["repo:spira", sub], sub), "a closed bead's stale CERTIFIED record is not a member");
-        assert!(!eligible("open", &["repo:spira"], sub), "reopened for rework: no longer submitted");
-        assert!(!eligible("in_progress", &[sub], sub), "an aeon holds it");
-    }
-
     use super::*;
 
     fn tmpdir(tag: &str) -> testkit::TempDir {
@@ -2169,6 +2271,69 @@ mod eject_tests {
         assert_eq!(lines[0][4], "test-a.sh,test-b.sh", "the fourth argument writes <id>.ejected");
         assert!(lines[0][3].contains("test-a.sh: FAIL widget"), "the reason names the suite's first FAIL line: {}", lines[0][3]);
         let _ = fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod lc_withdraw_tests {
+    use super::*;
+
+    /// A spira-lc stand-in whose `show` answers the given state at version 4 and whose
+    /// `event` calls are logged, one argv per line.
+    fn lc_stub(d: &Path, state: &str) -> PathBuf {
+        let log = d.join("lc-calls");
+        let bin = d.join("spira-lc");
+        testkit::write_exe(
+            &bin,
+            &format!(
+                "#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"bead_id\":\"'$2'\",\"state\":\"{state}\",\"version\":4}}}}' ;; esac\nexit 0\n",
+                log.display()
+            ),
+        );
+        bin
+    }
+
+    /// sp-mve9i: membership is the machine's CERTIFIED state alone, so a member the batcher
+    /// withdraws (reopened for rebase after consecutive base conflicts, or ejected by local
+    /// attribution) must leave CERTIFIED on the machine too — bd's reopen no longer keeps it
+    /// out of the next round. The machine's route is queue eject's: Deliver, then
+    /// Returned(batch-ejected), to REWORK.
+    #[test]
+    fn a_withdrawn_or_ejected_member_is_returned_to_rework_on_the_machine() {
+        for (tag, eject) in [("conflict", false), ("eject", true)] {
+            let d = testkit::TempDir::new(&format!("batcher-cut-lcw-{tag}"));
+            fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+            let mut e = super::lifecycle_tests_env(&d);
+            e.lc_bin = Some(lc_stub(&d, "CERTIFIED"));
+            if eject {
+                eject_member(&e, "spira", "sp-a", &["test-a.sh".into()], &[]);
+            } else {
+                let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "local/main".into(), forge: PathBuf::new(), land: Land::Local };
+                withdraw_for_conflict(&e, &repo, "sp-a", 2, &["x.rs".into()]);
+            }
+            let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+            assert!(
+                calls.contains("event bead sp-a --expect CERTIFIED --version 4 --actor batcher --kind \"Deliver\""),
+                "{tag}: {calls}"
+            );
+            assert!(
+                calls.contains("event bead sp-a --expect IN_DELIVERY --version 5 --actor batcher --kind {\"Returned\":{\"reason\":\"batch-ejected\"}}"),
+                "{tag}: {calls}"
+            );
+        }
+    }
+
+    /// A member the machine no longer holds CERTIFIED (resubmitted since, or already
+    /// returned) is left alone: nothing to withdraw.
+    #[test]
+    fn a_member_not_certified_on_the_machine_is_not_touched() {
+        let d = testkit::TempDir::new("batcher-cut-lcw-rework");
+        fs::write(d.join("lib.sh"), "bead_reopen() { :; }\n").unwrap();
+        let mut e = super::lifecycle_tests_env(&d);
+        e.lc_bin = Some(lc_stub(&d, "REWORK"));
+        eject_member(&e, "spira", "sp-a", &[], &[]);
+        let calls = fs::read_to_string(d.join("lc-calls")).unwrap_or_default();
+        assert!(!calls.contains("event "), "{calls}");
     }
 }
 

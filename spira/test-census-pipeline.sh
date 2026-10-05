@@ -158,10 +158,18 @@ case "${1:-}" in
         ;;
     list)
         [ -n "${CENSUS_LIST_ARGS_FILE:-}" ] && echo "$*" >> "$CENSUS_LIST_ARGS_FILE"
-        case " $* " in
-            *" --status closed "*) cat "${CENSUS_CLOSED_JSON:-/dev/null}" ;;
-            *)                     cat "${CENSUS_OPEN_JSON:-/dev/null}" ;;
-        esac
+        # The remedies are one content query (`--all`, sp-mve9i): every covers: bead, open
+        # and closed alike; which is which is the lifecycle stub's answer below.
+        python3 - "${CENSUS_OPEN_JSON:-}" "${CENSUS_CLOSED_JSON:-}" <<'PY'
+import json, sys
+rows = []
+for f in sys.argv[1:]:
+    try:
+        rows += json.load(open(f)) if f else []
+    except Exception:
+        pass
+print(json.dumps(rows))
+PY
         exit 0
         ;;
     *) exit 0 ;;
@@ -201,11 +209,35 @@ RUN_NO_WM="$T/run-no-wm"; mkdir -p "$RUN_NO_WM"
 # resolves to a real file. Pointing it nowhere makes the check a no-op, same as
 # SPIRA_CONF's nonexistent path above — a real map is ambient configuration this suite
 # must not depend on.
-# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
-# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
+# A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census splits the covers:
+# beads by `spira-lc list`, and asks `spira-lc state <id>` for LANDED (sp-oqf8c). The stub
+# models the fixture's two files in lifecycle terms: a bead in CENSUS_OPEN_JSON is READY
+# (nobody has handed it on), one in CENSUS_CLOSED_JSON is SUBMITTED (handed on, not landed)
+# unless $LCSTATE/<id> names its state (LANDED).
 LCSTATE="$T/lcstate"; mkdir -p "$LCSTATE"
-printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
-    "$LCSTATE" "$LCSTATE" > "$T/spira-lc-stub"
+cat > "$T/spira-lc-stub" <<STUB
+#!/usr/bin/env bash
+case "\${1:-}" in
+    state) if [ -s "$LCSTATE/\${2:-}" ]; then cat "$LCSTATE/\${2:-}"; else echo SUBMITTED; fi ;;
+    list) python3 - "\${CENSUS_OPEN_JSON:-}" "\${CENSUS_CLOSED_JSON:-}" "$LCSTATE" <<'PY'
+import json, os, sys
+open_f, closed_f, lcdir = sys.argv[1:4]
+def ids(f):
+    try:
+        return [r["id"] for r in json.load(open(f)) if r.get("id")] if f else []
+    except Exception:
+        return []
+def state(i, default):
+    p = os.path.join(lcdir, i)
+    return open(p).read().strip() if os.path.isfile(p) and os.path.getsize(p) else default
+rows = [{"bead_id": i, "state": state(i, "READY")} for i in ids(open_f)]
+rows += [{"bead_id": i, "state": state(i, "SUBMITTED")} for i in ids(closed_f)]
+print(json.dumps(rows))
+PY
+    ;;
+    *) exit 2 ;;
+esac
+STUB
 chmod +x "$T/spira-lc-stub"
 
 run_census_fake() {   # run_census_fake <SPIRA_RUN> [census-args...]
@@ -396,7 +428,7 @@ CENSUS_OPEN_JSON="$T/open.json"
 CENSUS_CLOSED_JSON="$T/closed.json"
 
 # Open remedy suppresses.
-printf '[{"labels":["maechen-remedy","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
+printf '[{"id":"open-remedy","labels":["maechen-remedy","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
 printf '[]' > "$CENSUS_CLOSED_JSON"
 RUN_OPEN="$T/run-open"; mkdir -p "$RUN_OPEN"
 open_out="$(run_census_fake "$RUN_OPEN")"
@@ -406,16 +438,18 @@ want "open remedy: --with-suppressed annotates it" "[suppressed]" \
 
 # covers: alone is the key: a remedy filed by any persona suppresses, and the bd query
 # selects on covers:*, never on the maechen-remedy provenance label.
-printf '[{"labels":["delivers:action","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
+printf '[{"id":"open-delivers","labels":["delivers:action","covers:sp-recur-fallback-test"]}]' > "$CENSUS_OPEN_JSON"
 CENSUS_LIST_ARGS_FILE="$T/list-args"; : > "$CENSUS_LIST_ARGS_FILE"
 lack "open bead with covers: and no maechen-remedy suppresses the class" "sp-recur-fallback-test" \
     "$(run_census_fake "$RUN_OPEN")"
-want "open and closed queries both select on covers:*" "2" "$(grep -c -- '--label-pattern covers:\*' "$CENSUS_LIST_ARGS_FILE")"
+# One content query for every remedy, open or closed (sp-mve9i): no bd status filter.
+want "the remedy query selects on covers:*" "1" "$(grep -c -- '--label-pattern covers:\*' "$CENSUS_LIST_ARGS_FILE")"
+lack "no bd list query filters on bd status" "--status" "$(cat "$CENSUS_LIST_ARGS_FILE")"
 lack "no bd list query filters on --label" "--label maechen" "$(cat "$CENSUS_LIST_ARGS_FILE")"
 unset CENSUS_LIST_ARGS_FILE
 
 # Unrelated covers: label does not suppress.
-printf '[{"labels":["maechen-remedy","covers:sp-recur-unrelated"]}]' > "$CENSUS_OPEN_JSON"
+printf '[{"id":"open-unrelated","labels":["maechen-remedy","covers:sp-recur-unrelated"]}]' > "$CENSUS_OPEN_JSON"
 want "unrelated covers: label does not suppress the class" "sp-recur-fallback-test" \
     "$(run_census_fake "$RUN_OPEN")"
 printf '[]' > "$CENSUS_OPEN_JSON"

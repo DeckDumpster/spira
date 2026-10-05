@@ -2,6 +2,7 @@
 //! gathered inputs, each is now a Rust function with its table as a test.
 
 use crate::bd;
+use spira_config::nonwork;
 
 /// `world_stop_decide`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +200,32 @@ pub fn disposition(i: &DispositionIn) -> Disposition {
     }
 }
 
+/// Did the session's builder hand its bead on by closing it — the legacy close path the
+/// verdict fences and teardown's closed branch judge (sp-mve9i)? Read from the bead's
+/// lifecycle row, never bd's `status` (design §3.4: bd status is inert for work beads).
+///
+/// A restricted session (`lifecycle_enforce`) hands its bead on only through the work verbs
+/// (`work submit`/`done`), which teardown's disposition reads as `submitted`
+/// (`lc_bead_verified`); bd's status never moved for it, so it never took this path and
+/// still does not. An unrestricted session's close is the row past the builder
+/// (`lc_state::past_builder`). No row is not a close: the conservative answer, which sends
+/// the bead through the disposition (release, never a reopen).
+pub fn builder_closed(restricted: bool, row: Option<&spira_config::lc_state::Row>) -> bool {
+    !restricted && row.is_some_and(|r| r.past_builder())
+}
+
+/// The status word the aeon ledger has always recorded (`done … status=<word>`), from the
+/// lifecycle row: `?` when there is none.
+pub fn ledger_word(row: Option<&spira_config::lc_state::Row>) -> &'static str {
+    match row {
+        None => "?",
+        Some(r) if r.working() => "in_progress",
+        Some(r) if r.claimable() => "open",
+        Some(r) if r.past_builder() => "closed",
+        Some(_) => "?",
+    }
+}
+
 /// What a closed bead's lifecycle row says about a batch eviction racing the close.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Eviction {
@@ -237,7 +264,8 @@ pub fn open_ask_blocker(json: &str, bead_id: &str, ask_label: &str) -> bool {
     let Some(row) = bd::first_row(json) else { return false };
     let close_sfx = (!bead_id.is_empty()).then(|| format!(" for bead {bead_id}"));
     row.dependencies.as_deref().unwrap_or(&[]).iter().any(|d| {
-        let open = d.status.as_deref() != Some("closed");
+        // An ask is not a work bead: bd's status is its only state (spira_config::nonwork).
+        let open = !nonwork::is_closed(nonwork::Kind::Ask, d.status.as_deref().unwrap_or(""));
         let has_ask = d.labels.as_deref().unwrap_or(&[]).iter().any(|l| l == ask_label);
         let blocks = d.kind() == Some("blocks");
         let title = d.title.as_deref().unwrap_or("");

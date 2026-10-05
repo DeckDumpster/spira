@@ -322,12 +322,14 @@ impl<'a> Sentinel<'a> {
         if subject.is_empty() {
             return false;
         }
+        // An ask is not a work bead: its bd status is its only state (spira_config::nonwork).
+        let [status_flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
         let out = self.bd().call_owned(
             self.h,
             &[
                 "list".into(),
-                "--status".into(),
-                "open".into(),
+                status_flag,
+                open,
                 "--label".into(),
                 self.cfg.ask.clone(),
                 "--limit".into(),
@@ -424,7 +426,8 @@ impl<'a> Sentinel<'a> {
                 return 1;
             }
         };
-        let snap = Snapshot::new(list_raw, list, r.ready.ok());
+        // A child's state is its lifecycle row (design §3.4): the one `spira-lc list`.
+        let snap = Snapshot::new(list_raw, list, r.ready.ok()).with_lc(self.state_rows().as_deref());
         self.mark_open_children(&snap, dry);
         0
     }
@@ -454,7 +457,10 @@ impl<'a> Sentinel<'a> {
                 None
             }
         };
-        Ok(Snapshot::new(list_raw, list, ready))
+        // Every state decision over this snapshot reads the bead's lifecycle row, never bd
+        // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
+        // lifecycle_enforce says — quietly when it is off (`state_rows`).
+        Ok(Snapshot::new(list_raw, list, ready).with_lc(self.state_rows().as_deref()))
     }
 
     /// Write the snapshots (and the ready cache) where every child reads them.
@@ -488,18 +494,11 @@ impl<'a> Sentinel<'a> {
         // backlog continuously (sp-2f9sa, sp-k6m1m).
         let (open_plan, plan_ready, plan_inprog) = if self.cfg.skip_reclaim {
             (Vec::new(), Some(0), 0)
-        } else if self.lc == Lifecycle::On {
-            (
-                snap.plan_open(&self.cfg),
-                self.plan_ready_live(),
-                self.plan_inprog_lc(&snap),
-            )
         } else {
-            (
-                snap.plan_open(&self.cfg),
-                snap.plan_ready(&self.cfg),
-                snap.plan_inprog(&self.cfg),
-            )
+            // plan_ready under lifecycle_enforce is spira-claim's ready set (sp-7g5q6); open
+            // and in_progress read the snapshot's lifecycle rows in either mode (sp-mve9i).
+            let ready = if self.lc == Lifecycle::On { self.plan_ready_live() } else { snap.plan_ready(&self.cfg) };
+            (snap.plan_open(&self.cfg), ready, snap.plan_inprog(&self.cfg))
         };
         let n_open = open_plan.len();
         let live = self.live_total();
@@ -583,7 +582,6 @@ impl<'a> Sentinel<'a> {
         self.check4(snap);
         if self.lc == Lifecycle::On {
             if let Some(rows) = self.lc_rows() {
-                self.check5_lc(snap, &rows);
                 self.check_rowless(snap, &rows);
             }
         }
@@ -697,19 +695,6 @@ impl<'a> Sentinel<'a> {
         store::read_json(&self.bd(), self.h, &a)
             .ok()
             .map(|(_, v)| v.len())
-    }
-
-    /// lifecycle_enforce on: the plan beads running, as the machine's WORKING rows (the pass's
-    /// one lifecycle read) — bd's in_progress is written by no claim (sp-7g5q6). A machine
-    /// that cannot be read is already loud (`lc_unreachable`) and counts nothing.
-    fn plan_inprog_lc(&self, snap: &Snapshot) -> usize {
-        let need = self.cfg.plan_labels();
-        self.lc_rows().map_or(0, |rows| {
-            rows.iter()
-                .filter(|r| r.state == "WORKING")
-                .filter(|r| snap.get(&r.bead_id).is_some_and(|b| b.status != "closed" && store::has_all(b, &need)))
-                .count()
-        })
     }
 
     /// The fleet: `aeon_count` summed over the roster, from one unit listing.

@@ -100,6 +100,9 @@ done
 # verdict is satisfied in every case here and the only thing under test is the verdict. The guard is not decoration: a suite shimming
 # `claude` by PATH alone would run the real model against a real account if anything reordered PATH.
 BIN="$TMP/bin"; mkdir -p "$BIN"
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 # aeon and the spira-claim it ranks through are invoked by name on the suite's PATH
 # (sp-gypjk); run_aeon's env -i keeps that PATH.
 for _t in aeon spira-claim; do

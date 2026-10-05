@@ -149,31 +149,27 @@ Run the sweep first so beads with mechanical remedies are resolved before you re
 The sweep closes litter unmapped-repo beads, adds the overseer label to needs-ryan beads that lack it, and strips awaiting-ci from beads whose repo will never have a CI run. Described unmapped-repo beads and unclaimable beads remain for you.
 
 The sweep no longer closes, drops or reopens beads by landing state: since the lifecycle
-cutover a bead's landing is its `spira-lc` row, and the sentinel's CHECK5-LC reports the
-three drifts (landed-but-open, closed-unlanded, blocked-by-unlanded) from those rows as
-`STATE-LC` lines in the audit log. Read `$SPIRA_RUN/groom.log` for what the sweep acted on
-before you start your own reading — poison triage and split/merge/premise judgement are
-yours.
+cutover a bead's state — landed, handed on, still being worked — is its `spira-lc` row
+alone, and bd's open/closed says nothing about it, so there is no "landed but open" or
+"closed but never landed" drift left to report. Read `$SPIRA_RUN/groom.log` for what the
+sweep acted on before you start your own reading — poison triage and split/merge/premise
+judgement are yours.
 
 ## How to scan the graph
 
-**Your scan is the whole graph, not the partition you own.** A bead's STATE — poisoned,
-landed-but-open, closed-but-never-landed, blocked-by-unlanded — does not depend on which
-partition it carries. Read every open bead in every partition (`work list --status open --json`),
-plus every closed bead a partition's own history names (the sentinel's `STATE-LC` lines narrow
-this for you — read those rather than walking history yourself). For each open bead:
+**Your scan is the whole graph, not the partition you own.** A bead's STATE — its
+`spira-lc` state and holds (poisoned, waiting, asked) — does not depend on which partition it
+carries. Read every open bead in every partition (`work list --status open --json`). For each
+open bead:
 
 1. Read the title, description, and labels
 2. Check for duplicates (`work search "<the title's key terms>"`)
 3. Check whether the premise exists in the current codebase or bead graph
 4. Check whether the lane label is correct
-5. Check its STATE: is it poisoned (why — see "Poison triage" below)? Does a `STATE-LC`
-   line already say landed-but-open, closed-unlanded, or blocked-by-unlanded about it or
-   something it depends on?
+5. Check its STATE: is it poisoned (why — see "Poison triage" below)? Is something it
+   depends on handed on but not yet terminal in `spira-lc` (`work show <dep>`)?
 
 Do not read every closed bead by hand — that is a full history scan and will hit your wall.
-The `STATE-LC` lines already narrow the closed set to the ones whose `spira-lc` row is not
-terminal; read those, not the history behind them.
 
 ### Poison triage
 
@@ -219,8 +215,8 @@ Decide which side of the charge it was:
 
 ### False blockers
 
-An open bead blocked by a bead that is CLOSED but never landed (a `STATE-LC
-blocked-by-unlanded` line) is not correctly blocked — the blocker only looks done.
+An open bead whose blocker is handed on in `spira-lc` but will never land (its delivery
+stalled, or the work was abandoned) is not correctly blocked — the blocker only looks done.
 Reopening the blocker is the fix: reopen it (`work reopen <blocker-id> --evidence "<why>"`)
 and note why on the blocked bead (`work note-on <id> "<why>"`).
 

@@ -44,6 +44,23 @@ struct World {
     fail_content_on_base: bool,
     /// `spira-lc holds <id>`'s answer, one hold kind a line.
     holds: BTreeMap<String, String>,
+    /// The lifecycle row's state per bead, as `spira-lc show` answers it. A bead with no
+    /// entry answers from the fake's bd status, the way the machine records the same
+    /// session: a builder's close is the row past the builder (SUBMITTED), a claim WORKING,
+    /// anything else READY (sp-mve9i: the aeon reads the row, never bd's status).
+    lc: BTreeMap<String, String>,
+}
+
+fn lc_state_of(w: &World, id: &str) -> String {
+    if let Some(s) = w.lc.get(id) {
+        return s.clone();
+    }
+    match w.status.get(id).map(String::as_str) {
+        Some("closed") => "SUBMITTED",
+        Some("in_progress") => "WORKING",
+        _ => "READY",
+    }
+    .to_string()
 }
 
 type W = Arc<Mutex<World>>;
@@ -197,6 +214,10 @@ impl Exec for FakeExec {
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("holds") {
             return Out::ok(self.0.lock().unwrap().holds.get(&args[1]).cloned().unwrap_or_default());
+        }
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("show") && args.len() == 2 {
+            let w = self.0.lock().unwrap();
+            return Out::ok(serde_json::json!({"bead": {"bead_id": args[1], "state": lc_state_of(&w, &args[1]), "holds": []}, "delivery": null}).to_string());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -924,6 +945,48 @@ fn a_decision_bead_closed_with_nothing_committed_stands_closed() {
     assert_eq!(w.status["sp-d"], "closed");
 }
 
+/// sp-mve9i: a bd close the lifecycle machine never saw is not the builder's close (design
+/// §3.4: bd status is inert for work beads). bd reads closed, the row is still WORKING: the
+/// aeon releases it through the disposition, never through the closed branch.
+#[test]
+fn a_bd_close_the_machine_never_saw_is_not_the_builders_close() {
+    let f = fx("bdcloselcworking");
+    seed(&f, "sp-w");
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, w, _| {
+        let id = spec.env.get("BEAD_ID").unwrap().clone();
+        let mut w = w.lock().unwrap();
+        w.status.insert(id.clone(), "closed".into());
+        w.lc.insert(id, "WORKING".into());
+        crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    assert!(!l_done(&o).contains("status=closed"), "{}", o.ledger);
+    assert!(l_done(&o).contains("status=in_progress"), "{}", o.ledger);
+    assert!(!o.log.contains("closed with nothing committed"), "the verdict fences judge a close, and there was none: {}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim"), "{:?}", w.seam_calls);
+}
+
+/// sp-mve9i: the row past the builder is the close, whatever bd says. bd still reads
+/// in_progress, the row is SUBMITTED: a non-work bead with nothing committed is judged by
+/// the verdict's close fence and reopened.
+#[test]
+fn the_row_past_the_builder_is_the_close_even_with_bd_in_progress() {
+    let f = fx("lcsubmittedbdopen");
+    seed_typed(&f, "sp-k", "spike", &[]);
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|spec, w, _| {
+        let id = spec.env.get("BEAD_ID").unwrap().clone();
+        w.lock().unwrap().lc.insert(id, "SUBMITTED".into());
+        crate::run::append(&spec.log, "{\"type\":\"result\",\"duration_ms\":3000,\"num_turns\":3,\"total_cost_usd\":0.5}\n");
+        0
+    });
+    let o = go(&f, "spira,plan", &[], false, Mode::Claim, BTreeMap::new(), act);
+    assert!(o.log.contains("sp-k REOPENED — closed with nothing committed"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "bead_reopen" && c.1[0] == "sp-k" && c.1[1] == "closed-without-commit"), "{:?}", w.seam_calls);
+}
+
 fn l_done(o: &Outcome) -> String {
     ledger_lines(o).into_iter().find(|l| l.starts_with("done ")).unwrap_or_default()
 }
@@ -1003,9 +1066,11 @@ fn a_session_that_leaves_the_bead_open_with_no_commit_is_a_no_progress_exit_held
     // Exempt, not charged: the events fold's `unjudged-` prefix, same as every other
     // never-judged disposition, so CHECK 4 never counts this toward the attempts ask.
     assert!(w.seam_calls.iter().any(|c| c.0 == "bump_requeue" && c.1 == vec!["sp-o", "unjudged-no-progress"]), "{:?}", w.seam_calls);
+    // sp-mve9i: no bd status write around the machine — bd's dated defer is a snooze that
+    // wakes on its own (`bd defer --help`), and the release above is the lifecycle's.
     assert!(
-        w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("update") && c.contains(&"--status".to_string()) && c.contains(&"open".to_string())),
-        "a timed hold must leave status open so it releases itself: {:?}",
+        !w.bd_calls.iter().any(|c| c.iter().any(|a| a == "--status" || a.starts_with("--status="))),
+        "a timed hold writes no bd status: {:?}",
         w.bd_calls
     );
     // Held, not resumed: a real defer, not just release() (which alone put it right back

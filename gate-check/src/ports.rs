@@ -25,7 +25,10 @@ pub trait World {
     /// `spira_event <kind> <subject> <summary> <detail>` (the `lib.sh` seam).
     fn spira_event(&self, kind: &str, subject: &str, summary: &str, detail: &str);
 
+    /// `bd list --all --json`: every bead's content, closed or not (bd's status is not state).
     fn bd_list_json(&self) -> String;
+    /// The lifecycle rows by bead id — which filed beads are still open (sp-mve9i).
+    fn lc_rows(&self) -> Result<crate::engine::Lc, String>;
     fn bd_priority(&self, id: &str, p: i64);
     fn bd_note(&self, id: &str, text: &str);
     /// `bead.sh file <title> --for builder --repo <repo> -p <priority> --body-file -`, `body`

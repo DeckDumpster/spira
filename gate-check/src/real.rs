@@ -119,8 +119,12 @@ impl World for Real {
 
     fn bd_list_json(&self) -> String {
         let mut c = self.bd();
-        c.arg("list").arg("--json");
+        c.arg("list").arg("--all").arg("--json");
         Self::combined(c)
+    }
+
+    fn lc_rows(&self) -> Result<crate::engine::Lc, String> {
+        spira_config::lc_state::list().map(spira_config::lc_state::index)
     }
 
     fn bd_priority(&self, id: &str, p: i64) {

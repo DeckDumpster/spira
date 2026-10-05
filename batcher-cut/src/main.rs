@@ -272,7 +272,11 @@ fn handle_base_conflicts(
             // The rebase path decides: it certifies, or reopens the bead itself with the hunk
             // quoted. The batcher never reopens or marks RED on its own (batcher-parity).
             io::conflict_streak_clear(env_, &m.id);
-            let _ = io::rebase_stale(env_, &repo.name, &m.id);
+            // Exit 1 (a real conflict) or 2 (red at the new tip): rebase-stale reopened the
+            // bead and returned it to an aeon, so its certification goes too (sp-mve9i).
+            if matches!(io::rebase_stale(env_, &repo.name, &m.id), 1 | 2) {
+                io::lc_withdraw(env_, &m.id);
+            }
         } else {
             let rounds = io::conflict_streak_bump(env_, &m.id, &m.tip);
             if rounds >= batcher::core::CONFLICT_EJECT_ROUNDS {
@@ -1078,6 +1082,37 @@ mod base_conflict_handling {
         handle_base_conflicts(&e, &repo, &sorted, &merges, &base, 200);
         let calls = fs::read_to_string(&log).unwrap_or_default();
         assert_eq!(calls.trim(), "rebase sp-c spira", "only the true base conflict reaches the rebase path, and nothing else is written: {calls}");
+    }
+
+    /// sp-mve9i: when the rebase path returns the member to an aeon (exit 1, a real conflict;
+    /// exit 2, red at the new tip) it reopened the bead, and the pool is the machine's
+    /// CERTIFIED rows alone — so the batcher takes the member out of CERTIFIED there too, or
+    /// the next round batches the very tip that cannot rebase. Exit 3 (not attempted) leaves
+    /// it CERTIFIED, as before.
+    #[test]
+    fn a_member_the_rebase_path_returns_to_an_aeon_leaves_certified_on_the_machine() {
+        for (rc, withdrawn) in [(1, true), (2, true), (3, false)] {
+            let d = testkit::TempDir::new(&format!("batcher-cut-hbc-lc{rc}"));
+            let [base, _a, _b, c, _root] = fixture(&d);
+            git(&d, &["checkout", "-q", "--detach", &base]);
+            fs::write(d.join("lib.sh"), "bead_reopen() { :; }\nbump_requeue() { :; }\n").unwrap();
+            let mut e = io::lifecycle_tests_env(&d);
+            testkit::write_exe(&e.rebase_stale_bin, &format!("#!/bin/sh\nexit {rc}\n"));
+            let lclog = d.join("lc-calls");
+            let lc = d.join("spira-lc");
+            testkit::write_exe(
+                &lc,
+                &format!("#!/bin/bash\necho \"$*\" >> '{}'\ncase \"$1\" in show) echo '{{\"bead\":{{\"state\":\"CERTIFIED\",\"version\":2}}}}' ;; esac\n", lclog.display()),
+            );
+            e.lc_bin = Some(lc);
+            e.run = d.to_path_buf();
+            let repo = Repo { name: "spira".into(), path: d.to_path_buf(), base: "base".into(), forge: PathBuf::new(), land: Land::Local };
+            let sorted = vec![member("sp-c", &c)];
+            let merges: BTreeMap<String, MergeResult> = sorted.iter().map(|m| (m.id.clone(), MergeResult::Conflict)).collect();
+            handle_base_conflicts(&e, &repo, &sorted, &merges, &base, 200);
+            let calls = fs::read_to_string(&lclog).unwrap_or_default();
+            assert_eq!(calls.contains("Returned"), withdrawn, "rc={rc}: {calls}");
+        }
     }
 }
 

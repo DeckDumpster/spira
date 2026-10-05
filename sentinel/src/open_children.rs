@@ -7,11 +7,17 @@
 //! in memory, and the store is touched only for the label writes that actually change
 //! something (law: every stage CPU/memory/IO bound, never bead-store bound).
 //!
-//! The contract is lib.sh's, unchanged:
+//! The contract is lib.sh's, with a bead's state read from its lifecycle row instead of bd
+//! `status` (design §3.4, sp-mve9i — bd holds content, spira-lc holds state):
 //! - candidates are the union of the (scope-filtered) ready set and the beads currently
-//!   carrying the label with `status = open`;
-//! - a candidate with any non-closed child gains the label if it lacks it;
-//! - a labeled candidate whose children are all closed (or who has none) loses it;
+//!   carrying the label whose lifecycle row is claimable (READY/REWORK — bd `open`);
+//! - a candidate with any open child gains the label if it lacks it. A child is open while
+//!   its lifecycle row is not terminal (LANDED/SUPERSEDED/DROPPED/DONE). A child with no
+//!   row is not a work bead the machine tracks: an epic/event child is read through
+//!   `spira_config::nonwork` (bd status is an epic's only state); any other rowless child
+//!   counts as OPEN — the conservative answer, since a parent wrongly kept out of dispatch
+//!   is a visible stall while a parent wrongly dispatched builds on unfinished work;
+//! - a labeled candidate whose children are all done (or who has none) loses it;
 //! - the same log lines, byte for byte.
 
 use std::collections::{BTreeSet, HashSet};
@@ -19,6 +25,8 @@ use std::collections::{BTreeSet, HashSet};
 use crate::model::Bead;
 use crate::pass::Sentinel;
 use crate::store;
+use spira_config::lc_state;
+use spira_config::nonwork::{self, Kind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
@@ -26,11 +34,21 @@ pub enum Change {
     Remove(String),
 }
 
-/// Every bead that has at least one non-closed child, by either link bd records: the row's
+/// Whether a child is still open (module doc): its lifecycle row is not terminal; rowless,
+/// an epic/event by its bd status, anything else open.
+fn child_open(snap: &store::Snapshot, b: &Bead) -> bool {
+    match snap.lc_state(&b.id) {
+        Some(state) => !lc_state::is_terminal(state),
+        None if matches!(b.typ(), "epic" | "event") => !nonwork::is_closed(Kind::Epic, &b.status),
+        None => true,
+    }
+}
+
+/// Every bead that has at least one open child, by either link bd records: the row's
 /// `parent` field or a `parent-child` dependency naming the parent.
-pub fn open_parents(list: &[Bead]) -> HashSet<&str> {
+pub fn open_parents(snap: &store::Snapshot) -> HashSet<&str> {
     let mut out = HashSet::new();
-    for b in list.iter().filter(|b| b.status != "closed") {
+    for b in snap.list.iter().filter(|b| child_open(snap, b)) {
         if let Some(p) = b.parent.as_deref().filter(|p| !p.is_empty() && *p != b.id) {
             out.insert(p);
         }
@@ -46,16 +64,17 @@ pub fn open_parents(list: &[Bead]) -> HashSet<&str> {
 }
 
 /// The label decision over one snapshot. `ready` is the ready set already narrowed to the
-/// scope; `list` is the whole store. Output order: ready candidates first, then labeled-only
-/// ones, each in their input order (lib.sh's `dict.fromkeys(ready + labeled)`).
-pub fn decide(list: &[Bead], ready: &[Bead], label: &str) -> Vec<Change> {
+/// scope; `snap.list` is the whole store. Output order: ready candidates first, then
+/// labeled-only ones, each in their input order (lib.sh's `dict.fromkeys(ready + labeled)`).
+pub fn decide(snap: &store::Snapshot, ready: &[Bead], label: &str) -> Vec<Change> {
     if label.is_empty() {
         return Vec::new();
     }
-    let open = open_parents(list);
-    let labeled: Vec<&str> = list
+    let open = open_parents(snap);
+    let labeled: Vec<&str> = snap
+        .list
         .iter()
-        .filter(|b| b.status == "open" && b.has(label))
+        .filter(|b| snap.lc_state(&b.id).is_some_and(lc_state::is_claimable) && b.has(label))
         .map(|b| b.id.as_str())
         .collect();
     let labeled_set: HashSet<&str> = labeled.iter().copied().collect();
@@ -110,7 +129,7 @@ impl<'a> Sentinel<'a> {
                 .map(|(_, v)| v)
                 .unwrap_or_default(),
         };
-        let changes = decide(&snap.list, &ready, &label);
+        let changes = decide(snap, &ready, &label);
         // Re-read before writing (fresh.rs): one live read for every bead about to change.
         let live = if dry || changes.is_empty() {
             None
@@ -170,9 +189,62 @@ mod tests {
         parse_beads(j).unwrap()
     }
 
+    /// The store `j`, with each bead's lifecycle row in the state its fixture `status`
+    /// stands for (open READY, in_progress WORKING, closed LANDED) — the fixtures predate
+    /// the lifecycle read; `lc_disagrees_with_bd` is the test where the two differ.
+    fn snap(j: &str) -> store::Snapshot {
+        let rows: Vec<crate::model::LcRow> = beads(j)
+            .iter()
+            .map(|b| crate::model::LcRow {
+                bead_id: b.id.clone(),
+                state: match b.status.as_str() {
+                    "in_progress" => "WORKING",
+                    "closed" => "LANDED",
+                    _ => "READY",
+                }
+                .into(),
+                ..Default::default()
+            })
+            .collect();
+        store::Snapshot::from_json(j, None).with_lc(Some(&rows))
+    }
+
+    fn lc_snap(j: &str, rows: &[(&str, &str)]) -> store::Snapshot {
+        let rows: Vec<crate::model::LcRow> = rows
+            .iter()
+            .map(|(id, st)| crate::model::LcRow { bead_id: id.to_string(), state: st.to_string(), ..Default::default() })
+            .collect();
+        store::Snapshot::from_json(j, None).with_lc(Some(&rows))
+    }
+
+    /// sp-mve9i: whether a child is open is its lifecycle row, never bd's status. bd says
+    /// k1 is closed and k2 open; the machine says k1 is WORKING and k2 LANDED.
+    #[test]
+    fn lc_disagrees_with_bd() {
+        let j = r#"[{"id":"p","status":"open"},{"id":"q","status":"open","labels":["spira-open-children"]},
+                    {"id":"k1","status":"closed","parent":"p"},{"id":"k2","status":"open","parent":"q"}]"#;
+        let s = lc_snap(j, &[("p", "READY"), ("q", "READY"), ("k1", "WORKING"), ("k2", "LANDED")]);
+        assert_eq!(
+            decide(&s, &beads(r#"[{"id":"p"}]"#), L),
+            vec![Change::Add("p".into()), Change::Remove("q".into())]
+        );
+        // A labeled candidate is one the machine says is claimable, whatever bd says.
+        let s = lc_snap(j, &[("p", "READY"), ("q", "SUBMITTED"), ("k1", "WORKING"), ("k2", "LANDED")]);
+        assert_eq!(decide(&s, &beads(r#"[{"id":"p"}]"#), L), vec![Change::Add("p".into())]);
+    }
+
+    /// A rowless child: an epic by its bd status (nonwork), anything else counts open.
+    #[test]
+    fn a_rowless_child_is_open_unless_it_is_a_closed_epic() {
+        let j = r#"[{"id":"p","status":"open"},{"id":"e","status":"closed","issue_type":"epic","parent":"p"},
+                    {"id":"r","status":"open"},{"id":"x","status":"closed","issue_type":"task","parent":"r"}]"#;
+        let s = lc_snap(j, &[("p", "READY"), ("r", "READY")]);
+        assert_eq!(decide(&s, &beads(r#"[{"id":"p"},{"id":"r"}]"#), L), vec![Change::Add("r".into())]);
+    }
+
     #[test]
     fn a_parent_with_an_open_child_gains_the_label() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"p","status":"open","labels":["plan"]},
                 {"id":"k1","status":"open","dependencies":[{"depends_on_id":"p","type":"parent-child"}]},
                 {"id":"k2","status":"closed","parent":"p"},
@@ -185,14 +257,14 @@ mod tests {
     #[test]
     fn the_parent_field_alone_counts_as_a_link() {
         let list =
-            beads(r#"[{"id":"p","status":"open"},{"id":"k","status":"in_progress","parent":"p"}]"#);
+            snap(r#"[{"id":"p","status":"open"},{"id":"k","status":"in_progress","parent":"p"}]"#);
         let ready = beads(r#"[{"id":"p"}]"#);
         assert_eq!(decide(&list, &ready, L), vec![Change::Add("p".into())]);
     }
 
     #[test]
     fn already_labeled_with_an_open_child_is_left_alone() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"p","status":"open","labels":["spira-open-children"]},
                 {"id":"k","status":"open","parent":"p"}]"#,
         );
@@ -202,7 +274,7 @@ mod tests {
 
     #[test]
     fn every_child_closed_removes_the_label_even_off_the_ready_set() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"p","status":"open","labels":["spira-open-children"]},
                 {"id":"k1","status":"closed","parent":"p"},
                 {"id":"k2","status":"closed","dependencies":[{"depends_on_id":"p","type":"parent-child"}]}]"#,
@@ -212,7 +284,7 @@ mod tests {
 
     #[test]
     fn one_of_two_children_open_keeps_the_label() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"p","status":"open","labels":["spira-open-children"]},
                 {"id":"k1","status":"closed","parent":"p"},
                 {"id":"k2","status":"open","parent":"p"}]"#,
@@ -222,7 +294,7 @@ mod tests {
 
     #[test]
     fn a_blocks_dependency_is_not_a_child() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"p","status":"open"},
                 {"id":"k","status":"open","dependencies":[{"depends_on_id":"p","type":"blocks"}]}]"#,
         );
@@ -233,19 +305,19 @@ mod tests {
     fn a_labeled_bead_not_open_is_not_a_candidate() {
         // lib.sh read the labeled set with `--status open`; an in_progress labeled bead is
         // neither re-labeled nor cleared unless it is also ready.
-        let list = beads(r#"[{"id":"p","status":"in_progress","labels":["spira-open-children"]}]"#);
+        let list = snap(r#"[{"id":"p","status":"in_progress","labels":["spira-open-children"]}]"#);
         assert!(decide(&list, &[], L).is_empty());
     }
 
     #[test]
     fn an_empty_label_disables_the_check() {
-        let list = beads(r#"[{"id":"p","status":"open"},{"id":"k","status":"open","parent":"p"}]"#);
+        let list = snap(r#"[{"id":"p","status":"open"},{"id":"k","status":"open","parent":"p"}]"#);
         assert!(decide(&list, &beads(r#"[{"id":"p"}]"#), "").is_empty());
     }
 
     #[test]
     fn candidates_are_deduplicated_ready_first() {
-        let list = beads(
+        let list = snap(
             r#"[{"id":"a","status":"open","labels":["spira-open-children"]},
                 {"id":"b","status":"open"},
                 {"id":"kb","status":"open","parent":"b"}]"#,
@@ -279,7 +351,7 @@ mod tests {
             let st = if i % 3 == 0 { "open" } else { "closed" };
             rows.push(format!("{{\"id\":\"b{i}\",\"status\":\"{st}\"{parent}}}"));
         }
-        let list = beads(&format!("[{}]", rows.join(",")));
+        let list = snap(&format!("[{}]", rows.join(",")));
         let ready = beads(&format!(
             "[{}]",
             (0..220)

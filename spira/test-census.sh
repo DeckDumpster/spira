@@ -53,8 +53,28 @@ CENSUS="$(command -v census)"
 B() { bd -C "$SPIRA_DB" "$@"; }
 REMEDY_LABEL=maechen-remedy
 
+# A REMEDY'S STATE IS ITS LIFECYCLE ROW (sp-mve9i, design §3.4): census lists the covers:
+# beads from bd as content and splits them by `spira-lc list`; "LANDED" is asked with
+# `spira-lc state <id>` (sp-oqf8c). The stub answers both from $LCSTATE/<id>, one state per
+# file: `list` has a row only for a bead with a file, `state` answers SUBMITTED for one
+# without (known, not landed).
+LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
+cat > "$TMP/spira-lc-stub" <<STUB
+#!/usr/bin/env bash
+case "\${1:-}" in
+    state) if [ -s "$LCSTATE/\${2:-}" ]; then cat "$LCSTATE/\${2:-}"; else echo SUBMITTED; fi ;;
+    list)  first=1; printf '['
+           for f in "$LCSTATE"/*; do [ -s "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0
+               printf '{"bead_id":"%s","state":"%s"}' "\$(basename "\$f")" "\$(tr -d '[:space:]' < "\$f")"; done
+           printf ']\n' ;;
+    *) exit 2 ;;
+esac
+STUB
+chmod +x "$TMP/spira-lc-stub"
+
 run_census() {
     env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
@@ -65,6 +85,7 @@ run_census() {
 run_census_repo() {  # run_census_repo <repo-path> [census-args...]
     local _rp="$1"; shift
     env SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$TMP/spira-lc-stub" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
         SPIRA_HOME="$HERE" \
@@ -193,6 +214,9 @@ remedy_id="$(B create "Fix sp-recur-remedy-class" --type task --priority 2 \
     --silent 2>/dev/null | tr -d '[:space:]')"
 [ -n "$remedy_id" ] || { bad "remedy bead created" "create failed"; tl_summary; exit; }
 
+# Open in lifecycle terms: nobody has handed it on.
+echo READY > "$LCSTATE/$remedy_id"
+
 out4="$(run_census)"
 lack "open remedy: class excluded by default" "sp-recur-remedy-class" "$out4"
 
@@ -212,12 +236,6 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
-# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-oqf8c): census asks `spira-lc state <id>`.
-# The stub answers from $LCSTATE/<id> (a bead with no file is SUBMITTED: known, not landed).
-LCSTATE="$TMP/lcstate"; mkdir -p "$LCSTATE"
-printf '#!/usr/bin/env bash\n[ "${1:-}" = state ] || exit 2\nif [ -s "%s/${2:-}" ]; then cat "%s/${2:-}"; else echo SUBMITTED; fi\n' \
-    "$LCSTATE" "$LCSTATE" > "$TMP/spira-lc-stub"
-chmod +x "$TMP/spira-lc-stub"
 
 run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
@@ -235,6 +253,8 @@ run_census_fixture() {
 testdb_seed <<JSONL
 {"id":"$remedy_id","title":"Fix sp-recur-remedy-class","status":"closed","closed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","updated_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)","issue_type":"task","priority":2,"labels":["spira","plan","${REMEDY_LABEL}","covers:sp-recur-remedy-class"]}
 JSONL
+# The builder handed it on: its lifecycle row is past the builder, not yet landed.
+echo SUBMITTED > "$LCSTATE/$remedy_id"
 # A closed remedy with NO branch is orphaned (sp-c3q60) — that decision path is
 # table-tested (fake bd, real throwaway git) in test-census-pipeline.sh. This fixture
 # gives it a branch to represent the in-flight case.

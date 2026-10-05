@@ -157,7 +157,12 @@ lc_seed_bead sp-r5 REWORK "$NOW_EPOCH" policy-violation
 # sp-c1: CERTIFIED.
 lc_seed_bead sp-c1 CERTIFIED "$OLD_EPOCH"
 
-# sp-d1..3 have no spira-lc row (done stage).
+# sp-d1..3: SUBMITTED too — the done stage is a handed-on bead awaiting certification with a
+# branch and no landing (sp-mve9i; it was "closed in bd, no row", which cannot happen once
+# the row is the bead's state), split by age at the cert window.
+lc_seed_bead sp-d1 SUBMITTED "$NOW_EPOCH"
+lc_seed_bead sp-d2 SUBMITTED "$NOW_EPOCH"
+lc_seed_bead sp-d3 SUBMITTED "$NOW_EPOCH"
 
 out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
     SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" \
@@ -171,13 +176,14 @@ out="$(env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
 echo "--- (a) funnel stage counts ---"
-is "SP_UNLANDED_N is 3 (sp-d1..3: done)"     "3"  "$(val SP_UNLANDED_N)"
+# Done is every SUBMITTED bead with a branch: sp-d1..3 and sp-g1..2.
+is "SP_UNLANDED_N is 5 (sp-d1..3, sp-g1..2: SUBMITTED)" "5"  "$(val SP_UNLANDED_N)"
 # sp-bf31a: SP_UNLANDED_N splits into stranded (older than the cert window) and cert
-# (within it). sp-d1/sp-d2 closed 2h ago are stranded; sp-d3 closed 65m ago is not
-# (default window is 90m).
+# (within it). sp-d1/sp-d2 finished 2h ago are stranded; sp-d3, sp-g1, sp-g2 finished 65m
+# ago are not (default window is 90m).
 is "SP_STRANDED_N is 2 (sp-d1,sp-d2 closed 2h ago)" "2"  "$(val SP_STRANDED_N)"
-is "SP_CERT_N is 1 (sp-d3 closed 65m ago)"          "1"  "$(val SP_CERT_N)"
-is "SP_FUNNEL_CERTIFY_N is 2 (sp-g1..2)"      "2"  "$(val SP_FUNNEL_CERTIFY_N)"
+is "SP_CERT_N is 3 (sp-d3, sp-g1..2 finished 65m ago)" "3"  "$(val SP_CERT_N)"
+is "SP_FUNNEL_CERTIFY_N is 5 (sp-d1..3, sp-g1..2 SUBMITTED)" "5"  "$(val SP_FUNNEL_CERTIFY_N)"
 is "SP_FUNNEL_RED_N is 5 (sp-r1..5)"          "5"  "$(val SP_FUNNEL_RED_N)"
 is "SP_QUEUE_DEPTH is 1 (sp-c1 CERTIFIED)"    "1"  "$(val SP_QUEUE_DEPTH)"
 

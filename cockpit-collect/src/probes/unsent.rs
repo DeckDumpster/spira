@@ -9,7 +9,7 @@ use super::{push, Kv};
 use crate::io;
 use crate::quoting::{parse_iso8601, rel_age, sanitize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 pub fn unsent_keys() -> Kv {
@@ -58,6 +58,9 @@ fn branch_backlog_section(out: &mut Kv) {
     let qdir = std::env::var("SPIRA_QUEUE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|_| run.join("queue"));
     let in_delivery: std::collections::HashMap<String, super::lc::LcRow> =
         super::lc::list(Some("IN_DELIVERY")).unwrap_or_default().into_iter().map(|r| (r.id.clone(), r)).collect();
+    // A branch's bead state is its lifecycle row's (design §3.4, sp-mve9i): one read for
+    // every branch instead of a bd show per branch.
+    let lc_index = super::lc::state_index();
     let batch_wait: i64 = std::env::var("SPIRA_QUEUE_BATCH_WAIT").ok().and_then(|v| v.parse().ok()).unwrap_or(1800);
 
     for rname in reg.all() {
@@ -84,7 +87,7 @@ fn branch_backlog_section(out: &mut Kv) {
                     let ts: Option<i64> = ts_s.parse().ok();
                     let id = b.trim_start_matches("spira/");
 
-                    let status = bead_status(id);
+                    let status = bead_status(id, lc_index.as_ref());
                     match status {
                         BeadStatus::ProbeFailed => {
                             probe_fail += 1;
@@ -108,13 +111,15 @@ fn branch_backlog_section(out: &mut Kv) {
                         }
                         BeadStatus::Closed { submitted } => {
                             done += 1;
-                            if awaits_round(&land, submitted) {
-                                awaiting_round += 1;
-                            } else if !b.starts_with("spira/queue/") {
-                                closed_stranded += 1;
-                                if let Some(ts) = ts {
-                                    if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
-                                        closed_stranded_oldest = Some(ts);
+                            match closed_branch_class(&land, submitted, b.starts_with("spira/queue/"), in_delivery.contains_key(id)) {
+                                ClosedClass::AwaitingRound => awaiting_round += 1,
+                                ClosedClass::Delivering | ClosedClass::BatchBranch => {}
+                                ClosedClass::Stranded => {
+                                    closed_stranded += 1;
+                                    if let Some(ts) = ts {
+                                        if closed_stranded_oldest.map(|o| ts < o).unwrap_or(true) {
+                                            closed_stranded_oldest = Some(ts);
+                                        }
                                     }
                                 }
                             }
@@ -129,7 +134,7 @@ fn branch_backlog_section(out: &mut Kv) {
                             }
                         }
                     }
-                    if !matches!(status, BeadStatus::Closed { .. }) {
+                    if batched_check_applies(&status, in_delivery.contains_key(id)) {
                         if let Some(row) = in_delivery.get(id) {
                             let mut in_batch = false;
                             if let Ok(entries) = std::fs::read_dir(&qdir) {
@@ -226,16 +231,44 @@ fn branch_backlog_section(out: &mut Kv) {
     }
 }
 
-fn closed_as_submitted(row: &Value) -> bool {
-    row.get("close_reason").and_then(Value::as_str).is_some_and(|r| r.trim_start().starts_with("OUTCOME: submitted"))
-}
-
 /// A submitted bead's branch under queue.local waits for a round by design; only elsewhere
 /// is a closed bead's surviving branch a stranding.
 fn awaits_round(land: &str, submitted: bool) -> bool {
     submitted && land == "queue.local"
 }
 
+/// How a done branch (its bead past the builder) is counted.
+#[derive(Debug, PartialEq, Eq)]
+enum ClosedClass {
+    /// Submitted under queue.local: waits for a round by design.
+    AwaitingRound,
+    /// The machine has it IN_DELIVERY: the batch check judges it.
+    Delivering,
+    /// A batch PR branch: never a stranding.
+    BatchBranch,
+    /// Done and nobody is moving it.
+    Stranded,
+}
+
+fn closed_branch_class(land: &str, submitted: bool, batch_branch: bool, delivering: bool) -> ClosedClass {
+    if delivering {
+        ClosedClass::Delivering
+    } else if awaits_round(land, submitted) {
+        ClosedClass::AwaitingRound
+    } else if batch_branch {
+        ClosedClass::BatchBranch
+    } else {
+        ClosedClass::Stranded
+    }
+}
+
+/// The BATCHED checks (in an open batch? delivering too long?) apply to every branch whose
+/// bead the machine has IN_DELIVERY, whatever else it reads as.
+fn batched_check_applies(_status: &BeadStatus, delivering: bool) -> bool {
+    delivering
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum BeadStatus {
     ProbeFailed,
     NoBead,
@@ -243,19 +276,42 @@ enum BeadStatus {
     Open,
 }
 
-/// `BD_TIMEOUT=2 bdjson show <id>` — deliberately short: this runs once per branch across
-/// every repository on the 600s tier, and a hung `bd` must not stall the whole probe.
-fn bead_status(id: &str) -> BeadStatus {
-    match bead_status_at(id, "2") {
-        // An empty/error-shaped answer under the short timeout is ambiguous (sp-cyc1t: an extant
-        // closed bead read as NoBead). Re-confirm once with a longer timeout; only a second
-        // not-found counts as NoBead, anything else is a probe fault.
-        BeadStatus::NoBead => bead_status_at(id, "10"),
+/// A branch's bead, by its lifecycle row: past the builder is "done" (submitted while the
+/// machine still delivers it, over once terminal), anything earlier is open. No machine
+/// answer is a probe fault. A bead with no lifecycle row falls back to bd for existence
+/// only (content, not state): present in bd it counts as open — its state cannot be told,
+/// so it is never read as done — and absent it is no bead.
+fn bead_status(id: &str, lc: Option<&HashMap<String, super::lc::Row>>) -> BeadStatus {
+    let Some(lc) = lc else { return BeadStatus::ProbeFailed };
+    if let Some(s) = status_of_row(lc.get(id)) {
+        return s;
+    }
+    match bead_exists(id) {
+        BeadStatus::Closed { .. } => BeadStatus::Open,
         other => other,
     }
 }
 
-fn bead_status_at(id: &str, timeout: &str) -> BeadStatus {
+/// The lifecycle half of [`bead_status`]; `None` when the machine has no row.
+fn status_of_row(row: Option<&super::lc::Row>) -> Option<BeadStatus> {
+    let row = row?;
+    Some(if row.past_builder() { BeadStatus::Closed { submitted: !row.terminal() } } else { BeadStatus::Open })
+}
+
+/// `BD_TIMEOUT=2 bdjson show <id>` — deliberately short: this runs once per rowless branch
+/// across every repository on the 600s tier, and a hung `bd` must not stall the whole probe.
+fn bead_exists(id: &str) -> BeadStatus {
+    match bead_exists_at(id, "2") {
+        // An empty/error-shaped answer under the short timeout is ambiguous (sp-cyc1t: an extant
+        // closed bead read as NoBead). Re-confirm once with a longer timeout; only a second
+        // not-found counts as NoBead, anything else is a probe fault.
+        BeadStatus::NoBead => bead_exists_at(id, "10"),
+        other => other,
+    }
+}
+
+/// `Closed` here only means "bd has it" — [`bead_status`] reads no state from bd.
+fn bead_exists_at(id: &str, timeout: &str) -> BeadStatus {
     let prev = std::env::var("BD_TIMEOUT").ok();
     std::env::set_var("BD_TIMEOUT", timeout);
     let raw = io::bdjson(&["show", id]);
@@ -265,11 +321,8 @@ fn bead_status_at(id: &str, timeout: &str) -> BeadStatus {
     }
     match io::bd_rows(raw) {
         None => BeadStatus::ProbeFailed,
-        Some(rows) => match rows.first().and_then(|r| r.get("status")).and_then(Value::as_str) {
-            Some("closed") => {
-                BeadStatus::Closed { submitted: closed_as_submitted(&rows[0]) }
-            }
-            Some(_) => BeadStatus::Open,
+        Some(rows) => match rows.first().and_then(|r| r.get("id")).and_then(Value::as_str) {
+            Some(_) => BeadStatus::Closed { submitted: false },
             None => BeadStatus::NoBead,
         },
     }
@@ -336,7 +389,9 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
     let home_repo = io::repo_registry().home_repo().to_string();
-    let raw = io::bdq(&["list", "--status", "closed", "--limit", "0", "--label", &label, "--json"]);
+    // Every plan bead's content; which of them the builder finished is the lifecycle row's
+    // to say (design §3.4, sp-mve9i), not bd's `closed`.
+    let raw = io::bdq(&["list", "--all", "--limit", "0", "--label", &label, "--json"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
@@ -344,6 +399,12 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         return;
     };
     let Some(rows) = io::bd_rows(Some(raw)) else {
+        for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
+            push(out, k, "?");
+        }
+        return;
+    };
+    let Some(lc_index) = super::lc::state_index() else {
         for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
             push(out, k, "?");
         }
@@ -363,8 +424,8 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if !run.join(format!("{id}.log")).exists() {
             continue;
         }
+        let Some(ts) = finished_at(i, lc_index.get(id)) else { continue };
         let closed_at = i.get("closed_at").or_else(|| i.get("updated_at")).and_then(Value::as_str).unwrap_or("");
-        let Some(ts) = parse_iso8601(closed_at) else { continue };
         if ts < cut {
             continue;
         }
@@ -426,13 +487,6 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
     let branch_lines: Vec<&str> = branches.iter().flat_map(|s| s.lines()).collect();
 
     let cert_win: i64 = std::env::var("SPIRA_CERT_WINDOW_MINS").ok().and_then(|v| v.parse().ok()).unwrap_or(90);
-    let Some(lc_rows) = super::lc::list(None) else {
-        for k in ["SP_CLOSED", "SP_LANDED", "SP_UNLANDED_N", "SP_STRANDED_N", "SP_CERT_N", "SP_FUNNEL_DONE_AGE"] {
-            push(out, k, "?");
-        }
-        return;
-    };
-    let lc_ids: HashSet<&str> = lc_rows.iter().map(|r| r.id.as_str()).collect();
 
     let mut landed_set: HashSet<&str> = HashSet::new();
     for r in &closed_pairs {
@@ -457,7 +511,7 @@ fn landing_funnel_section(out: &mut Kv, run: &Path) {
         if !has_br {
             continue;
         }
-        if lc_ids.contains(r.id.as_str()) {
+        if !awaits_certification(lc_index.get(r.id.as_str())) {
             continue;
         }
         anomaly += 1;
@@ -588,9 +642,80 @@ fn gate_section(out: &mut Kv, run: &Path) {
     push(out, "SP_LANDPROG_N", n.to_string());
 }
 
+/// An unlanded, branch-carrying finished bead the funnel counts (split by age into stranded
+/// and awaiting): one the machine holds handed on and not yet certified. Before sp-mve9i the
+/// test was "no lifecycle row at all" — a bd-closed bead the machine never took — which can
+/// no longer happen once "finished" is the row's own answer, so it left the counters at zero.
+fn awaits_certification(row: Option<&super::lc::Row>) -> bool {
+    row.is_some_and(|r| r.state == "SUBMITTED")
+}
+
+/// When a plan bead's builder finished it, for the 24h funnel: only a bead the machine has
+/// past the builder counts; the time is bd's `closed_at`/`updated_at` (content), else the
+/// lifecycle row's lease/state time is unknown and the bead is skipped.
+fn finished_at(bead: &Value, row: Option<&super::lc::Row>) -> Option<i64> {
+    if !row.is_some_and(|r| r.past_builder()) {
+        return None;
+    }
+    let at = bead.get("closed_at").or_else(|| bead.get("updated_at")).and_then(Value::as_str).unwrap_or("");
+    parse_iso8601(at)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn row(state: &str) -> super::super::lc::Row {
+        super::super::lc::Row { bead_id: "sp-a".into(), state: state.into(), ..Default::default() }
+    }
+
+    /// sp-mve9i: a branch's bead is done by its lifecycle row, never bd's status.
+    #[test]
+    fn a_branch_bead_is_done_by_its_lifecycle_row() {
+        assert_eq!(status_of_row(Some(&row("SUBMITTED"))), Some(BeadStatus::Closed { submitted: true }));
+        assert_eq!(status_of_row(Some(&row("IN_DELIVERY"))), Some(BeadStatus::Closed { submitted: true }));
+        assert_eq!(status_of_row(Some(&row("LANDED"))), Some(BeadStatus::Closed { submitted: false }));
+        assert_eq!(status_of_row(Some(&row("REWORK"))), Some(BeadStatus::Open));
+        assert_eq!(status_of_row(None), None);
+        assert_eq!(bead_status("sp-a", None), BeadStatus::ProbeFailed);
+    }
+
+    /// sp-mve9i: the funnel counts what the machine has past the builder, whatever bd says.
+    #[test]
+    fn the_funnel_counts_lifecycle_finished_beads() {
+        let b: Value = serde_json::json!({"id": "sp-a", "status": "open", "closed_at": "2026-10-01T00:00:00Z"});
+        assert!(finished_at(&b, Some(&row("CERTIFIED"))).is_some());
+        let closed: Value = serde_json::json!({"id": "sp-a", "status": "closed", "closed_at": "2026-10-01T00:00:00Z"});
+        assert!(finished_at(&closed, Some(&row("REWORK"))).is_none());
+        assert!(finished_at(&closed, None).is_none());
+    }
+
+    /// sp-mve9i: the unlanded/stranded funnel counts finished beads still waiting on their
+    /// certification — a SUBMITTED row — never "no row", which a finished bead cannot have.
+    #[test]
+    fn the_unlanded_funnel_counts_beads_awaiting_certification() {
+        assert!(awaits_certification(Some(&row("SUBMITTED"))));
+        assert!(!awaits_certification(Some(&row("CERTIFIED"))), "certified: the round's to deliver");
+        assert!(!awaits_certification(Some(&row("IN_DELIVERY"))), "judged by its batch");
+        assert!(!awaits_certification(Some(&row("LANDED"))));
+        assert!(!awaits_certification(None), "not finished");
+    }
+
+    /// sp-mve9i: a branch whose bead the machine has IN_DELIVERY is past the builder, so it
+    /// reads "done" — but the delivery pipeline holds it: its stranding is the BATCHED check
+    /// (no open batch names it), never the closed-bead stranding. With bd status it was never
+    /// "closed" here, so both checks ran as they should; with the lifecycle row they must be
+    /// told apart explicitly.
+    #[test]
+    fn a_delivering_branch_is_judged_by_its_batch_not_as_a_stranded_closed_bead() {
+        assert_eq!(closed_branch_class("push", true, false, true), ClosedClass::Delivering);
+        assert_eq!(closed_branch_class("push", true, false, false), ClosedClass::Stranded);
+        assert_eq!(closed_branch_class("queue.local", true, false, false), ClosedClass::AwaitingRound);
+        assert_eq!(closed_branch_class("push", false, true, false), ClosedClass::BatchBranch);
+        assert!(batched_check_applies(&BeadStatus::Closed { submitted: true }, true));
+        assert!(batched_check_applies(&BeadStatus::Open, true));
+        assert!(!batched_check_applies(&BeadStatus::Open, false));
+    }
 
     #[test]
     fn a_submitted_bead_awaits_a_round_only_under_queue_local() {
@@ -598,14 +723,6 @@ mod tests {
         assert!(!awaits_round("queue", true));
         assert!(!awaits_round("push", true));
         assert!(!awaits_round("queue.local", false));
-    }
-
-    #[test]
-    fn closed_as_submitted_reads_the_outcome_line() {
-        let row = |r: &str| serde_json::json!({"status": "closed", "close_reason": r});
-        assert!(closed_as_submitted(&row("OUTCOME: submitted\nwork committed")));
-        assert!(!closed_as_submitted(&row("OUTCOME: landed\n")));
-        assert!(!closed_as_submitted(&serde_json::json!({"status": "closed"})));
     }
 
     #[test]

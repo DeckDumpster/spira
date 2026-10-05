@@ -74,15 +74,20 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     let fold_map = w.census_class_fold_map();
     let covers_pattern = "covers:*";
 
+    // A remedy is open or closed by its lifecycle row, never by bd's status (design §3.4,
+    // sp-mve9i): bd lists the remedies (content), the machine says which are still with a
+    // builder.
+    let (open_json, closed_json) = split_remedies(w, &w.bd_list_all_json(covers_pattern));
+
     let suppressed: HashSet<String> = {
-        let json = w.bd_list_json("open,in_progress,blocked,deferred", covers_pattern);
+        let json = open_json;
         w.covers_py(&json, &fold_map).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
     };
 
     let mut suppressed_closed: HashSet<String> = HashSet::new();
     let mut orphaned_by_class: BTreeMap<String, Vec<String>> = BTreeMap::new();
     {
-        let json = w.bd_list_json("closed", covers_pattern);
+        let json = closed_json;
         let closed_out = w.covers_closed_py(&json, &fold_map);
         let repo = w.repo_root();
         for line in closed_out.lines() {
@@ -139,6 +144,44 @@ pub fn run(w: &dyn World, with_suppressed: bool) -> i32 {
     }
 
     0
+}
+
+/// The remedies bd lists, split by their lifecycle rows into (open, closed) JSON arrays for
+/// covers.py / covers_closed.py. Open: the bead is still READY, WORKING or in REWORK — a
+/// builder will still produce the fix, so its class stays suppressed. Closed: the builder
+/// has handed it on (SUBMITTED onward, or terminal), so whether it landed decides.
+///
+/// A remedy with no lifecycle row is neither: nothing says a fix is in flight or shipped, so
+/// it suppresses nothing and is named on stderr. A machine that cannot answer splits nothing
+/// — the census still ranks, unsuppressed, rather than suppressing on a guess
+/// (law-a-control-that-cannot-check-must-refuse).
+pub fn split_remedies(w: &dyn World, bd_json: &str) -> (String, String) {
+    let rows: Vec<serde_json::Value> = match serde_json::from_str::<serde_json::Value>(bd_json.trim()) {
+        Ok(serde_json::Value::Array(a)) => a,
+        Ok(one @ serde_json::Value::Object(_)) => vec![one],
+        _ => Vec::new(),
+    };
+    let lc = match w.lc_rows() {
+        Ok(r) => spira_config::lc_state::index(r),
+        Err(e) => {
+            if !rows.is_empty() {
+                w.err(&format!("census: the lifecycle machine cannot say which remedies are open ({e}) — not suppressing any class"));
+            }
+            return ("[]".into(), "[]".into());
+        }
+    };
+    let (mut open, mut closed) = (Vec::new(), Vec::new());
+    for r in rows {
+        let id = r.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        match lc.get(&id) {
+            Some(row) if row.past_builder() => closed.push(r),
+            Some(_) => open.push(r),
+            None if id.is_empty() => {}
+            None => w.err(&format!("census: remedy {id} has no lifecycle row — not suppressing its class")),
+        }
+    }
+    let json = |v: Vec<serde_json::Value>| serde_json::to_string(&v).unwrap_or_else(|_| "[]".into());
+    (json(open), json(closed))
 }
 
 fn print_lines(w: &dyn World, text: &str) {

@@ -1,3 +1,4 @@
+mod bd_status;
 mod brief;
 mod finding;
 mod landstate;
@@ -139,7 +140,9 @@ fn gate_verdict(scanned: usize, findings: &[Finding]) -> ExitCode {
          (the landstate ledger, a landed oracle, a bd lifecycle write or status read). \
          The lifecycle machine is the only route to a bead's state (design \
          bead-lifecycle-state-machine §3.6(3)), and this gate has no allow-list. Exits: (1) read \
-         or change the state through spira-lc (show / list / state / the lifecycle verbs) instead; \
+         or change the state through spira-lc (show / list / state / the lifecycle verbs; from Rust, \
+         spira_config::lc_state) instead, or for a bead that is not a work bead (an ask, alert, \
+         insight, epic) read its bd status through spira_config::nonwork, naming its kind; \
          (2) if the analyser is wrong, correct its rule in lifecycle-guard/ on this branch — the \
          tree owns its gate, so the branch is judged by the rule it carries; (3) to land without \
          a certificate, an operator sets SPIRA_LAND_UNGATED=<reason> (queue/DESIGN.md D12).",
@@ -154,6 +157,7 @@ fn run_one(root: &Path, rules: &Rules, gate: bool) -> Result<(usize, Vec<Finding
     let mut findings = shell::scan(&shell_files, root, rules)?.into_findings();
     findings.extend(brief::scan(&brief_files, root));
     findings.extend(landstate::scan_rust(&rust_files, root));
+    findings.extend(bd_status::scan_rust(&rust_files, root));
     Ok((scanned, findings))
 }
 

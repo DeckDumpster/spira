@@ -111,8 +111,11 @@ impl Run<'_> {
         self.restore_world();
         let _ = std::env::set_current_dir(&self.s.repo);
 
-        let st = bd::show(self.d.bd, &id).and_then(|r| r.status).unwrap_or_default();
-        let mut st = st;
+        // The bead's state is its lifecycle row's, never bd's status (design §3.4, sp-mve9i):
+        // `closed` is the builder's close (decide::builder_closed), `st` the ledger's word.
+        let lc = self.lc_bead(&id);
+        let mut closed = decide::builder_closed(self.s.lc_model_restricted, lc.as_ref());
+        let mut st = decide::ledger_word(lc.as_ref()).to_string();
 
         let ow_marker = self.run_dir().join(format!("{id}.operator-wait"));
         let mut ow_mine = false;
@@ -128,8 +131,8 @@ impl Run<'_> {
         let logf = self.s.logf.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
         let mut gate_why = String::new();
 
-        if st != "closed" {
-            let mut i = DispositionIn { status: if st.is_empty() { "?".into() } else { st.clone() }, session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
+        if !closed {
+            let mut i = DispositionIn { status: st.clone(), session_rc: self.s.session_rc, committed: false, session_started: self.s.session_started, ..Default::default() };
             let (mut reset, mut thrash_note, mut thrash_tip, mut streak) = (String::new(), String::new(), String::new(), 0i64);
             let (mut lapsed_quiet, mut lapsed_last, mut gw) = (String::new(), String::new(), String::new());
             let mut unlanded_reason = String::new();
@@ -370,10 +373,10 @@ impl Run<'_> {
                     } else {
                         let backoff_min = decide::no_progress_backoff_minutes(streak);
                         let until = util::iso_utc(self.now() + backoff_min * 60);
+                        // A dated defer is bd's snooze: hidden from `bd ready` until `until`,
+                        // then it wakes to open on its own (`bd defer --help`). No bd status
+                        // write follows it — the release above is the lifecycle's (sp-mve9i).
                         let _ = self.d.bd.bd(&s(&["update", &id, "--defer", &until]));
-                        // --defer also sets status=deferred, which bd ready excludes even after
-                        // defer_until passes; open + a future defer_until is what auto-releases.
-                        let _ = self.d.bd.bd(&s(&["update", &id, "--status", "open"]));
                         self.note(&format!("No progress ({o}): {reason}\n\nHeld for {backoff_min}m (no-progress streak {streak}, branch stuck at {tip}) — not re-claimed until {until}. No attempt charged."));
                         self.log(&format!("{f}: {id} no-progress streak {streak} at {tip} — held {backoff_min}m until {until}, no attempt charged"));
                     }
@@ -412,6 +415,7 @@ impl Run<'_> {
                         self.log(&format!("{f}: {id} closed against a recorded FAIL gate verdict, but {br} carries no commit of {id}'s own ahead of base — not this bead's fault, not reopening"));
                     } else {
                         self.bead_reopen("cert-gate-red", &format!("Reopened by aeon.sh: closed against a recorded FAIL gate verdict for {br} in {rn}.\n\n{why}"));
+                        closed = false;
                         st = "open".into();
                         self.log(&format!("{f}: {id} REOPENED — closed against a recorded FAIL gate verdict"));
                     }
@@ -455,6 +459,7 @@ impl Run<'_> {
                         self.log(&format!("{f}: {id} {cert_log}, but the bead is superseded — not handing {br} to certification, leaving it for the Sending to reap"));
                     } else if let Some(red) = self.fast_tier_red() {
                         self.refuse_handoff(&red);
+                        closed = false;
                         st = "open".into();
                     } else {
                         self.defer_self_cert(&defer_why);
@@ -472,9 +477,10 @@ impl Run<'_> {
         }
 
         // ---- the submitted conversion (sp-qsona) ----
-        if st == "closed" && self.fayth.graph_only {
+        let mut converted = false;
+        if closed && self.fayth.graph_only {
             self.log(&format!("{f}: {id} closed a work bead — graph-only persona, no commit expected, not converted"));
-        } else if !self.s.lc_model_restricted && st == "closed" {
+        } else if !self.s.lc_model_restricted && closed {
             if let Some(row) = bd::show(self.d.bd, &id) {
                 let ty = row.issue_type.clone().unwrap_or_default();
                 let deliv = row.labels().iter().any(|l| l.starts_with("delivers:"));
@@ -488,6 +494,7 @@ impl Run<'_> {
                         self.bead_reopen("work-close-converted", &format!("Submitted: work committed on branch; marked submitted instead of closed. The landing pass closes this bead when it lands, citing the merge commit.{g}"));
                         let _ = self.d.bd.bd(&s(&["label", "add", &id, &self.conf.submitted_label()]));
                         self.log(&format!("{f}: {id} closed a work bead directly — converted to submitted"));
+                        converted = true;
                         st = "submitted".into();
                     }
                 }
@@ -497,7 +504,7 @@ impl Run<'_> {
         let final_rc = self.s.session_rc;
         self.remove_identity();
         self.ledger_done(final_rc, if st.is_empty() { "?" } else { &st });
-        if st == "closed" || st == "submitted" {
+        if closed || converted {
             return 0;
         }
         final_rc

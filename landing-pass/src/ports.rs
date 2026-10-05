@@ -7,12 +7,13 @@ use std::path::Path;
 
 /// The bead store, read only. Writes go through [`Lib`].
 pub trait Beads {
-    /// `bd show <ids…> --json`, every row that came back. Err when the store could not be
-    /// read at all — never an empty Ok.
+    /// `bd show <ids…> --json`, every row that came back, each joined to its lifecycle
+    /// row's state (the read-only view design §3.4 names). Err when the store or the
+    /// lifecycle machine could not be read at all — never an empty Ok.
     fn show(&self, ids: &[String]) -> Result<Vec<BeadRow>, String>;
-    /// lib.sh `bead_land_status`: `closed` (or submitted-labelled), another status, or `-`
-    /// when it cannot be read.
-    fn land_status(&self, id: &str) -> String;
+    /// The bead's lifecycle state (spira-lc), re-read live: `-` when the machine holds no
+    /// row or cannot be read. [`crate::model::handed_on`] says whether it may land.
+    fn bead_lc_state(&self, id: &str) -> String;
     /// lib.sh `ask_already_open <subject>` (sp-31hjr, family C): true when an OPEN ask
     /// already carries `subject` in its title. `label` is `SPIRA_ASK_LABEL`.
     fn ask_open(&self, label: &str, subject: &str) -> bool;

@@ -145,13 +145,17 @@ esac
 STUB
 chmod +x "$SPIRA_HOME/queue.sh"
 ln -sf queue.sh "$SPIRA_HOME/queue"   # the queue binary replaced queue.sh; this stub stands in for both, by name
-# spira-lc stub: `show` answers the lifecycle row recorded in $SPIRA_RUN/lc-row/<id> ("<state> <tip>").
+# spira-lc stub: `show` answers the lifecycle row recorded in $SPIRA_RUN/lc-row/<id> ("<state> <tip>"),
+# else the bead's bd row in lifecycle terms (sp-mve9i: the aeon reads the close from the
+# lifecycle row, never bd status; the shim's bd close is the builder's submit — testlib.sh
+# lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export LCM="$TMP/lcm/spira-lc"
 cat > "$SPIRA_HOME/spira-lc" <<'STUB'
 #!/usr/bin/env bash
 case "$1" in
     show) if [ -f "$SPIRA_RUN/lc-row/$2" ]; then read -r st tip < "$SPIRA_RUN/lc-row/$2"
           printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":"1"},"delivery":null}\n' "$2" "$st" "$tip"
-          else printf '{"bead":{"bead_id":"%s","state":"WORKING","version":"1"},"delivery":null}\n' "$2"; fi ;;
+          else exec "$LCM" show "$2"; fi ;;
     *) exit 0 ;;
 esac
 STUB

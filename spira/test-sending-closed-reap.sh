@@ -72,6 +72,10 @@ REAL_LC="$(command -v spira-lc)"
 printf '#!/usr/bin/env bash\nif [ "${1:-}" = state ]; then [ "${2:-}" = sp-btch ] && { echo LANDED; exit 0; }; exit 1; fi\nexec "%s" "$@"\n' \
     "$REAL_LC" > "$SH/spira-lc"
 chmod +x "$SH/spira-lc"
+# sp-mve9i: the Sending's claim witness reads the lifecycle row, never bd status; with no
+# lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
+# (testlib.sh lc_socket_mirror) — a machine that does not answer would hold every branch.
+lc_socket_mirror "$TMP/lcsock"
 
 sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \

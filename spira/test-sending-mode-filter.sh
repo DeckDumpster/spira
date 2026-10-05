@@ -48,6 +48,10 @@ exit 0
 EOF
 chmod +x "$STUB_BD"
 export SPIRA_BD="$STUB_BD" SPIRA_DB="$TMP/no-such-db"
+# sp-mve9i: the Sending's claim witness reads the lifecycle row, never bd status; with no
+# lifecycle store here a stand-in service tells it the fixture's bd story in lifecycle terms
+# (testlib.sh lc_socket_mirror) — a machine that does not answer would hold every branch.
+lc_socket_mirror "$TMP/lcsock"
 
 # --------------------------------------------------------------------------------------
 # THREE REPOSITORIES: queue, queue.local and push. Each gets a bare remote so the

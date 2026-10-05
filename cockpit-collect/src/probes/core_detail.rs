@@ -7,6 +7,7 @@ use super::{push, Kv};
 use crate::io;
 use crate::quoting::{parse_iso8601, rel_age, sanitize, sanitize_title};
 use serde_json::Value;
+use spira_config::nonwork::{self, Kind};
 use std::collections::{HashMap, HashSet};
 
 pub fn core_detail_keys() -> Kv {
@@ -167,13 +168,14 @@ fn recent_section(out: &mut Kv, run: &std::path::Path) {
             if f[1] == "awake" && f[3].starts_with("sp-") {
                 ledger_rows.push(format!("{} {} claimed {}", f[0], f[2], f[3]));
             } else if f[1] == "done" && f[3].starts_with("sp-") {
-                let mut st = "ended".to_string();
+                // The aeon ledger's own `status=` word (decide::ledger_word), shown as text.
+                let mut word = "ended".to_string();
                 for tok in &f[4..] {
                     if let Some(v) = tok.strip_prefix("status=") {
-                        st = v.to_string();
+                        word = v.to_string();
                     }
                 }
-                let outcome = if st == "closed" { "finished".to_string() } else { st };
+                let outcome = if word == "closed" { "finished".to_string() } else { word };
                 ledger_rows.push(format!("{} {} {} {}", f[0], f[2], outcome, f[3]));
             }
         }
@@ -353,7 +355,8 @@ fn awaiting_ci_section(out: &mut Kv) {
     };
     let mut gated: Vec<&Value> = rows
         .iter()
-        .filter(|i| i.get("status").and_then(Value::as_str) != Some("closed") && i.get("await_type").and_then(Value::as_str) == Some("gh:run"))
+        // bd gates (`bd gate list`) are await beads, never work: bd status is their state.
+        .filter(|i| !nonwork::row_closed(Kind::Hold, i) && i.get("await_type").and_then(Value::as_str) == Some("gh:run"))
         .collect();
     gated.sort_by_key(|i| i.get("created_at").and_then(Value::as_str).and_then(parse_iso8601).unwrap_or(now));
 

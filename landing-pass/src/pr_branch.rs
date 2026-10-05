@@ -104,8 +104,8 @@ pub fn run(c: &Ctx, repo: &Path, br: &str, id: &str, baseref: &str, name: &str, 
     }
 
     // ── re-read before landing: a race with reopen/reclaim since the scan ─────────────────
-    let cur_st = c.beads.land_status(id);
-    if cur_st != "closed" {
+    let cur_st = c.beads.bead_lc_state(id);
+    if !crate::model::handed_on(&cur_st) {
         (c.log)(&format!("bead is now {cur_st} (was closed at scan time) — not landing {br}"));
         return 4;
     }
@@ -356,8 +356,7 @@ mod tests {
                 .iter()
                 .map(|id| crate::model::BeadRow {
                     id: id.clone(),
-                    status: "closed".into(),
-                    raw_status: "closed".into(),
+                    state: "SUBMITTED".into(),
                     repo: "spira".into(),
                     labels: Vec::new(),
                     superseded: false,
@@ -369,8 +368,8 @@ mod tests {
                 })
                 .collect())
         }
-        fn land_status(&self, id: &str) -> String {
-            self.status.borrow().get(id).cloned().unwrap_or_else(|| "closed".into())
+        fn bead_lc_state(&self, id: &str) -> String {
+            self.status.borrow().get(id).cloned().unwrap_or_else(|| "SUBMITTED".into())
         }
         fn ask_open(&self, _label: &str, _subject: &str) -> bool {
             false
@@ -583,7 +582,7 @@ mod tests {
     #[test]
     fn a_bead_reclaimed_since_the_scan_is_not_landed() {
         let f = Fixture::new();
-        f.beads.status.borrow_mut().insert("sp-a".into(), "in_progress".into());
+        f.beads.status.borrow_mut().insert("sp-a".into(), "WORKING".into());
         let rc = f.run("spira/sp-a", "sp-a", "t1");
         assert_eq!(rc, 4);
     }

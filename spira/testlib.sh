@@ -302,7 +302,7 @@ lc_fix_init() {
 join() { local first=1 f; printf '['; for f in "$@"; do [ -f "$f" ] || continue; [ $first = 1 ] || printf ','; first=0; cat "$f"; done; printf ']\n'; }
 case "$1" in
     list)
-        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; else join "$LC_FIX/bead/${3:-}"/*; fi ;;
+        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
     event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
     *) exit 7 ;;
@@ -330,7 +330,7 @@ case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@"
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
-        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; else join "\$LC_FIX/bead/\${3:-}"/*; fi ;;
+        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; elif [ -n "\${3:-}" ]; then join "\$LC_FIX/bead/\$3"/*; else join "\$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "\$LC_FIX/show/\$2" ] && cat "\$LC_FIX/show/\$2" || exit 1 ;;
     *) [ -f "\$LC_FIX/refuse" ] && exit 3; exit 0 ;;
 esac
@@ -339,15 +339,85 @@ STUB
 }
 # lc_called <fixdir> <verb> <bead> — did the pass send <verb> for <bead>?
 lc_called() { grep -q "^$2 $3\b" "$1/calls.log" 2>/dev/null; }
-lc_bead() {      # lc_bead <STATE> <id> <tip> <since>
+lc_bead() {      # lc_bead <STATE> <id> <tip> <since>  (one row per id: a new STATE replaces the old)
+    rm -f "$LC_FIX"/bead/*/"$2"
     mkdir -p "$LC_FIX/bead/$1"
     printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"
-    printf '{"bead":{"tip":"%s"}}' "$3" > "$LC_FIX/show/$2"
+    printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s"}}' "$2" "$1" "$3" > "$LC_FIX/show/$2"
 }
+# lc_state_of <id> — the STATE an lc_bead row was last given ("" for none): the fixture's
+# record of the state, for asserting what a suite seeded (sp-mve9i: state lives in spira-lc).
+lc_state_of() { local f; for f in "$LC_FIX"/bead/*/"$1"; do [ -f "$f" ] && basename "$(dirname "$f")"; done | tail -1; }
 lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
     mkdir -p "$LC_FIX/delivery/$1"
     printf '{"bead_id":"%s","mode":"%s","state":"%s","version":%s,"entered_at":%s}' "$2" "$3" "$1" "$5" "$4" > "$LC_FIX/delivery/$1/$2"
     [ -f "$LC_FIX/show/$2" ] || printf '{"bead":{"tip":"deadbeef"}}' > "$LC_FIX/show/$2"
+}
+
+# lc_mirror_bd <dir> — a spira-lc whose `list` and `show <id>` answer from the bead store the
+# suite already stubs, translated to lifecycle terms (sp-mve9i: decisions read the lifecycle
+# row, never bd status, so a fixture written in bd words needs its rows in the machine too).
+# The store is $SPIRA_BDJSON_FIXTURE when set, else `$SPIRA_BD -C $SPIRA_DB list --all`.
+# open/blocked/deferred → READY, in_progress → WORKING (holder = assignee), closed →
+# $LC_MIRROR_CLOSED (default LANDED); a `spira-poison` label → a poison hold, the ask label
+# ($SPIRA_ASK_LABEL) → an ask hold; epics and events have no row. A fixture row may say
+# `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none;
+# for a real store (which drops unknown fields), `<dir>/states` lines `<id> <STATE>` do it.
+# Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
+lc_mirror_bd() {
+    local dir="${1:?lc_mirror_bd needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
+else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
+printf '%s' "$src" | LC_MIRROR_DIR="$(dirname "$0")" python3 -c '
+import json, os, sys
+verb = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    beads = json.loads(sys.stdin.read() or "[]")
+except ValueError:
+    sys.exit(2)
+if isinstance(beads, dict):
+    beads = [beads]
+words = {"open": "READY", "blocked": "READY", "deferred": "READY", "in_progress": "WORKING",
+         "closed": os.environ.get("LC_MIRROR_CLOSED") or "LANDED"}
+ask = os.environ.get("SPIRA_ASK_LABEL", "")
+pinned = {}
+try:
+    for line in open(os.path.join(os.environ["LC_MIRROR_DIR"], "states")):
+        f = line.split()
+        if len(f) == 2:
+            pinned[f[0]] = f[1]
+except (OSError, KeyError):
+    pass
+rows = []
+for b in beads:
+    if not isinstance(b, dict) or not b.get("id") or b.get("_lc_rowless"):
+        continue
+    if b.get("issue_type") in ("epic", "event") and "_lc_state" not in b:
+        continue
+    labels = b.get("labels") or []
+    state = pinned.get(b["id"]) or b.get("_lc_state") or words.get(b.get("status") or "open", "READY")
+    holds = b.get("_lc_holds")
+    if holds is None:
+        holds = (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])
+    rows.append({"bead_id": b["id"], "state": state, "holds": holds,
+                 "holder": (b.get("assignee") or None) if state == "WORKING" else None})
+if verb == "list":
+    want = sys.argv[3] if len(sys.argv) > 3 and sys.argv[2] == "--state" else None
+    print(json.dumps([r for r in rows if want is None or r["state"] == want]))
+elif verb == "show":
+    hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
+    if not hit:
+        sys.exit(1)
+    print(json.dumps({"bead": hit[0], "delivery": None}))
+else:
+    sys.exit(7)
+' "$@"
+STUB
+    chmod +x "$dir/spira-lc"
+    SPIRA_LC_BIN="$dir/spira-lc"
 }
 
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc
@@ -400,6 +470,112 @@ tl_summary() {
     printf 'ASSERTIONS %d\n' "$((_TL_PASS + _TL_FAIL))"
     _tl_counts_cleanup
     [ "$_TL_FAIL" -eq 0 ]
+}
+
+# lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
+# aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
+# reads a bead's state from its lifecycle row, never bd status (sp-mve9i), so the fixture's
+# bd story is told to it in lifecycle terms: `show <id>` answers $SPIRA_RUN/lc-row/<id>
+# ("<STATE> [reason] [tip]") when the suite wrote one, else the bead's bd row translated —
+# closed (the builder's close is its submit) → SUBMITTED, in_progress → WORKING (holder =
+# assignee), anything else → READY; no bd row → exit 1 (no lifecycle row). Every other verb
+# goes to the real spira-lc further down PATH, exactly as before the stub.
+lc_aeon_mirror() {
+    local dir="${1:?lc_aeon_mirror needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ] && [ -n "${2:-}" ]; then
+    if [ -f "${SPIRA_RUN:-/nonexistent}/lc-row/$2" ]; then
+        read -r st rs tip < "$SPIRA_RUN/lc-row/$2"
+        printf '{"bead":{"bead_id":"%s","state":"%s","reason":"%s","tip":"%s","holds":[]},"delivery":null}\n' "$2" "$st" "${rs:-}" "${tip:-}"
+        exit 0
+    fi
+    BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" show "$2" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+d = d[0] if isinstance(d, list) and d else d
+if not isinstance(d, dict) or not d.get("id"):
+    sys.exit(1)
+st = {"closed": "SUBMITTED", "in_progress": "WORKING"}.get(d.get("status") or "open", "READY")
+holder = (d.get("assignee") or None) if st == "WORKING" else None
+print(json.dumps({"bead": {"bead_id": d["id"], "state": st, "holder": holder, "holds": []}, "delivery": None}))'
+    exit "${PIPESTATUS[2]}"
+fi
+for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
+exit 2
+STUB
+    chmod +x "$dir/spira-lc"
+}
+
+# lc_socket_mirror <dir> — a stand-in lifecycle service on a Unix socket, for a legacy suite
+# that drives a real `spira-lc` verb whose own state read (`show`/`list`, through
+# $SPIRA_LC_SOCKET) must answer — close-on-land reads the bead's state there (sp-mve9i). It
+# answers `show <id>` and `list` from the suite's bd store in lifecycle terms: closed (the
+# builder's close is its submit) or open + $SPIRA_SUBMITTED_LABEL → SUBMITTED, in_progress →
+# WORKING, anything else → READY; every other verb "cannot tell" (2). Exports
+# SPIRA_LC_SOCKET; the server exits on its own when the suite's shell does.
+lc_socket_mirror() {
+    local dir="${1:?lc_socket_mirror needs a directory}"
+    mkdir -p "$dir"
+    export SPIRA_LC_SOCKET="$dir/lc.sock"
+    rm -f "$SPIRA_LC_SOCKET"
+    python3 - "$SPIRA_LC_SOCKET" "$$" <<'PY' >"$dir/server.log" 2>&1 &
+import json, os, socket, subprocess, sys, threading, time
+path, owner = sys.argv[1], int(sys.argv[2])
+def watchdog():
+    while True:
+        try:
+            os.kill(owner, 0)
+        except OSError:
+            os._exit(0)
+        time.sleep(1)
+threading.Thread(target=watchdog, daemon=True).start()
+sub = os.environ.get("SPIRA_SUBMITTED_LABEL") or "spira-submitted"
+def bd(args):
+    env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
+    o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    t = o.stdout[o.stdout.find("[") if "[" in o.stdout else 0:]
+    try:
+        v = json.loads(t or "[]")
+    except ValueError:
+        return []
+    return v if isinstance(v, list) else [v]
+def row(b):
+    st = b.get("status") or "open"
+    labels = b.get("labels") or []
+    state = "SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY")
+    return {"bead_id": b["id"], "state": state, "holds": [],
+            "holder": (b.get("assignee") or None) if state == "WORKING" else None}
+def answer(args):
+    if args[:1] == ["show"] and len(args) > 1:
+        hit = [b for b in bd(["show", args[1]]) if isinstance(b, dict) and b.get("id") == args[1]]
+        return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
+    if args[:1] == ["list"]:
+        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"]) if isinstance(b, dict) and b.get("id")])
+    return 2, "cannot tell: stand-in lifecycle service"
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(path)
+srv.listen(16)
+while True:
+    c, _ = srv.accept()
+    try:
+        f = c.makefile("rw")
+        code, out = answer(json.loads(f.readline() or "[]"))
+        f.write(json.dumps({"exit_code": code, "stdout": out}) + "\n")
+        f.flush()
+    except Exception as e:
+        print(e, file=sys.stderr)
+    finally:
+        c.close()
+PY
+    local _i
+    for _i in $(seq 1 50); do [ -S "$SPIRA_LC_SOCKET" ] && return 0; sleep 0.1; done
+    bail "lc_socket_mirror: the stand-in lifecycle service never opened $SPIRA_LC_SOCKET: $(cat "$dir/server.log")"
 }
 
 # A suite declaring `# requires: testenv` (systemctl on a user manager, install/uninstall,

@@ -17,6 +17,13 @@ pub struct BeadRow {
     pub labels: Vec<String>,
 }
 
+impl BeadRow {
+    /// An alert bead is not a work bead: bd's status is its whole lifecycle (sp-mve9i).
+    pub fn closed(&self) -> bool {
+        spira_config::nonwork::is_closed(spira_config::nonwork::Kind::Alert, &self.status)
+    }
+}
+
 /// Whether a failed call was a timeout (lock contention — "saturated", not "down") or an
 /// ordinary failure. auron.sh's own distinction: exit 124 from `timeout` means another
 /// dolt process held the lock longer than `BD_TIMEOUT`; anything else means the database

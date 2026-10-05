@@ -61,7 +61,17 @@ fn main() {
                 }
                 ans.code
             };
-            std::process::exit(close_on_land::run(&args[1..], &mut record))
+            // Whether to close is the machine's state (sp-mve9i), read through the primitive
+            // `show`, whatever the switch says — never bd's status.
+            let mut lc = Live { conn: None };
+            let mut state = |id: &str| {
+                let (rc, out) = callers::Machine::call(&mut lc, &["show".to_string(), id.to_string()]);
+                if rc != 0 {
+                    return None;
+                }
+                spira_config::lc_state::parse_show(&out).ok().flatten().map(|r| r.state)
+            };
+            std::process::exit(close_on_land::run(&args[1..], &mut state, &mut record))
         }
         // Routed before the caller verbs' all-or-nothing switch: unclaim releases bd's claim
         // when the switch is off, and an epic's close is bd's whatever the switch says.

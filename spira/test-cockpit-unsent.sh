@@ -194,6 +194,11 @@ unsent() {    # unsent <fixture-file>
         cockpit-collect probe unsent 2>/dev/null
 }
 
+# The same two beads in the lifecycle machine (sp-mve9i: a branch's bead state is its
+# lifecycle row, not bd status): sp-aaa's builder finished it, sp-bbb's still holds it.
+lc_seed_bead sp-aaa SUBMITTED "$(date +%s)"
+lc_seed_bead sp-bbb WORKING "$(date +%s)"
+
 out="$(unsent "$TMP/beads.json")"
 val() { printf '%s' "$out" | grep "^$1=" | head -1 | sed "s/^$1=//; s/^'//; s/'\$//"; }
 

@@ -92,34 +92,45 @@ fn blocked_bead_none_on_malformed_json() {
 
 // -------------------------------------------------------------------------- has/find open bead
 
+fn lc(rows: &[(&str, &str)]) -> Lc {
+    rows.iter()
+        .map(|(id, st)| (id.to_string(), spira_config::lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() }))
+        .collect()
+}
+
+/// sp-mve9i: a filed bead is open while its lifecycle row is not terminal; bd's status (here
+/// deliberately the opposite of each row's state) plays no part.
 #[test]
-fn has_open_bead_true_only_for_open_or_in_progress_with_exact_title() {
+fn has_open_bead_follows_the_lifecycle_row_with_exact_title() {
     let json = r#"[
-        {"status":"closed","title":"flaky suite: a.sh"},
-        {"status":"open","title":"flaky suite: b.sh"},
-        {"status":"in_progress","title":"flaky suite: c.sh"}
+        {"id":"sp-a","status":"open","title":"flaky suite: a.sh"},
+        {"id":"sp-b","status":"closed","title":"flaky suite: b.sh"},
+        {"id":"sp-c","status":"closed","title":"flaky suite: c.sh"},
+        {"id":"sp-d","status":"open","title":"flaky suite: d.sh"}
     ]"#;
-    assert!(!has_open_bead(json, "flaky suite: a.sh"));
-    assert!(has_open_bead(json, "flaky suite: b.sh"));
-    assert!(has_open_bead(json, "flaky suite: c.sh"));
-    assert!(!has_open_bead(json, "flaky suite: nonexistent.sh"));
+    let lc = lc(&[("sp-a", "LANDED"), ("sp-b", "WORKING"), ("sp-c", "SUBMITTED")]);
+    assert!(!has_open_bead(json, "flaky suite: a.sh", &lc));
+    assert!(has_open_bead(json, "flaky suite: b.sh", &lc));
+    assert!(has_open_bead(json, "flaky suite: c.sh", &lc));
+    assert!(!has_open_bead(json, "flaky suite: d.sh", &lc), "no row: never worked, holds nothing open");
+    assert!(!has_open_bead(json, "flaky suite: nonexistent.sh", &lc));
 }
 
 #[test]
 fn find_open_bead_returns_id_and_default_priority() {
-    let json = r#"[{"id":"sp-1","status":"open","title":"suite red on main: x.sh"}]"#;
-    assert_eq!(find_open_bead(json, "suite red on main: x.sh"), Some(("sp-1".to_string(), 2)));
+    let json = r#"[{"id":"sp-1","title":"suite red on main: x.sh"}]"#;
+    assert_eq!(find_open_bead(json, "suite red on main: x.sh", &lc(&[("sp-1", "READY")])), Some(("sp-1".to_string(), 2)));
 }
 
 #[test]
 fn find_open_bead_reads_explicit_priority() {
-    let json = r#"[{"id":"sp-1","status":"open","title":"t","priority":1}]"#;
-    assert_eq!(find_open_bead(json, "t"), Some(("sp-1".to_string(), 1)));
+    let json = r#"[{"id":"sp-1","title":"t","priority":1}]"#;
+    assert_eq!(find_open_bead(json, "t", &lc(&[("sp-1", "REWORK")])), Some(("sp-1".to_string(), 1)));
 }
 
 #[test]
 fn find_open_bead_none_when_not_present() {
-    assert_eq!(find_open_bead("[]", "t"), None);
+    assert_eq!(find_open_bead("[]", "t", &lc(&[])), None);
 }
 
 // ---------------------------------------------------------------------------------- job_ids()

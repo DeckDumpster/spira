@@ -147,6 +147,9 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || { bad "(d): aeon is not on PATH" ""; tl_summary; exit 1; }
 

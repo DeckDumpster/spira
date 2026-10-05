@@ -40,6 +40,12 @@ deliberate-cause event silently** (they are real state, shown separately, never 
   so for this caller `bdq list ... --json` and `bd list ... --json` are the same call. This
   also follows this wiki's own rule directly: "reading anything at all — go straight to
   `bd`" (harness statute on `bead.sh`'s scope, carried into this port).
+- **Open vs closed remedy is the lifecycle row's, not bd's** (sp-mve9i, design
+  bead-lifecycle-state-machine §3.4). One `bd list --all --label-pattern covers:*` reads the
+  remedies' content; `spira-lc list` splits them (`split_remedies`): READY/WORKING/REWORK is
+  an open remedy (covers.py, suppresses), SUBMITTED onward a closed one (covers_closed.py,
+  then the landing check). A remedy with no lifecycle row is neither and is named on stderr;
+  a machine that cannot answer suppresses nothing.
 
 ## 3. Contract
 
@@ -81,7 +87,8 @@ trait World {
     fn handwritten_py(&self, tabular: &str) -> String;
     fn deliberate_py(&self, tabular: &str) -> String;
 
-    fn bd_list_json(&self, status: &str, label: &str) -> String;
+    fn bd_list_all_json(&self, label_pattern: &str) -> String;
+    fn lc_rows(&self) -> Result<Vec<lc_state::Row>, String>;
     fn git_branch_exists_matching(&self, repo: &str, pattern: &str) -> bool;
 
     fn host_utc_epoch(&self) -> i64;
@@ -112,7 +119,7 @@ watermark fallback, the three suppression outcomes, and the `--with-suppressed` 
   census.sh itself ran, and getting UTC/DST/leap-second edge cases bit-identical to GNU
   `date` without depending on it would be strictly riskier for a two-call guard that runs
   once per pass.
-- **`bd_list_json`'s two calls go straight to `bd`, bypassing `bdq`** (§2) — a deliberate,
+- **`bd_list_all_json`'s call goes straight to `bd`, bypassing `bdq`** (§2) — a deliberate,
   narrow exception to "port every call exactly," justified because `bdq`'s own guard
   predicates are gated on the verb (`create`/`reopen`/`update`/`close`) and provably never
   fire for `list`; this is not a behavior change, it is not calling code that would not have

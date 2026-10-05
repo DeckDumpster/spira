@@ -185,13 +185,6 @@ pub fn standard(r: &FakeRunner) {
     store_is(r, LIST);
     r.on(|s| if is_bd(s, "ready") { ok(READY) } else { None });
     r.on(|s| {
-        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list") {
-            ok("[]")
-        } else {
-            None
-        }
-    });
-    r.on(|s| {
         if s.args.iter().any(|a| a == "is-active") {
             ok("inactive\n")
         } else {
@@ -217,10 +210,38 @@ pub fn show_from(list: &'static str) -> impl Fn(&Spec) -> Option<Out> {
     }
 }
 
-/// The store: `bd list` returns `list`, and a live re-read agrees with it.
+/// The store: `bd list` returns `list`, and a live re-read agrees with it. The lifecycle
+/// machine (`spira-lc list`) agrees too: each fixture bead's `status` stands for its row
+/// (`lc_mirror`) — bd status itself decides nothing (sp-mve9i).
 pub fn store_is(r: &FakeRunner, list: &'static str) {
     r.on(move |s| if is_bd(s, "list") { ok(list) } else { None });
     r.on(show_from(list));
+    r.on(move |s| {
+        if s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list") {
+            ok(&lc_mirror(list))
+        } else {
+            None
+        }
+    });
+}
+
+/// `spira-lc list` rows for a bd fixture: open READY, in_progress WORKING, closed LANDED;
+/// epics and events have no row (the machine tracks work beads).
+pub fn lc_mirror(list: &str) -> String {
+    let rows: Vec<serde_json::Value> = serde_json::from_str(list).unwrap();
+    let out: Vec<serde_json::Value> = rows
+        .iter()
+        .filter(|r| !matches!(r["issue_type"].as_str(), Some("epic" | "event")))
+        .map(|r| {
+            let state = match r["status"].as_str() {
+                Some("in_progress") => "WORKING",
+                Some("closed") => "LANDED",
+                _ => "READY",
+            };
+            serde_json::json!({"bead_id": r["id"], "state": state, "holds": []})
+        })
+        .collect();
+    serde_json::to_string(&out).unwrap()
 }
 
 pub fn run_mode<'a>(
@@ -369,9 +390,11 @@ fn full_pass_reads_the_store_once_and_exports_it() {
     );
     assert_eq!(r.count(|s| is_bd(s, "list")), 1, "{:#?}", r.lines());
     assert_eq!(r.count(|s| is_bd(s, "ready")), 1);
-    // lifecycle_enforce OFF (the default here): no lifecycle read at all — run_mode asserts
-    // that for every OFF test. ON's one read is pinned in on_check2_reaps_….
-    assert_eq!(r.count(|s| s.prog == "spira-lc"), 0);
+    // lifecycle_enforce OFF (the default here): the pass's one `spira-lc list` is its state
+    // read whatever the switch says (design §3.4, sp-mve9i: bd status decides nothing), and
+    // nothing else — run_mode asserts no other verb for every OFF test.
+    assert_eq!(r.count(|s| s.prog == "spira-lc"), 1, "{:#?}", r.lines());
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args[0] == "list"), 1);
     assert!(sink.has("spira: state: open=2 plan_ready=1 in_progress=1 aeons=0 fayths=[builder ops]"), "{}", sink.text());
     assert!(sink.has("RECLAIMED sp-x — ghost"));
     assert!(sink.has("ACT handled 1 stranded item(s)"));
@@ -562,7 +585,7 @@ fn judgement_sees_a_bounded_sample_of_a_large_backlog() {
         .map(|i| format!(r#"{{"id":"sp-b{i:02}","status":"open","labels":["spira","plan"],"issue_type":"task"}}"#))
         .collect();
     let list: &'static str = Box::leak(format!("[{}]", rows.join(",")).into_boxed_str());
-    r.on(move |s| if is_bd(s, "list") { ok(list) } else { None });
+    store_is(&r, list);
     exe(&w.home.join("reflect.sh"));
     run_mode(&w, &r, &sink, &clock, Mode::Pass, &[], None);
     assert!(sink.has("STARVED — 40 open, 0 ready, 0 running. Dropping to inference."), "{}", sink.text());
@@ -1249,6 +1272,12 @@ fn on_plan_ready_is_spira_claims_and_in_progress_is_the_machines_working_rows() 
 fn on_a_starved_plan_recounts_through_spira_claim_never_bd_ready() {
     let (w, r, sink, clock) = setup("on-starved");
     r.on(|s| {
+        // The machine has both plan beads READY — nothing running, whatever bd's status says
+        // (in_progress is the machine's WORKING rows, sp-mve9i).
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            return ok(r#"[{"bead_id":"sp-a","state":"READY","holds":"[]","version":"1"},
+                          {"bead_id":"sp-b","state":"READY","holds":"[]","version":"1"}]"#);
+        }
         if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("ready-count") {
             return ok("0\n");
         }
@@ -1302,7 +1331,9 @@ fn audit_world(tag: &str) -> (World, FakeRunner, FakeSink, FakeClock) {
     });
     r.on(|s| {
         if s.prog == "spira-lc" && s.args[0] == "list" {
-            return ok(r#"[{"bead_id":"sp-h","state":"READY","holds":["poison"],"version":"2"}]"#);
+            return ok(r#"[{"bead_id":"sp-h","state":"READY","holds":["poison"],"version":"2"},
+                          {"bead_id":"sp-p","state":"READY","holds":[],"version":"9"},
+                          {"bead_id":"sp-q","state":"READY","holds":[],"version":"1"}]"#);
         }
         if s.prog == "spira-lc" && s.args[0] == "show" {
             return ok(r#"{"bead":{"state":"READY","version":"9"}}"#);
@@ -1473,11 +1504,11 @@ fn check4_poisons_asks_mails_and_clears() {
     assert_eq!(un.args.last().unwrap(), r#"{"Unhold":{"kind":"Poison"}}"#);
     assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
     assert!(w.run.join("audit.status").exists());
-    // CHECK-ROWLESS runs every pass now that the CHECK 5 off-switch is gone (sp-jnwbn), so
-    // the two open beads with no lifecycle row are backfilled: one more action.
-    assert!(sink.has("ACT backfilled 2 rowless bead(s)"), "{}", sink.text());
+    // CHECK-ROWLESS runs every pass (sp-jnwbn); every ready work bead here has its row, so
+    // nothing is backfilled.
+    assert!(!sink.has("rowless"), "{}", sink.text());
     assert!(
-        sink.has("audit pass complete — 3 action(s), 2 progress"),
+        sink.has("audit pass complete — 2 action(s), 2 progress"),
         "{}",
         sink.text()
     );
@@ -1520,10 +1551,12 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
         "CHECK4 sp-h: attempts query failed — stale-poison-clear makes no decision this pass"
     ));
 
+    // The builder handed sp-p on while the pass ran: its lifecycle row, re-read live, is
+    // SUBMITTED (sp-mve9i — bd's status is not read; bd still says open here).
     let (w, r, sink, clock) = audit_world("c4closed");
     r.on(|s| {
-        if is_bd(s, "show") {
-            ok(r#"{"id":"sp-p","status":"closed"}"#)
+        if s.prog == "spira-lc" && s.args[0] == "show" && s.args.get(1).map(String::as_str) == Some("sp-p") {
+            ok(r#"{"bead":{"bead_id":"sp-p","state":"SUBMITTED","version":"10"}}"#)
         } else {
             None
         }
@@ -1549,10 +1582,12 @@ fn check4_decides_nothing_when_counts_fail_and_skips_a_bead_closed_mid_pass() {
 }
 
 // ---------------------------------------------------------------------------------------
-// CHECK5-LC (audit, ON path — design sp-pswer.2)
+// CHECK5-LC is deleted (sp-mve9i): each of its three shapes was bd `status` disagreeing with
+// the lifecycle row, and bd status is inert for work beads (design §3.4).
 
+/// SEEN RED before the deletion: this exact world printed all three STATE-LC lines.
 #[test]
-fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
+fn check5_lc_is_gone_because_bd_status_has_nothing_to_disagree_with() {
     let (w, r, sink, clock) = audit_world("c5lc");
     r.on(|s| {
         if is_bd(s, "list") {
@@ -1593,34 +1628,10 @@ fn check5_lc_reports_all_three_shapes_from_the_lifecycle_rows_alone() {
         ],
         Some(&[]),
     );
-    assert!(
-        sink.has("STATE-LC a landed-but-open — spira-lc row is LANDED; close it"),
-        "{}",
-        sink.text()
-    );
-    assert!(
-        sink.has("STATE-LC c closed-unlanded — spira-lc row is WORKING, not a terminal state"),
-        "{}",
-        sink.text()
-    );
-    assert!(
-        sink.has("STATE-LC e blocked-by-unlanded c — depends on c, which is closed but its spira-lc row is not a terminal state"),
-        "{}",
-        sink.text()
-    );
-    assert!(
-        !sink.has(" b landed-but-open"),
-        "b's WORKING row agrees with in_progress"
-    );
-    assert!(
-        !sink.has(" d closed-unlanded"),
-        "d's LANDED row agrees with closed"
-    );
-    assert!(
-        !sink.has(" f blocked-by-unlanded"),
-        "f depends on d, which is not in the unlanded set"
-    );
-    assert!(sink.has("CHECK5-LC: 3 state drift line(s) from spira-lc"));
+    for shape in ["landed-but-open", "closed-unlanded", "blocked-by-unlanded", "CHECK5-LC"] {
+        assert!(!sink.has(shape), "{shape}: {}", sink.text());
+    }
+    assert!(sink.has("audit pass complete"), "{}", sink.text());
 }
 
 #[test]
@@ -1733,7 +1744,8 @@ fn sending_7c_7d_count_what_their_seams_report() {
     const COLLISIONS: &str = r#"[
       {"id":"sp-c1","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c1"]},
       {"id":"sp-c2","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-other"]},
-      {"id":"sp-c3","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]}
+      {"id":"sp-c3","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]},
+      {"id":"sp-c4","status":"open","issue_type":"task","labels":["spira","repo:spira","branch:spira/sp-c3"]}
     ]"#;
     let (w, r, sink, clock) = setup("tail");
     // `detect_branch_collisions` checks `<root>/.git` exists on the real filesystem before
@@ -1801,16 +1813,28 @@ fn sending_7c_7d_count_what_their_seams_report() {
         }
         None
     });
-    // bd show: sp-h1 (sp-c1's holder) is closed; sp-h3 (sp-c3's holder) is open (never
-    // freed); sp-other (sp-c2's inherited-from bead) exists.
+    // The lifecycle machine (sp-mve9i — bd status decides nothing): the three colliders are
+    // claimable; sp-h1 (sp-c1's holder) is SUBMITTED, handed on by its builder; sp-h3
+    // (sp-c3's holder) is READY (never freed). bd says the opposite of both below.
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            ok(r#"[{"bead_id":"sp-c1","state":"READY"},{"bead_id":"sp-c2","state":"REWORK"},{"bead_id":"sp-c3","state":"READY"},
+                   {"bead_id":"sp-c4","state":"SUBMITTED"},
+                   {"bead_id":"sp-h1","state":"SUBMITTED"},{"bead_id":"sp-h3","state":"READY"}]"#)
+        } else {
+            None
+        }
+    });
+    // bd show: sp-other (sp-c2's inherited-from bead) exists; bd's statuses for the holders
+    // are the reverse of the machine's and are not read.
     r.on(|s| {
         if !is_bd(s, "show") {
             return None;
         }
         if s.args.iter().any(|a| a == "sp-h1") {
-            ok(r#"[{"id":"sp-h1","status":"closed"}]"#)
+            ok(r#"[{"id":"sp-h1","status":"open"}]"#)
         } else if s.args.iter().any(|a| a == "sp-h3") {
-            ok(r#"[{"id":"sp-h3","status":"open"}]"#)
+            ok(r#"[{"id":"sp-h3","status":"closed"}]"#)
         } else if s.args.iter().any(|a| a == "sp-other") {
             ok(r#"[{"id":"sp-other","status":"open"}]"#)
         } else {
@@ -1845,6 +1869,9 @@ fn sending_7c_7d_count_what_their_seams_report() {
     assert!(sink.has("ACT surfaced 1 unclaimable ready bead(s)"));
     assert!(sink.has(&format!("COLLISION sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
     assert!(sink.has(&format!("FREED sp-c1 spira spira/sp-c1 sp-h1 {}", wt("sp-h1"))));
+    // sp-c4 is open in bd but SUBMITTED in the machine: not waiting for a builder, so not a
+    // collision (sp-mve9i).
+    assert!(!sink.has("COLLISION sp-c4"), "{}", sink.text());
     assert!(sink.has("UNLABELED sp-c2 spira spira/sp-other sp-other"));
     assert!(sink.has("ACT freed 1 branch-collision worktree(s)"));
     assert!(sink.has("ACT unlabeled 1 inherited branch-collision bead(s)"));
@@ -2093,13 +2120,15 @@ fn on_check4_note_names_the_hold() {
 // sp-uqrdn: the queue waiters read spira-lc only — with lifecycle_enforce OFF they read
 // nothing and decide nothing; an unreachable machine there is not the unit's failure.
 #[test]
-fn off_never_reads_the_machine_and_never_fails_the_unit_for_it() {
+fn off_never_fails_the_unit_for_an_unanswering_machine() {
     let (w, r, sink, clock) = setup("offnolc");
     r.on(|s| if s.prog == "spira-lc" { fail(2) } else { None });
     let rc = run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "0")], None);
     assert_eq!(rc, 0, "{}", sink.text());
     assert!(!sink.has("LIFECYCLE UNREACHABLE"), "{}", sink.text());
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")), 0);
+    // sp-mve9i: OFF still reads the bead states for its snapshot (bd status is inert), once,
+    // quietly — an unanswering machine there decides nothing and is not the unit's failure.
+    assert!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")) <= 1);
     assert!(sink.has("pass complete"));
 }
 
@@ -2356,10 +2385,20 @@ fn spawned_units_are_pinned_to_current_not_the_callers_release() {
 
 #[test]
 fn rowless_open_bead_is_surfaced_and_backfilled() {
+    // sp-mve9i: the rowless search is the ready set, never bd status — sp-gone is rowless
+    // and closed in bd, absent from ready: not backfilled to a claimable READY row.
     let (w, r, sink, clock) = audit_world("rowless");
     r.on(|s| {
         if is_bd(s, "list") {
-            ok(r#"[{"id":"sp-nr","status":"open","issue_type":"task"},{"id":"sp-has","status":"open","issue_type":"task"}]"#)
+            ok(r#"[{"id":"sp-nr","status":"open","issue_type":"task"},{"id":"sp-has","status":"open","issue_type":"task"},
+                   {"id":"sp-gone","status":"closed","issue_type":"task"}]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if is_bd(s, "ready") {
+            ok(r#"[{"id":"sp-nr","issue_type":"task"},{"id":"sp-has","issue_type":"task"}]"#)
         } else {
             None
         }
@@ -2380,4 +2419,61 @@ fn rowless_open_bead_is_surfaced_and_backfilled() {
     assert!(!sink.has("STATE-LC sp-has rowless"), "{}", sink.text());
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-nr"]), 1);
     assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-has"]), 0);
+    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args == ["create-bead", "sp-gone"]), 0);
+}
+
+/// sp-mve9i: close_landed_queue_waiters finds the labeled beads as content (`list --all
+/// --label`), never by bd status, and acts on the lifecycle row alone: sp-w is LANDED (bd
+/// calls it closed already), sp-x is WORKING (bd calls it open).
+#[test]
+fn close_landed_queue_waiters_reads_the_label_not_bd_status() {
+    let (w, r, sink, clock) = setup("qwclose");
+    r.on(|s| {
+        if is_bd(s, "list") && s.args.iter().any(|a| a == "spira-queue-waiting") {
+            ok(r#"[{"id":"sp-w","status":"closed"},{"id":"sp-x","status":"open"}]"#)
+        } else {
+            None
+        }
+    });
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            ok(r#"[{"bead_id":"sp-w","state":"LANDED"},{"bead_id":"sp-x","state":"WORKING"}]"#)
+        } else {
+            None
+        }
+    });
+    // The waiters are ON-only (sp-uqrdn): OFF they read nothing and decide nothing.
+    run_mode(&w, &r, &sink, &clock, Mode::CloseLandedQueueWaiters, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
+    let q = r.find(|s| is_bd(s, "list") && s.args.iter().any(|a| a == "spira-queue-waiting")).unwrap();
+    assert!(q.args.iter().any(|a| a == "--all") && !q.args.iter().any(|a| a == "--status"), "{:?}", q.args);
+    assert!(r.find(|s| is_bd(s, "close") && s.args.get(3).map(String::as_str) == Some("sp-w")).is_some(), "{:#?}", r.lines());
+    assert!(r.find(|s| is_bd(s, "close") && s.args.get(3).map(String::as_str) == Some("sp-x")).is_none());
+}
+
+/// sp-mve9i: CHECK 4's stale-poison clear considers a poison-held bead by its lifecycle
+/// row, never bd status: sp-h is open in bd but SUBMITTED in the machine — handed on by its
+/// builder, it is not a stale poison to lift.
+#[test]
+fn check4_stale_clear_reads_the_lifecycle_row_not_bd_status() {
+    let (w, r, sink, clock) = audit_world("c4stale-lc");
+    r.on(|s| {
+        if s.prog == "spira-lc" && s.args[0] == "list" {
+            ok(r#"[{"bead_id":"sp-h","state":"SUBMITTED","holds":["poison"],"version":"2"},
+                   {"bead_id":"sp-p","state":"READY","holds":[],"version":"9"},
+                   {"bead_id":"sp-q","state":"READY","holds":[],"version":"1"}]"#)
+        } else {
+            None
+        }
+    });
+    run_mode(
+        &w,
+        &r,
+        &sink,
+        &clock,
+        Mode::Audit,
+        &[("SPIRA_SKIP_RECLAIM", "1"), ("SPIRA_LIFECYCLE_ENFORCE", "1")],
+        Some(&[]),
+    );
+    assert!(r.find(|s| s.prog == "spira-lc" && s.args[0] == "event" && s.args[2] == "sp-h").is_none(), "{:#?}", r.lines());
+    assert!(!sink.has("stale poison cleared"), "{}", sink.text());
 }

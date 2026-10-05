@@ -16,6 +16,7 @@
 //! calls a day into a decommissioned harness to render a tab that could only be empty or
 //! historical. NOTIFICATIONS now filters rows this store already had.
 
+use spira_config::nonwork::{self, Kind};
 use crate::model::{Item, View};
 use serde_json::Value;
 use std::process::Command;
@@ -122,7 +123,8 @@ pub fn settled(s: &Snapshot, id: &str, e: Expect) -> bool {
         return true;
     };
     match e {
-        Expect::Closed => r["status"].as_str() == Some("closed"),
+        // A decision is an ask, not a work bead: bd status is its only state.
+        Expect::Closed => nonwork::row_closed(Kind::Ask, r),
         Expect::Archived(want) => labels(r).contains(&crate::model::ARCHIVED) == want,
     }
 }
@@ -268,7 +270,8 @@ fn fetch_threads(beads: &[Value]) -> std::collections::HashMap<String, Vec<Value
             if l.contains(&"archived") {
                 return false;
             }
-            r["status"].as_str() != Some("closed")
+            // Only asks and overseer escalations reach here: non-work beads, bd's status.
+            !nonwork::row_closed(Kind::Ask, r)
         })
         .filter_map(|r| Some(r["id"].as_str()?.to_string()))
         .collect();
@@ -610,7 +613,8 @@ fn alerts(s: &Snapshot, dismissed: bool, now: i64) -> Result<Vec<Item>, String> 
             };
             // Carried alongside rather than added to `Item`: status answers one question in
             // one branch, and a field the other four views ignore is a field that will drift.
-            (r["status"].as_str() != Some("closed"), it)
+            // An alert is not a work bead: bd status is its only state.
+            (!nonwork::row_closed(Kind::Alert, r), it)
         })
         // Firing and audible, versus everything the tab is deliberately not showing. A
         // silence is compared against `now` rather than merely being present, so it expires
@@ -798,8 +802,9 @@ pub fn view_items(
                     // And NOT `status == open`: an escalated bead is legitimately parked
                     // in `deferred` -- that is the one status the policy allows it to sit
                     // in, and filtering on `open` once hid every bead that was in it.
-                    // Anything not closed is still awaiting an answer.
-                    r["status"].as_str() != Some("closed")
+                    // Anything not closed is still awaiting an answer. A decision is an ask,
+                    // not a work bead, so bd's status is its state (spira_config::nonwork).
+                    !nonwork::row_closed(Kind::Ask, r)
                 })
                 .map(|r| {
                     let l = labels(r);

@@ -72,6 +72,9 @@ export SPIRA_FLOW_GRACE_SECS="2"   # short so the suite need not sleep for a rea
 export SPIRA_DESIRED_DIR="$T/desired"
 export SPIRA_SCOPE_LABEL=""
 mkdir -p "$SPIRA_RUN"
+# The backlog is the work beads the lifecycle machine has not finished (sp-mve9i), not bd's
+# open ones; this world's machine mirrors the fixture store (open READY, closed LANDED).
+lc_mirror_bd "$T/lc"; export SPIRA_LC_BIN
 
 # Stub mail: records every "send concierge" call so the alert path is observable without
 # a real mailbox. Any other subcommand is refused loudly — a call this suite did not expect.

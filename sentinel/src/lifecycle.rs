@@ -3,7 +3,7 @@
 //! sweep, and CHECK 4's poison hold. sp-i2m7y moved these onto spira-lc unconditionally;
 //! there is no bd-label mode to fall back to, and nothing here reads lifecycle_enforce.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use serde_json::Value;
 
@@ -11,6 +11,8 @@ use crate::host::{Io, Spec};
 use crate::model::{parse_lc_rows, LcRow};
 use crate::pass::Sentinel;
 use crate::store::Snapshot;
+use spira_config::lc_state;
+use spira_config::nonwork::{self, Kind};
 
 /// The hold kind's serde tag and implied cause (spira-lc callers.rs `hold_cause`; lc.sh's
 /// `_lc_hold_kind_tag` / `_lc_hold_kind_cause` before sp-arpjt).
@@ -39,15 +41,24 @@ pub fn unhold_event(kind: &str) -> Option<String> {
 
 pub const HOLDER_DEAD: &str = "\"HolderDead\"";
 
-/// CHECK 2 (protect-waiting half): which in-progress beads to wait-hold or release.
-/// `held` is the wait-held set; each bead's dependency facts come from the snapshot join.
+/// CHECK 2 (protect-waiting half): which WORKING beads to wait-hold or release. `held` is
+/// the wait-held set; each bead's dependency facts come from the snapshot join.
+///
+/// Every state here is the lifecycle machine's (design §3.4, sp-mve9i): the candidates are
+/// the WORKING rows, and a work dependency is resolved once its row is past the builder
+/// (what bd `closed` meant). An ask is not a work bead — its bd status is its only state —
+/// so an ask dependency is resolved when bd closes it (`spira_config::nonwork`). A work
+/// dependency with no lifecycle row counts as unresolved: it blocks the wait hold, which
+/// leaves the bead to the reaper exactly as an open non-ask dependency always did.
 pub fn wait_decisions(
     snap: &crate::store::Snapshot,
+    rows: &[LcRow],
     held: &HashSet<String>,
     ask: &str,
 ) -> Vec<(bool, String)> {
     let mut out = Vec::new();
-    for b in snap.list.iter().filter(|b| b.status == "in_progress") {
+    for r in rows.iter().filter(|r| lc_state::is_working(&r.state)) {
+        let Some(b) = snap.get(&r.bead_id) else { continue };
         let has_skip = held.contains(&b.id);
         if !(has_skip || b.dependency_count > 0) {
             continue;
@@ -57,14 +68,20 @@ pub fn wait_decisions(
             .iter()
             .filter_map(|d| {
                 let t = d.target()?;
-                let (status, labels) = match snap.get(t) {
+                let (bd_status, labels) = match snap.get(t) {
                     Some(x) => (x.status.clone(), x.labels.clone()),
                     None => (
                         d.status.clone().unwrap_or_default(),
                         d.labels.clone().unwrap_or_default(),
                     ),
                 };
-                if status == "closed" {
+                let is_ask = !ask.is_empty() && labels.iter().any(|x| x == ask);
+                let resolved = if is_ask {
+                    nonwork::is_closed(Kind::Ask, &bd_status)
+                } else {
+                    snap.lc_past_builder(t)
+                };
+                if resolved {
                     return None;
                 }
                 Some((t.to_string(), labels, d.r#type.as_deref() == Some("blocks")))
@@ -125,38 +142,18 @@ pub fn inconsistent(rows: &[LcRow]) -> Vec<String> {
         .collect()
 }
 
-/// Whether an `LcRow.state` tag is one of the machine's terminal states (`lifecycle::bead::
-/// BeadState::is_terminal`) — this crate depends on the tag strings `spira-lc list` emits,
-/// not the `lifecycle` crate itself.
-fn lc_terminal(state: &str) -> bool {
-    matches!(state, "LANDED" | "SUPERSEDED" | "DROPPED" | "DONE")
-}
-
-/// CHECK5-LC (ON path, design sp-pswer.2 — "design ON-path replacement for CHECK5 / groomer
-/// STATE sweeps"): the landed-but-open shape lib.sh's `detect_landed_but_open` proves today
-/// by grepping every open bead's repo base for a commit subject naming it. A LANDED row is
-/// the same fact spira_lifecycle already carries — reached only via `content_on_base` or
-/// `delivered`, both proof-carrying transitions — so this is a lookup, not a git walk.
-pub fn landed_but_open(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
-    let lc: HashMap<&str, &str> = rows
-        .iter()
-        .map(|r| (r.bead_id.as_str(), r.state.as_str()))
-        .collect();
-    snap.list
-        .iter()
-        .filter(|b| matches!(b.status.as_str(), "open" | "in_progress"))
-        .filter(|b| work_types.iter().any(|t| t == b.typ()))
-        .filter(|b| lc.get(b.id.as_str()) == Some(&"LANDED"))
-        .map(|b| {
-            format!(
-                "STATE-LC {} landed-but-open — spira-lc row is LANDED; close it",
-                b.id
-            )
-        })
-        .collect()
-}
-
 /// Open work beads with no `spira_lifecycle` row: they can never be claimed.
+///
+/// NAMED EXCEPTION to lifecycle-guard's bd-status-read rule (lifecycle-guard/DESIGN.md,
+/// "The rowless controls"; the Concierge's ruling on sp-mve9i): this is the positive control
+/// for "no bead is rowless". A bead with no lifecycle row has no state but bd's, so the only
+/// way to find one is to ask bd which beads it considers live and look for each in the
+/// machine — reading bd status here audits the machine's coverage, it decides nothing about
+/// a bead the machine holds. The rule names this function; nothing else may do this.
+///
+/// The CHECK5-LC shapes (landed-but-open, closed-unlanded, blocked-by-unlanded) are gone:
+/// each was a disagreement between bd `status` and the lifecycle row, and with bd status
+/// inert for work beads (design §3.4, sp-mve9i) there is nothing for the row to disagree with.
 pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<String> {
     let have: HashSet<&str> = rows.iter().map(|r| r.bead_id.as_str()).collect();
     snap.list
@@ -166,56 +163,6 @@ pub fn rowless(snap: &Snapshot, rows: &[LcRow], work_types: &[String]) -> Vec<St
         .filter(|b| !have.contains(b.id.as_str()))
         .map(|b| b.id.clone())
         .collect()
-}
-
-/// CHECK5-LC: the closed-unlanded shape `detect_closed_unlanded_states` proves today from the
-/// base's commit graph plus a hand-maintained exclusion list (supersedes, spira-dropped,
-/// delivers:, content-landed) — every entry of which is one of the machine's own terminal
-/// states, so `is_terminal` alone replaces the whole list. Returns (id, lc_state) pairs; the
-/// ids are also `false_blockers`'s input.
-pub fn closed_unlanded(
-    snap: &Snapshot,
-    rows: &[LcRow],
-    work_types: &[String],
-) -> Vec<(String, String)> {
-    let lc: HashMap<&str, &str> = rows
-        .iter()
-        .map(|r| (r.bead_id.as_str(), r.state.as_str()))
-        .collect();
-    snap.list
-        .iter()
-        .filter(|b| b.status == "closed")
-        .filter(|b| work_types.iter().any(|t| t == b.typ()))
-        .filter_map(|b| {
-            let st = *lc.get(b.id.as_str())?;
-            (!lc_terminal(st)).then(|| (b.id.clone(), st.to_string()))
-        })
-        .collect()
-}
-
-/// CHECK5-LC: the false-blockers shape `detect_false_blockers` proves today by re-reading
-/// `detect_closed_unlanded_states`'s own ids as the blocker set — the same relation, against
-/// `closed_unlanded`'s ids instead.
-pub fn false_blockers(snap: &Snapshot, closed_unlanded_ids: &HashSet<String>) -> Vec<String> {
-    let mut out = Vec::new();
-    for b in &snap.list {
-        if !matches!(b.status.as_str(), "open" | "in_progress") {
-            continue;
-        }
-        for d in &b.dependencies {
-            if d.r#type.as_deref() != Some("blocks") {
-                continue;
-            }
-            let Some(t) = d.target() else { continue };
-            if closed_unlanded_ids.contains(t) {
-                out.push(format!(
-                    "STATE-LC {} blocked-by-unlanded {t} — depends on {t}, which is closed but its spira-lc row is not a terminal state",
-                    b.id
-                ));
-            }
-        }
-    }
-    out
 }
 
 impl<'a> Sentinel<'a> {
@@ -233,6 +180,25 @@ impl<'a> Sentinel<'a> {
             return memo.clone();
         }
         let rows = self.lc_rows_read();
+        *self.lc_memo.borrow_mut() = Some(rows.clone());
+        rows
+    }
+
+    /// The bead states the pass's snapshot carries (design §3.4, sp-mve9i): a work bead's
+    /// state is its lifecycle row in either mode, because bd status is inert and there is no
+    /// other source. ON, this is [`Self::lc_rows`] (fail-closed, LOUD). OFF, the machine is
+    /// read quietly: a stage that runs one gets its states, and one that does not gets none —
+    /// every state decision over the snapshot then decides nothing, never LOUD and never
+    /// exit 1, as sp-uqrdn made the OFF waiters do.
+    pub fn state_rows(&self) -> Option<Vec<LcRow>> {
+        if self.lc != crate::cfg::Lifecycle::Off {
+            return self.lc_rows();
+        }
+        if let Some(memo) = self.lc_memo.borrow().as_ref() {
+            return memo.clone();
+        }
+        let o = self.h.run(Spec::args_owned(self.cfg.lc_bin.clone(), vec!["list".into()]));
+        let rows = if o.ok() { parse_lc_rows(&o.stdout).ok() } else { None };
         *self.lc_memo.borrow_mut() = Some(rows.clone());
         rows
     }
@@ -284,6 +250,22 @@ impl<'a> Sentinel<'a> {
                 false
             }
         }
+    }
+
+    /// One bead's lifecycle state, read live (`spira-lc show <id>`): the re-read before a
+    /// write that a stale snapshot must not drive. None when the machine has no row or
+    /// cannot answer.
+    pub fn lc_live_state(&self, id: &str) -> Option<String> {
+        let o = self.h.run(
+            Spec::args_owned(self.cfg.lc_bin.clone(), vec!["show".into(), id.into()])
+                .err(Io::Null)
+                .timeout(5),
+        );
+        if !o.ok() {
+            return None;
+        }
+        let v: Value = serde_json::from_str(o.stdout.trim()).ok()?;
+        v.get("bead")?.get("state")?.as_str().filter(|s| !s.is_empty()).map(str::to_string)
     }
 
     /// `spira-lc show` + `event`: read the row's current state and version, then apply
@@ -348,7 +330,7 @@ impl<'a> Sentinel<'a> {
         // released) a moment ago already counted. The rows here are the pass's one read;
         // apply the protect step's successful writes to them before reaping.
         let mut now_held = held.clone();
-        for (add, id) in wait_decisions(snap, &held, &ask) {
+        for (add, id) in wait_decisions(snap, rows, &held, &ask) {
             if add {
                 let ev = hold_event(
                     "wait",
@@ -440,30 +422,6 @@ impl<'a> Sentinel<'a> {
             "surfaced {} inconsistent spira-lc row(s)",
             lines.len()
         ));
-    }
-
-    /// CHECK5-LC — detect, never repair, exactly as CHECK 2c: the three shapes the retired
-    /// CHECK 5 and the groomer's STATE sweeps proved from git log / bd status, read instead
-    /// from the row `spira-lc list` already gave this pass (design sp-pswer.2). The legacy
-    /// checks were deleted at the cutover (sp-jnwbn); this is the only one left.
-    pub fn check5_lc(&self, snap: &Snapshot, rows: &[LcRow]) {
-        let work_types = self.cfg.work_types.clone();
-        let mut lines = landed_but_open(snap, rows, &work_types);
-        let unlanded = closed_unlanded(snap, rows, &work_types);
-        let unlanded_ids: HashSet<String> = unlanded.iter().map(|(id, _)| id.clone()).collect();
-        lines.extend(unlanded.iter().map(|(id, st)| {
-            format!("STATE-LC {id} closed-unlanded — spira-lc row is {st}, not a terminal state")
-        }));
-        lines.extend(false_blockers(snap, &unlanded_ids));
-        if lines.is_empty() {
-            return;
-        }
-        self.h.print(&lines.join("\n"));
-        self.log(&format!(
-            "CHECK5-LC: {} state drift line(s) from spira-lc",
-            lines.len()
-        ));
-        self.act(&format!("surfaced {} CHECK5-LC line(s)", lines.len()));
     }
 }
 
@@ -563,14 +521,44 @@ mod tests {
         ]"#,
             None,
         )
+        .with_lc(Some(&working()))
+    }
+
+    fn working() -> Vec<LcRow> {
+        let mut rows: Vec<LcRow> = ["w1", "w2", "w3", "w4", "w5"].iter().map(|i| lc5_row(i, "WORKING")).collect();
+        rows.push(lc5_row("o1", "READY"));
+        rows
     }
 
     #[test]
     fn protect_only_when_every_open_dep_is_an_ask_blocker() {
         let held: HashSet<String> = ["w3".to_string()].into();
-        let d = wait_decisions(&snap(), &held, "ask");
+        let d = wait_decisions(&snap(), &working(), &held, "ask");
         assert_eq!(d, vec![(true, "w1".to_string()), (false, "w3".to_string())]);
         // w2 has a non-ask open dep; w4 has none; w5's ask dep is not a blocks edge.
+    }
+
+    /// sp-mve9i: the candidates are the WORKING lifecycle rows and a work dependency is
+    /// resolved by its row, never bd status. bd calls x in_progress and its dependency o2
+    /// closed; the machine has x READY (not a candidate) and y WORKING on o2, which is still
+    /// WORKING — so y's open dep is a non-ask and y is not wait-held. z's dependency o3 is
+    /// open in bd but SUBMITTED in the machine: only its ask dep is left, so z is held.
+    #[test]
+    fn wait_decisions_read_the_lifecycle_row_not_bd_status() {
+        let s = Snapshot::from_json(
+            r#"[
+            {"id":"x","status":"in_progress","dependency_count":1,"dependencies":[{"depends_on_id":"q","type":"blocks"}]},
+            {"id":"y","status":"open","dependency_count":2,"dependencies":[{"depends_on_id":"q","type":"blocks"},{"depends_on_id":"o2","type":"blocks"}]},
+            {"id":"z","status":"open","dependency_count":2,"dependencies":[{"depends_on_id":"q","type":"blocks"},{"depends_on_id":"o3","type":"blocks"}]},
+            {"id":"q","status":"open","labels":["ask"]},
+            {"id":"o2","status":"closed","labels":[]},
+            {"id":"o3","status":"open","labels":[]}
+        ]"#,
+            None,
+        );
+        let rows = vec![lc5_row("x", "READY"), lc5_row("y", "WORKING"), lc5_row("z", "WORKING"), lc5_row("o2", "WORKING"), lc5_row("o3", "SUBMITTED")];
+        let s = s.with_lc(Some(&rows));
+        assert_eq!(wait_decisions(&s, &rows, &HashSet::new(), "ask"), vec![(true, "z".to_string())]);
     }
 
     #[test]
@@ -649,22 +637,7 @@ mod tests {
         assert_eq!(&u[14..15], "4");
     }
 
-    // ── CHECK5-LC (design sp-pswer.2) ──────────────────────────────────────────────────
-
-    fn lc5_snap() -> Snapshot {
-        Snapshot::from_json(
-            r#"[
-            {"id":"a","status":"open","issue_type":"task"},
-            {"id":"b","status":"in_progress","issue_type":"task"},
-            {"id":"c","status":"closed","issue_type":"task"},
-            {"id":"d","status":"closed","issue_type":"task"},
-            {"id":"e","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"c","type":"blocks"}]},
-            {"id":"f","status":"open","issue_type":"task","dependencies":[{"depends_on_id":"d","type":"blocks"}]},
-            {"id":"g","status":"open","issue_type":"epic"}
-        ]"#,
-            None,
-        )
-    }
+    // ── CHECK-ROWLESS ─────────────────────────────────────────────────────────────────
 
     fn lc5_row(id: &str, state: &str) -> LcRow {
         LcRow {
@@ -678,80 +651,17 @@ mod tests {
         vec!["task".into(), "bug".into(), "feature".into()]
     }
 
+    /// The rowless control (a named exception, see `rowless`): open and in-progress work
+    /// beads bd holds with no lifecycle row; a closed bead or an epic is not one.
     #[test]
-    fn landed_but_open_flags_only_a_landed_row_on_an_open_bead() {
-        let rows = vec![lc5_row("a", "LANDED"), lc5_row("b", "WORKING")];
-        assert_eq!(
-            landed_but_open(&lc5_snap(), &rows, &wt()),
-            vec!["STATE-LC a landed-but-open — spira-lc row is LANDED; close it".to_string()]
+    fn rowless_flags_live_work_beads_with_no_row() {
+        let s = Snapshot::from_json(
+            r#"[{"id":"a","status":"open","issue_type":"task"},{"id":"c","status":"closed","issue_type":"task"},
+                {"id":"r","status":"in_progress","issue_type":"task"},{"id":"g","status":"open","issue_type":"epic"}]"#,
+            None,
         );
-    }
-
-    #[test]
-    fn landed_but_open_is_silent_when_bd_and_lc_agree() {
-        // SEEN RED: swapping b's row to LANDED (agreeing with a's already-planted offender)
-        // would add a second line — proving this fixture's silence on b is not a tautology.
-        let rows = vec![lc5_row("a", "LANDED"), lc5_row("b", "WORKING")];
-        assert!(!landed_but_open(&lc5_snap(), &rows, &wt())
-            .iter()
-            .any(|l| l.contains(" b ")));
-        let rows_seen_red = vec![lc5_row("a", "LANDED"), lc5_row("b", "LANDED")];
-        assert_eq!(landed_but_open(&lc5_snap(), &rows_seen_red, &wt()).len(), 2);
-    }
-
-    #[test]
-    fn rowless_flags_open_work_beads_with_no_row() {
         let rows = vec![lc5_row("a", "READY")];
-        assert_eq!(rowless(&lc5_snap(), &rows, &wt()), vec!["b", "e", "f"]);
-        let all = vec![lc5_row("a", "READY"), lc5_row("b", "READY"), lc5_row("e", "READY"), lc5_row("f", "READY")];
-        assert!(rowless(&lc5_snap(), &all, &wt()).is_empty());
-    }
-
-    #[test]
-    fn landed_but_open_ignores_a_non_work_type() {
-        let rows = vec![lc5_row("g", "LANDED")];
-        assert!(landed_but_open(&lc5_snap(), &rows, &wt()).is_empty());
-    }
-
-    #[test]
-    fn closed_unlanded_flags_a_non_terminal_row_on_a_closed_bead() {
-        let rows = vec![lc5_row("c", "WORKING"), lc5_row("d", "LANDED")];
-        assert_eq!(
-            closed_unlanded(&lc5_snap(), &rows, &wt()),
-            vec![("c".to_string(), "WORKING".to_string())]
-        );
-    }
-
-    #[test]
-    fn closed_unlanded_accepts_every_terminal_state() {
-        for st in ["LANDED", "SUPERSEDED", "DROPPED", "DONE"] {
-            let rows = vec![lc5_row("c", st)];
-            assert!(
-                closed_unlanded(&lc5_snap(), &rows, &wt()).is_empty(),
-                "{st} should be accepted as a legitimate close"
-            );
-        }
-    }
-
-    #[test]
-    fn false_blockers_flags_only_the_dependent_of_a_closed_unlanded_blocker() {
-        let ids: HashSet<String> = ["c".to_string()].into();
-        assert_eq!(
-            false_blockers(&lc5_snap(), &ids),
-            vec!["STATE-LC e blocked-by-unlanded c — depends on c, which is closed but its spira-lc row is not a terminal state".to_string()]
-        );
-    }
-
-    #[test]
-    fn false_blockers_is_silent_once_the_blocker_is_no_longer_in_the_unlanded_set() {
-        // SEEN RED: e's dependency on c is real; only clearing c from the set (as landing c
-        // would) silences it — proving the filter is doing the work, not vacuously passing.
-        assert!(!false_blockers(&lc5_snap(), &HashSet::new())
-            .iter()
-            .any(|l| l.contains(" e ")));
-        let ids: HashSet<String> = ["c".to_string()].into();
-        assert!(false_blockers(&lc5_snap(), &ids)
-            .iter()
-            .any(|l| l.contains(" e ")));
+        assert_eq!(rowless(&s, &rows, &wt()), vec!["r"]);
+        assert!(rowless(&s, &[lc5_row("a", "READY"), lc5_row("r", "READY")], &wt()).is_empty());
     }
 }

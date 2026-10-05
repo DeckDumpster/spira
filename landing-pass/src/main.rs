@@ -127,8 +127,8 @@ fn pr() -> i32 {
         bd: s.bd.clone(),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
-        submitted_label: s.submitted_label.clone(),
         fixture: s.bdjson_fixture.clone(),
+        lc_bin: s.lc_bin.clone(),
     };
     let tools = RealPrTools { s: &s, out: &out };
     let procs = RealProcs { run: s.run.clone() };
@@ -198,8 +198,8 @@ fn land() -> i32 {
         bd: s.bd.clone(),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
-        submitted_label: s.submitted_label.clone(),
         fixture: s.bdjson_fixture.clone(),
+        lc_bin: s.lc_bin.clone(),
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads: beads.clone() };
     let tools = RealTools::new(s.home.clone(), s.queue_bin.clone(), Some(files.containers()), Some(s.run.join("gate-admission")));
@@ -303,8 +303,8 @@ fn noverdict_cmd(id: &str, branch: &str, repo: &str, reason: &str, outcome: &str
         bd: s.bd.clone(),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
-        submitted_label: s.submitted_label.clone(),
         fixture: s.bdjson_fixture.clone(),
+        lc_bin: s.lc_bin.clone(),
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
     let mut gate_out = String::new();
@@ -335,8 +335,8 @@ fn ask_rebase_loop_cmd(args: &[String]) -> i32 {
         bd: s.bd.clone(),
         timeout: s.bd_timeout,
         home_repo: s.home_repo.clone(),
-        submitted_label: s.submitted_label.clone(),
         fixture: s.bdjson_fixture.clone(),
+        lc_bin: s.lc_bin.clone(),
     };
     let lib = RealLib { seam: SeamRunner { home: s.home.clone(), out: &out }, incident: s.incident.clone(), s: s.clone(), beads };
     let refs: Vec<&str> = args.iter().map(String::as_str).collect();
@@ -432,8 +432,9 @@ fn resolve_beads(home: &Path) -> Result<RealBeads, String> {
         bd: get("SPIRA_BD", "bd"),
         timeout: ad_hoc("BD_TIMEOUT", "180").parse().unwrap_or(180),
         home_repo: get("SPIRA_HOME_REPO", "spira"),
-        submitted_label: get("SPIRA_SUBMITTED_LABEL", "spira-submitted"),
         fixture: env.get("SPIRA_BDJSON_FIXTURE").filter(|s| !s.is_empty()).map(PathBuf::from),
+        // Content only (titles): nothing here decides on a bead's state.
+        lc_bin: None,
     })
 }
 

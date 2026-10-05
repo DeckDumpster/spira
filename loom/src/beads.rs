@@ -8,7 +8,9 @@
 //! the graph formats drop either the type or the edges to beads that are no longer live.
 
 use serde_json::Value;
-use std::collections::HashSet;
+use spira_config::lc_state;
+use spira_config::nonwork::{self, Kind};
+use std::collections::{HashMap, HashSet};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tokio::process::Command;
@@ -112,7 +114,14 @@ pub fn json_only(out: &str) -> &str {
     ""
 }
 
-/// Rows that are not closed, and how many were dropped.
+/// Rows that are not over, and how many were dropped.
+///
+/// "Over" is the lifecycle machine's word for a work bead (design §3.4, sp-mve9i: bd holds
+/// content, spira-lc holds state): a row whose lifecycle row is terminal is dropped,
+/// whatever bd's status says. A row with no lifecycle row is a coordination or other
+/// non-work bead, whose bd status is its only state (spira_config::nonwork). With no answer
+/// from the machine (`lc` is `None`) nothing is dropped: a state that cannot be read is not
+/// read as over.
 ///
 /// The query is already bounded to work in flight — that bound is the entire reason a
 /// per-request read over `bd` is affordable, since the closed corpus is several times the
@@ -120,11 +129,15 @@ pub fn json_only(out: &str) -> &str {
 /// ever stops holding, the number says so out loud in every response rather than the payload
 /// quietly growing by a factor of six (a check that finds nothing must be able to find
 /// something).
-pub fn drop_closed(rows: Vec<Value>) -> (Vec<Value>, usize) {
+pub fn drop_closed(rows: Vec<Value>, lc: Option<&HashMap<String, lc_state::Row>>) -> (Vec<Value>, usize) {
     let before = rows.len();
+    let Some(lc) = lc else { return (rows, 0) };
     let kept: Vec<Value> = rows
         .into_iter()
-        .filter(|r| r.get("status").and_then(Value::as_str) != Some("closed"))
+        .filter(|r| match lc.get(r.get("id").and_then(Value::as_str).unwrap_or("")) {
+            Some(row) => !row.terminal(),
+            None => !nonwork::row_closed(Kind::Epic, r),
+        })
         .collect();
     let dropped = before - kept.len();
     (kept, dropped)
@@ -198,11 +211,32 @@ mod tests {
                 {"id":"sp-c","status":"in_progress"}]"#,
         )
         .unwrap();
-        let (kept, dropped) = drop_closed(rows);
+        let lc = HashMap::new();
+        let (kept, dropped) = drop_closed(rows, Some(&lc));
         // The filter is SEEN removing something before its silence is believed anywhere else.
         assert_eq!(dropped, 1);
         assert_eq!(kept.len(), 2);
         assert!(kept.iter().all(|r| r["status"].as_str() != Some("closed")));
+    }
+
+    /// sp-mve9i: a work bead's row is dropped when its lifecycle row is over, not when bd
+    /// says closed; with no machine answer nothing is dropped.
+    #[test]
+    fn a_work_row_is_dropped_by_its_lifecycle_state() {
+        let rows: Vec<Value> = serde_json::from_str(
+            r#"[{"id":"sp-a","status":"open"},
+                {"id":"sp-b","status":"closed"},
+                {"id":"sp-c","status":"open"}]"#,
+        )
+        .unwrap();
+        let lc: HashMap<String, lc_state::Row> = [("sp-a", "LANDED"), ("sp-b", "REWORK")]
+            .iter()
+            .map(|(id, st)| (id.to_string(), lc_state::Row { bead_id: id.to_string(), state: st.to_string(), ..Default::default() }))
+            .collect();
+        let (kept, dropped) = drop_closed(rows.clone(), Some(&lc));
+        let ids: Vec<&str> = kept.iter().filter_map(|r| r["id"].as_str()).collect();
+        assert_eq!((ids, dropped), (vec!["sp-b", "sp-c"], 1));
+        assert_eq!(drop_closed(rows, None).1, 0);
     }
 
     #[test]
