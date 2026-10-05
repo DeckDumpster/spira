@@ -85,6 +85,22 @@ impl Conn {
         Ok(Conn { host, port, user, password, database, session: Mutex::new(None), read_session: Mutex::new(None), io_timeout: std::time::Duration::from_secs(5) })
     }
 
+    /// A second connection to the same server and database under other credentials — the
+    /// database admin that admin-migrate applies a pending migration as (sp-p1z81), while
+    /// this one (the lifecycle service user) only probes. Lazy: nothing connects until used.
+    pub fn as_user(&self, user: String, password: String) -> Conn {
+        Conn {
+            host: self.host.clone(),
+            port: self.port,
+            user,
+            password,
+            database: self.database.clone(),
+            session: Mutex::new(None),
+            read_session: Mutex::new(None),
+            io_timeout: self.io_timeout,
+        }
+    }
+
     fn connect(&self, database: Option<&str>) -> Result<Wire, ScriptFailure> {
         Wire::connect_with(&self.host, self.port, &self.user, &self.password, database, self.io_timeout)
     }

@@ -8,9 +8,15 @@
 # admin-apply-ddl selects spira_lifecycle, so a migration file applies as shipped.
 # Positive controls: each "absent before" check precedes the "present after" one.
 #
+# sp-p1z81: the fixture is production's shape — root has a password, the lifecycle service
+# user spira_lc comes from grants.sql — and "already applied" is read as spira_lc, so a store
+# that carries every migration passes with no admin credential; only a pending migration
+# needs SPIRA_LC_ADMIN_USER/SPIRA_LC_ADMIN_PASSWORD, and without them (or with them wrong)
+# the run refuses naming exactly those variables and never prints a password.
+#
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
 #
-# defect: sp-vf9iu
+# defect: sp-vf9iu sp-p1z81
 # tier: T1
 # covers: lifecycle/schema.sql lifecycle/migrations/* spira-lc/src/** spira/pre-activate.sh
 # timeout: 180
@@ -60,7 +66,12 @@ for _ in $(seq 1 50); do
 done
 [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/server.log")"
 
-root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls "$@"; } # batch-job: fixture SQL against the suite's private server
+ROOTPW="root-pw-$RANDOM$RANDOM"
+SVCPW="svc-pw-$RANDOM$RANDOM"
+# Production's root has a password (sp-p1z81): set one before anything else runs.
+timeout 5 "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOTPW'" >/dev/null 2>&1 \
+    || bail "could not give the fixture root a password"
+root_sql() { "$DOLT_BIN" --data-dir "$TMP" --host 127.0.0.1 --port "$PORT" -u root -p "$ROOTPW" --no-tls "$@"; } # batch-job: fixture SQL against the suite's private server
 
 # spira-lc is the tree under test's own build, found by name on the suite's PATH (sp-gypjk);
 # lifecycle is switched on for this suite with SPIRA_LIFECYCLE_ENFORCE, never by a path.
@@ -71,35 +82,81 @@ export SPIRA_LC_HOST=127.0.0.1
 export SPIRA_LC_PORT="$PORT"
 export SPIRA_LC_DB=spira_lifecycle
 export SPIRA_LC_DATA_DIR="$TMP"
-export SPIRA_LC_USER=root
-export SPIRA_LC_PASSWORD=""
+# Hermetic: no operator credential file can stand in for an empty SPIRA_LC_PASSWORD_FILE.
+export XDG_CONFIG_HOME="$TMP/xdg"
+mkdir -p "$XDG_CONFIG_HOME"
+# admin-migrate's own connection is the lifecycle service user, as lc-serve's is.
+printf '%s\n' "$SVCPW" > "$TMP/svc.cred"; chmod 600 "$TMP/svc.cred"
+export SPIRA_LC_USER=spira_lc
+export SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred"
+unset SPIRA_LC_PASSWORD
+# The admin a pending migration is applied as; cases that test its absence unset these.
+export SPIRA_LC_ADMIN_USER=root
+export SPIRA_LC_ADMIN_PASSWORD="$ROOTPW"
+unset SPIRA_LC_ADMIN_PASSWORD_FILE
+as_root() { env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="$ROOTPW" SPIRA_LC_PASSWORD_FILE= "$@"; }
+no_admin() { env -u SPIRA_LC_ADMIN_USER -u SPIRA_LC_ADMIN_PASSWORD "$@"; }
+sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
 
 
 columns() { root_sql --use-db spira_lifecycle sql -q "SHOW COLUMNS FROM bead" -r csv 2>/dev/null; }
 reset_db() { root_sql sql -q "DROP DATABASE IF EXISTS spira_lifecycle" >/dev/null 2>&1; }
+# store_from <schema-file>: a fresh spira_lifecycle from that schema, plus grants.sql.
+store_from() {
+    reset_db
+    as_root spira-lc admin-apply-ddl "$1" >"$TMP/schema.log" 2>&1 || bail "schema did not apply: $(cat "$TMP/schema.log")"
+    as_root spira-lc admin-apply-ddl "$TMP/grants.sql" >"$TMP/grants.log" 2>&1 || bail "grants did not apply: $(cat "$TMP/grants.log")"
+}
 SHIPPED="$REPO/lifecycle/migrations"
 # The live database before round 268: schema.sql as it stood without bead.since.
 pre_since_db() {
-    reset_db
     grep -v '^    since ' "$REPO/lifecycle/schema.sql" > "$TMP/pre-since.sql"
-    spira-lc admin-apply-ddl "$TMP/pre-since.sql" >"$TMP/pre-since.log" 2>&1 || bail "pre-since schema did not apply: $(cat "$TMP/pre-since.log")"
+    store_from "$TMP/pre-since.sql"
 }
 
 echo
 echo "a fresh database (schema.sql on an empty server): every shipped migration is moot"
 reset_db
-spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
+as_root spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
 wantrc "schema.sql applies with no spira_lifecycle yet (admin-apply-ddl falls back to no database)" 0 $?
+as_root spira-lc admin-apply-ddl "$TMP/grants.sql" >"$TMP/grants.log" 2>&1
+wantrc "grants.sql creates the service user" 0 $?
 out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate on a fresh database succeeds" 0 $rc
 want "and skips 0002's column, which schema.sql already made" "0002-since.sql: bead.since present" "$out"
+
+echo
+echo "every migration applied: the service user alone decides it, no admin credential (sp-p1z81)"
+printf 'SELECT 1;\n' > "$TMP/select.sql"
+out="$(as_root env SPIRA_LC_PASSWORD="" spira-lc admin-apply-ddl "$TMP/select.sql" 2>&1)"
+want "positive control: root with an empty password is refused here, as in production" "Access denied" "$out"
+out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "admin-migrate with only the service user succeeds" 0 $rc
+want "and says no admin was needed" "every migration already applied" "$out"
+want "0003's guarded UPDATE is read as applied, not re-run" "0003-terminal-holder.sql: no row left for it to change" "$out"
+
+echo
+echo "a pending migration with no admin credential refuses, naming the exit (sp-p1z81)"
+pre_since_db
+out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "refused" 2 $rc
+want "names SPIRA_LC_ADMIN_USER" "SPIRA_LC_ADMIN_USER" "$out"
+want "names SPIRA_LC_ADMIN_PASSWORD" "SPIRA_LC_ADMIN_PASSWORD" "$out"
+want "names the pending migration" "0002-since.sql is pending" "$out"
+nowant "nothing applied" "since" "$(columns)"
+out="$(SPIRA_LC_ADMIN_PASSWORD="wrong-$ROOTPW" spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "a refused admin credential refuses too" 2 $rc
+want "naming the same exit" "check SPIRA_LC_ADMIN_USER and SPIRA_LC_ADMIN_PASSWORD" "$out"
+nowant "and never the password it tried" "$ROOTPW" "$out"
+nowant "nor the service password" "$SVCPW" "$out"
+nowant "nothing applied" "since" "$(columns)"
 
 echo
 echo "a pending migration is applied before activation, and not re-run after"
 pre_since_db
 nowant "positive control: the pre-since store lacks since" "since" "$(columns)"
 out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
-wantrc "pending migration applies" 0 $rc
+wantrc "pending migration applies, as the admin" 0 $rc
 want "reports 0002 applied" "0002-since.sql: added bead.since" "$out"
 want "since now exists" "since" "$(columns)"
 out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
@@ -136,7 +193,7 @@ echo
 echo "shipped migrations apply as shipped: admin-apply-ddl selects spira_lifecycle"
 pre_since_db
 nowant "positive control: pre-since store lacks since" "since" "$(columns)"
-spira-lc admin-apply-ddl "$SHIPPED/0002-since.sql" >"$TMP/m2.log" 2>&1
+as_root spira-lc admin-apply-ddl "$SHIPPED/0002-since.sql" >"$TMP/m2.log" 2>&1
 wantrc "0002-since.sql applies via admin-apply-ddl" 0 $?
 want "since now exists" "since" "$(columns)"
 
