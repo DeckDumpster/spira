@@ -292,7 +292,7 @@ esac
 git -C "$TREPO" rev-parse --verify -q "refs/heads/$_qid" >/dev/null \
     && ok "quarantine: the transition branch exists in the fixture repo" \
     || bad "quarantine: the transition branch exists in the fixture repo" "no ref refs/heads/$_qid"
-is "quarantine: transition branch certified" "CERTIFIED" "$(lcfix_state "$_qid")"
+want "quarantine: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_qid")"
 [ -f "$TRUN/queue/$_qid" ] && ok "quarantine: queue record written" \
     || bad "quarantine: queue record written" "file missing: $TRUN/queue/$_qid"
 
@@ -307,7 +307,7 @@ case "$_did" in
     spira-suite-state/*) ok "disable: branch name on stdout" ;;
     *) bad "disable: branch name on stdout" "got: [$_did]" ;;
 esac
-is "disable: transition branch certified" "CERTIFIED" "$(lcfix_state "$_did")"
+want "disable: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_did")"
 [ -f "$TRUN/queue/$_did" ] && ok "disable: queue record written" \
     || bad "disable: queue record written" "file missing: $TRUN/queue/$_did"
 
@@ -325,7 +325,7 @@ case "$_aid" in
     spira-suite-state/*) ok "activate: branch name on stdout" ;;
     *) bad "activate: branch name on stdout" "got: [$_aid]" ;;
 esac
-is "activate: transition branch certified" "CERTIFIED" "$(lcfix_state "$_aid")"
+want "activate: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_aid")"
 [ -f "$TRUN/queue/$_aid" ] && ok "activate: queue record written" \
     || bad "activate: queue record written" "file missing: $TRUN/queue/$_aid"
 
