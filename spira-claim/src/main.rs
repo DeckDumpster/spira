@@ -991,7 +991,12 @@ fn cmd_bulk_ready_by_fayth(a: &Args, env: &mut Env) -> Outcome {
         if predicate.labels.is_empty() {
             continue; // bulk_ready_by_fayth's own `[ -n "$inc" ] || continue`
         }
-        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&predicate.exclude_labels) });
+        // sp-85p8t: the SAME exclusion `fayth-ready` and an aeon's `select` apply (own,
+        // shared incl. open-children, and every other fayth's `fayth:<name>`) — counting with
+        // the bare own list let the sentinel summon builders for epics with open children
+        // that no builder could claim (56 summons in 10 minutes, each "nothing ready").
+        let exc = fayth_exclude_str(env, &home, &f, &predicate.exclude_labels);
+        parts.push(ready::FaythPart { name: f, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exc) });
     }
     if parts.is_empty() {
         return Outcome { code: 0, out: String::new(), err: warnings.join("\n") };
