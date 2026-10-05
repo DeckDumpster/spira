@@ -321,7 +321,9 @@ want "D: the ready set was read from the lifecycle machine (spira-lc list)" "lis
 # POSITIVE CONTROL for the zero below: the counting wrapper does see this pass's bd reads
 # (spira-claim's content read of the READY beads), so a zero is not a dead log.
 want "D: positive control: the pass's bd reads reach the counting wrapper" "list" "$(cat "$BD_CALL_LOG" 2>/dev/null)"
-is "D: ZERO bd ready calls — the summon pass's ready set is the machine's" "0" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null || echo 0)"
+# grep -c prints 0 AND exits 1 on no match, so no `|| echo 0` here (that printed "0\n0"); the
+# positive control above already proved the log exists.
+is "D: ZERO bd ready calls — the summon pass's ready set is the machine's" "0" "$(grep -c ' ready ' "$BD_CALL_LOG" 2>/dev/null)"
 want "D: log reports the summon-only pass" "summon-only pass complete" "$out_d1"
 nowant "D: no full-pass state line" "state: open=" "$out_d1"
 nowant "D: no full-pass CHECK7c" "CHECK7c" "$out_d1"

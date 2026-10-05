@@ -68,7 +68,7 @@ make_bd() {
     cat > "$path" <<EOF
 #!/usr/bin/env bash
 case " \$* " in
-    *" list "*" --all "*|*" list "*" --id "*) printf '%s\n' '$payload' ;;
+    *" list --all "*|*" list --id "*) printf '%s\n' '$payload' ;;
     *) printf '[]\n' ;;
 esac
 EOF
