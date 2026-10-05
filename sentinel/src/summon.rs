@@ -69,22 +69,17 @@ impl<'a> Sentinel<'a> {
     /// ready_cache_populate: never hand back an empty-but-existing file, because fayth_ready
     /// trusts the cache unconditionally once it exists.
     ///
-    /// ON: the counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
+    /// The counts are spira-claim's own claimability (`bulk-ready-by-fayth`), the rule an
     /// aeon's `select --blockers machine` applies — never the `bd ready` set, which counts a
     /// SUBMITTED bead and its dependents. A machine that cannot answer writes no cache, so
     /// `fayth_ready` asks again and fails closed.
     pub fn export_ready_cache(&self, ready: &[Bead]) {
-        let counts = match self.lc {
-            Lifecycle::Off => bucket(ready, &self.ctx.fayths, &self.shared_exclude()),
-            Lifecycle::On => {
-                let bin = self.cfg.claim_bin.clone();
-                let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
-                if !o.ok() {
-                    return;
-                }
-                parse_cache(&o.stdout)
-            }
-        };
+        let bin = self.cfg.claim_bin.clone();
+        let o = self.h.run(Spec::args_owned(bin, vec!["bulk-ready-by-fayth".into()]));
+        if !o.ok() {
+            return;
+        }
+        let counts = parse_cache(&o.stdout);
         if counts.is_empty() && !self.ctx.fayths.is_empty() {
             return;
         }

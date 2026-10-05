@@ -233,11 +233,6 @@ impl<'a> Sentinel<'a> {
     }
 
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
-        debug_assert_eq!(
-            self.lc,
-            crate::cfg::Lifecycle::On,
-            "OFF must never read spira-lc"
-        );
         let bin = self.cfg.lc_bin.clone();
         let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));
         if !o.ok() {

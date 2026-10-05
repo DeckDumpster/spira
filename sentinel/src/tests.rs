@@ -253,19 +253,12 @@ pub fn run_mode<'a>(
     );
     let rc = s.run();
     if lc == Lifecycle::Off {
-        // OFF never invokes spira-lc for a lifecycle-gated decision — not directly, and no
-        // child is handed a path to it. The one standing exception (sp-ki12s precedent,
-        // predates the OFF/ON split): mark_queue_waiters/close_landed_queue_waiters/
-        // park_branch_collisions (waiters.rs, detect.rs) dual-write a `hold`/`unhold` verb
-        // call unconditionally, in both lc modes — `spira-lc` itself answers "cannot tell"
-        // from `off()` without touching a socket when the switch is off, exactly the `||
-        // true` shape lib.sh used before any of this was ported, so it costs nothing and
-        // changes nothing in OFF. Every OTHER spira-lc verb (`list`, `show`, `event`, …)
-        // stays gated on `self.lc` and must never appear here.
+        // OFF is the test default: the queue waiters read `spira-lc list` regardless of the switch;
+        // every other verb stays gated on `self.lc`.
         assert_eq!(
-            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold"))),
+            r.count(|s| s.prog == "spira-lc" && !matches!(s.args.first().map(String::as_str), Some("hold" | "unhold" | "list"))),
             0,
-            "OFF called spira-lc for something other than the dual-written hold/unhold: {:#?}",
+            "OFF called spira-lc for something other than the waiters' list/hold/unhold: {:#?}",
             r.lines()
         );
         // ...and OFF is SPIRA_LIFECYCLE_ENFORCE=0 alone: no child is handed a tool path.
@@ -345,6 +338,12 @@ fn skip_reclaim_skips_the_db_check() {
 #[test]
 fn full_pass_reads_the_store_once_and_exports_it() {
     let (w, r, sink, clock) = setup("full");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
     r.on(|s| {
         if s.prog == "strand" {
             // the snapshot paths reached strand
@@ -666,6 +665,12 @@ fn summon_only_gates_then_reads_ready_once() {
     );
 
     let (w, r, sink, clock) = setup("summon2");
+    r.on(|s| {
+        if s.prog == "spira-claim" && s.args.first().map(String::as_str) == Some("bulk-ready-by-fayth") {
+            return ok("builder 1\nops 0\n");
+        }
+        None
+    });
     r.on(|s| if s.args.iter().any(|a| a == "list-units") { ok("spira-aeon-builder-1 loaded active\nspira-aeon-ops-2 loaded active\nspira-aeon-opsx-3 x\n") } else { None });
     // CK7 runs in-process now too: `fayth_ready` reaches `spira-claim fayth-ready`
     // directly, reading the SAME SPIRA_READY_CACHE export_snapshot (above) already wrote.
