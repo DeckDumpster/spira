@@ -1,8 +1,8 @@
 //! `close-on-land <id> [sha]` — the only place a work bead is closed for a landed reason.
-//! The landing itself is recorded first, on the lifecycle record (a `ContentOnBase` event
-//! whose proof is `landed:<sha>`) — the one record; nothing here writes a second ledger.
-//! The bd close that follows acts only while the bead is `open`/`in_progress` and carries
-//! the submitted label: one already closed, or never submitted, is left alone.
+//! A bead is acted on only while `open`/`in_progress` and carrying the submitted label: one
+//! already closed, or never submitted, is left alone. For one it acts on, the landing is
+//! recorded first on the lifecycle record (a `ContentOnBase` event whose proof is
+//! `landed:<sha>`) — the one record; nothing here writes a second ledger — then bd closes.
 //! Best-effort throughout and always exits 0, since every caller discards the answer.
 
 use std::collections::BTreeMap;
@@ -105,12 +105,15 @@ pub fn run(args: &[String], record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
         return 2;
     };
     let sha = args.get(1).map(String::as_str).unwrap_or("");
-    record_landing(id, sha, record);
     let label = spira_config::resolve::key_for_process("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
     let Some(row) = show_row(id) else { return 0 };
     if !should_close(&row, &label) {
         return 0;
     }
+    // A submitted bead whose work landed: the landing is recorded on the lifecycle record
+    // first, so a failed bd close below cannot leave it unrecorded. A bead never submitted
+    // (an ancestor branch with no work of its own, sp-cl0) records nothing, as before.
+    record_landing(id, sha, record);
     let shown = if sha.is_empty() { "unknown" } else { sha };
     if !bdq_close(id, &reason(sha)) {
         println!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)");
@@ -166,10 +169,11 @@ mod tests {
         });
         assert_eq!(rc, 0);
         assert_eq!(record_landing("sp-x", "abc", &mut |_, _| 3), 3, "a refusal is reported back, not swallowed");
-        // run() records before it reads bd at all, so a bead bd cannot show still lands.
+        // run() records only for a bead it will close, and before the bd close itself.
         let src = include_str!("close_on_land.rs");
         let body = &src[src.find("pub fn run(").unwrap()..];
-        assert!(body.find("record_landing(").unwrap() < body.find("show_row(").unwrap());
+        let at = |n: &str| body.find(n).unwrap();
+        assert!(at("should_close(&row") < at("record_landing(") && at("record_landing(") < at("bdq_close(id"));
         assert_eq!(seen, vec![("sp-x".to_string(), "landed:abc".to_string())]);
         assert_eq!(proof(""), "landed:unknown");
     }

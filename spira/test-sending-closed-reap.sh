@@ -64,6 +64,15 @@ in_fixture() {
         "$@"
 }
 
+# "LANDED" IS THE LIFECYCLE RECORD'S STATE (sp-2c1n0): the Sending asks `spira-lc state <id>`,
+# never a commit subject. A stub ahead of the real spira-lc on the Sending's PATH answers
+# `state` (sp-btch LANDED — its batch landed it; every other id has no row) and hands every
+# other verb to the real binary.
+REAL_LC="$(command -v spira-lc)"
+printf '#!/usr/bin/env bash\nif [ "${1:-}" = state ]; then [ "${2:-}" = sp-btch ] && { echo LANDED; exit 0; }; exit 1; fi\nexec "%s" "$@"\n' \
+    "$REAL_LC" > "$SH/spira-lc"
+chmod +x "$SH/spira-lc"
+
 sending() {
     SPIRA_HOME="$SH" PATH="$SH:$PATH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" SPIRA_REPO="$REPO" \
     SPIRA_HOME_REPO="$REPONAME" \
@@ -77,7 +86,7 @@ sending() {
 # sp-groom: 0 ahead, ancestor (Shape A — non-code delivers)
 # sp-sup0:  0 ahead, ancestor, supersedes sp-sup1 (Shape B — empty superseded)
 # sp-supc:  1 commit unique content, supersedes sp-sup1 (Shape B control — kept)
-# sp-btch:  1 commit, named in batch commit on main (Shape C — landed by other PR)
+# sp-btch:  1 commit, landed by a batch (its lifecycle row LANDED; Shape C — landed by other PR)
 # sp-keep:  1 commit, unique content NOT named on main (positive control — kept)
 # ---------------------------------------------------------------------------
 
