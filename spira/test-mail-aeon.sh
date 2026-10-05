@@ -13,7 +13,8 @@
 #       "never existed")
 #
 # (b), (c): bead.sh amend tested with real db and a fake pidfile (live = bash $$).
-# (d): aeon.sh run with a stub agent that immediately closes the bead.
+# (d): aeon.sh run with a stub agent that immediately finishes its bead (a bd close, which
+#      the lifecycle stand-in reads as the session's `work submit`).
 #
 # tier: T3
 # covers: spira/bead.sh mail/src/* aeon/src/* UC-operator-channel-12
@@ -155,22 +156,25 @@ command -v aeon >/dev/null 2>&1 \
 
 export MAILBOX_SEEN_MARKER="$TMP/mailbox-seen"
 
-cat > "$BIN/claude" <<'STUB'
+# The model runs restricted (sp-v62vn): no SPIRA_DB, SPIRA_MAIL or TMP in its environment,
+# and bd's status no longer says which bead it holds — the bound one is SPIRA_WORK_BEAD_ID.
+# The suite's own paths are baked in here; aeon_fixture_agent carries SPIRA_DB and PATH.
+cat > "$BIN/claude" <<STUB
 #!/usr/bin/env bash
 cat >/dev/null  # drain prompt
-id="$(BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" list --json 2>/dev/null \
-    | python3 -c 'import json,sys; r=json.load(sys.stdin); r=r if isinstance(r,list) else [r]; \
-      print(next((x["id"] for x in r if x.get("status")=="in_progress"),""))' 2>/dev/null)"
-[ -n "$id" ] || exit 1
+id="\${SPIRA_WORK_BEAD_ID:-}"
+[ -n "\$id" ] || exit 1
 # POSITIVE CONTROL (row 12): the mailbox must exist WHILE the aeon runs, before it is
 # checked for absence after — otherwise "gone" is indistinguishable from "never made".
-[ -d "$SPIRA_MAIL/aeon-$id" ] && touch "${MAILBOX_SEEN_MARKER:-/dev/null}"
+[ -d "$SPIRA_MAIL/aeon-\$id" ] && touch "$MAILBOX_SEEN_MARKER"
 printf 'work\n' >> f
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id: done" >/dev/null 2>&1
-BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
+git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "\$id: done" >/dev/null 2>&1
+# The lifecycle stand-in (testlib lc_aeon_mirror) reads this close as the session's submit.
+BD_IGNORE_SCHEMA_SKEW=1 bd -C "\$SPIRA_DB" close "\$id" --reason "done" >/dev/null 2>&1
 printf '{"type":"result","subtype":"success","is_error":false,"duration_ms":100,"num_turns":1,"total_cost_usd":0}\n'
 STUB
 chmod +x "$BIN/claude"
+aeon_fixture_agent "$BIN/claude"
 
 BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}partition:${SPIRA_PLAN_LABEL:-plan},repo:fixture" --json 2>/dev/null \
     | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d if isinstance(d,dict) else d[0])["id"])' 2>/dev/null)"
@@ -179,18 +183,14 @@ BID4="$(bdq create "Test mailbox cleanup bead" -l "${SPIRA_SCOPE_LABEL:+${SPIRA_
 aeon_rc=0
 SPIRA_HOME="$SPIRA_HOME" SPIRA_RUN="$SPIRA_RUN" SPIRA_MAIL="$SPIRA_MAIL" \
 SPIRA_DB="$SPIRA_DB" SPIRA_BD="${SPIRA_BD:-bd}" \
-SPIRA_AGENT="$BIN/claude" SPIRA_CONF="" \
+SPIRA_AGENT="$SPIRA_AGENT" SPIRA_CONF="" \
 GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
     aeon --home "$SPIRA_HOME" builder >/dev/null 2>&1 || aeon_rc=$?
 
-status="$(bdq show "$BID4" --json 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(d.get("status",""))' 2>/dev/null)"
-labels="$(bdq show "$BID4" --json 2>/dev/null \
-    | python3 -c 'import json,sys; d=json.load(sys.stdin); d=d if isinstance(d,dict) else d[0]; print(",".join(d.get("labels") or []))' 2>/dev/null)"
-# The stub closes a task bead; aeon.sh's teardown converts that close to open +
-# spira-submitted (sp-qsona) — only the landing pass closes a work bead.
-is   "SEEN RED (d): bead was closed by the stub aeon (converted to submitted)"  "open"  "$status"
-want "SEEN RED (d): carrying the submitted label" "spira-submitted" "$labels"
+# The session finished through its submit (teardown's bd-close conversion to open +
+# spira-submitted is gone with sp-v62vn): the ledger records the submitted disposition.
+want "SEEN RED (d): the stub aeon's session ran and submitted its bead" "status=submitted" \
+     "$(grep " done builder $BID4 " "$SPIRA_RUN/aeon-ledger.log" 2>/dev/null | tail -1)"
 
 if [ -f "$MAILBOX_SEEN_MARKER" ]; then
     ok "POSITIVE CONTROL (d): the mailbox existed while the aeon ran"

@@ -472,7 +472,9 @@ is   "the model's work ask was applied by the broker" "0" "$(cat "$FA_TMP/ask.rc
 ow_row="$(spira-lc show sp-ow2 2>/dev/null | python3 -c '
 import sys, json
 b = json.load(sys.stdin)["bead"]
-print(b["state"], ",".join(b.get("holds") or []))' 2>/dev/null)"
+h = b.get("holds") or []
+h = json.loads(h) if isinstance(h, str) else h   # the row stores holds as a JSON text column
+print(b["state"], ",".join(h))' 2>/dev/null)"
 is   "the row: released to READY, still carrying the ask hold until the operator answers" "READY ask" "$ow_row"
 notes_ow="$(fa_notes sp-ow2)"
 want   "note says the session asked the operator" "asked the operator" "$notes_ow"
