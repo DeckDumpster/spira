@@ -82,16 +82,36 @@ pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
         let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
         spira_config::resolve::lc_credential_default(&env_map)
     });
+    // sp-xp0u2: an upgrade's re-render (the PREDECESSOR's deploy.sh: `env -i <orig env>
+    // SPIRA_HOME=<release> ... units-install`) carries none of these, and reading them from
+    // the environment alone rendered `StandardOutput=append:/<name>.log` — every long-running
+    // unit failed 209/STDOUT and the deploy rolled back. The environment wins; otherwise the
+    // same config resolution every other binary uses; a run dir that still resolves empty is
+    // a refusal, never a render.
+    let resolved = |key: &str| -> String {
+        nonempty_env(key).unwrap_or_else(|| {
+            let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
+            spira_config::resolve::resolve_key(&env_map, Path::new(&home), key).unwrap_or_default()
+        })
+    };
+    let run = resolved("SPIRA_RUN");
+    if run.is_empty() {
+        return Err("SPIRA_RUN is unset and spira.run resolved empty — refusing to render units that would log to the filesystem root".to_string());
+    }
+    let db = resolved("SPIRA_DB");
+    let repo_map = resolved("SPIRA_REPO_MAP");
+    let dolt_data = resolved("SPIRA_DOLT_DATA");
+    let testdb_data = resolved("SPIRA_TESTDB_DATA");
     Ok(HostValues {
         home,
         lc_password_file,
         repo,
-        run: env_var("SPIRA_RUN"),
-        db: env_var("SPIRA_DB"),
-        repo_map: env_var("SPIRA_REPO_MAP"),
+        run,
+        db,
+        repo_map,
         cockpit,
-        dolt_data: env_var("SPIRA_DOLT_DATA"),
-        testdb_data: env_var("SPIRA_TESTDB_DATA"),
+        dolt_data,
+        testdb_data,
         dolt,
         prod: env_var("SPIRA_PROD"),
         instance: instance.to_string(),
@@ -382,5 +402,43 @@ mod stale_release_tests {
         assert_eq!(units_repo(Some("/h/not-git".into()), "/r/rel".into(), git), "/r/rel", "a mapped path that is not a checkout is not used");
         assert_eq!(units_repo(None, "/r/rel".into(), git), "/r/rel", "no map: the derivation, as before");
         assert_eq!(units_repo(Some(String::new()), "/r/rel".into(), git), "/r/rel");
+    }
+}
+
+#[cfg(test)]
+mod host_from_env_tests {
+    use super::*;
+
+    /// sp-xp0u2: an upgrade's re-render reaches units-install with SPIRA_HOME pointing into
+    /// the release and NO SPIRA_RUN in the environment (the predecessor's deploy.sh re-renders
+    /// under `env -i <orig env>`). The run dir must still resolve to a real directory — before
+    /// the fix it rendered empty, and every unit logged to `append:/<name>.log`.
+    #[test]
+    fn run_resolves_from_config_when_the_environment_carries_none() {
+        let t = testkit::TempDir::new("host-env-run");
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        let fake_home = t.path().join("home");
+        std::fs::create_dir_all(&fake_home).unwrap();
+        let _env = testkit::env(&[
+            ("SPIRA_HOME", Some(home.to_str().unwrap())),
+            ("SPIRA_RUN", None),
+            ("SPIRA_REPO", None),
+            ("SPIRA_TOML", None),
+            ("SPIRA_CONF", None),
+            ("XDG_CONFIG_HOME", None),
+            ("XDG_DATA_HOME", None),
+            ("HOME", Some(fake_home.to_str().unwrap())),
+        ]);
+        let host = host_from_env("prod").expect("host values resolve");
+        assert!(!host.run.is_empty(), "SPIRA_RUN rendered empty");
+        assert_ne!(host.run, "/", "SPIRA_RUN rendered as the filesystem root");
+        assert!(Path::new(&host.run).is_absolute(), "run dir {} is not absolute", host.run);
+    }
+
+    #[test]
+    fn an_explicit_spira_run_still_wins() {
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("spira");
+        let _env = testkit::env(&[("SPIRA_HOME", Some(home.to_str().unwrap())), ("SPIRA_RUN", Some("/explicit/run")), ("SPIRA_REPO", None)]);
+        assert_eq!(host_from_env("prod").expect("host values resolve").run, "/explicit/run");
     }
 }
