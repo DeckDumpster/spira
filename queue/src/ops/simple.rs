@@ -103,7 +103,11 @@ pub fn submit(w: &World, branch: &str, repo: Option<&str>) -> i32 {
 }
 
 /// Record the gate pass on spira-lc; a refusal is reported and the submit does not certify.
+/// A `spira-suite-state/` transition branch is no bead and has no lifecycle row to certify.
 fn lc_certify(w: &World, id: &str, tip: &str) -> Result<(), ()> {
+    if id.starts_with("spira-suite-state/") {
+        return Ok(());
+    }
     w.lc.certify(id, tip, "queue-submit", &super::actor(w)).map_err(|(rc, e)| {
         w.err(format!("queue.sh submit: spira-lc certify refused for {id} (rc={rc}): {e}"));
     })
