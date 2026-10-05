@@ -85,6 +85,20 @@ pub fn tool_tokens() -> Vec<(&'static str, String)> {
 /// harness's home — the model reaches neither (sp-st0mm), so no persona prompt names them.
 pub const WITHHELD_UNDER_ENFORCE: &[&str] = &["DB", "SPIRA_HOME"];
 
+/// `{{NO_BD}}`: the persona prompts' "you have no bd" line, selected by `lifecycle_enforce`
+/// exactly as `{{FINISH}}` is. With it OFF the model does have bd and its Finishing section
+/// says `bd close`; a persona line telling it the opposite left nothing able to submit
+/// (sp-74gzo — test-aeon-chamber-overlay.sh's SEEN RED CONTROL). Empty when off.
+pub fn no_bd_brief(lifecycle_enforce: bool) -> String {
+    if lifecycle_enforce {
+        "- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
+  spira-lc broker under this persona's own allow row — a verb it may not run is refused."
+            .to_string()
+    } else {
+        String::new()
+    }
+}
+
 /// `{{FOLLOWUP}}`: how to file work discovered rather than done, selected by
 /// `lifecycle_enforce` exactly as `{{FINISH}}` is. With it OFF every `work` verb refuses
 /// (exit 3), and an aeon that fell back to raw `bd create --parent` gave all six children
@@ -743,6 +757,26 @@ mod tests {
         assert!(on.contains("work file-followup"));
         assert!(on.contains("work split"));
         assert!(!on.contains("bead.sh file"));
+    }
+
+    // sp-st0mm: every persona that says "you have no bd" says it through {{NO_BD}}, which
+    // renders only under enforce — never as fixed chamber text a legacy-mode aeon would read.
+    #[test]
+    fn no_bd_line_follows_lifecycle_enforce() {
+        assert_eq!(no_bd_brief(false), "");
+        assert!(no_bd_brief(true).contains("You have no `bd`"));
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira/chamber");
+        let mut uses = 0;
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.extension().map_or(true, |x| x != "md") || p.file_name().unwrap() == "concierge.md" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&p).unwrap();
+            assert!(!text.contains("You have no `bd`"), "{}: fixed no-bd text; use {{{{NO_BD}}}}", p.display());
+            uses += text.matches("{{NO_BD}}").count();
+        }
+        assert!(uses >= 7, "positive control: the persona prompts carry {{{{NO_BD}}}} ({uses})");
     }
 
     // The shipped builder chamber renders both tokens, and leaves no relative runner path.

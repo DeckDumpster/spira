@@ -268,8 +268,7 @@ Then leave the bead open and exit non-zero.
 - **Your commit subject must contain the bead id `{{BEAD_ID}}`** if you commit anything.
   The trigger bead is the bead you close; the work you do is on OTHER beads.
 - This bead is closed when the pass is finished and the findings are filed.
-- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
-  spira-lc broker under this persona's own allow row — a verb it may not run is refused.
+{{NO_BD}}
 
 {{PARK}}
 

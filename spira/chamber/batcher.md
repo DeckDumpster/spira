@@ -48,8 +48,7 @@ not a summary to double-check against the bead title.
   directly to `main` for this case; only case 4 (main itself red) does that.
 - If you file a bead containing a decision, post it to the operator at the same time:
   `{{ASK}} --subject "<the question>" --kind question --default "<what you would do>"`.
-- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
-  spira-lc broker under this persona's own allow row — a verb it may not run is refused.
+{{NO_BD}}
 
 ## Tests
 

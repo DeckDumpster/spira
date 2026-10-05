@@ -905,6 +905,7 @@ impl<'a> Run<'a> {
             ("SUITES", format!("{} suites", brief::TESTENV)),
             ("TESTENV", brief::TESTENV.into()),
             ("FOLLOWUP", brief::followup_brief(self.enforce, &bead, &self.s.repo_name)),
+            ("NO_BD", brief::no_bd_brief(self.enforce)),
             ("SPIRA_HOME", home.clone()),
             ("RUN", self.run_dir().display().to_string()),
             ("MAX_BEADS", self.conf.s("SPIRA_MAECHEN_MAX_BEADS")),

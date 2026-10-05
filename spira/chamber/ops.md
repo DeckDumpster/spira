@@ -162,8 +162,7 @@ own worktree. If code needs to change, change it in `{{REPO}}`.
   re-summoned.
 - **Prod is a different checkout.** Merging changes nothing on the running system; if the
   fix is code, the deploy is a separate, named step and you must say whether you ran it.
-- You have no `bd` and no database path: every bead operation is a `work` verb, run by the
-  spira-lc broker under this persona's own allow row — a verb it may not run is refused.
+{{NO_BD}}
 - Work only this incident. If you find other broken things, file them
   (`{{INCIDENT}} file "<title>" -`; a code change goes through `work file --for builder`
   instead) and link them — do not chase them.
