@@ -231,9 +231,6 @@ pub fn resolve_run_dir(env: &BTreeMap<String, String>, home: &Path) -> Result<Pa
 /// otherwise `spira.toml` / the registry default. Never a literal fallback — a systemd unit
 /// does not export it, and a guessed label hides asks from the operator's queue.
 pub fn resolve_ask_label(env: &BTreeMap<String, String>, home: &Path) -> Result<String, String> {
-    if let Some(v) = env.get("SPIRA_ASK_LABEL").filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve ask label: {e}"))?;
     let v = resolved.get("SPIRA_ASK_LABEL");
@@ -255,9 +252,6 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     // `SPIRA_INSTANCE`'s own rule is also `:=` (`resolve_colon`), and a caller that
     // already has it explicitly has no need of the containment check the rest of
     // `resolve` runs unconditionally, over repos this key never touches.
-    if let Some(v) = env.get("SPIRA_INSTANCE").filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve spira.instance: {e}"))?;
     let instance = resolved.get("SPIRA_INSTANCE");
@@ -267,12 +261,8 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     Ok(instance.to_string())
 }
 
-/// Any one registry key, resolved like [`resolve_run_dir`]: a non-empty env value wins, else
-/// full resolution; a named refusal when neither yields a value.
+/// Any one registry key, from the one config file; a named refusal when it resolves empty.
 pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Result<String, String> {
-    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let repo = derive_home_repo(home, env);
     let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
     match resolved.get(key) {
@@ -281,18 +271,17 @@ pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Re
     }
 }
 
-/// `SPIRA_HOME` from the environment, else the first directory beside the executable's
-/// release or cargo layout that holds `lib.sh`; a named refusal when neither exists.
-pub fn locate_home(env: &BTreeMap<String, String>, exe: &Path) -> Result<PathBuf, String> {
+/// `SPIRA_HOME`, else `$SPIRA_RELEASE/spira`; a named refusal when neither is set.
+pub fn locate_home(env: &BTreeMap<String, String>, _exe: &Path) -> Result<PathBuf, String> {
+    // Named, never searched for (per Ryan 2026-10-05): SPIRA_HOME, else the release this
+    // process runs from ($SPIRA_RELEASE/spira, which every unit sets). Neither is a refusal.
     if let Some(h) = env.get("SPIRA_HOME").filter(|h| !h.is_empty()) {
         return Ok(PathBuf::from(h));
     }
-    let dir = exe.parent().ok_or_else(|| "SPIRA_HOME is not set and the executable has no parent directory".to_string())?;
-    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
-        .into_iter()
-        .find(|c| c.join("lib.sh").is_file())
-        .map(|c| c.canonicalize().unwrap_or(c))
-        .ok_or_else(|| "SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string())
+    if let Some(r) = env.get("SPIRA_RELEASE").filter(|r| !r.is_empty()) {
+        return Ok(PathBuf::from(r).join("spira"));
+    }
+    Err("neither SPIRA_HOME nor SPIRA_RELEASE is set — refusing to search for the harness home".to_string())
 }
 
 /// [`locate_home`] for this process.
@@ -304,9 +293,6 @@ pub fn locate_home_for_process() -> Result<PathBuf, String> {
 /// [`resolve_run_dir`] for this process: locates home, then resolves.
 pub fn run_dir_for_process() -> Result<PathBuf, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
-        return Ok(PathBuf::from(v));
-    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_run_dir(&env, &home)
 }
@@ -314,9 +300,6 @@ pub fn run_dir_for_process() -> Result<PathBuf, String> {
 /// [`resolve_key`] for this process: locates home, then resolves.
 pub fn key_for_process(key: &str) -> Result<String, String> {
     let env: BTreeMap<String, String> = std::env::vars().collect();
-    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
-        return Ok(v.clone());
-    }
     let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
     resolve_key(&env, &home, key)
 }
@@ -1266,13 +1249,13 @@ mod tests {
     /// An env override still wins outright, exactly as `SPIRA_RUN` always has — this is
     /// what makes a systemd unit, which sets it explicitly, keep working unchanged.
     #[test]
-    fn resolve_ask_label_env_override_wins_and_empty_env_falls_to_config() {
-        let mut env = BTreeMap::new();
-        env.insert("SPIRA_ASK_LABEL".to_string(), "ask-x".to_string());
-        assert_eq!(resolve_ask_label(&env, Path::new("/nonexistent")).unwrap(), "ask-x");
-        env.insert("SPIRA_ASK_LABEL".to_string(), String::new());
-        let got = resolve_ask_label(&env, Path::new("/nonexistent"));
-        assert!(got.map(|v| !v.is_empty()).unwrap_or(true));
+    fn resolve_ask_label_reads_the_declaration_never_the_environment() {
+        let ws = testkit::TempDir::new("spira-config-ask-label");
+        // The REAL registry, where SPIRA_ASK_LABEL is a key.
+        let home = Path::new(env!("CARGO_MANIFEST_DIR")).join("../spira");
+        let toml = crate::fixture_toml_file(ws.path(), &env(&[("SPIRA_ASK_LABEL", "declared-ask")]));
+        let e = env(&[("HOME", "/h"), ("SPIRA_TOML", toml.to_str().unwrap()), ("SPIRA_ASK_LABEL", "from-the-environment")]);
+        assert_eq!(resolve_ask_label(&e, &home).unwrap(), "declared-ask");
     }
 
 
