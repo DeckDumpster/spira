@@ -628,7 +628,7 @@ mod tests {
         // loop never runs; SP_UNSENT must still read 0, not ?, matching "an empty readable
         // store yields a numeric 0" (UC-cockpit-observability-08).
         let run = testkit::TempDir::new("cc-unsent-empty");
-        std::env::set_var("SPIRA_RUN", run.path());
+        let _env = crate::test_support::set_run(run.path());
         std::env::set_var("SPIRA_REPO_MAP", run.path().join("no-map"));
         let mut out = Kv::new();
         branch_backlog_section(&mut out);
