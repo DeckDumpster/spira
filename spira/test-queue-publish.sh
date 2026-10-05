@@ -143,6 +143,7 @@ land() {
     git -C "$REPO" add "$file"
     git -C "$REPO" commit -q -m "$id: the work"
     local tip; tip="$(git -C "$REPO" rev-parse "work-$id")"
+    LAST_TIP="$tip"
     git -C "$REPO" checkout -qb "round-$id" local/main
     git -C "$REPO" merge -q --no-ff -m "spira: land $id" "work-$id"
     local head; head="$(git -C "$REPO" rev-parse "round-$id")"
@@ -197,13 +198,13 @@ echo "2 — a green publish fast-forwards the forge with an IDENTICAL sha; no la
 testdb_reset
 seed sp-pub1
 land sp-pub1 one.txt one
-HEAD1="$(localmain)"
+HEAD1="$(localmain)"; TIP1="$LAST_TIP"
 
 out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "2: publish opens a PR (exit 0)" || bad "2: publish opens a PR (exit 0)" "got rc=$rc out=$out"
 want "2: names the PR" "PR 1 opened" "$out"
 is "2: publish record's head is local/main's tip" "$HEAD1" "$(sed -n 's/^head=//p' "$QDIR/$REPONAME/publish")"
-want "2: publish record names sp-pub1 as a member" "sp-pub1:$HEAD1" "$(publish_file)"
+want "2: publish record names sp-pub1 as a member" "sp-pub1:$TIP1" "$(publish_file)"
 nowant "2: production (the forge's main) has not moved yet" "$HEAD1" "$(git -C "$REMOTE" rev-parse main)"
 
 out="$(CHECK_STATUS=green verdict)"; rc=$?
@@ -225,11 +226,11 @@ echo "3 — a second publish after a green settle only carries what landed since
 clear_calls
 seed sp-pub2
 land sp-pub2 two.txt two
-HEAD2="$(localmain)"
+HEAD2="$(localmain)"; TIP2="$LAST_TIP"
 
 out="$(queue publish "$REPONAME")"; rc=$?
 [ "$rc" -eq 0 ] && ok "3: second publish opens a new PR" || bad "3: second publish opens a new PR" "got rc=$rc out=$out"
-want "3: publish record carries only sp-pub2, not sp-pub1 again" "sp-pub2:$HEAD2" "$(publish_file)"
+want "3: publish record carries only sp-pub2, not sp-pub1 again" "sp-pub2:$TIP2" "$(publish_file)"
 nowant "3: sp-pub1 is not re-published" "sp-pub1" "$(publish_file)"
 is "3: publish record's base is the just-published sha" "$HEAD1" "$(sed -n 's/^base=//p' "$QDIR/$REPONAME/publish")"
 
