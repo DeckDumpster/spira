@@ -471,13 +471,13 @@ impl<'a> Sentinel<'a> {
     /// Surface every rowless open work bead and backfill its row (`create-bead` is
     /// idempotent). A failed backfill is loud and retried next pass.
     pub fn check_rowless(&self, snap: &Snapshot, rows: &[LcRow]) {
-        let ids = rowless(snap, rows, &self.cfg.work_types);
-        if ids.is_empty() {
+        let rowless_ids = rowless(snap, rows, &self.cfg.work_types);
+        if rowless_ids.is_empty() {
             return;
         }
         let bin = self.cfg.lc_bin.clone();
         let mut failed = Vec::new();
-        for id in &ids {
+        for id in &rowless_ids {
             let o = self.h.run(
                 Spec::args_owned(bin.clone(), vec!["create-bead".into(), id.clone()])
                     .out(Io::Null)
@@ -488,18 +488,18 @@ impl<'a> Sentinel<'a> {
             }
         }
         self.h.print(
-            &ids.iter()
+            &rowless_ids.iter()
                 .map(|i| format!("STATE-LC {i} rowless — open bead had no spira-lc row; backfilled"))
                 .collect::<Vec<_>>()
                 .join("\n"),
         );
         self.log(&format!(
             "CHECK-ROWLESS: {} open bead(s) had no lifecycle row; {} backfill(s) failed{}",
-            ids.len(),
+            rowless_ids.len(),
             failed.len(),
             if failed.is_empty() { String::new() } else { format!(": {}", failed.join(" ")) }
         ));
-        self.act(&format!("backfilled {} rowless bead(s)", ids.len() - failed.len()));
+        self.act(&format!("backfilled {} rowless bead(s)", rowless_ids.len() - failed.len()));
     }
 }
 
