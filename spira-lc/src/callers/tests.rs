@@ -555,3 +555,55 @@ fn close_epic_closes_only_an_epic() {
     assert_eq!(close_epic(&v(&["sp-e", "x"]), &mut bd).code, CANNOT_TELL);
     assert_eq!(close_epic(&v(&["sp-e"]), &mut bd).code, CANNOT_TELL, "no reason: usage");
 }
+
+// ---- renew (sp-2jf0a): the working aeon's lease renewal --------------------------------
+
+#[test]
+fn renew_advances_the_holders_lease_and_keeps_the_row_working() {
+    let mut f = Fake::default();
+    let r = f.bead("sp-n", BeadState::Working);
+    r.holder = Some("aeon-1".into());
+    r.lease_until = Some(600);
+    for until in ["660", "720", "780"] {
+        let a = go(&mut f, "renew", &["sp-n", "aeon-1", until]);
+        assert_eq!(a.code, APPLIED, "{}", a.stderr);
+        assert_eq!(f.state("sp-n"), "WORKING");
+        assert_eq!(f.beads["sp-n"].lease_until, Some(until.parse().unwrap()));
+    }
+    let (_, _, expect, _, actor, kind) = f.events.last().unwrap().clone();
+    assert_eq!((expect.as_str(), actor.as_str(), kind.as_str()), ("WORKING", "aeon-1", r#"{"Renew":{"lease_until":780}}"#));
+}
+
+#[test]
+fn renew_by_a_non_holder_is_refused_and_leaves_the_lease_alone() {
+    let mut f = Fake::default();
+    let r = f.bead("sp-h", BeadState::Working);
+    r.holder = Some("aeon-2".into());
+    r.lease_until = Some(600);
+    let a = go(&mut f, "renew", &["sp-h", "aeon-1", "9999"]);
+    assert_eq!(a.code, NO_ROW, "{}", a.stderr);
+    assert!(a.stderr.contains("aeon-2"), "{}", a.stderr);
+    assert_eq!(f.beads["sp-h"].lease_until, Some(600));
+    assert!(f.events.is_empty(), "a renewal that is not ours sends nothing");
+    // Past WORKING (submitted, or reaped back to READY): nothing to renew, and nothing sent.
+    f.bead("sp-s", BeadState::Submitted);
+    assert_eq!(go(&mut f, "renew", &["sp-s", "aeon-1", "9999"]).code, NO_ROW);
+    f.bead("sp-r", BeadState::Ready);
+    assert_eq!(go(&mut f, "renew", &["sp-r", "aeon-1", "9999"]).code, NO_ROW);
+    assert!(f.events.is_empty());
+    assert_eq!(go(&mut f, "renew", &["sp-none", "aeon-1", "9999"]).code, NO_ROW);
+}
+
+#[test]
+fn renew_needs_a_numeric_deadline_and_reads_nothing_without_one() {
+    let mut f = Fake::default();
+    for args in [vec!["sp-a", "aeon-1"], vec!["sp-a", "aeon-1", "soon"], vec!["sp-a", "", "5"]] {
+        let a = go(&mut f, "renew", &args);
+        assert_eq!(a.code, CANNOT_TELL, "{args:?}");
+        assert!(a.stderr.starts_with("usage: spira-lc "), "{}", a.stderr);
+    }
+    assert_eq!(f.calls, 0);
+    assert_eq!(off("renew", &v(&["sp-a", "aeon-1", "5"])).code, CANNOT_TELL, "off: cannot tell, nothing read");
+    let mut down = Fake { down: true, ..Default::default() };
+    assert_eq!(go(&mut down, "renew", &["sp-a", "aeon-1", "5"]).code, CANNOT_TELL);
+}

@@ -191,6 +191,11 @@ pub enum BeadEventKind {
     /// it only while its reason is [`RESIDUE_RULE`] — the default the classifier writes when
     /// it saw no evidence at all, not a conclusion anything else acted on.
     Reclassify { state: BeadState, rule: String },
+    /// The holder's own lease renewal (sp-2jf0a): a WORKING row's `lease_until` advances to
+    /// the given deadline. Only the row's current holder (the event's `actor`) may send it,
+    /// and only forward — a lease never shrinks. A holder that stops renewing (a dead aeon)
+    /// still expires, and the stale-lease reaper's `HolderDead` clears it as before.
+    Renew { lease_until: i64 },
 }
 
 /// The classifier's no-evidence default for a closed bead; the one terminal reason a
@@ -409,6 +414,15 @@ fn apply_transition(row: &BeadRow, ev: &BeadEvent) -> Outcome<BeadRow> {
         | BeadEventKind::Requeued { .. }
         | BeadEventKind::BaseWithdrawn { .. }
         | BeadEventKind::PrereqLanded { .. } => primary_transition(row, &ev.kind),
+
+        // Holder-only: the one event whose legality turns on who sends it. Checked here,
+        // where the actor is in hand; the per-state table below decides the rest.
+        BeadEventKind::Renew { .. } => {
+            if row.state == BeadState::Working && row.holder.as_deref() != Some(ev.actor.as_str()) {
+                return Outcome::refuse(row.clone(), Refusal::NotHolder { actor: ev.actor.clone(), holder: row.holder.clone() });
+            }
+            primary_transition(row, &ev.kind)
+        }
     }
 }
 
@@ -453,7 +467,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
 
         BeadState::Working => match kind {
@@ -501,6 +515,16 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             PrereqLanded { prereq } => {
                 let mut new = row.clone();
                 new.stack.remove(prereq);
+                new.version += 1;
+                Outcome::applied(new)
+            }
+            // The holder check is `apply_transition`'s; here only "forward, never back".
+            Renew { lease_until } => {
+                if row.lease_until.is_some_and(|cur| *lease_until <= cur) {
+                    return illegal(row, kind);
+                }
+                let mut new = row.clone();
+                new.lease_until = Some(*lease_until);
                 new.version += 1;
                 Outcome::applied(new)
             }
@@ -572,7 +596,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | Deliver | Delivered { .. }
             | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
 
         BeadState::Certified => match kind {
@@ -615,7 +639,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => {
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => {
                 illegal(row, kind)
             }
         },
@@ -663,7 +687,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
 
         BeadState::Rework => match kind {
@@ -697,7 +721,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             }
             Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. } | GateRed { .. }
             | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. } | Requeued { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => illegal(row, kind),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => illegal(row, kind),
         },
 
         // Terminal states: every one of the 19 events is illegal here, because there is no
@@ -710,7 +734,7 @@ fn primary_transition(row: &BeadRow, kind: &BeadEventKind) -> Outcome<BeadRow> {
             Claim { .. } | Release | HolderDead | Submit { .. } | Done { .. } | GatePass { .. }
             | GateRed { .. } | GateInfra { .. } | Deliver | Delivered { .. } | Returned { .. }
             | Requeued { .. } | BaseWithdrawn { .. } | PrereqLanded { .. }
-            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } => terminal(row),
+            | ContentOnBase { .. } | Supersede { .. } | Drop { .. } | Hold { .. } | Unhold { .. } | Reply { .. } | AskWithdrawn | Reclassify { .. } | Renew { .. } => terminal(row),
         },
     }
 }
@@ -843,6 +867,7 @@ mod tests {
             BeadEventKind::Drop { reason: DropReason::Unwanted },
             BeadEventKind::Hold { kind: HoldKind::Poison, cause: HoldCause::AttemptsExhausted, detail: None },
             BeadEventKind::Unhold { kind: HoldKind::Poison },
+            BeadEventKind::Renew { lease_until: 2 },
         ]
     }
 
@@ -1602,5 +1627,93 @@ mod tests {
         assert_eq!(incremental, replayed);
         assert!(replayed.stack.is_empty(), "the landed prerequisite dropped out of the stack");
         assert_eq!(replayed.stack_depth, 1, "stack_depth is the claim-time meter, not re-derived on drop");
+    }
+
+    // ── lease renewal (sp-2jf0a) ──────────────────────────────────────────────────────
+    // With lifecycle_enforce on, the Claim's lease_until was set once and never renewed, so
+    // the stale-lease reaper cleared every session longer than lease + reclaim_grace.
+
+    fn held(holder: &str, lease_until: i64) -> BeadRow {
+        let mut r = row(BeadState::Working);
+        r.holder = Some(holder.into());
+        r.lease_until = Some(lease_until);
+        r
+    }
+
+    fn renew_by(actor: &str, r: &BeadRow, lease_until: i64) -> BeadEvent {
+        BeadEvent { actor: actor.into(), ..ev(r.state, r.version, BeadEventKind::Renew { lease_until }) }
+    }
+
+    #[test]
+    fn renewal_by_the_holder_keeps_a_long_session_working_with_an_advancing_lease() {
+        // A session three leases long, renewed every tick: the row never leaves WORKING,
+        // never loses its holder, and lease_until strictly advances each time.
+        let mut r = held("aeon-mindy", 600);
+        for tick in 1..=30 {
+            let until = 600 + tick * 60;
+            let out = apply(&r, &renew_by("aeon-mindy", &r, until));
+            assert!(out.applied, "tick {tick}: {:?}", out.refusal);
+            assert_eq!(out.row.state, BeadState::Working);
+            assert_eq!(out.row.holder.as_deref(), Some("aeon-mindy"));
+            assert_eq!(out.row.lease_until, Some(until));
+            assert_eq!(out.row.version, r.version + 1);
+            r = out.row;
+        }
+        assert!(r.lease_until.unwrap() > 600 * 3);
+    }
+
+    #[test]
+    fn a_non_holders_renewal_is_refused_and_changes_nothing() {
+        let r = held("aeon-mindy", 600);
+        let out = apply(&r, &renew_by("aeon-other", &r, 9_999));
+        assert!(!out.applied);
+        assert_eq!(out.row, r);
+        assert!(matches!(out.refusal, Some(Refusal::NotHolder { ref actor, .. }) if actor == "aeon-other"), "{:?}", out.refusal);
+    }
+
+    #[test]
+    fn a_renewal_never_shrinks_the_lease() {
+        let r = held("aeon-mindy", 600);
+        for until in [600, 300] {
+            let out = apply(&r, &renew_by("aeon-mindy", &r, until));
+            assert!(!out.applied, "lease {until} must not replace 600");
+            assert_eq!(out.row, r);
+        }
+    }
+
+    #[test]
+    fn renewal_is_version_checked_and_working_only() {
+        let r = held("aeon-mindy", 600);
+        let mut stale = renew_by("aeon-mindy", &r, 700);
+        stale.version = r.version + 1;
+        assert!(matches!(apply(&r, &stale).refusal, Some(Refusal::StaleVersion { .. })));
+        for &state in &ALL_STATES {
+            if state == BeadState::Working {
+                continue;
+            }
+            let mut other = row(state);
+            other.holder = Some("aeon-mindy".into());
+            assert!(!apply(&other, &renew_by("aeon-mindy", &other, 700)).applied, "{state:?} accepted a renewal");
+        }
+    }
+
+    #[test]
+    fn a_dead_holder_that_stops_renewing_is_still_reaped_and_its_late_renewal_refused() {
+        // The holder renewed a while, then died: its last lease stands, the reaper's
+        // HolderDead returns the row to READY, and a renewal arriving after that is refused.
+        let mut r = held("aeon-mindy", 600);
+        r = apply(&r, &renew_by("aeon-mindy", &r, 660)).row;
+        let reaped = apply(&r, &BeadEvent { actor: "sentinel".into(), ..ev(BeadState::Working, r.version, BeadEventKind::HolderDead) });
+        assert!(reaped.applied);
+        assert_eq!((reaped.row.state, reaped.row.holder.as_deref(), reaped.row.lease_until), (BeadState::Ready, None, None));
+        let late = apply(&reaped.row, &renew_by("aeon-mindy", &reaped.row, 720));
+        assert!(!late.applied);
+        assert_eq!(late.row.state, BeadState::Ready);
+        // And once a successor claims it, the dead holder's renewal cannot touch the new lease.
+        let mut succ = reaped.row.clone();
+        succ = apply(&succ, &BeadEvent { actor: "aeon-next".into(), ..ev(BeadState::Ready, succ.version, BeadEventKind::Claim { holder: "aeon-next".into(), lease_until: 900, stack: Stack::new(), stack_depth: 0, stack_max_depth: 4 }) }).row;
+        let out = apply(&succ, &renew_by("aeon-mindy", &succ, 5_000));
+        assert!(!out.applied);
+        assert_eq!(out.row.lease_until, Some(900));
     }
 }

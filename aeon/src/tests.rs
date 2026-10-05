@@ -598,6 +598,46 @@ fn enforce_claims_with_the_lifecycle_row_alone_and_never_bds_claim() {
     assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("heartbeat")), "no bd lease to renew");
 }
 
+/// sp-2jf0a: under enforce the lifecycle row's lease is the claim's, and nothing renewed it
+/// once sp-860zj dropped `bd heartbeat` — the stale-lease reaper cleared every long session.
+/// The heartbeat now renews it on every beat, as the claim's own holder, to a deadline that
+/// advances; and never through bd.
+#[test]
+fn enforce_renews_the_lifecycle_lease_on_every_heartbeat_while_the_session_runs() {
+    let f = fx("enf-renew");
+    seed(&f, "sp-lr");
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let renews = |w: &W| {
+        w.lock().unwrap().exec_calls.iter().filter(|(p, a, _)| p == "spira-lc" && a.first().map(String::as_str) == Some("renew")).map(|(_, a, _)| a.clone()).collect::<Vec<_>>()
+    };
+    // The session outlives three heartbeats, then commits and finishes.
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(move |spec, w, stop| {
+        let t0 = std::time::Instant::now();
+        while renews(w).len() < 3 && t0.elapsed() < std::time::Duration::from_secs(20) && stop.signalled().is_none() {
+            crate::run::append(&spec.log, "{\"type\":\"assistant\"}\n");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        commits_and_closes()(spec, w, stop)
+    });
+    let o = go(&f, "spira,plan", &[("FAYTH_HEARTBEAT_SECONDS", "1")], true, Mode::Claim, a, act);
+    assert_eq!(ledger_lines(&o)[1], "awake builder sp-lr", "{}", o.log);
+    let w = o.w.clone();
+    let r = renews(&w);
+    assert!(r.len() >= 3, "the lease was renewed on every beat of a session three beats long: {r:?}\n{}", o.log);
+    let w = w.lock().unwrap();
+    let holder = w.seam_calls.iter().find(|c| c.0 == "lc_claim_bead").map(|c| c.1[1].clone()).expect("claimed");
+    let mut last = 0i64;
+    for args in &r {
+        assert_eq!((args[1].as_str(), args[2].as_str()), ("sp-lr", holder.as_str()), "renewed as the claim's own holder: {args:?}");
+        let until: i64 = args[3].parse().unwrap();
+        assert!(until >= last, "the deadline never goes back: {r:?}");
+        assert!(until > crate::util::now_epoch() - 60, "a deadline of now + lease, not the claim's: {until}");
+        last = until;
+    }
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("heartbeat")), "no bd lease under enforce");
+}
+
 #[test]
 fn enforce_with_an_unreachable_machine_is_claim_error_not_idle() {
     let f = fx("enf-down");

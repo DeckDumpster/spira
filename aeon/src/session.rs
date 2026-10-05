@@ -145,8 +145,10 @@ pub trait Beat: Send + Sync {
     fn fuse(&self) -> String;
     /// `trace_last`, first `n` bytes.
     fn trace_last(&self, n: usize) -> String;
-    /// `bd heartbeat <id>`; false ends the heartbeat.
-    fn bd_heartbeat(&self) -> bool;
+    /// Renew the claim's lease to `lease_until` (epoch seconds), once per beat while the
+    /// session runs: `bd heartbeat <id>` with lifecycle_enforce off, the lifecycle row's
+    /// `spira-lc renew` with it on (sp-2jf0a). False ends the heartbeat.
+    fn renew(&self, lease_until: i64) -> bool;
     fn log(&self, msg: &str);
 }
 
@@ -172,7 +174,7 @@ impl Heartbeat {
         let _ = util::write_atomic(&f, deadline.to_string().as_bytes());
     }
 
-    /// The loop. Returns when told to shut down, when `bd heartbeat` fails, or after a trip.
+    /// The loop. Returns when told to shut down, when a renewal ends it, or after a trip.
     pub fn run(&self, b: &dyn Beat, stop: &Stop, shutdown: &AtomicBool) -> Option<HbTick> {
         let mut prev = b.trace_mtime();
         let session_start = b.now();
@@ -221,7 +223,7 @@ impl Heartbeat {
                 }
                 HbTick::Ok => {}
             }
-            if !b.bd_heartbeat() {
+            if !b.renew(now + self.lease_s) {
                 return None;
             }
         }
@@ -238,12 +240,17 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    #[derive(Default)]
     struct FakeBeat {
         now: Mutex<i64>,
         mtimes: Mutex<Vec<i64>>,
         fuse: String,
         logs: Mutex<Vec<String>>,
         beats: Mutex<u32>,
+        /// Every deadline a beat renewed to.
+        renewals: Mutex<Vec<i64>>,
+        /// End the heartbeat after this many renewals (0: never).
+        stop_after: usize,
     }
     impl Beat for FakeBeat {
         fn now(&self) -> i64 {
@@ -265,9 +272,11 @@ mod tests {
         fn trace_last(&self, _n: usize) -> String {
             "{\"type\":\"assistant\"}".into()
         }
-        fn bd_heartbeat(&self) -> bool {
+        fn renew(&self, lease_until: i64) -> bool {
             *self.beats.lock().unwrap() += 1;
-            true
+            let mut r = self.renewals.lock().unwrap();
+            r.push(lease_until);
+            self.stop_after == 0 || r.len() < self.stop_after
         }
         fn log(&self, m: &str) {
             self.logs.lock().unwrap().push(m.into());
@@ -283,7 +292,7 @@ mod tests {
     fn silent_trace_lapses_and_trips() {
         let d = tmp("lapse");
         let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 20 };
-        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![5]), fuse: "0".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![5]), fuse: "0".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Lapse));
@@ -299,7 +308,7 @@ mod tests {
     fn growing_trace_with_a_stale_fuse_thrashes() {
         let d = tmp("thrash");
         let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_millis(1), wall_min: 2 };
-        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1, 2, 2, 2, 2, 2]), fuse: "30".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1, 2, 2, 2, 2, 2]), fuse: "30".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         let r = hb.run(&b, &stop, &AtomicBool::new(false));
         assert_eq!(r, Some(HbTick::Thrash));
@@ -308,11 +317,30 @@ mod tests {
         assert!(*b.beats.lock().unwrap() >= 1, "bd heartbeat ran on the renewing beats");
     }
 
+    /// sp-2jf0a: a session many leases long renews on every beat, each renewal a fresh
+    /// `now + lease` — so the claim's lease advances for as long as the session runs, and
+    /// stops advancing the moment the heartbeat does (a dead holder's lease just expires).
+    #[test]
+    fn a_session_longer_than_its_lease_renews_on_every_beat_with_an_advancing_deadline() {
+        let d = tmp("renew");
+        let hb = Heartbeat { bead: "sp-a".into(), fayth: "builder".into(), run: d.to_path_buf(), lease_s: 120, every: Duration::from_millis(1), wall_min: 10_000 };
+        // The trace grows every beat: a live session. now() steps 60s a call.
+        let b = FakeBeat { mtimes: Mutex::new((1..=40).collect()), fuse: "?".into(), stop_after: 20, ..Default::default() };
+        let stop = Stop::default();
+        assert_eq!(hb.run(&b, &stop, &AtomicBool::new(false)), None);
+        assert_eq!(stop.signalled(), None, "a live session is never tripped");
+        let r = b.renewals.lock().unwrap().clone();
+        assert_eq!(r.len(), 20);
+        assert!(r.windows(2).all(|w| w[1] > w[0]), "every renewal advances: {r:?}");
+        assert!(*r.last().unwrap() - r[0] > 120 * 5, "the session outlived several leases: {r:?}");
+        assert!(r.iter().all(|&u| u % 60 == 0 && u >= 120 + 60), "each deadline is that beat's now + lease: {r:?}");
+    }
+
     #[test]
     fn shutdown_ends_quietly() {
         let d = tmp("down");
         let hb = Heartbeat { bead: "sp-a".into(), fayth: "b".into(), run: d.to_path_buf(), lease_s: 600, every: Duration::from_secs(60), wall_min: 20 };
-        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1]), fuse: "?".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0) };
+        let b = FakeBeat { now: Mutex::new(0), mtimes: Mutex::new(vec![1]), fuse: "?".into(), logs: Mutex::new(vec![]), beats: Mutex::new(0), ..Default::default() };
         let stop = Stop::default();
         assert_eq!(hb.run(&b, &stop, &AtomicBool::new(true)), None);
         assert_eq!(stop.signalled(), None);
