@@ -55,6 +55,16 @@ use std::process::{Command, Stdio};
 fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("release/ has a parent").to_path_buf()
 }
+/// The cargo profile this test binary was itself built in, from its own path
+/// (`<target>/<profile-dir>/deps/<exe>`; `debug` is the `dev` profile). Building the fixture
+/// binary in the SAME profile reuses what is already built — without it, a gate testing under
+/// its own profile cold-built the whole dependency tree a second time, minutes per gate (sp-0umtv).
+fn own_profile() -> String {
+    let exe = std::env::current_exe().expect("test binary has a path");
+    let dir = exe.parent().and_then(|d| d.parent()).and_then(|d| d.file_name()).and_then(|n| n.to_str()).unwrap_or("debug").to_string();
+    if dir == "debug" { "dev".to_string() } else { dir }
+}
+
 
 /// Builds one workspace binary and returns its real artifact path, parsed from
 /// `--message-format=json` (the target directory may be `CARGO_TARGET_DIR` or the gate's
@@ -63,7 +73,7 @@ fn workspace_root() -> PathBuf {
 fn build_bin(package: &str, bin: &str) -> PathBuf {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let out = Command::new(&cargo)
-        .args(["build", "--message-format=json", "-p", package, "--bin", bin])
+        .args(["build", "--message-format=json", "--profile", &own_profile(), "-p", package, "--bin", bin])
         .current_dir(workspace_root())
         .output()
         .unwrap_or_else(|e| panic!("cannot run cargo build -p {package}: {e}"));
