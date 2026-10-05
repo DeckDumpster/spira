@@ -133,6 +133,10 @@ INC=incident.sh   # invoked by name on the suite's PATH (sp-gypjk)
 SIN_STATE="$TMP/sin-state.json"
 SIN_LOG="$TMP/sin-bd.log"
 SIN_AT=2
+# sp-jgjvh: incident's dedup reads each incident bead's lifecycle row; a stand-in spira-lc
+# tells the stub store's story in lifecycle terms (testlib.sh lc_mirror_bd), passed to the
+# filer alone so the rest of this suite keeps its own environment.
+_keep_lc="${SPIRA_LC_BIN-}"; lc_mirror_bd "$TMP/sin-lc"; SIN_LC="$SPIRA_LC_BIN"; SPIRA_LC_BIN="$_keep_lc"
 
 # file_sin_incident <ref> <title> <payload> — a real incident.sh subprocess against
 # incident-stub-bd.py, with the real mail (SPIRA_HOME/SPIRA_MAIL from the suite-wide
@@ -142,6 +146,7 @@ file_sin_incident() {
     printf '%s' "$payload" | \
         env SPIRA_BD="$HERE/incident-stub-bd.py" \
         STUB_BD_STATE="$SIN_STATE" STUB_BD_LOG="$SIN_LOG" \
+        SPIRA_LC_BIN="$SIN_LC" \
         SPIRA_DB="fakedb" \
         SPIRA_INCIDENT_REF="$ref" \
         SPIRA_INCIDENT_LOCK="$TMP/run/real-sender-sin.lock" \

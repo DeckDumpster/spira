@@ -54,7 +54,13 @@ printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 # "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`:
 # a stub answers from $LCSTATE/<id>; no file is spira-lc's NO_ROW (rc 1).
 LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lcbin"
-printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+# sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
+# lifecycle row (incident beads are work beads), and a machine that does not answer fails the
+# sweep. A stand-in spira-lc tells this database's bd story in lifecycle terms (testlib.sh
+# lc_mirror_bd: open → READY, in_progress → WORKING, closed → LANDED).
+# `state` keeps answering from $LCSTATE; every other verb (`list`, `show`) goes to the mirror.
+lc_mirror_bd "$TMP/lcmirror"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exec "%s" "$@"\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$SPIRA_LC_BIN" "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
 chmod +x "$TMP/lcbin/spira-lc"
 
 run_sweep() {

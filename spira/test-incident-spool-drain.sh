@@ -23,6 +23,11 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 echo "test-incident-spool-drain.sh"
 STUB_BD="$HERE/incident-stub-bd.py"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+# sp-jgjvh: incident beads are work beads, so incident's dedup reads each one's state from
+# its lifecycle row, never bd status. A stand-in spira-lc tells the stub store's story in
+# lifecycle terms (testlib.sh lc_mirror_bd: open → READY, closed → LANDED); with no machine
+# every filing would stay spooled.
+lc_mirror_bd "$TMP/lc"
 mkdir -p "$TMP/home" "$TMP/run"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/home/mail"; chmod +x "$TMP/home/mail"
 SPOOL="$TMP/run/incident-spool"
@@ -74,7 +79,7 @@ spool_entry "incident:drain-good-1" "good one" suite-red "payload 1" >/dev/null
 spool_entry "incident:drain-good-2" "good two" suite-red "payload 2" >/dev/null
 
 drain_out="$(env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain 2>&1)"; rc=$?
@@ -105,7 +110,7 @@ echo "3. a REF-less entry is quarantined to .bad, not retried forever:"
 rm -rf "$SPOOL"; mkdir -p "$SPOOL"; : > "$ILOG"
 _bad_path="$(spool_entry "" "no ref here" suite-red "payload")"
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
@@ -121,7 +126,7 @@ rm -rf "$SPOOL"; mkdir -p "$SPOOL"; rm -f "$STUB_BD_STATE" "$STUB_BD_LOG"
 PRECAUSE_REF="incident:pre-cause-entry"
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "first filing" >/dev/null
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1
@@ -130,7 +135,7 @@ env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
 # a pre-CAUSE entry must default to.
 spool_entry "$PRECAUSE_REF" "pre-cause probe" "" "second filing" >/dev/null
 env -i HOME="$HOME" PATH="$TMP/home:$PATH" \
-    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" \
+    SPIRA_BD="$STUB_BD" STUB_BD_STATE="$STUB_BD_STATE" STUB_BD_LOG="$STUB_BD_LOG" SPIRA_LC_BIN="$SPIRA_LC_BIN" \
     SPIRA_DB="fakedb" SPIRA_RUN="$TMP/run" SPIRA_CONF="$TMP/no-conf" SPIRA_HOME="$TMP/home" \
     SPIRA_INCIDENT_LOCK="$TMP/run/spool-test.lock" \
     incident.sh drain >/dev/null 2>&1

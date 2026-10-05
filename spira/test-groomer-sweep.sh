@@ -27,6 +27,12 @@ trap 'exit 143' INT TERM
 
 . "$HERE/testlib.sh"
 
+# sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
+# lifecycle row (incident beads are work beads), and a machine that does not answer fails the
+# sweep. A stand-in spira-lc tells this database's bd story in lifecycle terms (testlib.sh
+# lc_mirror_bd: open → READY, in_progress → WORKING, closed → LANDED).
+lc_mirror_bd "$TMP/lc"
+
 MAP="$TMP/repo-map"
 RUN="$TMP/run"; mkdir -p "$RUN"
 
@@ -43,6 +49,7 @@ run_sweep() {
         SPIRA_PATH="${SPIRA_PATH:-}" \
         SPIRA_BD="${SPIRA_BD:-bd}" \
         SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$MAP" \
         SPIRA_ASK_LABEL=needs-ryan \

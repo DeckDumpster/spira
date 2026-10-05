@@ -36,6 +36,11 @@ trap 'rm -rf "$TMP"' EXIT
 
 echo "test-cockpit-dup-refs.sh"
 
+# sp-jgjvh: an incident bead is a work bead, so which ones are still live is each one's
+# lifecycle row, never bd status. A stand-in spira-lc answers from the same fixture in
+# lifecycle terms (testlib.sh lc_mirror_bd: open → READY, closed → LANDED).
+lc_mirror_bd "$TMP/lc"
+
 # Run cockpit-collect probe dup_refs — the probe's own subcommand, not a full `once` — with bd reads
 # answered from a canned-JSON fixture rather than a live store.
 dup_refs() {    # dup_refs <fixture-file>
@@ -44,6 +49,7 @@ dup_refs() {    # dup_refs <fixture-file>
         SPIRA_DB="$TMP/nodb" \
         SPIRA_RUN="$TMP" \
         SPIRA_BDJSON_FIXTURE="$1" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         cockpit-collect probe dup_refs 2>/dev/null
 }
 key() { printf '%s\n' "$1" | sed -n "s/^$2=//p" | head -1; }

@@ -53,6 +53,11 @@ testdb_require test-incident
 TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up incident || { echo "test-incident: could not build a fixture database"; exit 1; }
 BD_REAL="${SPIRA_BD:-bd}"
+# sp-jgjvh: incident beads are work beads, so the dedup reads each one's state from its
+# lifecycle row, never bd status. With no lifecycle store here, a stand-in spira-lc tells
+# this database's bd story in lifecycle terms (testlib.sh lc_mirror_bd: open → READY,
+# closed → LANDED); a machine that does not answer would leave every filing spooled.
+lc_mirror_bd "$TMP/lc"
 
 # Create a minimal repo-map so bdq can validate repo: labels in the test.
 # Format is name|path (pipe-separated), with comments starting with #.
@@ -79,6 +84,7 @@ inc() {
         SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
         SPIRA_MAIL="$TMP/mail" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         "$@" incident.sh file "the test sweep" -
 }
 
@@ -322,6 +328,7 @@ _cross_env() {
         SPIRA_RUN="$RUN" \
         SPIRA_HOME="$HERE" \
         SPIRA_MAIL="$TMP/mail" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         "$@" \
         incident.sh file "$_cross_title" - >/dev/null 2>&1
 }

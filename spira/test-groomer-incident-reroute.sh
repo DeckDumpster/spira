@@ -50,12 +50,19 @@ git -C "$REPO" remote set-head origin main
 REPONAME=increrouterepo
 printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 
+# sp-jgjvh: the sweep's incident-needs-builder scan reads each incident bead's state from its
+# lifecycle row (incident beads are work beads), and a machine that does not answer fails the
+# sweep. A stand-in spira-lc tells this database's bd story in lifecycle terms (testlib.sh
+# lc_mirror_bd: open → READY, in_progress → WORKING, closed → LANDED).
+lc_mirror_bd "$TMP/lc"
+
 run_sweep() {
     env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
         SPIRA_BD="${SPIRA_BD:-bd}" \
         SPIRA_DB="$SPIRA_DB" \
+        SPIRA_LC_BIN="$SPIRA_LC_BIN" \
         SPIRA_RUN="$RUN" \
         SPIRA_REPO_MAP="$TMP/repo-map" \
         SPIRA_ASK_LABEL=needs-ryan \
