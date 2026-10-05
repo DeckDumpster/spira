@@ -36,12 +36,21 @@ RUN="$TMP/run"; mkdir -p "$RUN"
 BASE_PATH="$PATH"
 : "${SPIRA_SCOPE_LABEL:=$(basename "$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null || printf '')")}"
 
+# THE READY SET IS THE MACHINE'S (sp-7g5q6; sp-v62vn: the only mode). The NEXT rows come
+# from spira-claim's `ready-count <partition labels> <exclude> --json`, which takes the
+# lifecycle machine's READY rows and reads bd only for their content. The stand-in below
+# (testlib lc_mirror_bd) answers spira-lc `list` from the mock bd's store — every open
+# fixture bead is a READY row — and spira-claim's own label predicate decides which
+# partition query each bead lands in, as it does in production.
+LC="$TMP/lc"
+lc_mirror_bd "$LC"
+
 # run_core <bd-binary> -> stdout of cockpit-collect probe core (SP_NEXT* and SP_READY keys)
 # SPIRA_SCOPE_LABEL is passed explicitly so the cockpit's partition queries use the
 # same value as the bead fixture labels below.
 run_core() {
     local bd_path="$1"
-    env -i PATH="$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
+    env -i PATH="$LC:$BASE_PATH" HOME="$TMP" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_REPO_MAP="$TMP/no-map" "SPIRA_FAYTHS=builder ops" \
@@ -51,24 +60,17 @@ run_core() {
         cockpit-collect probe core 2>/dev/null
 }
 
-# Build a mock bd that returns a given JSON array when queried for the plan partition
-# (ready ... --label <scope>,plan), and [] for everything else.
-# The LAST --label argument in the partition query is the combined scope+partition label.
-make_bd() {     # make_bd <path> <label-to-match> <json-to-return>
-    local path="$1" match="$2" payload="$3"
+# make_bd <path> <json> — a mock bd whose store is <json>: the lifecycle stand-in's read
+# (`list --all`) and spira-claim's content read (`list --id ...`) get it, every other query
+# gets [] — so no other cockpit section sees these beads.
+make_bd() {
+    local path="$1" payload="$2"
     cat > "$path" <<EOF
 #!/usr/bin/env bash
-is_ready=0; last_label=""; prev_arg=""
-for arg in "\$@"; do
-    [ "\$arg" = "ready" ] && is_ready=1
-    [ "\$prev_arg" = "--label" ] && last_label="\$arg"
-    prev_arg="\$arg"
-done
-if [ "\$is_ready" = 1 ] && [ "\$last_label" = "$match" ]; then
-    printf '%s\n' '$payload'
-else
-    printf '[]\n'
-fi
+case " \$* " in
+    *" list "*" --all "*|*" list "*" --id "*) printf '%s\n' '$payload' ;;
+    *) printf '[]\n' ;;
+esac
 EOF
     chmod +x "$path"
 }
@@ -79,7 +81,7 @@ echo "case 1 — positive control: a claimable builder bead shows 'builder', not
 # A bead with {plan, scope} and no fayth: preference appears in builder's partition query
 # and has no narrowing preference. The cockpit must show "builder", not "unclaimable".
 # Without this case, an implementation that always shows "unclaimable" would pass case 2.
-make_bd "$TMP/bd-1" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
+make_bd "$TMP/bd-1" \
     '[{"id":"sp-uc1a","title":"claimable builder bead","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-1")"
@@ -96,7 +98,7 @@ echo "case 2 — fayth:ops on plan labels shows 'unclaimable', not 'builder'"
 # The cockpit used to stamp it as "builder". This case asserts that the cockpit now shows
 # "unclaimable" instead: builder is excluded by the fayth:ops preference, and ops is
 # excluded by its own partition check (the bead has no incident label).
-make_bd "$TMP/bd-2" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" \
+make_bd "$TMP/bd-2" \
     '[{"id":"sp-uc2a","title":"fayth:ops on plan labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-2")"
@@ -111,7 +113,7 @@ echo "case 3 — fayth:ops on incident labels shows 'ops' (the preference matche
 # A bead with fayth:ops AND ops's partition labels (incident, spira) is correctly claimable
 # by ops. The cockpit must show "ops", not "unclaimable". The preference matches the
 # persona whose labels are all present on the bead.
-make_bd "$TMP/bd-3" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}incident" \
+make_bd "$TMP/bd-3" \
     '[{"id":"sp-uc3a","title":"fayth:ops on incident labels","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","incident","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
 
 out="$(run_core "$TMP/bd-3")"
@@ -128,7 +130,7 @@ echo "case 4 — mixed: claimable and unclaimable beads in the same partition qu
 # label strings appear SOMEWHERE in the output cannot tell which id got which label — an
 # implementation that swapped them would still pass. Each id's OWN line is checked instead.
 CASE4_JSON='[{"id":"sp-uc4a","title":"claimable: no pref","status":"open","issue_type":"task","priority":1,"labels":["plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]},{"id":"sp-uc4b","title":"unclaimable: fayth:ops","status":"open","issue_type":"task","priority":1,"labels":["fayth:ops","plan","repo:spira","'"${SPIRA_SCOPE_LABEL}"'"]}]'
-make_bd "$TMP/bd-4" "${SPIRA_SCOPE_LABEL:+${SPIRA_SCOPE_LABEL},}plan" "$CASE4_JSON"
+make_bd "$TMP/bd-4" "$CASE4_JSON"
 
 out="$(run_core "$TMP/bd-4")"
 line_a="$(line_for_id sp-uc4a "$out")"
