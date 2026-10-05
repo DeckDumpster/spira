@@ -31,7 +31,7 @@ pub fn locate_home(env_home: Option<&str>, exe: &Path) -> Option<PathBuf> {
 
 /// The sweep's own command line; Err is the usage error to print.
 pub fn parse(args: &[String]) -> Result<(Opts, Option<String>), String> {
-    let mut o = Opts { dry: false, fetch: true, only: None, scope: Scope::All };
+    let mut o = Opts { dry: false, fetch: true, only: None, scope: Scope::All, budget: None };
     let (mut skip, mut qonly, mut status) = (false, false, None);
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -39,6 +39,10 @@ pub fn parse(args: &[String]) -> Result<(Opts, Option<String>), String> {
             "--dry-run" => o.dry = true,
             "--no-fetch" => o.fetch = false,
             "--status-from" => status = Some(it.next().cloned().ok_or("--status-from needs a file")?),
+            "--budget-secs" => {
+                let n = it.next().and_then(|n| n.parse::<u64>().ok()).ok_or("--budget-secs needs a whole number of seconds")?;
+                o.budget = Some(std::time::Duration::from_secs(n));
+            }
             "--skip-queue" => skip = true,
             "--queue-only" => qonly = true,
             f if f.starts_with('-') => return Err(format!("unknown flag: {f}")),
