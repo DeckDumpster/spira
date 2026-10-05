@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use crate::host::{Io, Spec};
 use crate::model::parse_beads;
 use crate::pass::Sentinel;
+use spira_config::lc_state;
 
 // ---------------------------------------------------------------------------------------
 // CHECK 7c — unclaimable ready beads.
@@ -273,12 +274,22 @@ impl<'a> Sentinel<'a> {
         format!("{}/", self.cfg.run.join("worktree").display())
     }
 
-    /// lib.sh `detect_branch_collisions`.
+    /// lib.sh `detect_branch_collisions`. The candidates are the claimable beads — READY or
+    /// REWORK in the lifecycle machine (what bd `open` meant), never bd's status (design
+    /// §3.4, sp-mve9i); bd lists every bead's content and the machine says which wait for a
+    /// builder. No lifecycle read: no candidates, nothing detected this pass.
     pub fn detect_branch_collisions(&self) -> Vec<Collision> {
+        let Some(rows) = self.lc_rows() else {
+            return Vec::new();
+        };
+        let claimable: std::collections::HashSet<&str> = rows
+            .iter()
+            .filter(|r| lc_state::is_claimable(&r.state))
+            .map(|r| r.bead_id.as_str())
+            .collect();
         let args = vec![
             "list".into(),
-            "--status".into(),
-            "open".into(),
+            "--all".into(),
             "--limit".into(),
             "0".into(),
             "--exclude-type".into(),
@@ -287,9 +298,10 @@ impl<'a> Sentinel<'a> {
         let Ok(raw) = self.bd().json(self.h, &args) else {
             return Vec::new();
         };
-        let Ok(beads) = parse_beads(&raw) else {
+        let Ok(mut beads) = parse_beads(&raw) else {
             return Vec::new();
         };
+        beads.retain(|b| claimable.contains(b.id.as_str()));
         let ask = &self.cfg.ask;
         let prefix = self.worktree_prefix();
         let mut maps: HashMap<String, Vec<(String, String)>> = HashMap::new();
@@ -338,15 +350,6 @@ impl<'a> Sentinel<'a> {
         self.bd().call(self.h, &["label", "list", id], None).stdout
     }
 
-    fn bead_status(&self, id: &str) -> String {
-        self.bd()
-            .json(self.h, &["show".to_string(), id.to_string()])
-            .ok()
-            .and_then(|s| parse_beads(&s).ok())
-            .and_then(|v| v.into_iter().next())
-            .map(|b| b.status)
-            .unwrap_or_default()
-    }
 
     fn holder_alive(&self, id: &str) -> bool {
         self.h
@@ -426,8 +429,13 @@ impl<'a> Sentinel<'a> {
                 }
             }
 
-            let holder_status = self.bead_status(&c.holder_id);
-            if holder_status == "closed" && !self.holder_alive(&c.holder_id) {
+            // The squatter's builder has handed it on: its lifecycle row in the pass's one
+            // `spira-lc list` read (never bd status, sp-mve9i). No row, or no read, leaves
+            // the worktree alone.
+            let holder_done = self
+                .lc_rows()
+                .is_some_and(|rows| rows.iter().any(|r| r.bead_id == c.holder_id && lc_state::past_builder(&r.state)));
+            if holder_done && !self.holder_alive(&c.holder_id) {
                 let dirty = self.git(&c.holder_path, &["status", "--porcelain"]);
                 if dirty.ok() && dirty.stdout.trim().is_empty() {
                     if let Some(root) = self.repo_root_cmd(&c.repo) {

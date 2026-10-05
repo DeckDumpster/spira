@@ -322,12 +322,14 @@ impl<'a> Sentinel<'a> {
         if subject.is_empty() {
             return false;
         }
+        // An ask is not a work bead: its bd status is its only state (spira_config::nonwork).
+        let [status_flag, open] = spira_config::nonwork::status_args(spira_config::nonwork::Kind::Ask, spira_config::nonwork::Which::Open);
         let out = self.bd().call_owned(
             self.h,
             &[
                 "list".into(),
-                "--status".into(),
-                "open".into(),
+                status_flag,
+                open,
                 "--label".into(),
                 self.cfg.ask.clone(),
                 "--limit".into(),
@@ -424,7 +426,8 @@ impl<'a> Sentinel<'a> {
                 return 1;
             }
         };
-        let snap = Snapshot::new(list_raw, list, r.ready.ok());
+        // A child's state is its lifecycle row (design §3.4): the one `spira-lc list`.
+        let snap = Snapshot::new(list_raw, list, r.ready.ok()).with_lc(self.lc_rows().as_deref());
         self.mark_open_children(&snap, dry);
         0
     }
@@ -454,7 +457,10 @@ impl<'a> Sentinel<'a> {
                 None
             }
         };
-        Ok(Snapshot::new(list_raw, list, ready))
+        // Every state decision over this snapshot reads the bead's lifecycle row, never bd
+        // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
+        // lifecycle_enforce says (the queue waiters always read it too).
+        Ok(Snapshot::new(list_raw, list, ready).with_lc(self.lc_rows().as_deref()))
     }
 
     /// Write the snapshots (and the ready cache) where every child reads them.
@@ -577,7 +583,6 @@ impl<'a> Sentinel<'a> {
         self.check4(snap);
         if self.lc == Lifecycle::On {
             if let Some(rows) = self.lc_rows() {
-                self.check5_lc(snap, &rows);
                 self.check_rowless(snap, &rows);
             }
         }
