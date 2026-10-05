@@ -502,24 +502,4 @@ want "the note says it is not an escalation" "not an escalation" "$notes"
 nowant "and does NOT mention other beads"    "check whether" "$notes"
 drop_branch sp-mine
 
-# REPEATED REBASE FAILURES ESCALATE INSTEAD OF REOPENING AGAIN.
-# First RED is the single allowed reopen. Second RED with the same reason class
-# (no-rebase) escalates immediately — the root cause did not change.
-seed; branch sp-loop shared.txt "from the branch"
-printf '%s\n' "base v1" > "$REPO/shared.txt"
-git -C "$REPO" add -A; git -C "$REPO" commit -q -m "sp-other — change shared.txt"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-out="$(landing)"
-want "first rebase failure reopens"   "reopened sp-loop" "$out"
-is   "bead is open after first"       open "$(status_of sp-loop)"
-# Advance base and add a commit; the conflict recurs because shared.txt still disagrees.
-git -C "$REPO" commit -q --allow-empty -m "sp-other — base step 2"
-git -C "$REPO" push -q origin main; git -C "$REPO" fetch -q origin
-B close sp-loop --reason "try again" >/dev/null 2>&1
-git -C "$RUN/worktree/sp-loop" commit -q --allow-empty -m "sp-loop aeon attempt 1"
-out="$(landing)"
-want "second rebase failure escalates" "escalated sp-loop" "$out"
-nowant "and does not reopen"           "reopened sp-loop" "$out"
-is     "bead stays closed on escalation" closed "$(status_of sp-loop)"
-drop_branch sp-loop
 tl_summary

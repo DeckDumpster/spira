@@ -163,13 +163,12 @@ git -C "$REPO" branch -D "spira/sp-earlyq" 2>/dev/null || true
 # exists (queue-mode branches certify with no local gate — law-a-round-takes-
 # certified-tips).
 stub verdict-fixture '
-if [ -f "'"$RUN"'/landstate/sp-lateq" ] && grep -q "^CERTIFIED" "'"$RUN"'/landstate/sp-lateq"; then
+if grep -q "^certify sp-lateq .* pass " "'"$LC_FIX"'/calls.log"; then
     printf "verdict fixture: PR 1 landed by fast-forward (abc456)\n"
 fi'
 
 seed
 branch sp-lateq
-rm -f "$RUN/landstate/sp-lateq"
 out="$(landing)"; _landing_rc=$?
 [ "$_landing_rc" -eq 0 ] || bad "2. landing-crashed" "landing-pass land exited $_landing_rc (a stub or subprocess died)"
 

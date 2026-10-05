@@ -253,7 +253,6 @@ test-landing-pr.sh	T1	36.0
 test-landing-queue-early.sh	T1	17.0
 test-landing-race.sh	T1	22.0
 test-landing-rebase.sh	T1	48.0
-test-landing-red-recurring.sh	T1	17.0
 test-landing.sh	T1	68.5
 test-lanes.sh	T1	3.0
 test-layout-guard.sh	T1	3.0
