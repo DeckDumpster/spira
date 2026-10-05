@@ -1173,16 +1173,31 @@ iwr_ledger_idle5() {   # write 5 consecutive "awake builder idle" lines
         printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
     done
 }
-iwr_ready_nonempty="$TMP/iwr-ready-nonempty.json"
-printf '[{"id":"sp-iwr1","status":"open","labels":["plan"]}]' > "$iwr_ready_nonempty"
-iwr_ready_empty="$TMP/iwr-ready-empty.json"
-printf '[]' > "$iwr_ready_empty"
+# READY WORK IS spira-claim's ANSWER (sp-860zj: bulk-ready-by-fayth asks the lifecycle for READY
+# rows and bd for their labels; the old SPIRA_READY_SNAPSHOT is read by nothing). Readiness itself
+# is spira-claim's subject, tested there; here a stub first on PATH answers bulk-ready-by-fayth
+# from a fixture file and hands every other verb to the real spira-claim. The watchtower's probe
+# sources $SPIRA_HOME/lib.sh, so the fixture home gets the real one.
+printf '. "%s/lib.sh"\n' "$HERE" > "$IWR_HOME/lib.sh"
+ln -sf "$HERE/conf.d" "$IWR_HOME/conf.d"
+IWR_BIN="$TMP/iwr-bin"; mkdir -p "$IWR_BIN"
+_iwr_real_claim="$(command -v spira-claim)"
+cat > "$IWR_BIN/spira-claim" <<STUB
+#!/usr/bin/env bash
+[ "\${1:-}" = bulk-ready-by-fayth ] && { cat "\$IWR_READY" 2>/dev/null; exit 0; }
+exec "$_iwr_real_claim" "\$@"
+STUB
+chmod +x "$IWR_BIN/spira-claim"
+iwr_ready_nonempty="$TMP/iwr-ready-nonempty.txt"
+printf 'builder 1\n' > "$iwr_ready_nonempty"
+iwr_ready_empty="$TMP/iwr-ready-empty.txt"
+: > "$iwr_ready_empty"
 
 # CASE A: 5/5 idle, non-empty ready set for 'builder' — alarms.
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 want "5 idles + ready work fires the idle-while-ready escalation" "IDLE-WHILE-READY:" "$subjects"
 want "it names the fayth" "builder" "$subjects"
@@ -1192,7 +1207,7 @@ want "it names the fayth" "builder" "$subjects"
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_empty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_empty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "an empty ready set does not fire the escalation despite 5 idles" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1205,7 +1220,7 @@ for i in 2 3 4 5; do
     printf '2026-01-01T00:00:%02dZ awake builder idle\n' "$i" >> "$TMP/run/aeon-ledger.log"
 done
 rm -f "$TMP/inc-subjects" "$TMP/ops-prompt"
-wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_file_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 subjects="$(cat "$TMP/inc-subjects" 2>/dev/null || echo "")"
 nowant "a mix of idle and a real claim in the last N does not fire the escalation" "IDLE-WHILE-READY:" "$subjects"
 
@@ -1215,7 +1230,7 @@ nowant "a mix of idle and a real claim in the last N does not fire the escalatio
 fresh
 iwr_ledger_idle5
 rm -f "$TMP/inc-refs" "$TMP/ops-prompt"
-wt_refs_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder SPIRA_READY_SNAPSHOT="$iwr_ready_nonempty"
+wt_refs_multi SPIRA_HOME="$IWR_HOME" SPIRA_FAYTHS=builder PATH="$IWR_BIN:$PATH" IWR_READY="$iwr_ready_nonempty"
 refs="$(cat "$TMP/inc-refs" 2>/dev/null || echo "")"
 want "the dedup ref names the fayth" "idle-while-ready:builder" "$refs"
 

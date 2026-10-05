@@ -57,7 +57,8 @@ printf '# empty — test fixture\n' > "$FIXTURE/spira/watchers"
 printf '# empty\n' > "$FIXTURE/spira/repo-map.example"
 
 DEST="$TMP/home/.config/systemd/user"
-mkdir -p "$DEST" "$TMP/home"
+# units-install refuses to render units that would log to / (sp-xp0u2): the fixture has a run dir.
+mkdir -p "$DEST" "$TMP/home" "$TMP/run"
 
 # conf.sh rebuilds PATH from SPIRA_PATH + $HOME/.local/bin + the system dirs (never inherits
 # the caller's PATH), so a fresh, empty $HOME loses whatever directory this session's dolt
@@ -69,6 +70,7 @@ inst() {
         SPIRA_CONF=/nonexistent \
         SPIRA_PATH="$DOLT_DIR" \
         SPIRA_HOME="$FIXTURE/spira" \
+        SPIRA_RUN="$TMP/run" \
         SPIRA_REPO="$FIXTURE" \
         SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
         SPIRA_DOLT_DATA="" \

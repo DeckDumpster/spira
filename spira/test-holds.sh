@@ -141,6 +141,11 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"done","n
 exit 0
 SHIM
 chmod +x "$BIN/claude"
+# The claim goes through the lifecycle (sp-860zj) and the session runs restricted (sp-v62vn):
+# the bd fixture is told to the aeon in lifecycle terms, and the shim gets back the TMP it
+# records the prompt into.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+aeon_fixture_agent "$BIN/claude"
 
 # FAYTH_LABELS reads $SPIRA_PLAN_LABEL/$SPIRA_SCOPE_LABEL, not a literal "plan" — a fixture
 # bead must carry whatever this environment actually configured, or "nothing ready to claim"

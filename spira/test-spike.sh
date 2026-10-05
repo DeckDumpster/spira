@@ -91,6 +91,9 @@ ln -s "$HERE/conf.d" "$SPIRA_HOME/conf.d"
 printf '#!/bin/sh\ncase "$1 $2" in\n"capacity paused") exit 1 ;;\nesac\nexit 0\n' > "$SPIRA_HOME/aeon"
 chmod +x "$SPIRA_HOME/aeon"
 export PATH="$SPIRA_HOME:$PATH"   # summon_fayth launches the aeon on PATH; a stub here
+# Readiness is the lifecycle's (sp-860zj): the bd fixture is told to fayth_ready in lifecycle
+# terms — open is READY, the spira-poison label and the ask label are holds.
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 SUMMONED="$TMP/summoned.txt"
 export SPIRA_SUMMON="$TMP/summon.sh"
 printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\n' "$SUMMONED" > "$SPIRA_SUMMON"
