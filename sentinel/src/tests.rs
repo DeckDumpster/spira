@@ -1406,8 +1406,11 @@ fn check4_poisons_asks_mails_and_clears() {
     assert_eq!(un.args.last().unwrap(), r#"{"Unhold":{"kind":"Poison"}}"#);
     assert!(sink.has("ACT CHECK4 sp-h: stale poison cleared — 1 attempt(s), below threshold 3"));
     assert!(w.run.join("audit.status").exists());
+    // CHECK-ROWLESS runs every pass now that the CHECK 5 off-switch is gone (sp-jnwbn), so
+    // the two open beads with no lifecycle row are backfilled: one more action.
+    assert!(sink.has("ACT backfilled 2 rowless bead(s)"), "{}", sink.text());
     assert!(
-        sink.has("audit pass complete — 2 action(s), 2 progress"),
+        sink.has("audit pass complete — 3 action(s), 2 progress"),
         "{}",
         sink.text()
     );
