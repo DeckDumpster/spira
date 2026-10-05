@@ -1774,6 +1774,32 @@ fn a_refused_gatepass_leaves_the_bead_uncertified() {
     assert_eq!(*h.lc.certified.borrow(), vec!["sp-a t1 pass"]);
 }
 
+/// sp-vn19s, local acceptance on d40bbb589 (phase A, push-mode scratch repo): the model
+/// finishes with `work submit`, never a bd close, and the push gate's own GatePass moves the
+/// row SUBMITTED -> CERTIFIED before the land. CERTIFIED is past the builder (handed on), so
+/// the pass lands it rather than refusing it as "now open (was closed at scan time)".
+#[test]
+fn on_push_mode_lands_a_lifecycle_certified_bead_without_a_close() {
+    let h = H::new(LandMode::Push);
+    h.git.tree.set(true);
+    h.bead("sp-a", "CERTIFIED", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.run();
+    assert!(!h.logged("CHECK6 sp-a: spira/sp-a not landed — its bead is CERTIFIED and no aeon holds it"));
+    assert!(h.lib.has("deliver_delivered sp-a head1"), "{:?}", h.lib.calls.borrow());
+}
+
+/// sp-vn19s: a queued repository's CERTIFIED beads belong to the batcher: the pass must not
+/// certify them again (that would re-gate a certified tip every pass).
+#[test]
+fn on_queue_mode_a_certified_bead_is_not_walked_again() {
+    let h = H::new(LandMode::QueueLocal);
+    h.bead("sp-a", "CERTIFIED", &[]);
+    h.git.add("spira/sp-a", "t1");
+    h.run();
+    assert!(h.lc.certified.borrow().is_empty());
+}
+
 /// A SUBMITTED row whose branch moved on is offered for certification at the branch's live
 /// tip only: the machine's own tip check (TipMismatch) is the judge, never a tip remembered
 /// here.

@@ -428,6 +428,13 @@ impl<'a> Pass<'a> {
             return Screen::Retry;
         }
         if repo.mode.queued() {
+            // sp-vn19s: a queued repository certifies SUBMITTED only. Past that (CERTIFIED,
+            // IN_DELIVERY, ...) the bead is the batcher's; walking it again would re-gate a
+            // certified tip every pass. A push or hold repository lands its own CERTIFIED beads.
+            if bead.state != "SUBMITTED" {
+                self.log(&format!("CHECK6 {id}: {br} is {} — the batcher's now, not certified again", bead.state));
+                return Screen::Done(Flow::Next);
+            }
             return Screen::Queue(bead);
         }
         Screen::Push(bead)

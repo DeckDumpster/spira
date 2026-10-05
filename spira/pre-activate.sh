@@ -16,9 +16,11 @@
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
 #   lifecycle  every pending lifecycle/migrations/*.sql is applied (spira-lc
-#              admin-migrate, as the database admin SPIRA_LC_ADMIN_USER/PASSWORD, default
-#              root with an empty password, as cutover-deploy.sh and install use), so a
-#              release never goes live reading a column the store lacks (sp-vf9iu). Runs
+#              admin-migrate), so a release never goes live reading a column the store
+#              lacks (sp-vf9iu). Whether each is applied is read as the lifecycle service
+#              user (SPIRA_LC_USER + SPIRA_LC_PASSWORD_FILE, as lc-serve connects); only a
+#              pending one is applied, as the database admin SPIRA_LC_ADMIN_USER/PASSWORD,
+#              and with those unset or refused the check fails naming them (sp-p1z81). Runs
 #              last and only when every other check passed: a refused release must not
 #              change the live schema. A failing migration refuses the release.
 set -uo pipefail
@@ -201,8 +203,10 @@ check_lifecycle() {
         return
     fi
     local out rc
-    out="$(env -u SPIRA_LC_PASSWORD_FILE SPIRA_LC_USER="${SPIRA_LC_ADMIN_USER:-root}" \
-        SPIRA_LC_PASSWORD="${SPIRA_LC_ADMIN_PASSWORD:-}" "$lc" admin-migrate "$mig" 2>&1)"
+    # The environment's own lifecycle identity, untouched: admin-migrate probes as it and
+    # reads SPIRA_LC_ADMIN_USER/PASSWORD itself, only when a migration is pending (sp-p1z81).
+    # No --if-enforced: there is no off to gate on (sp-v62vn).
+    out="$("$lc" admin-migrate "$mig" 2>&1)"
     rc=$?
     if [ "$rc" -eq 0 ]; then
         ok "lifecycle ($(printf '%s' "$out" | tail -1))"

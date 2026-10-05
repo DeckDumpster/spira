@@ -362,6 +362,12 @@ pub fn bead_finished(show_json: &str) -> bool {
     closed || submitted
 }
 
+/// Whether a lifecycle history (`lifecycle_states`) shows the model's work handed off: it
+/// reached SUBMITTED, or anything only a submitted bead can reach.
+pub fn lifecycle_submitted(states: &[String]) -> bool {
+    states.iter().any(|s| matches!(s.as_str(), "SUBMITTED" | "CERTIFIED" | "IN_DELIVERY" | "QUEUED" | "BATCHED" | "LANDED" | "DONE"))
+}
+
 /// Whether `id` is among the beads of a `bd ready --json` reply. Unreadable is not claimable.
 pub fn ready_has(ready_json: &str, id: &str) -> bool {
     bd_json(ready_json).is_some_and(|v| v.iter().any(|b| b.get("id").and_then(|x| x.as_str()) == Some(id)))

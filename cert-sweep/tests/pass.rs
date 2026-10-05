@@ -264,3 +264,30 @@ fn a_bead_whose_lifecycle_row_is_terminal_does_not_hold_a_new_filing() {
     assert!(!out.contains("is already open"), "{out}");
     assert_eq!(fx.beads().matches("--priority").count(), 2, "{}", fx.beads());
 }
+
+/// Acceptance phase B: an upgrade's re-render maps `--repo` to the home repo's checkout, which
+/// in a push-landed repo has no `local/main`. A hard-coded base exited 2 on every tick; with no
+/// `--base` the pass now certifies the repo's own land ref.
+#[test]
+fn a_repo_without_local_main_certifies_its_own_land_ref() {
+    let fx = Fx::new();
+    fx.testenv("ok");
+    let (rc, out, err) = fx.sample();
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("SAMPLE round=? ran=2 red=0"), "{out}");
+}
+
+/// A mapped checkout that carries no harness suites has nothing to certify: a clean no-op,
+/// never a failed oneshot.
+#[test]
+fn a_repo_with_no_suites_is_a_clean_no_op() {
+    let fx = Fx::new();
+    let repo = fx.d.path().join("repo");
+    let g = |a: &[&str]| assert!(Command::new("git").arg("-C").arg(&repo).args(["-c", "user.name=t", "-c", "user.email=t@t"]).args(a).status().unwrap().success());
+    g(&["rm", "-q", "-r", "spira"]);
+    g(&["commit", "-q", "-m", "no suites"]);
+    write_exe(fx.d.path().join("bin/testenv"), "#!/bin/sh\necho testenv must not run >&2\nexit 9\n");
+    let (rc, out, err) = fx.sample();
+    assert_eq!(rc, 0, "{out}{err}");
+    assert!(out.contains("nothing to certify"), "{out}");
+}

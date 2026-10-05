@@ -7,15 +7,24 @@
 # self-test.sh) rather than the real dependency, since pre-activate exists
 # specifically to run before those real dependencies are trusted.
 #
+# The lifecycle check also runs once against a real Dolt server with the real spira-lc
+# (sp-p1z81): production's shape — root has a password, no admin credential configured —
+# where a store carrying every migration must pass on the service user alone.
+#
+# defect: sp-p1z81
 # tier: T1
-# covers: spira/pre-activate.sh spira/self-test.sh
+# covers: spira/pre-activate.sh spira/self-test.sh spira-lc/src/migrate.rs
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 
 echo "test-pre-activate.sh"
 
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d)"
+SERVER_PID=""
+trap '[ -n "$SERVER_PID" ] && kill "$SERVER_PID" >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+# No ambient admin credential: the lifecycle cases decide whether one is present.
+unset SPIRA_LC_ADMIN_USER SPIRA_LC_ADMIN_PASSWORD SPIRA_LC_ADMIN_PASSWORD_FILE
 mkdir -p "$TMP/home" "$TMP/emptyrepo" "$TMP/binstub"
 
 # mkbd <exit-code> — stub `bd` on PATH; `migrate status` is all pre-activate calls.
@@ -208,20 +217,22 @@ want "one bad of five: the other four still ok" "ok   deps" "$out"
 want "one bad of five: units unaffected"        "ok   units" "$out"
 
 # ── lifecycle: pending migrations apply before the flip; a failing one refuses it ────
-# The stub spira-lc records its argv and the admin identity pre-activate hands it.
+# The stub spira-lc records its argv and the identity pre-activate hands it.
 REL="$TMP/rel-lc-ok"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 cat > "$REL/bin/spira-lc" <<EOF2
 #!/usr/bin/env bash
-echo "\$SPIRA_LC_USER \$*" > "$TMP/lc-argv"
+echo "user=\$SPIRA_LC_USER pwfile=\${SPIRA_LC_PASSWORD_FILE-unset} admin=\${SPIRA_LC_ADMIN_USER-unset} \$*" > "$TMP/lc-argv"
 echo "admin-migrate: applied 0003-x.sql"
 exit 0
 EOF2
 chmod +x "$REL/bin/spira-lc"
-run "$REL"
+SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred" run "$REL"
 is   "lifecycle: migrations applied: exit 0" 0 "$rc"
 want "lifecycle: reports the check" "ok   lifecycle" "$out"
 want "lifecycle: runs admin-migrate against the release's own migrations" "admin-migrate $REL/lifecycle/migrations" "$(cat "$TMP/lc-argv")"
-want "lifecycle: as the admin, not the service user" "root admin-migrate" "$(cat "$TMP/lc-argv")"
+nowant "lifecycle: passes no retired --if-enforced (sp-v62vn)" "--if-enforced" "$(cat "$TMP/lc-argv")"
+# sp-p1z81: the service identity lc-serve uses, untouched — never swapped for a default root.
+want "lifecycle: as the service user, its credential file kept" "user=spira_lc pwfile=$TMP/svc.cred admin=unset admin-migrate" "$(cat "$TMP/lc-argv")"
 
 REL="$TMP/rel-lc-bad"; mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
 printf '#!/usr/bin/env bash\necho "admin-migrate: 0003-x.sql FAILED" >&2\nexit 2\n' > "$REL/bin/spira-lc"
@@ -243,6 +254,66 @@ run "$REL"
 is   "lifecycle: another check failed: exit 1" 1 "$rc"
 want "lifecycle: another check failed: reported skipped" "skip lifecycle" "$out"
 is   "lifecycle: another check failed: admin-migrate never ran" "absent" "$([ -e "$TMP/lc-argv" ] && echo present || echo absent)"
+
+# ── lifecycle, real spira-lc against a real store: root has a password, no admin set ──
+# (sp-p1z81) Every migration applied: pre-activate passes on the service user alone. One
+# pending: it refuses naming SPIRA_LC_ADMIN_USER/SPIRA_LC_ADMIN_PASSWORD and the migration.
+DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
+LC_BIN="$(command -v spira-lc 2>/dev/null || true)"
+REPO="$(cd "$HERE/.." && pwd -P)"
+if [ -z "$DOLT_BIN" ] || [ -z "$LC_BIN" ]; then
+    bad "lifecycle (real store): needs dolt and the tree's spira-lc on PATH" "dolt=[$DOLT_BIN] spira-lc=[$LC_BIN]"
+else
+    PORT=$(( ${SPIRA_LC_TESTDB_PORT:-3308} + 1300 + RANDOM % 300 ))
+    mkdir -p "$TMP/dolt/data"
+    cat > "$TMP/dolt/server.yaml" <<YAML
+log_level: warning
+listener:
+  port: $PORT
+data_dir: "$TMP/dolt/data"
+behavior:
+  dolt_transaction_commit: false
+  event_scheduler: "OFF"
+YAML
+    "$DOLT_BIN" sql-server --config "$TMP/dolt/server.yaml" > "$TMP/dolt/server.log" 2>&1 & # batch-job: the suite's own disposable sql-server, killed by the EXIT trap
+    SERVER_PID=$!
+    dsql() { "$DOLT_BIN" --data-dir "$TMP/dolt" --host 127.0.0.1 --port "$PORT" --no-tls "$@"; } # batch-job: fixture SQL against the suite's private server
+    up=0
+    for _ in $(seq 1 50); do
+        if timeout 5 "$DOLT_BIN" --data-dir "$TMP/dolt" --host 127.0.0.1 --port "$PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then up=1; break; fi
+        sleep 0.2
+    done
+    [ "$up" = 1 ] || bail "dolt sql-server never came up: $(cat "$TMP/dolt/server.log")"
+    ROOTPW="root-pw-$RANDOM$RANDOM"; SVCPW="svc-pw-$RANDOM$RANDOM"
+    printf '%s\n' "$SVCPW" > "$TMP/svc.cred"; chmod 600 "$TMP/svc.cred"
+    sed -e "s/@SPIRA_LC_PASSWORD@/$SVCPW/" -e "s/@SPIRA_LC_RO_PASSWORD@/ro-$SVCPW/" "$REPO/lifecycle/grants.sql" > "$TMP/grants.sql"
+    lc_env() { env SPIRA_LC_SOCKET=/nonexistent/test-pre-activate SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$PORT" SPIRA_LC_DB=spira_lifecycle \
+        XDG_CONFIG_HOME="$TMP/home/.config" "$@"; }
+    lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/dolt/ddl.log" 2>&1 \
+        && lc_env SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_PASSWORD_FILE= "$LC_BIN" admin-apply-ddl "$TMP/grants.sql" >>"$TMP/dolt/ddl.log" 2>&1 \
+        && dsql -u root -p "" sql -q "ALTER USER 'root'@'localhost' IDENTIFIED BY '$ROOTPW'" >>"$TMP/dolt/ddl.log" 2>&1 \
+        || bail "lifecycle fixture did not build: $(cat "$TMP/dolt/ddl.log")"
+    is "lifecycle (real store): positive control: root with an empty password is refused, as in production" 1 \
+        "$(dsql -u root -p "" sql -q "SELECT 1" >/dev/null 2>&1; echo $?)"
+
+    REL="$TMP/rel-lc-real"; mkrel "$REL"; mkdir -p "$REL/lifecycle"
+    ln -sf "$LC_BIN" "$REL/bin/spira-lc"
+    cp -r "$REPO/lifecycle/migrations" "$REL/lifecycle/migrations"
+    run_lc() { out="$(lc_env SPIRA_LC_USER=spira_lc SPIRA_LC_PASSWORD_FILE="$TMP/svc.cred" \
+        HOME="$TMP/home" SPIRA_REPO="$TMP/emptyrepo" SPIRA_TOML="$TMP/no-such.toml" PATH="$TMP/binstub:$PATH" \
+        pre-activate.sh "$1" 2>&1)"; rc=$?; }
+
+    run_lc "$REL"
+    is   "lifecycle (real store): every migration applied, service user only: exit 0" 0 "$rc"
+    want "lifecycle (real store): passes without an admin" "ok   lifecycle (admin-migrate: every migration already applied" "$out"
+
+    dsql -u root -p "$ROOTPW" --use-db spira_lifecycle sql -q "ALTER TABLE bead DROP COLUMN since" >/dev/null 2>&1
+    run_lc "$REL"
+    is   "lifecycle (real store): a pending migration, no admin: refused" 1 "$rc"
+    want "lifecycle (real store): names the pending migration" "0002-since.sql is pending" "$out"
+    want "lifecycle (real store): names the exit" "set SPIRA_LC_ADMIN_USER and SPIRA_LC_ADMIN_PASSWORD" "$out"
+    nowant "lifecycle (real store): never a password" "$SVCPW" "$out"
+fi
 
 # ── self-test.sh itself: MANIFEST integrity, not just an exit-code stub ──────────────
 REL="$TMP/rel-manifest-ok"

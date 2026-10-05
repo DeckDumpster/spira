@@ -84,6 +84,19 @@ fn run_dir(f: &Flags) -> Result<PathBuf, String> {
     flag(f, "run").map(str::to_string).or_else(|| std::env::var("SPIRA_RUN").ok()).filter(|s| !s.is_empty()).map(PathBuf::from).ok_or("--run or SPIRA_RUN is required".into())
 }
 
+/// The ref a pass certifies when `--base` is absent: `local/main` when `repo` has it (the
+/// harness under `queue.local`, unchanged), else the repo map's land ref for `repo`
+/// (`spira_landref`). A hard-coded `local/main` exited 2 on every tick in a repo that lands
+/// on `origin/main` (acceptance phase B, after sp-xp0u2's re-render mapped `--repo` to it).
+fn landing_ref(repo: &str) -> String {
+    if git(repo, &["rev-parse", "--verify", "-q", "local/main^{commit}"]).is_ok() {
+        return "local/main".into();
+    }
+    let home = std::env::var("SPIRA_HOME").unwrap_or_default();
+    let reg = spira_config::repos::Registry::from_env(std::env::vars().collect(), Path::new(&home));
+    spira_config::repos::landref(&reg, repo).unwrap_or_else(|| "local/main".into())
+}
+
 fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
@@ -192,8 +205,11 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         return Err("--mode must be full or subset".into());
     }
     let repo = flag(f, "repo").map(str::to_string).or_else(|| std::env::var("SPIRA_REPO").ok()).ok_or("--repo or SPIRA_REPO is required")?;
-    let base = flag(f, "base").unwrap_or("local/main");
-    let tip = git(&repo, &["rev-parse", base])?;
+    let base = match flag(f, "base") {
+        Some(b) => b.to_string(),
+        None => landing_ref(&repo),
+    };
+    let tip = git(&repo, &["rev-parse", &base])?;
     let round = git(&repo, &["for-each-ref", "--points-at", &tip, "--format=%(refname:short)", "refs/archive/rounds"])?
         .lines()
         .next()
@@ -206,6 +222,13 @@ fn pass(f: &Flags) -> Result<ExitCode, String> {
         .filter(|n| n.starts_with("test-") && n.ends_with(".sh"))
         .map(str::to_string)
         .collect();
+    // A repository with no harness suites at its tip (a mapped checkout that is not the
+    // harness) has nothing to certify; that is not a failure (sp-xp0u2's re-render maps
+    // `--repo` to the home repo's checkout, whatever repo that is).
+    if all.is_empty() {
+        println!("cert-sweep: no spira/test-*.sh suites at {base} ({tip}) in {repo} — nothing to certify");
+        return Ok(ExitCode::SUCCESS);
+    }
     let picks = if mode == "full" { all } else { pick_subset(&all, num(f, "subset-div", 4)? as usize, now() ^ u64::from(std::process::id()) << 32) };
     let start = now();
     let rt = Rt { f, run: &run, repo: &repo, mode, seq: std::cell::Cell::new(0) };

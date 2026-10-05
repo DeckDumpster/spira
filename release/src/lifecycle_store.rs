@@ -122,6 +122,11 @@ pub fn admin_env(admin: &Admin, password_file: &Path) -> Vec<(String, String)> {
         ("SPIRA_LC_PASSWORD".to_string(), String::new()),
         ("SPIRA_LC_PORT".to_string(), admin.port.to_string()),
         ("SPIRA_LC_SOCKET".to_string(), "/nonexistent/spira-install-admin-never-forwards".to_string()),
+        // admin-migrate applies a pending migration only as the admin these name (sp-p1z81);
+        // the password stays in the file, out of every environment.
+        ("SPIRA_LC_ADMIN_USER".to_string(), admin.user.clone()),
+        ("SPIRA_LC_ADMIN_PASSWORD_FILE".to_string(), password_file.to_string_lossy().to_string()),
+        ("SPIRA_LC_ADMIN_PASSWORD".to_string(), String::new()),
     ];
     if let Some(h) = &admin.host {
         e.push(("SPIRA_LC_HOST".to_string(), h.clone()));
@@ -340,6 +345,10 @@ mod tests {
         assert_eq!(get("SPIRA_LC_USER").as_deref(), Some("root"));
         assert_eq!(get("SPIRA_LC_PASSWORD_FILE").as_deref(), Some("/p/admin"));
         assert_eq!(get("SPIRA_LC_PASSWORD").as_deref(), Some(""));
+        // admin-migrate applies a pending migration as the admin these name (sp-p1z81).
+        assert_eq!(get("SPIRA_LC_ADMIN_USER").as_deref(), Some("root"));
+        assert_eq!(get("SPIRA_LC_ADMIN_PASSWORD_FILE").as_deref(), Some("/p/admin"));
+        assert_eq!(get("SPIRA_LC_ADMIN_PASSWORD").as_deref(), Some(""));
         assert_eq!(get("SPIRA_LC_PORT").as_deref(), Some("3310"));
         assert_eq!(get("SPIRA_LC_HOST").as_deref(), Some("10.0.0.1"));
         assert!(!e.iter().any(|(_, v)| v == "pw"));

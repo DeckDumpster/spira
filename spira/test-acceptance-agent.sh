@@ -23,29 +23,47 @@ echo "1. acceptance-agent.sh drives the deterministic aeon path"
 _ag_tmp="$(mktemp -d)"
 git init -q -b main "$_ag_tmp/repo"
 git -C "$_ag_tmp/repo" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
-printf '#!/usr/bin/env bash\nexit 0\n' > "$_ag_tmp/bd"; chmod +x "$_ag_tmp/bd"
+# THE STUB RUNS IN THE MODEL'S RESTRICTED ENVIRONMENT (sp-zf4q3/sp-st0mm): no bd, no
+# SPIRA_DB, no release bin/, only model-bin/ holding `work`. It used to `bd close` through
+# SPIRA_DB and died "SPIRA_DB: unbound variable", so the probe bead never SUBMITTED (local
+# acceptance phases A and D, 2026-10-05). Driven here with exactly that shape: a `work` stub
+# that records its argv and BEAD_ID, beside nothing else of the harness.
+mkdir -p "$_ag_tmp/model-bin"
+printf '#!/usr/bin/env bash\necho "$BEAD_ID $*" >> "%s/work.log"\n' "$_ag_tmp" > "$_ag_tmp/model-bin/work"
+chmod +x "$_ag_tmp/model-bin/work"
+_ag_path="$_ag_tmp/model-bin:$(dirname "$(command -v git)"):/usr/bin:/bin"
 _ag_run() {   # _ag_run <bead-id>
-    ( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF=/nonexistent \
-        SPIRA_BD="$_ag_tmp/bd" SPIRA_DB="$_ag_tmp/db" SPIRA_RUN="$_ag_tmp/run" BEAD_ID="$1" \
+    ( cd "$_ag_tmp/repo" && env -i PATH="$_ag_path" HOME="$_ag_tmp" BEAD_ID="$1" \
         GIT_AUTHOR_NAME=a GIT_AUTHOR_EMAIL=a@a GIT_COMMITTER_NAME=a GIT_COMMITTER_EMAIL=a@a \
-        bash "$AGENT" </dev/null >/dev/null 2>&1 )
+        bash "$(command -v "$AGENT")" </dev/null >"$_ag_tmp/out" 2>&1 )
 }
 _ag_run sp-agt1
+_ag_rc=$?
 is "acceptance-agent.sh commits for the first bead" "sp-agt1: acceptance probe" \
    "$(git -C "$_ag_tmp/repo" log -1 --format=%s 2>/dev/null)"
+is   "and exits 0 with no bd and no SPIRA_DB in its environment" 0 "$_ag_rc"
+is   "and finishes the bead with work submit, as a real model does" "sp-agt1 submit" \
+     "$(tail -n1 "$_ag_tmp/work.log" 2>/dev/null)"
+nowant "and never reaches for configuration a model does not have" "spira-config not found" \
+     "$(cat "$_ag_tmp/out")"
 git -C "$_ag_tmp/repo" checkout -q -b spira/sp-agt2
 _ag_run sp-agt2
 is "and again for a second bead on a branch that already carries the first probe" \
    "sp-agt2: acceptance probe" "$(git -C "$_ag_tmp/repo" log -1 --format=%s 2>/dev/null)"
+is "and submits that bead too" "sp-agt2 submit" "$(tail -n1 "$_ag_tmp/work.log" 2>/dev/null)"
+# A `work submit` the broker refuses is an honest failure, never a reported success.
+printf '#!/usr/bin/env bash\nexit 3\n' > "$_ag_tmp/model-bin/work"
+git -C "$_ag_tmp/repo" checkout -q -b spira/sp-agt3
+_ag_run sp-agt3; _ag_rc=$?
+is   "a refused work submit fails the session" 1 "$_ag_rc"
 # A SWEEP SESSION HAS NO BEAD. Ops and the other sweep personas summon the agent with no
 # BEAD_ID; the stub exited 1 ("BEAD_ID not set"), spira-ops was left FAILED, and every later
 # deploy's pre-health check refused on it (local phases B and D, 2026-09-26). A sweep has
 # nothing to commit or close: the stub reports a finished turn and exits 0.
-_sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$PATH" HOME="$_ag_tmp" SPIRA_CONF=/nonexistent \
-    SPIRA_BD="$_ag_tmp/bd" SPIRA_DB="$_ag_tmp/db" SPIRA_RUN="$_ag_tmp/run" \
-    bash "$AGENT" </dev/null 2>&1 )"; _sw_rc=$?
+_sw_out="$( cd "$_ag_tmp/repo" && env -i PATH="$_ag_path" HOME="$_ag_tmp" \
+    bash "$(command -v "$AGENT")" </dev/null 2>&1 )"; _sw_rc=$?
 is   "acceptance-agent.sh: a sweep session (no BEAD_ID) exits 0" 0 "$_sw_rc"
 want "and reports a finished turn"                             '"type":"result"' "$_sw_out"
-rm -rf "$_ag_tmp"; unset _ag_tmp _sw_out _sw_rc
+rm -rf "$_ag_tmp"; unset _ag_tmp _ag_path _ag_rc _sw_out _sw_rc
 
 tl_summary
