@@ -239,6 +239,9 @@ cp "$HERE/lib.sh" "$HERE/conf.sh" "$HERE/confine.sh" "$SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$SH/gate.sh"; chmod +x "$SH/gate.sh"
 printf 'home | %s | push | origin/main | |\n' "$LREPO" > "$SH/repo-map"
+# sp-mve9i: the landing pass reads a branch's hand-off from its lifecycle row, never bd
+# status; a fixture spira-lc in $SH answers the rows land_branch declares (SUBMITTED).
+lc_path_stub "$SH" "$TMP/lcfix"
 
 land() {
     rm -f "$RUN/landing.progress"
@@ -263,6 +266,7 @@ land_branch() {   # land_branch <id> <file>...
     for f in "$@"; do mkdir -p "$RUN/worktree/$id/$(dirname "$f")"; echo "$id" > "$RUN/worktree/$id/$f"; done
     git -C "$RUN/worktree/$id" add -A
     git -C "$RUN/worktree/$id" commit -q -m "$id — work"
+    lc_bead SUBMITTED "$id" "$(git -C "$RUN/worktree/$id" rev-parse HEAD)" 0   # the hand-off is the lifecycle row (sp-mve9i)
 }
 
 beads "$(bead sp-land-doc "${SPIRA_SCOPE_LABEL},$SPIRA_SPIKE_LABEL,repo:home" task closed)"
