@@ -89,17 +89,3 @@ CREATE TABLE IF NOT EXISTS event (
 );
 
 CREATE INDEX IF NOT EXISTS event_lc_key_idx ON event (machine, lc_key);
-
--- Applied migrations (see spira-lc admin-migrate). A fresh database already has every column
--- below via the CREATE TABLEs above, so it is seeded with every migration shipped here; the
--- seed only runs on an empty ledger, so re-applying this file never marks a later one done.
--- Adding a migration means adding its name to this list (test-lifecycle-migrate.sh checks).
-CREATE TABLE IF NOT EXISTS schema_migration (
-    name       VARCHAR(255) NOT NULL PRIMARY KEY,
-    applied_at BIGINT NOT NULL
-);
-
-INSERT INTO schema_migration (name, applied_at)
-SELECT m.name, UNIX_TIMESTAMP()
-FROM (SELECT '0001-stack.sql' AS name UNION ALL SELECT '0002-since.sql') AS m
-WHERE NOT EXISTS (SELECT 1 FROM schema_migration);

@@ -67,6 +67,7 @@ pub fn full_pass() -> Kv {
     out.extend(sop_keys());
     out.extend(ratelim::ratelim_keys());
     out.extend(statute_keys());
+    out.extend(drift_keys());
     out.extend(czar_triggers_keys());
     out.push(("SP_PASS_SECS".to_string(), (io::now() - start).to_string()));
     out
@@ -103,6 +104,7 @@ pub fn run(subcommand: &str) -> Option<Kv> {
         "ratelim" => Some(ratelim::ratelim_keys()),
         "sops" => Some(sop_keys()),
         "statute" => Some(statute_keys()),
+        "drift" => Some(drift_keys()),
         "mail" => Some(mail_keys()),
         "czar_triggers" => Some(czar_triggers_keys()),
         "sending" => Some(sending_keys()),
@@ -485,7 +487,7 @@ fn py_truthy(v: Option<&Value>) -> bool {
 
 pub fn core_counts_keys() -> Kv {
     let mut out = Kv::new();
-    let ask_label = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask_label = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--status", "open", "--limit", "0", "--label", &ask_label]));
     match rows {
         None => push(&mut out, "SP_WAITING", "?"),
@@ -569,7 +571,7 @@ pub fn sphere_keys() -> Kv {
 
     let scope = std::env::var("SPIRA_SCOPE_LABEL").unwrap_or_default();
     let label = if scope.is_empty() { "plan".to_string() } else { format!("{scope},plan") };
-    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let rows = io::bd_rows(io::bdjson(&["list", "--limit", "0", "--label", &label]));
     match rows {
         None => {
@@ -930,9 +932,11 @@ pub fn czar_triggers_keys() -> Kv {
 // sop_keys
 // ---------------------------------------------------------------------------------------
 
+const SOP_LEDGER_REL: &str = "sop/applied.jsonl";
+
 pub fn sop_keys() -> Kv {
     let mut out = Kv::new();
-    let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join("sop/applied.jsonl").to_string_lossy().into_owned());
+    let ledger = std::env::var("SPIRA_SOP_LEDGER").unwrap_or_else(|_| io::run_dir().join(SOP_LEDGER_REL).to_string_lossy().into_owned());
     let raw = io::bdjson(&["memories"]);
     let Some(raw) = raw.filter(|s| !s.trim().is_empty()) else {
         push(&mut out, "SP_SOP_NEVER_FIRED", "?");
@@ -1039,6 +1043,46 @@ pub fn statute_keys() -> Kv {
         }
         _ => push(&mut out, "SP_STATUTE_SKEW", "?"),
     }
+    out
+}
+
+// ---------------------------------------------------------------------------------------
+// drift_keys
+// ---------------------------------------------------------------------------------------
+
+/// `OK`, `<dirty>:<n>` counting `finding_prefix` lines, or `?` when `drift.sh` could not run.
+pub fn drift_value(code: Option<i32>, out: &str, dirty: &str, finding_prefix: &str) -> String {
+    match code {
+        Some(0) => "OK".to_string(),
+        Some(1) => format!("{dirty}:{}", out.lines().filter(|l| l.starts_with(finding_prefix)).count()),
+        _ => "?".to_string(),
+    }
+}
+
+pub fn drift_keys() -> Kv {
+    let drift_sh = io::home_dir().join("drift.sh");
+    let repo = std::env::var("SPIRA_REPO").ok().filter(|s| !s.is_empty());
+    let run_one = |args: &[&str]| {
+        std::process::Command::new("bash")
+            .envs(spira_config::release_env::child_path_env_for_process())
+            .arg(&drift_sh)
+            .args(args)
+            .stdin(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .map(|o| (o.status.code(), String::from_utf8_lossy(&o.stdout).into_owned()))
+            .unwrap_or((None, String::new()))
+    };
+    let mut out = Kv::new();
+    let mut co_args = vec!["checkout"];
+    if let Some(r) = repo.as_deref() {
+        co_args.push(r);
+    }
+    let (rc, text) = run_one(&co_args);
+    push(&mut out, "SP_CHECKOUT_DRIFT", drift_value(rc, &text, "DIRTY", "DIRTY "));
+    let (rc, text) = run_one(&["units"]);
+    push(&mut out, "SP_UNIT_DRIFT", drift_value(rc, &text, "UNSHIPPED", "UNSHIPPED "));
     out
 }
 
@@ -1189,5 +1233,18 @@ mod tests {
         let kv = strand_keys();
         let get = |k: &str| kv.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.clone());
         assert_eq!(get("SP_STRANDS"), Some("?".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod drift_tests {
+    use super::drift_value;
+
+    #[test]
+    fn a_probe_that_could_not_run_is_never_read_as_clean() {
+        assert_eq!(drift_value(Some(0), "", "DIRTY", "DIRTY "), "OK");
+        assert_eq!(drift_value(Some(1), "DIRTY a\nDIRTY b\nnote\n", "DIRTY", "DIRTY "), "DIRTY:2");
+        assert_eq!(drift_value(Some(3), "", "DIRTY", "DIRTY "), "?");
+        assert_eq!(drift_value(None, "", "DIRTY", "DIRTY "), "?");
     }
 }

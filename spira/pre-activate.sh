@@ -15,8 +15,12 @@
 #              PATH (deps' version_min already pins which bd that is)
 #   units      every systemd unit renders with no unresolved placeholder
 #   self-test  the release's own spira/self-test.sh
-#   lifecycle  every pending lifecycle/migrations/*.sql is applied, as the database
-#              admin, before the release can go live against the schema it reads
+#   lifecycle  every pending lifecycle/migrations/*.sql is applied (spira-lc
+#              admin-migrate, as the database admin SPIRA_LC_ADMIN_USER/PASSWORD, default
+#              root with an empty password, as cutover-deploy.sh and install use), so a
+#              release never goes live reading a column the store lacks (sp-vf9iu). Runs
+#              last and only when every other check passed: a refused release must not
+#              change the live schema. A failing migration refuses the release.
 set -uo pipefail
 
 REL="${1:?usage: pre-activate.sh <release-dir>}"
@@ -188,6 +192,10 @@ check_self_test() {
 # --- lifecycle: pending schema migrations, applied before the flip; failure refuses it ---
 check_lifecycle() {
     local lc="$REL/bin/spira-lc" mig="$REL/lifecycle/migrations"
+    if [ "$FAIL" -ne 0 ]; then
+        printf 'pre-activate: skip lifecycle (another check failed; migrations not applied)\n'
+        return
+    fi
     if [ ! -x "$lc" ] || [ ! -d "$mig" ]; then
         ok "lifecycle (release carries no spira-lc or migrations)"
         return

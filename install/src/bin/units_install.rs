@@ -32,6 +32,15 @@
 //! regardless of which branch a given box takes" completeness check
 //! `test-timer-templates.sh` (still bash) used static text parsing of `systemd/units.sh`
 //! for.
+//!
+//! `--list-manifest-union` prints `unit <installed-name>` for every template any
+//! combination of this box's SIX conditional inputs (dolt data, testdb data,
+//! `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_checkout`) could
+//! EVER install, resolved to this instance's installed name — not just this box's current
+//! resolution, which `--list-manifest` probes fresh on every call. `owned.sh` unions this
+//! into its removal manifest (sp-da4y0): a unit installed under yesterday's resolution
+//! (the repo was a git checkout then) that today's `--list-manifest` no longer lists (not
+//! seen as one now) is still a real file on disk that uninstall must still remove.
 
 use install::bootstrap::{self, nonempty_env};
 use install::install_units::{self, Ctx};
@@ -61,7 +70,7 @@ fn main() -> ExitCode {
     let mut skip_migrate_watchers = false;
     for a in &args {
         match a.as_str() {
-            "--diff" | "--render" | "--laptop" | "--list-manifest" | "--list-enable" | "--list-optional" | "--list-templates" | "--list-union" => mode = Some(Box::leak(a.clone().into_boxed_str())),
+            "--diff" | "--render" | "--laptop" | "--list-manifest" | "--list-enable" | "--list-optional" | "--list-templates" | "--list-union" | "--list-manifest-union" => mode = Some(Box::leak(a.clone().into_boxed_str())),
             "--no-migrate-watchers" => skip_migrate_watchers = true,
             _ if !a.starts_with("--") && instance_arg.is_none() => instance_arg = Some(a.clone()),
             _ => {}
@@ -98,8 +107,12 @@ fn main() -> ExitCode {
             for testdb in [false, true] {
                 for inotify in [false, true] {
                     for sccache in [false, true] {
-                        if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
-                            union.extend(m.optional);
+                        for lc_system in [false, true] {
+                            for repo_git in [false, true] {
+                                if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: false, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                                    union.extend(m.optional);
+                                }
+                            }
                         }
                     }
                 }
@@ -119,15 +132,17 @@ fn main() -> ExitCode {
             for testdb in [false, true] {
                 for inotify in [false, true] {
                     for broker in [false, true] {
-                        for sccache in [false, true] {
-                            if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, watch_names: Ok(Vec::new()) }) {
-                                for u in &m.units {
-                                    units.insert(u.name.clone());
-                                    if u.enable {
-                                        enable.insert(u.name.clone());
+                        for (sccache, lc_system) in [(false, false), (false, true), (true, false), (true, true)] {
+                            for repo_git in [false, true] {
+                                if let Ok(m) = install::manifest::build(&install::manifest::Inputs { instance: instance.clone(), dolt_data_set: dolt, testdb_data_set: testdb, broker_enable: broker, inotify_present: inotify, sccache_dav_addr_set: sccache, repo_is_git_checkout: repo_git, lc_system_mode: lc_system, watch_names: Ok(Vec::new()) }) {
+                                    for u in &m.units {
+                                        units.insert(u.name.clone());
+                                        if u.enable {
+                                            enable.insert(u.name.clone());
+                                        }
                                     }
+                                    optional.extend(m.optional);
                                 }
-                                optional.extend(m.optional);
                             }
                         }
                     }
@@ -142,6 +157,13 @@ fn main() -> ExitCode {
         }
         for o in optional {
             println!("OPTIONAL {o}");
+        }
+        return ExitCode::SUCCESS;
+    }
+
+    if mode == Some("--list-manifest-union") {
+        for name in install::manifest::union_installed_names(&instance) {
+            println!("unit {name}");
         }
         return ExitCode::SUCCESS;
     }

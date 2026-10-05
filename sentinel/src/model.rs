@@ -33,10 +33,6 @@ pub struct Bead {
     #[serde(default)]
     pub parent: Option<String>,
     #[serde(default)]
-    pub assignee: Option<String>,
-    #[serde(default)]
-    pub lease_expires_at: Option<String>,
-    #[serde(default)]
     pub created_at: Option<String>,
     #[serde(default)]
     pub close_reason: Option<String>,

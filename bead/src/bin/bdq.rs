@@ -16,7 +16,7 @@ use std::process::{Command, Stdio};
 
 use bead::claimdesc;
 use bead::bdq::{
-    check_destructive, check_repo_label, check_schema_delete, czar_fence_class, is_create, json_count, json_only,
+    check_destructive, check_repo_label, check_schema_delete, creates_closed, czar_fence_class, is_create, json_count, json_only,
     should_retry, retryable, backoff_ms,
 };
 use spira_config::repos::Registry;
@@ -186,22 +186,28 @@ fn date_now_utc_nanos() -> String {
 /// (matching bash's unredirected call — a retried attempt can duplicate stdout a prior
 /// failed attempt already printed, same latent behaviour the bash original has), stderr
 /// captured so the retry loop can inspect it before replaying it once at the end.
-fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String]) -> (i32, String) {
+fn run_bd_once(timeout_s: &str, bd_bin: &str, db: &str, args: &[String], capture_stdout: bool) -> (i32, String, Vec<u8>) {
     let mut cmd = Command::new("timeout");
     cmd.arg(timeout_s).arg(bd_bin).arg("-C").arg(db).args(args);
     cmd.stdin(Stdio::inherit());
-    cmd.stdout(Stdio::inherit());
+    cmd.stdout(if capture_stdout { Stdio::piped() } else { Stdio::inherit() });
     cmd.stderr(Stdio::piped());
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(_) => return (127, String::new()),
+        Err(_) => return (127, String::new(), Vec::new()),
     };
+    let mut out_buf = Vec::new();
+    let reader = child.stdout.take().map(|mut o| std::thread::spawn(move || {
+        let _ = o.read_to_end(&mut out_buf);
+        out_buf
+    }));
     let mut buf = Vec::new();
     if let Some(mut err) = child.stderr.take() {
         let _ = err.read_to_end(&mut buf);
     }
     let rc = child.wait().map(|s| s.code().unwrap_or(1)).unwrap_or(127);
-    (rc, String::from_utf8_lossy(&buf).into_owned())
+    let out_buf = reader.and_then(|h| h.join().ok()).unwrap_or_default();
+    (rc, String::from_utf8_lossy(&buf).into_owned(), out_buf)
 }
 
 fn cmd_bdq(args: &[String]) -> i32 {
@@ -306,18 +312,28 @@ fn cmd_bdq(args: &[String]) -> i32 {
     let backoff_base: u64 = env_nonempty("SPIRA_BDQ_CONN_BACKOFF_MS").and_then(|s| s.parse().ok()).unwrap_or(1000);
     let t_start = std::time::Instant::now();
 
+    let lc_row = is_create(args) && !creates_closed(args) && spira_config::lifecycle_enforce(None);
     let mut try_n: u32 = 1;
-    let (rc, stderr_buf) = loop {
-        let (rc, err) = run_bd_once(&timeout_s, &bd_bin, &db, args);
+    let (rc, stderr_buf, created_out) = loop {
+        let (rc, err, out) = run_bd_once(&timeout_s, &bd_bin, &db, args, lc_row);
         if should_retry(rc, try_n, max_tries, retryable(args, &err)) {
             eprintln!("bdq: invalid connection (attempt {try_n}/{max_tries}); retrying");
             std::thread::sleep(std::time::Duration::from_millis(backoff_ms(backoff_base, try_n)));
             try_n += 1;
             continue;
         }
-        break (rc, err);
+        break (rc, err, out);
     };
     eprint!("{stderr_buf}");
+    if lc_row {
+        let _ = std::io::stdout().write_all(&created_out);
+        let _ = std::io::stdout().flush();
+        if rc == 0 {
+            if let Err(e) = spira_config::lifecycle_row::after_create("bdq", &String::from_utf8_lossy(&created_out)) {
+                eprintln!("bdq: LIFECYCLE: row not written after create: {e}; the new bead is rowless and cannot be claimed");
+            }
+        }
+    }
     if let Some(run) = env_nonempty("SPIRA_RUN") {
         let dir = format!("{run}/bdq");
         let _ = std::fs::create_dir_all(&dir);

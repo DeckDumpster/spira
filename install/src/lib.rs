@@ -13,6 +13,7 @@ pub mod decide;
 pub mod ensure;
 pub mod guards;
 pub mod install_units;
+pub mod lifecycle_store;
 pub mod manifest;
 pub mod orchestrate;
 pub mod seed_instance;

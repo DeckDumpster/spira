@@ -36,7 +36,13 @@ fn resolve_home() -> PathBuf {
             }
         }
     }
-    std::env::var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
+    match std::env::var("SPIRA_HOME") {
+        Ok(h) if !h.is_empty() => PathBuf::from(h),
+        _ => {
+            eprintln!("census: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable");
+            std::process::exit(3)
+        }
+    }
 }
 
 /// `argv[0]`, resolved to where it actually sits, with every symlink component left

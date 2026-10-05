@@ -249,7 +249,7 @@ impl<'a> Sentinel<'a> {
     pub fn lc_unreachable(&self, why: &str) {
         if !self.lc_failed.replace(true) {
             self.log(&format!(
-                "LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but {why}; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1 (set lifecycle_enforce=0 to run on the legacy records)"
+                "LIFECYCLE UNREACHABLE — lifecycle_enforce=1 but {why}; CHECK 2/2c/4 make no lifecycle decision this pass and the unit exits 1"
             ));
         }
     }

@@ -25,6 +25,18 @@
 # release's. A tool missing from PATH refuses the commit, naming it; it never silently
 # skips the check.
 set -uo pipefail
+# THE TOOLS BESIDE THIS HOOK FIRST (sp-tf7nt). core.hooksPath points at a release's
+# spira/hooks, so <release>/spira and <release>/bin are this hook's own release. Under
+# lifecycle_enforce the model's PATH is restricted (aeon/src/restrict.rs: /usr/bin, /bin,
+# the release's bin/) and omits spira/, so a bare-name lookup alone refused every commit on
+# a fresh install; production only passed because the agent's shell inherited a profile
+# PATH. Still the release's tools, still refusing when one is missing.
+_hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+for _d in "$_hook_dir/../../bin" "$_hook_dir/.."; do
+    [ -d "$_d" ] && PATH="$(cd "$_d" && pwd -P):$PATH"
+done
+export PATH
+unset _hook_dir _d
 for _t in exclude.sh spira-lint branch-guard.sh; do
     command -v "$_t" >/dev/null 2>&1 || {
         echo "pre-commit: $_t is not on PATH — the launcher sets PATH to a release; refusing to commit unchecked" >&2

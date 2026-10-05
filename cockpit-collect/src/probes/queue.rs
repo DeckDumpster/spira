@@ -219,7 +219,7 @@ pub fn queue_keys() -> Kv {
         let reg = io::repo_registry();
         for rname in reg.all() {
             let Some(rp) = reg.root(&rname) else { continue };
-            let suite_state_file = std::env::var("SPIRA_SUITE_STATE_FILE").unwrap_or_else(|_| "spira/suite-state".to_string());
+            let suite_state_file = spira_config::resolve::suite_state_file().unwrap_or_default();
             let sf = std::path::Path::new(&rp).join(&suite_state_file);
             if let Ok(content) = std::fs::read_to_string(&sf) {
                 quarantine_n += content.lines().filter(|l| l.contains(" | quarantined |")).count();
@@ -250,6 +250,9 @@ mod tests {
     fn unreachable_lifecycle_store_renders_question_marks() {
         let _guard = crate::test_support::ENV_LOCK.lock().unwrap();
         let run = testkit::TempDir::new("cc-queue-missing");
+        // The repo's own harness home, as a fixture: run_dir() resolves SPIRA_RUN's
+        // containment against it, and the gate no longer leaks a production SPIRA_RELEASE.
+        std::env::set_var("SPIRA_HOME", concat!(env!("CARGO_MANIFEST_DIR"), "/../spira"));
         std::env::set_var("SPIRA_RUN", run.path());
         std::env::set_var("SPIRA_QUEUE_DIR", run.path().join("queue"));
         std::env::set_var("SPIRA_LC_BIN", run.path().join("no-such-spira-lc"));

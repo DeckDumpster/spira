@@ -48,7 +48,7 @@ fn main() -> ExitCode {
 }
 
 fn bd_cli(env: &Env) -> BdCli {
-    BdCli { bin: env.bd_bin.clone(), db: env.db.clone() }
+    BdCli { bin: env.bd_bin.clone(), db: env.db.clone(), conn_retries: env.bd_conn_retries }
 }
 
 fn fail(msg: impl AsRef<str>) -> ExitCode {

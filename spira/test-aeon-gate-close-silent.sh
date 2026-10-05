@@ -45,6 +45,9 @@
 #      20+ times against one dead run, with no code change in between).
 #   9. gate status 5 through aeon.sh's own routing (the stub): defers exactly as status 3
 #      does, and the note never claims a recorded FAIL verdict.
+#  10. gate status 3 with a branch whose own spira/build-fence.sh is red — the in-session fast
+#      tier refuses the handoff: the bead is reopened plain (not submitted) with the failure
+#      text. The same branch with a green fence is still handed off (positive control).
 #
 # SUBMITTED, NOT CLOSED (sp-qsona). Every case whose close is not undone by a reopen ends
 # open carrying spira-submitted — the conversion runs AFTER the gate/defer branch, so a
@@ -125,8 +128,8 @@ case "${1:-}" in
         br="${2:-}"
         if [ "$code" = 0 ]; then
             tip="$(git -C "$REPO" rev-parse "$br" 2>/dev/null)"
-            mkdir -p "$SPIRA_RUN/landstate"
-            printf 'CERTIFIED %s %s ' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/${br#spira/}"
+            mkdir -p "$SPIRA_RUN/lc-row"
+            printf 'CERTIFIED %s\n' "$tip" > "$SPIRA_RUN/lc-row/${br#spira/}"
             printf 'queue.sh submit: certified %s (stub)\n' "$br"
             exit 0
         else
@@ -142,7 +145,19 @@ esac
 STUB
 chmod +x "$SPIRA_HOME/queue.sh"
 ln -sf queue.sh "$SPIRA_HOME/queue"   # the queue binary replaced queue.sh; this stub stands in for both, by name
+# spira-lc stub: `show` answers the lifecycle row recorded in $SPIRA_RUN/lc-row/<id> ("<state> <tip>").
+cat > "$SPIRA_HOME/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+case "$1" in
+    show) if [ -f "$SPIRA_RUN/lc-row/$2" ]; then read -r st tip < "$SPIRA_RUN/lc-row/$2"
+          printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s","version":"1"},"delivery":null}\n' "$2" "$st" "$tip"
+          else printf '{"bead":{"bead_id":"%s","state":"WORKING","version":"1"},"delivery":null}\n' "$2"; fi ;;
+    *) exit 0 ;;
+esac
+STUB
+chmod +x "$SPIRA_HOME/spira-lc"
 # The aeon runs with the fixture home FIRST on PATH, so these stubs shadow the tree's tools.
+printf '#!/usr/bin/env bash\nexit 0\n' > "$SPIRA_HOME/spira-lint"; chmod +x "$SPIRA_HOME/spira-lint"
 
 seed() {
     local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
@@ -181,10 +196,21 @@ case "$BEAD_ID" in
         git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — done" >/dev/null 2>&1
         ;;
 esac
+case "$BEAD_ID" in
+    sp-cert-fence-red|sp-cert-fence-ok)
+        mkdir -p spira
+        if [ "$BEAD_ID" = sp-cert-fence-red ]; then
+            printf '#!/usr/bin/env bash\necho "build-fence: make build FAILED (fixture)" >&2\nexit 1\n' > spira/build-fence.sh
+        else
+            printf '#!/usr/bin/env bash\nexit 0\n' > spira/build-fence.sh
+        fi
+        git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$BEAD_ID — fence" >/dev/null 2>&1
+        ;;
+esac
 if [ "$BEAD_ID" = sp-cert-already ]; then
     tip="$(git rev-parse HEAD)"
-    mkdir -p "$SPIRA_RUN/landstate"
-    printf 'CERTIFIED %s %s ' "$tip" "$(date +%s)" > "$SPIRA_RUN/landstate/$BEAD_ID"
+    mkdir -p "$SPIRA_RUN/lc-row"
+    printf 'CERTIFIED %s\n' "$tip" > "$SPIRA_RUN/lc-row/$BEAD_ID"
 fi
 if [ "$BEAD_ID" = sp-cert-super ]; then
     BD_IGNORE_SCHEMA_SKEW=1 bd -C "$SPIRA_DB" supersede "$BEAD_ID" --with sp-cert-super-succ >/dev/null 2>&1
@@ -289,7 +315,7 @@ nowant "defer: queue.sh submit was never called — no blocking self-cert" "spir
     "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-ok 2>/dev/null)"
 nowant "defer: no landstate is written — certification is the landing pass's to run" "CERTIFIED $tip" \
-    "$(cat "$SPIRA_RUN/landstate/sp-cert-ok" 2>/dev/null)"
+    "$(cat "$SPIRA_RUN/lc-row/sp-cert-ok" 2>/dev/null)"
 
 # ======================================================================================
 echo
@@ -307,7 +333,7 @@ nowant "superseded: queue.sh submit was never called" "spira/sp-cert-super " \
     "$(cat "$TMP/queue-calls.log" 2>/dev/null)"
 tip="$(git -C "$REPO" rev-parse spira/sp-cert-super 2>/dev/null)"
 nowant "superseded: no landstate is written" "CERTIFIED $tip" \
-    "$(cat "$SPIRA_RUN/landstate/sp-cert-super" 2>/dev/null)"
+    "$(cat "$SPIRA_RUN/lc-row/sp-cert-super" 2>/dev/null)"
 
 # ======================================================================================
 echo
@@ -440,6 +466,24 @@ out4="$(gate-run.sh --status "$BR4" fixture 2>&1)"; rc4=$?
 is   "died without a verdict answers 5, never 1" "5" "$rc4"
 want "st=5: message says the run died without recording a verdict" "died" "$out4"
 nowant "st=5: message must never claim FAILED" "FAILED" "$out4"
+
+# ======================================================================================
+echo
+echo "st=3 with a red build fence — the handoff is refused in-session; a green fence is"
+echo "still handed off (positive control):"
+# ======================================================================================
+fresh; seed sp-cert-fence-ok
+run_aeon 3 0
+want "fence green: still handed to the landing pass" "handed to the landing pass" "$(bead_notes sp-cert-fence-ok)"
+want "fence green: carrying the submitted label" "spira-submitted" "$(bead_labels sp-cert-fence-ok)"
+
+fresh; seed sp-cert-fence-red
+run_aeon 3 0
+want "fence red: log says the handoff was refused" "fast tier red, handoff refused" "$(cat "$TMP/out" 2>/dev/null)"
+want "fence red: the bead carries the failure text" "make build FAILED (fixture)" "$(bead_notes sp-cert-fence-red)"
+nowant "fence red: never handed to the landing pass" "handed to the landing pass" "$(bead_notes sp-cert-fence-red)"
+is   "fence red: bead is open, claimable" "open" "$(bead_status sp-cert-fence-red)"
+nowant "fence red: NOT marked submitted" "spira-submitted" "$(bead_labels sp-cert-fence-red)"
 
 echo
 tl_summary

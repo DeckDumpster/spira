@@ -313,6 +313,8 @@ _rendered="$(env -i \
     "SPIRA_REPO=$FAKE_REPO" \
     "SPIRA_COCKPIT=$COCKPIT_DIR" \
     SPIRA_INSTALL_FORCE=1 \
+    SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
+    SPIRA_INSTALL_AERC_CONSIDERED=1 \
     "SPIRA_BD=$MOCK_BIN/bd" \
     units-install prod --render  2>/dev/null)"
 _render_rc=$?
@@ -343,6 +345,8 @@ run_install() {
         "SPIRA_REPO=$FAKE_REPO" \
         "SPIRA_COCKPIT=$COCKPIT_DIR" \
         SPIRA_INSTALL_FORCE=1 \
+        SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
+        SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "SPIRA_DB=$FAKE_DB" \

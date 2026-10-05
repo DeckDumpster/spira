@@ -351,7 +351,10 @@ pub struct Request<'a> {
 /// when every slot is busy or unusable (the caller falls back to [`acquire`]).
 pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<Worktree> {
     let base = scratch_root(req.run_dir);
-    fs::create_dir_all(&base).ok()?;
+    if let Err(e) = fs::create_dir_all(&base) {
+        log(&format!("no warm slot: cannot create {}: {e}", base.display()));
+        return None;
+    }
     if let Err(e) = scratch_room(&base, req.min_free_mib, req.min_mem_mib) {
         log(&format!("no warm slot: {e}"));
         return None;
@@ -366,6 +369,7 @@ pub fn acquire_warm(req: &Request, slots: usize, log: &dyn Fn(&str)) -> Option<W
     for i in 0..slots {
         let (slot, lock_path, _) = crate::warm::paths(req.run_dir, i);
         let Some(lock) = lock_slot(&lock_path) else {
+            log(&format!("warm slot {i} is locked — trying the next"));
             continue;
         };
         match prepare_slot(req.repo, &slot, req.commit) {

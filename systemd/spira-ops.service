@@ -50,7 +50,11 @@ ExecStartPre=-@SPIRA_PROD@/incident.sh drain
 # file is absent (watchtower has not run since boot), this unit exits non-zero and systemd
 # records a failure; the next tick will find the file present. That is the correct outcome:
 # a sweep with no snapshot context produces no useful signal.
-ExecStart=/bin/bash -c 'exec @SPIRA_PROD_ROOT@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt - < @SPIRA_RUN@/ops-sweep-prompt.txt'
+# The prompt reaches stdin through systemd, not a bash redirect: an ExecStart whose first
+# path is /bin/bash fails doctor's "resolves outside $SPIRA_RELEASES" check, and deploy's
+# pre-health refused every deploy on it (sp-ycxt2). A missing file still fails the unit.
+ExecStart=@SPIRA_PROD_ROOT@/bin/aeon --home @SPIRA_PROD@ ops --sweep --prompt -
+StandardInput=file:@SPIRA_RUN@/ops-sweep-prompt.txt
 # Matches FAYTH_TIMEOUT_SECONDS plus room for the sweep to start. An aeon that outlives
 # this is killed and the next timer tick starts a fresh pass.
 TimeoutStartSec=2000

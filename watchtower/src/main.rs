@@ -10,12 +10,13 @@ mod deadline;
 mod deploy_fault;
 mod disk_mem;
 mod disabled_timer;
+mod drift;
 mod env;
 mod failed_units;
 mod gate_wait;
 mod git;
 mod incident;
-mod landstate;
+mod lc;
 mod lapsed;
 mod lock_holders;
 mod log;
@@ -24,6 +25,7 @@ mod probes;
 mod release_skew;
 mod sccache_wedge;
 mod seams;
+mod slow_query;
 mod sweep;
 mod throttle;
 
@@ -218,7 +220,7 @@ fn main() {
                 land_ref: tc_land_ref.as_deref(),
                 land_ref_default_for_log: "origin/main",
             };
-            throttle::run(n, &run.join("landstate"), &cfg, &ctx);
+            throttle::run(n, &cfg, &ctx);
         }
         Some("--czar-outcome-check") => {
             if world_halted(&run) {
@@ -251,7 +253,6 @@ fn main() {
             };
             pr_stall::run(
                 n,
-                &run.join("landstate"),
                 &lib_sh_dir(),
                 &getenv("SPIRA_DB").unwrap_or_default(),
                 &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
@@ -268,9 +269,11 @@ fn main() {
             let tc_repo = getenv("SPIRA_TC_REPO").or_else(|| getenv("SPIRA_REPO"));
             let land_ref = getenv("SPIRA_TC_LAND_REF")
                 .or_else(|| tc_repo.as_deref().and_then(|r| git::spira_landref(&lib_sh_dir(), r)));
-            let landstate = run.join("landstate");
-            let depth = throttle::compute_depth(&landstate, tc_repo.as_deref(), land_ref.as_deref());
-            let since = throttle::minutes_since_last_landed(&landstate, n);
+            let Some(depth) = throttle::compute_depth(tc_repo.as_deref(), land_ref.as_deref()) else {
+                log::log("watchtower: lock-holders-check skipped — spira-lc is unreachable, depth unknown");
+                return;
+            };
+            let since = throttle::minutes_since_last_landed(n);
             if depth == 0 || since.map(|m| m < stall_mins).unwrap_or(false) {
                 log::log(&format!("watchtower: lock-holders-check — no stall (depth={depth} since_land={}m)", throttle::disp(since)));
                 return;
@@ -395,6 +398,42 @@ fn main() {
             conditions::reconcile(n, &ctx, "failing-units", probes::failing_units(&cfg, &run));
             conditions::reconcile(n, &ctx, "pressure", probes::pressure(&cfg));
             conditions::reconcile(n, &ctx, "release-store", probes::release_store(&cfg));
+            let rowless_cfg = probes::RowlessCfg {
+                enforce: spira_config::lifecycle_enforce(None),
+                bd: "bd".to_string(),
+                db: db.clone(),
+                lc_bin: spira_config::lifecycle_row::lc_bin(),
+                cap: getenv_i64("SPIRA_ROWLESS_CAP", 20).max(1) as usize,
+                sustain_secs: getenv_i64("SPIRA_ROWLESS_SUSTAIN_SECS", 300),
+            };
+            conditions::reconcile(n, &ctx, "rowless-beads", probes::rowless_beads(&rowless_cfg));
+        }
+        Some("--slow-query-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: slow-query-check skipped \u{2014} world is halted");
+                return;
+            }
+            let log_path = getenv("SPIRA_SLOW_QUERY_LOG").map(PathBuf::from).unwrap_or_else(|| run.join("slow-queries.log"));
+            slow_query::run(
+                &run,
+                &log_path,
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+            );
+        }
+        Some("--drift-check") => {
+            if world_halted(&run) {
+                log::log("watchtower: drift-check skipped — world is halted");
+                return;
+            }
+            drift::run(
+                &spira_home(),
+                &getenv("SPIRA_REPO").unwrap_or_default(),
+                &getenv("SPIRA_DB").unwrap_or_default(),
+                &getenv("SPIRA_HOME_REPO").unwrap_or_else(|| "spira".to_string()),
+                &resolved_incident_sh(),
+            );
         }
         Some(other) => {
             eprintln!("watchtower: unknown argument: {other}");

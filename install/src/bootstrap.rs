@@ -51,12 +51,26 @@ pub fn which(prog: &str) -> Option<String> {
 ///
 /// `repo` falls back to `derive_repo_filesystem` when unset: units substitute it into
 /// `ExecStart=`, and an empty value bakes `--repo ` into the installed unit.
+/// The repository units bake into `--repo` when `SPIRA_REPO` is unset: the repo map's
+/// home-repo root when that is a git checkout, else the filesystem derivation. On a release
+/// the derivation is the release directory, which has no `.git`, so both cert-sweep units
+/// exited 2 on every run ("not a git repository") and deploy's pre-health refused on them
+/// (sp-7i16g); the map already names the real checkout.
+pub fn units_repo(mapped: Option<String>, derived: String, is_git: impl Fn(&Path) -> bool) -> String {
+    match mapped.filter(|m| !m.is_empty() && is_git(Path::new(m))) {
+        Some(m) => m,
+        None => derived,
+    }
+}
+
 pub fn host_from_env(instance: &str) -> Result<HostValues, String> {
     let repo_env = nonempty_env("SPIRA_REPO");
     let home = resolve_home(nonempty_env("SPIRA_HOME"), repo_env.clone(), argv0_path().as_deref())?;
     let repo = repo_env.unwrap_or_else(|| {
         let env_map: std::collections::BTreeMap<String, String> = env::vars().collect();
-        spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned()
+        let mapped = spira_config::repos::Registry::from_env(env_map.clone(), Path::new(&home)).root("");
+        let derived = spira_config::resolve::derive_repo_filesystem(Path::new(&home), &env_map).to_string_lossy().into_owned();
+        units_repo(mapped, derived, |p| p.join(".git").exists())
     });
     let cockpit = nonempty_env("SPIRA_COCKPIT").unwrap_or_else(|| {
         let parent = Path::new(&home).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
@@ -246,6 +260,10 @@ fn is_exec(p: &Path) -> bool {
 /// notes to stderr.
 pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
     let inotify_present = which("inotifywait").is_some();
+    // Same resolution host_from_env gives `--repo` (the repo map's home-repo root when it is
+    // a git checkout, else the release dir): a failure to resolve it at all means the rest of
+    // the install fails too, so treating it as "not a checkout" here costs nothing extra.
+    let repo_is_git_checkout = host_from_env(instance).map(|h| Path::new(&h.repo).join(".git").exists()).unwrap_or(false);
     let m = manifest::build(&manifest::Inputs {
         instance: instance.to_string(),
         dolt_data_set: nonempty_env("SPIRA_DOLT_DATA").is_some(),
@@ -255,6 +273,8 @@ pub fn manifest_from_env(instance: &str) -> Result<Manifest, String> {
         sccache_dav_addr_set: resolve_home(nonempty_env("SPIRA_HOME"), nonempty_env("SPIRA_REPO"), argv0_path().as_deref())
             .map(|h| !sccache_dav_addr(Path::new(&h)).is_empty())
             .unwrap_or(false),
+        repo_is_git_checkout,
+        lc_system_mode: spira_config::resolve::lc_system_mode(),
         watch_names: watch_names(),
     })?;
     for note in &m.notes {
@@ -353,5 +373,14 @@ mod stale_release_tests {
         assert!(msg.contains("REFUSING") && msg.contains("/new"), "{msg}");
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("new/bin/unit-ensure")), None);
         assert_eq!(stale_release_refusal("unit-ensure", &d.join("missing/bin/unit-ensure")), None);
+    }
+
+    #[test]
+    fn units_repo_prefers_a_mapped_git_checkout_over_the_derived_release_dir() {
+        let git = |p: &Path| p == Path::new("/h/harness");
+        assert_eq!(units_repo(Some("/h/harness".into()), "/r/rel".into(), git), "/h/harness");
+        assert_eq!(units_repo(Some("/h/not-git".into()), "/r/rel".into(), git), "/r/rel", "a mapped path that is not a checkout is not used");
+        assert_eq!(units_repo(None, "/r/rel".into(), git), "/r/rel", "no map: the derivation, as before");
+        assert_eq!(units_repo(Some(String::new()), "/r/rel".into(), git), "/r/rel");
     }
 }

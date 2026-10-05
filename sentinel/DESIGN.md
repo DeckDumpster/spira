@@ -122,7 +122,6 @@ The format is `<YYYY-MM-DDTHH:MM:SSZ> spira: <msg>` (lib.sh `log`), in UTC.
 | `pass complete — <a> action(s), <p> progress` | auron-classify.py:110 |
 | `summon-only pass complete — <a> action(s)`, `audit pass complete — <a> action(s), <p> progress` | nothing outside tests |
 | untimestamped `RECLAIMED`, `SENT`, `HELD`, `KEEP`, `FAILED` lines passed through from strand and sending | cockpit.sh:637, cockpit-metrics.py:236 |
-| `CHECK5: …` summary lines | unpoison.sh:145 (reads sentinel.log, but CHECK 5 logs to audit.log; pre-existing, §9) |
 
 Every other message is kept word for word as well, because the bash suites and the operator
 grep them. The exact strings are the ones §4 quotes; `src/tests.rs` pins the parsed ones
@@ -178,7 +177,6 @@ The directory paths come from the probe's variables (§6, S0): `SPIRA_POISON_ASK
 | CHECK 2 | spira-lc Hold/Unhold `wait`, HolderDead; an events row `reclaimed stale-lease` (bd sql); `bd note` |
 | CHECK 3 | `bd recompute-blocked` |
 | CHECK 4 | spira-lc Hold/Unhold `poison`; `bd note`; `events.log` (spira_event seam); mail |
-| CHECK 5 | `incident.sh file`; `bd close --force <incident> --reason-file -` |
 | seams | whatever lib.sh does in CHECK 3b, 3c, 7, 7c and 7d, unchanged |
 
 ### 2.5 Processes it runs
@@ -239,7 +237,6 @@ Dead ones are deleted, as `aeon_count` does.
 | CHECK 1 | `$SPIRA_HOME/pilgrimage.sh check` | output passed through; `^PILGRIMAGE COMPLETE` counted → progress |
 | CHECK 2b | `strand check` | output passed through; `^RECLAIMED` → progress, `^STRANDED` → act |
 | CHECK 4 | `spira-claim counts` (ids on stdin), `decide --poison-at P --requeue-at R --reclaim-at C -- n rq rc labels stamp [poisoned]`; `mail send operator --from … --subject … --kind question --default …` (body on stdin) | `id\tatt\treq\trcl`; tokens; rc |
-| CHECK 5 | `bash ${SPIRA_INCIDENT_SH:-incident.sh} file "<title>" -` (env `SPIRA_INCIDENT_*`, body on stdin) | ignored |
 | CHECK 6 | `watchtower --throttle-check`, `--czar-outcome-check`, `--pr-stall-check`, `--disabled-timer-check` (bare name on the release PATH, each 2>/dev/null; sp-lnmbq) | ignored |
 | CHECK 6b | `sending --skip-queue` (sending/DESIGN.md; sending.sh until sp-arpjt) | output passed through; `^SENT <id> <repo> <branch>` → act; `^FAILED` → log |
 | CHECK 8 | `$SPIRA_HOME/reflect.sh "<open children, newline-separated>"` >> `reflect.log` | — |
@@ -267,9 +264,6 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_RECLAIM_AT` | 5 | CHECK 4 |
 | `SPIRA_RECLAIM_GRACE_SECS` | 10800 | CHECK 2 |
 | `SPIRA_INFERENCE_EVERY` | 3600 | CHECK 8 |
-| `SPIRA_CHECK5_MAX_FILE` | 5 | CHECK 5 |
-| `SPIRA_CHECK5_MAX_RESOLVE` | 50 | CHECK 5 |
-| `SPIRA_CHECK5_BUDGET_SECS` | 60 | CHECK 5 |
 | `SPIRA_AUDIT_UNIT` | `spira-audit` | audit |
 | `SPIRA_AUDIT_MAXSEC` | 1800 | audit |
 | `SPIRA_AUDIT_STALE` | 1800 | audit |
@@ -279,7 +273,6 @@ names live as plain `Cfg` fields so a unit test can point one at a fixture.
 | `SPIRA_LAND_STALE` | 1800 | CHECK 6 |
 | `SPIRA_LAUNCH`, `SPIRA_SYSTEMCTL`, `SPIRA_SUMMON` | `systemd-run`, `systemctl`, `systemd-run` | test seams |
 | `SPIRA_SKIP_RECLAIM` | 0 | fixture fast path (skips the DB check, STATE, CHECK 2/2c/3/7c/7d) |
-| `SPIRA_SKIP_CLOSED_CHECK` | 0 | skips CHECK 5 |
 | `SPIRA_LIFECYCLE_ENFORCE` / `spira.lifecycle_enforce` | off | **the lifecycle switch** (§2.9). The unit's own environment wins (`1`/`true` = on, anything else = off). It is read from this process's original environment, not conf.sh's, which defaults it to 0. Else `spira.lifecycle_enforce` in the spira.toml conf.sh resolved (`SPIRA_TOML_FILE`), read with the spira-config library. Else off. This is the same resolution as the aeon crate (concierge/rw-aeon `aeon/src/conf.rs`). Binary presence is never consulted |
 | `SPIRA_RECLAIM_SKIP_LABEL` | `spira-waiting-operator` | OFF's CHECK 2 protection label. The key was retired by sp-i2m7y; this is its last default, kept as a literal |
 | `SPIRA_FAYTHS` | the chamber | the roster (lib.sh `spira_fayths`, via the probe) |
@@ -913,7 +906,6 @@ Then `systemd/install.sh` (or `unit-ensure.sh`) re-renders, and `daemon-reload`.
 | 15 | `spira/canary.sh:136` | `bash "$SPIRA_HOME/sentinel.sh" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` | `"$SPIRA_SENTINEL_BIN" 2>&1 \| sed 's/^/  sentinel: /' \|\| true` |
 | 16 | `spira/timeout-lint.sh:41` | `files=("$HERE/aeon.sh" "$HERE/sentinel.sh" "$HERE/landing.sh")` | `files=("$HERE/aeon.sh" "$HERE/landing.sh")` |
 | 17 | `spira/config-fence-allow:68` | `spira/sentinel.sh` | delete the line |
-| 18 | `spira/unpoison.sh:139-145` | waits for `CHECK5:` in `sentinel.log` | read `$SPIRA_RUN/audit.log` instead (pre-existing defect; §9) |
 
 **Delete**
 

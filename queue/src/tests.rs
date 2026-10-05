@@ -242,9 +242,6 @@ impl Lib for FLib {
     fn cancel_runs(&self, _: &Path, _: &Path, br: &str) {
         self.log(format!("cancel_runs {br}"));
     }
-    fn lc_returned(&self, id: &str, reason: &str) {
-        self.log(format!("lc_returned {id} {reason}"));
-    }
     fn format_batch(&self, _: &Path, _: &str, _: &str) {
         self.log("format_batch".into());
     }
@@ -659,7 +656,6 @@ impl T {
     /// The OFF contract: spira-lc was never invoked, not even probed.
     fn assert_lc_untouched(&self) {
         assert!(self.lc.calls.borrow().is_empty(), "spira-lc invoked with lifecycle_enforce off: {:?}", self.lc.calls.borrow());
-        assert!(!self.lib.has("lc_returned"), "lc_returned with lifecycle_enforce off");
     }
     fn hold_lock(&self) -> crate::lock::Guard {
         match crate::lock::try_lock(&self.s().queue_dir, "spira") {
@@ -1004,7 +1000,10 @@ fn eject_member_marks_red_records_the_harness_cause_and_returns_survivors() {
     assert_eq!(t.run(&["eject", "sp-a", "--reason", "needs rebase"]), 0);
     assert!(t.lib.has("land_mark sp-a RED ta needs rebase"));
     assert!(t.lib.has("cause_event sp-a eject"));
-    assert!(t.lib.has("lc_returned sp-a needs rebase"));
+    let calls = t.lc.calls.borrow().clone();
+    let d = calls.iter().position(|c| c == "event bead sp-a CERTIFIED 3 \"Deliver\"").unwrap_or_else(|| panic!("no Deliver: {calls:?}"));
+    let r = calls.iter().position(|c| c == "event bead sp-a IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}").unwrap_or_else(|| panic!("no Returned: {calls:?}"));
+    assert!(d < r);
     assert!(t.lib.has("release_claim sp-a"));
     assert!(!t.lib.has("bead_reopen"));
     assert!(t.lib.has("land_mark sp-b CERTIFIED tb"));
@@ -1130,7 +1129,30 @@ fn the_environment_pins_the_switch_over_the_config() {
     t.lc.available.set(true);
     open_batch_record(&t);
     assert_eq!(t.run(&["eject", "sp-a"]), 0);
-    assert!(t.lib.has("lc_returned sp-a"));
+    assert!(t.lc.calls.borrow().iter().any(|c| c.contains("batch-ejected")));
+}
+
+#[test]
+fn eject_of_a_member_already_in_delivery_returns_without_a_second_deliver() {
+    let t = T::new(LandMode::Queue);
+    t.lifecycle_on();
+    open_batch_record(&t);
+    t.lc.bead_rows.borrow_mut().insert("sp-a".into(), ("IN_DELIVERY".into(), "7".into()));
+    assert_eq!(t.run(&["eject", "sp-a"]), 0);
+    let calls = t.lc.calls.borrow().join("\n");
+    assert!(!calls.contains("\"Deliver\""), "{calls}");
+    assert!(calls.contains("event bead sp-a IN_DELIVERY 7 {\"Returned\":{\"reason\":\"batch-ejected\"}}"), "{calls}");
+}
+
+#[test]
+fn eject_of_a_certified_unbatched_bead_delivers_then_returns_on_spira_lc() {
+    let t = T::new(LandMode::Queue);
+    t.lifecycle_on();
+    t.landstate("sp-c", "CERTIFIED tc 1\n");
+    assert_eq!(t.run(&["eject", "sp-c"]), 0, "{}", t.err());
+    let calls = t.lc.calls.borrow().clone();
+    assert!(calls.contains(&"event bead sp-c CERTIFIED 3 \"Deliver\"".to_string()), "{calls:?}");
+    assert!(calls.contains(&"event bead sp-c IN_DELIVERY 4 {\"Returned\":{\"reason\":\"batch-ejected\"}}".to_string()), "{calls:?}");
 }
 
 #[test]
@@ -2103,4 +2125,91 @@ fn usage_errors_exit_two() {
     assert_eq!(t.run(&["bogus"]), 2);
     assert_eq!(t.run(&["abandon", "--nope"]), 2);
     assert!(matches!(cli::parse(&["stats".to_string()]), Ok(Cmd::Stats)));
+}
+
+// ------------------------------------------------------------------- publish-settle
+
+use crate::ops::publish::{ci_of, decide, Ci, Pr, Settle};
+
+#[test]
+fn settle_decision_table() {
+    let open = |ci, behind| Some(Pr::Open { ci, behind });
+    assert_eq!(decide(None), Settle::Open);
+    assert_eq!(decide(open(Ci::Green, true)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Green, false)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Pending, true)), Settle::Wait);
+    assert_eq!(decide(open(Ci::Red, true)), Settle::Supersede);
+    assert_eq!(decide(open(Ci::Untested, true)), Settle::Supersede);
+    assert_eq!(decide(open(Ci::Red, false)), Settle::Wait);
+    assert_eq!(decide(Some(Pr::Gone)), Settle::Retire);
+    assert_eq!(decide(Some(Pr::Unknown)), Settle::Wait);
+    assert_eq!(ci_of("provision_fault\n"), Ci::Untested);
+    assert_eq!(ci_of("harness_fault"), Ci::Untested);
+    assert_eq!(ci_of("red\nred-suite: a"), Ci::Red);
+    assert_eq!(ci_of(""), Ci::Pending);
+}
+
+fn stale_publish(t: &T, status: &str) {
+    publishable(t);
+    t.git.set("refs/heads/local/main", "m4");
+    t.git.ancestor("f0", "m4");
+    t.git.ancestor("t1", "m4");
+    t.git.ancestor("t2", "m4");
+    fs::write(
+        t.qfile("publish"),
+        "pr=77\nhead=m3\nbase=f0\nmembers=sp-a:t1\nopened=900\nbranch=spira/publish/OLD\nremote=origin\nforge_branch=main\n",
+    )
+    .unwrap();
+    t.forge.status.borrow_mut().push(Some(status.into()));
+    *t.forge.pr.borrow_mut() = Some("78".into());
+}
+
+#[test]
+fn settle_supersedes_a_red_or_untested_publish_that_local_has_moved_past() {
+    for status in ["red\n", "provision_fault\n"] {
+        let t = T::new(LandMode::QueueLocal);
+        stale_publish(&t, status);
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+        let calls = t.forge.calls.borrow().clone();
+        assert!(calls.contains(&"pr-close 77".to_string()), "{calls:?}");
+        assert!(calls.iter().any(|c| c.starts_with("pr-create spira/publish/20260929T010203Z main")), "{calls:?}");
+        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m4\n"));
+    }
+}
+
+#[test]
+fn settle_waits_on_a_green_or_pending_publish_and_on_an_unmoved_red_one() {
+    for (status, moved) in [("green\n", true), ("pending\n", true), ("red\n", false)] {
+        let t = T::new(LandMode::QueueLocal);
+        stale_publish(&t, status);
+        if !moved {
+            t.git.set("refs/heads/local/main", "m3");
+        }
+        assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+        let calls = t.forge.calls.borrow().clone();
+        assert!(!calls.iter().any(|c| c.starts_with("pr-close") || c.starts_with("pr-create")), "{calls:?}");
+        assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=77\n"));
+    }
+}
+
+#[test]
+fn settle_opens_a_publish_when_none_is_open_and_skips_other_modes() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    *t.forge.pr.borrow_mut() = Some("78".into());
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(fs::read_to_string(t.qfile("publish")).unwrap().starts_with("pr=78\nhead=m3\n"));
+    let t = T::new(LandMode::Queue);
+    assert_eq!(t.run(&["publish-settle"]), 0);
+    assert!(t.forge.calls.borrow().is_empty());
+}
+
+#[test]
+fn settle_exits_zero_and_logs_when_the_queue_lock_is_held() {
+    let t = T::new(LandMode::QueueLocal);
+    publishable(&t);
+    let _q = crate::lock::try_lock(&t.lib.s.queue_dir, "spira");
+    assert_eq!(t.run(&["publish-settle"]), 0, "{}", t.err());
+    assert!(t.out().contains("publish-settle spira: another queue operation holds the lock"), "{}", t.out());
+    assert!(t.forge.calls.borrow().is_empty());
 }

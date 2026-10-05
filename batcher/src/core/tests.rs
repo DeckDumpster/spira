@@ -149,7 +149,7 @@ fn combine_orders_express_first_then_rank_then_arrival() {
     let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Ok)).collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     let ids: Vec<&str> = combined.merged.iter().map(|m| m.id.as_str()).collect();
     assert_eq!(ids, vec!["sp-x", "sp-early", "sp-late", "sp-low"]);
     assert!(combined.set_aside.is_empty());
@@ -163,7 +163,7 @@ fn a_conflicting_member_is_set_aside_never_merged() {
     merges.insert("sp-b".to_string(), MergeResult::Conflict);
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
     assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Conflict { deleted_suites: vec![] } }]);
 }
@@ -177,7 +177,7 @@ fn all_conflict_round_merges_nothing() {
     let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Conflict)).collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert!(combined.merged.is_empty());
     assert_eq!(combined.set_aside.len(), 3);
 }
@@ -193,7 +193,7 @@ fn an_empty_member_is_set_aside_never_merged() {
     merges.insert("sp-b".to_string(), MergeResult::Empty);
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a"]);
     assert_eq!(combined.set_aside, vec![SetAside { id: "sp-b".into(), reason: SetAsideReason::Empty }]);
 }
@@ -264,7 +264,7 @@ fn combine_keeps_a_stacked_prerequisite_whose_tip_merged_empty() {
     merges.insert("sp-z".to_string(), MergeResult::Empty); // genuinely no commits of its own
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-a", "sp-b"]);
     assert_eq!(combined.set_aside, vec![SetAside { id: "sp-z".into(), reason: SetAsideReason::Empty }]);
 }
@@ -286,7 +286,7 @@ fn a_member_missing_from_merge_results_fails_closed_to_set_aside() {
     let merges: BTreeMap<Id, MergeResult> = BTreeMap::new();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert!(combined.merged.is_empty());
     assert_eq!(combined.set_aside[0].id, "sp-a");
 }
@@ -301,7 +301,7 @@ fn a_sequenced_member_stays_set_aside_even_if_it_now_merges() {
     let deleted = BTreeMap::new();
     let mut sequenced = BTreeMap::new();
     sequenced.insert("sp-a".to_string(), "sp-dep".to_string());
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert!(combined.merged.is_empty());
     assert_eq!(combined.set_aside, vec![SetAside { id: "sp-a".into(), reason: SetAsideReason::Dependency { waits_on: "sp-dep".into() } }]);
 }
@@ -499,7 +499,7 @@ fn combine_then_pr_record_puts_express_first_regardless_of_pool_order() {
     let merges: BTreeMap<Id, MergeResult> = pool.iter().map(|p| (p.id.clone(), MergeResult::Ok)).collect();
     let deleted = BTreeMap::new();
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     let pr = pr_record(&combined.merged);
     assert_eq!(pr.members, vec!["sp-x".to_string(), "sp-a".to_string()]);
 }
@@ -595,7 +595,7 @@ fn a_full_round_from_trigger_through_pr_record() {
     let mut deleted = BTreeMap::new();
     deleted.insert("sp-b".to_string(), vec!["test-retired.sh".to_string()]);
     let sequenced = BTreeMap::new();
-    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced });
+    let combined = combine(&CombineInput { pool: &pool, merges: &merges, deleted_suites: &deleted, sequenced: &sequenced, siblings: &BTreeMap::new() });
     assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-x", "sp-a"]);
     assert_eq!(combined.set_aside.len(), 1);
 
@@ -774,4 +774,23 @@ fn base_fix_member_triggers_ahead_of_express_and_lands_alone() {
 fn base_fix_lane_leaves_a_pool_without_a_fix_untouched() {
     let pool = vec![m("sp-a", 1, false, 0), m("sp-x", 1, true, 5)];
     assert_eq!(base_fix_lane(pool.clone()), pool);
+}
+
+#[test]
+fn a_sibling_loser_names_the_p0_it_lost_to_not_the_base() {
+    let mut p0 = m("sp-p0", 0, false, 200);
+    p0.certified_at = 200;
+    let mut p2 = m("sp-p2", 2, false, 0);
+    p2.certified_at = 100;
+    let sorted = topo_order(&[p2.clone(), p0.clone()]);
+    assert_eq!(sorted[0].id, "sp-p0");
+    let mut merges = BTreeMap::new();
+    merges.insert("sp-p0".to_string(), MergeResult::Ok);
+    merges.insert("sp-p2".to_string(), MergeResult::Conflict);
+    let mut siblings = BTreeMap::new();
+    siblings.insert("sp-p2".to_string(), ("sp-p0".to_string(), vec!["a.rs".to_string()]));
+    let combined = combine(&CombineInput { pool: &sorted, merges: &merges, deleted_suites: &BTreeMap::new(), sequenced: &BTreeMap::new(), siblings: &siblings });
+    assert_eq!(combined.merged.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec!["sp-p0"]);
+    let text = evicted_event(&combined.set_aside[0]).text;
+    assert!(text.contains("sibling sp-p0") && text.contains("a.rs") && !text.contains("with base"), "{text}");
 }

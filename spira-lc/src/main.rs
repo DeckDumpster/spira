@@ -8,12 +8,10 @@
 //!
 //! Every verb below is `dispatch(args, conn) -> (exit_code, stdout_text)`, not a function
 //! that prints and exits directly: `main` runs it once against a fresh, one-shot `Conn`,
-//! and `serve` runs the identical code in-process against its own persistent `Conn` for
+//! and `serve` runs the identical code in-process against its own long-lived `Conn` for
 //! every request the socket receives, printing nothing of its own. One implementation, two
-//! callers, and the fast path (persistent connection) and the correct-but-slow path
-//! (same-user fallback, a fresh `dolt` process per call) can never drift apart.
+//! callers, and the service path and the same-user fallback can never drift apart.
 
-mod migrate;
 mod bd;
 mod bd_facts;
 mod callers;
@@ -23,10 +21,12 @@ mod cutover;
 mod db;
 mod git_evidence;
 mod legacy_files;
-mod persistent;
+mod migrate;
+mod wire;
 mod repo_config;
 mod rows;
 mod serve;
+mod slow;
 mod work;
 
 use db::Conn;
@@ -65,7 +65,10 @@ fn main() {
     }
 
     let conn = match Conn::from_env() {
-        Ok(c) => c,
+        Ok(mut c) => {
+            c.io_timeout = db::io_timeout_for(args.first().map(String::as_str).unwrap_or(""));
+            c
+        }
         Err(e) => {
             eprintln!("cannot tell: {e:?}");
             std::process::exit(CANNOT_TELL);
@@ -110,13 +113,17 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
     }
     if let Some((what, detail)) = ans.cert_log {
         // lifecycle-cert.sh's log, same path and line shape: `<epoch> <verb> bead=<id> <detail>`.
-        let dir = std::env::var("SPIRA_RUN").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| "/tmp".into());
         let id = args.first().map(String::as_str).unwrap_or("");
-        let _ = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(std::path::Path::new(&dir).join("lifecycle-cert.log"))
-            .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
+        match spira_config::resolve::run_dir_for_process() {
+            Ok(dir) => {
+                let _ = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(dir.join("lifecycle-cert.log"))
+                    .and_then(|mut f| writeln!(f, "{} {what} bead={id} {detail}", db::now_epoch()));
+            }
+            Err(e) => eprintln!("spira-lc: {e} — lifecycle-cert.log not written"),
+        }
     }
     ans.code
 }
@@ -124,6 +131,7 @@ fn emit(args: &[String], ans: callers::Answer) -> i32 {
 /// Every verb but `serve` (which never reaches here — see `main`, and `serve::run`'s own
 /// direct dispatch to this same function per request).
 pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
+    slow::set_verb(args.first().map(|s| s.as_str()).unwrap_or("-"));
     match args.first().map(|s| s.as_str()) {
         Some("show") => cmd_show(&args[1..], conn),
         Some("list") => cmd_list(&args[1..], conn),
@@ -148,13 +156,17 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         // step and the test fixture use to apply schema.sql/grants.sql through the same
         // connection code the rest of this binary uses, instead of a second copy in shell.
         Some("admin-apply-ddl") => cmd_admin_apply_ddl(&args[1..], conn),
+        // lifecycle/migrations/*.sql in filename order, each ADD COLUMN applied only when
+        // the column is absent (migrate.rs) — what spira-install's lifecycle-store phase runs
+        // after schema.sql, so a fresh database and an old one converge (sp-xfqnr), and
+        // what release pre-activate runs (`--if-enforced`) before every flip (sp-vf9iu).
         Some("admin-migrate") => migrate::run(&args[1..], conn),
         // The one-time migration classifier (design §4). Deploys inert like the rest of
         // this binary: nothing calls it until the cutover deploy step (a later bead).
         Some("classify") => classify_cmd::run(&args[1..], conn),
         _ => (
             CANNOT_TELL,
-            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | admin-migrate <dir> | admin-migrate --baseline <name>... | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
+            "usage: spira-lc show <bead-id> | show-batch <batch-id> | list [--delivery] [--state S] [--hold poison|ask|wait|operator] | history <key> [--machine bead|delivery|batch] | event <machine> <key> --expect S --version N --actor A --kind <json> | create-bead <id> | cut <batch-id> --repo R --head H --base B --members id:tip,... --actor A [--parent P] | stack <batch-id> --members id:tip,... --actor A | land <batch-id> --expect S --version N --actor A --sha SHA | settle <batch-id> --expect S --version N --actor A [--eject id,...] [--requeue id,...] | abandon-batch <batch-id> --expect S --version N --actor A --reason R | eject-member <batch-id> --bead-id ID --expect S --version N --actor A --reason R | classify --home DIR --bd-db PATH --landstate-dir DIR --queue-dir DIR [--repo NAME]... [--base REF] [--dry-run] | work <bead-id> <verb> ... | serve | caller verbs (lifecycle_enforce on): hold|unhold|reply|withdraw-ask|release|holder-dead|drop|returned|content-on-base|state|holds|held|list-held|list-state|list-all|deliver|certify|resubmit".to_string(),
         ),
     }
 }
@@ -222,9 +234,13 @@ fn cmd_list(args: &[String], conn: &Conn) -> (i32, String) {
     let where_clause = if clauses.is_empty() { String::new() } else { format!(" WHERE {}", clauses.join(" AND ")) };
     // reason/updated_at: a bulk caller bucketing REWORK by cause or ageing a row needs both
     // without a second round trip per bead.
-    let since = entered_at_sql("bead", "bead.bead_id", "bead.state");
+    // `since` comes from one grouped pass over the event log joined on (key, state). A
+    // correlated per-row subquery is not resolved through event_lc_key_idx by Dolt and
+    // took 85 s on 3.7k rows, past every caller's timeout (sp-c3azm).
     let sql = format!(
-        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, {since} AS since FROM bead{where_clause} ORDER BY bead_id"
+        "SELECT bead_id, state, tip, holder, lease_until, holds, reason, updated_at, version, stack, stack_depth, s.since AS since FROM bead \
+         LEFT JOIN (SELECT lc_key, to_state, MAX(at) AS since FROM event WHERE machine = 'bead' AND applied = 1 GROUP BY lc_key, to_state) s \
+         ON s.lc_key = bead.bead_id AND s.to_state = bead.state{where_clause} ORDER BY bead_id"
     );
     match conn.query(&sql) {
         Ok(r) => (0, serde_json::to_string_pretty(&Value::Array(r)).unwrap()),

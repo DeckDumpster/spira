@@ -52,7 +52,7 @@ fn detectors_are_observability_and_the_loop_is_work() {
     for d in ["auron", "watchtower", "skew", "notify", "refresh", "verify-asks", "gate-check", "cert-sweep-full", "cert-sweep-sample"] {
         assert_eq!(plane_of_shipped(&format!("spira-{d}.timer")), Some(Plane::Observability), "{d}");
     }
-    for w in ["summon", "sentinel", "landing-pass", "verdict", "reconciler", "reconciler-flow", "groom", "gh-intake", "ops", "czar-pass", "maechen", "straggler-sweep"] {
+    for w in ["summon", "sentinel", "landing-pass", "verdict", "publish", "reconciler", "reconciler-flow", "groom", "gh-intake", "ops", "czar-pass", "maechen", "straggler-sweep"] {
         assert_eq!(plane_of_shipped(&format!("spira-{w}.timer")), Some(Plane::Work), "{w}");
     }
     for m in ["archivist", "archive", "mail-tidy", "moot-sweep"] {

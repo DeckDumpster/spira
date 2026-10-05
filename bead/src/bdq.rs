@@ -263,6 +263,12 @@ pub fn is_create(args: &[String]) -> bool {
     args.first().map(String::as_str) == Some("create")
 }
 
+/// A bead created already closed (`--status closed`) is never claimed, so it needs no
+/// lifecycle row.
+pub fn creates_closed(args: &[String]) -> bool {
+    args.windows(2).any(|w| w[0] == "--status" && w[1] == "closed") || args.iter().any(|a| a == "--status=closed")
+}
+
 // =========================================================================================
 // The czar fence's dispatch decision (the fence itself is `czar-fence.sh`, a subprocess —
 // see `src/bin/bdq.rs`). Pure: "should the caller shell out to czar-fence.sh at all, and
@@ -484,6 +490,14 @@ mod tests {
     }
 
     // -- is_create ----------------------------------------------------------------------------
+
+    #[test]
+    fn creates_closed_reads_the_status_flag() {
+        assert!(creates_closed(&s(&["create", "t", "--status", "closed"])));
+        assert!(creates_closed(&s(&["create", "t", "--status=closed"])));
+        assert!(!creates_closed(&s(&["create", "t", "--status", "open"])));
+        assert!(!creates_closed(&s(&["create", "closed"])));
+    }
 
     #[test]
     fn is_create_only_true_for_the_create_verb() {

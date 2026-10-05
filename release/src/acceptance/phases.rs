@@ -52,10 +52,20 @@ impl Run<'_> {
         Cmd::new(name).envs(&self.launcher_env())
     }
 
+    /// deploy.sh names its forge repository from SPIRA_FORGE_REPO or the checkout's git
+    /// remote, and an installed release has no remote: hand it the owner/repo this run
+    /// already resolved for its own gh calls, or every upgrade deploy exits 2 (sp-j0vhm).
+    fn forge(&self, c: Cmd) -> Cmd {
+        match &self.o.gh_repo {
+            Some(r) => c.env("SPIRA_FORGE_REPO", r),
+            None => c,
+        }
+    }
+
     /// `deploy.sh` of the release under test: always `--allow-draft` (acceptance runs before
     /// the draft is published), and the local tarball when this run was handed one.
     fn deploy_tag(&self) -> Cmd {
-        let mut c = self.tool("deploy.sh").arg("--allow-draft");
+        let mut c = self.forge(self.tool("deploy.sh")).arg("--allow-draft");
         if let Some(t) = &self.o.a.tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
@@ -64,11 +74,22 @@ impl Run<'_> {
 
     /// `deploy.sh` of the predecessor (a rollback), with its local tarball when handed one.
     fn deploy_prev(&self, prev: &str) -> Cmd {
-        let mut c = self.tool("deploy.sh");
+        let mut c = self.forge(self.tool("deploy.sh"));
         if let Some(t) = &self.o.a.prev_tarball {
             c = c.arg("--tarball").arg(Self::s(t));
         }
         c.arg(prev)
+    }
+
+    /// `uninstall.sh --yes`, carrying the SAME `SPIRA_HOME_REPO` `install_env()` handed the
+    /// install it is undoing. Without it, `owned.sh list` (which `uninstall.sh` asks what it
+    /// owns) re-derives `repo_is_git_checkout` from scratch under bare `launcher_env()` —
+    /// no home-repo override there, so it resolves a different answer than install saw — and
+    /// the cert-sweep units (optional on that flag, manifest.rs) installed under one answer
+    /// go unlisted, hence unremoved, under the other: `spira-cert-sweep-{full,sample}.{service,timer}`
+    /// left running after every `uninstall.sh --yes` in this harness (sp-dn2rl).
+    fn uninstall(&self) -> Cmd {
+        self.tool("uninstall.sh").env("SPIRA_HOME_REPO", self.o.scratch_name()).arg("--yes")
     }
 
     /// One variable as the release under test's own conf.sh resolves it (DESIGN.md Decision 3).
@@ -258,7 +279,15 @@ impl Run<'_> {
     fn file_probe(&self, title: &str, description: &str, labels: &Labels) -> (Option<String>, String) {
         let l = format!("acceptance,{},{},repo:{}", labels.plan, labels.scope, self.o.scratch_name());
         let out = self.h.run(&self.bd(&["create", "--title", title, "--description", description, "--label", &l, "--type", "task"]));
-        (extract_bead_id(&out.text), out.text)
+        let Some(id) = extract_bead_id(&out.text) else { return (None, out.text) };
+        // File the way bead.sh does: the bead's lifecycle row is part of filing it. Under
+        // lifecycle_enforce a rowless bead is never claimable, so the probe sat unsummoned
+        // (sp-6ka75); a row that cannot be created fails "bead filed", naming why.
+        let lc = self.h.run(&self.tool("spira-lc").args(["create-bead", &id]));
+        if lc.rc != 0 {
+            return (None, format!("{}spira-lc create-bead {id} rc={}: {}", out.text, lc.rc, lc.text.trim_end()));
+        }
+        (Some(id), out.text)
     }
 
     /// Stages 2-5 for a filed bead: summoned (branch), committed, closed, landed by ancestry
@@ -506,9 +535,17 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
         let landed = format!("phase A stage 5: bead {id} landed on {}:{land_ref}", scratch.display());
         r.follow("phase A", &id, &land_ref, &base, &landed);
         let mode = land_modes.iter().find(|(n, _)| *n == home_repo).map(|(_, m)| m.clone()).unwrap_or_else(|| "push".into());
-        let hist = h.run(&r.tool("spira-lc").args(["history", &id]));
-        let got = lifecycle_states(&hist.out);
         let want = expected_lifecycle(&mode);
+        // LANDED is recorded by the sending sweep inside the sentinel's audit worker, one pass
+        // after the push — never at the instant stage 5 sees the commit. Read history until it
+        // holds the whole sequence or the bound runs out; the last read is what is judged
+        // (sp-53own: a single immediate read saw [.., CERTIFIED], missing LANDED).
+        let mut hist = h.run(&r.tool("spira-lc").args(["history", &id]));
+        let _ = r.poll(120, 5, || {
+            hist = h.run(&r.tool("spira-lc").args(["history", &id]));
+            hist.rc == 0 && missing_in_order(&want, &lifecycle_states(&hist.out)).is_none()
+        });
+        let got = lifecycle_states(&hist.out);
         let name = format!("phase A: {id} lifecycle event sequence {} ({mode})", want.join(" -> "));
         r.check(&name, hist.rc == 0 && missing_in_order(&want, &got).is_none(), || {
             format!("spira-lc history {id} rc={} — saw [{}], missing {}", hist.rc, got.join(", "), missing_in_order(&want, &got).unwrap_or("history"))
@@ -516,7 +553,7 @@ pub fn run(h: &dyn Host, o: Opts) -> u8 {
     }
 
     println!("\nphase A — uninstall and clean state");
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase A: uninstall.sh --yes exits 0", rc);
     let left: Vec<String> = first_fields(&r.systemctl(&["list-unit-files", "--no-legend", "--plain"]).out).into_iter().filter(|u| u.starts_with("spira-")).collect();
     r.check("phase A: no spira-* units remain after uninstall", left.is_empty(), || left.join("\n"));
@@ -631,7 +668,7 @@ fn phase_bc(r: &mut Run, tag: &str, pt: &str) {
     } else {
         r.bad("phase C: unit set after rollback matches pre-upgrade snapshot", &diff.iter().take(10).cloned().collect::<Vec<_>>().join("\n"));
     }
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase C: uninstall.sh --yes after rollback exits 0", rc);
 }
 
@@ -763,6 +800,6 @@ fn phase_d(r: &mut Run, tag: &str, pt: &str, prev_tb: Option<PathBuf>, prev_dir:
             None => r.ok("phase D: world running after aged rollback"),
         }
     }
-    let rc = h.run(&r.tool("uninstall.sh").arg("--yes")).rc;
+    let rc = h.run(&r.uninstall()).rc;
     r.is0("phase D: uninstall.sh exits 0", rc);
 }

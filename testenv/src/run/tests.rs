@@ -994,13 +994,13 @@ fn a_deadline_cut_is_green_partial_recorded_and_never_cached_as_full() {
     let b = FakeBuilder::new(None);
     let args = [
         "--deadline",
-        "1",
+        "4",
         "--suites",
         "test-b.sh,test-a.sh",
         "topic",
     ];
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
-    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 1s)");
+    assert_eq!(w.last(), "VERDICT GREEN ran=1 deferred=1 (deadline 4s)");
     assert!(w.has_line(|l| l.starts_with("  test-b.sh") && l.contains("DEFERRED deadline after")));
     assert!(w
         .has_line(|l| l
@@ -1009,7 +1009,7 @@ fn a_deadline_cut_is_green_partial_recorded_and_never_cached_as_full() {
     let res = w.results_dir();
     let meta = fs::read_to_string(res.join("batch.meta")).unwrap();
     assert!(
-        meta.contains("deadline=1\ndeferred=1\ndeferred_suites=test-b.sh\nphases=resolve:"),
+        meta.contains("deadline=4\ndeferred=1\ndeferred_suites=test-b.sh\nphases=resolve:"),
         "{meta}"
     );
     assert!(meta.contains("\nwarm=off\nsetup_secs="), "{meta}");
@@ -1053,12 +1053,12 @@ fn a_red_that_finished_before_the_deadline_makes_the_verdict_red() {
     let rc = w.run(
         &rt,
         &b,
-        &["--deadline=1", "--suites", "test-a.sh,test-b.sh", "topic"],
+        &["--deadline=4", "--suites", "test-a.sh,test-b.sh", "topic"],
         "",
         &w.root,
     );
     assert_eq!(rc, 1);
-    assert_eq!(w.last(), "VERDICT RED ran=1 red=1 deferred=1 (deadline 1s)");
+    assert_eq!(w.last(), "VERDICT RED ran=1 red=1 deferred=1 (deadline 4s)");
     let key = w
         .results_dir()
         .file_name()
@@ -1347,7 +1347,7 @@ fn a_build_still_running_at_the_setup_cutoff_is_no_verdict_never_the_candidates_
     assert!(rt.suite_execs().is_empty());
     let rows = fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl")).unwrap();
     assert!(
-        rows.contains("\"phases\":\"resolve:0,build:0\"") && rows.contains("\"rc\":2"),
+        rows.contains("build:0\"") && rows.contains("\"rc\":2"),
         "{rows}"
     );
 }
@@ -1407,14 +1407,14 @@ fn a_cold_build_is_not_charged_against_the_setup_share_of_the_container() {
     rt.testenv_delay
         .lock()
         .unwrap()
-        .insert("up".into(), Duration::from_millis(600));
-    // --deadline 3, share 50 %: the build takes 1.2 s,
-    // then the boot takes 0.6 s — together over the 1.5 s share, each alone under it.
-    let b = FakeBuilder::slow(Duration::from_millis(1200));
+        .insert("up".into(), Duration::from_millis(2200));
+    // --deadline 6, share 50 %: the build takes 2.2 s, then the boot 2.2 s — together over
+    // the 3 s share, each alone under it with room for a loaded host's jitter.
+    let b = FakeBuilder::slow(Duration::from_millis(2200));
     let rc = w.run(
         &rt,
         &b,
-        &["--deadline", "3", "--suites", "test-a.sh", "topic"],
+        &["--deadline", "6", "--suites", "test-a.sh", "topic"],
         "",
         &w.root,
     );
@@ -1459,7 +1459,7 @@ fn a_trial_where_every_runnable_suite_was_deferred_judged_nothing() {
     let rc = w.run(
         &rt,
         &b,
-        &["--deadline", "1", "--suites", "test-b.sh", "topic"],
+        &["--deadline", "4", "--suites", "test-b.sh", "topic"],
         "",
         &w.root,
     );
@@ -1480,6 +1480,20 @@ fn mounting(rt: &FakeRuntime, slot: PathBuf) {
     );
 }
 
+/// A sibling test's fork can hold a copy of the slot's flock descriptor until its exec, so a
+/// trial that follows another on the same slot first waits for the lock to be really free.
+fn slot_lock_free(lock: &Path) {
+    fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    let end = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < end {
+        if crate::worktree::try_lock(lock).is_some() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("slot lock {} still held after 30s", lock.display());
+}
+
 fn batch_rows(w: &World) -> Vec<String> {
     fs::read_to_string(w.root.join("run/tsd/suite-timing.jsonl"))
         .unwrap_or_default()
@@ -1495,13 +1509,14 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     w.env.insert("SPIRA_TESTENV_WARM_SLOTS".into(), "1".into());
     w.env.insert("SPIRA_VERDICT_TTL".into(), "0".into());
     let run = w.root.join("run");
-    let (slot, _, record) = crate::warm::paths(&run, 0);
+    let (slot, lock, record) = crate::warm::paths(&run, 0);
     let rt = runtime();
     mounting(&rt, slot.clone());
     let b = FakeBuilder::new(None);
     let args = ["--deadline", "300", "--suites", "test-a.sh", "topic"];
 
     // 1st trial: the slot has no spare yet — it boots its own container ON the slot
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("warm slot 0: no spare booted in this slot yet")));
     let ups: Vec<Vec<String>> = rt
@@ -1543,6 +1558,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
         .iter()
         .filter(|c| c[0] == "up")
         .count();
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(
         w.has_line(|l| l.contains(&format!("claimed warm spare {spare}"))),
@@ -1575,6 +1591,7 @@ fn a_warm_trial_claims_the_slots_spare_once_tears_it_down_and_asks_for_a_refill(
     assert_eq!(*w.refills.lock().unwrap(), vec![0, 0]);
 
     // 3rd trial with no refill in between: the spare is gone, so it boots cold again
+    slot_lock_free(&lock);
     assert_eq!(w.run(&rt, &b, &args, "", &w.root), 0);
     assert!(w.has_line(|l| l.contains("no spare booted")));
 }

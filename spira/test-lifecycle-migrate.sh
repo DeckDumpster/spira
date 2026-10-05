@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 #
-# test-lifecycle-migrate.sh — `spira-lc admin-migrate` applies pending lifecycle/migrations
-# in order, records each in the schema_migration ledger, never replays one (0002 is not
-# idempotent), and exits non-zero on a failing one so release pre-activate refuses the flip.
-# Positive controls: the failing-migration case first proves a good migration does apply.
+# test-lifecycle-migrate.sh — the migrations release pre-activate runs before every flip
+# (sp-vf9iu), against a real Dolt server: `spira-lc admin-migrate --if-enforced` applies a
+# pending lifecycle/migrations ADD COLUMN, never re-runs an applied one (0002 is not
+# idempotent: a replay fails "duplicate column"), exits non-zero on a failing migration so
+# pre-activate refuses the release, and is a no-op where lifecycle is not enforced. And
+# admin-apply-ddl selects spira_lifecycle, so a migration file applies as shipped.
+# Positive controls: each "absent before" check precedes the "present after" one.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
 #
@@ -72,71 +75,68 @@ export SPIRA_LC_USER=root
 export SPIRA_LC_PASSWORD=""
 
 
-ledger()  { root_sql --use-db spira_lifecycle sql -q "SELECT name FROM schema_migration ORDER BY name" -r csv 2>/dev/null; }
 columns() { root_sql --use-db spira_lifecycle sql -q "SHOW COLUMNS FROM bead" -r csv 2>/dev/null; }
 reset_db() { root_sql sql -q "DROP DATABASE IF EXISTS spira_lifecycle" >/dev/null 2>&1; }
-MIG="$TMP/migrations"; mkdir -p "$MIG"
+SHIPPED="$REPO/lifecycle/migrations"
+# The live database before round 268: schema.sql as it stood without bead.since.
+pre_since_db() {
+    reset_db
+    grep -v '^    since ' "$REPO/lifecycle/schema.sql" > "$TMP/pre-since.sql"
+    spira-lc admin-apply-ddl "$TMP/pre-since.sql" >"$TMP/pre-since.log" 2>&1 || bail "pre-since schema did not apply: $(cat "$TMP/pre-since.log")"
+}
 
 echo
-echo "every shipped migration is named in schema.sql's ledger seed"
-for f in "$REPO"/lifecycle/migrations/*.sql; do
-    want "schema.sql seeds $(basename "$f")" "'$(basename "$f")'" "$(cat "$REPO/lifecycle/schema.sql")"
-done
-
-echo
-echo "a fresh database is seeded: nothing is pending, shipped migrations are not replayed"
+echo "a fresh database (schema.sql on an empty server): every shipped migration is moot"
+reset_db
 spira-lc admin-apply-ddl "$REPO/lifecycle/schema.sql" >"$TMP/schema.log" 2>&1
-wantrc "schema applies" 0 $?
-out="$(spira-lc admin-migrate "$REPO/lifecycle/migrations" 2>&1)"; rc=$?
+wantrc "schema.sql applies with no spira_lifecycle yet (admin-apply-ddl falls back to no database)" 0 $?
+out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate on a fresh database succeeds" 0 $rc
-want "and reports nothing pending" "no pending" "$out"
-want "ledger holds 0002" "0002-since.sql" "$(ledger)"
+want "and skips 0002's column, which schema.sql already made" "0002-since.sql: bead.since present" "$out"
 
 echo
-echo "a pending migration is applied once and recorded"
-cp "$REPO"/lifecycle/migrations/*.sql "$MIG/"
-printf 'USE spira_lifecycle;\nALTER TABLE bead ADD COLUMN probe3 INT NULL;\n' > "$MIG/0003-probe.sql"
-nowant "positive control: probe3 is absent before" "probe3" "$(columns)"
-out="$(spira-lc admin-migrate "$MIG" 2>&1)"; rc=$?
+echo "a pending migration is applied before activation, and not re-run after"
+pre_since_db
+nowant "positive control: the pre-since store lacks since" "since" "$(columns)"
+out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "pending migration applies" 0 $rc
-want "reports 0003 applied" "applied 0003-probe.sql" "$out"
-want "column exists" "probe3" "$(columns)"
-want "recorded in the ledger" "0003-probe.sql" "$(ledger)"
-out="$(spira-lc admin-migrate "$MIG" 2>&1)"; rc=$?
-wantrc "re-running does not replay the non-idempotent migration" 0 $rc
-want "nothing pending the second time" "no pending" "$out"
+want "reports 0002 applied" "0002-since.sql: added bead.since" "$out"
+want "since now exists" "since" "$(columns)"
+out="$(spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "a second run succeeds: the non-idempotent 0002 is not replayed" 0 $rc
+want "and says why" "0002-since.sql: bead.since present" "$out"
 
 echo
-echo "a failing migration exits non-zero, is not recorded, and stops the run"
-printf 'USE spira_lifecycle;\nALTER TABLE no_such_table ADD COLUMN x INT NULL;\n' > "$MIG/0004-bad.sql"
-printf 'USE spira_lifecycle;\nALTER TABLE bead ADD COLUMN probe5 INT NULL;\n' > "$MIG/0005-after.sql"
-out="$(spira-lc admin-migrate "$MIG" 2>&1)"; rc=$?
+echo "where lifecycle is not enforced, --if-enforced migrates nothing"
+pre_since_db
+out="$(SPIRA_LIFECYCLE_ENFORCE=0 spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "exit 0" 0 $rc
+want "says so" "lifecycle_enforce is off" "$out"
+nowant "and changed nothing" "since" "$(columns)"
+
+echo
+echo "a failing migration exits non-zero and stops the run, so pre-activate refuses the flip"
+pre_since_db
+MIG="$TMP/migrations"; mkdir -p "$MIG"
+printf 'UPDATE no_such_table SET x = 1;\n' > "$MIG/0001-bad.sql"
+printf 'ALTER TABLE bead ADD COLUMN since BIGINT NULL;\n' > "$MIG/0002-after.sql"
+out="$(spira-lc admin-migrate --if-enforced "$MIG" 2>&1)"; rc=$?
 wantrc "admin-migrate refuses" 2 $rc
-want "names the failing migration" "0004-bad.sql FAILED" "$out"
-nowant "the failure is not in the ledger" "0004-bad.sql" "$(ledger)"
-nowant "the migration after it did not run" "probe5" "$(columns)"
-nowant "nor is it recorded" "0005-after.sql" "$(ledger)"
+want "names the failing migration" "0001-bad.sql" "$out"
+nowant "the migration after it did not run" "since" "$(columns)"
+rm -f "$MIG"/*.sql
+printf 'ALTER TABLE bead ADD COLUMN since BIGINT NULL;\n' > "$MIG/0001-good.sql"
+printf 'ALTER TABLE bead DROP COLUMN stack_depth;\n' > "$MIG/0002-unguarded.sql"
+out="$(spira-lc admin-migrate --if-enforced "$MIG" 2>&1)"; rc=$?
+wantrc "an ALTER that cannot be guarded is refused" 2 $rc
+want "named" "0002-unguarded.sql" "$out"
+nowant "before anything ran (0001 not applied)" "since" "$(columns)"
 
 echo
-echo "a missing ledger refuses; --baseline creates it without running anything"
-reset_db
-root_sql sql -q "CREATE DATABASE spira_lifecycle" >/dev/null 2>&1
-root_sql --use-db spira_lifecycle sql -q "CREATE TABLE bead (bead_id VARCHAR(8) PRIMARY KEY)" >/dev/null 2>&1
-out="$(spira-lc admin-migrate "$MIG" 2>&1)"; rc=$?
-wantrc "no ledger: refused" 2 $rc
-want "and says how to baseline" "baseline" "$out"
-spira-lc admin-migrate --baseline 0001-stack.sql 0002-since.sql >/dev/null 2>&1
-wantrc "baseline succeeds" 0 $?
-want "baseline recorded 0002" "0002-since.sql" "$(ledger)"
-nowant "baseline ran nothing (bead has no since)" "since" "$(columns)"
-
-echo
-echo "shipped migrations apply as shipped (they select the database themselves)"
-reset_db
-grep -v '^    since ' "$REPO/lifecycle/schema.sql" > "$TMP/pre-since.sql"
-spira-lc admin-apply-ddl "$TMP/pre-since.sql" >/dev/null 2>&1
-nowant "positive control: pre-since schema lacks since" "since" "$(columns)"
-spira-lc admin-apply-ddl "$REPO/lifecycle/migrations/0002-since.sql" >"$TMP/m2.log" 2>&1
+echo "shipped migrations apply as shipped: admin-apply-ddl selects spira_lifecycle"
+pre_since_db
+nowant "positive control: pre-since store lacks since" "since" "$(columns)"
+spira-lc admin-apply-ddl "$SHIPPED/0002-since.sql" >"$TMP/m2.log" 2>&1
 wantrc "0002-since.sql applies via admin-apply-ddl" 0 $?
 want "since now exists" "since" "$(columns)"
 

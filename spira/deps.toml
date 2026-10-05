@@ -50,6 +50,13 @@ version_min = ""
 version_probe = "journalctl --version"
 
 [[dep]]
+name = "gunzip"
+tier = "runtime"
+purpose = "install unpacks the pinned duckdb download (duckdb_cli-linux-<arch>.gz) before preflight"
+version_min = ""
+version_probe = "gunzip --version"
+
+[[dep]]
 name = "tar"
 tier = "runtime"
 purpose = "release build extracts git archive of the commit it builds (release crate)"
@@ -122,7 +129,7 @@ version_probe = "cargo --version"
 [[dep]]
 name = "sccache"
 tier = "operator"
-purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Since sp-xjnzl this cache is also shared with every ephemeral round-vm over a small WebDAV store (sccache-dav), which needs the `webdav` backend compiled in — `cargo install sccache --locked` alone (no feature flags) silently builds a binary that passes every ordinary check and never speaks WebDAV. Install: cargo install sccache --locked --no-default-features --features webdav — `doctor`'s \"compilation cache\" section runs `sccache --help` and fails if its own \"Enabled features\" block says WebDAV: false, so presence on PATH is checked separately from this."
+purpose = "the box's one shared compilation cache (sp-z61hj): every Spira build (gate tree tools and unit phases, testenv, release build) compiles through it, so a dependency crate is compiled once per Cargo.lock and profile, not once per worktree. Since sp-xjnzl this cache is also shared with every ephemeral round-vm over a small WebDAV store (sccache-dav), which needs the `webdav` backend compiled in — `cargo install sccache --locked` alone (no feature flags) silently builds a binary that passes every ordinary check and never speaks WebDAV. `doctor`'s \"compilation cache\" section runs `sccache --help` and fails if its own \"Enabled features\" block says WebDAV: false, so presence on PATH is checked separately from this. install's phase -1 (sp-x6v17, law-install-installs-every-dependency) now fetches this itself when the sccache already on PATH lacks the webdav line: a fresh box has no cargo at all (acceptance run 37222619835), so `cargo install ... --features webdav` cannot be install's own provisioning path — it fetches mozilla/sccache's prebuilt release binary instead (built with default features, which include webdav)."
 version_min = ""
 version_probe = "sccache --version"
 absent = "every build tool refuses rather than compile every dependency cold: the gate is NO_VERDICT reason=no-build-cache, testenv faults rc=3 reason=no-build-cache, release build errors; an aeon session runs with its builds uncached and says so. SPIRA_BUILD_CACHE=off opts out on purpose."
@@ -182,7 +189,7 @@ absent = "every suite that builds a container fixture cannot run; testenv.sh and
 [[dep]]
 name = "inotifywait"
 tier = "operator"
-purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start"
+purpose = "delivering mail the moment it arrives (inotify-tools); without it mail waits for the next session start. install's phase -1 (sp-x6v17, law-install-installs-every-dependency) fetches this itself when it is not already on PATH: install carries no sudo, so `apt install inotify-tools` cannot be the provisioning path, but inotify-tools' own release workflow publishes a verified-static inotifywait binary (`file -L $bin | grep -q static`, checked at publish time) for x86_64/aarch64 linux, which install vendors straight into ~/.local/bin instead."
 version_min = ""
 version_probe = "inotifywait --version"
 absent = "no mail is delivered to registered readers mid-session — escalations and verdict replies wait for the next session start."
@@ -190,7 +197,7 @@ absent = "no mail is delivered to registered readers mid-session — escalations
 [[dep]]
 name = "aerc"
 tier = "operator"
-purpose = "the operator's mail client for reading and answering; any Maildir client works"
+purpose = "the operator's mail client for reading and answering; any Maildir client works. Provided by install (sp-x6v17, operator ruling 2026-10-03: law-install-installs-every-dependency, no optional tier), but since sp-41so3 install never builds it: unlike duckdb/sccache/inotify-tools, aerc (git.sr.ht/~rjarry/aerc) publishes no prebuilt binary release, and its own tags (\"0.22.0\", no \"v\" prefix) are not a valid go module version query, so `go install git.sr.ht/~rjarry/aerc@<tag>` cannot resolve it either — but install-time `go install` (fetching ~95 of aerc's own module dependencies from proxy.golang.org on every host with no cached GOPATH) is exactly what made it fragile: on 2026-10-04 every one of those fetches hit a TLS handshake timeout under load, failing local acceptance on a build that had passed earlier the same day. `spira/build-tarball.sh` now builds aerc from the pinned tag's source archive (git.sr.ht/~rjarry/aerc/archive/<tag>.tar.gz) ONCE, at release-build time — same flags as before (`go install -trimpath -ldflags \"-X main.Version=<tag>\"`, GOTOOLCHAIN=local) — and ships the binary inside the release tarball at vendor/bin/aerc. install's phase -1 (`install_aerc` in install/src/bin/install.rs) only ever copies that binary to ~/.local/bin/aerc — no network, no Go toolchain — and fails closed, naming the missing file, if the running release carries no vendor/bin/aerc at all (a dev tree, or a tarball built before sp-41so3). Idempotent: skipped entirely when ~/.local/bin/aerc already reports the pinned version."
 version_min = ""
 version_probe = "aerc --version"
 
@@ -204,7 +211,7 @@ version_probe = "hunk --version"
 [[dep]]
 name = "go"
 tier = "operator"
-purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally"
+purpose = "building the pinned bd from source when no prebuilt exists for this platform; without it a bd mismatch cannot be recovered locally — still manual, still `go version` via build-bd.sh's $GO. Between sp-x6v17 and sp-41so3, install's own phase -1 also reused whatever go it found here to build aerc at install time; sp-41so3 moved that build to spira/build-tarball.sh, at release-build time, which is the one place a usable go (or a pinned go.dev/dl toolchain, fetched the same way install used to) now matters for aerc. install's phase -1 touches go for nothing at all any more."
 version_min = ""
 version_probe = "go version"
 

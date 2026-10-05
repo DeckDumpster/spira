@@ -88,6 +88,14 @@ pub struct Job {
     pub exclusive: Option<String>,
 }
 
+/// The caller's order, exactly: exclusive suites first (they cannot share the box), each group in
+/// the order given. Used for an explicit `--suites` list, whose order is the caller's decision.
+pub fn given(jobs: &[Job]) -> Vec<Job> {
+    let mut out: Vec<Job> = jobs.iter().filter(|j| j.exclusive.is_some()).cloned().collect();
+    out.extend(jobs.iter().filter(|j| j.exclusive.is_none()).cloned());
+    out
+}
+
 /// Exclusive suites first (in selection order), then the pool longest-first by recorded mean
 /// wall time. A suite with no record sorts as the longest on record + 1 — an unmeasured
 /// suite is the one a late start costs most. Ties keep selection order.
@@ -213,6 +221,14 @@ mod tests {
             name: n.into(),
             exclusive: excl.then(|| "heavy".to_string()),
         }
+    }
+
+    #[test]
+    fn given_keeps_the_callers_order_with_exclusive_first() {
+        let j = |n: &str, x: bool| Job { name: n.into(), exclusive: x.then(|| "x".into()) };
+        let jobs = vec![j("c", false), j("a", false), j("x", true), j("b", false)];
+        let names: Vec<String> = given(&jobs).into_iter().map(|j| j.name).collect();
+        assert_eq!(names, ["x", "c", "a", "b"], "no re-sorting: the caller's order stands");
     }
 
     #[test]

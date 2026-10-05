@@ -626,7 +626,7 @@ fn live(tag: &str, bd_body: &str, lc_body: &str) -> (Live, testkit::TempDir) {
     (l, dir)
 }
 
-const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\nSTDIN '; cat; printf '\n'; } >> @LOG@"#;
+const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\nSTDIN '; /bin/cat; printf '\n'; } >> @LOG@"#;
 
 #[test]
 fn live_bd_writes_pass_text_on_stdin() {

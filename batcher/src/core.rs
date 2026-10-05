@@ -219,6 +219,9 @@ pub enum MergeResult {
 pub enum SetAsideReason {
     /// Handed back to the landing pass to rebase; never reopened by the batcher itself.
     Conflict { deleted_suites: Vec<String> },
+    /// Conflicts with a sibling admitted earlier in this round (not with the base): nothing to
+    /// rebase, the member waits for the next round once `lost_to` lands.
+    SiblingConflict { lost_to: Id, files: Vec<String> },
     /// A member's own new/changed suite is red against main-plus-that-member-alone and
     /// names the bead it waits on (E): sequenced behind that bead, certification withdrawn.
     TestAheadOfCode { waits_on: Id },
@@ -244,6 +247,8 @@ pub struct CombineInput<'a> {
     /// Members already sequenced behind a dependency by an earlier round's judgement or E
     /// check; still withheld until that bead lands.
     pub sequenced: &'a BTreeMap<Id, Id>,
+    /// Conflicting member -> the earlier-admitted sibling it lost to and the files clashed on.
+    pub siblings: &'a BTreeMap<Id, (Id, Vec<String>)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -266,6 +271,10 @@ pub fn combine(input: &CombineInput) -> Combined {
             Some(MergeResult::Ok) => merged.push(m.clone()),
             Some(MergeResult::Empty) if stacked_into(input.pool, &m.id) => merged.push(m.clone()),
             Some(MergeResult::Empty) => set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Empty }),
+            _ if input.siblings.contains_key(&m.id) => {
+                let (lost_to, files) = input.siblings[&m.id].clone();
+                set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::SiblingConflict { lost_to, files } });
+            }
             _ => {
                 let deleted = input.deleted_suites.get(&m.id).cloned().unwrap_or_default();
                 set_aside.push(SetAside { id: m.id.clone(), reason: SetAsideReason::Conflict { deleted_suites: deleted } });
@@ -513,6 +522,11 @@ pub fn evicted_event(set_aside: &SetAside) -> Event {
             "{} set aside: conflicts with base, handed to the landing pass to rebase (suites deleted since cut: {})",
             set_aside.id,
             deleted_suites.join(", ")
+        ),
+        SetAsideReason::SiblingConflict { lost_to, files } => format!(
+            "{} set aside: conflicts with sibling {lost_to} in this round on {} — no rebase needed, retried next round once {lost_to} lands",
+            set_aside.id,
+            files.join(", ")
         ),
         SetAsideReason::TestAheadOfCode { waits_on } => {
             format!("{} set aside: test ahead of its code, sequenced behind {waits_on}", set_aside.id)

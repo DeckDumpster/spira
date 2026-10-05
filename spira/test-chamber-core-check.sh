@@ -34,4 +34,32 @@ case "$out" in *"names law-chamber-core-a,"*) bad "a resolvable slug is not repo
 out="$(SPIRA_DB="$TMP/nowhere" "$CHECK" "$TMP/good" 2>&1)"; rc=$?
 is "an unreadable store is refused, not passed" 2 "$rc"
 
+# THE SHIPPED SEEDS COVER EVERY CHAMBER'S CORE, not just the builder's (sp-crr3n widens
+# sp-6ka75's check). A fresh install holds only what spira/statutes/ ships, so a core slug
+# any fayth ends up declaring but the seeds lack makes that fresh-install persona refuse to
+# start ("core statute(s) declared but not found") pre-session. Static: no store needed.
+#
+# A FAYTH THAT DECLARES NO FAYTH_STATUTE_CORE OF ITS OWN still has one: aeon's run.rs falls
+# back to SPIRA_STATUTE_CORE's default (lib.sh: "unset, it gets $SPIRA_STATUTE_CORE"), which
+# is ops/groomer/maechen/batcher/spike's real core in production — the gap acceptance phase B
+# caught for ops. Resolve that same default once, from spira/conf.d/SPIRA_STATUTE_CORE's seed
+# line, so a fayth with no override is checked against what it actually gets at summon.
+global_core="$(sed -n 's/.*SPIRA_STATUTE_CORE:=\(.*\)}".*/\1/p' "$HERE/conf.d/SPIRA_STATUTE_CORE" | tail -1)"
+[ -n "$global_core" ] || bad "conf.d/SPIRA_STATUTE_CORE's default parses (positive control)" "none parsed"
+
+total_checked=0
+all_unshipped=""
+for f in "$HERE"/chamber/*.fayth; do
+    name="$(basename "$f" .fayth)"
+    own="$(sed -n 's/^FAYTH_STATUTE_CORE="\(.*\)"/\1/p' "$f" | tail -1)"
+    core="${own:-$global_core}"
+    core="$(tr ', ' '\n\n' <<<"$core" | sed '/^$/d')"
+    for c in $core; do
+        total_checked=$((total_checked + 1))
+        [ -f "$HERE/statutes/$c.txt" ] || all_unshipped="$all_unshipped $name:$c"
+    done
+done
+[ "$total_checked" -gt 0 ] || bad "at least one chamber fayth resolves a core slug (positive control)" "none parsed"
+is "every chamber fayth's core statute ships in spira/statutes/" "" "${all_unshipped# }"
+
 tl_summary

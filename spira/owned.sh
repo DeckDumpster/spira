@@ -56,6 +56,36 @@ while IFS=' ' read -r _kind _name; do
     esac
 done < <(units-install --list-manifest) || exit 1
 
+# UNION IN EVERY TEMPLATE units-install COULD EVER INSTALL FOR THIS INSTANCE (sp-da4y0).
+# `--list-manifest` reflects this box's CURRENT resolution of conditional inputs (e.g.
+# `Inputs::repo_is_git_checkout`) — probed FRESH by `manifest_from_env` on every call, never
+# frozen at install time — so a unit installed under yesterday's resolution (the repo was a
+# git checkout then) that today's no longer resolves the same way (not seen as one now)
+# silently drops out of `--list-manifest`. A removal pass driven by that list alone then
+# leaves the unit file on disk; the positive-control stray sweep below only REPORTS what it
+# finds unlisted, it never removes. Acceptance hit exactly this (run 37222619835): install
+# resolved the repo as a git checkout and installed spira-cert-sweep-{full,sample}-prod's
+# four units; uninstall's own re-resolution saw it as not one, and all four survived
+# `uninstall.sh --yes` as reported strays.
+#
+# `--list-manifest-union` (install/src/manifest.rs's `union_installed_names`) is bounded to
+# every template name any combination of the six conditional inputs could ever produce, so
+# this stays narrow — it does not widen into "every file matching spira-*-<instance> on
+# disk": an actually unknown stray left by an older harness version is still left for the
+# sweep to report, never silently swept into removal.
+_owned_known_union=" "
+for _ou_n in "${_OWNED_UNIT_NAMES[@]+"${_OWNED_UNIT_NAMES[@]}"}"; do
+    _owned_known_union="$_owned_known_union$_ou_n "
+done
+while IFS=' ' read -r _kind _name; do
+    [ "$_kind" = unit ] || continue
+    case "$_owned_known_union" in
+        *" $_name "*) ;;
+        *) _OWNED_UNIT_NAMES+=("$_name"); _owned_known_union="$_owned_known_union$_name " ;;
+    esac
+done < <(units-install --list-manifest-union) || exit 1
+unset _owned_known_union _ou_n
+
 # ---------------------------------------------------------------------------
 # LIST: kind|id|location|phase|retention
 # ---------------------------------------------------------------------------

@@ -8,5 +8,12 @@ DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
     # often are the ones a violation costs most to miss. Being wrongly in core costs ~88
     # words; being wrongly out costs an untraced violation. The default is generous.
     # CSV of slug names, without the leading path — e.g. "law-foo,law-bar".
-    : "${SPIRA_STATUTE_CORE:=law-absence-needs-a-positive-control,law-fence-loops-on-shared-hardware,law-alerts-must-be-actionable,law-prefer-the-real-dependency,law-gates-run-in-a-clean-environment,law-closed-is-not-landed,law-a-regression-test-must-be-seen-to-fail,law-guard-binds-the-caller,law-verify-nothing-was-dropped,law-gate-earns-its-place,law-arm-before-you-retire,law-hand-land-the-unblocker,law-no-close-reason-admits-unfinished}"
+    # THREE SLUGS DROPPED (sp-crr3n), never shipped in spira/statutes/: this default is what
+    # ops, groomer, maechen, batcher and spike (no FAYTH_STATUTE_CORE of their own) fall back
+    # to, and a fresh install died pre-session on these ("core statute(s) declared but not
+    # found", acceptance phase B). law-fence-loops-on-shared-hardware names this operator's
+    # own gt dashboard and pokedumpster by name; law-gate-earns-its-place and
+    # law-arm-before-you-retire name Ryan in their own scars — all inventory, not mechanism
+    # (law-harness-ships-mechanism-not-inventory).
+    : "${SPIRA_STATUTE_CORE:=law-absence-needs-a-positive-control,law-alerts-must-be-actionable,law-prefer-the-real-dependency,law-gates-run-in-a-clean-environment,law-closed-is-not-landed,law-a-regression-test-must-be-seen-to-fail,law-guard-binds-the-caller,law-verify-nothing-was-dropped,law-hand-land-the-unblocker,law-no-close-reason-admits-unfinished}"
 SPIRA_CONF_DEFAULT_EOF

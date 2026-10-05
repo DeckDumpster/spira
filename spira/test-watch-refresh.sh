@@ -370,7 +370,7 @@ if [ "$watcher_calls" = "restart_watchd=1 restart_systemctl=1 mkdir=0 forbidden=
     ok "a restarting pass restarts the stale watcher once, through watchd, and touches nothing else"
 else
     bad "a restarting pass restarts the stale watcher once, through watchd, and touches nothing else" \
-        "$watcher_calls :: $(grep -E '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" | cut -c1-80 | tr '\n' '|')"
+        "$watcher_calls :: $(grep -E '^(systemctl|stat|mkdir|watchd|FORBIDDEN)' "$EXECLOG" | cut -c1-80 | tr '\n' '|') :: err: $(cat "$TMP/err")"
 fi
 # The restart is not bookkeeping: a counter that moved without systemctl being called would
 # be a meter measuring itself.

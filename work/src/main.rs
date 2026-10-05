@@ -42,7 +42,7 @@ fn main() {
     };
     let actor = std::env::var("SPIRA_FAYTH").or_else(|_| std::env::var("SPIRA_WORK_ACTOR")).unwrap_or_else(|_| "aeon".to_string());
 
-    let tip = if verb == "submit" { read_tip() } else { None };
+    let tip = if verb == "submit" { read_tip(&bound) } else { None };
 
     let req = match work::build_request(&bound, &verb, &verb_args, tip.as_deref(), &actor) {
         Ok(r) => r,
@@ -66,9 +66,17 @@ fn main() {
     }
 }
 
-/// `submit` never takes a tip argument (design §3.5): it is read from the aeon's own
-/// worktree, here, the only place this binary touches git.
-fn read_tip() -> Option<String> {
+/// `submit` never takes a tip argument (design §3.5): it is read here, the only place this
+/// binary touches git — from the bead's own branch `spira/<id>`, which every worktree of the
+/// repo shares, so the answer does not depend on the caller's cwd. `HEAD` read from the
+/// wrong directory recorded local/main as the tip and the bead could never certify.
+fn read_tip(bead: &str) -> Option<String> {
+    let branch = format!("refs/heads/spira/{bead}");
+    if let Ok(out) = Command::new("timeout").args(["5", "git", "rev-parse", "--verify", "-q", &branch]).output() {
+        if out.status.success() {
+            return Some(String::from_utf8_lossy(&out.stdout).trim().to_string());
+        }
+    }
     let out = Command::new("git").args(["rev-parse", "HEAD"]).output().ok()?;
     if !out.status.success() {
         return None;
@@ -80,7 +88,7 @@ fn read_tip() -> Option<String> {
 /// line in (the argv array), one JSON line out (`{exit_code, stdout}`). No same-user
 /// fallback exists here — see this file's module doc for why that absence is the point.
 fn send(argv: &[String]) -> Result<(i32, String), String> {
-    let socket_path = std::env::var("SPIRA_LC_SOCKET").unwrap_or_else(|_| "/run/spira-lc/sock".to_string());
+    let socket_path = spira_config::resolve::key_for_process("SPIRA_LC_SOCKET")?;
     let stream = UnixStream::connect(&socket_path).map_err(|e| format!("connecting to {socket_path}: {e}"))?;
     stream.set_read_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;
     stream.set_write_timeout(Some(TIMEOUT)).map_err(|e| e.to_string())?;

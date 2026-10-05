@@ -5,7 +5,7 @@
 `work <verb>` is how a builder aeon acts on its one bound bead when it has no `bd` (lifecycle
 design §3.5). The verbs are `show`, `note`, `submit`, `done`, `blocked`, `file-followup`,
 `split` and `superseded-by`. It holds no database code. It speaks one JSON line to spira-lc's
-socket (`SPIRA_LC_SOCKET`, default `/run/spira-lc/sock`) and prints the reply.
+socket (`SPIRA_LC_SOCKET`; default `/run/spira-lc/sock` in system mode, `/run/user/<uid>/spira-lc/sock` — install's `lc-serve.service` — in same-user mode, see `spira_config::resolve::lc_socket_default`) and prints the reply.
 
 ## 2. Contract
 

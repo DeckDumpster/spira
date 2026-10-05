@@ -268,9 +268,113 @@ pub fn release_store(cfg: &Cfg) -> Reading {
     })
 }
 
+// ---- (e) open beads with no lifecycle row -------------------------------------------
+
+pub const ROWLESS_REFERENCE: &str = "incident:lifecycle-rowless-beads";
+
+pub struct RowlessCfg {
+    pub enforce: bool,
+    pub bd: String,
+    pub db: String,
+    pub lc_bin: String,
+    pub cap: usize,
+    pub sustain_secs: i64,
+}
+
+pub fn rowless(open: &[String], rows: &[String]) -> Vec<String> {
+    let have: std::collections::BTreeSet<&str> = rows.iter().map(String::as_str).collect();
+    let mut missing: Vec<String> = open.iter().filter(|id| !have.contains(id.as_str())).cloned().collect();
+    missing.sort();
+    missing.dedup();
+    missing
+}
+
+pub fn rowless_cond(missing: &[String], cap: usize, sustain_secs: i64) -> Option<Cond> {
+    if missing.is_empty() {
+        return None;
+    }
+    let shown: Vec<&str> = missing.iter().take(cap.max(1)).map(String::as_str).collect();
+    let more = missing.len() - shown.len();
+    Some(Cond {
+        key: "rowless-beads".into(),
+        reference: ROWLESS_REFERENCE.into(),
+        title: "LIFECYCLE: open beads have no lifecycle row and can never be claimed".into(),
+        body: format!(
+            "{} open bead(s) have no spira_lifecycle row (lifecycle_enforce is on), so no builder can claim them: {}{}.\n\nA creation path did not run `spira-lc create-bead`. Create the rows (`spira-lc create-bead <id>`) and find the path that filed them.\n",
+            missing.len(),
+            shown.join(", "),
+            if more > 0 { format!(" (+{more} more)") } else { String::new() }
+        ),
+        priority: 0,
+        sustain_secs,
+    })
+}
+
+fn ids_of(stdout: &[u8], key: &str) -> Option<Vec<String>> {
+    let rows: Vec<serde_json::Value> = serde_json::from_slice(stdout).ok()?;
+    Some(rows.iter().filter_map(|r| r.get(key).and_then(|v| v.as_str()).map(String::from)).collect())
+}
+
+pub fn rowless_beads(cfg: &RowlessCfg) -> Reading {
+    if !cfg.enforce {
+        return Reading::Standing(Vec::new());
+    }
+    let open = crate::deadline::output(
+        "rowless open beads",
+        Command::new(&cfg.bd).args(["-C", &cfg.db, "list", "--status", "open,in_progress,blocked,deferred", "--json", "--limit", "0", "--brief"]),
+    )
+    .ok()
+    .filter(|o| o.status.success())
+    .and_then(|o| ids_of(&o.stdout, "id"));
+    let rows = crate::deadline::output("rowless lifecycle rows", Command::new(&cfg.lc_bin).arg("list"))
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| ids_of(&o.stdout, "bead_id"));
+    let (Some(open), Some(rows)) = (open, rows) else { return Reading::Unknown };
+    Reading::Standing(rowless_cond(&rowless(&open, &rows), cfg.cap, cfg.sustain_secs).into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rowless_finds_an_injected_rowless_bead_and_caps_the_list() {
+        let open: Vec<String> = ["sp-a", "sp-b", "sp-c"].iter().map(|s| s.to_string()).collect();
+        let rows: Vec<String> = ["sp-a", "sp-c", "sp-gone"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(rowless(&open, &rows), vec!["sp-b".to_string()]);
+        assert_eq!(rowless(&open, &open), Vec::<String>::new());
+        assert!(rowless_cond(&[], 5, 0).is_none(), "a fully rowed store stands nothing");
+        let many: Vec<String> = (0..30).map(|i| format!("sp-{i:02}")).collect();
+        let c = rowless_cond(&many, 5, 300).unwrap();
+        assert_eq!(c.reference, ROWLESS_REFERENCE, "one reference de-duplicates every filing");
+        assert!(c.body.contains("30 open bead(s)") && c.body.contains("(+25 more)") && !c.body.contains("sp-05"), "{}", c.body);
+        assert_eq!(c.sustain_secs, 300);
+    }
+
+    #[test]
+    fn rowless_beads_is_silent_with_lifecycle_off_and_reads_the_stores_when_on() {
+        let t = testkit::TempDir::new("rowless");
+        let write = |name: &str, body: &str| {
+            let p = t.path().join(name);
+            testkit::write_exe(&p, &format!("#!/bin/sh\n{body}\n"));
+            p.to_string_lossy().into_owned()
+        };
+        let bd = write("bd", "echo '[{\"id\":\"sp-a\"},{\"id\":\"sp-b\"}]'");
+        let lc = write("lc", "echo '[{\"bead_id\":\"sp-a\"}]'");
+        let mut cfg = RowlessCfg { enforce: false, bd: bd.clone(), db: "x".into(), lc_bin: lc.clone(), cap: 20, sustain_secs: 0 };
+        assert!(matches!(rowless_beads(&cfg), Reading::Standing(v) if v.is_empty()), "off must not alarm");
+        cfg.enforce = true;
+        match rowless_beads(&cfg) {
+            Reading::Standing(v) => {
+                assert_eq!(v.len(), 1);
+                assert!(v[0].body.contains("sp-b") && !v[0].body.contains("sp-a,"), "{}", v[0].body);
+            }
+            Reading::Unknown => panic!("both stores answered"),
+        }
+        cfg.lc_bin = write("lc-down", "exit 1");
+        assert!(matches!(rowless_beads(&cfg), Reading::Unknown), "an unanswering store neither files nor clears");
+    }
 
     #[test]
     fn units_off_current_names_only_units_rendering_another_release() {

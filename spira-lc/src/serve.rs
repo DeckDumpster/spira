@@ -1,9 +1,7 @@
 //! The system service entry point (design §3.6.4): `spira-lc serve` binds the Unix socket
 //! that carries the machine's own DB credential (via this process's environment) so that no
-//! other process needs to read it, and holds one persistent `dolt` session for its whole
-//! lifetime — the same `Conn`, reused, is what lets a transition through this daemon meet
-//! the design's p99 < 50ms bench; a fresh CLI invocation cannot, because starting a new
-//! `dolt` process and connection costs 150-230ms on its own, before any SQL runs.
+//! other process needs to read it, and holds one database connection for its whole
+//! lifetime, so a request through it pays no connect or handshake.
 //!
 //! Every request runs through `crate::dispatch`, the exact function a one-shot CLI
 //! invocation calls directly — there is one implementation of show/list/history/event, not
@@ -27,7 +25,7 @@ pub fn run(args: &[String]) -> i32 {
         .or_else(|| std::env::var("SPIRA_LC_SOCKET").ok())
         .unwrap_or_else(|| "/run/spira-lc/sock".to_string());
 
-    let conn = match Conn::persistent_session() {
+    let conn = match Conn::from_env() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("spira-lc serve: cannot configure a connection: {e:?}");
@@ -54,15 +52,20 @@ pub fn run(args: &[String]) -> i32 {
     }
 
     eprintln!("spira-lc serve: listening on {socket_path}");
-    // One connection at a time: the persistent dolt session is a single subprocess with a
-    // single stdin, so concurrent requests must serialize through it regardless — a
-    // dedicated thread per connection would only add contention, not throughput.
-    for conn_stream in listener.incoming() {
-        match conn_stream {
-            Ok(stream) => handle(stream, &conn),
-            Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+    // A request may spawn a child (`work blocked` runs `mail`) that calls back into this
+    // socket; serving one connection at a time deadlocks on that. The session mutex still
+    // serializes the queries themselves.
+    std::thread::scope(|scope| {
+        for conn_stream in listener.incoming() {
+            match conn_stream {
+                Ok(stream) => {
+                    let conn = &conn;
+                    scope.spawn(move || handle(stream, conn));
+                }
+                Err(e) => eprintln!("spira-lc serve: accept error: {e}"),
+            }
         }
-    }
+    });
     0
 }
 

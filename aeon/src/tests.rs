@@ -950,9 +950,11 @@ fn a_no_progress_streak_at_the_cap_is_routed_to_the_concierge_not_ryan() {
         "at the cap this routes to the Concierge instead of deferring again: {:?}",
         w.bd_calls
     );
-    let mail = w.exec_calls.iter().find(|c| c.0 == "mail").unwrap_or_else(|| panic!("no mail send concierge: {:?}", w.exec_calls));
-    assert_eq!(mail.1[0], "send");
-    assert_eq!(mail.1[1], "concierge", "never operator/ryan — the Concierge's own mailbox");
+    let mail = w.exec_calls.iter().find(|c| c.0 == "env" && c.1.iter().any(|a| a == "mail")).unwrap_or_else(|| panic!("no mail send concierge: {:?}", w.exec_calls));
+    assert_eq!(mail.1[0], "SPIRA_MAIL_ALLOW_BLOCKING=1", "the question must wire a blocking edge so the bead is unclaimable");
+    assert_eq!(mail.1[1..3], ["mail", "send"]);
+    assert_eq!(mail.1[3], "concierge", "never operator/ryan — the Concierge's own mailbox");
+    assert!(mail.1.windows(2).any(|p| p == ["--kind", "question"]), "{:?}", mail.1);
     let bead_at = mail.1.iter().position(|a| a == "--bead").expect("--bead flag");
     assert_eq!(mail.1[bead_at + 1], "sp-q");
     let subj_at = mail.1.iter().position(|a| a == "--subject").expect("--subject flag");
@@ -1272,6 +1274,49 @@ fn a_declared_core_statute_that_does_not_exist_refuses_the_start() {
     let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
     let o = go(&f, "spira,plan", &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real")], false, Mode::Sweep { prompt: Some("x".into()) }, BTreeMap::new(), act);
     assert!(!o.seen.is_empty(), "positive control: a resolvable core slug starts the session: {}", o.log);
+}
+
+// sp-crr3n: SPIRA_STATUTE_CORE_LOCAL is this installation's own addition to whatever core
+// the persona already resolves (FAYTH_STATUTE_CORE here) — never shipped with the fayth,
+// per law-harness-ships-mechanism-not-inventory. A slug it names renders in full exactly
+// like a FAYTH_STATUTE_CORE one, and a missing one refuses the start the same way.
+#[test]
+fn spira_statute_core_local_renders_in_full_and_a_missing_one_refuses() {
+    let f = fx("corelocalok");
+    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    let cache = f.run.join("memories.json");
+    std::fs::write(&cache, r#"{"law-real":"text","law-local":"local text"}"#).unwrap();
+    let cache_s = cache.display().to_string();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
+    let o = go(
+        &f,
+        "spira,plan",
+        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-local")],
+        false,
+        Mode::Sweep { prompt: Some("x".into()) },
+        BTreeMap::new(),
+        act,
+    );
+    assert!(!o.seen.is_empty(), "a resolvable local core slug, appended to the persona's own, starts the session: {}", o.log);
+
+    let f = fx("corelocalfail");
+    std::fs::write(f.home.join("chamber/builder.md"), "persona\n<!-- task -->\nstanding brief\n").unwrap();
+    let cache = f.run.join("memories.json");
+    std::fs::write(&cache, r#"{"law-real":"text"}"#).unwrap();
+    let cache_s = cache.display().to_string();
+    let act: Box<dyn Fn(&SessionSpec, &W, &Stop) -> i32 + Send + Sync> = Box::new(|_, _, _| 0);
+    let o = go(
+        &f,
+        "spira,plan",
+        &[("SPIRA_MEMORIES_CACHE", &cache_s), ("FAYTH_STATUTE_CORE", "law-real"), ("SPIRA_STATUTE_CORE_LOCAL", "law-gone-local")],
+        false,
+        Mode::Sweep { prompt: Some("x".into()) },
+        BTreeMap::new(),
+        act,
+    );
+    assert_eq!(o.code, 1);
+    assert!(o.log.contains("law-gone-local"), "{}", o.log);
+    assert!(o.seen.is_empty(), "a missing SPIRA_STATUTE_CORE_LOCAL slug refuses the start exactly like a missing FAYTH_STATUTE_CORE one");
 }
 
 // ---- admission and summon jitter (sp-f4ig1) -------------------------------------------

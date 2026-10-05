@@ -32,6 +32,17 @@ pub struct Inputs {
     /// `SPIRA_SCCACHE_DAV_ADDR` is non-empty (sp-xtdqi): this box names its own LAN address
     /// for the shared compilation cache.
     pub sccache_dav_addr_set: bool,
+    /// The resolved `SPIRA_REPO` (`bootstrap::units_repo`'s own choice: the repo map's
+    /// home-repo root when that is a git checkout, else the release directory) is itself a
+    /// git checkout. The cert-sweep units run `git rev-parse --repo` at every tick; a fresh
+    /// install with no mapped harness checkout resolves `--repo` to the release directory,
+    /// which has no `.git`, so both units failed every run with "not a git repository"
+    /// (sp-8lztt). False on a fresh install with no harness checkout mapped.
+    pub repo_is_git_checkout: bool,
+    /// The root installer's `--system-user` phase has installed the SYSTEM spira-lc unit
+    /// (`spira_config::resolve::lc_system_mode`). Off is same-user mode, the default: this
+    /// manifest then installs the operator's own `lc-serve.service` (sp-xfqnr).
+    pub lc_system_mode: bool,
     /// Plain watcher names from the manifest (`watchd.sh units`, `spira-watch@<name>.service`
     /// with the wrapper stripped) — `Err` when the manifest itself is malformed, matching
     /// units.sh's `return 1` when `watchd.sh units` fails.
@@ -40,7 +51,7 @@ pub struct Inputs {
 
 impl Default for Inputs {
     fn default() -> Self {
-        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, watch_names: Ok(Vec::new()) }
+        Inputs { instance: String::new(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: false, sccache_dav_addr_set: false, repo_is_git_checkout: false, lc_system_mode: false, watch_names: Ok(Vec::new()) }
     }
 }
 
@@ -80,10 +91,6 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-watchtower.timer", true));
     m.units.push(t("spira-skew.service", false));
     m.units.push(t("spira-skew.timer", true));
-    m.units.push(t("spira-cert-sweep-full.service", false));
-    m.units.push(t("spira-cert-sweep-full.timer", true));
-    m.units.push(t("spira-cert-sweep-sample.service", false));
-    m.units.push(t("spira-cert-sweep-sample.timer", true));
     m.units.push(t("spira-archivist.service", false));
     m.units.push(t("spira-archivist.timer", true));
     m.units.push(t("spira-czar-pass.service", false));
@@ -123,6 +130,8 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     m.units.push(t("spira-gh-intake.timer", true));
     m.units.push(t("spira-verdict.service", false));
     m.units.push(t("spira-verdict.timer", true));
+    m.units.push(t("spira-publish.service", false));
+    m.units.push(t("spira-publish.timer", true));
     m.units.push(t("spira-straggler-sweep.service", false));
     m.units.push(t("spira-straggler-sweep.timer", true));
     m.units.push(t("spira-sop-lint.service", false));
@@ -136,6 +145,19 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
     // spira-lc.service: a SYSTEM unit installed by the root installer's --system-user phase,
     // never by the per-instance flow this manifest drives.
     m.optional.push("spira-lc.service".into());
+
+    // lc-serve.service (sp-xfqnr): the SAME-USER answer to the socket an aeon's `work`
+    // reaches spira-lc through — `spira-lc serve` as the operator on %t/spira-lc/sock, the
+    // path spira_config::resolve::lc_socket_default gives every caller in this mode. In
+    // system mode spira-lc.socket already answers /run/spira-lc/sock as its own Unix user,
+    // and a second, operator-run copy would hand the store to the credential the privilege
+    // split exists to keep away from the operator, so it is declined there.
+    if inputs.lc_system_mode {
+        m.optional.push("lc-serve.service".into());
+        m.notes.push("spira-lc runs as a system service (--system-user) — not installing lc-serve.service.".into());
+    } else {
+        m.units.push(t("lc-serve.service", true));
+    }
 
     if inputs.inotify_present {
         m.units.push(t("spira-mail-deliver.service", true));
@@ -180,6 +202,27 @@ pub fn build(inputs: &Inputs) -> Result<Manifest, String> {
         m.optional.push("sccache-dav.service".into());
         m.notes.push("SPIRA_SCCACHE_DAV_ADDR is empty — not installing sccache-dav.service.".into());
         m.notes.push("Set it in spira.conf (this box's own LAN address, e.g. 192.168.1.56:9431) and re-run install.".into());
+    }
+
+    // spira-cert-sweep-{full,sample}: both run `git rev-parse --repo` against the resolved
+    // `SPIRA_REPO` on every tick. A fresh install with no harness checkout mapped
+    // (`SPIRA_REPO_MAP`) resolves `--repo` to the release directory, which has no `.git`, so
+    // both units exited 2 on every run with "not a git repository" and acceptance phase B
+    // refused on them (sp-8lztt) — the same shape as sp-7i16g/sp-b2jsl's render-time fix,
+    // which only helps boxes that DO have a mapped checkout. Declined like
+    // sccache-dav.service until one exists; an inert unit that would run forever is noise.
+    if inputs.repo_is_git_checkout {
+        m.units.push(t("spira-cert-sweep-full.service", false));
+        m.units.push(t("spira-cert-sweep-full.timer", true));
+        m.units.push(t("spira-cert-sweep-sample.service", false));
+        m.units.push(t("spira-cert-sweep-sample.timer", true));
+    } else {
+        m.optional.push("spira-cert-sweep-full.service".into());
+        m.optional.push("spira-cert-sweep-full.timer".into());
+        m.optional.push("spira-cert-sweep-sample.service".into());
+        m.optional.push("spira-cert-sweep-sample.timer".into());
+        m.notes.push("SPIRA_REPO is not a git checkout — not installing the cert-sweep units.".into());
+        m.notes.push("Map a real harness checkout (SPIRA_REPO_MAP) and re-run install to enable continuous certification.".into());
     }
 
     m.units.push(t("spira-broker.service", false));
@@ -231,6 +274,48 @@ impl Manifest {
     }
 }
 
+/// Every template name any combination of this box's SIX conditional inputs (dolt data,
+/// testdb data, `inotifywait`, `SPIRA_SCCACHE_DAV_ADDR`, `--system-user`, `repo_is_git_
+/// checkout`) could ever push into `Manifest::units` — the same completeness union
+/// `--list-optional`/`--list-union` already compute for a human (`SPIRA_BROKER_ENABLE` is
+/// left out: it never changes which units exist, only `spira-broker.timer`'s `enable`),
+/// factored out here so a REMOVAL caller gets it too (sp-da4y0).
+///
+/// `manifest_from_env` probes every one of these fresh on each call — `repo_is_git_
+/// checkout` in particular is a filesystem check, not a frozen fact from install time — so
+/// `units-install --list-manifest`'s CURRENT resolution can legitimately differ from what
+/// was true when a unit was actually installed. A unit this box installed under
+/// yesterday's resolution (the repo was a git checkout then) is still one this box's
+/// manifest could install; an uninstall that only ever asks "what would I install right
+/// now" misses it. `spira-watch@.service`, the never-installed-directly template, is
+/// excluded exactly as `template_names()` excludes it.
+pub fn union_template_names() -> Vec<String> {
+    let mut set = std::collections::BTreeSet::new();
+    for dolt in [false, true] {
+        for testdb in [false, true] {
+            for inotify in [false, true] {
+                for sccache in [false, true] {
+                    for lc_system in [false, true] {
+                        for repo_git in [false, true] {
+                            let inputs = Inputs { dolt_data_set: dolt, testdb_data_set: testdb, inotify_present: inotify, sccache_dav_addr_set: sccache, lc_system_mode: lc_system, repo_is_git_checkout: repo_git, ..Default::default() };
+                            if let Ok(m) = build(&inputs) {
+                                set.extend(m.units.into_iter().map(|u| u.name).filter(|n| n != "spira-watch@.service"));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set.into_iter().collect()
+}
+
+/// [`union_template_names`], resolved to this instance's installed names via [`inst_name`]
+/// — what a removal caller actually needs to check against disk.
+pub fn union_installed_names(instance: &str) -> Vec<String> {
+    union_template_names().iter().map(|n| inst_name(n, instance)).collect()
+}
+
 /// `inst_name` (units.sh): a `spira-*.service`/`.timer` template gets the instance suffix
 /// appended before its extension; everything else (shared units, and the watcher template
 /// itself, which is never installed directly) keeps its plain name.
@@ -268,6 +353,8 @@ mod tests {
             broker_enable: false,
             inotify_present: true,
             sccache_dav_addr_set: false,
+            repo_is_git_checkout: true,
+            lc_system_mode: false,
             watch_names: Ok(vec!["testview".into(), "notify".into()]),
         }
     }
@@ -289,6 +376,52 @@ mod tests {
         let u = m2.units.iter().find(|u| u.name == "sccache-dav.service").expect("installed once the address is set");
         assert!(u.enable, "a plain long-running service, enabled like spira-loom.service");
         assert!(!m2.optional.contains(&"sccache-dav.service".to_string()));
+    }
+
+    /// sp-8lztt: on a fresh install with no harness checkout mapped, the resolved
+    /// `SPIRA_REPO` is the release directory, which has no `.git` — both cert-sweep units
+    /// then run `git rev-parse --repo` against a non-repository on every tick and fail.
+    /// They must be declined (like `sccache-dav.service`, `dolt-beads.service`) rather than
+    /// installed when `repo_is_git_checkout` is false; this must fail against manifest.rs
+    /// before this bead, which installs them unconditionally.
+    #[test]
+    fn cert_sweep_units_are_installed_only_when_the_repo_is_a_git_checkout() {
+        let cert_sweep_names = ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer"];
+
+        let m = build(&inputs()).unwrap();
+        for n in cert_sweep_names {
+            assert!(m.units.iter().any(|u| u.name == n), "a mapped git checkout: {n} is installed");
+            assert!(!m.optional.contains(&n.to_string()));
+        }
+
+        let mut i = inputs();
+        i.repo_is_git_checkout = false;
+        let m2 = build(&i).unwrap();
+        for n in cert_sweep_names {
+            assert!(!m2.units.iter().any(|u| u.name == n), "no git checkout: {n} must not be installed");
+            assert!(m2.optional.contains(&n.to_string()), "{n} must be declared optional, not just absent");
+        }
+        assert!(m2.notes.iter().any(|n| n.contains("SPIRA_REPO") && n.contains("git checkout")), "{:?}", m2.notes);
+        assert!(m2.unlisted(cert_sweep_names).is_empty(), "declined units must never be UNLISTED");
+    }
+
+    /// sp-xfqnr: same-user mode (no --system-user) installs and enables the operator's own
+    /// serve unit, shared across instances (no suffix); system mode declines it.
+    #[test]
+    fn lc_serve_is_installed_and_enabled_only_in_same_user_mode() {
+        let m = build(&inputs()).unwrap();
+        let u = m.units.iter().find(|u| u.name == "lc-serve.service").expect("same-user mode installs it");
+        assert!(u.enable);
+        assert!(m.enable("prod").contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+        assert!(!m.optional.contains(&"lc-serve.service".to_string()));
+
+        let mut i = inputs();
+        i.lc_system_mode = true;
+        let m2 = build(&i).unwrap();
+        assert!(!m2.units.iter().any(|u| u.name == "lc-serve.service"), "system mode: not installed");
+        assert!(m2.optional.contains(&"lc-serve.service".to_string()), "declined, so never UNLISTED");
+        assert!(!m2.enable("prod").iter().any(|u| u.starts_with("lc-serve")));
+        assert!(m2.unlisted(["lc-serve.service"]).is_empty());
     }
 
     #[test]
@@ -390,5 +523,33 @@ mod tests {
         let m = build(&inputs()).unwrap();
         let on_disk = ["spira-watch@.service"];
         assert_eq!(m.unlisted(on_disk), Vec::<String>::new());
+    }
+
+    /// sp-da4y0: the cert-sweep units are declined under SOME resolutions of
+    /// `repo_is_git_checkout` (see `cert_sweep_units_are_installed_only_when_the_repo_is_a_
+    /// git_checkout` above) — exactly the shape a removal pass must not miss. The union must
+    /// carry them regardless, and resolve them to this instance's installed names.
+    #[test]
+    fn union_template_names_carries_a_conditionally_declined_template() {
+        let names = union_template_names();
+        for n in ["spira-cert-sweep-full.service", "spira-cert-sweep-full.timer", "spira-cert-sweep-sample.service", "spira-cert-sweep-sample.timer", "sccache-dav.service", "dolt-beads.service", "spira-mail-deliver.service", "lc-serve.service"] {
+            assert!(names.contains(&n.to_string()), "{n} missing from union: {names:?}");
+        }
+        assert!(!names.iter().any(|n| n == "spira-watch@.service"), "the watcher template itself must never appear");
+
+        let installed = union_installed_names("test");
+        assert!(installed.contains(&"spira-cert-sweep-full-test.service".to_string()));
+        assert!(installed.contains(&"spira-cert-sweep-sample-test.timer".to_string()));
+        assert!(installed.contains(&"lc-serve.service".to_string()), "shared name, never instance-suffixed");
+    }
+
+    /// A name this manifest never produces under ANY input combination (an unrelated or
+    /// retired template) must never appear — the union is bounded to real templates, not
+    /// every unit file a disk scan might turn up (an actually-unknown stray from an older
+    /// harness version must stay a reported STRAY, never get swept into a silent removal).
+    #[test]
+    fn union_template_names_never_invents_an_unknown_template() {
+        let names = union_template_names();
+        assert!(!names.iter().any(|n| n == "spira-legacy-shard.service"));
     }
 }

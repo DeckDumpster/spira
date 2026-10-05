@@ -325,6 +325,76 @@ pub fn resolve_instance(env: &BTreeMap<String, String>, home: &Path) -> Result<S
     Ok(instance.to_string())
 }
 
+/// Any one registry key, resolved like [`resolve_run_dir`]: a non-empty env value wins, else
+/// full resolution; a named refusal when neither yields a value.
+pub fn resolve_key(env: &BTreeMap<String, String>, home: &Path, key: &str) -> Result<String, String> {
+    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
+    let repo = derive_home_repo(home, env);
+    let resolved = resolve_for_process(home, &repo, env).map_err(|e| format!("cannot resolve {key}: {e}"))?;
+    match resolved.get(key) {
+        "" => Err(format!("{key} is not set and spira.toml does not resolve it")),
+        v => Ok(v.to_string()),
+    }
+}
+
+/// `SPIRA_HOME` from the environment, else the first directory beside the executable's
+/// release or cargo layout that holds `lib.sh`; a named refusal when neither exists.
+pub fn locate_home(env: &BTreeMap<String, String>, exe: &Path) -> Result<PathBuf, String> {
+    if let Some(h) = env.get("SPIRA_HOME").filter(|h| !h.is_empty()) {
+        return Ok(PathBuf::from(h));
+    }
+    let dir = exe.parent().ok_or_else(|| "SPIRA_HOME is not set and the executable has no parent directory".to_string())?;
+    [dir.join("../spira"), dir.join("../../spira"), dir.join("../../../spira")]
+        .into_iter()
+        .find(|c| c.join("lib.sh").is_file())
+        .map(|c| c.canonicalize().unwrap_or(c))
+        .ok_or_else(|| "SPIRA_HOME is not set and no spira/lib.sh sits beside the executable".to_string())
+}
+
+/// [`locate_home`] for this process.
+pub fn locate_home_for_process() -> Result<PathBuf, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    locate_home(&env, &std::env::current_exe().unwrap_or_default())
+}
+
+/// [`resolve_run_dir`] for this process: locates home, then resolves.
+pub fn run_dir_for_process() -> Result<PathBuf, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    if let Some(v) = env.get("SPIRA_RUN").filter(|v| !v.is_empty()) {
+        return Ok(PathBuf::from(v));
+    }
+    let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
+    resolve_run_dir(&env, &home)
+}
+
+/// [`resolve_key`] for this process: locates home, then resolves.
+pub fn key_for_process(key: &str) -> Result<String, String> {
+    let env: BTreeMap<String, String> = std::env::vars().collect();
+    if let Some(v) = env.get(key).filter(|v| !v.is_empty()) {
+        return Ok(v.clone());
+    }
+    let home = locate_home(&env, &std::env::current_exe().unwrap_or_default())?;
+    resolve_key(&env, &home, key)
+}
+
+/// The repo-relative path of the suite-state file: `$SPIRA_SUITE_STATE_FILE`, else
+/// `spira.suite_state_file` in the document in force, else the registered default
+/// (`spira/conf.d/SPIRA_SUITE_STATE_FILE`).
+pub fn suite_state_file() -> Result<String, String> {
+    if let Some(v) = std::env::var("SPIRA_SUITE_STATE_FILE").ok().filter(|v| !v.is_empty()) {
+        return Ok(v);
+    }
+    let configured = match crate::discover(None) {
+        Some(p) => crate::load(&p)?.spira.and_then(|s| s.suite_state_file),
+        None => None,
+    };
+    Ok(configured.filter(|v| !v.is_empty()).unwrap_or_else(|| DEFAULT_SUITE_STATE_FILE.to_string()))
+}
+
+pub const DEFAULT_SUITE_STATE_FILE: &str = "spira/suite-state";
+
 /// Every resolved key, plus any warning `resolve` itself produced (today, only the
 /// `SPIRA_CLAUDE` deprecation notice) — a caller prints these to stderr; `resolve` itself
 /// never writes anywhere.
@@ -579,6 +649,39 @@ pub fn lc_password_file(env: &BTreeMap<String, String>) -> String {
             let path = lc_credential_default(env);
             if Path::new(&path).is_file() { path } else { String::new() }
         }
+    }
+}
+
+/// The socket the root installer's `--system-user` phase gives `spira-lc.socket` (system mode).
+pub const LC_SYSTEM_SOCKET: &str = "/run/spira-lc/sock";
+
+/// The system-mode marker: the unit file `spira-install --system-user` writes. Its presence is
+/// what makes a box "system mode" (spira-lc runs as its own Unix user); without it the box is
+/// same-user mode, where `spira-install` itself installs the operator's own user-level serve
+/// unit, `lc-serve.service` (sp-xfqnr).
+pub const LC_SYSTEM_UNIT: &str = "/etc/systemd/system/spira-lc.socket";
+
+/// Whether this box runs spira-lc in system mode (see [`LC_SYSTEM_UNIT`]).
+pub fn lc_system_mode() -> bool {
+    Path::new(LC_SYSTEM_UNIT).is_file()
+}
+
+/// This process's real uid.
+pub fn current_uid() -> u32 {
+    // SAFETY: getuid(2) takes no arguments, cannot fail, and touches no memory of ours.
+    unsafe { libc::getuid() }
+}
+
+/// `SPIRA_LC_SOCKET`'s default, following the mode: system mode's [`LC_SYSTEM_SOCKET`], else
+/// the same-user serve unit's `%t/spira-lc/sock` — `%t` being the user manager's runtime
+/// directory, which is always `/run/user/<uid>`. Derived from the uid, never from
+/// `XDG_RUNTIME_DIR`: an aeon's restricted environment (aeon/src/restrict.rs) does not carry
+/// that variable, and every caller of one operator must land on the one socket.
+pub fn lc_socket_default(system_mode: bool, uid: u32) -> String {
+    if system_mode {
+        LC_SYSTEM_SOCKET.to_string()
+    } else {
+        format!("/run/user/{uid}/spira-lc/sock")
     }
 }
 
@@ -845,7 +948,7 @@ fn resolve_unchecked(input: ResolveInput<'_>) -> Result<Resolved, ResolveError> 
     );
     set!(
         "SPIRA_LC_SOCKET",
-        resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, ok_str!("/run/spira-lc/sock"))
+        resolve_colon("SPIRA_LC_SOCKET", env, &toml_map, || Ok(lc_socket_default(lc_system_mode(), current_uid())))
             .map_err(ResolveError::Registry)?
     );
 
@@ -1622,6 +1725,33 @@ mod tests {
             !err.contains("at conf.d") && err != "no config registry at conf.d",
             "must never surface the bare relative path: {err}"
         );
+    }
+}
+
+#[cfg(test)]
+mod lc_socket_tests {
+    use super::*;
+
+    #[test]
+    fn same_user_mode_defaults_to_the_user_units_socket() {
+        assert_eq!(lc_socket_default(false, 1000), "/run/user/1000/spira-lc/sock");
+        assert_eq!(lc_socket_default(false, 0), "/run/user/0/spira-lc/sock");
+    }
+
+    #[test]
+    fn system_mode_defaults_to_the_system_socket() {
+        assert_eq!(lc_socket_default(true, 1000), "/run/spira-lc/sock");
+        assert_eq!(lc_socket_default(true, 1000), LC_SYSTEM_SOCKET);
+    }
+
+    #[test]
+    fn an_explicit_value_still_wins_over_either_default() {
+        let env: BTreeMap<String, String> = [("SPIRA_LC_SOCKET".to_string(), "/x/sock".to_string())].into();
+        let got = resolve_colon("SPIRA_LC_SOCKET", &env, &BTreeMap::new(), || Ok(lc_socket_default(false, 7))).unwrap();
+        assert_eq!(got, "/x/sock");
+        let empty: BTreeMap<String, String> = [("SPIRA_LC_SOCKET".to_string(), String::new())].into();
+        let got = resolve_colon("SPIRA_LC_SOCKET", &empty, &BTreeMap::new(), || Ok(lc_socket_default(false, 7))).unwrap();
+        assert_eq!(got, "/run/user/7/spira-lc/sock", "an empty value defaults, the := rule");
     }
 }
 

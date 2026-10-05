@@ -1,0 +1,16 @@
+TYPE=string
+GROUP=statute
+DOC=THIS INSTALLATION'S OWN CORE STATUTES — slugs it renders in full in every persona's
+DEFAULT<<'SPIRA_CONF_DEFAULT_EOF'
+    # THIS INSTALLATION'S OWN CORE STATUTES — slugs it renders in full in every persona's
+    # brief, on top of whatever core that persona already resolves (its FAYTH_STATUTE_CORE,
+    # else SPIRA_STATUTE_CORE). The shipped chamber and the shipped default both carry only
+    # mechanism (law-harness-ships-mechanism-not-inventory); a statute that names this
+    # operator's own repositories, labels or preferences belongs here instead, in config that
+    # never ships, rather than paraphrased into something the harness can publish.
+    # CSV of slug names, same format as SPIRA_STATUTE_CORE — e.g. "law-foo,law-bar". Empty by
+    # default: a fresh install has none of its own. A slug named here that the database does
+    # not hold refuses exactly like any other declared core slug ("core statute(s) declared
+    # but not found") — set this only on a box whose database already holds every slug in it.
+    : "${SPIRA_STATUTE_CORE_LOCAL:=}"
+SPIRA_CONF_DEFAULT_EOF

@@ -465,13 +465,31 @@ pub fn split_not_active(not_active: &[String], in_testenv: bool) -> NotActiveSpl
     if !in_testenv {
         return NotActiveSplit { warn_only: Vec::new(), fatal: not_active.to_vec() };
     }
+    // lc-serve.service serves the lifecycle store, which a test fixture's install never builds
+    // (that is spira-install's phase 4.5, against a real Dolt server): in a fixture it cannot
+    // reach active either, and is named, never silently dropped (sp-xfqnr).
     let (watchers, other): (Vec<String>, Vec<String>) =
-        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-"));
+        not_active.iter().cloned().partition(|u| u.starts_with("spira-watch-") || u == "lc-serve.service");
     NotActiveSplit { warn_only: watchers, fatal: other }
 }
 
 #[allow(dead_code)]
 fn _unused(_: &BTreeMap<String, String>) {}
+
+#[cfg(test)]
+mod lc_serve_split_tests {
+    use super::*;
+    #[test]
+    fn lc_serve_not_active_is_warn_only_in_a_fixture_and_fatal_outside() {
+        let na = vec!["lc-serve.service".to_string(), "spira-sentinel-prod.service".to_string()];
+        let f = split_not_active(&na, true);
+        assert_eq!(f.warn_only, vec!["lc-serve.service".to_string()]);
+        assert_eq!(f.fatal, vec!["spira-sentinel-prod.service".to_string()]);
+        let p = split_not_active(&na, false);
+        assert!(p.warn_only.is_empty());
+        assert_eq!(p.fatal.len(), 2);
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -485,7 +503,7 @@ mod tests {
     }
 
     fn tiny_manifest() -> Manifest {
-        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, watch_names: Ok(vec![]) }).unwrap();
+        let mut m = build(&Inputs { instance: "prod".into(), dolt_data_set: false, testdb_data_set: false, broker_enable: false, inotify_present: true, sccache_dav_addr_set: false, repo_is_git_checkout: true, lc_system_mode: false, watch_names: Ok(vec![]) }).unwrap();
         m.units.retain(|u| u.name == "spira-sentinel.service" || u.name == "spira-sentinel.timer");
         m
     }

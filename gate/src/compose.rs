@@ -402,6 +402,32 @@ pub fn unit_commands(crates: &[String], jobs: u64) -> [(&'static str, String); 2
     ]
 }
 
+/// The environment of the unit test phase: the gate's own, minus the release's directories on
+/// PATH and the release locator. A test that shells out to a bare tool name must not find the
+/// running release's binary and, through it, the live stores. `SPIRA_RUN` stays: the build
+/// wrapper's admission lease needs it.
+pub fn test_phase_env(env: &[(String, String)]) -> Vec<(String, String)> {
+    let release = env
+        .iter()
+        .find(|(k, _)| k == spira_config::RELEASE_ENV)
+        .map(|(_, v)| v.trim_end_matches('/').to_string())
+        .filter(|r| !r.is_empty());
+    env.iter()
+        .filter(|(k, _)| k != spira_config::RELEASE_ENV)
+        .map(|(k, v)| {
+            let v = match (&release, k.as_str()) {
+                (Some(r), "PATH") => v
+                    .split(':')
+                    .filter(|seg| *seg != r && !seg.starts_with(&format!("{r}/")))
+                    .collect::<Vec<_>>()
+                    .join(":"),
+                _ => v.clone(),
+            };
+            (k.clone(), v)
+        })
+        .collect()
+}
+
 // ------------------------------------------------------------------------------ re-entry
 
 /// THE RE-ENTRY CHECK (sp-p3srm; design item 6): a bead the round returned must pass the
@@ -457,6 +483,22 @@ pub fn touched_suites(changed: &[Changed]) -> Vec<String> {
 /// itself says it does not block (disabled, quarantined — a round would not eject on it).
 /// SKIPPED, SKIP-REQ, UNREACHED, DEFERRED and silence prove nothing.
 const SATISFIED: &[&str] = &["ok", "DISABLED", "QUARANTINED-RED"];
+
+/// Split re-entry's `required` into the suites this gate can prove and the ones the tree's own
+/// `spira/skip-allowlist.tsv` declares un-runnable under testenv (first column of each
+/// non-comment line). A declared skip can never report `ok` here, so requiring it made every
+/// branch that touched one NO_VERDICT forever (sp-xfqnr: test-install-rehearsal.sh, which
+/// needs nested podman). The dropped ones are named by the caller; the full-suite VM round
+/// (law-landing-rounds-run-the-full-suite-on-a-vm) is where they run.
+pub fn drop_declared_skips(required: &[String], allowlist: &str) -> (Vec<String>, Vec<String>) {
+    let declared: std::collections::BTreeSet<&str> = allowlist
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split('\t').next())
+        .collect();
+    required.iter().cloned().partition(|s| !declared.contains(s.as_str()))
+}
 
 /// The required suites that `out` does not show satisfied, in `required`'s order. A suite
 /// reported twice counts by its last report (the re-entry phase re-runs what the gate string
@@ -771,6 +813,38 @@ mod tests {
     }
 
     #[test]
+    fn test_phase_env_drops_the_release_from_path_and_the_locator() {
+        let e = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let env = vec![
+            e("PATH", "/r/rel/bin:/r/rel/spira:/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
+            e(spira_config::RELEASE_ENV, "/r/rel/"),
+            e("SPIRA_RUN", "/run"),
+            e("HOME", "/h"),
+        ];
+        let got = test_phase_env(&env);
+        assert_eq!(
+            got,
+            vec![
+                e("PATH", "/usr/bin:/bin:/h/.cargo/bin:/r/release-x/bin"),
+                e("SPIRA_RUN", "/run"),
+                e("HOME", "/h"),
+            ]
+        );
+        assert_eq!(test_phase_env(&[e("PATH", "/a:/b")]), vec![e("PATH", "/a:/b")]);
+    }
+
+    #[test]
+    fn gate_test_run_sees_no_lifecycle_locators() {
+        // Canary: only meaningful inside a gate trial (it sets SPIRA_GATE_BRANCH).
+        if std::env::var_os("SPIRA_GATE_BRANCH").is_none() {
+            return;
+        }
+        for k in ["SPIRA_LC_PASSWORD_FILE", "SPIRA_LC_SOCKET"] {
+            assert!(std::env::var_os(k).is_none(), "{k} is visible inside a gate test run");
+        }
+    }
+
+    #[test]
     fn the_real_workspace_metadata_parses() {
         // A positive control against this workspace's own shape: gate is a member and
         // queue depends on spira-config.
@@ -1025,5 +1099,20 @@ cargo: test tests::x ... ok";
             };
             assert_eq!(g, want, "{input:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod drop_declared_skips_tests {
+    use super::drop_declared_skips;
+    #[test]
+    fn declared_skips_leave_required_and_are_named() {
+        let req = vec!["test-a.sh".to_string(), "test-install-rehearsal.sh".to_string()];
+        let allow = "# header\ntest-install-rehearsal.sh\tskip:podman_not_on_PATH\twhy\n\n";
+        let (kept, dropped) = drop_declared_skips(&req, allow);
+        assert_eq!(kept, vec!["test-a.sh".to_string()]);
+        assert_eq!(dropped, vec!["test-install-rehearsal.sh".to_string()]);
+        let (k2, d2) = drop_declared_skips(&req, "");
+        assert_eq!((k2.len(), d2.len()), (2, 0), "no allowlist drops nothing");
     }
 }

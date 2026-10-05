@@ -374,10 +374,12 @@ fn certify_voids_a_stale_certification_first_and_leaves_a_current_one_alone() {
     let r = f.bead("sp-s", BeadState::Certified);
     r.tip = Some("aaa111".into());
     r.gate_key = Some("keyA".into());
-    // Same tip: no Submit, the pass is not a SUBMITTED transition — skipped, rc 3.
+    // Same tip: the same pass again is idempotent — applied as "already", no event. A red
+    // verdict on it is still not a SUBMITTED transition — skipped, rc 3.
     let a = go(&mut f, "certify", &["sp-s", "aaa111", "pass", "keyA"]);
-    assert_eq!(a.code, REFUSED);
-    assert_eq!(a.cert_log.unwrap().0, "skip");
+    assert_eq!((a.code, a.cert_log.unwrap().0), (APPLIED, "already".into()));
+    let a = go(&mut f, "certify", &["sp-s", "aaa111", "red", "branch-red"]);
+    assert_eq!((a.code, a.cert_log.unwrap().0), (REFUSED, "skip".into()));
     assert!(f.events.is_empty());
     // Moved tip: Submit voids it, then the verdict lands on SUBMITTED.
     assert_eq!(go(&mut f, "certify", &["sp-s", "bbb222", "pass", "keyA"]).code, APPLIED);
@@ -446,4 +448,21 @@ fn log_lines_carry_libsh_logs_timestamp() {
     assert_eq!(fmt_utc(951_782_400), "2000-02-29T00:00:00Z");
     let l = log_line("x");
     assert!(l.len() == "2026-09-21T14:13:20Z spira: x\n".len() && l.ends_with("Z spira: x\n"), "{l}");
+}
+
+#[test]
+fn a_push_landing_with_no_delivery_round_records_landed_on_a_certified_bead() {
+    // Push mode creates no delivery row; the landing is recorded on the bead (sp-51lgh).
+    let mut f = Fake::default();
+    f.bead("sp-q", BeadState::Certified);
+    let a = go(&mut f, "deliver", &["push-delivered", "sp-q", "abc"]);
+    assert_eq!(a.code, APPLIED, "{}", a.stdout);
+    assert!(a.stdout.contains("lc: sp-q landed by push — CERTIFIED -> LANDED"), "{}", a.stdout);
+    let last = f.events.last().unwrap();
+    assert_eq!(last.5, r#"{"ContentOnBase":{"proof":"ancestry:abc"}}"#);
+    // Not CERTIFIED (e.g. a queue-mode bead mid-delivery): still no row, nothing recorded.
+    let n = f.events.len();
+    f.bead("sp-r", BeadState::Submitted);
+    assert_eq!(go(&mut f, "deliver", &["push-delivered", "sp-r", "abc"]).code, NO_ROW);
+    assert_eq!(f.events.len(), n, "no event for a bead that is not CERTIFIED");
 }

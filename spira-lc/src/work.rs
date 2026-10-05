@@ -28,8 +28,8 @@ pub fn dispatch(args: &[String], conn: &Conn) -> (i32, String) {
         "submit" => cmd_submit(bead_id, rest, conn),
         "done" => cmd_done(bead_id, rest, conn),
         "blocked" => cmd_blocked(bead_id, rest, conn),
-        "file-followup" => cmd_file(bead_id, rest, "file-followup"),
-        "split" => cmd_file(bead_id, rest, "split"),
+        "file-followup" => cmd_file(bead_id, rest, "file-followup", conn),
+        "split" => cmd_file(bead_id, rest, "split", conn),
         "superseded-by" => cmd_superseded_by(bead_id, rest, conn),
         other => (CANNOT_TELL, format!("work: unknown verb {other:?} (want show, note, submit, done, blocked, file-followup, split, superseded-by)")),
     }
@@ -130,7 +130,7 @@ fn cmd_blocked(bead_id: &str, args: &[String], conn: &Conn) -> (i32, String) {
     }
 }
 
-fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
+fn cmd_file(bead_id: &str, args: &[String], verb: &str, conn: &Conn) -> (i32, String) {
     let Some(title) = args.first() else {
         return (CANNOT_TELL, format!("work {verb}: missing <title>"));
     };
@@ -143,7 +143,13 @@ fn cmd_file(bead_id: &str, args: &[String], verb: &str) -> (i32, String) {
         Err(e) => return (CANNOT_TELL, format!("cannot tell: {e}")),
     };
     match crate::bd::file_child(title, &persona, &repo, bead_id) {
-        Ok(new_id) => (0, new_id),
+        Ok(new_id) => match crate::cutover::cmd_create_bead(&[new_id.clone()], conn) {
+            (0, _) => (0, new_id),
+            (_, e) => (
+                CANNOT_TELL,
+                format!("LIFECYCLE: {new_id} was filed but has NO lifecycle row and cannot be claimed (do not file it again): {e}"),
+            ),
+        },
         Err(e) => (CANNOT_TELL, format!("cannot tell: {e}")),
     }
 }

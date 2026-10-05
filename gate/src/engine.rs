@@ -275,8 +275,8 @@ impl<'w, W: World> Trial<'w, W> {
                 let list: String = paths
                     .iter()
                     .fold(String::new(), |acc, p| acc + "gate:   " + p + "\n");
-                return v(NOVERDICT, "conflict", format!(
-                    "gate: {br} does not merge onto {base} — it is stale, not red; nothing about the work is judged.\n{list}gate: rebase it onto {base} (the landing pass hands it to rebase-stale)."));
+                return v(FAIL, "no-rebase", format!(
+                    "gate: {br} does not merge onto {base} — the branch's own defect; nothing about the work is judged.\n{list}gate: rebase it onto {base}."));
             }
             Merge::Failed(e) => {
                 return v(NOVERDICT, "merge-failed", format!("gate: cannot merge {br} onto {base} in {name} to judge it — refusing to judge the branch alone.\n{e}"));
@@ -622,7 +622,16 @@ impl<'w, W: World> Trial<'w, W> {
                 named.push_str(&s);
             }
         }
-        let re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
+        let mut re = compose::reentry(&named, |s| w.exists(&tree.join("spira").join(s)));
+        let allowlist = std::fs::read_to_string(tree.join("spira/skip-allowlist.tsv")).unwrap_or_default();
+        let (kept, declared_skips) = compose::drop_declared_skips(&re.required, &allowlist);
+        if !declared_skips.is_empty() {
+            w.eprint(&format!(
+                "gate: re-entry: not required here (declared skip in spira/skip-allowlist.tsv, cannot run under testenv; the full-suite round proves them): {}",
+                declared_skips.join(" ")
+            ));
+        }
+        re.required = kept;
         // The base trial runs only the named suites the base has: a suite this branch adds
         // cannot be red on the base, and naming it there faults the runner ("unknown suite"),
         // which read as base-untestable and held every branch that adds a suite.
@@ -1820,7 +1829,14 @@ pub fn run_composed<W: World>(
             return (124, out, phases);
         }
         let t = w.now();
-        let (r, o) = w.run_gate(tree, env, &left(), &c);
+        let hermetic;
+        let step_env = if name == "test" {
+            hermetic = compose::test_phase_env(env);
+            &hermetic[..]
+        } else {
+            env
+        };
+        let (r, o) = w.run_gate(tree, step_env, &left(), &c);
         phases.push((format!("{prefix}{name}"), w.now().saturating_sub(t)));
         if !o.is_empty() {
             if !out.is_empty() {

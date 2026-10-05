@@ -154,6 +154,27 @@ mod tests {
         }
     }
 
+    /// sp-xfqnr: the same-user serve unit renders completely, serves the user runtime-dir
+    /// socket the resolver's same-user default names, and authenticates with the same-user
+    /// credential.
+    #[test]
+    fn the_same_user_serve_unit_renders_onto_the_user_socket() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../systemd/lc-serve.service");
+        let out = render_file(&p, &hv(), None).unwrap();
+        assert!(!out.contains('@'), "every placeholder substituted:\n{out}");
+        assert!(out.contains("\nExecStart=/h/bin/spira-lc serve %t/spira-lc/sock\n"), "{out}");
+        assert!(out.contains("\nEnvironment=SPIRA_LC_SOCKET=%t/spira-lc/sock\n"));
+        assert!(out.contains("\nEnvironment=SPIRA_LC_PASSWORD_FILE=/h/lc.credential\n"));
+        assert!(out.contains("\nRuntimeDirectory=spira-lc\n"));
+        for k in ["SPIRA_RELEASE=/h", "SPIRA_HOME=/h/spira", "SPIRA_REPO=/h", "SPIRA_DB=/db", "SPIRA_RUN=/run"] {
+            assert!(out.contains(&format!("\nEnvironment={k}\n")), "{k}");
+        }
+        // PATH is the standard unit form (release, system dirs, then the configured tail, which
+        // is where ~/.local/bin — dolt and bd — comes from); the release crate enforces the shape.
+        assert!(out.lines().any(|l| l.starts_with("Environment=PATH=/h/bin:/h/spira:/usr/local/bin:/usr/bin:/bin")), "standard unit PATH:\n{out}");
+        assert!(!out.contains("\nUser="), "a user unit runs as the operator");
+    }
+
     #[test]
     fn prod_falls_back_to_home_and_derives_release_keys() {
         let m = hv().to_map();

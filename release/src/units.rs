@@ -101,6 +101,17 @@ pub fn release_values(rel: &Path) -> BTreeMap<String, String> {
     m
 }
 
+/// `@SPIRA_REPO@` for a unit: the repo map's home-repo root when that is a git checkout,
+/// else the release directory. The release directory has no `.git`, so a unit that runs
+/// git against `--repo` (both cert-sweep units) exited 2 on every run and deploy's
+/// pre-health refused on it (sp-b2jsl; install's renderer took the same rule in sp-7i16g).
+pub fn units_repo(mapped: Option<String>, rel: &Path, is_git: impl Fn(&Path) -> bool) -> String {
+    match mapped.filter(|m| !m.is_empty() && is_git(Path::new(m))) {
+        Some(m) => m,
+        None => rel.display().to_string(),
+    }
+}
+
 /// The binary a `SPIRA_<X>_BIN` key names, if `key` is one.
 pub fn bin_for_key(key: &str) -> Option<String> {
     let x = key.strip_prefix("SPIRA_")?.strip_suffix("_BIN")?;
@@ -189,7 +200,12 @@ const OPTIONAL_EMPTY: &[&str] = &["SPIRA_PATH_TAIL", "SPIRA_REPO_MAP", "SPIRA_LC
 /// `host` supplies the host keys. A placeholder no key fills, or a key the template uses
 /// with an empty value, is an error naming it — except [`OPTIONAL_EMPTY`].
 pub fn render(template_name: &str, text: &str, rel: &Path, host: &BTreeMap<String, String>, watcher: Option<&str>, instance: &str) -> Result<String, String> {
-    let rv = release_values(rel);
+    let mut rv = release_values(rel);
+    if text.contains("@SPIRA_REPO@") {
+        let env: BTreeMap<String, String> = std::env::vars().collect();
+        let mapped = spira_config::repos::Registry::from_env(env, &rel.join("spira")).root("");
+        rv.insert("SPIRA_REPO".into(), units_repo(mapped, rel, |p| p.join(".git").exists()));
+    }
     let lookup = |k: &str| -> Option<String> {
         if let Some(v) = rv.get(k) {
             return Some(v.clone());
@@ -312,5 +328,18 @@ mod absent_is_empty_tests {
         assert_eq!(ok, "Environment=SPIRA_LC_PASSWORD_FILE=\n");
         let err = render_from_lookup("x.service", "Environment=SPIRA_DB=@SPIRA_DB@\n", |_| None, None, "prod").unwrap_err();
         assert!(err.contains("SPIRA_DB"), "{err}");
+    }
+}
+
+#[cfg(test)]
+mod units_repo_tests {
+    use super::*;
+    #[test]
+    fn units_repo_is_the_mapped_checkout_when_it_is_git_else_the_release() {
+        let rel = Path::new("/r/rel");
+        let git = |p: &Path| p == Path::new("/h/harness");
+        assert_eq!(units_repo(Some("/h/harness".into()), rel, git), "/h/harness");
+        assert_eq!(units_repo(Some("/h/plain".into()), rel, git), "/r/rel");
+        assert_eq!(units_repo(None, rel, git), "/r/rel");
     }
 }

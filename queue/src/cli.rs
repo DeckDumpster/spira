@@ -35,13 +35,14 @@ pub enum Cmd {
     Release { repo: Option<String> },
     LandLocal { repo: Option<String>, head: String, members: Text, worktree: Option<PathBuf> },
     Publish { repo: Option<String> },
+    PublishSettle { repo: Option<String> },
     ToForge { repo: Option<String> },
     ToLocal { repo: Option<String> },
     RollbackLocal { repo: Option<String> },
     Help,
 }
 
-pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
+pub const USAGE: &str = "usage: queue.sh submit <branch> [<repo>] | queue.sh protect [<repo>] | queue.sh stats | queue.sh flush [<repo>] | queue.sh step <repo> | queue.sh step --all | queue.sh verdict <repo> | queue.sh eject <id> [--reason <text>] [--dry-run] [<repo>] | queue.sh abandon [<repo>] --reason <text> [--dry-run] | queue.sh open-batch [<repo>] [--members <ids>] [--skip-pregate] [--dry-run] | queue.sh claim [<repo>] --reason <text> [--force] | queue.sh release [<repo>] | queue.sh land-local [<repo>] --head <sha> --members <id:tip[,id:tip...]> | queue.sh publish [<repo>] | queue.sh publish-settle [<repo>] | queue.sh to-forge [<repo>] | queue.sh to-local [<repo>] | queue.sh rollback-local [<repo>]";
 
 /// A usage error: the message queue.sh printed (without trailing newline) and exit 2.
 #[derive(Debug, PartialEq, Eq)]
@@ -253,6 +254,7 @@ pub fn parse(argv: &[String]) -> Result<Cmd, Usage> {
             Ok(Cmd::LandLocal { repo, head, members, worktree })
         }
         "publish" => Ok(Cmd::Publish { repo: repo_only("publish", args)? }),
+        "publish-settle" => Ok(Cmd::PublishSettle { repo: repo_only("publish-settle", args)? }),
         "to-forge" => Ok(Cmd::ToForge { repo: repo_only("to-forge", args)? }),
         "to-local" => Ok(Cmd::ToLocal { repo: repo_only("to-local", args)? }),
         // rollback-local took `${1:-home}` and nothing else.

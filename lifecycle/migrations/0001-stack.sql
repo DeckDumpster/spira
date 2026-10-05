@@ -6,9 +6,7 @@
 -- doing nothing. A fresh database never needs it: schema.sql's own CREATE TABLE already
 -- includes both columns.
 --
---   spira-lc admin-migrate migrations      (ledgered; never run by hand — it is not idempotent)
-
-USE spira_lifecycle;
+--   dolt --host H --port P -u root -p PASS --use-db spira_lifecycle sql < migrations/0001-stack.sql
 
 ALTER TABLE bead ADD COLUMN stack JSON NOT NULL DEFAULT (JSON_OBJECT());
 ALTER TABLE bead ADD COLUMN stack_depth BIGINT NOT NULL DEFAULT 0;

@@ -432,6 +432,24 @@ fn deliver(args: &[String], m: &mut dyn Machine) -> Answer {
         }))
     });
     let Some((state, version)) = rec else {
+        // PUSH MODE HAS NO DELIVERY ROUND (sp-51lgh). A CERTIFIED bead landed by push has no
+        // delivery row to carry the landing, and the sending sweep's ContentOnBase fires only
+        // for a branch still ahead of the base — never for a fast-forward — so the row stayed
+        // CERTIFIED with its commit on the base. Record the landing on the bead itself, with
+        // the ancestry proof; every other no-row case is unchanged.
+        if sub == "push-delivered" {
+            let certified = show(m, &id).ok().is_some_and(|v| bead_field(&v, "state") == "CERTIFIED");
+            if certified {
+                let proof = format!("ancestry:{}", a(2));
+                let ans = with_row(m, &id, actor, |_| Ok(BeadEventKind::ContentOnBase { proof: proof.clone() }));
+                let line = if ans.code == 0 {
+                    format!("lc: {id} landed by push — CERTIFIED -> LANDED (no delivery round; {actor}, {proof})")
+                } else {
+                    format!("lc: {id} landed by push, but the LANDED event was refused or unreachable ({actor}, exit {})", ans.code)
+                };
+                return Answer::out(ans.code, log_line(&line));
+            }
+        }
         return Answer::out(
             NO_ROW,
             log_line(&format!("lc: no delivery row for {id} — not recording {actor}'s event (inert until the delivery round lands)")),
@@ -524,6 +542,12 @@ fn certify(m: &mut dyn Machine, id: &str, tip: &str, outcome: &str, detail: &str
     let Some((state, version)) = reach_submitted(m, id, tip, actor) else {
         return Answer::cert(CANNOT_TELL, "cannot-tell", "no lifecycle row yet".into());
     };
+    // A pass on a row already CERTIFIED at this tip (reach_submitted resubmits any other
+    // tip) is the same verdict again: idempotent success, no event. Answering "skip" made a
+    // fail-closed caller treat a certified bead as uncertified (sp-e9o2y's CHECK6).
+    if state == "CERTIFIED" && outcome == "pass" {
+        return Answer::cert(APPLIED, "already", format!("pass tip={tip} — already CERTIFIED"));
+    }
     if state != "SUBMITTED" {
         return Answer::cert(REFUSED, "skip", format!("state={state} tip={tip} outcome={outcome} — not SUBMITTED"));
     }

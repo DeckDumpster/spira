@@ -311,6 +311,8 @@ impl<'a> Sentinel<'a> {
             "--deploy-fault-check",
             "--sccache-wedge-check",
             "--conditions-check",
+            "--slow-query-check",
+            "--drift-check",
         ] {
             self.h.run(
                 Spec::args_owned("watchtower", vec![flag.into()])

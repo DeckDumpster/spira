@@ -108,7 +108,13 @@ cat > "$MOCK_BIN/systemctl" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "${MOCK_LOG}"
 case "$*" in
-    *"spira-landing*"*"spira-aeon-*"*) printf '%s\n' "${MOCK_TRANSIENT_UNITS:-}" ;;
+    *"spira-landing*"*"spira-aeon-*"*)
+        # The first sweep sees MOCK_TRANSIENT_UNITS; a later one (after the timers are
+        # stopped) sees MOCK_LATE_TRANSIENT — a transient a sentinel pass started in between.
+        n=$(( $(cat "${MOCK_LIST_COUNT:-/dev/null}" 2>/dev/null || echo 0) + 1 ))
+        [ -n "${MOCK_LIST_COUNT:-}" ] && echo "$n" > "$MOCK_LIST_COUNT"
+        if [ "$n" -gt 1 ] && [ -n "${MOCK_LATE_TRANSIENT:-}" ]; then printf '%s\n' "$MOCK_LATE_TRANSIENT"
+        else printf '%s\n' "${MOCK_TRANSIENT_UNITS:-}"; fi ;;
     *list-units*) printf '' ;;
     *is-active*)  printf 'inactive\n' ;;
     *daemon-reload*) ;;
@@ -160,6 +166,8 @@ un() {
         "LAYOUT_LOG=$LAYOUT_LOG" \
         "MOCK_LINGER=${MOCK_LINGER:-yes}" \
         "MOCK_TRANSIENT_UNITS=${MOCK_TRANSIENT_UNITS:-}" \
+        "MOCK_LIST_COUNT=${MOCK_LIST_COUNT:-}" \
+        "MOCK_LATE_TRANSIENT=${MOCK_LATE_TRANSIENT:-}" \
         bash "$FIXTURE/spira/uninstall.sh" test --yes "$@" 2>&1
 }
 
@@ -406,6 +414,17 @@ want   "transient: systemctl stop was actually called on the aeon one" \
 nowant "transient: not reported as a stray (it was handled, not missed)" \
     "STRAY  spira-landing" "$trans_out"
 MOCK_TRANSIENT_UNITS=""
+
+# A transient a sentinel pass starts AFTER the first sweep (sp-53own): only the second
+# sweep, after every timer is stopped, can catch it.
+_seed_units || { printf 'fixture: re-seed for late-transient failed\n'; exit 1; }
+export MOCK_LIST_COUNT="$TMP/list-count"; : > "$MOCK_LIST_COUNT"
+export MOCK_LATE_TRANSIENT="spira-audit.service loaded active running sentinel --audit"
+: > "$MOCK_LOG"
+late_out="$(un)"
+want "late transient: the audit worker started mid-uninstall is stopped" "stop spira-audit.service" "$(cat "$MOCK_LOG")"
+want "late transient: and reported"                                      "stopping spira-audit.service" "$late_out"
+unset MOCK_LIST_COUNT MOCK_LATE_TRANSIENT
 
 # ==========================================================================
 echo
@@ -677,6 +696,51 @@ done
 nowant "unbuilt: none of them is left as a stray" "STRAY  spira-broker-test" "$unbuilt_out"
 want   "unbuilt: the broker service was stopped" "stop spira-broker-test.service" "$(cat "$MOCK_LOG")"
 unset _ub
+
+# ==========================================================================
+echo
+echo "RESOLUTION DRIFT (sp-da4y0) — a unit installed under one resolution of a conditional input is removed even when uninstall's own re-resolution of it says otherwise:"
+# spira-cert-sweep-{full,sample} (sp-8lztt) are installed only when
+# Inputs::repo_is_git_checkout is true — probed FRESH by manifest_from_env on every
+# units-install call, never frozen at install time. owned.sh's removal list comes from
+# `units-install --list-manifest` recomputed NOW, so a repo that was a git checkout at
+# install time but is not seen as one by uninstall time (a different SPIRA_REPO, a
+# scratch-repo cleanup, a release directory with no .git) drops these four units from the
+# manifest silently; the stop/disable/remove pass, driven solely by that list, never
+# touches the unit files still on disk. The stray sweep only REPORTS what it finds
+# unlisted — it does not remove. Acceptance hit exactly this (run 37222619835): install
+# resolved the repo as a git checkout and installed all four; uninstall.sh's own
+# re-resolution saw it as not one and left all four behind.
+# ==========================================================================
+
+git -C "$FAKE_REPO" init -q 2>/dev/null || { printf 'fixture: git init FAKE_REPO failed\n'; exit 1; }
+_seed_units || { printf 'fixture: re-seed for resolution-drift failed\n'; exit 1; }
+
+for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
+           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
+    isfile "resolution-drift: $_cs is seeded while the repo is a git checkout" "$DEST/$_cs"
+done
+
+# Flip the resolution uninstall.sh's own owned.sh call will see: the repo is no longer a
+# git checkout by the time uninstall runs.
+rm -rf "$FAKE_REPO/.git"
+
+drift_out="$(un)"
+drift_rc=$?
+iszero "resolution-drift: uninstall exits 0" "$drift_rc"
+
+for _cs in spira-cert-sweep-full-test.service spira-cert-sweep-full-test.timer \
+           spira-cert-sweep-sample-test.service spira-cert-sweep-sample-test.timer; do
+    [ -e "$DEST/$_cs" ] \
+        && bad "resolution-drift: $_cs is removed" "still in $DEST" \
+        || ok  "resolution-drift: $_cs is removed"
+done
+want   "resolution-drift: the full-sweep service was stopped" \
+    "stop spira-cert-sweep-full-test.service" "$(cat "$MOCK_LOG")"
+want   "resolution-drift: the sample-sweep service was stopped" \
+    "stop spira-cert-sweep-sample-test.service" "$(cat "$MOCK_LOG")"
+nowant "resolution-drift: none of them is left as a stray" "STRAY  spira-cert-sweep" "$drift_out"
+unset _cs
 
 # ==========================================================================
 echo

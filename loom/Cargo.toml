@@ -5,6 +5,7 @@ edition = "2021"
 description = "Loom — a read endpoint over the live beads graph, with the budget that keeps it cheap."
 
 [dependencies]
+spira-config = { path = "../spira-config" }
 # axum for the routing, tokio for the process deadline. The deadline is not decoration: a
 # query that overruns is KILLED rather than awaited, and `kill_on_drop` on a tokio child is
 # what makes dropping the timed-out future actually end the `bd` process.

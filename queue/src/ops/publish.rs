@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{czar_ok, idents, landing_log, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
+use super::{czar_ok, Acquire, Ctx, idents, landing_log, lock, lock_held_by_caller, repo_path, resolve, take_lock, title_line, World, FAIL, OK};
 use crate::model::{LandMode, Member};
 use crate::ports::Divergence;
 use crate::records::{self, write_atomic, Kv};
@@ -165,4 +165,143 @@ pub fn range_members(w: &World, path: &std::path::Path, landstate: &std::path::P
         crate::ident::check("tip", t).is_ok() && w.git.commit_exists(path, t) && w.git.is_ancestor(path, t, head) && !w.git.is_ancestor(path, t, forge)
     };
     Ok(crate::publish_range::members(&commits, &states, &in_range))
+}
+
+/// What a publish pass does about the repository's publish PR.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Settle {
+    Wait,
+    Supersede,
+    Retire,
+    Open,
+}
+
+/// The open publish PR as the pass saw it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pr {
+    Open { ci: Ci, behind: bool },
+    Gone,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ci {
+    Green,
+    Red,
+    /// The branch was never tested (a provision fault): its CI says nothing about the head.
+    Untested,
+    Pending,
+}
+
+pub fn ci_of(status: &str) -> Ci {
+    match super::verdict::normalize_status(status.lines().next().unwrap_or("").trim()) {
+        "green" => Ci::Green,
+        "red" => Ci::Red,
+        "harness_fault" => Ci::Untested,
+        _ => Ci::Pending,
+    }
+}
+
+/// None: no publish PR on record. A PR whose CI is not concluded, or concluded green, is
+/// left to the verdict pass; only a concluded-red or untested head that local has moved
+/// past is superseded (law-a-retry-must-change-an-input: the republish carries a new head).
+pub fn decide(pr: Option<Pr>) -> Settle {
+    match pr {
+        None => Settle::Open,
+        Some(Pr::Gone) => Settle::Retire,
+        Some(Pr::Unknown) => Settle::Wait,
+        Some(Pr::Open { ci: Ci::Red | Ci::Untested, behind: true }) => Settle::Supersede,
+        Some(Pr::Open { .. }) => Settle::Wait,
+    }
+}
+
+/// `queue publish-settle [<repo>]`: settle a stale publish PR, then publish; every
+/// queue.local repository when none is named.
+pub fn publish_settle(w: &World, repo: Option<&str>) -> i32 {
+    let names = match repo {
+        Some(r) => vec![r.to_string()],
+        None => match w.lib.repos() {
+            Ok(n) => n,
+            Err(e) => {
+                w.err(format!("queue.sh publish-settle: cannot list repositories: {e}"));
+                return FAIL;
+            }
+        },
+    };
+    let mut rc = OK;
+    for name in names {
+        let Ok(c) = resolve(w, "publish-settle", Some(&name)) else {
+            rc = FAIL;
+            continue;
+        };
+        if c.r.mode != LandMode::QueueLocal {
+            if repo.is_some() {
+                w.err(format!("queue.sh publish-settle: {name} is not in queue.local mode (mode={})", c.r.mode.as_str()));
+                rc = FAIL;
+            }
+            continue;
+        }
+        if settle_repo(w, &c) != OK {
+            rc = FAIL;
+        }
+    }
+    rc
+}
+
+fn settle_repo(w: &World, c: &Ctx) -> i32 {
+    if !czar_ok(w) {
+        return FAIL;
+    }
+    let name = c.r.name.clone();
+    let Ok(path) = repo_path(w, "publish-settle", c) else { return FAIL };
+    if idents(w, "publish-settle", &[("repo", &name)]).is_err() {
+        return FAIL;
+    }
+    let _g = match lock::try_lock(&c.s.queue_dir, &name) {
+        Acquire::Held(g) => g,
+        Acquire::Busy => {
+            w.out(format!("{} publish-settle {name}: another queue operation holds the lock; retry on the next tick", w.clock.now()));
+            return OK;
+        }
+        Acquire::Unopenable => {
+            w.err(format!("queue.sh publish-settle: cannot open lock file for {name}"));
+            return FAIL;
+        }
+    };
+    let pfile = c.queue_file("publish");
+    let kv = records::read_kv(&pfile).ok().flatten();
+    let pr = kv.as_ref().map(|kv| observe(w, c, &path, kv));
+    let action = decide(pr);
+    let now = w.clock.now();
+    let pr_no = kv.as_ref().and_then(|k| k.get("pr")).unwrap_or("").to_string();
+    w.out(format!("{now} publish-settle {name}: pr={} -> {action:?}", if pr_no.is_empty() { "none" } else { &pr_no }));
+    match action {
+        Settle::Wait => OK,
+        Settle::Open => publish_with(w, Some(&name), true),
+        Settle::Retire | Settle::Supersede => {
+            if action == Settle::Supersede {
+                w.forge.pr_close(&c.s.forge, &path, &pr_no);
+            }
+            let _ = std::fs::remove_file(&pfile);
+            landing_log(&c.s.run, &format!("QUEUE PUBLISH_SUPERSEDED {now} repo={name} pr={pr_no} action={action:?}"));
+            publish_with(w, Some(&name), true)
+        }
+    }
+}
+
+fn observe(w: &World, c: &Ctx, path: &std::path::Path, kv: &Kv) -> Pr {
+    let field = |k: &str| kv.get(k).unwrap_or("").to_string();
+    let (pr, branch, head) = (field("pr"), field("branch"), field("head"));
+    if pr.is_empty() || branch.is_empty() || head.is_empty() {
+        return Pr::Unknown;
+    }
+    match w.forge.pr_state(&c.s.forge, path, &pr).as_deref().map(str::trim) {
+        Some("open") => {}
+        Some("closed" | "merged") => return Pr::Gone,
+        _ => return Pr::Unknown,
+    }
+    let Some(base) = c.r.landref.as_deref() else { return Pr::Unknown };
+    let Some(local) = w.git.rev_parse(path, base) else { return Pr::Unknown };
+    let ci = ci_of(&w.forge.check_status(&c.s.forge, path, &pr, &branch).unwrap_or_default());
+    Pr::Open { ci, behind: local != head }
 }

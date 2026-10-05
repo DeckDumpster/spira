@@ -159,6 +159,15 @@ exit 0
 FAKESCRIPT
 chmod +x "$TMP/systemctl"
 
+cat > "$TMP/dolt" <<'FAKESCRIPT'
+#!/usr/bin/env bash
+case "$*" in
+    *"--get metrics.disabled"*) printf 'true\n'; exit 0 ;;
+esac
+exit 0
+FAKESCRIPT
+chmod +x "$TMP/dolt"
+
 mkdir -p "$TMP/run" "$TMP/doctor-home"
 touch "$TMP/run/cockpit.env"
 
@@ -170,6 +179,7 @@ run_doctor() {
         SPIRA_PATH="$TMP" \
         SPIRA_SYSTEMCTL="$TMP/systemctl" \
         SPIRA_BD="$TMP/bd" \
+        SPIRA_DOLT_BIN="$TMP/dolt" \
         SPIRA_DB="$DB" \
         SPIRA_RUN="$TMP/run" \
         SPIRA_INSTANCE=prod \

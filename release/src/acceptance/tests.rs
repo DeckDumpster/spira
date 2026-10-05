@@ -171,6 +171,9 @@ struct Fake {
     rollback: (i32, &'static str),
     never_lands: bool,
     history_gap: bool,
+    lc_create_fails: bool,
+    history_late: Cell<u32>,
+    rows: RefCell<Vec<String>>,
     no_cutover_script: bool,
     cutover_rc: i32,
     land_modes: Vec<(&'static str, &'static str)>,
@@ -191,6 +194,9 @@ impl Fake {
             rollback: (0, ""),
             never_lands: false,
             history_gap: false,
+            lc_create_fails: false,
+            history_late: Cell::new(0),
+            rows: RefCell::new(Vec::new()),
             no_cutover_script: false,
             cutover_rc: 0,
             land_modes: vec![("scratch-repo", "push"), ("scratch-q", "queue.local"), ("scratch-pr", "pr")],
@@ -264,7 +270,19 @@ impl Fake {
             }
             ("spira-config", ["repo", "names"]) => ok(&self.land_modes.iter().map(|(n, _)| format!("{n}\n")).collect::<String>()),
             ("spira-config", ["repo", "land", n]) => ok(&format!("{}\n", self.land_modes.iter().find(|(x, _)| x == n).map_or("", |(_, m)| m))),
+            ("spira-lc", ["create-bead", id]) => {
+                if self.lc_create_fails {
+                    return Out { rc: 2, text: "cannot tell: connecting to the socket: Connection refused\n".into(), out: String::new() };
+                }
+                self.rows.borrow_mut().push(id.to_string());
+                ok("{}\n")
+            }
             ("spira-lc", ["history", _]) => {
+                if self.history_late.get() > 0 {
+                    self.history_late.set(self.history_late.get() - 1);
+                    let ev: Vec<String> = ["WORKING", "SUBMITTED", "CERTIFIED"].iter().map(|s| format!(r#"{{"from_state":"x","to_state":"{s}","applied":"1"}}"#)).collect();
+                    return ok(&format!("[{}]", ev.join(",")));
+                }
                 let states = if self.history_gap { &["READY", "WORKING", "SUBMITTED", "LANDED"][..] } else { &["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"][..] };
                 let ev: Vec<String> = states.iter().map(|s| format!(r#"{{"to_state":"{s}","applied":1}}"#)).collect();
                 ok(&format!("[{}]", ev.join(",")))
@@ -449,6 +467,15 @@ fn every_tool_runs_on_the_release_launcher_path_and_every_deploy_of_the_tag_allo
         assert_eq!(c.env_of("PATH"), Some(want_path.as_str()), "{}", c.line());
         assert_eq!(c.env_of("SPIRA_CONF"), Some(b.root.join("config/spira/spira.conf").display().to_string().as_str()), "{}", c.line());
     }
+    // uninstall.sh (phases A, C, D) carries the SAME SPIRA_HOME_REPO install_env() gave the
+    // install it undoes. Without it, owned.sh's manifest re-derives repo_is_git_checkout
+    // from scratch under bare launcher_env(), resolves a different answer than install saw,
+    // and leaves the cert-sweep units unlisted — hence unremoved (sp-dn2rl).
+    let uninstalls: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "uninstall.sh").collect();
+    assert_eq!(uninstalls.len(), 3, "phase A, C and D each uninstall once");
+    for c in &uninstalls {
+        assert_eq!(c.env_of("SPIRA_HOME_REPO"), Some("scratch-repo"), "{}", c.line());
+    }
     let deploys_of_tag: Vec<&&Cmd> = tools.iter().filter(|c| c.prog == "deploy.sh" && c.args.last().unwrap().ends_with("20260930T000000Z")).collect();
     assert_eq!(deploys_of_tag.len(), 2, "phase B and phase D");
     for c in deploys_of_tag {
@@ -594,6 +621,24 @@ fn a_bead_that_never_lands_fails_stage_5_inside_its_budget() {
 }
 
 #[test]
+fn the_probe_bead_is_filed_with_its_lifecycle_row() {
+    let b = Box_::new();
+    let f = b.fake();
+    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
+    assert_eq!(*f.rows.borrow(), *f.probes.borrow(), "every probe gets a row, and only probes");
+}
+
+#[test]
+fn a_probe_whose_row_cannot_be_created_fails_bead_filed() {
+    let b = Box_::new();
+    let mut f = b.fake();
+    f.lc_create_fails = true;
+    assert_eq!(phases::run(&f, b.opts(&[])), 1);
+    let fails = b.fails();
+    assert!(fails.iter().any(|x| x.starts_with("phase A: bead filed") && x.contains("create-bead")), "{fails:#?}");
+}
+
+#[test]
 fn a_history_missing_a_state_fails_the_lifecycle_check() {
     let b = Box_::new();
     let mut f = b.fake();
@@ -648,4 +693,45 @@ fn phase_a_bootstrap_conf_sets_id_prefix() {
 
     let doc = spira_config::SpiraToml { spira: Some(section), repo: Default::default(), persona: Default::default() };
     assert!(spira_config::require_id_prefix(&doc).is_ok(), "the converted document must pass the same check doctor/pre-activate run");
+}
+
+#[test]
+fn lifecycle_states_reads_the_store_s_real_history_shape() {
+    // As production's spira-lc history prints it (2026-10-04): applied is the string "1",
+    // the row's READY is only the first event's from_state, and refused events repeat.
+    let h = r#"[{"from_state":"READY","to_state":"WORKING","applied":"1"},
+        {"from_state":"WORKING","to_state":"SUBMITTED","applied":"1"},
+        {"from_state":"SUBMITTED","to_state":"SUBMITTED","applied":"0"},
+        {"from_state":"SUBMITTED","to_state":"CERTIFIED","applied":"1"},
+        {"from_state":"CERTIFIED","to_state":"LANDED","applied":"1"}]"#;
+    let got = crate::acceptance::lifecycle_states(h);
+    assert_eq!(got, vec!["READY", "WORKING", "SUBMITTED", "CERTIFIED", "LANDED"]);
+    assert_eq!(crate::acceptance::missing_in_order(&crate::acceptance::expected_lifecycle("push"), &got), None);
+    assert!(crate::acceptance::lifecycle_states(r#"[{"from_state":"READY","to_state":"WORKING","applied":"0"}]"#).is_empty(), "nothing applied, nothing passed through");
+}
+
+#[test]
+fn a_landed_event_recorded_a_pass_later_is_waited_for() {
+    // The audit worker records LANDED one sentinel pass after the push (sp-53own).
+    let b = Box_::new();
+    let f = b.fake();
+    f.history_late.set(3);
+    assert_eq!(phases::run(&f, b.opts(&[])), 0, "{:#?}", b.fails());
+    assert_eq!(f.history_late.get(), 0, "the late reads were all consumed");
+}
+
+#[test]
+fn every_deploy_carries_the_forge_repository_this_run_resolved() {
+    // An installed release has no git remote; deploy.sh must be told its repo (sp-j0vhm).
+    let b = Box_::new();
+    let f = b.fake();
+    let mut o = with_prev(&b, &[]);
+    o.gh_repo = Some("Owner/spira".into());
+    phases::run(&f, o);
+    let log = f.log.borrow();
+    let deploys: Vec<&Cmd> = log.iter().filter(|c| c.prog == "deploy.sh").collect();
+    assert!(deploys.len() >= 3, "upgrade, rollback and aged deploys ran: {}", deploys.len());
+    for c in deploys {
+        assert_eq!(c.env_of("SPIRA_FORGE_REPO"), Some("Owner/spira"), "{}", c.line());
+    }
 }

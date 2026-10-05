@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# test-pre-activate.sh — pre-activate.sh gates a release against five checks
+# test-pre-activate.sh — pre-activate.sh gates a release against six checks
 # before releases/current moves onto it (release verify runs it and refuses the flip
 # when the gate fails). Every check gets a fixture release dir with stubbed
 # probes (a fake spira-config, a fake bd, a fake units-install --render, a fake
@@ -229,6 +229,20 @@ chmod +x "$REL/bin/spira-lc"
 run "$REL"
 is   "lifecycle: failing migration refuses the release" 1 "$rc"
 want "lifecycle: names the failure" "FAIL lifecycle: admin-migrate: 0003-x.sql FAILED" "$out"
+
+# A release refused for another reason must not change the live schema.
+REL="$TMP/rel-lc-other-bad"; SELFTEST_RC=1 mkrel "$REL"; mkdir -p "$REL/lifecycle/migrations"
+rm -f "$TMP/lc-argv"
+cat > "$REL/bin/spira-lc" <<EOF2
+#!/usr/bin/env bash
+echo "\$*" > "$TMP/lc-argv"
+exit 0
+EOF2
+chmod +x "$REL/bin/spira-lc"
+run "$REL"
+is   "lifecycle: another check failed: exit 1" 1 "$rc"
+want "lifecycle: another check failed: reported skipped" "skip lifecycle" "$out"
+is   "lifecycle: another check failed: admin-migrate never ran" "absent" "$([ -e "$TMP/lc-argv" ] && echo present || echo absent)"
 
 # ── self-test.sh itself: MANIFEST integrity, not just an exit-code stub ──────────────
 REL="$TMP/rel-manifest-ok"

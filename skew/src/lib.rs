@@ -207,15 +207,30 @@ pub fn check(w: &dyn World, escalate_flag: bool) -> i32 {
 
     let spira_repo = w.env("SPIRA_REPO").unwrap_or_default();
     let repo_path = PathBuf::from(&spira_repo);
+
+    let tag_sidecar = releases_dir.join(".tags").join(&activated_name);
+    let mut release_tag = w.read_to_string(&tag_sidecar).map(|s| s.trim().to_string()).unwrap_or_default();
+
+    // NOT APPLICABLE, NOT CANNOT-VERIFY — but only here. The sidecar names the release tag
+    // with no git at all (artifact mode judges NOT-LATEST from it); a checkout is needed only
+    // to match tags to the MANIFEST commit when the sidecar is empty. A release-only install
+    // with no sidecar and no checkout cannot be asked the question at all: exit 0, named
+    // (sp-wecsq's case). Returning earlier, whenever SPIRA_REPO had no .git, silenced
+    // artifact-mode verdicts too (test-skew-check-release, the regression this fixes).
+    if release_tag.is_empty() && !w.is_git_repo(&repo_path) {
+        w.out(&format!(
+            "skew: not applicable — no release tag recorded for {activated_name} and no harness checkout at SPIRA_REPO ({}) to match tags against",
+            repo_path.display()
+        ));
+        return EXIT_OK;
+    }
+
     let all_tags = match resolve_all_tags(w, &repo_path) {
         Ok(t) => t,
         Err(code) => return code,
     };
 
     let latest_tag = all_tags.last().cloned().unwrap_or_default();
-
-    let tag_sidecar = releases_dir.join(".tags").join(&activated_name);
-    let mut release_tag = w.read_to_string(&tag_sidecar).map(|s| s.trim().to_string()).unwrap_or_default();
 
     if release_tag.is_empty() {
         for t in &all_tags {

@@ -51,6 +51,368 @@ fn parse_args() -> Result<Opts, String> {
 fn phase(n: &str) {
     println!("\n[{n}]");
 }
+/// The pinned duckdb, the same version spira/testenv/Containerfile installs (DUCKDB_VERSION).
+const DUCKDB_VERSION: &str = "1.5.5";
+
+/// The pinned mozilla/sccache release (sp-x6v17). Same version doctor/src/real.rs's test
+/// fixture (REAL_SCCACHE_018_HELP) captures `sccache --help` output for, so the webdav-feature
+/// text this code checks at runtime is text an existing test already pins independently.
+/// mozilla/sccache's Cargo.toml sets `default = ["all"]`, and `all` lists `webdav` — its
+/// release CI (ci.yml's `build` job) builds the plain `sccache` binary for
+/// x86_64/aarch64-unknown-linux-musl with no `--no-default-features`, so the published
+/// tarball's binary already has the backend doctor::check_sccache requires. (The
+/// `--no-default-features --features=dist-server` row in that matrix builds a DIFFERENT
+/// binary, `sccache-dist`, not this one.)
+const SCCACHE_VERSION: &str = "0.18.0";
+
+/// The pinned inotify-tools release (sp-x6v17). inotify-tools is normally a distro package
+/// (`apt install inotify-tools`) and install carries no sudo, so apt cannot be the
+/// provisioning path here. Its own release workflow (.github/workflows/build.yml) builds
+/// inotifywait with `ALL_STATIC=1` and asserts `file -L "$bin" | grep -q static` before
+/// publishing — i.e. upstream already guarantees the binary this tarball carries has no
+/// shared-library dependency on the box's libc/distro, which is what makes vendoring it
+/// (rather than building from source, which would need a full distro toolchain) safe.
+const INOTIFY_TOOLS_VERSION: &str = "4.26.262";
+
+/// Map `std::env::consts::ARCH` to mozilla/sccache's release target triple. Upstream only
+/// publishes Linux x86_64/aarch64 (musl) assets.
+fn sccache_target(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64-unknown-linux-musl"),
+        "aarch64" => Ok("aarch64-unknown-linux-musl"),
+        other => Err(format!("no sccache build for architecture {other}")),
+    }
+}
+
+/// Map `std::env::consts::ARCH` to inotify-tools' release arch label (its asset names use
+/// the bare arch, unlike sccache's target triple).
+fn inotify_tools_arch(arch: &str) -> Result<&'static str, String> {
+    match arch {
+        "x86_64" => Ok("x86_64"),
+        "aarch64" => Ok("aarch64"),
+        other => Err(format!("no inotify-tools build for architecture {other}")),
+    }
+}
+
+fn sccache_url(target: &str) -> String {
+    format!("https://github.com/mozilla/sccache/releases/download/v{SCCACHE_VERSION}/sccache-v{SCCACHE_VERSION}-{target}.tar.gz")
+}
+
+fn inotify_tools_url(arch: &str) -> String {
+    format!("https://github.com/inotify-tools/inotify-tools/releases/download/{INOTIFY_TOOLS_VERSION}/inotify-tools-{INOTIFY_TOOLS_VERSION}-{arch}-linux.tar.gz")
+}
+
+/// The path of the `sccache` member inside its own release tarball — `tar -O` pulls just
+/// this file out without ever extracting the rest to disk. (mozilla/sccache's release.yml
+/// `Create release assets` step: `tar -zcvf "$d.tar.gz" "$d"` where `$d` is this exact
+/// directory name — the same string the published asset's filename is built from.)
+fn sccache_tar_member(target: &str) -> String {
+    format!("sccache-v{SCCACHE_VERSION}-{target}/sccache")
+}
+
+/// Parses `sccache --help`'s "Enabled features" block the same way doctor::check_sccache
+/// does (doctor/src/lib.rs) — reimplemented rather than shared, since install does not
+/// otherwise depend on the doctor crate (it invokes doctor as an external binary, phase 0).
+fn sccache_help_has_webdav(help: &str) -> bool {
+    help.lines().find(|l| l.trim_start().starts_with("WebDAV:")).is_some_and(|l| l.trim_end().ends_with("true"))
+}
+
+/// The pinned aerc tag (git.sr.ht/~rjarry/aerc). NOT a "v"-prefixed go module version (its
+/// tags are bare "0.22.0", which `go install git.sr.ht/~rjarry/aerc@0.22.0` cannot resolve —
+/// go module version queries require a canonical `vX.Y.Z` — and aerc publishes no prebuilt
+/// binary release either), so `spira/build-tarball.sh` builds it ONCE, at release-build
+/// time, from the tag's own source archive, and ships the resulting binary inside the
+/// release tarball at [`AERC_VENDORED_REL`]. Install's phase -1 (`install_aerc`, below)
+/// only ever COPIES that already-built binary — never a network fetch, never a Go
+/// toolchain, never `go install`, not even when no usable one is already present.
+///
+/// Before sp-41so3 this constant named a version install itself built from source at
+/// install time: a fetched Go toolchain, then `go install` resolving ~95 of aerc's own
+/// module dependencies over the network. law-install-installs-every-dependency still
+/// requires install to provide aerc — there is no optional tier — but an install that needs
+/// ~95 network round-trips to proxy.golang.org is fragile by construction: on 2026-10-04
+/// local acceptance failed when every one of those fetches hit "net/http: TLS handshake
+/// timeout" (this host's IPv6 is unreachable; load was high) — the identical build had
+/// passed earlier the same day. Building once, on the release-build machine, and shipping
+/// the binary removes the fragility without touching the law: install still provides aerc,
+/// it just never has to build it.
+const AERC_VERSION: &str = "0.22.0";
+
+/// Where the release build (`spira/build-tarball.sh`) ships the aerc binary it built once,
+/// relative to the release root — the same ancestor whose `bin/` holds this very
+/// `spira-install` binary, and what
+/// `spira_config::release_env::own_release_root_for_process` resolves to for it. Deliberately
+/// NOT under `bin/`: `release::build::clashes` (and anything else that assumes `bin/` holds
+/// only this workspace's own `[[bin]]` targets) never has to learn that aerc is not one of
+/// them, and `spira/build-tarball.sh`'s own compat-symlink pass over `bin/` never has to
+/// skip it either.
+const AERC_VENDORED_REL: &str = "vendor/bin/aerc";
+
+/// Parses `aerc -v`'s stdout (`"aerc 0.22.0 (go1.27.1 amd64 linux)\n"`, from main.go's
+/// `ShowVersion`/`buildInfo` — main.Version is what `-ldflags "-X main.Version=..."` sets)
+/// and reports whether it names exactly `version`.
+fn aerc_reports_version(output: &str, version: &str) -> bool {
+    output.split_whitespace().nth(1) == Some(version)
+}
+
+/// Whether `install_aerc` can skip the copy entirely: the aerc already at
+/// `~/.local/bin/aerc` (the exact path `install_aerc` would overwrite) already reports the
+/// pinned AERC_VERSION. `current` is `None` when that path is absent or did not run.
+fn aerc_install_can_be_skipped(current: Option<&str>) -> bool {
+    current.is_some_and(|s| aerc_reports_version(s, AERC_VERSION))
+}
+
+/// Phase -1: put ~/.local/bin on PATH (for the doctor this process runs next), set dolt's
+/// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
+/// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
+/// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
+/// inotifywait, and aerc (copied from this release's own vendored binary — sp-41so3; see
+/// AERC_VERSION's comment — never built here, never a network fetch).
+fn dependencies(dry: bool) -> Result<(), String> {
+    let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
+    let bin = Path::new(&home).join(".local/bin");
+    let path = std::env::var("PATH").unwrap_or_default();
+    if !path.split(':').any(|p| Path::new(p) == bin) {
+        std::env::set_var("PATH", format!("{}:{path}", bin.display()));
+    }
+
+    let metrics_off = Command::new("timeout")
+        .args(["5", "dolt", "config", "--global", "--get", "metrics.disabled"])
+        .output()
+        .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+        .unwrap_or(false);
+    if metrics_off {
+        skip("dolt metrics.disabled already true");
+    } else if dry {
+        would("run: dolt config --global --add metrics.disabled true");
+    } else {
+        run_ok("timeout", &["5", "dolt", "config", "--global", "--add", "metrics.disabled", "true"])
+            .map_err(|e| format!("cannot set dolt metrics.disabled: {e}"))?;
+        info("set dolt metrics.disabled true (dolt config --global)");
+    }
+
+    fetch_duckdb(dry, &bin)?;
+    fetch_sccache(dry, &bin)?;
+    fetch_inotifywait(dry, &bin)?;
+    install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
+    Ok(())
+}
+
+/// Fetch duckdb into ~/.local/bin when no duckdb is on PATH.
+fn fetch_duckdb(dry: bool, bin: &Path) -> Result<(), String> {
+    let have_duckdb = Command::new("timeout").args(["5", "duckdb", "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    if have_duckdb {
+        skip("duckdb on PATH");
+        return Ok(());
+    }
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "amd64",
+        "aarch64" => "arm64",
+        other => return Err(format!("no duckdb build for architecture {other}")),
+    };
+    let url = format!("https://github.com/duckdb/duckdb/releases/download/v{DUCKDB_VERSION}/duckdb_cli-linux-{arch}.gz");
+    let dest = bin.join("duckdb");
+    if dry {
+        would(&format!("fetch duckdb {DUCKDB_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let gz = bin.join(".duckdb.download.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &gz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch duckdb from {url}: {e}"))?;
+    // batch-job: unpacking the downloaded duckdb once per install; bounded at 120 s.
+    let out = Command::new("timeout").args(["120", "gunzip", "-c", &gz.to_string_lossy()]).output().map_err(|e| format!("gunzip: {e}"))?;
+    let _ = std::fs::remove_file(&gz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack duckdb from {url}"));
+    }
+    let tmp = bin.join(".duckdb.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod duckdb: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let ok = Command::new("timeout").args(["5", dest.to_str().unwrap_or("duckdb"), "--version"]).output().map(|o| o.status.success()).unwrap_or(false);
+    if !ok {
+        return Err(format!("installed {} does not run", dest.display()));
+    }
+    info(&format!("installed duckdb {DUCKDB_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch sccache into ~/.local/bin unless the sccache already resolvable on PATH already
+/// reports the webdav backend (doctor::check_sccache's own bar — not a version comparison,
+/// since that is the actual property both doctor and every build need). No `cargo` is
+/// guaranteed present on a fresh box (acceptance run 37222619835 had neither cargo nor
+/// sccache on PATH), so `cargo install sccache --features webdav` cannot be the
+/// provisioning path install itself takes; fetch mozilla/sccache's own prebuilt release
+/// binary instead, which already carries the feature (see SCCACHE_VERSION's comment).
+fn fetch_sccache(dry: bool, bin: &Path) -> Result<(), String> {
+    let current_help = Command::new("timeout")
+        .args(["5", "sccache", "--help"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if current_help.as_deref().is_some_and(sccache_help_has_webdav) {
+        skip("sccache on PATH with webdav backend");
+        return Ok(());
+    }
+    let target = sccache_target(std::env::consts::ARCH)?;
+    let url = sccache_url(target);
+    let dest = bin.join("sccache");
+    if dry {
+        would(&format!("fetch sccache {SCCACHE_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".sccache.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch sccache from {url}: {e}"))?;
+    let member = sccache_tar_member(target);
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", &member]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack sccache from {url}"));
+    }
+    let tmp = bin.join(".sccache.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod sccache: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("sccache"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !sccache_help_has_webdav(&help) {
+        return Err(format!("installed {} does not report the webdav backend", dest.display()));
+    }
+    info(&format!("installed sccache {SCCACHE_VERSION} (webdav) at {}", dest.display()));
+    Ok(())
+}
+
+/// Fetch inotifywait into ~/.local/bin unless it is already on PATH. No sudo, so this
+/// vendors inotify-tools' own statically-linked release binary rather than `apt install
+/// inotify-tools` (see INOTIFY_TOOLS_VERSION's comment on why that binary is safe to vendor).
+fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
+    if which_prog("inotifywait").is_some() {
+        skip("inotifywait on PATH");
+        return Ok(());
+    }
+    let arch = inotify_tools_arch(std::env::consts::ARCH)?;
+    let url = inotify_tools_url(arch);
+    let dest = bin.join("inotifywait");
+    if dry {
+        would(&format!("fetch inotifywait {INOTIFY_TOOLS_VERSION} from {url} into {}", dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tgz = bin.join(".inotify-tools.download.tar.gz");
+    // batch-job: install downloads a pinned dependency once per host; bounded by curl --max-time 300.
+    run_ok(
+        "curl",
+        &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz.to_string_lossy(), &url],
+    )
+    .map_err(|e| format!("cannot fetch inotify-tools from {url}: {e}"))?;
+    // batch-job: pulling the one binary member out of the downloaded tarball; bounded at 60 s.
+    let out = Command::new("timeout").args(["60", "tar", "-xzf", &tgz.to_string_lossy(), "-O", "usr/bin/inotifywait"]).output().map_err(|e| format!("tar: {e}"))?;
+    let _ = std::fs::remove_file(&tgz);
+    if !out.status.success() || out.stdout.is_empty() {
+        return Err(format!("cannot unpack inotifywait from {url}"));
+    }
+    let tmp = bin.join(".inotifywait.new");
+    std::fs::write(&tmp, &out.stdout).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod inotifywait: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    // inotifywait --help exits 1 by design (inotify-tools' own release check relies on this
+    // too); its first line names the binary, which is all that is worth asserting here.
+    let help = Command::new("timeout").args(["5", dest.to_str().unwrap_or("inotifywait"), "--help"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !help.contains("inotifywait") {
+        return Err(format!("installed {} does not run", dest.display()));
+    }
+    info(&format!("installed inotifywait {INOTIFY_TOOLS_VERSION} at {}", dest.display()));
+    Ok(())
+}
+
+/// Phase -1's aerc step (sp-41so3): copy the release's own vendored aerc
+/// ([`AERC_VENDORED_REL`], built once at release-build time by
+/// `spira/build-tarball.sh`) to `bin`/aerc, unless the aerc already there already
+/// reports [`AERC_VERSION`]. No network, no Go toolchain, no `go install` — ever; see
+/// `AERC_VERSION`'s comment for why.
+///
+/// `release_root` is this `spira-install` binary's own release
+/// (`spira_config::release_env::own_release_root_for_process`, resolved once by the
+/// caller). `None` means this process is not running from a built release at all — a dev
+/// checkout, `cargo run --bin spira-install` with no `spira/build-tarball.sh` output
+/// anywhere above it — and that is a FAIL-CLOSED condition: law-install-installs-every-
+/// dependency still requires install to provide aerc, so this names exactly what is
+/// missing and how to produce it rather than silently skipping the dependency. Likewise
+/// when `release_root` resolves but that release's tarball predates sp-41so3 (or was built
+/// by something other than `spira/build-tarball.sh`) and simply has no
+/// `AERC_VENDORED_REL` file.
+fn install_aerc(dry: bool, bin: &Path, release_root: Option<&Path>) -> Result<(), String> {
+    let dest = bin.join("aerc");
+    let current = Command::new("timeout")
+        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    if aerc_install_can_be_skipped(current.as_deref()) {
+        skip(&format!("aerc {AERC_VERSION} at {}", dest.display()));
+        return Ok(());
+    }
+    // SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, same shape as phase 4.5's
+    // SPIRA_INSTALL_LC_STORE_CONSIDERED): an install-suite fixture that installs from a
+    // plain tree or a `release build --bin-dir` stage carries no AERC_VENDORED_REL at all
+    // — that path is for production's own build-tarball.sh tarballs, never these fixtures
+    // — so the fail-closed refusal below would stop every such suite at phase -1, long
+    // before the phase it actually means to test. This is a NAMED, loud opt-out: one line
+    // saying aerc was not installed and why, never a silent skip, and it never fires
+    // against a real release (where no caller has reason to set it).
+    if nonempty_env("SPIRA_INSTALL_AERC_CONSIDERED").is_some() {
+        info("aerc NOT installed — SPIRA_INSTALL_AERC_CONSIDERED is set (a fixture with no release-vendored binary); aerc will not run until install runs without it");
+        return Ok(());
+    }
+    let Some(release_root) = release_root else {
+        return Err(format!(
+            "cannot install aerc {AERC_VERSION}: this process is not running from a built release (no ancestor holds both bin/ and spira/conf.sh), so there is no {AERC_VENDORED_REL} to copy — build a release tarball first (bash spira/build-tarball.sh build --workspace <repo>), which builds aerc {AERC_VERSION} once and ships it there; install never builds it"
+        ));
+    };
+    let src = release_root.join(AERC_VENDORED_REL);
+    if !src.is_file() {
+        return Err(format!(
+            "release at {} does not carry {AERC_VENDORED_REL} — rebuild its tarball with spira/build-tarball.sh, which builds aerc {AERC_VERSION} once at release-build time and ships the binary there; install never builds it",
+            release_root.display()
+        ));
+    }
+    if dry {
+        would(&format!("copy aerc {AERC_VERSION} from {} to {}", src.display(), dest.display()));
+        return Ok(());
+    }
+    std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
+    let tmp = bin.join(".aerc.new");
+    std::fs::copy(&src, &tmp).map_err(|e| format!("cannot copy {} to {}: {e}", src.display(), tmp.display()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod aerc: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
+    let verify = Command::new("timeout")
+        .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .unwrap_or_default();
+    if !aerc_reports_version(&verify, AERC_VERSION) {
+        return Err(format!("installed {} does not report version {AERC_VERSION}", dest.display()));
+    }
+    info(&format!("installed aerc {AERC_VERSION} (copied from the release) at {}", dest.display()));
+    Ok(())
+}
+
 fn info(s: &str) {
     println!("  {s}");
 }
@@ -99,6 +461,16 @@ fn main() -> ExitCode {
 
     if opts.system_user {
         return standalone_system_user(&instance, opts.dry);
+    }
+
+    // ---- phase -1: dependencies ----------------------------------------------------------
+    // Install provides what its own doctor demands BEFORE the preflight judges the host
+    // (law-install-installs-every-dependency, sp-k0n0j): a fresh host used to fail preflight on
+    // two things install could have supplied — dolt's telemetry flag and duckdb.
+    phase("phase -1: dependencies");
+    if let Err(e) = dependencies(opts.dry) {
+        eprintln!("install: {e}");
+        return ExitCode::from(1);
     }
 
     // ---- phase 0: preflight -------------------------------------------------------------
@@ -152,13 +524,34 @@ fn main() -> ExitCode {
         changes += 1;
     }
 
+    // Resolve the locations the rest of install reads, now that the config exists. They
+    // were read straight from this process's environment, which a fresh host never sets,
+    // so the database phase initialised "" (sp-xbxcb). install.sh used to source conf.sh here.
+    for (key, required) in [("SPIRA_DB", true), ("SPIRA_RUN", true), ("SPIRA_DOLT_DATA", false), ("SPIRA_RELEASES", false)] {
+        if nonempty_env(key).is_some() {
+            continue;
+        }
+        match spira_config::resolve::key_for_process(key) {
+            Ok(v) if !v.trim().is_empty() => {
+                info(&format!("{key} = {v} (resolved from config)"));
+                std::env::set_var(key, v);
+            }
+            Ok(_) | Err(_) if !required => {}
+            Ok(_) => {
+                eprintln!("install: {key} resolved empty — refusing to continue");
+                return ExitCode::from(2);
+            }
+            Err(e) => {
+                eprintln!("install: cannot resolve {key}: {e}");
+                return ExitCode::from(2);
+            }
+        }
+    }
+
     // ---- phase 1.5: same-user spira_lc credential ---------------------------------------
     phase("phase 1.5: spira-lc same-user credential");
     {
-        let cred = nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
-            let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
-            spira_config::resolve::lc_credential_default(&env_map)
-        });
+        let cred = same_user_credential_path();
         for path in [cred.clone(), format!("{cred}-ro")] {
             if Path::new(&path).is_file() {
                 skip(&format!("{path} already exists"));
@@ -336,6 +729,18 @@ fn main() -> ExitCode {
         }
     }
 
+    let metrics_off = Command::new("dolt").args(["config", "--global", "--get", "metrics.disabled"]).output().map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true").unwrap_or(false);
+    if metrics_off {
+        skip("dolt metrics.disabled already true");
+    } else if opts.dry {
+        would("run: dolt config --global --add metrics.disabled true");
+    } else if Command::new("dolt").args(["config", "--global", "--add", "metrics.disabled", "true"]).status().map(|s| s.success()).unwrap_or(false) {
+        info("set dolt metrics.disabled true (dolt config --global)");
+        changes += 1;
+    } else {
+        eprintln!("install: could not set metrics.disabled — run: dolt config --global --add metrics.disabled true");
+    }
+
     if Path::new(&db).join(".beads").is_dir() || !opts.dry {
         let server_mode = dolt_data.is_some();
         let server_up = server_mode && tcp_up(dolt_port);
@@ -470,6 +875,78 @@ fn main() -> ExitCode {
         if rc != 0 {
             eprintln!("install: phase units failed — seed.sh failed with the database server running");
             return ExitCode::from(2);
+        }
+    }
+
+    // ---- phase 4.5: lifecycle store -------------------------------------------------------
+    // sp-xfqnr: a fresh same-user install never built spira_lifecycle, so with
+    // lifecycle_enforce on an aeon was summoned but could not claim or submit, and `spira-lc
+    // history` exited 2. Here, after phase 4 has dolt-beads.service listening: schema,
+    // migrations, grants — idempotent, and fatal when it cannot be done (no silent skip).
+    phase("phase 4.5: lifecycle store");
+    if spira_config::resolve::lc_system_mode() {
+        skip("spira-lc runs as a system service (--system-user) — its store and grants are spira/cutover-deploy.sh's, with the credentials under /etc/spira-lc");
+    } else if nonempty_env("SPIRA_INSTALL_LC_STORE_CONSIDERED").is_some() {
+        info("lifecycle store NOT built — SPIRA_INSTALL_LC_STORE_CONSIDERED is set (a fixture with no real Dolt server); spira-lc will not answer until install runs without it");
+    } else if opts.dry {
+        would("apply lifecycle/schema.sql, lifecycle/migrations/*.sql (spira-lc admin-migrate) and lifecycle/grants.sql as the Dolt admin");
+    } else {
+        let port = nonempty_env("SPIRA_LC_PORT").and_then(|p| p.parse().ok()).or_else(|| dolt_data.as_ref().and_then(|dd| read_yaml_port(&format!("{dd}/dolt-server.yaml")))).unwrap_or(3307);
+        match lifecycle_store_phase(port) {
+            Ok(lines) => {
+                for l in lines {
+                    info(&l);
+                }
+                changes += 1;
+                // lc-serve.service was enabled in phase 4, before this store existed, and may
+                // have given up (StartLimitBurst): restart it now and require it to be active —
+                // fail closed, since an aeon cannot claim without it (sp-xfqnr).
+                // batch-job: one restart of a service during install; bounded by timeout 30.
+                let _ = Command::new("timeout").args(["30", "systemctl", "--user", "restart", "lc-serve.service"]).status();
+                let mut active = false;
+                for _ in 0..20 {
+                    active = Command::new("timeout")
+                        .args(["5", "systemctl", "--user", "is-active", "--quiet", "lc-serve.service"])
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false);
+                    if active {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                if !active {
+                    eprintln!("install: phase lifecycle store failed — lc-serve.service is not active after the store was built (journalctl --user -u lc-serve.service)");
+                    return ExitCode::from(2);
+                }
+                info("lc-serve.service active on the lifecycle store");
+                // The store is built and serving, so this install runs on the lifecycle machine:
+                // turn spira.lifecycle_enforce on, unless the operator already set it either way
+                // (a seeder never overwrites a decision). Off by default, a fresh install never
+                // used the store it just built, and acceptance's lifecycle sequence saw nothing
+                // (acceptance 37183437236, sp-6ka75).
+                match spira_config::discover(None) {
+                    Some(toml) if toml.is_file() => {
+                        let set = spira_config::load(&toml).ok().and_then(|d| d.spira).and_then(|s| s.lifecycle_enforce);
+                        if set.is_some() {
+                            skip(&format!("spira.lifecycle_enforce already set in {} — left as the operator set it", toml.display()));
+                        } else if let Err(e) = spira_config::set_paths_in_file(&toml, &[("spira.lifecycle_enforce", "true")]) {
+                            eprintln!("install: phase lifecycle store failed — could not set spira.lifecycle_enforce in {}: {e}", toml.display());
+                            return ExitCode::from(2);
+                        } else {
+                            info(&format!("spira.lifecycle_enforce = true in {}", toml.display()));
+                        }
+                    }
+                    _ => {
+                        eprintln!("install: phase lifecycle store failed — spira-config discovered no config document to turn lifecycle_enforce on in");
+                        return ExitCode::from(2);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("install: phase lifecycle store failed — {e}");
+                return ExitCode::from(2);
+            }
         }
     }
 
@@ -943,6 +1420,50 @@ fn group_gid(group: &str) -> Option<u32> {
     String::from_utf8_lossy(&out.stdout).trim().split(':').nth(2)?.parse().ok()
 }
 
+/// The same-user spira_lc credential: `SPIRA_LC_PASSWORD_FILE`, else the default path under
+/// the operator's config dir. Its read-only sibling is this path with `-ro` appended. Phase
+/// 1.5 creates both; phase 4.5 spends them.
+fn same_user_credential_path() -> String {
+    nonempty_env("SPIRA_LC_PASSWORD_FILE").unwrap_or_else(|| {
+        let env_map: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+        spira_config::resolve::lc_credential_default(&env_map)
+    })
+}
+
+/// Phase 4.5 (sp-xfqnr): build spira_lifecycle through `spira-lc`'s admin verbs, as the Dolt
+/// admin (`SPIRA_LC_ADMIN_USER`/`SPIRA_LC_ADMIN_PASSWORD`, default root with an empty
+/// password — what a fresh dolt-beads.service has, and what cutover-deploy.sh defaults to),
+/// against the SQL this release ships beside its unit templates.
+fn lifecycle_store_phase(port: u16) -> Result<Vec<String>, String> {
+    use install::lifecycle_store::{self, Admin};
+    let host = nonempty_env("SPIRA_LC_HOST");
+    if host.is_none() && !tcp_up(port) {
+        return Err(format!("no Dolt server is listening on 127.0.0.1:{port} for the lifecycle store (SPIRA_LC_PORT / dolt-server.yaml)"));
+    }
+    let lifecycle_dir = bootstrap::templates_dir().parent().map(|r| r.join("lifecycle")).ok_or("cannot locate this release's lifecycle/ directory")?;
+    let cred = same_user_credential_path();
+    let rw = lifecycle_store::read_credential(Path::new(&cred))?;
+    let ro = lifecycle_store::read_credential(Path::new(&format!("{cred}-ro")))?;
+    let admin = Admin {
+        user: nonempty_env("SPIRA_LC_ADMIN_USER").unwrap_or_else(|| "root".into()),
+        password: std::env::var("SPIRA_LC_ADMIN_PASSWORD").unwrap_or_default(),
+        host,
+        port,
+    };
+    lifecycle_store::apply(&lifecycle_dir, &std::env::temp_dir(), &admin, &rw, &ro, |args, env| {
+        // batch-job: one-time install DDL against the local Dolt server; bounded at 120 s by timeout(1).
+        let mut c = Command::new("timeout");
+        c.arg("120").arg("spira-lc").args(args).stdin(Stdio::null());
+        for (k, v) in env {
+            c.env(k, v);
+        }
+        match c.output() {
+            Ok(o) => (o.status.code().unwrap_or(1), format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr))),
+            Err(e) => (127, format!("cannot run spira-lc: {e}")),
+        }
+    })
+}
+
 fn create_same_user_credential(path: &str) -> Result<(), String> {
     if let Some(dir) = Path::new(path).parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
@@ -981,4 +1502,206 @@ fn base64_no_pad(bytes: &[u8]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod dependency_fetch_tests {
+    use super::*;
+
+    #[test]
+    fn sccache_target_maps_known_arches_to_mozillas_release_triples() {
+        assert_eq!(sccache_target("x86_64").unwrap(), "x86_64-unknown-linux-musl");
+        assert_eq!(sccache_target("aarch64").unwrap(), "aarch64-unknown-linux-musl");
+        assert!(sccache_target("riscv64").is_err());
+    }
+
+    #[test]
+    fn inotify_tools_arch_maps_known_arches_to_the_bare_label() {
+        assert_eq!(inotify_tools_arch("x86_64").unwrap(), "x86_64");
+        assert_eq!(inotify_tools_arch("aarch64").unwrap(), "aarch64");
+        assert!(inotify_tools_arch("riscv64").is_err());
+    }
+
+    #[test]
+    fn sccache_url_names_the_pinned_version_and_asset() {
+        let url = sccache_url("x86_64-unknown-linux-musl");
+        assert_eq!(url, "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz");
+    }
+
+    #[test]
+    fn inotify_tools_url_names_the_pinned_version_and_asset() {
+        let url = inotify_tools_url("aarch64");
+        assert_eq!(url, "https://github.com/inotify-tools/inotify-tools/releases/download/4.26.262/inotify-tools-4.26.262-aarch64-linux.tar.gz");
+    }
+
+    #[test]
+    fn sccache_tar_member_is_the_versioned_directory_the_release_asset_actually_contains() {
+        // mozilla/sccache's release.yml packs the binary at <dirname>/sccache where
+        // <dirname> is the same string the published .tar.gz's own filename is built
+        // from — not just "sccache" at the tarball root.
+        assert_eq!(sccache_tar_member("x86_64-unknown-linux-musl"), "sccache-v0.18.0-x86_64-unknown-linux-musl/sccache");
+    }
+
+    /// The exact text of sccache 0.18.0's own "Enabled features" block (captured live,
+    /// built with `--features webdav`) — doctor/src/real.rs's REAL_SCCACHE_018_HELP pins
+    /// this same text independently; kept in sync by inspection, not by sharing code.
+    const REAL_SCCACHE_018_HELP_WEBDAV_TRUE: &str = "Enabled features:\n    S3:        false\n    Redis:     false\n    Memcached: false\n    GCS:       false\n    GHA:       false\n    Azure:     false\n    WebDAV:    true\n    OSS:       false\n    COS:       false\n";
+
+    #[test]
+    fn sccache_help_has_webdav_true_passes() {
+        assert!(sccache_help_has_webdav(REAL_SCCACHE_018_HELP_WEBDAV_TRUE));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_false_fails() {
+        let help = REAL_SCCACHE_018_HELP_WEBDAV_TRUE.replace("WebDAV:    true", "WebDAV:    false");
+        assert!(!sccache_help_has_webdav(&help));
+    }
+
+    #[test]
+    fn sccache_help_has_webdav_missing_line_fails() {
+        assert!(!sccache_help_has_webdav("sccache: error: no such option --help\n"));
+    }
+
+    #[test]
+    fn aerc_reports_version_matches_the_real_dash_v_output_shape() {
+        assert!(aerc_reports_version("aerc 0.22.0 (go1.27.1 amd64 linux)\n", "0.22.0"));
+        assert!(!aerc_reports_version("aerc 0.21.0 (go1.25.0 amd64 linux)\n", "0.22.0"));
+        assert!(!aerc_reports_version("", "0.22.0"));
+        assert!(!aerc_reports_version("aerc\n", "0.22.0"));
+    }
+
+    /// sp-x6v17: the coordinator asked specifically for this case — a present-at-the-
+    /// pinned-version aerc must skip install_aerc's copy entirely.
+    #[test]
+    fn a_present_at_pinned_version_aerc_skips_the_install() {
+        assert!(aerc_install_can_be_skipped(Some("aerc 0.22.0 (go1.27.1 amd64 linux)\n")));
+        assert!(!aerc_install_can_be_skipped(Some("aerc 0.21.0 (go1.25.0 amd64 linux)\n")));
+        assert!(!aerc_install_can_be_skipped(None));
+    }
+
+    /// A fake `timeout` on PATH that drops its own first argument (the duration) and execs
+    /// the rest — enough for `install_aerc`'s `timeout 5 <path> -v` version checks, with no
+    /// real `timeout`(1) dependency and, critically, no `curl`, `go` or `tar` anywhere on
+    /// PATH at all. Any attempt by the code under test to spawn one of those would fail with
+    /// ENOENT, so a test whose PATH holds only this proves the code path it exercises
+    /// touches no network and no Go toolchain.
+    fn fake_timeout_only_path() -> testkit::TempDir {
+        let d = testkit::TempDir::new("install-aerc-fake-path");
+        testkit::write_exe(d.join("timeout"), "#!/bin/sh\nshift\nexec \"$@\"\n");
+        d
+    }
+
+    /// A fake aerc binary (any interpreter is fine — install_aerc only ever runs `-v`
+    /// against it) that reports the pinned AERC_VERSION, written at `path`.
+    fn fake_aerc_reporting_pinned_version(path: &Path) {
+        testkit::write_exe(path, "#!/bin/sh\nprintf 'aerc 0.22.0 (go1.27.1 amd64 linux)\\n'\n");
+    }
+
+    /// sp-41so3: before this bead, aerc's only path to ~/.local/bin was `find_usable_go`
+    /// then `go install` against a freshly-curled source archive — no concept of a release
+    /// carrying a prebuilt copy existed at all, so a fresh host (no aerc at `bin`/aerc yet)
+    /// always needed the network, no matter what sat beside it. This is exactly the shape
+    /// that failed real acceptance on 2026-10-04: every `go install` module fetch hit a TLS
+    /// handshake timeout under load. This test is RED against that code (no such function
+    /// as `install_aerc`, and `fetch_aerc` could not have passed it: it ignores
+    /// `AERC_VENDORED_REL` entirely and reaches straight for go/curl on a cache miss) and
+    /// GREEN after sp-41so3: a fresh host whose release already carries the vendored binary
+    /// installs with PATH holding nothing but a fake `timeout` — no curl, no go, no tar
+    /// resolvable at all, so any attempt to spawn one would have errored this test out.
+    #[test]
+    fn install_aerc_copies_the_vendored_binary_and_spawns_no_network_command() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let release = testkit::TempDir::new("install-aerc-release");
+        let vendor_dir = release.join("vendor/bin");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        fake_aerc_reporting_pinned_version(&vendor_dir.join("aerc"));
+        let bin = testkit::TempDir::new("install-aerc-bin");
+
+        let r = install_aerc(false, &bin, Some(release.path()));
+
+        assert!(r.is_ok(), "{r:?}");
+        let dest = bin.join("aerc");
+        assert!(dest.is_file(), "aerc was not copied to {}", dest.display());
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755, "aerc is not executable (mode {mode:o})");
+    }
+
+    #[test]
+    fn install_aerc_skips_the_copy_when_the_pinned_version_is_already_at_dest() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-skip");
+        fake_aerc_reporting_pinned_version(&bin.join("aerc"));
+
+        // release_root is None (no release to copy from at all): a correct skip never looks
+        // at it, because there is nothing to do.
+        let r = install_aerc(false, &bin, None);
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn install_aerc_fails_closed_with_no_release_root() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-norel");
+
+        let r = install_aerc(false, &bin, None);
+        let e = r.expect_err("no release root must refuse, not silently skip");
+        assert!(e.contains(AERC_VENDORED_REL), "{e}");
+        assert!(e.contains("build-tarball.sh"), "{e}");
+        assert!(!bin.join("aerc").exists());
+    }
+
+    /// SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, the same named-opt-out shape phase 4.5's
+    /// SPIRA_INSTALL_LC_STORE_CONSIDERED already uses): an install-suite fixture installing
+    /// from a plain tree has no release at all to resolve, let alone one carrying
+    /// AERC_VENDORED_REL — without this escape hatch the fail-closed refusal above stops
+    /// every such suite dead in phase -1, long before the phase it actually means to test
+    /// (test-install-hooks-artifact.sh and 7 siblings, caught by the landing gate). Named
+    /// and loud: Ok(()), but only after printing why aerc was not installed — never a
+    /// silent skip, and no caller with a real release has reason to set it.
+    #[test]
+    fn install_aerc_considered_opt_out_reports_and_skips_with_no_release_root() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str()), ("SPIRA_INSTALL_AERC_CONSIDERED", Some("1"))]);
+        let bin = testkit::TempDir::new("install-aerc-bin-considered");
+
+        let r = install_aerc(false, &bin, None);
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!bin.join("aerc").exists(), "the opt-out must not fabricate an aerc binary");
+    }
+
+    #[test]
+    fn install_aerc_fails_closed_when_the_release_has_no_vendored_binary() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-novendor");
+        // A release with a bin/ and spira/ of its own but no vendor/bin/aerc — e.g. a
+        // tarball built before sp-41so3.
+        let release = testkit::TempDir::new("install-aerc-release-novendor");
+
+        let r = install_aerc(false, &bin, Some(release.path()));
+        let e = r.expect_err("a release missing the vendored binary must refuse, not silently skip");
+        assert!(e.contains(AERC_VENDORED_REL), "{e}");
+        assert!(e.contains("build-tarball.sh"), "{e}");
+        assert!(!bin.join("aerc").exists());
+    }
+
+    #[test]
+    fn install_aerc_dry_run_reports_intent_and_copies_nothing() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let release = testkit::TempDir::new("install-aerc-release-dry");
+        let vendor_dir = release.join("vendor/bin");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        fake_aerc_reporting_pinned_version(&vendor_dir.join("aerc"));
+        let bin = testkit::TempDir::new("install-aerc-bin-dry");
+
+        let r = install_aerc(true, &bin, Some(release.path()));
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!bin.join("aerc").exists(), "a dry run must not copy anything");
+    }
 }

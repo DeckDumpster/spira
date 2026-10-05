@@ -1,0 +1,15 @@
+[Unit]
+Description=Settle and open the publish PR every thirty minutes
+
+[Timer]
+OnBootSec=5min
+OnActiveSec=5min
+OnUnitActiveSec=30min
+AccuracySec=1min
+Unit=spira-publish.service
+
+[Install]
+WantedBy=timers.target
+
+[X-Spira]
+Plane=work

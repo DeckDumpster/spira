@@ -185,10 +185,11 @@ pub fn max_aeons() -> String {
 }
 
 pub fn run_dir() -> PathBuf {
-    std::env::var_os("SPIRA_RUN")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir().join("../run"))
+    let env: std::collections::BTreeMap<String, String> = std::env::vars().collect();
+    spira_config::resolve::resolve_run_dir(&env, &home_dir()).unwrap_or_else(|e| {
+        eprintln!("cockpit-collect: {e}");
+        std::process::exit(1)
+    })
 }
 
 fn env_or(key: &str, default: &str) -> String {

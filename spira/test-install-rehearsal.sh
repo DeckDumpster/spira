@@ -212,6 +212,8 @@ iszero "world.halted created" "$?"
 
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
+    -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
+    -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
     "$CNAME" "$INSTALL_BIN" >&2
 iszero "install exits 0" "$?"
 
@@ -312,6 +314,8 @@ echo "stray sweep positive control — plant a unit, confirm STRAY is reported:"
     "mkdir -p '${SPIRA_RUN_CTR}' && touch '${SPIRA_RUN_CTR}/world.halted'" >/dev/null
 "${CEXEC[@]}" \
     -e "SPIRA_INSTALL_FORCE=1" \
+    -e "SPIRA_INSTALL_LC_STORE_CONSIDERED=1" \
+    -e "SPIRA_INSTALL_AERC_CONSIDERED=1" \
     "$CNAME" "$INSTALL_BIN" >/dev/null 2>&1
 iszero "re-install for stray test exits 0" "$?"
 

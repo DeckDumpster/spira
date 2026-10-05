@@ -242,11 +242,22 @@ chmod +x "$SH/forge-fixture.sh"
 cat > "$SH/spira-lc-stub.sh" <<'LCSTUB'
 #!/usr/bin/env bash
 log="${SPIRA_LC_STUB_LOG:?}"
+certified_rows() {
+    local f id st tip ep sep=''
+    printf '['
+    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+        [ -f "$f" ] || continue
+        read -r st tip ep < "$f"
+        [ "$st" = CERTIFIED ] || continue
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+    done
+    printf ']\n'
+}
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
     cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
-    list) printf '[]\n'; exit 0 ;;   # lc_probe: the machine answers with an (empty) array
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
 esac
@@ -264,7 +275,7 @@ bump_requeue() {
 LIBSPY
 
 cut_repo() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -281,7 +292,7 @@ cut_repo() {
     SPIRA_BATCH_MAXPAR="${SPIRA_BATCH_MAXPAR:-}" \
     SPIRA_BATCHER_WALL_SECS="${SPIRA_BATCHER_WALL_SECS:-}" \
     SPIRA_RELEASE_RUST_TOOLCHAIN="${SPIRA_RELEASE_RUST_TOOLCHAIN:-}" \
-    SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-}" \
+    SPIRA_LC_STUB_LOG="${SPIRA_LC_STUB_LOG:-$TMP/lc-default.log}" \
     SPIRA_LC_STUB_RC="${SPIRA_LC_STUB_RC:-0}" \
         batcher cut "$REPONAME" --round-vm "$SH/round-vm-stub.sh" 2>&1
 }
@@ -355,8 +366,8 @@ is   "A: open-batch branch is spira/queue/*" "1" "$(case "$(open_field branch)" 
 is   "A: open-batch owner=batcher (sp-lomk3: verdict's own CI-red routing reads this)" \
     "batcher" "$(open_field owner)"
 is   "A: sp-caaa1 landstate BATCHED" "BATCHED" "$(cut -d' ' -f1 < "$LANDSTATE/sp-caaa1")"
-is   "A: no batch_id with the lifecycle switch off (legacy default, never blocks the PR)" "" "$(open_field batch_id)"
-is   "A: no version with the lifecycle switch off"                                  "" "$(open_field version)"
+is   "A: open-batch batch_id is the batch branch spira-lc cut" "$(open_field branch)" "$(open_field batch_id)"
+is   "A: open-batch version is 1 (one member)"                 "1"                    "$(open_field version)"
 want "A: commit message names spira: land sp-caaa1, with the bead's own title" \
     "spira: land sp-caaa1 — sp-caaa1 bead" \
     "$(git -C "$REPO" log --format=%s "$(open_field branch)" -n 5 2>/dev/null)"
@@ -699,7 +710,7 @@ localmode  | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_other() {
-    SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -899,7 +910,7 @@ locland   | $LREPO | queue.local | local/main  | | |
 RMAP
 
 cut_local() {
-    PATH="$SH:$PATH" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
+    PATH="${LC_STUB_DIR:-$SH/lc-stub-bin}:$SH:$PATH" SPIRA_LC_STUB_LOG="$TMP/lc-default.log" SPIRA_HOME="$SH" SPIRA_RUN="$RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" \
     SPIRA_REPO_MAP="$SH/repo-map" \
     SPIRA_QUEUE_DIR="$QUEUEDIR" \
@@ -998,13 +1009,24 @@ echo "M. stacked dependents: closure, topological order, every member reaches LA
 LC_STACKS="$TMP/lc-stacks"; mkdir -p "$LC_STACKS"
 cat > "$SH/spira-lc-stack-stub.sh" <<'LCSTACKSTUB'
 #!/usr/bin/env bash
+certified_rows() {
+    local f id st tip ep sep=''
+    printf '['
+    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
+        [ -f "$f" ] || continue
+        read -r st tip ep < "$f"
+        [ "$st" = CERTIFIED ] || continue
+        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
+    done
+    printf ']\n'
+}
 case "${1:-}" in
-    list) printf '[]\n'; exit 0 ;;   # the reachability probe lifecycle_enforce=1 makes first
+    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
         stack="{}"
         [ -f "$f" ] && stack="$(cat "$f")"
-        printf '{"bead":{"stack":%s}}\n' "$stack"
+        printf '{"bead":{"state":"CERTIFIED","version":"3","stack":%s}}\n' "$stack"
         exit 0
         ;;
     *) exit 0 ;;
@@ -1048,7 +1070,7 @@ certify sp-cmbb2 "$tip_mb" 300
 
 # Stacking is a lifecycle-machine concept (read_stack runs nothing with the switch OFF), so
 # this case runs ON.
-out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 PATH="$SH/lc-stack-stub-bin:$PATH" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
+out_m="$(SPIRA_LIFECYCLE_ENFORCE=1 STUB_INSTALL_BINS=1 LC_STUB_DIR="$SH/lc-stack-stub-bin" SPIRA_LC_STACKS_DIR="$LC_STACKS" cut_local)"
 want   "M: reports landing locally"                             "landed locally"  "$out_m"
 want   "M: all three members landed in one round"                "3 member(s)"    "$out_m"
 is     "M: sp-cmaa1 landstate LANDED (the closed-over prerequisite, never dropped as EMPTY)" \

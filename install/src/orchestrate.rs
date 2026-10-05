@@ -125,8 +125,8 @@ pub fn phase_4_units(unit_dir: &Path, templates_dir: &Path, host: &HostValues, m
 /// Build phase 4's manifest from the box's own signals — the one place `install`'s phase 4
 /// and the standalone `units-install`/`unit-ensure` binaries all call [`manifest::build`], so
 /// they cannot resolve a different manifest from the same box.
-pub fn build_manifest(instance: &str, dolt_data_set: bool, testdb_data_set: bool, broker_enable: bool, inotify_present: bool, sccache_dav_addr_set: bool, watch_names: Result<Vec<String>, String>) -> Result<Manifest, String> {
-    manifest::build(&manifest::Inputs { instance: instance.to_string(), dolt_data_set, testdb_data_set, broker_enable, inotify_present, sccache_dav_addr_set, watch_names })
+pub fn build_manifest(instance: &str, dolt_data_set: bool, testdb_data_set: bool, broker_enable: bool, inotify_present: bool, sccache_dav_addr_set: bool, repo_is_git_checkout: bool, watch_names: Result<Vec<String>, String>) -> Result<Manifest, String> {
+    manifest::build(&manifest::Inputs { instance: instance.to_string(), dolt_data_set, testdb_data_set, broker_enable, inotify_present, sccache_dav_addr_set, repo_is_git_checkout, lc_system_mode: spira_config::resolve::lc_system_mode(), watch_names })
 }
 
 /// Where the installed unit directory and the release's own PATH tail live — resolved once,

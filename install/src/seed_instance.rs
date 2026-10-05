@@ -39,8 +39,8 @@ fn write_target_for(conf: &Path, toml: &Path, home: &Path, repo_map: Option<&Pat
 
 /// `_spira_fayth_paths` (conf.sh): every `*.fayth` under `<home>/chamber` (or
 /// `$SPIRA_CHAMBER`), sorted for a deterministic convert argv.
-fn fayth_paths(home: &Path) -> Vec<PathBuf> {
-    let dir = std::env::var("SPIRA_CHAMBER").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home.join("chamber"));
+fn fayth_paths(home: &Path) -> Result<Vec<PathBuf>, String> {
+    let dir = PathBuf::from(spira_config::resolve::resolve_key(&std::env::vars().collect(), home, "SPIRA_CHAMBER")?);
     let mut out = Vec::new();
     if let Ok(rd) = std::fs::read_dir(&dir) {
         for e in rd.flatten() {
@@ -51,7 +51,7 @@ fn fayth_paths(home: &Path) -> Vec<PathBuf> {
         }
     }
     out.sort();
-    out
+    Ok(out)
 }
 
 /// `_seed_prod_instance <conf> <toml> <instance>`. Returns the message to print on stdout
@@ -60,7 +60,13 @@ fn fayth_paths(home: &Path) -> Vec<PathBuf> {
 /// stderr).
 pub fn seed_prod_instance(conf: &Path, toml: &Path, instance: &str, home: &Path) -> Option<String> {
     let rm = spira_config::repo_map_candidate(conf.parent(), home);
-    let fy = fayth_paths(home);
+    let fy = match fayth_paths(home) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("install: {e}");
+            return None;
+        }
+    };
     let target = write_target_for(conf, toml, home, rm.as_deref(), &fy)?;
     let current = Command::new("spira-config")
         .args(["get", "spira.instance"])

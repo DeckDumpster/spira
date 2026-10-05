@@ -143,14 +143,21 @@ impl<'a> Pass<'a> {
         Ok(rows)
     }
 
-    /// Record a gate outcome as a lifecycle event (enforce only); a refusal is loud, not fatal.
-    fn lc_certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) {
+    /// Record a gate outcome as a lifecycle event (enforce only); a refusal is loud, and the
+    /// caller of a "pass" must not mark CERTIFIED when this returns false.
+    fn lc_certify(&self, id: &str, tip: &str, outcome: &str, detail: &str) -> bool {
         if !self.s.lifecycle_enforce {
-            return;
+            return true;
         }
         match self.lc.certify(id, tip, outcome, detail) {
-            Ok(a) => self.log(&format!("CHECK6 {id}: lifecycle certify {outcome} at {tip}: {a}")),
-            Err(why) => self.log(&format!("CHECK6 {id}: LIFECYCLE: certify {outcome} at {tip} did not happen ({why})")),
+            Ok(a) => {
+                self.log(&format!("CHECK6 {id}: lifecycle certify {outcome} at {tip}: {a}"));
+                true
+            }
+            Err(why) => {
+                self.log(&format!("CHECK6 {id}: LIFECYCLE: certify {outcome} at {tip} did not happen ({why})"));
+                false
+            }
         }
     }
 
@@ -532,25 +539,14 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: certification gate {} on {br} in {name} ({reason})", g.outcome.word()));
             self.lib.land_mark(id, "GATED", &tip, &format!("{}:{reason}", g.outcome.word()));
             match g.outcome {
-                GateOutcome::Fail => self.lc_certify(id, &tip, "red", &reason),
-                GateOutcome::NoVerdict => self.lc_certify(id, &tip, "infra", ""),
+                GateOutcome::Fail => drop(self.lc_certify(id, &tip, "red", &reason)),
+                GateOutcome::NoVerdict => drop(self.lc_certify(id, &tip, "infra", "")),
                 _ => {}
             }
             match g.outcome {
                 GateOutcome::BaseFail => {
                     self.log(&format!("CHECK6 {id}: held — the base fails its own gate (suite {})", g.suite));
                     self.base_fail(w, br, id, bead, &tip, &g);
-                }
-                GateOutcome::NoVerdict if reason == "conflict" => {
-                    // STALE, NOT RED (gate/DESIGN.md): the branch no longer merges onto the
-                    // landing ref. rebase-stale rebases it mechanically and re-certifies, or
-                    // returns it to an aeon with the hunks quoted; only when it could not even
-                    // attempt it does this fall back to the ordinary no-verdict record.
-                    let rc = self.tools.rebase_stale(id, name);
-                    self.log(&format!("CHECK6 {id}: {br} does not merge onto {} — handed to rebase-stale (exit {rc})", w.base));
-                    if rc == 3 {
-                        self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
-                    }
                 }
                 GateOutcome::NoVerdict => {
                     self.lib.noverdict(id, br, name, &reason, g.outcome.word(), &g.out);
@@ -590,7 +586,10 @@ impl<'a> Pass<'a> {
             self.log(&format!("CHECK6 {id}: bead is now {st} (was closed at scan time) — not certifying {br}"));
             return Flow::Next;
         }
-        self.lc_certify(id, &tip, "pass", "gate");
+        if !self.lc_certify(id, &tip, "pass", "gate") {
+            self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
+            return Flow::Next;
+        }
         self.lib.land_mark(id, "CERTIFIED", &tip, "");
         self.files.mark_submitted(id, &tip, "certified", self.clock.now());
         self.out.progress(&format!("certified {br} in {name} — gate passed, round and CI are the remaining judges"));
@@ -805,6 +804,10 @@ impl<'a> Pass<'a> {
             let (closed, _) = self.status_closed(id);
             if closed {
                 self.log(&format!("CHECK6 {id}: base-fix: {br} is green on {name}'s red suite {suite} — certifying"));
+                if !self.lc_certify(id, tip, "pass", "base-fix") {
+                    self.log(&format!("CHECK6 {id}: lifecycle refused GatePass at {tip} — {br} stays uncertified"));
+                    return;
+                }
                 self.lib.land_mark(id, "CERTIFIED", tip, "");
                 self.files.mark_submitted(id, tip, "certified", self.clock.now());
                 self.out.progress(&format!("certified {br} in {name} — base-fix (suite {suite})"));

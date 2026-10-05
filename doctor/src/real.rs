@@ -54,7 +54,13 @@ impl Real {
                 }
             }
         }
-        std::env::var("SPIRA_HOME").map(PathBuf::from).unwrap_or_else(|_| PathBuf::from("."))
+        match std::env::var("SPIRA_HOME") {
+            Ok(h) if !h.is_empty() => PathBuf::from(h),
+            _ => {
+                eprintln!("doctor: SPIRA_HOME is not set and no spira/conf.sh sits beside the executable");
+                std::process::exit(3)
+            }
+        }
     }
 
     fn capture_env(home: &Path) -> BTreeMap<String, String> {
@@ -285,6 +291,19 @@ impl World for Real {
         }
     }
 
+    fn dolt_metrics_disabled(&self) -> bool {
+        Command::new(self.env("SPIRA_DOLT_BIN").unwrap_or_else(|| "dolt".to_string()))
+            .args(["config", "--global", "--get", "metrics.disabled"])
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
+            .unwrap_or(false)
+    }
+    fn dolt_events_count(&self) -> usize {
+        let dir = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join(".dolt").join("eventsData");
+        std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
+    }
+
     fn bd_first_id(&self, db: &Path) -> Option<String> {
         let out = Command::new(self.env("SPIRA_BD").unwrap_or_else(|| "bd".to_string()))
             .arg("-C")
@@ -357,6 +376,12 @@ impl World for Real {
             .map_err(|e| e.to_string())?;
         if !out.status.success() {
             let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            // No unit matched: systemd answers exit 1 with no output at all — a fresh host
+            // before install. That is an empty list, as systemd_enabled_unit_files already
+            // treats it; any real failure prints its reason and still errors (sp-47myv).
+            if text.trim().is_empty() {
+                return Ok(Vec::new());
+            }
             return Err(text.lines().next().unwrap_or("").to_string());
         }
         let mut rows = Vec::new();
