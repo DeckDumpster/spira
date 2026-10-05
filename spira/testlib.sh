@@ -73,6 +73,13 @@
 # instinct holds: a helper that can fail for a reason OTHER than the assertion itself
 # (a missing binary, a broken pipe) must not be indistinguishable from the assertion
 # failing. [[ ]] has no such failure mode.
+# Every suite's binaries find lib.sh through SPIRA_HOME first. Without it, slay/sending/
+# spira-world walk up from their own resolved exe — which the gate builds outside the tree
+# (a tmpfs target), so the walk finds nothing and every destroy/slay answers 2. A suite that
+# sets its own SPIRA_HOME keeps it; production units always set it (sp-wiqcq is the binaries'
+# own fix).
+[ -n "${SPIRA_HOME:-}" ] || export SPIRA_HOME="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 set -u
 
 # A suite never inherits a git location: an inherited GIT_DIR makes `git init --bare` or
