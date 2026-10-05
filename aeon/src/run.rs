@@ -1188,6 +1188,9 @@ impl<'a> Run<'a> {
             git: self.d.git,
             bd: self.d.bd,
             bd_lease: !self.enforce,
+            exec: self.d.exec,
+            holder: format!("aeon-{}", self.s.aeon),
+            renew_rc: std::sync::Mutex::new(0),
             sink: self.d.sink,
             clock: self.d.clock,
             repos: self.conf.repos.clone(),
@@ -1213,9 +1216,16 @@ pub struct RealBeat<'a> {
     pub seam: &'a dyn Seam,
     pub git: &'a dyn Git,
     pub bd: &'a dyn Bd,
-    /// Enforce off only: bd's claim carries a lease to renew. On, there is no bd claim, and
-    /// `bd heartbeat` on an unclaimed bead fails — which would end the heartbeat loop.
+    /// Enforce off: bd's claim carries the lease, renewed by `bd heartbeat`. On, there is no
+    /// bd claim (`bd heartbeat` on an unclaimed bead fails, which would end the heartbeat
+    /// loop); the lifecycle row's lease is renewed by `spira-lc renew` instead (sp-2jf0a).
     pub bd_lease: bool,
+    /// `spira-lc renew`'s runner, found by name like every other spira-lc call here.
+    pub exec: &'a dyn Exec,
+    /// The claim's holder — the name `lc_claim` claimed under (`aeon-<name>`).
+    pub holder: String,
+    /// The last renewal's exit, so a refusal is logged once per change, not every beat.
+    pub renew_rc: std::sync::Mutex<i32>,
     pub sink: &'a dyn Sink,
     pub clock: &'a (dyn Fn() -> i64 + Sync),
     /// spira_config::repos (sp-o88bx, "wave 4.12"): the heartbeat's base-ref read
@@ -1248,8 +1258,23 @@ impl Beat for RealBeat<'_> {
         let b = t.as_bytes();
         String::from_utf8_lossy(&b[..b.len().min(n)]).into_owned()
     }
-    fn bd_heartbeat(&self) -> bool {
-        !self.bd_lease || self.bd.bd(&s(&["heartbeat", &self.bead])).success()
+    fn renew(&self, lease_until: i64) -> bool {
+        if self.bd_lease {
+            return self.bd.bd(&s(&["heartbeat", &self.bead])).success();
+        }
+        // Enforce on: the lifecycle row's lease (sp-2jf0a). Never ends the heartbeat — its
+        // lapse and thrash guards must keep watching the session whatever the machine says.
+        // A refusal (reaped and handed on, already submitted, the machine unreachable) is
+        // logged once per change; a holder that stops renewing simply expires.
+        let o = self.exec.exec("spira-lc", &s(&["renew", &self.bead, &self.holder, &lease_until.to_string()]), None, None);
+        let mut last = self.renew_rc.lock().unwrap_or_else(|e| e.into_inner());
+        if o.code != *last {
+            if o.code != 0 {
+                self.log(&format!("{}: lifecycle lease renewal refused (rc={}): {}", self.bead, o.code, o.first_err_line()));
+            }
+            *last = o.code;
+        }
+        true
     }
     fn log(&self, msg: &str) {
         self.sink.out(&util::log_line((self.clock)(), msg));

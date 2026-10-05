@@ -33,6 +33,7 @@ it existed).
 | `list-held <kind>` · `list-state <state>` · `list-all` | `lc_list_*` | `id` · `id\tlease\tholds,` · `id\tstate\tholder`; always 0 |
 | `deliver pr-merged <repo> <id> <branch> <sha>` · `pr-closed <id>` · `push-delivered <id> <sha>` · `push-requeued <id> <tip>` · `push-returned <id>` | `lc_deliver_*` | 0 applied · 1 skipped (no delivery row / wrong state, logged) · 2/3 as `event`; lib.sh `log` lines on stdout |
 | `certify <id> <tip> <pass\|red\|infra> [detail] [actor=lifecycle-cert]` · `resubmit <id> <tip> [actor]` | `lc_certify` · `lc_resubmit` | 0 · 2 cannot tell · 3 refused/skipped; each outcome appended to `$SPIRA_RUN/lifecycle-cert.log` as before |
+| `renew <id> <holder> <lease-until>` | `bd heartbeat` (sp-2jf0a: the aeon's heartbeat renews its lifecycle lease) | 0 renewed · 1 not this holder's WORKING row · 2 cannot tell · 3 refused (race, or a deadline that does not advance); the machine refuses a non-holder with `NotHolder` |
 
 **Two verbs carry bd's half of a claim or an epic, and run whatever the switch says** (sp-hyo5e —
 nothing in shell writes a claim, a status or a close around the machine any more):

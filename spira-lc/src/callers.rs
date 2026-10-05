@@ -74,6 +74,7 @@ pub const VERBS: &[&str] = &[
     "deliver",
     "certify",
     "resubmit",
+    "renew",
 ];
 
 pub fn is_verb(v: &str) -> bool {
@@ -241,6 +242,7 @@ pub fn run(verb: &str, args: &[String], m: &mut dyn Machine) -> Answer {
             }
             resubmit(m, &a(0), &a(1), &actor_or(args.get(2), "lifecycle-cert"))
         }
+        "renew" => renew(m, args),
         other => usage(&format!("unknown caller verb {other:?}")),
     }
 }
@@ -556,6 +558,43 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
         return Answer::cert(APPLIED, "applied", format!("resubmit tip={tip}"));
     }
     Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
+}
+
+/// `renew <id> <holder> <lease-until>` — a working aeon extends its own lease (sp-2jf0a). The
+/// Claim sets `lease_until` once; without this the stale-lease reaper clears every session
+/// that outlives lease + reclaim_grace. Like `unclaim`, it acts only on a row WORKING under
+/// `holder`, and sends the event AS the holder, so the machine's own holder check (a
+/// `NotHolder` refusal) backs this read: a reaped aeon's late renewal can never extend the
+/// lease of the aeon the bead was handed to. A holder that stops renewing still expires.
+///
+/// Exit: 0 renewed · 1 not this holder's WORKING row (held by another, past WORKING, no row)
+/// · 2 cannot tell, or usage · 3 refused (a race, or a deadline that does not advance).
+fn renew(m: &mut dyn Machine, args: &[String]) -> Answer {
+    let (Some(id), Some(holder), Some(until)) = (
+        args.first().filter(|s| !s.is_empty()),
+        args.get(1).filter(|s| !s.is_empty()),
+        args.get(2).and_then(|s| s.parse::<i64>().ok()),
+    ) else {
+        return usage("renew <bead-id> <holder> <lease-until-epoch>");
+    };
+    let not_held = |why: String| Answer { code: NO_ROW, stderr: format!("spira-lc renew: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(NO_ROW) => return not_held("no lifecycle row".into()),
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version, cur) = (bead_field(&v, "state"), bead_field(&v, "version"), bead_field(&v, "holder"));
+    if state != "WORKING" {
+        return not_held(format!("{state}, not WORKING — no lease to renew"));
+    }
+    if cur != *holder {
+        return not_held(format!("held by {cur:?}, not {holder}"));
+    }
+    let kind = serde_json::to_string(&BeadEventKind::Renew { lease_until: until }).unwrap_or_default();
+    match event(m, "bead", id, &state, &version, holder, &kind) {
+        (APPLIED, _) => Answer::code(APPLIED),
+        (rc, out) => Answer { code: rc, stderr: format!("spira-lc renew: {id}: {}\n", out.trim()), ..Default::default() },
+    }
 }
 
 /// The bd half a verb needs: the switch-off claim mutex and an epic's own close. Behind a
