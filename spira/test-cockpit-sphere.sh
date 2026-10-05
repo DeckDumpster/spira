@@ -38,8 +38,10 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 
 SCOPE_LABEL="spherescope"
 RUN="$TMP/run"; mkdir -p "$RUN"
+# The lifecycle rows this world implies (sp-mve9i: the probes read state from spira-lc).
+lc_mirror_bd "$TMP/lc"
 sphere() {    # sphere <fixture-file>
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i SPIRA_LC_BIN="$SPIRA_LC_BIN" PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" SPIRA_HOME="$HERE" SPIRA_REPO="$TMP" \
         SPIRA_RUN="$RUN" SPIRA_DB="$TMP/nodb" \
         SPIRA_BDJSON_FIXTURE="$1" \

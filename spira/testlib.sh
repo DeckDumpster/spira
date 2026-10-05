@@ -290,7 +290,7 @@ lc_fix_init() {
 join() { local first=1 f; printf '['; for f in "$@"; do [ -f "$f" ] || continue; [ $first = 1 ] || printf ','; first=0; cat "$f"; done; printf ']\n'; }
 case "$1" in
     list)
-        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; else join "$LC_FIX/bead/${3:-}"/*; fi ;;
+        if [ "$2" = "--delivery" ]; then join "$LC_FIX/delivery/${4:-}"/*; elif [ -n "${3:-}" ]; then join "$LC_FIX/bead/$3"/*; else join "$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "$LC_FIX/show/$2" ] && cat "$LC_FIX/show/$2" || exit 1 ;;
     event) printf '%s\n' "$*" >> "$LC_FIX/events.log"; [ -f "$LC_FIX/refuse" ] && exit 3; exit 0 ;;
     *) exit 7 ;;
@@ -318,7 +318,7 @@ case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@"
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
-        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; else join "\$LC_FIX/bead/\${3:-}"/*; fi ;;
+        if [ "\$2" = "--delivery" ]; then join "\$LC_FIX/delivery/\${4:-}"/*; elif [ -n "\${3:-}" ]; then join "\$LC_FIX/bead/\$3"/*; else join "\$LC_FIX/bead"/*/*; fi ;;
     show) [ -f "\$LC_FIX/show/\$2" ] && cat "\$LC_FIX/show/\$2" || exit 1 ;;
     *) [ -f "\$LC_FIX/refuse" ] && exit 3; exit 0 ;;
 esac
@@ -327,15 +327,76 @@ STUB
 }
 # lc_called <fixdir> <verb> <bead> — did the pass send <verb> for <bead>?
 lc_called() { grep -q "^$2 $3\b" "$1/calls.log" 2>/dev/null; }
-lc_bead() {      # lc_bead <STATE> <id> <tip> <since>
+lc_bead() {      # lc_bead <STATE> <id> <tip> <since>  (one row per id: a new STATE replaces the old)
+    rm -f "$LC_FIX"/bead/*/"$2"
     mkdir -p "$LC_FIX/bead/$1"
     printf '{"bead_id":"%s","state":"%s","tip":"%s","since":%s}' "$2" "$1" "$3" "$4" > "$LC_FIX/bead/$1/$2"
-    printf '{"bead":{"tip":"%s"}}' "$3" > "$LC_FIX/show/$2"
+    printf '{"bead":{"bead_id":"%s","state":"%s","tip":"%s"}}' "$2" "$1" "$3" > "$LC_FIX/show/$2"
 }
+# lc_state_of <id> — the STATE an lc_bead row was last given ("" for none): the fixture's
+# record of the state, for asserting what a suite seeded (sp-mve9i: state lives in spira-lc).
+lc_state_of() { local f; for f in "$LC_FIX"/bead/*/"$1"; do [ -f "$f" ] && basename "$(dirname "$f")"; done | tail -1; }
 lc_delivery() {  # lc_delivery <STATE> <id> <mode> <entered_at> <version>
     mkdir -p "$LC_FIX/delivery/$1"
     printf '{"bead_id":"%s","mode":"%s","state":"%s","version":%s,"entered_at":%s}' "$2" "$3" "$1" "$5" "$4" > "$LC_FIX/delivery/$1/$2"
     [ -f "$LC_FIX/show/$2" ] || printf '{"bead":{"tip":"deadbeef"}}' > "$LC_FIX/show/$2"
+}
+
+# lc_mirror_bd <dir> — a spira-lc whose `list` and `show <id>` answer from the bead store the
+# suite already stubs, translated to lifecycle terms (sp-mve9i: decisions read the lifecycle
+# row, never bd status, so a fixture written in bd words needs its rows in the machine too).
+# The store is $SPIRA_BDJSON_FIXTURE when set, else `$SPIRA_BD -C $SPIRA_DB list --all`.
+# open/blocked/deferred → READY, in_progress → WORKING (holder = assignee), closed →
+# $LC_MIRROR_CLOSED (default LANDED); a `spira-poison` label → a poison hold, the ask label
+# ($SPIRA_ASK_LABEL) → an ask hold; epics and events have no row. A fixture row may say
+# `"_lc_state"` / `"_lc_holds"` to set its row outright, or `"_lc_rowless": true` for none.
+# Sets SPIRA_LC_BIN; pass it (and LC_MIRROR_CLOSED, if set) through any `env -i`.
+lc_mirror_bd() {
+    local dir="${1:?lc_mirror_bd needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ -n "${SPIRA_BDJSON_FIXTURE:-}" ]; then src="$(cat "$SPIRA_BDJSON_FIXTURE")"
+else src="$("${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" list --all --limit 0 --json 2>/dev/null)" || exit 2; fi
+printf '%s' "$src" | python3 -c '
+import json, os, sys
+verb = sys.argv[1] if len(sys.argv) > 1 else ""
+try:
+    beads = json.loads(sys.stdin.read() or "[]")
+except ValueError:
+    sys.exit(2)
+if isinstance(beads, dict):
+    beads = [beads]
+words = {"open": "READY", "blocked": "READY", "deferred": "READY", "in_progress": "WORKING",
+         "closed": os.environ.get("LC_MIRROR_CLOSED") or "LANDED"}
+ask = os.environ.get("SPIRA_ASK_LABEL", "")
+rows = []
+for b in beads:
+    if not isinstance(b, dict) or not b.get("id") or b.get("_lc_rowless"):
+        continue
+    if b.get("issue_type") in ("epic", "event") and "_lc_state" not in b:
+        continue
+    labels = b.get("labels") or []
+    state = b.get("_lc_state") or words.get(b.get("status") or "open", "READY")
+    holds = b.get("_lc_holds")
+    if holds is None:
+        holds = (["poison"] if "spira-poison" in labels else []) + (["ask"] if ask and ask in labels else [])
+    rows.append({"bead_id": b["id"], "state": state, "holds": holds,
+                 "holder": (b.get("assignee") or None) if state == "WORKING" else None})
+if verb == "list":
+    want = sys.argv[3] if len(sys.argv) > 3 and sys.argv[2] == "--state" else None
+    print(json.dumps([r for r in rows if want is None or r["state"] == want]))
+elif verb == "show":
+    hit = [r for r in rows if r["bead_id"] == (sys.argv[2] if len(sys.argv) > 2 else "")]
+    if not hit:
+        sys.exit(1)
+    print(json.dumps({"bead": hit[0], "delivery": None}))
+else:
+    sys.exit(7)
+' "$@"
+STUB
+    chmod +x "$dir/spira-lc"
+    SPIRA_LC_BIN="$dir/spira-lc"
 }
 
 plan() {    # plan <n> — must be called before the first ok/bad/want/nowant/wantrc
