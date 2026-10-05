@@ -107,8 +107,10 @@ failing output: `work reopen <id> --evidence "<the failing output>"`.
 
 **Case 4 — Attribution ejected all members** (PR 87: all six innocent): recertify each
 member whose own change does not touch any file the failing suite names. The
-`work queue eject` already wrote landstate=RED (it also records the cause: pass `--red` when the member broke a test); call `work landing-pass mark <id> CERTIFIED <tip>` for
-each innocent member and re-add them to a new batch.
+`work queue eject` already returned each member to REWORK on the lifecycle record (`spira-lc`;
+pass `--red` when the member broke a test). There is no hand-written certification: note each
+innocent member (`work note-on <id> "innocent in <PR>: resubmit at <tip>"`) so its resubmission
+recertifies it, and re-add it to a new batch once it is CERTIFIED again.
 
 **Case 5 — Duplicate in the batch** (a member identical to one already batched): do not
 add it. Note the bead with the id of the existing member (`work note-on <dup-id> "duplicate of
@@ -124,7 +126,7 @@ landing pass. If it did not run, note the bead and escalate.
 **Case 8 — Stale batch after a landing moved base**: never push to base while a batch is
 in CI. Halt the landing pass with `work landing-pass halt --reason-file -` if it is about to do so.
 
-**Case 9 — BATCHED landstate absent from every open batch** (sp-8jany sat 35h): recertify
+**Case 9 — IN_DELIVERY lifecycle row absent from every open batch** (sp-8jany sat 35h): recertify
 at the branch tip if the branch still points there. If the tip moved, escalate — the
 branch has diverged from what was batched.
 

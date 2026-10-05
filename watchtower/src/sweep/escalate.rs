@@ -211,7 +211,7 @@ fn batched_stranded(d: &SweepData, cfg: &Cfg) {
     };
     let names = d.env.raw("SP_BATCHED_STRANDED_NAMES").unwrap_or("(unavailable)");
     let body = format!(
-        "Stranded BATCHED branches: {n}\n\nThe branch(es) below have BATCHED landstate but their ID is absent from every open batch members= line. The Sending refuses to reap BATCHED branches, so these are permanently stuck until the landstate is corrected.\n\nBranch IDs (spira/ prefix omitted): {names}\n\nCheck: for each id, read $SPIRA_RUN/landstate/<id> (first field = BATCHED) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: if the branch still points to the BATCHED tip, recertify: land_mark <id> CERTIFIED <tip>. If the tip moved, escalate — the branch has diverged from what was batched.\n"
+        "Stranded IN_DELIVERY branches: {n}\n\nThe branch(es) below are IN_DELIVERY on the lifecycle record but their ID is absent from every open batch members= line. The Sending refuses to reap in-delivery branches, so these are permanently stuck until the record is corrected.\n\nBranch IDs (spira/ prefix omitted): {names}\n\nCheck: for each id, `spira-lc state <id>` (IN_DELIVERY) and confirm the id does not appear in $SPIRA_QUEUE_DIR/*/open members= lines.\nFix: settle or abandon the batch the row names on the lifecycle record (`spira-lc show <id>`). If the tip moved, escalate — the branch has diverged from what was batched.\n"
     );
     let f = Finding::new(&cfg.db, &cfg.home_repo, "SENDING: BATCHED branch absent from open batch", &body)
         .priority(1)

@@ -9,8 +9,8 @@
 # rediscovered the same red, over and over, at a full corpus's cost each time.
 #
 # bead_reopen now writes the suites a withdrawal is known to have reddened to
-# $LANDSTATE/<id>.ejected — the sidecar gate.sh already reads unconditionally for the
-# EJECTED case (verdict.sh's _attr_eject) — so a WITHDRAWN bead gets the same forcing.
+# $SPIRA_RUN/ejected/<id> — the sidecar the gate reads unconditionally — so a withdrawn bead
+# gets the same forcing as an ejected one.
 #
 # THE GATE COMMAND HERE ONLY SIMULATES test-x.sh: it never runs a real suite, it reports
 # whether it was TOLD to via SPIRA_GATE_EJECTED_SUITES. This is what "red first" against
@@ -82,7 +82,7 @@ submit() {
 
 echo
 echo "A. positive control — a bead with no withdrawal history certifies fences-only, gate never told about test-x.sh:"
-rm -f "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
+rm -f "$RUN/ejected/sp-wsx" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
 out="$(submit)"; rc=$?
 [ "$rc" -eq 0 ] && ok "A: exit 0, no withdrawal history" || bad "A: exit 0" "rc=$rc out=$out"
 want "A: certified" "certified" "$out"
@@ -92,16 +92,16 @@ nowant "A: gate command was never told to force test-x.sh" "test-x.sh" "$(cat "$
 
 echo
 echo "B. THE DEFECT, seen to fail: a bead withdrawn with suites=test-x.sh must re-certify with test-x.sh forced:"
-rm -f "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
+rm -f "$RUN/ejected/sp-wsx" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
 (
     export SPIRA_RUN="$RUN" SPIRA_CONF=/nonexistent SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     # shellcheck disable=SC1090
     . "$SH/lib.sh"
     bead_reopen sp-wsx batch-eject "reproduced failure" "test-x.sh" >/dev/null 2>&1
 )
-[ "$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)" = "test-x.sh" ] \
-    && ok "B: .ejected sidecar carries test-x.sh" \
-    || bad "B: .ejected sidecar" "got [$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)]"
+[ "$(cat "$RUN/ejected/sp-wsx" 2>/dev/null)" = "test-x.sh" ] \
+    && ok "B: ejected sidecar carries test-x.sh" \
+    || bad "B: ejected sidecar" "got [$(cat "$RUN/ejected/sp-wsx" 2>/dev/null)]"
 
 out="$(submit)"; rc=$?
 want "B: the gate command was told to force test-x.sh" "ejected=test-x.sh" "$(cat "$GATELOG")"

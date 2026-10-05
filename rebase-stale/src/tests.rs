@@ -1,4 +1,4 @@
-//! Contract tests against real temp git repositories. git is real; the bead store, landstate
+//! Contract tests against real temp git repositories. git is real; the bead store
 //! and the gate are a recording fake behind `Seam`.
 
 use std::cell::RefCell;

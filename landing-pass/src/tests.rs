@@ -86,7 +86,7 @@ impl Git for FakeGit {
     fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
         self.ancestors.borrow().contains(&(a.to_string(), b.to_string()))
     }
-    fn content_landed(&self, _: &Path, b: &str, _: &str) -> bool {
+    fn content_on_base(&self, _: &Path, b: &str, _: &str) -> bool {
         self.content.borrow().contains(b)
     }
     fn count(&self, _: &Path, _: &str) -> Option<u64> {
@@ -777,7 +777,7 @@ fn every_early_exit_says_why() {
     assert!(h.logged("CHECK6 sp-cut: spira/sp-cut is labelled cutover-round — leaving it for the cutover round"));
     assert!(h.logged("CHECK6 sp-held: a live aeon still holds spira/sp-held — deferring the land"));
     assert!(h.logged("origin/main already contains every change on spira/sp-content — nothing to land"));
-    assert!(!h.s.run.join("landstate/sp-content.ejected").exists());
+    assert!(!h.s.run.join("landstate").exists(), "the pass recreated the retired landstate ledger (sp-2c1n0)");
     assert!(h.tools.gate_calls.borrow().is_empty());
 }
 
@@ -803,8 +803,8 @@ fn a_branch_gone_mid_pass_is_never_evidence_of_unlanded_work() {
         fn is_ancestor(&self, r: &Path, a: &str, b: &str) -> bool {
             self.0.is_ancestor(r, a, b)
         }
-        fn content_landed(&self, r: &Path, b: &str, base: &str) -> bool {
-            self.0.content_landed(r, b, base)
+        fn content_on_base(&self, r: &Path, b: &str, base: &str) -> bool {
+            self.0.content_on_base(r, b, base)
         }
         fn count(&self, r: &Path, x: &str) -> Option<u64> {
             self.0.count(r, x)
@@ -931,7 +931,6 @@ fn a_clean_sweep_rebase_carries_a_certified_verdict_to_the_new_tip() {
     let nv = "gate: VERDICT=NO_VERDICT reason=lock branch=b repo=spira suite=-\n";
     h.tools.gates.borrow_mut().insert("spira/sp-b".into(), (75, nv.into()));
     h.tools.gates.borrow_mut().insert("spira/sp-c".into(), (75, nv.into()));
-    crate::landstate::land_mark(&h.s.run, "sp-b", "CERTIFIED", "t0", "", "");
     h.run();
 }
 
@@ -1193,9 +1192,9 @@ fn push_mode_lands_on_a_real_remote() {
     assert!(anc.success(), "the branch's own commit is on the remote's main");
     // A branch already on top of the base fast-forwards, exactly as `git merge` did in bash.
     assert_eq!(remote_main, tip);
-    // content_landed now answers yes for the landed branch (lib.sh semantics: ancestor).
+    // content_on_base now answers yes for the landed branch (lib.sh semantics: ancestor).
     let _ = sh("git -C work fetch -q origin");
-    assert!(RealGit.content_landed(&work, "spira/sp-a", "refs/remotes/origin/main"));
+    assert!(RealGit.content_on_base(&work, "spira/sp-a", "refs/remotes/origin/main"));
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1768,7 +1767,7 @@ fn on_a_lifecycle_submitted_bead_without_the_label_is_certified_and_recorded() {
 }
 
 #[test]
-fn a_refused_gatepass_leaves_the_bead_uncertified_in_landstate() {
+fn a_refused_gatepass_leaves_the_bead_uncertified() {
     let mut h = H::new(LandMode::QueueLocal);
     h.s.lifecycle_enforce = true;
     h.bead("sp-a", "open", &[]);

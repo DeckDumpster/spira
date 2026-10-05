@@ -1,7 +1,9 @@
 //! `close-on-land <id> [sha]` — the only place a work bead is closed for a landed reason.
-//! A bead is acted on only while `open`/`in_progress` and carrying the submitted label: one
-//! already closed, or never submitted, is left alone. Best-effort throughout and always
-//! exits 0, since every caller discards the answer.
+//! The landing itself is recorded first, on the lifecycle record (a `ContentOnBase` event
+//! whose proof is `landed:<sha>`) — the one record; nothing here writes a second ledger.
+//! The bd close that follows acts only while the bead is `open`/`in_progress` and carries
+//! the submitted label: one already closed, or never submitted, is left alone.
+//! Best-effort throughout and always exits 0, since every caller discards the answer.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -34,6 +36,11 @@ pub fn should_close(row: &Row, submitted_label: &str) -> bool {
 
 fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
     labels.iter().find_map(|l| l.strip_prefix(prefix))
+}
+
+/// The `ContentOnBase` proof this verb records: the land ref's sha the caller saw the work at.
+pub fn proof(sha: &str) -> String {
+    format!("landed:{}", if sha.is_empty() { "unknown" } else { sha })
 }
 
 pub fn reason(sha: &str) -> String {
@@ -79,12 +86,26 @@ fn reap(id: &str, branch: &str, root: &str, why: &str) -> Result<(), String> {
     }
 }
 
-pub fn run(args: &[String]) -> i32 {
+/// Record the landing on the lifecycle record. A refusal (already terminal, an ask hold) or an
+/// unreachable record is reported, never fatal: the bd close and the reap do not depend on it.
+pub fn record_landing(id: &str, sha: &str, record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
+    let rc = record(id, &proof(sha));
+    if rc != 0 {
+        println!("land-close {id}: lifecycle content-on-base {} not applied (rc={rc})", proof(sha));
+    }
+    rc
+}
+
+/// `record(id, proof)` applies the `ContentOnBase` event on the lifecycle record (main.rs
+/// hands in the caller-verb path, so the switch and the machine are read exactly as
+/// `spira-lc content-on-base` reads them) and returns its exit code.
+pub fn run(args: &[String], record: &mut dyn FnMut(&str, &str) -> i32) -> i32 {
     let Some(id) = args.first().filter(|s| !s.is_empty()) else {
         eprintln!("spira-lc close-on-land: usage: close-on-land <bead-id> [sha]");
         return 2;
     };
     let sha = args.get(1).map(String::as_str).unwrap_or("");
+    record_landing(id, sha, record);
     let label = spira_config::resolve::key_for_process("SPIRA_SUBMITTED_LABEL").ok().filter(|l| !l.is_empty()).unwrap_or_else(|| "spira-submitted".into());
     let Some(row) = show_row(id) else { return 0 };
     if !should_close(&row, &label) {
@@ -92,11 +113,10 @@ pub fn run(args: &[String]) -> i32 {
     }
     let shown = if sha.is_empty() { "unknown" } else { sha };
     if !bdq_close(id, &reason(sha)) {
-        println!("land-close {id}: bd close failed — left submitted, CHECK 5 will report it");
+        println!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)");
         return 0;
     }
     println!("land-close {id}: closed at {shown} (submitted -> landed)");
-    let _ = Command::new("timeout").args([CALL_SECS, "landing-pass", "mark", id, "LANDED", sha, "Closed by the landing pass"]).stdin(Stdio::null()).status();
 
     let (Some(repo_label), Some(branch)) = (label_value(&row.labels, "repo:"), label_value(&row.labels, "branch:")) else { return 0 };
     let Ok(home) = spira_config::resolve::locate_home_for_process() else { return 0 };
@@ -135,6 +155,32 @@ mod tests {
         assert_eq!(r.raw_status, "open");
         assert_eq!(r.labels, vec!["a", "repo:r"]);
         assert!(parse_row("no json").is_none());
+    }
+
+    #[test]
+    fn the_landing_is_recorded_on_the_lifecycle_record_before_anything_else() {
+        let mut seen: Vec<(String, String)> = Vec::new();
+        let rc = record_landing("sp-x", "abc", &mut |id, p| {
+            seen.push((id.to_string(), p.to_string()));
+            0
+        });
+        assert_eq!(rc, 0);
+        assert_eq!(record_landing("sp-x", "abc", &mut |_, _| 3), 3, "a refusal is reported back, not swallowed");
+        // run() records before it reads bd at all, so a bead bd cannot show still lands.
+        let src = include_str!("close_on_land.rs");
+        let body = &src[src.find("pub fn run(").unwrap()..];
+        assert!(body.find("record_landing(").unwrap() < body.find("show_row(").unwrap());
+        assert_eq!(seen, vec![("sp-x".to_string(), "landed:abc".to_string())]);
+        assert_eq!(proof(""), "landed:unknown");
+    }
+
+    #[test]
+    fn the_retired_landstate_writer_is_not_called() {
+        // Guard (sp-2c1n0): the ledger and `landing-pass mark` are deleted; this verb records
+        // LANDED through the lifecycle record alone.
+        let src = include_str!("close_on_land.rs");
+        let needle = ["landing-pass", "\"mark\""].join("\", ");
+        assert!(!src.contains(&needle), "close-on-land shells to the retired landstate writer again");
     }
 
     #[test]

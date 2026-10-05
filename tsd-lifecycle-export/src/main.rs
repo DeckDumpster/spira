@@ -10,7 +10,6 @@
 // (tsd-write), the one IO seam every run/tsd/ producer already shells out to — never a
 // second, in-process writer of the same file.
 
-use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -99,7 +98,7 @@ fn run_legacy(mode: &str, default_since: &str) -> Result<(), String> {
         return Ok(());
     }
 
-    let rows = fold_legacy(&fresh, &BTreeMap::new(), mode, cp.next_seq);
+    let rows = fold_legacy(&fresh, mode, cp.next_seq);
     write_rows(&run, &rows)?;
     write_checkpoint(&cp_path, &new_cp)
 }

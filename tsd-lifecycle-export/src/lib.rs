@@ -1,13 +1,14 @@
-//! Pure core: legacy bd events (+ current landstate) and post-cutover `spira_lifecycle.event`
+//! Pure core: legacy bd events and post-cutover `spira_lifecycle.event`
 //! rows both become `bead-stage` rows here, through `lifecycle::classify` itself (design
 //! reconciler-time-series-2026-09-27 §2a.1: "call the same crate functions once per legacy
 //! event, so there is still one mapping, owned by the lifecycle crate"). No I/O: main.rs
-//! reads bd, `landstate/` and `spira_lifecycle`, and appends what this module builds.
+//! reads bd and `spira_lifecycle`, and appends what this module builds. (The landing
+//! ledger it once also read is deleted, sp-2c1n0.)
 
 use std::collections::BTreeMap;
 
 use lifecycle::bead::BeadState;
-use lifecycle::classify::{self, BdStatus, BeadFacts, LandState};
+use lifecycle::classify::{self, BdStatus, BeadFacts};
 
 /// One `bead-stage` row, minus the envelope (`ts`/`host`/`family`) `tsd-write` adds — `ts`
 /// is carried here anyway because it is the *source* event's own clock, not "now"
@@ -88,11 +89,8 @@ fn apply_legacy_event(facts: &mut BeadFacts, ev: &BdAuditEvent) {
 }
 
 /// Folds a chronologically-ordered (`created_at`, `id`) slice of legacy events for every bead
-/// they touch into `bead-stage` rows, in the same order. `landstates` supplies each bead's
-/// *current* landstate ledger entry (`land_mark`'s file carries no history of its own, only
-/// the latest write) — applied only to a bead's last event in this slice, so every earlier
-/// event classifies with `landstate: None`, exactly `classify`'s own "landstate none" case,
-/// never a guess about what the ledger said back then.
+/// they touch into `bead-stage` rows, in the same order. Every event classifies from bd's
+/// own facts alone (`classify`'s no-ledger case).
 ///
 /// `next_seq` is the exporter's own running counter for this source (carried in the
 /// checkpoint across runs) — bd's audit `events` table has no numeric ordering column of its
@@ -100,35 +98,17 @@ fn apply_legacy_event(facts: &mut BeadFacts, ev: &BdAuditEvent) {
 /// all.
 pub fn fold_legacy(
     events: &[BdAuditEvent],
-    landstates: &BTreeMap<String, (LandState, Option<String>)>,
     source: &str,
     next_seq: i64,
 ) -> Vec<StageRow> {
-    let mut last_idx: BTreeMap<&str, usize> = BTreeMap::new();
-    for (i, ev) in events.iter().enumerate() {
-        last_idx.insert(ev.issue_id.as_str(), i);
-    }
-
     let mut facts_by_bead: BTreeMap<String, BeadFacts> = BTreeMap::new();
     let mut state_by_bead: BTreeMap<String, BeadState> = BTreeMap::new();
     let mut rows = Vec::with_capacity(events.len());
     let mut seq = next_seq;
 
-    for (i, ev) in events.iter().enumerate() {
+    for ev in events.iter() {
         let facts = facts_by_bead.entry(ev.issue_id.clone()).or_insert_with(default_facts);
         apply_legacy_event(facts, ev);
-        if last_idx.get(ev.issue_id.as_str()) == Some(&i) {
-            if let Some((ls, _tip)) = landstates.get(&ev.issue_id) {
-                // classify()'s terminal-evidence tier requires a Landed ledger entry to
-                // come with an ancestry or content proof (its own "unreachable" arm
-                // otherwise) — this exporter never re-runs that git check itself, so a
-                // current LANDED ledger entry is taken as its own proof.
-                if *ls == LandState::Landed {
-                    facts.tip_ancestor_of_base = true;
-                }
-                facts.landstate = Some(ls.clone());
-            }
-        }
         let outcome = classify::classify(facts);
         let from_state = state_by_bead
             .get(&ev.issue_id)
@@ -304,36 +284,23 @@ mod tests {
     // ── legacy fold: every event maps to exactly one row, with lifecycle state names ──────
 
     #[test]
-    fn claim_then_close_maps_ready_to_working_to_dropped_absent_landstate() {
+    fn claim_then_close_maps_ready_to_working_to_dropped() {
         let events = vec![
             ev("1", "sp-a", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
             ev("2", "sp-a", "closed", "aeon-1", None, "2026-09-15T00:05:00Z"),
         ];
-        let rows = fold_legacy(&events, &BTreeMap::new(), "legacy", 1);
+        let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].from_state, "READY");
         assert_eq!(rows[0].to_state, "WORKING");
         assert_eq!(rows[0].event, "claimed");
         assert_eq!(rows[0].seq, 1);
         assert_eq!(rows[1].from_state, "WORKING");
-        // No landstate/content evidence at all: classify()'s own default for a bare bd
+        // No landing or content evidence at all: classify()'s own default for a bare bd
         // "closed" is the residue rule, DROPPED — an honest limitation of this source, not
         // a defect, stated in this module's own doc comment.
         assert_eq!(rows[1].to_state, "DROPPED");
         assert_eq!(rows[1].seq, 2);
-    }
-
-    #[test]
-    fn a_current_landstate_of_landed_is_applied_only_to_the_last_event() {
-        let events = vec![
-            ev("1", "sp-b", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
-            ev("2", "sp-b", "closed", "aeon-1", None, "2026-09-15T00:05:00Z"),
-        ];
-        let mut landstates = BTreeMap::new();
-        landstates.insert("sp-b".to_string(), (LandState::Landed, Some("deadbeef".to_string())));
-        let rows = fold_legacy(&events, &landstates, "legacy", 1);
-        assert_eq!(rows[0].to_state, "WORKING", "landstate must not leak into an earlier event");
-        assert_eq!(rows[1].to_state, "LANDED");
     }
 
     #[test]
@@ -342,14 +309,14 @@ mod tests {
             ev("1", "sp-c", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
             ev("2", "sp-c", "reopened", "harness", None, "2026-09-15T00:05:00Z"),
         ];
-        let rows = fold_legacy(&events, &BTreeMap::new(), "legacy", 1);
+        let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows[1].to_state, "READY");
     }
 
     #[test]
     fn an_event_type_with_no_fact_effect_still_emits_one_row_with_from_equal_to_to() {
         let events = vec![ev("1", "sp-d", "recurred", "harness", Some("closed-not-landed"), "2026-09-15T00:00:00Z")];
-        let rows = fold_legacy(&events, &BTreeMap::new(), "legacy", 1);
+        let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].from_state, rows[0].to_state);
         assert_eq!(rows[0].reason.as_deref(), Some("closed-not-landed"));
@@ -362,11 +329,9 @@ mod tests {
             ev("2", "sp-f", "claimed", "aeon-2", None, "2026-09-15T00:00:01Z"),
             ev("3", "sp-e", "closed", "aeon-1", None, "2026-09-15T00:00:02Z"),
         ];
-        let mut landstates = BTreeMap::new();
-        landstates.insert("sp-e".to_string(), (LandState::Landed, None));
-        let rows = fold_legacy(&events, &landstates, "legacy", 1);
+        let rows = fold_legacy(&events, "legacy", 1);
         assert_eq!(rows[1].to_state, "WORKING", "sp-f's own claim must classify sp-f, not sp-e");
-        assert_eq!(rows[2].to_state, "LANDED");
+        assert_eq!(rows[2].from_state, "WORKING", "sp-e's close follows sp-e's own claim");
     }
 
     #[test]
@@ -375,7 +340,7 @@ mod tests {
             ev("1", "sp-g", "claimed", "aeon-1", None, "2026-09-15T00:00:00Z"),
             ev("2", "sp-g", "closed", "aeon-1", None, "2026-09-15T00:00:01Z"),
         ];
-        let rows = fold_legacy(&events, &BTreeMap::new(), "legacy", 41);
+        let rows = fold_legacy(&events, "legacy", 41);
         assert_eq!(rows[0].seq, 41);
         assert_eq!(rows[1].seq, 42);
     }

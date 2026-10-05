@@ -46,8 +46,8 @@ pub struct Context {
 /// Where the lifecycle machine's records are the truth, or the legacy ones are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lifecycle {
-    /// `lifecycle_enforce` off (production today): bd status/labels, landstate files and the
-    /// bd events trail. The sentinel never calls spira-lc, and nothing it starts can.
+    /// `lifecycle_enforce` off (production today): bd status/labels and the bd events trail
+    /// (the landing ledger is deleted, sp-2c1n0). The sentinel never calls spira-lc, and nothing it starts can.
     Off,
     /// `lifecycle_enforce` on: spira-lc is authoritative; an unreachable machine is an error.
     On,

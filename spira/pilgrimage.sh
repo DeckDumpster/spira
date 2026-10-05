@@ -89,7 +89,7 @@ landed_key() { printf 'spira.landed.%s' "$1"; }
 # LANDED in the lifecycle record (`spira-lc state`), 1 (with a log line) if any is not.
 #
 # THE ASSERTION THIS GUARDS AGAINST: sp-qj8n demonstrated that landing.sh could push and
-# merge a branch without writing its LANDED entry to landstate — marker commits lost, the
+# merge a branch without recording it LANDED — marker commits lost, the
 # branch present in the repo, the bead closed, and the epic then closing over work that
 # was never confirmed to have reached the base. The assertion: a branch still present in
 # a push-mode repo must carry a LANDED entry. If it does not, the epic is deferred until
@@ -98,8 +98,8 @@ landed_key() { printf 'spira.landed.%s' "$1"; }
 #
 # WHY ONLY PUSH-MODE REPOS. A pr-mode repo's branches are landed by GitHub, not by
 # landing.sh, so there is no LANDED record to check. A hold-mode branch waits for a
-# human. Only push-mode branches go through land_mark LANDED, so only those have an entry
-# to assert against.
+# human. Only push-mode branches are recorded LANDED by the landing pass itself (on the
+# lifecycle record), so only those have a state to assert against.
 #
 # WHY ONLY LIVE BRANCHES. A branch reaped long ago left no trace in the repo. The landing
 # that reaped it recorded LANDED, so the absence of a branch from the repo is not a

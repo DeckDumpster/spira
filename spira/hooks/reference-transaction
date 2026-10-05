@@ -17,7 +17,7 @@
 #
 # WHY lib.sh's CHOKEPOINT DID NOT CONTAIN IT. lib.sh states that nothing outside its
 # destruction section may call `git branch -D`, and spira_destroy_branch carries the
-# content_landed guard that refuses to delete a branch whose commits are not on the
+# content-on-base guard (`spira-lc content-landed`) that refuses to delete a branch whose commits are not on the
 # base — the exact guard that would have saved all 24. But that rule was prose. A
 # one-liner walked past it, and because it never reached sending.sh, nothing was
 # written to reap.log either: the destruction was silent as well as unguarded.
@@ -46,7 +46,7 @@
 # THE OVERRIDE IS THE SANCTIONED PATH. spira_destroy_branch and batch.sh's queue
 # cleanup export SPIRA_REF_SANCTIONED=1, so they keep working and keep their own
 # guards. A fence is a polite refusal, not a wall — but the override is named, and
-# what sets it is code that already carries the content_landed check.
+# what sets it is code that already carries the content-on-base check (`spira-lc content-landed`).
 #
 # stdin: one line per ref, "<old-oid> <new-oid> <refname>". A deletion is a new-oid
 # of all zeros. $1 is the phase: prepared | committed | aborted.

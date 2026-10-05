@@ -682,15 +682,14 @@ impl Live {
         self.run_dir.join("audit.log")
     }
 
-    /// `$SPIRA_RUN/landstate` — `None` when `run_dir` was never resolved (no `--db`-style
-    /// override exists for this one; `bead_reopen`'s own `.ejected` sidecar write is
-    /// best-effort either way, exactly like bash's own unset-`$SPIRA_RUN` path, where
-    /// `$LANDSTATE` is empty and every touch of it is already wrapped in `|| true`).
-    fn landstate_dir(&self) -> Option<PathBuf> {
+    /// `$SPIRA_RUN/ejected` — the withdrawn-suites sidecars' own directory (sp-2c1n0: no
+    /// longer under the retired landstate ledger). `None` when `run_dir` was never resolved;
+    /// the sidecar write is best-effort either way.
+    fn ejected_dir(&self) -> Option<PathBuf> {
         if self.run_dir.as_os_str().is_empty() {
             None
         } else {
-            Some(self.run_dir.join("landstate"))
+            Some(self.run_dir.join("ejected"))
         }
     }
 }
@@ -838,10 +837,13 @@ pub(crate) fn reopen_status_args(id: &str) -> [&str; 6] {
 
 impl crate::reopen::World for Live {
     fn write_ejected(&mut self, id: &str, suites: &str) {
-        let Some(dir) = self.landstate_dir() else { return };
-        let tmp = dir.join(format!("{id}.ejected.{}", std::process::id()));
+        let Some(dir) = self.ejected_dir() else { return };
+        if std::fs::create_dir_all(&dir).is_err() {
+            return;
+        }
+        let tmp = dir.join(format!("{id}.{}", std::process::id()));
         if std::fs::write(&tmp, suites).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join(format!("{id}.ejected")));
+            let _ = std::fs::rename(&tmp, dir.join(id));
         }
     }
 

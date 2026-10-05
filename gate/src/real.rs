@@ -55,7 +55,7 @@ fn close_inherited_fds(cmd: &mut Command) {
 
 /// The variables read after `. lib.sh` (DESIGN.md "Environment it reads"). Every name here
 /// has NO `spira/conf.d/<KEY>` entry — a per-invocation value the gate's own caller sets
-/// (SPIRA_GATE_BEAD, SPIRA_GATE_CALLER, ...), a lib.sh-derived one (LANDSTATE), or an
+/// (SPIRA_GATE_BEAD, SPIRA_GATE_CALLER, ...) or an
 /// ambient launcher var (SPIRA_RELEASE, HOME) — so these stay read straight out of the
 /// `CONTEXT` bash subprocess's own environment.
 ///
@@ -83,7 +83,6 @@ const VARS: &[&str] = &[
     "SPIRA_VERDICT_REPEAT_CONSIDERED",
     "SPIRA_TESTENV_SETUP_SHARE",
     "SPIRA_TESTENV_WARM_SLOTS",
-    "LANDSTATE",
     "SPIRA_BUILD_CACHE",
     "SPIRA_GATE_TARGET_ROOT",
     "SPIRA_GATE_TARGET_CAP_MIB",

@@ -119,10 +119,11 @@ pub fn disposition(c: &Ctx, id: &str, br: &str) -> Disp {
         }
     }
 
-    // LANDED BY OTHER PR: a landing record names the bead — but that record may be about a
-    // PRIOR push of this branch, so every commit unique to it must already be on the base
-    // (git cherry), or this would delete work under a landed() that is true about the past.
-    if b.is_some() && g.landed(id, &c.base.landrefs) {
+    // LANDED BY OTHER PR: the lifecycle record says the bead LANDED (`spira-lc state`, the one
+    // record — never a commit-subject search) — but that landing may be about a PRIOR push of
+    // this branch, so every commit unique to it must already be on the base (git cherry), or
+    // this would delete work under a LANDED that is true about the past.
+    if b.is_some() && c.w.lc_landed(id) {
         if g.cherry_unapplied(lr, br) {
             return Disp::KeepCherryUnapplied;
         }
@@ -314,7 +315,7 @@ impl<'a> Sweep<'a> {
             }
             Disp::KeepUnlanded => self.say(&format!("KEEP   {id}  unlanded — {} commit(s) not in {lr}", q(g.ahead(lr, br)))),
             Disp::KeepCherryUnapplied => self.say(&format!(
-                "KEEP   {id}  {} commit(s) not in {lr}; landed() names it but git cherry finds unapplied commits — not safe to reap",
+                "KEEP   {id}  {} commit(s) not in {lr}; the lifecycle record says LANDED but git cherry finds unapplied commits — not safe to reap",
                 q(g.ahead(lr, br))
             )),
             Disp::OrphanNoBead => {

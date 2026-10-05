@@ -55,7 +55,7 @@ _spira_lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 # conf.sh peel — wave4-decomposition.md). Every function below either IS log/die, or IS a
 # shim: the family-by-family move named in that plan has landed, in-process callers read
 # the owning crate directly, and a bash caller that still types the OLD name by habit —
-# `repo_root`, `land_mark`, `bdq`, whatever — reaches the same logic one
+# `repo_root`, `bdq`, whatever — reaches the same logic one
 # subprocess call away. `spira-lint`'s `lib-sh-shims` rule enforces this mechanically: a
 # function here that is not a shim fails the gate unless it is named, with why, in
 # `spira-lint/lib-sh-shims-allow` — today that is `host_cores`; `ready_raw_args`/
@@ -479,12 +479,12 @@ ready_shared_exclude() {
 
 # mark_queue_waiters / close_landed_queue_waiters — apply/remove SPIRA_QUEUE_WAIT_LABEL on
 # beads whose closed blocker is in the queue pipeline (CERTIFIED/BATCHED, not yet LANDED),
-# and close out a labeled bead whose landstate already reads LANDED (it never got a branch
+# and close out a labeled bead whose lifecycle row already reads LANDED (it never got a branch
 # to land, so the normal close-on-land path never visited it). PERMANENT (wave4-decomposition
 # row H): the lifecycle-flip plan keeps this family even once lc.sh's own calls are gone —
 # stacked dependents still read the label. Ported to Rust (sp-fbqsv, "wave 4.28"); see
 # `sentinel::waiters` for the one-pass decision (no release-then-apply flip-flop) and the
-# landstate scan (now in-process, no per-file awk fork).
+# lifecycle read (in-process, `spira-lc`).
 mark_queue_waiters() {
     sentinel --mark-queue-waiters
 }
@@ -497,8 +497,8 @@ close_landed_queue_waiters() {
 # candidate, which cost 302 s a pass. `sentinel --open-children` runs it alone.
 
 # bead_reopen <id> <cause> [note] [suites] — hand a bead back to the graph so the NEXT aeon
-# can claim it: withdraws a CERTIFIED landstate (unless <cause> is admission-exempt — see
-# _census_deliberate_reopen_causes below), writes the <suites> sidecar, reopens, strips the
+# can claim it: withdraws a CERTIFIED lifecycle row (unless <cause> is admission-exempt — see
+# _census_deliberate_reopen_causes below), writes the <suites> sidecar ($SPIRA_RUN/ejected/), reopens, strips the
 # submitted label, releases the claim and records the cause. Ported to spira-claim (wave
 # 4.19, sp-3wfcb, row I, safety note (c7)); see spira-claim/src/reopen.rs for the contract
 # and the scar (a reopen that keeps the assignee is claimable by nobody). Non-zero RC means
@@ -2298,14 +2298,9 @@ recut_onto() {
 # _prune_candidates retired with activate.sh (sp-jsnbm): release install-tarball's own
 # prune (release/src/install.rs) replaces it; nothing else called this function.
 
-LANDSTATE="${SPIRA_RUN}/landstate"
-# Reasons written by the batch/queue eviction machinery. Only these warrant the eviction-race
-# reopen in aeon.sh; no-rebase@*, gate and confine are landing.sh REDs with their own paths.
-LAND_EVICTION_REASONS="ejected conflicts-with-base rebase-suite-red"
-
-# _tsd_landing_event is RETIRED (sp-cnnt6, "wave 4.16"): its one caller was land_mark, now a
-# shim onto `landing-pass mark`, which does the landing-event dual-write itself, in-process
-# (landing-pass/src/landstate.rs), rather than shelling to tsd-write.
+# The landing ledger under $SPIRA_RUN and its writer/reader shims are DELETED (sp-2c1n0,
+# lifecycle cutover): a bead's delivery state is the lifecycle record alone (`spira-lc state
+# <id>`), and the withdrawn-suites sidecar lives in $SPIRA_RUN/ejected/ (spira-claim reopen).
 
 # _tsd_kv_field is RETIRED (wave 4.35, sp-kelr2, row AC): its one intended caller,
 # session_result_fields, was already dead (row N, retired in wave 4.2's bead 2 — "RETIRE
@@ -2434,14 +2429,6 @@ bead_is_decision_type() {
         *" $t "*) return 0 ;;
         *) return 1 ;;
     esac
-}
-
-# bead_close_on_land <bead-id> <landed-sha> — close a submitted work bead whose work landed,
-# citing the sha, and reap its branch (`spira-lc close-on-land`; best-effort, always 0). Kept
-# only because the queue crate's seam still types this name (sp-du6dl moves it); every other
-# caller reaches spira-lc directly. Not the landing pass's subcommand any more (sp-oqf8c.3).
-bead_close_on_land() {
-    spira-lc close-on-land "$1" "${2:-}" || true
 }
 
 # _gh_close_ask_unblock/gh_issue_ask_unlanded/_gh_resolve_stale_asks/_gh_unlanded_scan

@@ -120,7 +120,6 @@ impl World {
         let run = dir.join("run");
         let home = dir.join("home");
         std::fs::create_dir_all(&run).unwrap();
-        std::fs::create_dir_all(run.join("landstate")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
         World { dir, run, home }
     }

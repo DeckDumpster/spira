@@ -657,7 +657,7 @@ pub fn same_repo(a: &str, b: &str) -> bool {
 /// deliberate override and returned the release root for the home repo outright,
 /// bypassing the repo-map's real row entirely — the home repo 'spira' resolved to the
 /// release directory instead of its configured checkout, and every closed bead's
-/// landstate pruned next, reading "no branch" from a registry that could not look.
+/// landing record pruned next, reading "no branch" from a registry that could not look.
 /// Recomputing it fresh, always, from THIS process's own `home` is the same
 /// law-a-binary-resolves-the-config-it-reads fix sp-hh599 made for spira-claim's own
 /// `fayth_home`: a derived fact is resolved in-process, never trusted from the

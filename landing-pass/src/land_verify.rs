@@ -1,17 +1,10 @@
-//! Landed verification (family R, decomposition row 17, sp-81t4d): `landed`, `landed_sha`,
-//! `bead_cited_commit_on_base`, `pr_merged`, `land_subject`, `other_beads_on_conflicts`,
-//! `conflict_reopen_note`, `bead_is_work_type`, `bead_close_on_land` — the lib.sh functions
-//! this crate absorbed. `content_landed` (the rest of the family) was already native
-//! (`Git::content_landed`, `RealGit`); it is untouched here. `bead_land_status` (the
-//! family's one dead name) had no caller left anywhere in the tree and is not ported.
-//!
-//! THREE OUTCOMES, NOT TWO (law-closed-is-not-landed). [`landed`] answers found / not found
-//! / cannot tell, and "cannot tell" — an unresolvable land ref — is a NAMED refusal a caller
-//! must never fold into "not landed": doing that is exactly what reopened sp-pd-ci-green four
-//! times (lib.sh's own `landed` doc comment). [`Lib::close_on_land`] and
-//! [`Ports::bead_cited_commit_on_base`]'s git checks both read ancestry with
-//! `merge-base --is-ancestor`, never by comparing a tip SHA to a remembered one — a tip
-//! moves under a caller holding a stale copy.
+//! Landed verification (family R, decomposition row 17, sp-81t4d): `pr_merged`,
+//! `land_subject`, `other_beads_on_conflicts`, `conflict_reopen_note`, `bead_is_work_type`
+//! and the push pass's own close — the lib.sh functions this crate absorbed. The
+//! commit-subject and cited-commit oracles (`landed`, `bead_cited_commit_on_base`) are
+//! deleted (sp-2c1n0): whether a bead landed is the lifecycle record's LANDED state
+//! (`spira-lc state`), never a search of the base's history. Content-on-base is
+//! `Git::content_on_base` (`RealGit`).
 //!
 //! The pr/ask/reap-adjacent pieces (`conflict_reopen_note`'s git plumbing, `close_on_land`'s
 //! bd close + reap) run real subprocesses (`bdq`, `sending`) by bare name on PATH
@@ -59,108 +52,11 @@ pub fn is_work_type(t: &str, close_types: &str) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// landed / landed_sha
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// lib.sh `landed`/`landed_sha`'s one search, against refs already resolved by the caller
-/// (`spira_landrefs` — `spira_config::repos::landrefs`). `refs` empty is the caller's own
-/// "cannot tell" (an unresolvable land ref); this never guesses one. Trusts only two
-/// subject shapes — the queue's own merge subject (`land_subject`'s own output) or a
-/// bead's own commit (`<id>:` — never a substring, the colon must follow immediately) —
-/// never a body mention (sp-dgaig).
-pub fn landed(git: &dyn Git, repo: &Path, id: &str, refs: &[String]) -> Option<String> {
-    if refs.is_empty() {
-        return None;
-    }
-    let out = git.log_grep(repo, id, refs)?;
-    let land = format!("spira: land {id}");
-    let land_sp = format!("{land} ");
-    let own = format!("{id}:");
-    for line in out.lines() {
-        let Some((sha, subj)) = line.split_once('\t') else { continue };
-        if subj == land || subj.starts_with(&land_sp) || subj.starts_with(&own) {
-            return Some(sha.to_string());
-        }
-    }
-    None
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
-// bead_cited_commit_on_base
-// ──────────────────────────────────────────────────────────────────────────────
-
-/// A candidate sha pulled from a bead's notes: `true` for a declared hand-landing
-/// ("landed as <sha>" / "hand-landed <sha>"), `false` for a bare hex token in prose.
-pub type Candidate = (bool, String);
-
-/// lib.sh `bead_cited_commit_on_base`'s note scan: every "declared" shape across every
-/// note, in order, each sha seen once — THEN every bare hex token across every note, same
-/// dedup. A bare sha in prose is never sufficient on its own (law-closed-is-not-landed);
-/// it only becomes a candidate here, and [`bead_cited_commit_on_base`] still requires the
-/// commit it names to cite the bead by id.
-pub fn cited_candidates(notes: &[String]) -> Vec<Candidate> {
-    let declared = Regex::new(r"(?:landed\s+as|hand-landed)\s+([0-9a-f]{7,40})").expect("static regex");
-    let bare = Regex::new(r"[0-9a-f]{7,40}").expect("static regex");
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for n in notes {
-        let low = n.to_lowercase();
-        for m in declared.captures_iter(&low) {
-            let sha = m[1].to_string();
-            if seen.insert(sha.clone()) {
-                out.push((true, sha));
-            }
-        }
-    }
-    for n in notes {
-        let low = n.to_lowercase();
-        for m in bare.find_iter(&low) {
-            let sha = m.as_str().to_string();
-            if seen.insert(sha.clone()) {
-                out.push((false, sha));
-            }
-        }
-    }
-    out
-}
-
-/// `(^|[^a-z0-9-])<id>([^a-z0-9-]|$)` against the raw (not lowercased) commit body — the
-/// same case-sensitive character class lib.sh's grep used; bead ids are their own lowercase
-/// form, so this is deliberately not case-insensitive.
-pub fn id_named_in(body: &str, id: &str) -> bool {
-    let Ok(re) = Regex::new(&format!(r"(^|[^a-z0-9-]){}([^a-z0-9-]|$)", regex::escape(id))) else { return false };
-    re.is_match(body)
-}
-
-/// lib.sh `bead_cited_commit_on_base <id> <repo> <base>` → `Some((sha, "cited-declared" |
-/// "cited-named"))`. Every candidate must first verify as a real commit AND be an ancestor
-/// of `base` (ancestry, never a tip comparison) before its shape is trusted at all.
-pub fn bead_cited_commit_on_base(git: &dyn Git, repo: &Path, base: &str, id: &str, notes: &[String]) -> Option<(String, &'static str)> {
-    for (declared, sha) in cited_candidates(notes) {
-        if git.rev_parse(repo, &format!("{sha}^{{commit}}")).is_none() {
-            continue;
-        }
-        if !git.is_ancestor(repo, &sha, base) {
-            continue;
-        }
-        if declared {
-            return Some((sha, "cited-declared"));
-        }
-        if let Some(body) = git.commit_body(repo, &sha) {
-            if id_named_in(&body, id) {
-                return Some((sha, "cited-named"));
-            }
-        }
-    }
-    None
-}
-
-// ──────────────────────────────────────────────────────────────────────────────
 // pr_merged
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// lib.sh `pr_merged <repo> <branch>`: a pull request whose head is `branch` is MERGED.
-/// Evidence for not reopening, never for deleting (`content_landed` is the exact, local
+/// Evidence for not reopening, never for deleting (`content_on_base` is the exact, local
 /// check a destroying caller must use instead).
 ///
 /// `ghq` IS NOT A PROGRAM. lib.sh's `ghq() { command bdq __ghq "$@"; }` is itself a shim
@@ -245,10 +141,10 @@ pub fn conflict_reopen_note(git: &dyn Git, repo: &Path, br: &str, base: &str, na
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
-// bead_close_on_land
+// close on land (the push pass's own bd close)
 // ──────────────────────────────────────────────────────────────────────────────
 
-/// lib.sh `bead_close_on_land`'s own three-way read of a bead's status: `submitted` only
+/// The push pass's close-on-land three-way read of a bead's status: `submitted` only
 /// when bd's raw status is not already `closed` and the submitted label is present — the
 /// one case this function acts on. `BeadRow::status` already folds a submitted label into
 /// `"closed"` (sp-qsona) for every OTHER reader, which is exactly why this reads
@@ -270,7 +166,7 @@ fn label_value<'a>(labels: &'a [String], prefix: &str) -> Option<&'a str> {
 }
 
 /// `bdq close <id> --reason-file -`, the reason on stdin — the exact shape
-/// `bead_close_on_land`'s heredoc wrote. `true` only on a clean exit.
+/// the retired bash close's heredoc wrote. `true` only on a clean exit.
 fn bdq_close(id: &str, reason: &str) -> bool {
     let mut c = Command::new("bdq");
     c.args(["close", id, "--reason-file", "-"]);
@@ -307,7 +203,7 @@ fn sending_reap(status_file: Option<&str>, id: &str, branch: &str, repo: &str, w
     }
 }
 
-/// lib.sh `bead_close_on_land <id> <sha>` — the only place a work bead is closed for a
+/// The push pass's close-on-land `<id> <sha>` — the only place a work bead is closed for a
 /// landed reason. Idempotent both ways: a bead already `closed` is left alone, and one
 /// never marked submitted is left alone too. On a successful close, best-effort reaps the branch through `sending` (family X's own chokepoint; never touched
 /// directly here).
@@ -321,7 +217,7 @@ pub fn close_on_land(git: &dyn Git, out: &Reporter, home: &Path, submitted_label
     let shown_sha = if sha.is_empty() { "unknown" } else { sha };
     let reason = format!("OUTCOME: landed\nClosed by the landing pass: work landed at {shown_sha} (law-closed-is-not-landed).\n");
     if !bdq_close(id, &reason) {
-        out.log(&format!("land-close {id}: bd close failed — left submitted, CHECK 5 will report it"));
+        out.log(&format!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"));
         return;
     }
     out.log(&format!("land-close {id}: closed at {shown_sha} (submitted -> landed)"));
@@ -374,7 +270,7 @@ mod tests {
         assert!(!is_work_type("buggy", "task bug feature"));
     }
 
-    // ── landed / landed_sha: a real git repo, both directions + "cannot tell" ──
+    // ── a real git repo, for the conflict-note family below ──
 
     fn git_init(dir: &Path) {
         let run = |args: &[&str]| {
@@ -390,110 +286,6 @@ mod tests {
     }
 
     use crate::real::RealGit;
-
-    #[test]
-    fn landed_finds_the_writer_commit_by_ancestry_not_by_a_remembered_tip() {
-        let dir = testkit::TempDir::new("land-verify-landed-writer");
-        git_init(&dir);
-        let sha = commit(&dir, "spira: land sp-fix");
-        let refs = vec!["main".to_string()];
-        assert_eq!(landed(&RealGit, &dir, "sp-fix", &refs), Some(sha));
-    }
-
-    #[test]
-    fn landed_recognises_the_titled_writer_form_and_the_authors_own_commit() {
-        let dir = testkit::TempDir::new("land-verify-landed-titled");
-        git_init(&dir);
-        let sha = commit(&dir, "spira: land sp-titled — a fix with a title");
-        let refs = vec!["main".to_string()];
-        assert_eq!(landed(&RealGit, &dir, "sp-titled", &refs), Some(sha));
-
-        let sha2 = commit(&dir, "sp-own: did the thing");
-        assert_eq!(landed(&RealGit, &dir, "sp-own", &refs), Some(sha2));
-    }
-
-    #[test]
-    fn landed_returns_none_when_no_commit_names_the_id() {
-        let dir = testkit::TempDir::new("land-verify-landed-none");
-        git_init(&dir);
-        let refs = vec!["main".to_string()];
-        assert_eq!(landed(&RealGit, &dir, "sp-nocommit", &refs), None);
-    }
-
-    #[test]
-    fn landed_trusts_a_landing_record_not_a_body_mention() {
-        // A commit whose subject merely TALKS ABOUT the id must not count (sp-dgaig).
-        let dir = testkit::TempDir::new("land-verify-landed-mention");
-        git_init(&dir);
-        commit(&dir, "fix something related to sp-mentioned's analysis");
-        let refs = vec!["main".to_string()];
-        assert_eq!(landed(&RealGit, &dir, "sp-mentioned", &refs), None);
-    }
-
-    #[test]
-    fn landed_cannot_tell_when_refs_do_not_resolve() {
-        // The caller's own refusal: empty refs (an unresolvable land ref) is "cannot tell",
-        // never folded into "not landed".
-        let dir = testkit::TempDir::new("land-verify-landed-cannot-tell");
-        git_init(&dir);
-        commit(&dir, "spira: land sp-fix");
-        assert_eq!(landed(&RealGit, &dir, "sp-fix", &[]), None, "empty refs must be handled by the caller as exit 2, not folded in here");
-    }
-
-    // ── bead_cited_commit_on_base ───────────────────────────────────────────
-
-    #[test]
-    fn cited_candidates_orders_declared_before_bare_each_deduplicated() {
-        let notes = vec!["hand-landed deadbeef1234, also mentions deadbeef1234 again".to_string(), "landed as cafef00dcafef00d".to_string(), "see also abc1234abc1234".to_string()];
-        let got = cited_candidates(&notes);
-        assert_eq!(got, vec![(true, "deadbeef1234".to_string()), (true, "cafef00dcafef00d".to_string()), (false, "abc1234abc1234".to_string())]);
-    }
-
-    #[test]
-    fn id_named_in_requires_a_whole_token_not_a_substring() {
-        assert!(id_named_in("fixed sp-a today", "sp-a"));
-        assert!(id_named_in("sp-a: did the thing", "sp-a"));
-        assert!(!id_named_in("sp-ab did the thing", "sp-a"));
-        assert!(!id_named_in("xsp-a did the thing", "sp-a"));
-    }
-
-    #[test]
-    fn bead_cited_commit_on_base_accepts_a_declared_sha_that_verifies_and_is_on_base() {
-        let dir = testkit::TempDir::new("land-verify-cited-declared");
-        git_init(&dir);
-        let sha = commit(&dir, "unrelated subject");
-        let notes = vec![format!("hand-landed {sha}")];
-        let got = bead_cited_commit_on_base(&RealGit, &dir, "main", "sp-x", &notes);
-        assert_eq!(got, Some((sha, "cited-declared")));
-    }
-
-    #[test]
-    fn bead_cited_commit_on_base_accepts_a_bare_sha_only_when_the_commit_names_the_id() {
-        let dir = testkit::TempDir::new("land-verify-cited-named");
-        git_init(&dir);
-        let sha = commit(&dir, "sp-y: did the fix");
-        let notes = vec![format!("see {sha} for the fix")];
-        let got = bead_cited_commit_on_base(&RealGit, &dir, "main", "sp-y", &notes);
-        assert_eq!(got, Some((sha, "cited-named")));
-    }
-
-    #[test]
-    fn bead_cited_commit_on_base_refuses_a_bare_sha_whose_commit_does_not_name_the_id() {
-        let dir = testkit::TempDir::new("land-verify-cited-bare-refused");
-        git_init(&dir);
-        let sha = commit(&dir, "unrelated subject, names nobody");
-        let notes = vec![format!("see {sha} for the fix")];
-        assert_eq!(bead_cited_commit_on_base(&RealGit, &dir, "main", "sp-z", &notes), None, "a bare sha in prose is never sufficient on its own");
-    }
-
-    #[test]
-    fn bead_cited_commit_on_base_refuses_a_sha_not_on_the_base() {
-        let dir = testkit::TempDir::new("land-verify-cited-off-base");
-        git_init(&dir);
-        // A sha that verifies as a commit but is not reachable from `main` at all.
-        let notes = vec!["hand-landed 0000000deadbeef".to_string()];
-        assert_eq!(bead_cited_commit_on_base(&RealGit, &dir, "main", "sp-q", &notes), None);
-    }
 
     // ── other_beads_on_conflicts / conflict_reopen_note ─────────────────────
 
@@ -536,7 +328,7 @@ mod tests {
         assert!(note.contains("A merge conflict is not an escalation"));
     }
 
-    // ── bead_close_on_land's status read ────────────────────────────────────
+    // ── close-on-land's status read ────────────────────────────────────
 
     fn row(raw_status: &str, labels: &[&str]) -> BeadRow {
         BeadRow {

@@ -25,8 +25,8 @@
 
 /// `_census_deliberate_reopen_causes`'s declared list, in bash's own print order: `work-
 /// close-converted` is exempt (aeon.sh's teardown carrying a session's own finished work
-/// bead forward to the landing pass — bookkeeping, not rework, so the CERTIFIED landstate
-/// and the submitted label it arrived with must survive); `eject` is deliberate for census
+/// bead forward to the landing pass — bookkeeping, not rework, so the CERTIFIED lifecycle
+/// row and the submitted label it arrived with must survive); `eject` is deliberate for census
 /// (withdrawing a CERTIFIED-but-unbatched bead is the system working) but NOT exempt — it
 /// still needs WITHDRAWN written and the label stripped, or the bead stays admissible to
 /// the next batch cut (sp-eiatd).
@@ -59,7 +59,7 @@ pub fn admission_exempt(cause: &str) -> bool {
 /// [`run`] below is pure decision logic over this interface, and [`crate::unpoison::Live`]
 /// is the one real implementation.
 pub trait World {
-    /// The `$LANDSTATE/<id>.ejected` sidecar gate.sh reads unconditionally — best-effort
+    /// The `$SPIRA_RUN/ejected/<id>` sidecar the gate reads unconditionally — best-effort
     /// (bash: `printf ... && mv -f ... || true`).
     fn write_ejected(&mut self, id: &str, suites: &str);
     /// `bdq reopen "$id"` — the first of the two steps whose failure sets the exit code.

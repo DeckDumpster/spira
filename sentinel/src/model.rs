@@ -188,28 +188,6 @@ pub fn status_fields(text: &str, prefix: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// A landstate record: `<STATE> <tip> …`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LandState {
-    pub state: String,
-    pub tip: String,
-}
-
-impl LandState {
-    pub fn parse(text: &str) -> LandState {
-        let mut w = text.lines().next().unwrap_or("").split_whitespace();
-        LandState {
-            state: w.next().unwrap_or("").into(),
-            tip: w.next().unwrap_or("").into(),
-        }
-    }
-    /// LANDED with a real tip — the only record that proves anything.
-    pub fn landed_tip(&self) -> Option<&str> {
-        (self.state == "LANDED" && !self.tip.is_empty() && self.tip != "none")
-            .then_some(self.tip.as_str())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,15 +236,5 @@ mod tests {
                 ("SP_LAND_RC".into(), "2".into())
             ]
         );
-    }
-
-    #[test]
-    fn landstate_proves_only_a_landed_tip() {
-        assert_eq!(
-            LandState::parse("LANDED abc123 x\n").landed_tip(),
-            Some("abc123")
-        );
-        assert_eq!(LandState::parse("LANDED none").landed_tip(), None);
-        assert_eq!(LandState::parse("CERTIFIED abc").landed_tip(), None);
     }
 }

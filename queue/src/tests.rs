@@ -2171,7 +2171,7 @@ fn a_refused_close_is_left_submitted_and_reaps_nothing() {
     assert_eq!(t.run(&["submit", "spira/sp-a"]), 0, "{}", t.err());
     assert!(t.lib.has("bead_close sp-a t1"));
     assert!(!t.lib.has("reap"));
-    assert!(t.out().contains("land-close sp-a: bd close failed — left submitted, CHECK 5 will report it"));
+    assert!(t.out().contains("land-close sp-a: bd close failed — left submitted (LANDED is on the lifecycle record)"));
 }
 
 #[test]

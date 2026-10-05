@@ -78,21 +78,6 @@ impl Git<'_> {
         })
     }
 
-    /// lib.sh landed: a LANDING RECORD on the land refs names <id> — the queue's own merge
-    /// subject (`spira: land <id>`, optionally ` — <title>`) or the bead's own commit
-    /// (`<id>:`). --grep only narrows; the subject is what is trusted.
-    pub fn landed(&self, id: &str, refs: &[String]) -> bool {
-        if refs.is_empty() {
-            return false;
-        }
-        let grep = format!("--grep={id}");
-        let mut args = vec!["log", "--format=%s", grep.as_str(), "-F"];
-        args.extend(refs.iter().map(String::as_str));
-        let Some(out) = self.out(&args) else { return false };
-        let (land, own) = (format!("spira: land {id}"), format!("{id}:"));
-        out.lines().any(|s| s == land || s.starts_with(&format!("{land} ")) || s.starts_with(&own))
-    }
-
     /// `git cherry base br` has a `+` line: a commit unique to <br> with no patch-equivalent
     /// on <base>.
     pub fn cherry_unapplied(&self, base: &str, br: &str) -> bool {

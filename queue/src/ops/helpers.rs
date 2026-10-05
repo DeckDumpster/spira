@@ -392,7 +392,7 @@ pub fn close_on_land(w: &World, submitted_label: &str, id: &str, sha: &str) {
     }
     let shown = if sha.is_empty() { "unknown" } else { sha };
     if !w.lib.bead_close(id, &land_close_reason(sha)) {
-        w.out(format!("land-close {id}: bd close failed — left submitted, CHECK 5 will report it"));
+        w.out(format!("land-close {id}: bd close failed — left submitted (LANDED is on the lifecycle record)"));
         return;
     }
     w.out(format!("land-close {id}: closed at {shown} (submitted -> landed)"));

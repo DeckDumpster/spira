@@ -495,13 +495,12 @@ impl<'a> Lib for RealLib<'a> {
     }
     /// `gh-intake closeout <id> <sha> <repo>` (sp-j3fim, "wave 4.31"): gh_issue_closeout
     /// moved natively into gh-intake; this crate shells to the compiled binary by bare
-    /// name now, the same way `land_mark` shells to `landing-pass` itself rather than the
-    /// lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
+    /// name now, rather than the lib.sh seam. No lib.sh snippet backs this any more. stdout is captured and relayed
     /// through this pass's own `Reporter::raw`, exactly as the seam's own log lines were.
     fn closeout(&self, id: &str, sha: &str, repo: &Path) {
         run_bin(self.seam.out, "gh-intake", &["closeout", id, sha, &p(repo)]);
     }
-    /// lib.sh `bead_close_on_land` — ported natively (sp-81t4d, "wave 4.17": family R; was
+    /// The bash close-on-land — ported natively (sp-81t4d, "wave 4.17": family R; was
     /// the S16 seam's second half — `gh_issue_closeout`, S16's other half, is unchanged).
     fn close_on_land(&self, id: &str, sha: &str) {
         let row = self.beads.show(&[id.to_string()]).ok().and_then(|rows| rows.into_iter().next());
@@ -751,7 +750,7 @@ impl Git for RealGit {
         c.args(["merge-base", "--is-ancestor", a, b]);
         git_ok(c)
     }
-    fn content_landed(&self, repo: &Path, branch: &str, base: &str) -> bool {
+    fn content_on_base(&self, repo: &Path, branch: &str, base: &str) -> bool {
         let Some(ahead) = self.count(repo, &format!("{base}..{branch}")) else { return false };
         // An ancestor branch is landed: every commit is already reachable from the base.
         if self.is_ancestor(repo, branch, base) {

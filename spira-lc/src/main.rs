@@ -43,9 +43,26 @@ fn main() {
         std::process::exit(serve::run(&args[1..]));
     }
 
-    // Neither touches the lifecycle machine, so neither reads the switch.
+    // content-landed never touches the lifecycle machine; close-on-land reaches it only
+    // through the caller verb `content-on-base`, which reads the switch itself.
     match args.first().map(String::as_str) {
-        Some("close-on-land") => std::process::exit(close_on_land::run(&args[1..])),
+        Some("close-on-land") => {
+            // The landing is recorded through the caller verb `content-on-base`, so the
+            // switch and the machine are read exactly as that verb reads them.
+            let mut record = |id: &str, proof: &str| {
+                let a = vec![id.to_string(), proof.to_string(), "sending".to_string()];
+                let ans = if spira_config::lifecycle_enforce(None) {
+                    callers::run("content-on-base", &a, &mut Live { conn: None })
+                } else {
+                    callers::off("content-on-base", &a)
+                };
+                if !ans.stderr.is_empty() {
+                    eprint!("{}", ans.stderr);
+                }
+                ans.code
+            };
+            std::process::exit(close_on_land::run(&args[1..], &mut record))
+        }
         Some("content-landed") if args.len() == 4 => {
             std::process::exit(if git_evidence::content_on_base(std::path::Path::new(&args[1]), &args[2], &args[3]) { 0 } else { 1 })
         }

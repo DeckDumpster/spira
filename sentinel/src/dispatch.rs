@@ -211,7 +211,7 @@ impl<'a> Sentinel<'a> {
             } else if self.unit_active(&unit) {
                 self.log("CHECK4/5 audit: started underneath this pass — not starting another");
             } else {
-                self.log("CHECK4/5 audit WARN: could not dispatch the audit worker; poison, closed-not-landed, sending and collision checks will not run until this is fixed");
+                self.log("CHECK4/5 audit WARN: could not dispatch the audit worker; poison, lifecycle-state (CHECK5-LC), sending and collision checks will not run until this is fixed");
             }
         }
 

@@ -15,7 +15,7 @@
 ///
 /// `ConflictNote`, `OtherBeads`, `PrMerged`, `LandSubject` and `CloseOnLand` are retired
 /// (sp-81t4d, "wave 4.17": family R, landed verification) — `conflict_reopen_note`,
-/// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and `bead_close_on_land` are all
+/// `other_beads_on_conflicts`, `pr_merged`, `land_subject` and the close-on-land are all
 /// native now (`land_verify.rs`), reached through `RealLib` directly, never this seam.
 /// `Closeout` and `GhUnlandedScan` are retired too (sp-j3fim, "wave 4.31": family AB,
 /// GitHub closeout) — `gh_issue_closeout`/`_gh_unlanded_scan` moved into gh-intake;

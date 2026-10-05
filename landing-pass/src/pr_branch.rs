@@ -164,7 +164,7 @@ fn pr_number(c: &Ctx, repo: &Path, br: &str) -> Option<u64> {
 
 /// Another open PR whose head already carries every commit on `br` — a parallel duplicate,
 /// catching the sp-pd-ci case (#114 carried all nineteen of #113's commits). Uses
-/// `content_landed`'s merge-tree equivalence (this crate's own primitive for exactly "does
+/// `content_on_base`'s merge-tree equivalence (this crate's own primitive for exactly "does
 /// X already contain every change on Y") rather than bash's per-commit SHA-ancestor loop —
 /// more robust to the candidate branch having been rebased or amended since it diverged
 /// (a named difference from bash's `land_pr`, DESIGN.md). The candidate ref is qualified
@@ -176,7 +176,7 @@ fn duplicate_open_pr(c: &Ctx, repo: &Path, br: &str, remote: &str) -> Option<u64
             continue;
         }
         let candidate_ref = format!("{remote}/{head}");
-        if c.git.content_landed(repo, br, &candidate_ref) {
+        if c.git.content_on_base(repo, br, &candidate_ref) {
             return Some(n);
         }
     }
@@ -304,7 +304,7 @@ mod tests {
         fn is_ancestor(&self, _: &Path, a: &str, b: &str) -> bool {
             self.ancestors.borrow().iter().any(|(x, y)| x == a && y == b)
         }
-        fn content_landed(&self, _: &Path, _: &str, _: &str) -> bool {
+        fn content_on_base(&self, _: &Path, _: &str, _: &str) -> bool {
             false
         }
         fn count(&self, _: &Path, _: &str) -> Option<u64> {
@@ -591,8 +591,8 @@ mod tests {
     #[test]
     fn a_duplicate_pull_request_is_noted_and_not_reopened_as_a_second_pr() {
         let f = Fixture::new();
-        // content_landed defaults false in FGit, so make the candidate branch look like it
-        // already carries br's work by overriding content_landed via a second fixture git.
+        // content_on_base defaults false in FGit, so make the candidate branch look like it
+        // already carries br's work by overriding content_on_base via a second fixture git.
         struct DupGit(FGit);
         impl Git for DupGit {
             fn spira_refs(&self, r: &Path) -> Vec<(String, String)> {
@@ -607,7 +607,7 @@ mod tests {
             fn is_ancestor(&self, r: &Path, a: &str, b: &str) -> bool {
                 self.0.is_ancestor(r, a, b)
             }
-            fn content_landed(&self, _: &Path, branch: &str, base: &str) -> bool {
+            fn content_on_base(&self, _: &Path, branch: &str, base: &str) -> bool {
                 branch == "spira/sp-a" && base == "origin/spira/sp-b"
             }
             fn count(&self, r: &Path, x: &str) -> Option<u64> {

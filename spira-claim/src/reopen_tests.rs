@@ -193,7 +193,7 @@ const RECORD: &str = r#"{ printf 'ARGV'; for a in "$@"; do printf ' [%s]' "$a"; 
 
 fn live(tag: &str, bd_body: &str) -> (Live, testkit::TempDir) {
     let dir = testkit::TempDir::new(&format!("spira-claim-reopen-{tag}"));
-    std::fs::create_dir_all(dir.join("run/landstate")).unwrap();
+    std::fs::create_dir_all(dir.join("run")).unwrap();
     let bd = script(&dir, "bd", &bd_body.replace("@LOG@", &dir.join("bd.log").to_string_lossy()));
     let l = Live {
         store: Store { bd, db: Some("/fake/db".into()), lc: "true".into(), timeout: Duration::from_secs(10) },
@@ -217,8 +217,11 @@ fn live_reopen_writes_sidecar_reopens_strips_label_releases_notes() {
     };
     assert_eq!(run(&o, &mut w), 0);
 
-    let ejected = std::fs::read_to_string(dir.join("run/landstate/sp-a.ejected")).unwrap();
+    // The sidecar lives in its own directory, created on demand: nothing creates the retired
+    // landstate ledger any more (sp-2c1n0), and nothing here may write into it again.
+    let ejected = std::fs::read_to_string(dir.join("run/ejected/sp-a")).unwrap();
     assert_eq!(ejected, "test-x.sh", "no trailing newline, exactly printf '%s'");
+    assert!(!dir.join("run/landstate").exists(), "reopen recreated the retired landstate ledger");
 
     let bd_log = std::fs::read_to_string(dir.join("bd.log")).unwrap();
     let bd_argv: Vec<&str> = bd_log.lines().filter(|l| l.starts_with("ARGV")).collect();
@@ -241,5 +244,5 @@ fn live_without_suites_writes_no_sidecar() {
     let (mut w, dir) = live("noop", RECORD);
     let o = Opts { id: "sp-b".into(), cause: "gate-red".into(), note: String::new(), suites: String::new(), submitted_label: "spira-submitted".into() };
     assert_eq!(run(&o, &mut w), 0);
-    assert!(!dir.join("run/landstate/sp-b.ejected").exists());
+    assert!(!dir.join("run/ejected/sp-b").exists());
 }

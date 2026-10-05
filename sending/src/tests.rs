@@ -45,6 +45,8 @@ struct Fake {
     queued: BTreeSet<String>,
     fail: BTreeMap<String, String>,
     prs: BTreeMap<String, String>,
+    /// Beads the lifecycle record has LANDED (`spira-lc state`).
+    lc_landed: BTreeSet<String>,
     enforce: bool,
     base: Option<Base>,
     wts: PathBuf,
@@ -117,6 +119,9 @@ impl World for Fake {
     }
     fn label_add(&self, id: &str, label: &str) {
         self.call(format!("label {id} {label}"));
+    }
+    fn lc_landed(&self, id: &str) -> bool {
+        self.lc_landed.contains(id)
     }
     fn content_on_base(&self, id: &str, proof: &str) {
         self.call(format!("lc {id} {proof}"));
@@ -199,8 +204,9 @@ fn fixture() -> (Fx, Fake) {
     commit_file(&r, "shared-sq.txt", "line1\nline2\nline3\n", "unrelated: advance shared-sq.txt");
     f.put("sp-sq", b("closed"));
     f.prs.insert("spira/sp-sq".into(), sq_tip.clone());
-    // sp-otherpr: a landing record names it, every commit patch-equivalent upstream.
-    // sp-cherry: the record is about the past; a later commit is unapplied.
+    // sp-otherpr: the lifecycle record has it LANDED, every commit patch-equivalent upstream.
+    // sp-cherry: the LANDED is about the past; a later commit is unapplied. Both also carry a
+    // base commit whose subject names them — which is NOT what makes them landed.
     for id in ["sp-otherpr", "sp-cherry"] {
         let file = format!("shared-{id}.txt");
         git(&r, &["checkout", "-q", "-b", &format!("spira/{id}"), "main"]);
@@ -209,6 +215,7 @@ fn fixture() -> (Fx, Fake) {
         commit_file(&r, &file, "v1\n", &format!("spira: land {id}"));
         commit_file(&r, &file, "v2\n", "unrelated: advance further");
         f.put(id, b("closed"));
+        f.lc_landed.insert(id.to_string());
     }
     git(&r, &["checkout", "-q", "spira/sp-cherry"]);
     commit_file(&r, "sp-cherry-extra.txt", "never landed\n", "sp-cherry: one more commit, after landing");
@@ -256,6 +263,17 @@ fn sweep(f: &Fake, o: Opts, repos: &[Repo]) -> i32 {
 
 fn exists(fx: &Fx, br: &str) -> bool {
     Git(&fx.repo).branch_exists(br)
+}
+
+#[test]
+fn a_landing_subject_on_the_base_is_not_landed_without_the_lifecycle_record() {
+    // sp-2c1n0: the commit-subject oracle (`spira: land <id>` on the base) is deleted. With no
+    // LANDED on the lifecycle record, sp-otherpr's naming commit makes it nothing but unlanded.
+    let (fx, mut f) = fixture();
+    f.lc_landed.clear();
+    let base = f.base.clone().unwrap();
+    let c = Ctx { w: &f, repo: &fx.repo, name: "home", base: &base, submitted_label: "spira-submitted" };
+    assert_eq!(disposition(&c, "sp-otherpr", "spira/sp-otherpr"), Disp::KeepUnlanded);
 }
 
 #[test]
@@ -315,7 +333,7 @@ fn one_pass_sends_reaps_keeps_archives_and_holds() {
     assert!(out.contains("\nsp-supunsafe.txt\n"), "{out}");
     assert!(exists(&fx, "spira/sp-supunsafe"));
     assert!(f.called("destroy sp-supunsafe"), "the kept branch's worktree is freed");
-    assert!(out.contains("KEEP   sp-cherry  2 commit(s) not in main; landed() names it but git cherry finds unapplied commits"), "{out}");
+    assert!(out.contains("KEEP   sp-cherry  2 commit(s) not in main; the lifecycle record says LANDED but git cherry finds unapplied commits"), "{out}");
     assert!(out.contains("KEEP   sp-unlanded  unlanded — 1 commit(s) not in main"));
     assert!(out.contains("HELD   sp-held  in_progress"));
     assert!(exists(&fx, "spira/sp-held") && exists(&fx, "spira/sp-cherry") && exists(&fx, "spira/sp-unlanded"));
@@ -355,7 +373,7 @@ fn content_on_base_evidence_is_a_machine_event_on_and_the_label_off() {
 }
 
 #[test]
-fn a_branch_with_no_commit_naming_the_bead_is_not_content_landed_evidence() {
+fn a_branch_with_no_commit_naming_the_bead_is_not_content_on_base_evidence() {
     for enforce in [true, false] {
         let (fx, mut f) = fixture();
         f.enforce = enforce;
