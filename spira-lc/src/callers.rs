@@ -558,8 +558,8 @@ fn resubmit(m: &mut dyn Machine, id: &str, tip: &str, actor: &str) -> Answer {
     Answer::cert(REFUSED, "refused", format!("resubmit tip={tip}"))
 }
 
-/// The bd half a claim verb needs: the claim mutex (`bd update --claim`'s inverse) and an
-/// epic's own close. Behind a trait so the compositions below are unit-testable without bd.
+/// The bd half a verb needs: the switch-off claim mutex and an epic's own close. Behind a
+/// trait so the compositions below are unit-testable without bd.
 pub trait Bd {
     /// `bd unclaim <id> --if-assignee <actor>` — Ok when the claim was released.
     fn unclaim(&mut self, id: &str, actor: &str) -> Result<(), String>;
@@ -570,29 +570,43 @@ pub trait Bd {
 }
 
 /// `unclaim <id> <actor>` — an aeon hands back a bead it still holds (lib.sh
-/// `release_own_claim`, sp-hyo5e). One route for both halves of a claim:
+/// `release_own_claim`).
 ///
-/// 1. the machine's `Release` (switch on only; best-effort — it fires from SUBMITTED, DONE
-///    and every other state where Release is illegal as often as from WORKING, and those
-///    refusals are the row already being where it should be, so they are not surfaced);
-/// 2. bd's claim mutex, always: `bd unclaim --if-assignee <actor>`, the compare-and-swap
-///    inverse of the aeon's `bd update --claim`. The candidate set (`MACHINE_READY_ARGS`:
-///    `--status open --no-assignee`) and the claim itself are still bd's, so a claim left
-///    standing strands the bead from every later claim. The CAS is the safety property: a
-///    supervisor that reclaimed the bead and handed it to another aeon between our fence and
-///    this call makes bd refuse, and the new holder keeps it.
+/// Switch on, the lifecycle row IS the claim and the only record touched: a row WORKING
+/// under `actor` gets `Release`; a row WORKING under anyone else is refused, because a sweep
+/// that reaped this aeon may already have handed the bead on; a row past WORKING means the
+/// claim is already over. bd is not written — nothing reads its assignee. Switch off, bd's
+/// claim is the claim, released with its own compare-and-swap (`--if-assignee`).
 ///
-/// Exit: 0 released · 1 bd refused (not this actor's claim, or no such bead) · 2 usage.
+/// Exit: 0 released, or nothing held · 1 not this actor's claim, or no such bead · 2 cannot
+/// tell, or usage.
 pub fn unclaim(args: &[String], enforce: bool, m: &mut dyn Machine, bd: &mut dyn Bd) -> Answer {
     let (Some(id), Some(actor)) = (args.first().filter(|s| !s.is_empty()), args.get(1).filter(|s| !s.is_empty())) else {
         return usage("unclaim <bead-id> <actor>");
     };
-    if enforce {
-        let _ = with_row(m, id, actor, |_| Ok(BeadEventKind::Release));
+    if !enforce {
+        return match bd.unclaim(id, actor) {
+            Ok(()) => Answer::code(APPLIED),
+            Err(e) => Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: bd kept the claim on {id}: {}\n", e.trim()), ..Default::default() },
+        };
     }
-    match bd.unclaim(id, actor) {
-        Ok(()) => Answer::code(APPLIED),
-        Err(e) => Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: bd kept the claim on {id}: {}\n", e.trim()), ..Default::default() },
+    let refuse = |why: String| Answer { code: NO_ROW, stderr: format!("spira-lc unclaim: {id}: {why}\n"), ..Default::default() };
+    let v = match show(m, id) {
+        Ok(v) => v,
+        Err(NO_ROW) => return refuse("no lifecycle row".into()),
+        Err(rc) => return Answer::code(rc),
+    };
+    let (state, version, holder) = (bead_field(&v, "state"), bead_field(&v, "version"), bead_field(&v, "holder"));
+    if state != "WORKING" {
+        return Answer::code(APPLIED);
+    }
+    if holder != *actor {
+        return refuse(format!("held by {holder:?}, not {actor}"));
+    }
+    match event(m, "bead", id, &state, &version, actor, &serde_json::to_string(&BeadEventKind::Release).unwrap_or_default()).0 {
+        APPLIED => Answer::code(APPLIED),
+        REFUSED => refuse("the release lost a race with another writer".into()),
+        rc => Answer::code(rc),
     }
 }
 

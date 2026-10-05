@@ -56,7 +56,7 @@ const USAGE_TEXT: &str = "usage: spira-claim attempts <bead> [--events F] [--jso
        spira-claim ready-count <labels> [<exclude-labels>]                   (ready_count; prints '0' on a failed query too)
        spira-claim claim-retry <bd query argv...>                            (claim_retry; retried SPIRA_CLAIM_RETRIES x)
        spira-claim fayth-exclude <fayth> [own-exclusions]                    (fayth_exclude; resolves $SPIRA_HOME in-process, $SPIRA_FAYTHS)
-       spira-claim fayth-ready <fayth>                                      (fayth_ready; ditto, plus $SPIRA_READY_CACHE)
+       spira-claim fayth-ready <fayth> [--json]                             (fayth_ready; ditto, plus $SPIRA_READY_CACHE; --json: the rows themselves, never cached)
        spira-claim bulk-ready-by-fayth                                      (bulk_ready_by_fayth; plus $SPIRA_READY_SNAPSHOT)
        spira-claim unpoison --bead ID [--bead ID...] --cause TEXT [--watch] [--watch-timeout-s N] [--dry-run]
                             [--credit SLUG] [--actor NAME] [--poison-at N]   (the one writer: DESIGN.md §8)
@@ -744,6 +744,12 @@ fn cmd_ready_count(a: &Args, env: &mut Env) -> Outcome {
         [l] => (l.as_str(), ""),
         _ => return Outcome::usage("ready-count needs <labels> [<exclude-labels>]"),
     };
+    if lifecycle_on() {
+        return match machine_claimable(a, env) {
+            Ok(rows) => Outcome::ok(ready::count_matching(&rows, &ready::split_csv(labels), &ready::split_csv(exclude)).to_string()),
+            Err(e) => Outcome { code: 1, out: "0".into(), err: format!("spira-claim: ready_count: {}", first_line(&e)) },
+        };
+    }
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
@@ -862,14 +868,18 @@ fn ready_cache_lookup(text: &str, me: &str) -> u64 {
     0
 }
 
-/// lifecycle_enforce on: the open beads a claim could actually take, by the rule `select
-/// --blockers machine` applies — bd's own ready set misses a lifecycle-SUBMITTED bead and a
-/// bead blocked by one. `Err` when the machine cannot answer: a count must refuse, not read 0.
+/// lifecycle_enforce on: the beads a claim could actually take. The candidates are the
+/// machine's READY/REWORK rows; bd is read only for their content (labels, type, priority,
+/// blockers), never for status or assignee — the same rule `select --blockers machine`
+/// applies. `Err` when the machine cannot answer: a count must refuse, not read 0.
 fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String> {
     let st = store(a, &env.config)?;
-    let raw = st.ready_json(&ready::machine_ready_args(&scope_label(a, env), &no_loop_label(a, env)))?;
-    let rows = rank::parse_ready(&raw)?;
     let lc = rank::parse_lifecycle(&st.lifecycle_snapshot()?)?;
+    let ids = ready::lifecycle_ready_ids(&lc);
+    let want: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+    let mut rows = if ids.is_empty() { Vec::new() } else { st.list_by_ids(&ids)? };
+    let (scope, no_loop) = (scope_label(a, env), no_loop_label(a, env));
+    rows.retain(|r| want.contains(r.id.as_str()) && ready::in_scope(r, &scope, &no_loop));
     let wanted = rank::all_blockers(&rows);
     let recs = if wanted.is_empty() { Vec::new() } else { st.list_by_ids(&wanted)? };
     let bd = rank::index_rows(recs);
@@ -901,8 +911,11 @@ fn machine_claimable(a: &Args, env: &Env) -> Result<Vec<rank::ReadyRow>, String>
 /// subshell where every label IS exported — sp-xsnid's "the sentinel's own lane count
 /// already said ops has 25" is this fast path, already correct, untouched here), so a
 /// cache hit skips [`spira_config::chamber::fayth_predicate`] entirely, on purpose.
+///
+/// `--json` prints the counted rows instead of their number: an aeon's ready set, so what it
+/// claims from is what the sentinel summoned it for.
 fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
-    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label"]) {
+    if let Err(e) = a.check_known(&["--scope-label", "--noloop-label", "--json"]) {
         return Outcome::usage(e);
     }
     let me = match a.pos.first() {
@@ -923,8 +936,9 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
             err: format!("spira-claim: fayth_ready: no fayth in the chamber: {}", file.display()),
         };
     }
+    let json = a.has("--json");
     if let Ok(cache) = std::env::var("SPIRA_READY_CACHE") {
-        if !cache.is_empty() {
+        if !cache.is_empty() && !json {
             if let Ok(text) = std::fs::read_to_string(&cache) {
                 return Outcome::ok(ready_cache_lookup(&text, &me).to_string());
             }
@@ -942,14 +956,25 @@ fn cmd_fayth_ready(a: &Args, env: &mut Env) -> Outcome {
             Err(e) => return Outcome { code: 1, out: "0".into(), err: format!("spira-claim: fayth_ready: {}", first_line(&e)) },
         };
         let part = ready::FaythPart { name: me, inc: ready::split_csv(&predicate.labels), exc: ready::split_csv(&exclude) };
-        let n = ready::bucket(&rows, &[part], &queue_wait_label(env), &submitted_label_f(env)).first().map_or(0, |c| c.1);
-        return Outcome::ok(n.to_string());
+        let mine = ready::partition(&rows, &part, &queue_wait_label(env), &submitted_label_f(env));
+        if json {
+            return Outcome::ok(format!("{}\n", serde_json::to_string(&mine).unwrap()));
+        }
+        return Outcome::ok(mine.len().to_string());
     }
     let st = match store(a, &env.config) {
         Ok(s) => s,
         Err(e) => return Outcome::usage(e),
     };
     let args = ready_args_for(a, env);
+    if json {
+        let mut q = args.clone();
+        q.extend(["--label".to_string(), predicate.labels.clone(), "--exclude-label".to_string(), exclude.clone()]);
+        return match st.ready_json(&q) {
+            Ok(t) => Outcome::ok(format!("{}\n", if t.trim().is_empty() { "[]" } else { t.trim() })),
+            Err(e) => Outcome { code: 1, out: String::new(), err: format!("spira-claim: fayth_ready: query failed: {}", first_line(&e)) },
+        };
+    }
     match st.ready_count(&args, &predicate.labels, &exclude) {
         Ok(n) => Outcome::ok(n.to_string()),
         Err(e) => Outcome {

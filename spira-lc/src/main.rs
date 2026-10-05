@@ -63,8 +63,8 @@ fn main() {
             };
             std::process::exit(close_on_land::run(&args[1..], &mut record))
         }
-        // The claim's two halves and an epic's close (sp-hyo5e): bd's half runs whatever the
-        // switch says, so these are routed before the caller verbs' all-or-nothing switch.
+        // Routed before the caller verbs' all-or-nothing switch: unclaim releases bd's claim
+        // when the switch is off, and an epic's close is bd's whatever the switch says.
         Some("unclaim") => {
             let enforce = spira_config::lifecycle_enforce(None);
             let ans = callers::unclaim(&args[1..], enforce, &mut Live { conn: None }, &mut bd::LiveBd);

@@ -42,6 +42,8 @@ struct World {
     stack_answer: Option<String>,
     /// Makes the `spira-lc content-on-base` exec call refuse.
     fail_content_on_base: bool,
+    /// `spira-lc holds <id>`'s answer, one hold kind a line.
+    holds: BTreeMap<String, String>,
 }
 
 type W = Arc<Mutex<World>>;
@@ -131,6 +133,15 @@ impl Seam for FakeSeam {
             return o.clone();
         }
         match func {
+            // spira-claim `fayth-ready --json`: the lifecycle machine's ready rows. bd's own
+            // status plays no part, so a row bd shows in_progress is offered like any other.
+            "_aeon_ready_set" => {
+                if w.ready_fails {
+                    return Out::fail(1, "spira-claim: fayth_ready: cannot tell\n");
+                }
+                let rows: Vec<serde_json::Value> = w.ready.iter().map(|id| serde_json::from_str::<serde_json::Value>(&row_json(&w, id)).unwrap()[0].clone()).collect();
+                Out::ok(serde_json::Value::Array(rows).to_string())
+            }
             "aeon_count" => Out::ok("0"),
             "fayth_free" => Out::ok("1"),
             "_aeon_rebase" => Out::ok(""),
@@ -183,6 +194,9 @@ impl Exec for FakeExec {
                 "stack" => Out::ok(self.0.lock().unwrap().stack_answer.clone().unwrap_or_else(|| "{}".into())),
                 _ => Out::ok("{}"),
             };
+        }
+        if prog == "spira-lc" && args.first().map(String::as_str) == Some("holds") {
+            return Out::ok(self.0.lock().unwrap().holds.get(&args[1]).cloned().unwrap_or_default());
         }
         if prog == "spira-lc" && args.first().map(String::as_str) == Some("content-on-base") && self.0.lock().unwrap().fail_content_on_base {
             return Out::fail(1, "spira-lc content-on-base: stub refusal");
@@ -319,7 +333,6 @@ fn go_as(fayth_name: &str, f: &Fx, labels: &str, extra: &[(&str, &str)], enforce
         env: base.clone(),
         vars: vars.clone(),
         ready_args: vec!["ready".into(), "--limit".into(), "0".into()],
-        machine_ready_args: vec!["list".into(), "--status".into(), "open".into()],
         claim_exclude: "spira-poison".into(),
     };
     let env = Env::new(base.clone(), base);
@@ -552,7 +565,7 @@ fn a_release_without_model_bin_refuses_the_session() {
 }
 
 #[test]
-fn a_refused_lifecycle_claim_releases() {
+fn a_refused_lifecycle_claim_is_another_aeons_bead_and_is_left_alone() {
     let f = fx("enf-refused");
     seed(&f, "sp-z");
     let extra: Vec<(&str, &str)> = Vec::new();
@@ -560,7 +573,51 @@ fn a_refused_lifecycle_claim_releases() {
     a.insert("lc_claim_bead", Out::fail(3, ""));
     let o = go(&f, "spira,plan", &extra, true, Mode::Claim, a, no_session());
     assert_eq!(o.code, 0);
-    assert!(ledger_lines(&o)[2].contains("status=lc-claim-refused"));
+    assert_eq!(ledger_lines(&o)[1], "awake builder idle", "{:?}", ledger_lines(&o));
+    assert!(o.log.contains("refused ranked candidate sp-z"), "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "release_own_claim"), "never release a claim this aeon does not hold");
+}
+
+/// sp-860zj: the lifecycle row is the claim. Under enforce the aeon reads its ready set from
+/// the machine and claims with a Claim event alone — bd's `update --claim` is never run, so
+/// a bead bd shows in_progress under a dead aeon's name is claimed like any READY row.
+#[test]
+fn enforce_claims_with_the_lifecycle_row_alone_and_never_bds_claim() {
+    let f = fx("enf-row");
+    seed(&f, "sp-ip");
+    f.w.lock().unwrap().status.insert("sp-ip".into(), "in_progress".into());
+    let mut a = BTreeMap::new();
+    a.insert("lc_bead_verified", Out::ok(""));
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, commits_and_closes());
+    assert_eq!(ledger_lines(&o)[1], "awake builder sp-ip", "{}", o.log);
+    let w = o.w.lock().unwrap();
+    assert!(w.seam_calls.iter().any(|c| c.0 == "_aeon_ready_set"), "the ready set is the machine's");
+    assert!(!w.bd_calls.iter().any(|c| c.iter().any(|a| a == "--claim")), "no bd claim: {:?}", w.bd_calls);
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("ready")), "bd's ready query is not read");
+    assert!(!w.bd_calls.iter().any(|c| c.first().map(String::as_str) == Some("heartbeat")), "no bd lease to renew");
+}
+
+#[test]
+fn enforce_with_an_unreachable_machine_is_claim_error_not_idle() {
+    let f = fx("enf-down");
+    seed(&f, "sp-d");
+    let mut a = BTreeMap::new();
+    a.insert("lc_claim_bead", Out::fail(2, ""));
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, a, no_session());
+    assert_eq!(o.code, 1);
+    assert_eq!(ledger_lines(&o)[1], "awake builder claim-error lifecycle machine unreachable");
+}
+
+#[test]
+fn enforce_releases_a_bead_held_between_the_ready_read_and_the_claim() {
+    let f = fx("enf-hold");
+    seed(&f, "sp-h");
+    f.w.lock().unwrap().holds.insert("sp-h".into(), "poison".into());
+    let o = go(&f, "spira,plan", &[], true, Mode::Claim, BTreeMap::new(), no_session());
+    assert_eq!(o.code, 0);
+    assert!(ledger_lines(&o)[2].contains("status=hold-raced"), "{:?}", ledger_lines(&o));
+    assert!(o.w.lock().unwrap().seam_calls.iter().any(|c| c.0 == "release_own_claim"));
 }
 
 /// No tool paths to hand in any more (sp-gypjk): spira-lc and work are found by name.
@@ -645,7 +702,8 @@ fn a_stack_conflict_refuses_the_claim_and_notes_both_prerequisites() {
     assert_eq!(o.code, 0, "{}", o.log);
     assert!(ledger_lines(&o).last().unwrap().contains("status=stack-conflict"), "{:?}", ledger_lines(&o));
     let w = o.w.lock().unwrap();
-    assert_eq!(w.status.get("sp-c").map(String::as_str), Some("open"), "the dependent stays held, not requeued as a fault");
+    assert!(w.seam_calls.iter().any(|c| c.0 == "release_own_claim" && c.1[0] == "sp-c"), "the claim is handed back");
+    assert!(!w.seam_calls.iter().any(|c| c.0 == "bead_reopen" || c.0 == "bump_requeue"), "the dependent stays held, not requeued as a fault");
     let notes: Vec<&str> = w.notes.iter().filter(|(id, _)| id == "sp-a" || id == "sp-b-prereq").map(|(_, t)| t.as_str()).collect();
     assert_eq!(notes.len(), 2, "both prerequisites get a note: {:?}", w.notes);
     assert!(notes.iter().all(|n| n.contains("stack conflict: sp-a x sp-b-prereq")), "{notes:?}");
