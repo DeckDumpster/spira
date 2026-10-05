@@ -56,30 +56,33 @@ pub fn repo_path(w: &World, label: &str, c: &Ctx) -> Result<PathBuf, i32> {
     }
 }
 
-/// `lifecycle_enforce` — THE switch for everything touching the lifecycle machine
-/// (DESIGN.md §10). Resolved as the aeon crate resolves it: the process environment's
-/// `SPIRA_LIFECYCLE_ENFORCE` wins (a unit or a fixture pins it; `1`/`true` = on), else
-/// `spira.lifecycle_enforce` in the document conf.sh resolved, read through the spira-config
-/// library; else off. Binary presence is never consulted.
-pub fn lifecycle_on(w: &World) -> bool {
-    if let Some(v) = w.env.var("SPIRA_LIFECYCLE_ENFORCE") {
-        return v == "1" || v == "true";
-    }
-    w.config.lifecycle_enforce(w.lib.toml_path().as_deref())
-}
-
-/// With the switch ON, spira-lc is authoritative: an unreachable machine is a loud refusal
-/// before anything changes. Never called with the switch OFF.
+/// spira-lc is the only record: an unreachable machine is a loud refusal before anything
+/// changes.
 pub fn require_lc(w: &World, label: &str) -> Result<(), i32> {
     let why = if w.lc.available() { w.lc.probe().err() } else { Some("no spira-lc program".into()) };
     match why {
         None => Ok(()),
         Some(e) => {
             w.err(format!(
-                "queue.sh {label}: lifecycle_enforce is on and spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine or turn lifecycle_enforce off"
+                "queue.sh {label}: spira-lc is unreachable ({e}) — refused, nothing changed; fix the lifecycle machine"
             ));
             Err(FAIL)
         }
+    }
+}
+
+/// Ask spira-lc for the batch's fresh (state, version) and run `f` against it; rc 1 with no
+/// output when the batch row does not exist there.
+pub fn lc_cas<F>(w: &World, batch_id: &str, f: F) -> Result<(), (i32, String)>
+where
+    F: FnOnce(&str, &str) -> Result<(), (i32, String)>,
+{
+    if !w.lc.available() {
+        return Err((2, "no spira-lc program".into()));
+    }
+    match w.lc.batch_state(batch_id) {
+        Some((state, version)) if !state.is_empty() => f(&state, &version),
+        _ => Err((1, String::new())),
     }
 }
 

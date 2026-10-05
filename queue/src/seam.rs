@@ -17,7 +17,6 @@ pub enum Op {
     BeadReopen,
     CauseEvent,
     ReleaseClaim,
-    CloseOnLand,
     Comment,
     Event,
     Rebase,
@@ -57,7 +56,6 @@ printf '\036'
 __kv home "${SPIRA_HOME:-$HERE}"
 __kv run "${SPIRA_RUN:-}"
 __kv queue_dir "${SPIRA_QUEUE_DIR:-${SPIRA_RUN:-}/queue}"
-__kv landstate "${LANDSTATE:-${SPIRA_RUN:-}/landstate}"
 __kv releases "${SPIRA_RELEASES:-}"
 __kv forge "${SPIRA_FORGE:-forge}"
 __kv repo_map "${SPIRA_REPO_MAP:-}"
@@ -85,13 +83,10 @@ fn body(op: Op) -> &'static str {
         Op::TomlPath => "printf '\\036%s' \"$(spira_toml_resolve 2>/dev/null)\"\nexit 0\n",
         // spira_landref dropped (sp-o88bx, "wave 4.12") and repo_land with it (sp-k6lku,
         // "wave 4.13"): readback() resolves both in-process through spira_config::repos
-        // now, so there is no Readback op left to call here. land_mark dropped the same
-        // way (sp-cnnt6, "wave 4.16"): landing-pass owns the landstate ledger's one write,
-        // reached through its own `mark` CLI, never this seam.
+        // now, so there is no Readback op left to call here.
         Op::BeadReopen => "bead_reopen \"$1\" \"$2\" \"\" \"$3\"\nexit $?\n",
         Op::CauseEvent => "_bump_write_event \"$1\" reopen \"$2\"\nexit $?\n",
         Op::ReleaseClaim => "release_claim \"$1\"\nexit $?\n",
-        Op::CloseOnLand => "bead_close_on_land \"$1\" \"$2\" || true\nexit 0\n",
         Op::Comment => "printf '%s' \"$2\" | bdq comment \"$1\" --stdin >/dev/null 2>&1 || true\nexit 0\n",
         Op::Event => "spira_event \"$1\" - \"$2\" \"$3\" || true\nexit 0\n",
         Op::Rebase => "rebase_branch \"$1\" \"$2\" \"$3\" \"$4\" 2>/dev/null; __rc=$?\nprintf '\\036%s' \"${REBASE_FAILURE:-}\"\nexit $__rc\n",
@@ -207,7 +202,7 @@ mod tests {
     fn every_script_is_one_braced_command_with_no_nul() {
         for op in [
             Op::Context, Op::TomlPath, Op::BeadReopen, Op::CauseEvent, Op::ReleaseClaim,
-            Op::CloseOnLand, Op::Comment, Op::Event, Op::Rebase,
+            Op::Comment, Op::Event, Op::Rebase,
             Op::LandSubject, Op::FormatBatch, Op::BaseConflict, Op::PfGate,
             Op::CreateBug, Op::AmendBug,
         ] {
@@ -223,9 +218,8 @@ mod tests {
         let _serial = crate::testutil::serial();
         // The seam's own mechanism, against a stand-in lib.sh that defines bead_reopen as
         // "print my arguments": proves argv is only `bash` and every value arrives whole.
-        // (land_mark is gone from this seam — sp-cnnt6, "wave 4.16" — so BeadReopen is the
-        // stand-in now; its own body hardcodes an empty third positional, which is what
-        // exercises the empty-value case this test is for.)
+        // (BeadReopen is the stand-in; its own body hardcodes an empty third positional,
+        // which is what exercises the empty-value case this test is for.)
         let dir = crate::testutil::tmpdir("seam");
         std::fs::write(dir.join("lib.sh"), "bead_reopen() { printf '[%s]' \"$@\"; }\n").unwrap();
         let home = dir.to_str().unwrap();

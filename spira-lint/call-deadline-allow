@@ -57,7 +57,7 @@
 3 queue-watch/src/io.rs
 1 queue-watch/src/main.rs
 6 queue/src/ops/helpers.rs
-8 queue/src/real.rs
+7 queue/src/real.rs
 2 rebase-stale/src/resolve.rs
 5 rebase-stale/src/seam.rs
 2 reconciler-alert/src/io.rs
@@ -181,7 +181,6 @@
 5 spira/test-closed-strand.sh
 2 spira/test-cockpit-bd-contract.sh
 3 spira/test-cockpit-funnel.sh
-3 spira/test-cockpit-queue-section.sh
 2 spira/test-cockpit-remote.sh
 3 spira/test-cockpit-unlanded.sh
 4 spira/test-cockpit-unsent.sh

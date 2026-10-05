@@ -14,7 +14,7 @@
 # repo whose base is `master`.
 #
 # tier: T2
-# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh
+# covers: batcher-cut/src/*.rs batcher/src/*.rs queue/src/* landing-pass/src/* spira/lib.sh spira/testlib/lc-fixture.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$HERE/testlib.sh"
@@ -23,9 +23,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-config-compat-master-base
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up cfgcompatmaster || skip "testdb not available"
+lcfix_up || { echo "test-config-compat-master-base: could not build a lifecycle fixture"; exit 1; }
 
 # The batcher is the tree's own build, by name on this suite's PATH (sp-gypjk).
 
@@ -40,7 +42,7 @@ echo "batcher cut: a CERTIFIED branch is merged onto a MASTER-based spira_landre
 B_REPONAME=fixture-batch
 B_REPO="$TMP/batch-repo"; B_REMOTE="$TMP/batch-remote.git"
 B_RUN="$TMP/batch-run"; B_SH="$TMP/batch-spira"
-B_LANDSTATE="$B_RUN/landstate"; B_QUEUEDIR="$B_RUN/queue"
+B_QUEUEDIR="$B_RUN/queue"
 
 git init -q --bare -b master "$B_REMOTE"
 git init -q -b master "$B_REPO"
@@ -50,7 +52,7 @@ git -C "$B_REPO" add -A && git -C "$B_REPO" commit -q -m base
 git -C "$B_REPO" remote add origin "$B_REMOTE"
 git -C "$B_REPO" push -q origin master
 git -C "$B_REPO" fetch -q origin
-mkdir -p "$B_RUN/worktree" "$B_SH" "$B_LANDSTATE" "$B_QUEUEDIR/$B_REPONAME"
+mkdir -p "$B_RUN/worktree" "$B_SH" "$B_QUEUEDIR/$B_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$B_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$B_SH/"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$B_SH/mail"; chmod +x "$B_SH/mail"
@@ -116,41 +118,16 @@ git -C "$B_RUN/worktree/sp-mbase" add -A
 git -C "$B_RUN/worktree/sp-mbase" commit -q -m "sp-mbase: work"
 B_TIP="$(git -C "$B_REPO" rev-parse spira/sp-mbase)"
 git -C "$B_REPO" worktree remove -f "$B_RUN/worktree/sp-mbase"
-printf 'CERTIFIED %s %s\n' "$B_TIP" "$(date +%s)" > "$B_LANDSTATE/sp-mbase"
-
-mkdir -p "$B_SH/lc-bin"
-cat > "$B_SH/lc-bin/spira-lc" <<'LCEOF'
-#!/usr/bin/env bash
-certified_rows() {
-    local f id st tip ep sep=''
-    printf '['
-    for f in "${SPIRA_RUN:-/nonexistent}"/landstate/*; do
-        [ -f "$f" ] || continue
-        read -r st tip ep < "$f"
-        [ "$st" = CERTIFIED ] || continue
-        printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
-    done
-    printf ']\n'
-}
-case "${1:-}" in
-    list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi ;;
-    show) printf '{"bead":{}}\n' ;;
-esac
-exit 0
-LCEOF
-chmod +x "$B_SH/lc-bin/spira-lc"
+lcfix_seed sp-mbase CERTIFIED "$B_TIP"
 
 out="$(SPIRA_HOME="$B_SH" SPIRA_RUN="$B_RUN" SPIRA_DB="$SPIRA_DB" \
     SPIRA_BD="${SPIRA_BD:-$TESTDB_BD}" SPIRA_REPO_MAP="$B_SH/repo-map" \
     SPIRA_QUEUE_DIR="$B_QUEUEDIR" SPIRA_QUEUE_BATCH_WAIT=999999 \
-    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH/lc-bin:$B_SH:$PATH" \
+    SPIRA_FORGE="$B_SH/forge-fixture.sh" PATH="$B_SH:$PATH" \
         batcher cut "$B_REPONAME" --round-vm "$B_SH/round-vm-stub.sh" 2>&1)"
 
 want "batcher cut: a PR was opened for the master-based batch" "opened" "$out"
-case "$(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" in
-    BATCHED*) ok "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" ;;
-    *) bad "batcher cut: sp-mbase is BATCHED, not left CERTIFIED" "got: $(cat "$B_LANDSTATE/sp-mbase" 2>/dev/null)" ;;
-esac
+is "batcher cut: sp-mbase is IN_DELIVERY, not left CERTIFIED" "IN_DELIVERY" "$(lcfix_state sp-mbase)"
 B_BATCH_BRANCH="$(grep '^branch=' "$B_QUEUEDIR/$B_REPONAME/open" 2>/dev/null | cut -d= -f2)"
 if [ -n "$B_BATCH_BRANCH" ] \
    && git -C "$B_REPO" merge-base --is-ancestor master "refs/heads/$B_BATCH_BRANCH" 2>/dev/null; then
@@ -167,7 +144,7 @@ echo "queue verdict: a green batch fast-forwards a MASTER-based remote:"
 V_REPONAME=fixture-verdict
 V_REPO="$TMP/verdict-repo"; V_REMOTE="$TMP/verdict-remote.git"
 V_RUN="$TMP/verdict-run"; V_SH="$TMP/verdict-spira"
-V_LANDSTATE="$V_RUN/landstate"; V_QUEUEDIR="$V_RUN/queue"
+V_QUEUEDIR="$V_RUN/queue"
 
 git init -q --bare -b master "$V_REMOTE"
 git init -q -b master "$V_REPO"
@@ -175,7 +152,7 @@ git -C "$V_REPO" commit -q --allow-empty -m base
 git -C "$V_REPO" remote add origin "$V_REMOTE"
 git -C "$V_REPO" push -q origin master
 git -C "$V_REPO" fetch -q origin
-mkdir -p "$V_RUN/worktree" "$V_SH" "$V_LANDSTATE" "$V_QUEUEDIR/$V_REPONAME"
+mkdir -p "$V_RUN/worktree" "$V_SH" "$V_QUEUEDIR/$V_REPONAME"
 cp "$HERE"/*.sh "$HERE"/*.py "$V_SH/"
 cp -r "$HERE/conf.d" "$HERE/conf-gen.sh" "$V_SH/"
 
@@ -220,7 +197,12 @@ git -C "$V_REPO" worktree remove -f "$V_BWT" 2>/dev/null || true
     printf 'opened=%s\n' "$(date +%s)"
     printf 'branch=spira/queue/vtest\n'
 } > "$V_QUEUEDIR/$V_REPONAME/open"
-printf 'BATCHED %s %s\n' "$V_MEMBER_TIP" "$(date +%s)" > "$V_LANDSTATE/sp-vbase"
+lcfix_seed sp-vbase CERTIFIED "$V_MEMBER_TIP"
+V_CUT="$(spira-lc cut vtest-1 --repo "$V_REPONAME" --head "$V_BATCH_HEAD" --base "$V_BASE_SHA" \
+    --members "sp-vbase:$V_MEMBER_TIP" --actor queue.sh 2>&1)"
+want "verdict fixture: the batch is cut on spira-lc" "vtest-1" "$V_CUT"
+V_LC_VERSION="$(spira-lc show-batch vtest-1 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version",""))' 2>/dev/null)"
+{ printf 'batch_id=vtest-1\n'; printf 'version=%s\n' "$V_LC_VERSION"; } >> "$V_QUEUEDIR/$V_REPONAME/open"
 printf 'green\nhead-sha: %s\n' "$V_BATCH_HEAD" > "$V_FORGE_STATUS_FILE"
 
 out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
@@ -232,10 +214,9 @@ out="$(SPIRA_HOME="$V_SH" SPIRA_RUN="$V_RUN" SPIRA_DB="$SPIRA_DB" \
 is   "verdict: remote MASTER fast-forwards to the batch head" \
      "$V_BATCH_HEAD" "$(git -C "$V_REMOTE" rev-parse master 2>/dev/null)"
 want "verdict: reports a fast-forward landing" "landed by fast-forward" "$out"
-case "$(cat "$V_LANDSTATE/sp-vbase" 2>/dev/null)" in
-    LANDED*) ok "verdict: sp-vbase LANDED on the master base" ;;
-    *) bad "verdict: sp-vbase LANDED on the master base" "got: $(cat "$V_LANDSTATE/sp-vbase" 2>/dev/null)" ;;
-esac
+nowant "verdict: spira-lc refused no step of the land walk" "refused" "$out"
+is "verdict: the batch is LANDED on spira-lc" "LANDED" \
+    "$(lcfix_sql -q "SELECT state FROM batch WHERE batch_id='vtest-1'" -r csv 2>/dev/null | sed -n 2p)"
 
 # ============================================================================
 echo

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::{idents, landing_log, lifecycle_on, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
+use super::{idents, landing_log, owner_refused, require_lc, resolve, Ctx, World, FAIL, OK, USAGE};
 use crate::lock::{self, Acquire, Guard};
 use crate::model::{LandMode, Member};
 use crate::ports::ref_branch;
@@ -12,7 +12,7 @@ use crate::records::{self, write_atomic, Kv};
 /// The publish settle's answer: red is left for the unlocked half (§2.1).
 pub const RED: i32 = 3;
 
-/// `queue verdict <repo>`: resolve, read the lifecycle switch, run one pass.
+/// `queue verdict <repo>`: resolve, require the lifecycle machine, run one pass.
 pub fn verdict(w: &World, repo: &str) -> i32 {
     if repo.is_empty() {
         w.err("queue.sh verdict: repo required");
@@ -22,15 +22,14 @@ pub fn verdict(w: &World, repo: &str) -> i32 {
     if idents(w, "verdict", &[("repo", &c.r.name)]).is_err() {
         return FAIL;
     }
-    let lc_on = lifecycle_on(w);
-    if lc_on && require_lc(w, "verdict").is_err() {
+    if require_lc(w, "verdict").is_err() {
         return FAIL;
     }
-    pass(w, &c, lc_on)
+    pass(w, &c)
 }
 
 /// One verdict pass for a resolved repository — `queue step` calls this in process.
-pub fn pass(w: &World, c: &Ctx, lc_on: bool) -> i32 {
+pub fn pass(w: &World, c: &Ctx) -> i32 {
     let name = c.r.name.as_str();
     let Some(path) = c.r.path.clone() else {
         w.err(format!("verdict {name}: not a registered repository (no checkout path)"));
@@ -38,7 +37,7 @@ pub fn pass(w: &World, c: &Ctx, lc_on: bool) -> i32 {
     };
     match c.r.mode {
         LandMode::QueueLocal => local_pass(w, c, &path),
-        LandMode::Queue => forge_pass(w, c, &path, lc_on),
+        LandMode::Queue => forge_pass(w, c, &path),
         _ => OK,
     }
 }
@@ -247,7 +246,7 @@ fn lock_waiting(w: &World, c: &Ctx) -> Result<Guard, bool> {
     }
 }
 
-fn forge_pass(w: &World, c: &Ctx, path: &Path, lc_on: bool) -> i32 {
+fn forge_pass(w: &World, c: &Ctx, path: &Path) -> i32 {
     let name = c.r.name.as_str();
     let skips_file = c.queue_file("lock-skips");
     let guard = match lock_waiting(w, c) {
@@ -269,7 +268,7 @@ fn forge_pass(w: &World, c: &Ctx, path: &Path, lc_on: bool) -> i32 {
     };
     let _ = std::fs::remove_file(&skips_file);
     let open = c.queue_file("open");
-    let rc = if open.is_file() { process(w, c, path, &open, lc_on) } else { OK };
+    let rc = if open.is_file() { process(w, c, path, &open) } else { OK };
     drop(guard);
     // D2: the express-takeover stash had one writer (batch.sh, retired). Never silently skip one.
     let stashed = stashed_attributions(&c.s.queue_dir.join(name));
@@ -362,7 +361,7 @@ impl Batch<'_> {
     }
 }
 
-fn process(w: &World, c: &Ctx, path: &Path, file: &Path, lc_on: bool) -> i32 {
+fn process(w: &World, c: &Ctx, path: &Path, file: &Path) -> i32 {
     let name = c.r.name.as_str();
     let kv = match records::read_kv(file) {
         Ok(Some(kv)) => kv,
@@ -392,7 +391,7 @@ fn process(w: &World, c: &Ctx, path: &Path, file: &Path, lc_on: bool) -> i32 {
     match status.as_str() {
         "pending" => pending(w, c, &b),
         "harness_fault" => harness_fault(w, c, &b),
-        "green" => green(w, c, &b, &base, &out, lc_on),
+        "green" => green(w, c, &b, &base, &out),
         "red" => red(w, c, &b, &out),
         s => {
             w.err(format!("verdict {name}: PR {} unknown check status: {s}", b.pr));
@@ -450,12 +449,20 @@ fn rewrite(file: &Path, drop: &[&str], add: &[(&str, &str)]) -> Result<(), Strin
     write_atomic(file, &kv.render())
 }
 
+/// Abandon the batch on spira-lc, which requeues every member to CERTIFIED. Reported, never
+/// fatal: the PR and the record are going either way.
+fn lc_requeue(w: &World, b: &Batch, reason: &str) {
+    let Some(id) = b.kv.get("batch_id") else { return };
+    let r = crate::ident::bounded_text(reason);
+    if let Err((rc, e)) = super::lc_cas(w, id, |s, v| w.lc.abandon_batch(id, s, v, "verdict.sh", &r)) {
+        w.err(format!("verdict: spira-lc abandon-batch refused for {id} (rc={rc}): {e}"));
+    }
+}
+
 /// Close the PR and hand every member back CERTIFIED; the record goes.
 fn close_and_certify(w: &World, c: &Ctx, b: &Batch) {
     w.forge.pr_close(&c.s.forge, b.path, &b.pr);
-    for m in &b.members {
-        w.lib.land_mark(&m.id, "CERTIFIED", &m.tip, "");
-    }
+    lc_requeue(w, b, "batch closed");
     let _ = std::fs::remove_file(b.file);
 }
 
@@ -487,13 +494,12 @@ fn harness_fault(w: &World, c: &Ctx, b: &Batch) -> i32 {
     OK
 }
 
-fn land_member(w: &World, path: &Path, m: &Member, sha: &str, reason: &str) {
-    w.lib.land_mark(&m.id, "LANDED", &m.tip, reason);
+fn land_member(w: &World, c: &Ctx, path: &Path, m: &Member, sha: &str) {
     w.lib.gh_issue_closeout(&m.id, sha, path);
-    w.lib.bead_close_on_land(&m.id, sha);
+    super::helpers::close_on_land(w, &c.s.submitted_label, &m.id, sha);
 }
 
-fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str, lc_on: bool) -> i32 {
+fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     let ci_head = tagged(out, "head-sha: ").last().map(|s| s.trim().to_string()).unwrap_or_default();
     if ci_head.is_empty() || ci_head != b.head {
@@ -525,29 +531,27 @@ fn green(w: &World, c: &Ctx, b: &Batch, base: &str, out: &str, lc_on: bool) -> i
     let base_branch = ref_branch(base).to_string();
     let current = w.git.rev_parse(b.path, base);
     if current.as_deref() == Some(b.base_sha.as_str()) {
-        return fast_forward(w, c, b, base, &remote, &base_branch, out, lc_on);
+        return fast_forward(w, c, b, base, &remote, &base_branch, out);
     }
     base_moved(w, c, b, &remote, current)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_branch: &str, out: &str, lc_on: bool) -> i32 {
+fn fast_forward(w: &World, c: &Ctx, b: &Batch, base: &str, remote: &str, base_branch: &str, out: &str) -> i32 {
     let (name, pr) = (b.name, &b.pr);
     if !w.lib.push(b.path, remote, &format!("{}:{base_branch}", b.head)) {
         w.err(format!("verdict {name}: PR {pr} fast-forward push failed"));
         return FAIL;
     }
     w.out(format!("verdict {name}: PR {pr} landed by fast-forward ({})", b.head));
-    if lc_on {
-        lc_land(w, b);
-    }
+    lc_land(w, b);
     w.lib.notify(
         name,
         &format!("PR {pr} merged (fast-forward)"),
         &format!("PR {pr} merged onto {base_branch} by fast-forward (head {}). Members: {}", b.head, b.members_str()),
     );
     for m in &b.members {
-        land_member(w, b.path, m, &b.head, "");
+        land_member(w, c, b.path, m, &b.head);
     }
     for suite in tagged(out, "flaky: ") {
         w.scripts.observe_flake(suite.trim(), &b.head);
@@ -579,7 +583,7 @@ fn reap_stale_queue_refs(w: &World, c: &Ctx, path: &Path, base: &str) {
     }
 }
 
-/// The lifecycle's GREEN → LANDED walk (switch ON only, D3); best-effort, never blocks.
+/// The lifecycle's GREEN → LANDED walk (D3); best-effort, never blocks.
 fn lc_land(w: &World, b: &Batch) {
     let (Some(id), Some(v)) = (b.kv.get("batch_id"), b.kv.get("version").and_then(|v| v.trim().parse::<u64>().ok())) else {
         return;
@@ -639,13 +643,12 @@ fn base_moved(w: &World, c: &Ctx, b: &Batch, remote: &str, current: Option<Strin
     }
     w.forge.pr_close(&c.s.forge, b.path, pr);
     w.out(format!("verdict {name}: PR {pr} base moved ({}) — closed, members requeued", current.as_deref().unwrap_or("unknown")));
+    lc_requeue(w, b, "base moved");
     for m in &b.members {
-        match current.as_ref() {
-            Some(cur) if w.git.is_ancestor(b.path, &m.tip, cur) => {
-                land_member(w, b.path, m, cur, "already-in-base");
-                w.out(format!("verdict {name}: {} already in moved base — LANDED", m.id));
-            }
-            _ => w.lib.land_mark(&m.id, "CERTIFIED", &m.tip, ""),
+        if let Some(cur) = current.as_ref().filter(|cur| w.git.is_ancestor(b.path, &m.tip, cur)) {
+            super::land::lc_deliver(w, b.path, cur, m);
+            land_member(w, c, b.path, m, cur);
+            w.out(format!("verdict {name}: {} already in moved base — LANDED", m.id));
         }
     }
     let _ = std::fs::remove_file(b.file);

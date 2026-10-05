@@ -18,20 +18,23 @@
 # write the sidecar and case B fails (gate passes fences-only, oblivious to the red).
 #
 # tier: T1
-# covers: queue/src/* spira/lib.sh
+# covers: queue/src/* spira/lib.sh spira/testlib/lc-fixture.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
+. "$HERE/testlib/lc-fixture.sh"
 # The queue and gate binaries (queue/DESIGN.md §7.4) by name on the suite's PATH (sp-gypjk);
 # the minimal PATH submit() hands queue carries the directory they resolve in.
 BIN_DIR="$(dirname "$(command -v queue)")" || { echo "FAIL: queue is not on PATH"; exit 1; }
 
 echo "test-withdrawn-suites-recert.sh"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-withdrawn-suites-recert: could not build a lifecycle fixture"; exit 1; }
+lcfix_seed sp-wsx WORKING
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 REPO="$TMP/repo"; RUN="$TMP/run"; SH="$TMP/spira"
-mkdir -p "$RUN/worktree" "$RUN/landstate" "$RUN/queue/fixq" "$SH"
+mkdir -p "$RUN/worktree" "$RUN/queue/fixq" "$SH"
 cp "$HERE/gate.sh" "$HERE/lib.sh" "$HERE/conf.sh" \
    "$HERE/exclude.sh" "$HERE/commit-cite.sh" "$HERE/yield.sh" "$HERE/suite-covers.sh" \
    "$HERE/gate-sweep.sh" "$SH/"
@@ -63,7 +66,7 @@ printf 'fixq | %s | queue | main |  | %s\n' "$REPO" "$SH/gate-stub.sh" > "$RMAP"
 
 submit() {
     : > "$GATELOG"
-    env -i SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
+    env -i $(lcfix_env) SPIRA_RELEASE="$SPIRA_RELEASE" PATH="$SH:$BIN_DIR:/usr/local/bin:/usr/bin:/bin" HOME="$TMP" \
         GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$SH" \
@@ -79,26 +82,24 @@ submit() {
 
 echo
 echo "A. positive control — a bead with no withdrawal history certifies fences-only, gate never told about test-x.sh:"
-rm -f "$RUN/landstate/sp-wsx" "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"
+rm -f "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
 out="$(submit)"; rc=$?
 [ "$rc" -eq 0 ] && ok "A: exit 0, no withdrawal history" || bad "A: exit 0" "rc=$rc out=$out"
 want "A: certified" "certified" "$out"
+is "A: the lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-wsx)"
 want "A: the gate command actually ran" "ejected=" "$(cat "$GATELOG")"
 nowant "A: gate command was never told to force test-x.sh" "test-x.sh" "$(cat "$GATELOG")"
 
 echo
 echo "B. THE DEFECT, seen to fail: a bead withdrawn with suites=test-x.sh must re-certify with test-x.sh forced:"
-rm -f "$RUN/landstate/sp-wsx" "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"
+rm -f "$RUN/landstate/sp-wsx.ejected" "$RUN/queue/sp-wsx"; lcfix_seed sp-wsx WORKING
 (
     export SPIRA_RUN="$RUN" SPIRA_CONF=/nonexistent SPIRA_DB=/nonexistent SPIRA_BD=/nonexistent
     # shellcheck disable=SC1090
     . "$SH/lib.sh"
-    printf 'CERTIFIED %s %s\n' "deadbeef" "$(date +%s)" > "$RUN/landstate/sp-wsx"
+    mkdir -p "$RUN/landstate"
     bead_reopen sp-wsx batch-eject "reproduced failure" "test-x.sh" >/dev/null 2>&1
 )
-st="$(awk '{print $1}' "$RUN/landstate/sp-wsx" 2>/dev/null || true)"
-[ "$st" = "WITHDRAWN" ] && ok "B: landstate WITHDRAWN after bead_reopen with suites" \
-    || bad "B: landstate WITHDRAWN" "got $st"
 [ "$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)" = "test-x.sh" ] \
     && ok "B: .ejected sidecar carries test-x.sh" \
     || bad "B: .ejected sidecar" "got [$(cat "$RUN/landstate/sp-wsx.ejected" 2>/dev/null)]"
@@ -108,6 +109,7 @@ want "B: the gate command was told to force test-x.sh" "ejected=test-x.sh" "$(ca
 [ "$rc" -ne 0 ] && ok "B: re-certification RED — the withdrawn suite is caught, not skipped" \
     || bad "B: re-certification RED" "rc=$rc out=$out"
 want "B: failure reported to the aeon" "failed the gate" "$out"
+nowant "B: the lifecycle row is not certified by the red re-cert" "CERTIFIED" "$(lcfix_state sp-wsx)"
 [ ! -f "$RUN/queue/sp-wsx" ] && ok "B: not admitted to the queue on a red re-cert" \
     || bad "B: not admitted to the queue" "queue record exists"
 

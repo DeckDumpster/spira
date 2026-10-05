@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-queue-submit.sh — queue.sh submit: certifies any branch the batcher can adopt,
 # refuses the rest. Merged from test-submit.sh (sp-s088v.16, duplicate cluster #17,
-# UC-27): cmd_submit never calls bd for a bead-less branch (only land_mark + gate.sh),
+# UC-27): cmd_submit never calls bd for a bead-less branch (only the lifecycle certify + gate.sh),
 # so the merge drops test-submit.sh's testdb dependency along with the duplicated
 # REPO/RMAP/run() scaffolding both files built independently.
 #
@@ -18,8 +18,12 @@ HERE="$(cd "$(dirname "$0")" && pwd -P)"
 # The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
 # on the suite's PATH (sp-gypjk).
 
+. "$HERE/testlib/lc-fixture.sh"
+
 echo "test-queue-submit.sh"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-queue-submit: could not build a lifecycle fixture"; exit 1; }
+for _b in sp-abc01 sp-g6-01 sp-cso01 sp-def02 sp-ghi03; do lcfix_seed "$_b" WORKING; done
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 GATE_LOG="$TMP/gate-calls.log"
@@ -40,7 +44,7 @@ RMAP="$TMP/repo-map"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP"
 
 run() {
-    env -i PATH="$TMP/spira:$PATH" \
+    env -i $(lcfix_env) PATH="$TMP/spira:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -56,35 +60,31 @@ git -C "$REPO" branch "spira-suite-state/test-foo-20260101000000" main
 
 echo
 echo "certification honours SPIRA_CERTIFY_SUITES=off (fences only), as landing.sh does:"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 : > "$GATE_LOG"
 git -C "$REPO" branch "spira/sp-cso01" main
-env -i PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
+env -i $(lcfix_env) PATH="$TMP/spira:$PATH" HOME="$TMP" SPIRA_CONF=/nonexistent \
     SPIRA_HOME_REPO=fixq SPIRA_REPO="$REPO" SPIRA_RUN="$TMP/run" \
     SPIRA_QUEUE_DIR="$TMP/run/queue" SPIRA_REPO_MAP="$RMAP" SPIRA_CERTIFY_SUITES=off \
     SPIRA_HOME="$TMP/spira" queue submit spira/sp-cso01 >/dev/null 2>&1
 want "the gate is handed suites=off" "suites=off" "$(cat "$GATE_LOG")"
-rm -f "$TMP/run/landstate/sp-cso01"
 
 echo
 echo "positive control — gate is reachable for a valid spira/<id> branch (bead-less, UC-27):"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 : > "$GATE_LOG"
 out="$(run submit spira/sp-abc01)"; rc=$?
 [ "$rc" -eq 0 ] && ok "exit 0 for valid branch" || bad "exit 0 for valid branch" "got rc=$rc out=$out"
 want "gate stub was called for valid branch" "gate-called" "$(cat "$GATE_LOG")"
 want "exit 0 for valid branch" "certified" "$out"
-case "$(cat "$TMP/run/landstate/sp-abc01" 2>/dev/null)" in
-    CERTIFIED*) ok "bead-less: landstate is CERTIFIED" ;;
-    *)          bad "bead-less: landstate is CERTIFIED" "got: [$(cat "$TMP/run/landstate/sp-abc01" 2>/dev/null)]" ;;
-esac
+is "bead-less: the lifecycle row is CERTIFIED" "CERTIFIED" "$(lcfix_state sp-abc01)"
 [ -f "$TMP/run/queue/sp-abc01" ] && ok "bead-less: queue record written" \
     || bad "bead-less: queue record written" "file missing: $TMP/run/queue/sp-abc01"
 rm -rf "$TMP/run"
 
 echo
-echo "red branch fails submission; no landstate written:"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+echo "red branch fails submission; no lifecycle row written:"
+mkdir -p "$TMP/run/queue"
 git -C "$REPO" branch "spira/sp-red01" main 2>/dev/null || true
 cat > "$TMP/spira/gate.sh" <<FAKERED
 #!/usr/bin/env bash
@@ -96,8 +96,7 @@ chmod +x "$TMP/spira/gate.sh"
 out="$(run submit spira/sp-red01)"; rc=$?
 [ "$rc" -ne 0 ] && ok "red branch: exits non-zero" || bad "red branch: exits non-zero" "got rc=$rc"
 want "red branch: failure reported" "failed the gate" "$out"
-[ ! -f "$TMP/run/landstate/sp-red01" ] && ok "red branch: no landstate" \
-    || bad "red branch: no landstate" "got: [$(cat "$TMP/run/landstate/sp-red01" 2>/dev/null)]"
+is "red branch: no lifecycle row" "" "$(lcfix_state sp-red01)"
 # Restore the passing gate stub for the remaining cases.
 cat > "$TMP/spira/gate.sh" <<FAKE
 #!/usr/bin/env bash
@@ -109,7 +108,7 @@ rm -rf "$TMP/run"
 
 echo
 echo "gap G6: queue-dir write fails — no 'certified', no silent success:"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 git -C "$REPO" branch "spira/sp-g6-01" main 2>/dev/null || true
 # Pre-create the queue-dir target AS A DIRECTORY: the write is `printf ... > path`,
 # which fails against a directory the same way a full disk or a permissions error
@@ -125,7 +124,7 @@ rm -rf "$TMP/run"
 
 echo
 echo "spira-suite-state/... transition branch is accepted (not refused like non-spira/):"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 : > "$GATE_LOG"
 out="$(run submit spira-suite-state/test-foo-20260101000000)"; rc=$?
 want "gate stub was called for suite-state branch" "gate-called" "$(cat "$GATE_LOG")"
@@ -135,15 +134,12 @@ rm -rf "$TMP/run"
 
 echo
 echo "submit refuses a non-spira/ branch in queue mode:"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 git -C "$REPO" branch "concierge/sp-swux6" main
 out="$(run submit "concierge/sp-swux6")"; rc=$?
 [ "$rc" -ne 0 ] && ok "exits non-zero" || bad "exits non-zero" "got rc=$rc"
 want   "names required form" "spira/" "$out"
 nowant "never says certified" "certified"   "$out"
-[ ! -e "$TMP/run/landstate/concierge" ] \
-    && ok "no landstate subdir created" \
-    || bad "no landstate subdir created" "directory exists"
 [ ! -e "$TMP/run/queue/concierge" ] \
     && ok "no queue subdir created" \
     || bad "no queue subdir created" "directory exists"
@@ -151,7 +147,7 @@ rm -rf "$TMP/run"
 
 echo
 echo "submit allows a spira-suite-state/* transition branch:"
-mkdir -p "$TMP/run/queue" "$TMP/run/landstate"
+mkdir -p "$TMP/run/queue"
 git -C "$REPO" branch "spira-suite-state/test-q.sh" main
 : > "$GATE_LOG"
 out="$(run submit spira-suite-state/test-q.sh)"; rc=$?
@@ -179,10 +175,10 @@ RMAP2="$TMP/repo-map2"
 printf 'holdhome | %s | hold | main | | |\n' "$REPO" > "$RMAP2"
 printf 'queuerepo | %s | queue | main | | |\n' "$REPO2" >> "$RMAP2"
 
-mkdir -p "$TMP/run2/queue" "$TMP/run2/landstate"
+mkdir -p "$TMP/run2/queue"
 : > "$GATE_LOG2"
 run2() {
-    env -i PATH="$TMP/spira2:$PATH" \
+    env -i $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=holdhome \
@@ -202,7 +198,7 @@ rm -rf "$TMP/run2"
 
 echo
 echo "submit uses home repo when no second arg — gate sees home repo name:"
-mkdir -p "$TMP/run3/queue" "$TMP/run3/landstate"
+mkdir -p "$TMP/run3/queue"
 : > "$GATE_LOG2"
 git -C "$REPO" branch "spira/sp-ghi03" main 2>/dev/null || true
 
@@ -210,7 +206,7 @@ RMAP3="$TMP/repo-map3"
 printf 'fixq | %s | queue | main | | |\n' "$REPO" > "$RMAP3"
 
 run3() {
-    env -i PATH="$TMP/spira2:$PATH" \
+    env -i $(lcfix_env) PATH="$TMP/spira2:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME_REPO=fixq \
@@ -264,7 +260,7 @@ git -C "$TREPO" push -q origin main
 git -C "$TREPO" fetch -q origin
 
 transition() {
-    env -i PATH="$TSH:$PATH" \
+    env -i $(lcfix_env) PATH="$TSH:$PATH" \
         HOME="$TMP" \
         SPIRA_CONF=/nonexistent \
         SPIRA_HOME="$TSH" \
@@ -276,12 +272,11 @@ transition() {
         SPIRA_TESTENV_HARNESS="$TREPO" \
         testenv suites "$@" 2>&1
 }
-tlandstate() { cat "$TRUN/landstate/${1:-}" 2>/dev/null; }
 tqueue_rec()  { cat "$TRUN/queue/${1:-}" 2>/dev/null; }
 
 echo
 echo "quarantine: creates a branch, commits, and submits it (certified via queue submit):"
-mkdir -p "$TRUN/queue" "$TRUN/landstate"
+mkdir -p "$TRUN/queue"
 : > "$TGATE_LOG"
 git -C "$TREPO" checkout -q main 2>/dev/null || true
 _thead="$(git -C "$TREPO" rev-parse HEAD)"
@@ -297,10 +292,7 @@ esac
 git -C "$TREPO" rev-parse --verify -q "refs/heads/$_qid" >/dev/null \
     && ok "quarantine: the transition branch exists in the fixture repo" \
     || bad "quarantine: the transition branch exists in the fixture repo" "no ref refs/heads/$_qid"
-case "$(tlandstate "$_qid")" in
-    CERTIFIED*) ok "quarantine: transition branch certified" ;;
-    *)          bad "quarantine: transition branch certified" "got: [$(tlandstate "$_qid")]" ;;
-esac
+want "quarantine: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_qid")"
 [ -f "$TRUN/queue/$_qid" ] && ok "quarantine: queue record written" \
     || bad "quarantine: queue record written" "file missing: $TRUN/queue/$_qid"
 
@@ -315,10 +307,7 @@ case "$_did" in
     spira-suite-state/*) ok "disable: branch name on stdout" ;;
     *) bad "disable: branch name on stdout" "got: [$_did]" ;;
 esac
-case "$(tlandstate "$_did")" in
-    CERTIFIED*) ok "disable: transition branch certified" ;;
-    *)          bad "disable: transition branch certified" "got: [$(tlandstate "$_did")]" ;;
-esac
+want "disable: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_did")"
 [ -f "$TRUN/queue/$_did" ] && ok "disable: queue record written" \
     || bad "disable: queue record written" "file missing: $TRUN/queue/$_did"
 
@@ -336,10 +325,7 @@ case "$_aid" in
     spira-suite-state/*) ok "activate: branch name on stdout" ;;
     *) bad "activate: branch name on stdout" "got: [$_aid]" ;;
 esac
-case "$(tlandstate "$_aid")" in
-    CERTIFIED*) ok "activate: transition branch certified" ;;
-    *)          bad "activate: transition branch certified" "got: [$(tlandstate "$_aid")]" ;;
-esac
+want "activate: transition branch certified in its queue record (no bead, no lifecycle row)" "CERTIFIED" "$(tqueue_rec "$_aid")"
 [ -f "$TRUN/queue/$_aid" ] && ok "activate: queue record written" \
     || bad "activate: queue record written" "file missing: $TRUN/queue/$_aid"
 

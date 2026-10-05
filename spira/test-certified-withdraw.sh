@@ -25,19 +25,20 @@
 # with batch.sh, sp-uwhx0: no repo runs in `land=queue` mode, and the check was never
 # ported. Case C used to exercise "not picked back up" through batch.sh's own admission
 # sweep; it now checks queue_certified_list directly, lib.sh's selection primitive that
-# any cutter — batch.sh before, the batcher now — draws from, since a WITHDRAWN
-# landstate simply drops out of it, no sweep required.)
+# any cutter draws from; it reads the lifecycle row (spira-lc), so case C drives that row.)
 #
 # tier: T2
-# covers: spira/lib.sh spira/conf.sh
+# covers: spira/lib.sh spira/conf.sh queue/src/ops/helpers.rs spira/testlib/lc-fixture.sh
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-certified-withdraw
-TMP="$(mktemp -d)"; trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+TMP="$(mktemp -d)"; trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+lcfix_up || { echo "test-certified-withdraw: could not build a lifecycle fixture"; exit 1; }
 testdb_up certwithdraw || { echo "test-certified-withdraw: could not build fixture database"; exit 1; }
 
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -152,34 +153,28 @@ git -C "$REPO" add sp-e2e.txt && git -C "$REPO" commit -q -m "sp-e2e: work v1"
 _e2e_tip1="$(git -C "$REPO" rev-parse spira/sp-e2e)"
 git -C "$REPO" checkout -q main
 
-printf 'CERTIFIED %s %s\n' "$_e2e_tip1" "$(date +%s)" > "$LANDSTATE/sp-e2e"
+lcfix_seed sp-e2e CERTIFIED "$_e2e_tip1"
 rm -f "$QUEUEDIR/$REPONAME/open"
 
-# Reopen it — the same mechanism queue.sh eject, the sentinel, and slay.sh all
-# reach through (bead_reopen, sourced above as part of this process's lib.sh).
-bead_reopen sp-e2e recertify-needed "test: withdrawing sp-e2e for a fix" >/dev/null 2>&1
-is "reopen: landstate WITHDRAWN" "WITHDRAWN" "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
+# POSITIVE CONTROL: the certified row is what the selection primitive draws from.
+want "certified: drawn by the next cut" "sp-e2e $_e2e_tip1" "$(queue_certified_list "$REPO")"
 
-# queue_certified_list (lib.sh) is what any cutter — the batcher included — draws
-# admissible branches from; a WITHDRAWN landstate simply does not match its CERTIFIED
-# filter, no separate sweep needed.
+bead_reopen sp-e2e recertify-needed "test: withdrawing sp-e2e for a fix" >/dev/null 2>&1
+lcfix_seed sp-e2e REWORK "$_e2e_tip1"
+
 nowant "not picked back up: excluded from what the next cut draws from" "sp-e2e " \
     "$(queue_certified_list "$REPO")"
-is "still WITHDRAWN after the check" "WITHDRAWN" "$(awk '{print $1}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
-# The aeon pushes a new tip and it recertifies.
 git -C "$REPO" checkout -q spira/sp-e2e
 printf 'e2e-v2\n' >> "$REPO/sp-e2e.txt"
 git -C "$REPO" add sp-e2e.txt && git -C "$REPO" commit -q -m "sp-e2e: fixed"
 _e2e_tip2="$(git -C "$REPO" rev-parse spira/sp-e2e)"
 git -C "$REPO" checkout -q main
 bdq close sp-e2e --reason "test: recertified" >/dev/null 2>&1
-printf 'CERTIFIED %s %s\n' "$_e2e_tip2" "$(date +%s)" > "$LANDSTATE/sp-e2e"
+lcfix_seed sp-e2e CERTIFIED "$_e2e_tip2"
 
-want "recertified: admissible again — back in what the next cut draws from" "sp-e2e " \
+want "recertified: admissible again — back in what the next cut draws from" "sp-e2e $_e2e_tip2" \
     "$(queue_certified_list "$REPO")"
-is "recertified: landstate carries the new tip" "$_e2e_tip2" \
-    "$(awk '{print $2}' "$LANDSTATE/sp-e2e" 2>/dev/null)"
 
 echo
 tl_summary
