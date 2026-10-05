@@ -490,6 +490,73 @@ STUB
     chmod +x "$dir/spira-lc"
 }
 
+# lc_socket_mirror <dir> — a stand-in lifecycle service on a Unix socket, for a legacy suite
+# that drives a real `spira-lc` verb whose own state read (`show`/`list`, through
+# $SPIRA_LC_SOCKET) must answer — close-on-land reads the bead's state there (sp-mve9i). It
+# answers `show <id>` and `list` from the suite's bd store in lifecycle terms: closed (the
+# builder's close is its submit) or open + $SPIRA_SUBMITTED_LABEL → SUBMITTED, in_progress →
+# WORKING, anything else → READY; every other verb "cannot tell" (2). Exports
+# SPIRA_LC_SOCKET; the server exits on its own when the suite's shell does.
+lc_socket_mirror() {
+    local dir="${1:?lc_socket_mirror needs a directory}"
+    mkdir -p "$dir"
+    export SPIRA_LC_SOCKET="$dir/lc.sock"
+    rm -f "$SPIRA_LC_SOCKET"
+    python3 - "$SPIRA_LC_SOCKET" "$$" <<'PY' >"$dir/server.log" 2>&1 &
+import json, os, socket, subprocess, sys, threading, time
+path, owner = sys.argv[1], int(sys.argv[2])
+def watchdog():
+    while True:
+        try:
+            os.kill(owner, 0)
+        except OSError:
+            os._exit(0)
+        time.sleep(1)
+threading.Thread(target=watchdog, daemon=True).start()
+sub = os.environ.get("SPIRA_SUBMITTED_LABEL") or "spira-submitted"
+def bd(args):
+    env = dict(os.environ, BD_IGNORE_SCHEMA_SKEW="1")
+    o = subprocess.run([os.environ.get("SPIRA_BD") or "bd", "-C", os.environ.get("SPIRA_DB") or ".", *args, "--json"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    t = o.stdout[o.stdout.find("[") if "[" in o.stdout else 0:]
+    try:
+        v = json.loads(t or "[]")
+    except ValueError:
+        return []
+    return v if isinstance(v, list) else [v]
+def row(b):
+    st = b.get("status") or "open"
+    labels = b.get("labels") or []
+    state = "SUBMITTED" if st == "closed" or sub in labels else {"in_progress": "WORKING"}.get(st, "READY")
+    return {"bead_id": b["id"], "state": state, "holds": [],
+            "holder": (b.get("assignee") or None) if state == "WORKING" else None}
+def answer(args):
+    if args[:1] == ["show"] and len(args) > 1:
+        hit = [b for b in bd(["show", args[1]]) if isinstance(b, dict) and b.get("id") == args[1]]
+        return (0, json.dumps({"bead": row(hit[0]), "delivery": None})) if hit else (1, "{}")
+    if args[:1] == ["list"]:
+        return 0, json.dumps([row(b) for b in bd(["list", "--all", "--limit", "0"]) if isinstance(b, dict) and b.get("id")])
+    return 2, "cannot tell: stand-in lifecycle service"
+srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+srv.bind(path)
+srv.listen(16)
+while True:
+    c, _ = srv.accept()
+    try:
+        f = c.makefile("rw")
+        code, out = answer(json.loads(f.readline() or "[]"))
+        f.write(json.dumps({"exit_code": code, "stdout": out}) + "\n")
+        f.flush()
+    except Exception as e:
+        print(e, file=sys.stderr)
+    finally:
+        c.close()
+PY
+    local _i
+    for _i in $(seq 1 50); do [ -S "$SPIRA_LC_SOCKET" ] && return 0; sleep 0.1; done
+    bail "lc_socket_mirror: the stand-in lifecycle service never opened $SPIRA_LC_SOCKET: $(cat "$dir/server.log")"
+}
+
 # A suite declaring `# requires: testenv` (systemctl on a user manager, install/uninstall,
 # production paths) refuses here, before any of its own code runs, when SPIRA_IN_TESTENV
 # is not 1 — the one thing a statute could not stop (sp-nxvjm) a structural check can.

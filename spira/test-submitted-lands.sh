@@ -68,6 +68,7 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$
 stub confine.sh 'exit 0'
 stub mail    'exit 0'
 stub gh         'exit 1'
+REAL_LC="$(command -v spira-lc 2>/dev/null || true)"
 lc_path_stub "$SPIRA_HOME" "$TMP/lcfix"
 gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
 gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }
@@ -87,9 +88,22 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
-# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
-lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
+# sp-mve9i: every decision here — the aeon's close, the landing pass's "is it submitted",
+# close-on-land's "may I close it" — reads the bead's lifecycle row, never bd status. The
+# story is still told in bd words (the shim's bd close is the builder's submit; open +
+# spira-submitted is SUBMITTED), so a stand-in lifecycle service answers the real
+# spira-lc's state reads from the bd store (testlib.sh lc_socket_mirror), and a wrapper
+# first on PATH sends show/list to that real spira-lc; every other verb still reaches the
+# landing stub as before.
+lc_socket_mirror "$TMP/lcsock"
+mkdir -p "$TMP/lcm"
+cat > "$TMP/lcm/spira-lc" <<WRAP
+#!/usr/bin/env bash
+case "\${1:-}" in show|list) exec "$REAL_LC" "\$@" ;; esac
+exec "$SPIRA_HOME/spira-lc" "\$@"
+WRAP
+chmod +x "$TMP/lcm/spira-lc"; export PATH="$TMP/lcm:$PATH"
+[ -n "$REAL_LC" ] || bail "spira-lc is not on PATH"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'
