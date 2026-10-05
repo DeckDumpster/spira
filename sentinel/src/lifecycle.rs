@@ -183,6 +183,25 @@ impl<'a> Sentinel<'a> {
         rows
     }
 
+    /// The bead states the pass's snapshot carries (design §3.4, sp-mve9i): a work bead's
+    /// state is its lifecycle row in either mode, because bd status is inert and there is no
+    /// other source. ON, this is [`Self::lc_rows`] (fail-closed, LOUD). OFF, the machine is
+    /// read quietly: a stage that runs one gets its states, and one that does not gets none —
+    /// every state decision over the snapshot then decides nothing, never LOUD and never
+    /// exit 1, as sp-uqrdn made the OFF waiters do.
+    pub fn state_rows(&self) -> Option<Vec<LcRow>> {
+        if self.lc != crate::cfg::Lifecycle::Off {
+            return self.lc_rows();
+        }
+        if let Some(memo) = self.lc_memo.borrow().as_ref() {
+            return memo.clone();
+        }
+        let o = self.h.run(Spec::args_owned(self.cfg.lc_bin.clone(), vec!["list".into()]));
+        let rows = if o.ok() { parse_lc_rows(&o.stdout).ok() } else { None };
+        *self.lc_memo.borrow_mut() = Some(rows.clone());
+        rows
+    }
+
     fn lc_rows_read(&self) -> Option<Vec<LcRow>> {
         let bin = self.cfg.lc_bin.clone();
         let o = self.h.run(Spec::args_owned(bin, vec!["list".into()]));

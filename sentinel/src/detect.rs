@@ -279,7 +279,7 @@ impl<'a> Sentinel<'a> {
     /// §3.4, sp-mve9i); bd lists every bead's content and the machine says which wait for a
     /// builder. No lifecycle read: no candidates, nothing detected this pass.
     pub fn detect_branch_collisions(&self) -> Vec<Collision> {
-        let Some(rows) = self.lc_rows() else {
+        let Some(rows) = self.state_rows() else {
             return Vec::new();
         };
         let claimable: std::collections::HashSet<&str> = rows
@@ -433,7 +433,7 @@ impl<'a> Sentinel<'a> {
             // `spira-lc list` read (never bd status, sp-mve9i). No row, or no read, leaves
             // the worktree alone.
             let holder_done = self
-                .lc_rows()
+                .state_rows()
                 .is_some_and(|rows| rows.iter().any(|r| r.bead_id == c.holder_id && lc_state::past_builder(&r.state)));
             if holder_done && !self.holder_alive(&c.holder_id) {
                 let dirty = self.git(&c.holder_path, &["status", "--porcelain"]);

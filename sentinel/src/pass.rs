@@ -427,7 +427,7 @@ impl<'a> Sentinel<'a> {
             }
         };
         // A child's state is its lifecycle row (design §3.4): the one `spira-lc list`.
-        let snap = Snapshot::new(list_raw, list, r.ready.ok()).with_lc(self.lc_rows().as_deref());
+        let snap = Snapshot::new(list_raw, list, r.ready.ok()).with_lc(self.state_rows().as_deref());
         self.mark_open_children(&snap, dry);
         0
     }
@@ -459,8 +459,8 @@ impl<'a> Sentinel<'a> {
         };
         // Every state decision over this snapshot reads the bead's lifecycle row, never bd
         // status (design §3.4, sp-mve9i): the pass's one `spira-lc list`, read whatever
-        // lifecycle_enforce says (the queue waiters always read it too).
-        Ok(Snapshot::new(list_raw, list, ready).with_lc(self.lc_rows().as_deref()))
+        // lifecycle_enforce says — quietly when it is off (`state_rows`).
+        Ok(Snapshot::new(list_raw, list, ready).with_lc(self.state_rows().as_deref()))
     }
 
     /// Write the snapshots (and the ready cache) where every child reads them.

@@ -2044,13 +2044,15 @@ fn on_check4_note_names_the_hold() {
 // sp-uqrdn: the queue waiters read spira-lc only — with lifecycle_enforce OFF they read
 // nothing and decide nothing; an unreachable machine there is not the unit's failure.
 #[test]
-fn off_never_reads_the_machine_and_never_fails_the_unit_for_it() {
+fn off_never_fails_the_unit_for_an_unanswering_machine() {
     let (w, r, sink, clock) = setup("offnolc");
     r.on(|s| if s.prog == "spira-lc" { fail(2) } else { None });
     let rc = run_mode(&w, &r, &sink, &clock, Mode::Pass, &[("SPIRA_LIFECYCLE_ENFORCE", "0")], None);
     assert_eq!(rc, 0, "{}", sink.text());
     assert!(!sink.has("LIFECYCLE UNREACHABLE"), "{}", sink.text());
-    assert_eq!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")), 0);
+    // sp-mve9i: OFF still reads the bead states for its snapshot (bd status is inert), once,
+    // quietly — an unanswering machine there decides nothing and is not the unit's failure.
+    assert!(r.count(|s| s.prog == "spira-lc" && s.args.first().map(String::as_str) == Some("list")) <= 1);
     assert!(sink.has("pass complete"));
 }
 
@@ -2364,7 +2366,8 @@ fn close_landed_queue_waiters_reads_the_label_not_bd_status() {
             None
         }
     });
-    run_mode(&w, &r, &sink, &clock, Mode::CloseLandedQueueWaiters, &[], None);
+    // The waiters are ON-only (sp-uqrdn): OFF they read nothing and decide nothing.
+    run_mode(&w, &r, &sink, &clock, Mode::CloseLandedQueueWaiters, &[("SPIRA_LIFECYCLE_ENFORCE", "1")], None);
     let q = r.find(|s| is_bd(s, "list") && s.args.iter().any(|a| a == "spira-queue-waiting")).unwrap();
     assert!(q.args.iter().any(|a| a == "--all") && !q.args.iter().any(|a| a == "--status"), "{:?}", q.args);
     assert!(r.find(|s| is_bd(s, "close") && s.args.get(3).map(String::as_str) == Some("sp-w")).is_some(), "{:#?}", r.lines());
