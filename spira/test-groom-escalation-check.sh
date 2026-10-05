@@ -94,6 +94,9 @@ printf 'FAYTH_GROOM_ESCALATION_CHECK=1\n' >> "$HOMEDIR/chamber/scrubber.fayth"
 # The guard against the real model: conf.sh REPLACES $PATH, so shimming by PATH alone
 # would invoke the real model.
 BIN="$TMP/bin"; mkdir -p "$BIN"
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 # aeon and the spira-claim it ranks through are found by name on the suite's PATH, which
 # run_aeon's env -i carries over (sp-gypjk).
 command -v aeon >/dev/null 2>&1 \

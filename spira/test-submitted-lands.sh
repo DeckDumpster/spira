@@ -87,6 +87,9 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/c
 # THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
 # replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
+# shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
+lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
 cat > "$BIN/claude" <<'SHIM'

@@ -64,8 +64,12 @@ command -v aeon >/dev/null 2>&1 || bail "aeon is not on PATH — refusing to run
 # "the gate ran this" from "the gate skipped it", exactly what a --with-bins tree looks like
 # from aeon's point of view: spira-lc and work found by name on PATH (the stub dir first).
 STUBS="$TMP/stubs"; mkdir -p "$STUBS"
+# A state read (show/list) is not the restricted path: every aeon reads its bead's state from
+# the lifecycle row whatever the switch says (sp-mve9i, design §3.4), so the stub answers it
+# with "no row" and records only what the semantic layer alone would call.
 cat > "$STUBS/spira-lc" <<STUB
 #!/usr/bin/env bash
+case "\${1:-}" in show|list) exit 1 ;; esac
 printf '%s\n' "\$*" >> "$TMP/stub-lc-invoked"
 exit 0
 STUB

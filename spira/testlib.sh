@@ -451,6 +451,45 @@ tl_summary() {
     [ "$_TL_FAIL" -eq 0 ]
 }
 
+# lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
+# aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
+# reads a bead's state from its lifecycle row, never bd status (sp-mve9i), so the fixture's
+# bd story is told to it in lifecycle terms: `show <id>` answers $SPIRA_RUN/lc-row/<id>
+# ("<STATE> [reason] [tip]") when the suite wrote one, else the bead's bd row translated —
+# closed (the builder's close is its submit) → SUBMITTED, in_progress → WORKING (holder =
+# assignee), anything else → READY; no bd row → exit 1 (no lifecycle row). Every other verb
+# goes to the real spira-lc further down PATH, exactly as before the stub.
+lc_aeon_mirror() {
+    local dir="${1:?lc_aeon_mirror needs a directory}"
+    mkdir -p "$dir"
+    cat > "$dir/spira-lc" <<'STUB'
+#!/usr/bin/env bash
+if [ "${1:-}" = show ] && [ -n "${2:-}" ]; then
+    if [ -f "${SPIRA_RUN:-/nonexistent}/lc-row/$2" ]; then
+        read -r st rs tip < "$SPIRA_RUN/lc-row/$2"
+        printf '{"bead":{"bead_id":"%s","state":"%s","reason":"%s","tip":"%s","holds":[]},"delivery":null}\n' "$2" "$st" "${rs:-}" "${tip:-}"
+        exit 0
+    fi
+    BD_IGNORE_SCHEMA_SKEW=1 "${SPIRA_BD:-bd}" -C "${SPIRA_DB:-.}" show "$2" --json 2>/dev/null | sed -n '/^[[{]/,$p' | python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+d = d[0] if isinstance(d, list) and d else d
+if not isinstance(d, dict) or not d.get("id"):
+    sys.exit(1)
+st = {"closed": "SUBMITTED", "in_progress": "WORKING"}.get(d.get("status") or "open", "READY")
+holder = (d.get("assignee") or None) if st == "WORKING" else None
+print(json.dumps({"bead": {"bead_id": d["id"], "state": st, "holder": holder, "holds": []}, "delivery": None}))'
+    exit "${PIPESTATUS[2]}"
+fi
+for c in $(type -ap spira-lc); do [ "$c" -ef "$0" ] || exec "$c" "$@"; done
+exit 2
+STUB
+    chmod +x "$dir/spira-lc"
+}
+
 # A suite declaring `# requires: testenv` (systemctl on a user manager, install/uninstall,
 # production paths) refuses here, before any of its own code runs, when SPIRA_IN_TESTENV
 # is not 1 — the one thing a statute could not stop (sp-nxvjm) a structural check can.
