@@ -231,7 +231,6 @@
 3 spira/test-landing-queue-early.sh
 4 spira/test-landing-race.sh
 14 spira/test-landing-rebase.sh
-9 spira/test-landing-red-recurring.sh
 12 spira/test-landing.sh
 3 spira/test-law-synth.sh
 3 spira/test-lc-hold.sh
