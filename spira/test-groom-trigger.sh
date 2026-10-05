@@ -73,19 +73,15 @@ printf '%s\n' "$*" >> "$BD_LOG_PATH"
 # Strip -C <path> so the subcommand is always in $1 for the case.
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    list)
-        # Dedup query carries --label; total-count query does not.
-        case " $* " in
-            *" --label "*) printf '%s\n' "${BD_LIST_OUTPUT:-[]}"; exit 0 ;;
-            *)             printf '%s\n' "${BD_TOTAL_OUTPUT:-[]}"; exit 0 ;;
-        esac ;;
+    list) printf '%s\n' "${BD_LIST_OUTPUT:-[]}"; exit 0 ;;
     *)    exit 0 ;;
 esac
 STUB
 chmod +x "$STUB_BD"
 
 # STUB SPIRA-LC. Whether a trigger bead is still open is its lifecycle row (sp-mve9i, design
-# §3.4), never bd status: `list` answers LC_LIST_OUTPUT (default: no rows).
+# §3.4), never bd status, and so is the backlog the score counts (its READY/WORKING/REWORK
+# rows): `list` answers LC_LIST_OUTPUT (default: no rows).
 STUB_LC="$T/stub-lc"
 cat > "$STUB_LC" <<'STUB'
 #!/usr/bin/env bash
@@ -96,15 +92,16 @@ esac
 STUB
 chmod +x "$STUB_LC"
 
-# FIVE_OPEN: a minimal JSON array satisfying SPIRA_GROOM_THRESHOLD=5 (default). Used
-# as BD_TOTAL_OUTPUT wherever the short-circuit predicate must not suppress filing.
-FIVE_OPEN='[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'
+# FIVE_OPEN: five unfinished lifecycle rows, satisfying SPIRA_GROOM_THRESHOLD=5 (default).
+# Used as LC_LIST_OUTPUT wherever the short-circuit predicate must not suppress filing. The
+# landed row is not backlog and must not count.
+FIVE_OPEN='[{"bead_id":"x1","state":"READY"},{"bead_id":"x2","state":"WORKING"},{"bead_id":"x3","state":"REWORK"},{"bead_id":"x4","state":"READY"},{"bead_id":"x5","state":"READY"},{"bead_id":"x6","state":"LANDED"}]'
 
 # Run groom-trigger.sh in a clean environment.
 # SPIRA_CONF points to a nonexistent file so no real config is read; conf.sh defaults
 # still apply. SPIRA_BD is the stub. BD_LOG_PATH is the argv capture file.
-# BD_TOTAL_OUTPUT feeds the stub's total-count list response; BD_LIST_OUTPUT feeds the
-# dedup list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
+# LC_LIST_OUTPUT feeds the lifecycle rows (the backlog count and the dedup's open check);
+# BD_LIST_OUTPUT feeds the dedup's bd list response. SPIRA_RUN=$T/run gives tests a writable, predictable lastpass dir.
 run_trigger() {
     mkdir -p "$T/run"
     env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
@@ -113,7 +110,6 @@ run_trigger() {
         BD_LOG_PATH="$BD_LOG" \
         SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
         BD_LIST_OUTPUT="${BD_LIST_OUTPUT:-[]}" \
-        BD_TOTAL_OUTPUT="${BD_TOTAL_OUTPUT:-[]}" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -124,17 +120,18 @@ run_trigger() {
 echo
 echo "FILING: no open trigger — bd create is called with the right labels"
 # ==========================================================================================
-# POSITIVE CONTROL: BD_LIST_OUTPUT=[] means no open trigger; BD_TOTAL_OUTPUT satisfies
+# POSITIVE CONTROL: BD_LIST_OUTPUT=[] means no open trigger; LC_LIST_OUTPUT satisfies
 # the short-circuit threshold; we expect a create call.
 : > "$BD_LOG"
-BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" \
-    out="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc=$?
+out="$(BD_LIST_OUTPUT="[]" LC_LIST_OUTPUT="$FIVE_OPEN" run_trigger)"; rc=$?
 is   "filing exits 0"                  0          "$rc"
 want "bd create is called"             "create"   "$(cat "$BD_LOG")"
 # The trigger bead must carry the scope label so the groomer's FAYTH_LABELS predicate
 # finds it. The default scope label is "spira" and the groomer label is "groom".
 want "create args include scope label" "spira"    "$(cat "$BD_LOG")"
 want "create args include groom label" "groom"    "$(cat "$BD_LOG")"
+# sp-mve9i: the backlog count reads the lifecycle rows; bd is never asked by status.
+nowant "bd is never queried by status"  "--status" "$(cat "$BD_LOG")"
 
 # ==========================================================================================
 echo
@@ -158,17 +155,13 @@ echo "ERROR: bd create fails — exit code is 1"
 # If filing fails (bd returns non-zero for create), groom-trigger.sh must exit 1 so the
 # service records a failure and the timer does not silently mark success for a broken pass.
 FAIL_BD="$T/fail-bd"
-# FAIL_BD returns [] for the dedup (labeled) list query, five beads for the total-count
-# (unlabeled) query so the short-circuit predicate does not fire, and exit 1 for create.
+# FAIL_BD returns [] for the dedup list query and exit 1 for create; the lifecycle rows
+# (FIVE_OPEN) keep the short-circuit predicate from firing.
 cat > "$FAIL_BD" <<'STUB'
 #!/usr/bin/env bash
 [ "${1:-}" = "-C" ] && shift 2
 case "${1:-}" in
-    list)
-        case " $* " in
-            *" --label "*) printf '[]'; exit 0 ;;
-            *) printf '[{"id":"x1"},{"id":"x2"},{"id":"x3"},{"id":"x4"},{"id":"x5"}]'; exit 0 ;;
-        esac ;;
+    list) printf '[]'; exit 0 ;;
     *) exit 1 ;;
 esac
 STUB
@@ -178,7 +171,7 @@ out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$FAIL_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
         BD_LIST_OUTPUT="[]" \
         SPIRA_RUN="$T/run" \
         SPIRA_DB="$T/fixture.db" \
@@ -201,8 +194,7 @@ out="$(BD_LIST_OUTPUT="[]" \
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
-        BD_TOTAL_OUTPUT="$FIVE_OPEN" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -232,8 +224,7 @@ out="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/
         SPIRA_CONF="$NONE" \
         SPIRA_BD="$STUB_BD" \
         BD_LOG_PATH="$BD_LOG" \
-        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="${LC_LIST_OUTPUT:-[]}" \
-        BD_TOTAL_OUTPUT="$FIVE_OPEN" \
+        SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
         SPIRA_DB="$T/fixture.db" \
         SPIRA_RUN="$T/run" \
         SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -276,7 +267,7 @@ out_gp="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/u
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    BD_TOTAL_OUTPUT="$FIVE_OPEN" \
+    SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$FIVE_OPEN" \
     SPIRA_DB="$T/fixture.db" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -293,7 +284,7 @@ echo "SHORT-CIRCUIT: low score — trigger skips without filing"
 # threshold; if the trigger always skipped, both tests would exit 0 but the positive
 # control would lack a bd create call.
 : > "$BD_LOG"
-out_sc="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="[]" run_trigger)"; rc_sc=$?
+out_sc="$(BD_LIST_OUTPUT="[]" LC_LIST_OUTPUT="[]" run_trigger)"; rc_sc=$?
 is     "short-circuit exits 0"          0         "$rc_sc"
 nowant "short-circuit: no create call"  "create"  "$(cat "$BD_LOG")"
 want   "short-circuit: logs no-pass"    "no-pass" "$out_sc"
@@ -302,9 +293,9 @@ want   "short-circuit: logs no-pass"    "no-pass" "$out_sc"
 echo
 echo "SHORT-CIRCUIT LIFTED: score at threshold — trigger fires"
 # ==========================================================================================
-# FIVE_OPEN delivers score=5, matching the default threshold=5. Trigger must file.
+# FIVE_OPEN delivers score=5 (its LANDED row does not count), matching the default threshold=5. Trigger must file.
 : > "$BD_LOG"
-out_sf="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_sf=$?
+out_sf="$(BD_LIST_OUTPUT="[]" LC_LIST_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_sf=$?
 is   "score-at-threshold exits 0"       0        "$rc_sf"
 want "score-at-threshold: create called" "create" "$(cat "$BD_LOG")"
 
@@ -312,15 +303,15 @@ want "score-at-threshold: create called" "create" "$(cat "$BD_LOG")"
 echo
 echo "SHORT-CIRCUIT: custom SPIRA_GROOM_THRESHOLD respected"
 # ==========================================================================================
-# Two open beads (score=2) with threshold=2 must fire; with threshold=3 must not.
-TWO_OPEN='[{"id":"y1"},{"id":"y2"}]'
+# Two unfinished rows (score=2; the SUBMITTED one is past the builder) with threshold=2 must fire; with threshold=3 must not.
+TWO_OPEN='[{"bead_id":"y1","state":"READY"},{"bead_id":"y2","state":"WORKING"},{"bead_id":"y3","state":"SUBMITTED"}]'
 : > "$BD_LOG"
 out_t2="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/usr/bin:/bin" \
     SPIRA_CONF="$NONE" \
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    BD_TOTAL_OUTPUT="$TWO_OPEN" \
+    SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \
     SPIRA_DB="$T/fixture.db" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -334,7 +325,7 @@ out_t3="$(env -i HOME="$T" PATH="$HERE:${SPIRA_CONFIG_DIR:+$SPIRA_CONFIG_DIR:}/u
     SPIRA_BD="$STUB_BD" \
     BD_LOG_PATH="$BD_LOG" \
     BD_LIST_OUTPUT="[]" \
-    BD_TOTAL_OUTPUT="$TWO_OPEN" \
+    SPIRA_LC_BIN="$STUB_LC" LC_LIST_OUTPUT="$TWO_OPEN" \
     SPIRA_DB="$T/fixture.db" \
     SPIRA_RUN="$T/run" \
     SPIRA_REPO_MAP="$GROOM_MAP" \
@@ -355,7 +346,7 @@ exec 8>"$T/run/groom-trigger.lock"
 flock -x 8
 
 : > "$BD_LOG"
-out_locked="$(BD_LIST_OUTPUT="[]" BD_TOTAL_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_locked=$?
+out_locked="$(BD_LIST_OUTPUT="[]" LC_LIST_OUTPUT="$FIVE_OPEN" run_trigger)"; rc_locked=$?
 exec 8>&-
 
 is     "locked: exits 0 (a skipped tick is not an error)" 0             "$rc_locked"
