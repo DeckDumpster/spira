@@ -63,6 +63,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
@@ -103,74 +105,49 @@ git -C "$REPO" checkout -q -B spira/sp-cc-b origin/main
 printf 'b-work\n' >> "$REPO/f"; git -C "$REPO" commit -qam "sp-cc-b - prior attempt"
 git -C "$REPO" checkout -q main
 
-# THE SAME QUESTION aeon.sh is about to ask (READY_ARGS, unfiltered by branch state) —
-# asked here so the test learns bd's own row order instead of assuming one, since ordering
-# among equal-priority rows is exactly the thing aeon.sh's own comments say bd never promised.
-order_ids="$(bd -C "$SPIRA_DB" ready --limit 0 --exclude-type epic,event -u --label plan --json 2>/dev/null \
-    | python3 -c '
-import sys, json
-d = json.load(sys.stdin)
-d = d if isinstance(d, list) else [d]
-for i in d:
-    if i["id"] in ("sp-cc-a", "sp-cc-b"): print(i["id"])')"
-first_id="$(printf '%s\n' "$order_ids" | head -1)"
-second_id="sp-cc-b"; [ "$first_id" = "sp-cc-b" ] && second_id="sp-cc-a"
-[ -n "$first_id" ] && [ "$first_id" != "$second_id" ] \
-    && ok  "setup: both candidates present and ordered ($first_id then $second_id)" \
-    || bad "setup: both candidates present and ordered" "order_ids=[$order_ids]"
+# Both are READY rows in the machine (the stand-in's list), so both are candidates.
+cands="$(spira-lc list 2>/dev/null)"
+[[ "$cands" == *'"sp-cc-a"'* && "$cands" == *'"sp-cc-b"'* ]] \
+    && ok  "setup: both candidates are READY rows in the machine" \
+    || bad "setup: both candidates are READY rows in the machine" "list=[$cands]"
 
-# A PRE-CLAIM BEFORE aeon.sh RUNS DOES NOT REPRODUCE THE RACE: `bd ready` lists only
-# UNCLAIMED beads, so a bead claimed before aeon.sh's own resume query runs never appears
-# as a candidate at all — the "collision" would never be attempted, only skipped, and the
-# test would pass for the wrong reason (the loser is never a candidate, not a candidate
-# that lost). The race this bug is about happens BETWEEN aeon.sh's own read and its own
-# write, so it has to be manufactured at that exact point.
-#
-# SPIRA_BD WRAPS THE REAL bd. Every call passes straight through to the real embedded
-# binary except the one this test cares about: the moment aeon.sh itself asks to claim
-# $first_id, the wrapper claims it FIRST, as a different actor, using the real bd's own
-# atomicity — so aeon.sh's own subsequent claim on that id genuinely loses, the same way
-# it would against a second live aeon, not a fabricated empty response.
-REAL_BD="$(command -v bd)"
-BIN_BD="$TMP/bin"; mkdir -p "$BIN_BD"
+# A PRE-CLAIM BEFORE THE AEON RUNS DOES NOT REPRODUCE THE RACE: the ready set lists only
+# READY rows, so a bead claimed before the aeon's own read never appears as a candidate at
+# all — the "collision" would never be attempted, only skipped, and the test would pass for
+# the wrong reason. The race happens BETWEEN the aeon's read and its write, so it is
+# manufactured at that exact point: the claim is a Claim event on the lifecycle row
+# (sp-v62vn — bd's `update --claim` is nobody's claim any more), and a wrapper ahead of the
+# stand-in on PATH, on the aeon's FIRST Claim, applies a Claim on the same row as a different
+# actor first — so the aeon's own Claim is genuinely refused by the stand-in's own rule
+# (Claim applies only to a READY/REWORK row), the same way it would lose to a second live
+# aeon. Which id it was is recorded, so the suite learns the aeon's own order, never assumes it.
 STOLEN_MARK="$TMP/stolen"
-cat > "$BIN_BD/bd" <<STUB
+STEAL="$TMP/steal"; mkdir -p "$STEAL"
+cat > "$STEAL/spira-lc" <<STUB
 #!/usr/bin/env bash
-is_target=0 has_update=0 has_claim=0
-for a in "\$@"; do
-    [ "\$a" = "update" ] && has_update=1
-    [ "\$a" = "$first_id" ] && is_target=1
-    [ "\$a" = "--claim" ] && has_claim=1
-done
-if [ "\$has_update" = 1 ] && [ "\$is_target" = 1 ] && [ "\$has_claim" = 1 ] && [ ! -f "$STOLEN_MARK" ]; then
-    touch "$STOLEN_MARK"
-    BEADS_ACTOR="aeon-other" "$REAL_BD" -C "$SPIRA_DB" update "$first_id" --claim >/dev/null 2>&1
+if [ "\${1:-}" = event ] && [[ "\$*" == *Claim* ]] && [ ! -f "$STOLEN_MARK" ]; then
+    printf '%s\n' "\$3" > "$STOLEN_MARK"
+    "$TMP/lcm/spira-lc" event bead "\$3" --expect READY --version 0 --actor aeon-other --kind '{"Claim":{}}' >/dev/null 2>&1
 fi
-exec "$REAL_BD" "\$@"
+exec "$TMP/lcm/spira-lc" "\$@"
 STUB
-chmod +x "$BIN_BD/bd"
-export SPIRA_BD="$BIN_BD/bd"
+chmod +x "$STEAL/spira-lc"
 
-run_aeon
+PATH="$STEAL:$PATH" run_aeon
 
-first_status="$(bd -C "$SPIRA_DB" show "$first_id" --json 2>/dev/null | python3 -c '
+first_id="$(cat "$STOLEN_MARK" 2>/dev/null)"
+second_id="sp-cc-b"; [ "$first_id" = "sp-cc-b" ] && second_id="sp-cc-a"
+row_of() { spira-lc show "$1" 2>/dev/null | python3 -c '
 import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(d.get("status"))' 2>/dev/null)"
-second_status="$(bd -C "$SPIRA_DB" show "$second_id" --json 2>/dev/null | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(d.get("status"))' 2>/dev/null)"
+b = json.load(sys.stdin)["bead"]; print(b["state"], b.get("holder") or "-")' 2>/dev/null; }
 
-is "loser ($first_id): left untouched — still held by the other aeon" "in_progress" "$first_status"
-# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona): only
-# the landing pass closes a work bead.
-second_labels="$(bd -C "$SPIRA_DB" show "$second_id" --json 2>/dev/null | python3 -c '
-import sys, json
-d = json.load(sys.stdin); d = d[0] if isinstance(d, list) else d
-print(",".join(d.get("labels") or []))' 2>/dev/null)"
-is "winner ($second_id): this aeon fell through to it and closed it (converted to submitted)" "open" "$second_status"
-want "winner ($second_id): carrying the submitted label" ",spira-submitted," ",$second_labels,"
+is "loser ($first_id): left untouched — still held by the other aeon" "WORKING aeon-other" "$(row_of "$first_id")"
+# The winner's session ran and closed it in bd: the stand-in reads that close as the
+# builder's submit (the restricted session's own `work submit`, in lifecycle terms).
+is "winner ($second_id): this aeon fell through to it, claimed it and finished it" "SUBMITTED -" "$(row_of "$second_id")"
+claims="$(cat "$SPIRA_RUN/lc-claims.log" 2>/dev/null)"
+want   "winner ($second_id): this aeon's claim applied"      "$second_id aeon-"      "$claims"
+nowant "winner ($second_id): and it was never the other's"   "$second_id aeon-other" "$claims"
 want "log: the collision on $first_id is named"      "$first_id"                                    "$(cat "$TMP/out")"
 want "log: the fallback to the next candidate is named" "trying the next ranked candidate"        "$(cat "$TMP/out")"
 want "log: it resumed $second_id, not the general claim head" "resuming $second_id"                  "$(cat "$TMP/out")"

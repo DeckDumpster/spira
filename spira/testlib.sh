@@ -479,6 +479,29 @@ tl_summary() {
     [ "$_TL_FAIL" -eq 0 ]
 }
 
+# aeon_fixture_agent <shim> — point SPIRA_AGENT at <shim> through a wrapper that gives the
+# fixture back the environment it is written against. Since sp-v62vn every model session
+# runs restricted (aeon/src/restrict.rs: HOME, SPIRA_RUN and a PATH of /usr/bin:/bin plus the
+# release's model-bin — no TMP, no SPIRA_DB, no bd), so a legacy shim that records its
+# prompt under $TMP and tells its story with `bd close` silently did nothing. The shim is a
+# FIXTURE standing in for the model, not the model: it may reach the suite's bd store,
+# because the lifecycle stand-in (lc_aeon_mirror) reads that close as the session's
+# `work submit`. TMP, SPIRA_DB, SPIRA_BD and PATH are captured when this is called — call it
+# once the suite's PATH and database are set. The restricted environment itself is
+# asserted where it is the subject (test-aeon-lifecycle-cutover.sh, aeon's restrict tests).
+aeon_fixture_agent() {
+    local shim="${1:?aeon_fixture_agent needs the shim path}" outer="${1}.fixture-env" k
+    {
+        printf '#!/usr/bin/env bash\n'
+        for k in TMP SPIRA_DB SPIRA_BD PATH; do
+            [ -n "${!k:-}" ] && printf 'export %s=%q\n' "$k" "${!k}"
+        done
+        printf 'exec %q "$@"\n' "$shim"
+    } > "$outer"
+    chmod +x "$outer"
+    export SPIRA_AGENT="$outer"
+}
+
 # lc_aeon_mirror <dir> — a spira-lc, installed by name into <dir> (put <dir> first on the
 # aeon's PATH), for the legacy aeon suites whose model shim closes its bead in bd. The aeon
 # reads a bead's state from its lifecycle row, never bd status (sp-mve9i), and since sp-v62vn

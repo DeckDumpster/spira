@@ -59,6 +59,8 @@ BIN="$TMP/bin"; mkdir -p "$BIN"
 # lifecycle terms, ahead of the tree's spira-lc on PATH.
 lc_aeon_mirror "$TMP/lc"; export PATH="$TMP/lc:$PATH"
 export SPIRA_AGENT="$BIN/claude" TMP
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
 
 # The stub records its argv and stdin, then emits a minimal success event.
 cat > "$BIN/claude" <<'SHIM'

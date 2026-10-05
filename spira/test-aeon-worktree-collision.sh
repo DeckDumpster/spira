@@ -75,6 +75,8 @@ printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' \
     > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
 # sp-mve9i: the aeon reads its bead's state from the lifecycle row, never bd status; the
 # shim's bd close is told to it in lifecycle terms (testlib.sh lc_aeon_mirror).
 lc_aeon_mirror "$TMP/lcm"; export PATH="$TMP/lcm:$PATH"
@@ -133,23 +135,15 @@ want "case 1: log names the mislabeled branch"    "spira/sp-cw-a" "$out2"
 want "case 1: log names the branch's true holder" "sp-cw-a"       "$out2"
 want "case 1: log says it took a fresh branch instead of dying" "taking a fresh branch instead of dying" "$out2"
 
-b_status="$(bd -C "$SPIRA_DB" show sp-cw-b --json 2>/dev/null | python3 -c '
+# "Reached the model and finished it" is the machine's row: the session's bd close reads, in
+# the lifecycle stand-in, as the builder's submit (sp-v62vn: every session is restricted, so
+# the teardown's old bd-close conversion to open+spira-submitted, sp-qsona, never runs).
+b_row="$(spira-lc show sp-cw-b 2>/dev/null | python3 -c '
 import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-print(d[0].get("status","") if d else "")' 2>/dev/null)"
-# A task bead's close is converted to open + spira-submitted at teardown (sp-qsona), so
-# "reached the model and closed it" reads as open carrying the submitted label.
-b_labels="$(bd -C "$SPIRA_DB" show sp-cw-b --json 2>/dev/null | python3 -c '
-import sys, json
-try: d = json.load(sys.stdin)
-except Exception: sys.exit(0)
-d = d if isinstance(d, list) else [d]
-print(",".join(d[0].get("labels") or []) if d else "")' 2>/dev/null)"
-is   "case 1: bead B's summon reached the model and closed the bead (converted to submitted) — no FATAL" \
-     "open" "$b_status"
-want "case 1: and bead B carries the submitted label" ",spira-submitted," ",$b_labels,"
+print(json.load(sys.stdin)["bead"]["state"])' 2>/dev/null)"
+is   "case 1: bead B's summon reached the model and finished the bead (SUBMITTED) — no FATAL" \
+     "SUBMITTED" "$b_row"
+want "case 1: and bead B's session was handed bead B" "work sp-cw-b " "$(cat "$TMP/prompt" 2>/dev/null)"
 
 b_branch="$(bd -C "$SPIRA_DB" state sp-cw-b branch 2>/dev/null)"
 is "case 1: bead B's recorded branch was corrected to its own" "spira/sp-cw-b" "$b_branch"

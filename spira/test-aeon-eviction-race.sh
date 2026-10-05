@@ -79,6 +79,8 @@ FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
 BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
+# The model session is restricted (sp-v62vn); the shim is a fixture — testlib aeon_fixture_agent.
+aeon_fixture_agent "$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-aeon-eviction-race: aeon is not on PATH" >&2; exit 1; }
 
