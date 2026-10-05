@@ -62,6 +62,7 @@ crate's design and here, not a configuration (unit test
 
 ### Gate status
 
-`bd-status-read` joins `GATE_CLASSES` in the commit that clears its last findings: spira-claim's
-select/ready and holder paths (sp-860zj) and the incident dedup (sp-jgjvh). Until then the
-gate counts it on its summary line.
+`bd-status-read` is in `GATE_CLASSES`: it joined in the commit that cleared its last
+findings — spira-claim's select, epic and holder paths (sp-mve9i, after sp-860zj/sp-7g5q6
+moved ready and claim) and the incident family's dedup (sp-jgjvh). A Rust decision on a work
+bead's bd status is now a red at the gate (`gate_mode_refuses_a_rust_bd_status_read`).

@@ -66,15 +66,15 @@ pub const ORACLE_SUBCOMMANDS: &[&str] = &["mark", "state", "landed", "cited-comm
 /// spira-lc (`unclaim`, `close-epic`, `show`) before it joined this list.
 ///
 /// The Rust bd-status read (`bd-status-read`, sp-mve9i, design §3.4: bd holds content,
-/// spira-lc holds state; `bd_status.rs`) joins this list in the commit that clears its last
-/// findings: spira-claim's select/ready and holder paths (rank.rs, ready.rs, deadlock.rs,
-/// unpoison.rs), which sp-860zj moves to spira-lc, and the incident crate's dedup (incident
-/// beads are work beads; sp-jgjvh). Every other Rust decision was routed
-/// through `spira_config::lc_state` or, for a bead that is not a work bead,
-/// `spira_config::nonwork`; until then the gate counts it on its summary line. The rest — the
-/// credential rule (over-broad: it flags every `spira-lc` CLI call and comment) and bd named
-/// in a brief — are still reported by a plain run, counted on the gate's one summary line,
-/// and join this list in the commit that clears them.
+/// spira-lc holds state; `bd_status.rs`) joined this list in the commit that cleared its last
+/// findings — spira-claim's select, epic and holder paths (sp-mve9i) and the incident
+/// family's dedup (sp-jgjvh). Every Rust decision on a work bead reads
+/// `spira_config::lc_state`; a bead that is not a work bead names its kind through
+/// `spira_config::nonwork`; the rule's named exceptions (the rowless controls and the off
+/// claim record) are argued in DESIGN.md. The rest — the credential rule (over-broad: it
+/// flags every `spira-lc` CLI call and comment) and bd named in a brief — are still reported
+/// by a plain run, counted on the gate's one summary line, and join this list in the commit
+/// that clears them.
 pub const GATE_CLASSES: &[Class] = &[
     Class::LandstateCall,
     Class::LandstatePath,
@@ -82,6 +82,7 @@ pub const GATE_CLASSES: &[Class] = &[
     Class::WrapperWrite,
     Class::DynamicVerb,
     Class::LifecycleRead,
+    Class::BdStatusRead,
 ];
 
 /// Cutover-specific and therefore empty until the cutover round actually retires a label or

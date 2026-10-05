@@ -413,11 +413,14 @@ fn rust_state_read_through_the_machine_or_the_nonwork_scope_is_not_reported() {
     assert!(findings.is_empty(), "{findings:#?}");
 }
 
-/// The gate reports a Rust bd-status read on its summary line; the class joins GATE_CLASSES
-/// (and this test asserts the refusal) in the commit that clears spira-claim's last findings.
+/// The gate refuses a planted Rust bd-status decision (sp-mve9i): the class is in
+/// GATE_CLASSES, so a decision on a work bead's bd status is a red, not a count.
 #[test]
-fn gate_mode_counts_a_rust_bd_status_read() {
+fn gate_mode_refuses_a_rust_bd_status_read() {
     let (code, out, err) = gate(&fixture("gate_bd_status_rust"));
-    assert_eq!(code, Some(0), "stdout:\n{out}\nstderr:\n{err}");
-    assert!(out.contains("not yet refused at the gate: bd-status-read=1"), "{out}");
+    assert_eq!(code, Some(1), "stdout:\n{out}\nstderr:\n{err}");
+    assert!(out.lines().any(|l| l.starts_with("src/lib.rs:2: [bd-status-read]")), "{out}");
+    assert!(!out.contains("not yet refused at the gate: bd-status-read"), "{out}");
+    assert!(!out.contains("fence: lifecycle-guard"), "a refused run proves nothing: {out}");
+    assert!(err.contains("REFUSED"), "{err}");
 }
