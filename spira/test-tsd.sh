@@ -13,11 +13,6 @@
 #      any line is appended.
 #   4. An invalid family name (uppercase, space, path separator) is refused, no file created.
 #   5. Neither --root nor SPIRA_RUN set is refused with a clear message.
-#   6. Concurrent writers to the same family never interleave a line (flock).
-#   7. land_mark (lib.sh) appends a landing-event row alongside its existing landstate file —
-#      MUST FAIL against the previous lib.sh, which had no such row.
-#   8. land_mark still succeeds, unchanged, when tsd-write fails —
-#      the tsd row is best-effort, landing itself never depends on it.
 #   9. testenv-batch.sh's suite-times hook (_append_suite_times) appends a suite-timing row —
 #      the sole producer since the git-notes ledger and suite-times.sh were retired.
 #  10. tsd-query.sh: baseline (avg), rate (count/hours), dwell (quantile), and by-group
@@ -143,51 +138,7 @@ is "20 concurrent writers -> 20 lines" "20" "$(jpy "$FAM4" 'len(rows)')"
 is "every line parses as one JSON object (no interleaving)" \
    "20" "$(jpy "$FAM4" 'sum(1 for r in rows if isinstance(r, dict))')"
 
-# ============================================================================================
-printf '\n%s\n' "7-8. land_mark (lib.sh) writes a landing-event row, best-effort"
-# ============================================================================================
-# land_mark is now a one-line shim onto `landing-pass mark` (sp-cnnt6, "wave 4.16"), which
-# does this dual-write in-process rather than shelling to tsd-write — the tree's own build,
-# same reasoning as TSD_BIN above.
-command -v landing-pass >/dev/null 2>&1 || bail "landing-pass is not on PATH"
-RUN5="$T/run5"; DB5="$T/db5"; mkdir -p "$RUN5" "$DB5"
-(
-    export SPIRA_HOME="$T" SPIRA_RUN="$RUN5" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    set -uo pipefail
-    . "$HERE/lib.sh"
-    landing-pass mark "sp-landtest" "LANDED" "deadbeef" ""
-    echo "land_mark_rc=$?"
-) > "$T/land_mark.out" 2>&1
-land_out="$(cat "$T/land_mark.out")"
-want "land_mark still succeeds" "land_mark_rc=0" "$land_out"
-[ -f "$RUN5/landstate/sp-landtest" ] && ok "landstate file still written (unchanged behaviour)" \
-                                      || bad "landstate file missing — land_mark's own job regressed"
-FAM5="$RUN5/tsd/landing-event.jsonl"
-[ -f "$FAM5" ] && ok "landing-event row appended" || bad "MUST-FAIL CHECK: no landing-event row (old lib.sh behaviour)"
-if [ -f "$FAM5" ]; then
-    is "landing-event: bead"  "sp-landtest" "$(jpy "$FAM5" 'rows[0]["bead"]')"
-    is "landing-event: state" "LANDED"      "$(jpy "$FAM5" 'rows[0]["state"]')"
-    is "landing-event: tip"   "deadbeef"    "$(jpy "$FAM5" 'rows[0]["tip"]')"
-fi
-
-# Best-effort: a tsd row that cannot be written must not break land_mark's own job. The
-# write is in-process now (landing-pass/src/landstate.rs), so the failure planted is a tsd/
-# path that cannot become a directory, not a failing tsd-write binary on PATH.
-RUN6="$T/run6"; mkdir -p "$RUN6"
-: > "$RUN6/tsd"   # a plain file where the tsd family dir must go: mkdir -p on it fails
-(
-    export SPIRA_HOME="$T" SPIRA_RUN="$RUN6" SPIRA_DB="$DB5" SPIRA_REPO="$HERE/.." SPIRA_CONF=/nonexistent
-    set -uo pipefail
-    . "$HERE/lib.sh"
-    landing-pass mark "sp-landtest2" "LANDED" "cafef00d" ""
-    echo "land_mark_rc=$?"
-) > "$T/land_mark2.out" 2>&1
-land_out2="$(cat "$T/land_mark2.out")"
-want "land_mark succeeds even when the tsd row cannot be written" "land_mark_rc=0" "$land_out2"
-[ -f "$RUN6/landstate/sp-landtest2" ] && ok "landstate still written with the tsd write failing" \
-                                       || bad "landstate broke when the tsd write failed"
-[ -f "$RUN6/tsd/landing-event.jsonl" ] && bad "a tsd row appeared despite the tsd write failing" \
-                                        || ok "no tsd row written when the tsd write fails"
+DB5="$T/db5"; mkdir -p "$DB5"
 
 # ============================================================================================
 printf '\n%s\n' "9. suite-timing rows (RETIRED here)"

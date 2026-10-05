@@ -212,11 +212,19 @@ git init -q "$FIXTURE_REPO" \
        GIT_COMMITTER_EMAIL=t@t \
        git -C "$FIXTURE_REPO" commit --allow-empty -q -m "initial" 2>/dev/null
 
+# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`.
+# census puts <home>/../bin first on PATH, so the stub lives in a release-shaped directory
+# whose spira/ is this tree: $LCSTATE/<id> holds the state, and no file is spira-lc's NO_ROW.
+LCHOME="$TMP/lchome"; LCSTATE="$TMP/lc-state"; mkdir -p "$LCHOME/bin" "$LCSTATE"
+ln -s "$HERE" "$LCHOME/spira"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$LCHOME/bin/spira-lc"
+chmod +x "$LCHOME/bin/spira-lc"
+
 run_census_fixture() {
     env SPIRA_DB="$SPIRA_DB" \
         SPIRA_MAECHEN_REMEDY_LABEL="$REMEDY_LABEL" \
         SPIRA_CONF="$TMP/no-conf" \
-        SPIRA_HOME="$HERE" \
+        SPIRA_HOME="$LCHOME/spira" \
         SPIRA_REPO="$FIXTURE_REPO" \
         "$CENSUS" "$@" 2>/dev/null
 }
@@ -232,13 +240,14 @@ lack "closed-unlanded: still suppressed" "sp-recur-remedy-class" "$out5_pre"
 want "closed-unlanded: annotated [suppressed: remedy closed, not landed]" \
     "[suppressed: remedy closed, not landed]" "$(run_census_fixture --with-suppressed)"
 
-# Land the remedy: a landing-record commit naming the bead on the base. landed() trusts
-# only two subject shapes (law-a-matcher-reads-code-not-prose / sp-dgaig); a
-# cross-reference like "fix: <id> closes <class>" is a mention, not a landing record.
+# A commit naming the remedy on the base is not a landing: only the lifecycle record is.
 GIT_AUTHOR_NAME=test GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=test GIT_COMMITTER_EMAIL=t@t \
     git -C "$FIXTURE_REPO" commit --allow-empty -q \
     -m "spira: land $remedy_id" 2>/dev/null
+lack "naming commit alone: still suppressed" "sp-recur-remedy-class" "$(run_census_fixture)"
 
+# Land the remedy: the lifecycle record reads LANDED.
+echo LANDED > "$LCSTATE/$remedy_id"
 out5="$(run_census_fixture)"
 want "landed: class reappears" "sp-recur-remedy-class" "$out5"
 lack "landed: no suppression annotation" "[suppressed]" "$out5"

@@ -25,9 +25,9 @@
 #   4. FALSE BLOCKER — an open bead that depends (type=blocks) on the conflict-case bead
 #      above is noted once that blocker is reopened.
 #
-# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): landed()/content_landed()
-# read git ancestry and merge-tree, which a stub cannot stand in for without becoming a
-# second implementation of git.
+# REAL GIT REPO, REAL TESTDB (law-prefer-the-real-dependency): content_landed() reads git
+# ancestry and merge-tree, which a stub cannot stand in for without becoming a second
+# implementation of git. "landed" itself is the lifecycle record (stub spira-lc below).
 #
 # tier: T2
 # defect: sp-0qp7s
@@ -58,8 +58,14 @@ git -C "$REPO" remote set-head origin main
 REPONAME=statetestrepo
 printf '%s | %s | push | main | |\n' "$REPONAME" "$REPO" > "$TMP/repo-map"
 
+# "landed" is the lifecycle record's LANDED state (sp-oqf8c), read through `spira-lc state`:
+# a stub answers from $LCSTATE/<id>; no file is spira-lc's NO_ROW (rc 1).
+LCSTATE="$TMP/lc-state"; mkdir -p "$LCSTATE" "$TMP/lcbin"
+printf '#!/usr/bin/env bash\n[ "$1" = state ] || exit 2\n[ -s "%s/$2" ] || exit 1\ncat "%s/$2"\n' "$LCSTATE" "$LCSTATE" > "$TMP/lcbin/spira-lc"
+chmod +x "$TMP/lcbin/spira-lc"
+
 run_sweep() {
-    env -i PATH="$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
+    env -i PATH="$TMP/lcbin:$PATH" HOME="$HOME" LC_ALL=C.UTF-8 \
         SPIRA_CONF="$TMP/no.conf" \
         SPIRA_HOME="$HERE" SPIRA_REPO="$REPO" SPIRA_HOME_REPO="$REPONAME" \
         SPIRA_BD="${SPIRA_BD:-bd}" \
@@ -89,7 +95,8 @@ echo "FIXTURE"
 # ==========================================================================================
 testdb_reset
 
-# Case 1: LANDED-BUT-OPEN — sp-st-lbo's own commit is already on the base.
+# Case 1: LANDED-BUT-OPEN — the lifecycle record has sp-st-lbo LANDED, its commit on the base.
+echo LANDED > "$LCSTATE/sp-st-lbo"
 git -C "$REPO" commit -q --allow-empty -m "sp-st-lbo: implement the thing"
 git -C "$REPO" push -q origin main
 git -C "$REPO" fetch -q origin

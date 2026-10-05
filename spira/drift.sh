@@ -75,7 +75,7 @@ declared_verdict() {
         printf 'UNSHIPPED %s (%s)\n' "$f" "$why"
         return 1
     fi
-    if landing-pass landed "$bead" "${SPIRA_REPO:-}" >/dev/null 2>&1; then
+    if [ "$(spira-lc state "$bead" 2>/dev/null)" = LANDED ]; then
         printf 'RETIRE-NOW %s (declared local override; retiring bead %s has landed)\n' "$f" "$bead"
         return 1
     fi

@@ -198,6 +198,7 @@ version = "1.0.0"
 dependencies = [
  "aeon",
  "spira-config",
+ "testkit",
 ]
 
 [[package]]
