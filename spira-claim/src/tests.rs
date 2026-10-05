@@ -960,6 +960,30 @@ fn bulk_ready_by_fayth_cli_buckets_one_fetch_by_the_chamber_roster() {
 }
 
 #[test]
+fn bulk_ready_by_fayth_cli_excludes_exactly_what_fayth_ready_excludes() {
+    // sp-85p8t: e (open children) and f (addressed to another fayth) are never claimable by
+    // a builder, so neither count may include them — the bulk count once did, and the
+    // sentinel summoned a builder for them every pass.
+    let home = chamber_home(&[("builder", "spira,plan", ""), ("ops", "spira,ops-trigger", "")]);
+    let bd = sh(
+        r#"echo '[{"id":"a","labels":["spira","plan"]},{"id":"e","labels":["spira","plan","spira-open-children"]},{"id":"f","labels":["spira","plan","fayth:ops"]}]'"#,
+    );
+    let _env = testkit::env(&[
+        ("SPIRA_HOME", Some(home.as_str())),
+        ("SPIRA_BD", Some(bd.as_str())),
+        ("SPIRA_DB", None),
+        ("SPIRA_READY_SNAPSHOT", None),
+        ("SPIRA_READY_CACHE", None),
+        ("SPIRA_FAYTHS", None),
+        ("SPIRA_SUBMITTED_LABEL", Some("spira-submitted")),
+        ("SPIRA_OPEN_CHILDREN_LABEL", Some("spira-open-children")),
+        ("SPIRA_QUEUE_WAIT_LABEL", None),
+    ]);
+    let o = run(&["bulk-ready-by-fayth"], "");
+    assert_eq!(o.out, "builder 1\nops 0\n", "{}", o.err);
+}
+
+#[test]
 fn bulk_ready_by_fayth_cli_reads_the_snapshot_instead_of_calling_bd() {
     let home = chamber_home(&[("builder", "spira,plan", "")]);
     let snap = tmp(r#"[{"id":"a","labels":["spira","plan"]}]"#);
