@@ -249,6 +249,7 @@ certified_rows() {
         [ -f "$f" ] || continue
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
+        grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
     done
     printf ']\n'
@@ -256,7 +257,11 @@ certified_rows() {
 printf '%s\n' "$*" >> "$log"
 case "${1:-}" in
     create-bead) exit 0 ;;
-    cut|stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    cut)
+        members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
+        for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
+        exit "${SPIRA_LC_STUB_RC:-0}" ;;
+    stack) exit "${SPIRA_LC_STUB_RC:-0}" ;;
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;   # lc_probe: an (empty) array; the pool: landstate's CERTIFIED records
     show) printf '{"bead":{}}\n'; exit 0 ;;   # read_stack: a bead the machine holds, unstacked
     *) exit 0 ;;
@@ -336,6 +341,7 @@ plant_open() {
 
 certify() {   # certify <id> <tip-sha> [epoch]
     printf 'CERTIFIED %s %s\n' "$2" "${3:-$(date +%s)}" > "$LANDSTATE/$1"
+    [ -f "$RUN/lc-taken" ] && { grep -vx "$1" "$RUN/lc-taken" > "$RUN/lc-taken.n" || true; mv "$RUN/lc-taken.n" "$RUN/lc-taken"; }
 }
 
 echo "test-batcher-cut.sh"
@@ -1005,11 +1011,16 @@ certified_rows() {
         [ -f "$f" ] || continue
         read -r st tip ep < "$f"
         [ "$st" = CERTIFIED ] || continue
+        grep -qx "$(basename "$f")" "${SPIRA_RUN:-/nonexistent}/lc-taken" 2>/dev/null && continue
         printf '%s{"bead_id":"%s","tip":"%s","updated_at":%s}' "$sep" "$(basename "$f")" "$tip" "${ep:-0}"; sep=','
     done
     printf ']\n'
 }
 case "${1:-}" in
+    cut)
+        members=""; while [ $# -gt 0 ]; do [ "$1" = --members ] && members="$2"; shift; done
+        for m in $(printf '%s' "$members" | tr ',' ' '); do printf '%s\n' "${m%%:*}" >> "${SPIRA_RUN:?}/lc-taken"; done
+        exit 0 ;;
     list) if [ "${3:-}" = CERTIFIED ]; then certified_rows; else printf '[]\n'; fi; exit 0 ;;
     show)
         f="${SPIRA_LC_STACKS_DIR:?}/${2:-}"
