@@ -309,6 +309,26 @@ impl Pool {
         r.map_err(|e| e.to_string())
     }
 
+    /// Destroys the warm VM and any provision in flight: both were cloned from a template that
+    /// is no longer current. Leases are left to finish. Returns how many VMs it released.
+    pub fn recycle(&self, factory: &dyn Fn() -> Result<Attempt, String>) -> Result<usize, String> {
+        let handles = self.with_state(|s| {
+            let mut h: Vec<String> = s.ready.take().map(|v| v.handle).into_iter().collect();
+            if let Some(pr) = s.provisioning.take() {
+                h.extend(pr.vmid);
+            }
+            h
+        })?;
+        let mut released = 0;
+        for h in &handles {
+            match self.release(h, factory) {
+                Ok(()) => released += 1,
+                Err(e) => eprintln!("{e}"),
+            }
+        }
+        Ok(released)
+    }
+
     /// Releases every VM `owner` holds: its leases and a provision it had in flight (a `run`
     /// being interrupted).
     pub fn release_owned_by(&self, owner: ProcId, factory: &dyn Fn() -> Result<Attempt, String>) {
@@ -666,6 +686,28 @@ mod tests {
         assert!(fp.name("777").is_none(), "its provision in flight is destroyed too");
         assert!(fp.name(&theirs.handle).is_some());
         assert!(read_state(&pl.state_file()).unwrap().provisioning.is_none());
+    }
+
+    #[test]
+    fn recycle_destroys_the_warm_vm_and_the_provision_but_not_a_lease() {
+        let d = TempDir::new();
+        let (fp, alarm, sp) = (FakeProvider::new(), FakeAlarm::default(), FakeSpawner::default());
+        let pl = pool(&d, 1);
+        let f = || Ok(attempt(&fp));
+        let deps = Deps { factory: &f, alarm: &alarm, spawner: &sp };
+        let (leased, _) = pl.acquire(&deps, None).unwrap();
+        fp.plant("201", "round-201");
+        fp.plant("202", "round-202");
+        pl.with_state(|s| {
+            s.ready = Some(Vm { handle: "201".into(), addr: "10.0.0.1".into() });
+            s.provisioning = Some(Provisioning { owner: ProcId::current(), vmid: Some("202".into()), since: 0 });
+        })
+        .unwrap();
+        assert_eq!(pl.recycle(&f).unwrap(), 2);
+        assert!(fp.name("201").is_none() && fp.name("202").is_none());
+        assert!(fp.name(&leased.handle).is_some(), "a run in progress keeps its VM");
+        let s = read_state(&pl.state_file()).unwrap();
+        assert!(s.ready.is_none() && s.provisioning.is_none() && s.doomed.is_empty());
     }
 
     #[test]

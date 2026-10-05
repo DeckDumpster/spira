@@ -16,7 +16,7 @@ use crate::pve::{HttpTransport, Pve};
 use crate::run::{parse_run_args, run, GitHost, RunEnv, SshRemote};
 use crate::schema::ProcId;
 
-pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|teardown|template <tree-dir> [--vmid <n>]";
+pub const USAGE: &str = "usage: round-vm acquire|release <handle>|run <tree-dir> [--suites <csv>] [--maxpar <n>] [--toolchain <ver>] [--results-dir <dir>] [--attr-spool <dir>]|status|teardown|template|refresh <tree-dir> [--ref <rev>] [--toolchain <ver>]";
 
 fn secs_env(key: &str, default: u64) -> Duration {
     Duration::from_secs(std::env::var(key).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(default))
@@ -107,7 +107,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     };
     let rest = rest.to_vec();
     match verb.as_str() {
-        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" | "teardown" => {}
+        "acquire" | "release" | "run" | "status" | "_provision-bg" | "template" | "refresh" | "teardown" => {}
         other => {
             eprintln!("round-vm: unknown verb: {other}");
             eprintln!("{USAGE}");
@@ -129,7 +129,7 @@ pub fn main_with(args: Vec<String>) -> i32 {
     } else {
         None
     };
-    let template_args = if verb == "template" {
+    let template_args = if verb == "template" || verb == "refresh" {
         match crate::template::parse_template_args(&rest) {
             Ok(a) => Some(a),
             Err(e) => {
@@ -199,9 +199,10 @@ pub fn main_with(args: Vec<String>) -> i32 {
                 1
             }
         },
-        "template" => {
+        "template" | "refresh" => {
             let Some(a) = template_args.as_ref() else { return 2 };
-            no_panic(|| template(&cfg, a))
+            let refresh = verb == "refresh";
+            no_panic(|| template(&cfg, a, refresh, &pool))
         }
         "run" => {
             let me = ProcId::current();
@@ -227,7 +228,12 @@ pub fn main_with(args: Vec<String>) -> i32 {
 }
 
 /// `round-vm template` (DESIGN.md §2.2b): preflight, then build; prints `<vmid> <image>`.
-fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
+///
+/// `refresh` is the unattended form: it does nothing when the template already holds the tree's
+/// image, and after a build records the template, repoints `pve.env` at it and recycles the warm
+/// pool, so no person types a VMID.
+fn template(cfg: &Config, a: &crate::template::TemplateArgs, refresh: bool, pool: &Pool) -> i32 {
+    use crate::template::{repoint, Record};
     use crate::run::Host;
     let host = GitHost { state_dir: cfg.state_dir.clone(), mirror_port: cfg.mirror_port, listen: cfg.host_addr.clone().unwrap_or_default() };
     if !host.is_checkout(&a.tree_dir) {
@@ -247,13 +253,34 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
         );
         return 2;
     }
-    let (commit, _) = match host.head(&a.tree_dir) {
-        Ok(h) => h,
+    let commit = match &a.rev {
+        Some(r) => crate::run::git(&["-C", &a.tree_dir.to_string_lossy(), "rev-parse", &format!("{r}^{{commit}}")]),
+        None => host.head(&a.tree_dir).map(|h| h.0),
+    };
+    let commit = match commit {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("round-vm template: {e}");
             return 2;
         }
     };
+    if refresh {
+        let tag = match host.image_tag(&a.tree_dir, &commit) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("round-vm refresh: cannot compute the image tag of {commit}: {e}");
+                return 2;
+            }
+        };
+        let named = PveEnv::load(&cfg.pve_env_path, &|k| std::env::var(k).ok()).map(|p| p.template_vmid).ok();
+        if let (Some(r), Some(n)) = (Record::read(&cfg.state_dir), named) {
+            if r.vmid == n && r.holds(&tag) {
+                eprintln!("round-vm refresh: template {n} already holds {} — nothing to do", r.image);
+                return 0;
+            }
+        }
+        eprintln!("round-vm refresh: the template does not hold localhost/spira-testenv:{tag} — rebuilding it");
+    }
     let attempt = match real_attempt() {
         Ok(at) => at,
         Err(e) => {
@@ -280,6 +307,23 @@ fn template(cfg: &Config, a: &crate::template::TemplateArgs) -> i32 {
         a.toolchain.as_deref().unwrap_or(""),
         cfg.cache_home.as_deref().unwrap_or(""),
     ) {
+        Ok(b) if refresh => {
+            println!("{} {}", b.vmid, b.image);
+            let done = Record { vmid: b.vmid.clone(), image: b.image.clone() }
+                .write(&cfg.state_dir)
+                .and_then(|()| repoint(&cfg.pve_env_path, &b.vmid))
+                .and_then(|()| pool.recycle(&real_attempt));
+            match done {
+                Ok(n) => {
+                    eprintln!("round-vm refresh: template {} holds {}; {} repointed, {n} warm VM(s) recycled", b.vmid, b.image, cfg.pve_env_path.display());
+                    0
+                }
+                Err(e) => {
+                    eprintln!("round-vm refresh: template {} built but not put in force: {e}", b.vmid);
+                    1
+                }
+            }
+        }
         Ok(b) => {
             println!("{} {}", b.vmid, b.image);
             eprintln!(
@@ -322,5 +366,6 @@ mod tests {
         assert_eq!(main_with(s(&["run", "/t", "--bogus"])), 2);
         assert_eq!(main_with(s(&["template"])), 2);
         assert_eq!(main_with(s(&["template", "/t", "--vmid", "x"])), 2);
+        assert_eq!(main_with(s(&["refresh"])), 2);
     }
 }
