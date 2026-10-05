@@ -113,7 +113,7 @@ pub fn reachable_keys() -> Kv {
     };
 
     let home = io::home_dir();
-    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
 
     let mut live: Vec<LabelSet> = Vec::new();
     if let Some(fayths) = io::lib_call(&home, "spira_fayths", &[]) {

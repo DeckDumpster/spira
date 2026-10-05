@@ -41,7 +41,7 @@ pub fn core_detail_keys() -> Kv {
 // ---------------------------------------------------------------------------------------
 
 fn next_section(out: &mut Kv, part_map: &HashMap<String, String>) {
-    let ask = std::env::var("SPIRA_ASK_LABEL").unwrap_or_else(|_| "needs-ryan".to_string()); // literal-ok: fixture/fallback
+    let ask = spira_config::resolve::key_for_process("SPIRA_ASK_LABEL").unwrap_or_default(); // the configured ask label; never a literal fallback (literal-lint ask_fallback)
     let ci_label = std::env::var("SPIRA_CI_LABEL").unwrap_or_else(|_| "gh:run".to_string());
     let queue_wait = std::env::var("SPIRA_QUEUE_WAIT_LABEL").unwrap_or_default();
 

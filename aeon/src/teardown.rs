@@ -67,15 +67,10 @@ impl Run<'_> {
         if !work.join("spira/build-fence.sh").is_file() {
             return None;
         }
-        let base = format!("SPIRA_GATE_BASE={}", self.s.base_fq);
-        let steps: [(&str, Vec<String>); 2] = [
-            ("spira-lint", Vec::new()),
-            ("env", s(&[&base, "bash", "spira/build-fence.sh"])),
-        ];
-        for (prog, args) in steps {
+        for (prog, args) in fast_tier_steps(&self.s.base_fq) {
             let o = self.d.exec.exec(prog, &args, None, Some(work));
             if o.code != 0 && o.code != 127 {
-                let name = if prog == "env" { "spira/build-fence.sh" } else { prog };
+                let name = if args.iter().any(|a| a == "spira/build-fence.sh") { "spira/build-fence.sh" } else { "spira-lint" };
                 return Some(format!("{name} failed (rc={}):\n{}{}", o.code, o.stdout, o.stderr));
             }
         }
@@ -527,5 +522,33 @@ impl Run<'_> {
         self.remove_identity();
         self.ledger_done(rc, status);
         rc
+    }
+}
+
+/// The fast tier's commands, in order. BOTH get the branch's base: spira-lint's diff-relative
+/// rules (plan-matrix, lockfile-lint, the tier-budget allowlists) exit with "no base to compare
+/// against" without SPIRA_GATE_BASE, so a bare `spira-lint` refused every aeon's handoff
+/// (sp-zh81k, 2026-10-04: four builders reopened in a row).
+fn fast_tier_steps(base_fq: &str) -> Vec<(&'static str, Vec<String>)> {
+    let base = format!("SPIRA_GATE_BASE={base_fq}");
+    vec![
+        ("env", vec![base.clone(), "spira-lint".to_string()]),
+        ("env", vec![base, "bash".to_string(), "spira/build-fence.sh".to_string()]),
+    ]
+}
+
+#[cfg(test)]
+mod fast_tier_steps_tests {
+    use super::fast_tier_steps;
+    #[test]
+    fn spira_lint_and_the_build_fence_both_run_against_the_branch_base() {
+        let steps = fast_tier_steps("refs/heads/local/main");
+        assert_eq!(steps.len(), 2);
+        for (prog, args) in &steps {
+            assert_eq!(*prog, "env");
+            assert_eq!(args[0], "SPIRA_GATE_BASE=refs/heads/local/main", "{args:?}");
+        }
+        assert_eq!(steps[0].1[1], "spira-lint");
+        assert_eq!(steps[1].1[1..], ["bash".to_string(), "spira/build-fence.sh".to_string()]);
     }
 }

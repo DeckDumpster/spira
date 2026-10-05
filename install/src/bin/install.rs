@@ -117,70 +117,36 @@ fn sccache_help_has_webdav(help: &str) -> bool {
     help.lines().find(|l| l.trim_start().starts_with("WebDAV:")).is_some_and(|l| l.trim_end().ends_with("true"))
 }
 
-/// The pinned Go toolchain (go.dev/dl), used ONLY to build aerc, and ONLY when no usable
-/// go (>= GO_MIN_MAJOR.GO_MIN_MINOR — aerc's own go.mod says `go 1.25.0`) is already
-/// reachable (sp-x6v17: "reuse it rather than fetching a second"; find_usable_go, below,
-/// checks the same GO env / $HOME/.local/go/bin/go / PATH candidates doctor's own go check
-/// and build-bd.sh's $GO default already use before this ever fetches anything). Fetched
-/// into $HOME/.local/go — that exact path, not a system path like /usr/local/go — so a
-/// toolchain this code fetches is indistinguishable from one an operator placed there by
-/// hand per doctor's own hint text ("or use $HOME/.local/go/bin/go").
-const GO_VERSION: &str = "1.27.1";
-const GO_MIN_MAJOR: u32 = 1;
-const GO_MIN_MINOR: u32 = 25;
-/// go.dev/dl's published sha256 for go{GO_VERSION}.linux-{amd64,arm64}.tar.gz — checked
-/// after download, unlike duckdb/sccache/inotify-tools' fetches, because this one tarball
-/// becomes the compiler every subsequent build in this phase trusts.
-const GO_SHA256_AMD64: &str = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445";
-const GO_SHA256_ARM64: &str = "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec";
-
 /// The pinned aerc tag (git.sr.ht/~rjarry/aerc). NOT a "v"-prefixed go module version (its
 /// tags are bare "0.22.0", which `go install git.sr.ht/~rjarry/aerc@0.22.0` cannot resolve —
 /// go module version queries require a canonical `vX.Y.Z` — and aerc publishes no prebuilt
-/// binary release either), so this fetches the tag's own source archive and builds it from
-/// a local checkout instead, where no VCS tag lookup is needed at all.
+/// binary release either), so `spira/build-tarball.sh` builds it ONCE, at release-build
+/// time, from the tag's own source archive, and ships the resulting binary inside the
+/// release tarball at [`AERC_VENDORED_REL`]. Install's phase -1 (`install_aerc`, below)
+/// only ever COPIES that already-built binary — never a network fetch, never a Go
+/// toolchain, never `go install`, not even when no usable one is already present.
+///
+/// Before sp-41so3 this constant named a version install itself built from source at
+/// install time: a fetched Go toolchain, then `go install` resolving ~95 of aerc's own
+/// module dependencies over the network. law-install-installs-every-dependency still
+/// requires install to provide aerc — there is no optional tier — but an install that needs
+/// ~95 network round-trips to proxy.golang.org is fragile by construction: on 2026-10-04
+/// local acceptance failed when every one of those fetches hit "net/http: TLS handshake
+/// timeout" (this host's IPv6 is unreachable; load was high) — the identical build had
+/// passed earlier the same day. Building once, on the release-build machine, and shipping
+/// the binary removes the fragility without touching the law: install still provides aerc,
+/// it just never has to build it.
 const AERC_VERSION: &str = "0.22.0";
 
-/// Map `std::env::consts::ARCH` to go.dev/dl's GOARCH naming (distinct from both
-/// sccache_target's Rust-triple style and inotify_tools_arch's bare label).
-fn go_release_arch(arch: &str) -> Result<&'static str, String> {
-    match arch {
-        "x86_64" => Ok("amd64"),
-        "aarch64" => Ok("arm64"),
-        other => Err(format!("no go toolchain build for architecture {other}")),
-    }
-}
-
-fn go_release_sha256(goarch: &str) -> Result<&'static str, String> {
-    match goarch {
-        "amd64" => Ok(GO_SHA256_AMD64),
-        "arm64" => Ok(GO_SHA256_ARM64),
-        other => Err(format!("no pinned go{GO_VERSION} checksum for {other}")),
-    }
-}
-
-fn go_release_url(goarch: &str) -> String {
-    format!("https://go.dev/dl/go{GO_VERSION}.linux-{goarch}.tar.gz")
-}
-
-fn aerc_src_url() -> String {
-    format!("https://git.sr.ht/~rjarry/aerc/archive/{AERC_VERSION}.tar.gz")
-}
-
-/// Parses `go version`'s stdout (`"go version go1.27.1 linux/amd64\n"`) and reports whether
-/// it names a version >= `min_major.min_minor`. Malformed/unexpected output is `false`,
-/// never a panic.
-fn go_version_at_least(output: &str, min_major: u32, min_minor: u32) -> bool {
-    let Some(tok) = output.split_whitespace().nth(2).and_then(|w| w.strip_prefix("go")) else {
-        return false;
-    };
-    let mut parts = tok.split('.');
-    let Some(major) = parts.next().and_then(|p| p.parse::<u32>().ok()) else {
-        return false;
-    };
-    let minor = parts.next().and_then(|p| p.parse::<u32>().ok()).unwrap_or(0);
-    (major, minor) >= (min_major, min_minor)
-}
+/// Where the release build (`spira/build-tarball.sh`) ships the aerc binary it built once,
+/// relative to the release root — the same ancestor whose `bin/` holds this very
+/// `spira-install` binary, and what
+/// `spira_config::release_env::own_release_root_for_process` resolves to for it. Deliberately
+/// NOT under `bin/`: `release::build::clashes` (and anything else that assumes `bin/` holds
+/// only this workspace's own `[[bin]]` targets) never has to learn that aerc is not one of
+/// them, and `spira/build-tarball.sh`'s own compat-symlink pass over `bin/` never has to
+/// skip it either.
+const AERC_VENDORED_REL: &str = "vendor/bin/aerc";
 
 /// Parses `aerc -v`'s stdout (`"aerc 0.22.0 (go1.27.1 amd64 linux)\n"`, from main.go's
 /// `ShowVersion`/`buildInfo` — main.Version is what `-ldflags "-X main.Version=..."` sets)
@@ -189,10 +155,10 @@ fn aerc_reports_version(output: &str, version: &str) -> bool {
     output.split_whitespace().nth(1) == Some(version)
 }
 
-/// Whether fetch_aerc can skip the entire go-toolchain-then-build pipeline: the aerc
-/// already at `~/.local/bin/aerc` (the exact binary GOBIN would overwrite) already reports
-/// the pinned AERC_VERSION. `current` is `None` when that path is absent or did not run.
-fn aerc_build_can_be_skipped(current: Option<&str>) -> bool {
+/// Whether `install_aerc` can skip the copy entirely: the aerc already at
+/// `~/.local/bin/aerc` (the exact path `install_aerc` would overwrite) already reports the
+/// pinned AERC_VERSION. `current` is `None` when that path is absent or did not run.
+fn aerc_install_can_be_skipped(current: Option<&str>) -> bool {
     current.is_some_and(|s| aerc_reports_version(s, AERC_VERSION))
 }
 
@@ -200,8 +166,8 @@ fn aerc_build_can_be_skipped(current: Option<&str>) -> bool {
 /// metrics.disabled, and fetch every dependency doctor would otherwise FAIL on
 /// (law-install-installs-every-dependency, operator ruling 2026-10-03: install provides every
 /// dependency, there is no optional tier) — duckdb, sccache (with its webdav backend),
-/// inotifywait, and aerc (building it from source behind a fetched Go toolchain when no
-/// usable one is already present).
+/// inotifywait, and aerc (copied from this release's own vendored binary — sp-41so3; see
+/// AERC_VERSION's comment — never built here, never a network fetch).
 fn dependencies(dry: bool) -> Result<(), String> {
     let home = std::env::var("HOME").map_err(|_| "HOME is unset".to_string())?;
     let bin = Path::new(&home).join(".local/bin");
@@ -228,7 +194,7 @@ fn dependencies(dry: bool) -> Result<(), String> {
     fetch_duckdb(dry, &bin)?;
     fetch_sccache(dry, &bin)?;
     fetch_inotifywait(dry, &bin)?;
-    fetch_aerc(dry, &bin, &home)?;
+    install_aerc(dry, &bin, spira_config::release_env::own_release_root_for_process().as_deref())?;
     Ok(())
 }
 
@@ -374,88 +340,23 @@ fn fetch_inotifywait(dry: bool, bin: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The first already-usable go (>= GO_MIN_MAJOR.GO_MIN_MINOR) found among: $GO, the
-/// conventional $HOME/.local/go/bin/go, or PATH — the same candidate order doctor's own
-/// go check (doctor/src/lib.rs's check_operator_channel) uses, so this reuses exactly what
-/// doctor would already call "go — <path>" rather than fetching a second toolchain.
-fn find_usable_go(home: &str) -> Option<String> {
-    let candidates = [std::env::var("GO").ok().filter(|v| !v.is_empty()), Some(format!("{home}/.local/go/bin/go")), which_prog("go")];
-    for c in candidates.into_iter().flatten() {
-        if !Path::new(&c).is_file() {
-            continue;
-        }
-        let ver = Command::new("timeout").args(["5", &c, "version"]).output();
-        if let Ok(o) = ver {
-            if o.status.success() && go_version_at_least(&String::from_utf8_lossy(&o.stdout), GO_MIN_MAJOR, GO_MIN_MINOR) {
-                return Some(c);
-            }
-        }
-    }
-    None
-}
-
-/// Fetch the pinned go.dev/dl toolchain into $HOME/.local/go. Only called from fetch_aerc
-/// when find_usable_go found nothing usable; `dry` is handled by fetch_aerc's own
-/// early-return, so this is never reached in a dry run, but it keeps its own guard for any
-/// future direct caller.
-fn fetch_go_toolchain(dry: bool, home: &str) -> Result<String, String> {
-    let goarch = go_release_arch(std::env::consts::ARCH)?;
-    let url = go_release_url(goarch);
-    let dest = format!("{home}/.local/go");
-    let gobin = format!("{dest}/bin/go");
-    if dry {
-        would(&format!("fetch go {GO_VERSION} from {url} into {dest}"));
-        return Ok(gobin);
-    }
-    let local = format!("{home}/.local");
-    std::fs::create_dir_all(&local).map_err(|e| format!("cannot create {local}: {e}"))?;
-    let tgz = format!("{local}/.go-toolchain.download.tar.gz");
-    // batch-job: install downloads a pinned Go toolchain once per host, only when aerc needs
-    // building and no usable go is already present; bounded by curl --max-time 300.
-    run_ok("curl", &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz, &url])
-        .map_err(|e| format!("cannot fetch go toolchain from {url}: {e}"))?;
-    let want = go_release_sha256(goarch)?;
-    let sha = Command::new("timeout").args(["5", "sha256sum", &tgz]).output().map_err(|e| format!("sha256sum: {e}"))?;
-    let got = String::from_utf8_lossy(&sha.stdout).split_whitespace().next().unwrap_or("").to_string();
-    if got != want {
-        let _ = std::fs::remove_file(&tgz);
-        return Err(format!("go toolchain checksum mismatch for {url}: got {got}, want {want}"));
-    }
-    let extract_tmp = format!("{local}/.go.new");
-    let _ = std::fs::remove_dir_all(&extract_tmp);
-    std::fs::create_dir_all(&extract_tmp).map_err(|e| format!("cannot create {extract_tmp}: {e}"))?;
-    // batch-job: unpacking the fetched go toolchain tree (~210 MB uncompressed) once per
-    // install; bounded at 180 s.
-    let unpacked = Command::new("timeout").args(["180", "tar", "-xzf", &tgz, "-C", &extract_tmp]).status().map(|s| s.success()).unwrap_or(false);
-    let _ = std::fs::remove_file(&tgz);
-    if !unpacked {
-        let _ = std::fs::remove_dir_all(&extract_tmp);
-        return Err(format!("cannot unpack go toolchain from {url}"));
-    }
-    let new_go = format!("{extract_tmp}/go/bin/go");
-    let ok = Command::new("timeout")
-        .args(["5", &new_go, "version"])
-        .output()
-        .map(|o| o.status.success() && go_version_at_least(&String::from_utf8_lossy(&o.stdout), GO_MIN_MAJOR, GO_MIN_MINOR))
-        .unwrap_or(false);
-    if !ok {
-        let _ = std::fs::remove_dir_all(&extract_tmp);
-        return Err(format!("fetched go toolchain at {new_go} does not run or is below go{GO_MIN_MAJOR}.{GO_MIN_MINOR}"));
-    }
-    let _ = std::fs::remove_dir_all(&dest);
-    std::fs::rename(format!("{extract_tmp}/go"), &dest).map_err(|e| format!("cannot install go toolchain to {dest}: {e}"))?;
-    let _ = std::fs::remove_dir_all(&extract_tmp);
-    info(&format!("installed go {GO_VERSION} at {dest}"));
-    Ok(gobin)
-}
-
-/// Build aerc (git.sr.ht/~rjarry/aerc, COCKPIT_MAIL's default) into ~/.local/bin, unless the
-/// aerc already there already reports AERC_VERSION. aerc publishes no prebuilt binary
-/// release (unlike duckdb/sccache/inotify-tools above), so this fetches its pinned tag's
-/// source archive and runs `go install` against that local checkout — reusing an already-
-/// usable go toolchain (find_usable_go) when one exists, fetching a pinned one
-/// (fetch_go_toolchain) only when it doesn't.
-fn fetch_aerc(dry: bool, bin: &Path, home: &str) -> Result<(), String> {
+/// Phase -1's aerc step (sp-41so3): copy the release's own vendored aerc
+/// ([`AERC_VENDORED_REL`], built once at release-build time by
+/// `spira/build-tarball.sh`) to `bin`/aerc, unless the aerc already there already
+/// reports [`AERC_VERSION`]. No network, no Go toolchain, no `go install` — ever; see
+/// `AERC_VERSION`'s comment for why.
+///
+/// `release_root` is this `spira-install` binary's own release
+/// (`spira_config::release_env::own_release_root_for_process`, resolved once by the
+/// caller). `None` means this process is not running from a built release at all — a dev
+/// checkout, `cargo run --bin spira-install` with no `spira/build-tarball.sh` output
+/// anywhere above it — and that is a FAIL-CLOSED condition: law-install-installs-every-
+/// dependency still requires install to provide aerc, so this names exactly what is
+/// missing and how to produce it rather than silently skipping the dependency. Likewise
+/// when `release_root` resolves but that release's tarball predates sp-41so3 (or was built
+/// by something other than `spira/build-tarball.sh`) and simply has no
+/// `AERC_VENDORED_REL` file.
+fn install_aerc(dry: bool, bin: &Path, release_root: Option<&Path>) -> Result<(), String> {
     let dest = bin.join("aerc");
     let current = Command::new("timeout")
         .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
@@ -463,59 +364,43 @@ fn fetch_aerc(dry: bool, bin: &Path, home: &str) -> Result<(), String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-    if aerc_build_can_be_skipped(current.as_deref()) {
+    if aerc_install_can_be_skipped(current.as_deref()) {
         skip(&format!("aerc {AERC_VERSION} at {}", dest.display()));
         return Ok(());
     }
-    if dry {
-        would(&format!("fetch a go toolchain if needed, then build aerc {AERC_VERSION} (git.sr.ht/~rjarry/aerc) into {}", dest.display()));
+    // SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, same shape as phase 4.5's
+    // SPIRA_INSTALL_LC_STORE_CONSIDERED): an install-suite fixture that installs from a
+    // plain tree or a `release build --bin-dir` stage carries no AERC_VENDORED_REL at all
+    // — that path is for production's own build-tarball.sh tarballs, never these fixtures
+    // — so the fail-closed refusal below would stop every such suite at phase -1, long
+    // before the phase it actually means to test. This is a NAMED, loud opt-out: one line
+    // saying aerc was not installed and why, never a silent skip, and it never fires
+    // against a real release (where no caller has reason to set it).
+    if nonempty_env("SPIRA_INSTALL_AERC_CONSIDERED").is_some() {
+        info("aerc NOT installed — SPIRA_INSTALL_AERC_CONSIDERED is set (a fixture with no release-vendored binary); aerc will not run until install runs without it");
         return Ok(());
     }
-    let go = match find_usable_go(home) {
-        Some(g) => g,
-        None => fetch_go_toolchain(dry, home)?,
+    let Some(release_root) = release_root else {
+        return Err(format!(
+            "cannot install aerc {AERC_VERSION}: this process is not running from a built release (no ancestor holds both bin/ and spira/conf.sh), so there is no {AERC_VENDORED_REL} to copy — build a release tarball first (bash spira/build-tarball.sh build --workspace <repo>), which builds aerc {AERC_VERSION} once and ships it there; install never builds it"
+        ));
     };
-
-    let cache = format!("{home}/.cache/spira-install");
-    std::fs::create_dir_all(&cache).map_err(|e| format!("cannot create {cache}: {e}"))?;
-    let src = format!("{cache}/aerc-{AERC_VERSION}");
-    // A stale partial checkout from an interrupted earlier run must not be mistaken for a
-    // fresh one — `tar --strip-components=1` below would merge into it rather than replace it.
-    let _ = std::fs::remove_dir_all(&src);
-    std::fs::create_dir_all(&src).map_err(|e| format!("cannot create {src}: {e}"))?;
-    let url = aerc_src_url();
-    let tgz = format!("{cache}/.aerc-src.download.tar.gz");
-    // batch-job: install downloads the pinned aerc source archive once per host; bounded by
-    // curl --max-time 300.
-    run_ok("curl", &["-fsSL", "--retry", "3", "--retry-all-errors", "--connect-timeout", "10", "--max-time", "300", "-o", &tgz, &url])
-        .map_err(|e| format!("cannot fetch aerc source from {url}: {e}"))?;
-    // batch-job: unpacking the aerc source archive (a few hundred KB) once per install;
-    // bounded at 60 s.
-    let unpacked = Command::new("timeout").args(["60", "tar", "-xzf", &tgz, "-C", &src, "--strip-components=1"]).status().map(|s| s.success()).unwrap_or(false);
-    let _ = std::fs::remove_file(&tgz);
-    if !unpacked {
-        let _ = std::fs::remove_dir_all(&src);
-        return Err(format!("cannot unpack aerc source from {url}"));
+    let src = release_root.join(AERC_VENDORED_REL);
+    if !src.is_file() {
+        return Err(format!(
+            "release at {} does not carry {AERC_VENDORED_REL} — rebuild its tarball with spira/build-tarball.sh, which builds aerc {AERC_VERSION} once at release-build time and ships the binary there; install never builds it",
+            release_root.display()
+        ));
+    }
+    if dry {
+        would(&format!("copy aerc {AERC_VERSION} from {} to {}", src.display(), dest.display()));
+        return Ok(());
     }
     std::fs::create_dir_all(bin).map_err(|e| format!("cannot create {}: {e}", bin.display()))?;
-    // batch-job: `go install` resolves and compiles aerc's module dependencies over the
-    // network (no vendor/ directory is bundled in the source archive) and compiles the
-    // program; bounded at 600 s. GOTOOLCHAIN=local pins the build to exactly the go binary
-    // this invokes, never a second, possibly-newer toolchain auto-fetched mid-build because
-    // go.mod names a newer `go` line than expected.
-    let build = Command::new("timeout")
-        .args(["600", &go, "install", "-trimpath", "-ldflags", &format!("-X main.Version={AERC_VERSION}"), "."])
-        .current_dir(&src)
-        .env("GOBIN", bin)
-        .env("GOFLAGS", "-mod=mod")
-        .env("GOTOOLCHAIN", "local")
-        .status();
-    let _ = std::fs::remove_dir_all(&src);
-    match build {
-        Ok(s) if s.success() => {}
-        Ok(s) => return Err(format!("go install aerc failed ({s}) — see stderr above")),
-        Err(e) => return Err(format!("cannot run go install for aerc: {e}")),
-    }
+    let tmp = bin.join(".aerc.new");
+    std::fs::copy(&src, &tmp).map_err(|e| format!("cannot copy {} to {}: {e}", src.display(), tmp.display()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).map_err(|e| format!("chmod aerc: {e}"))?;
+    std::fs::rename(&tmp, &dest).map_err(|e| format!("cannot install {}: {e}", dest.display()))?;
     let verify = Command::new("timeout")
         .args(["5", dest.to_str().unwrap_or("aerc"), "-v"])
         .output()
@@ -524,7 +409,7 @@ fn fetch_aerc(dry: bool, bin: &Path, home: &str) -> Result<(), String> {
     if !aerc_reports_version(&verify, AERC_VERSION) {
         return Err(format!("installed {} does not report version {AERC_VERSION}", dest.display()));
     }
-    info(&format!("installed aerc {AERC_VERSION} (go install via {go}) at {}", dest.display()));
+    info(&format!("installed aerc {AERC_VERSION} (copied from the release) at {}", dest.display()));
     Ok(())
 }
 
@@ -1679,36 +1564,6 @@ mod dependency_fetch_tests {
     }
 
     #[test]
-    fn go_release_arch_maps_known_arches_to_godevs_goarch_naming() {
-        assert_eq!(go_release_arch("x86_64").unwrap(), "amd64");
-        assert_eq!(go_release_arch("aarch64").unwrap(), "arm64");
-        assert!(go_release_arch("riscv64").is_err());
-    }
-
-    #[test]
-    fn go_release_sha256_is_pinned_per_goarch_and_refuses_unknown_ones() {
-        assert_eq!(go_release_sha256("amd64").unwrap(), GO_SHA256_AMD64);
-        assert_eq!(go_release_sha256("arm64").unwrap(), GO_SHA256_ARM64);
-        assert!(go_release_sha256("386").is_err());
-    }
-
-    #[test]
-    fn go_release_url_and_aerc_src_url_name_the_pinned_versions() {
-        assert_eq!(go_release_url("amd64"), "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz");
-        assert_eq!(aerc_src_url(), "https://git.sr.ht/~rjarry/aerc/archive/0.22.0.tar.gz");
-    }
-
-    #[test]
-    fn go_version_at_least_reads_the_real_go_version_output_shape() {
-        assert!(go_version_at_least("go version go1.27.1 linux/amd64\n", 1, 25));
-        assert!(go_version_at_least("go version go1.25.0 linux/amd64\n", 1, 25));
-        assert!(!go_version_at_least("go version go1.24.9 linux/amd64\n", 1, 25));
-        assert!(!go_version_at_least("go version go0.9 linux/amd64\n", 1, 25));
-        assert!(!go_version_at_least("", 1, 25));
-        assert!(!go_version_at_least("not go at all\n", 1, 25));
-    }
-
-    #[test]
     fn aerc_reports_version_matches_the_real_dash_v_output_shape() {
         assert!(aerc_reports_version("aerc 0.22.0 (go1.27.1 amd64 linux)\n", "0.22.0"));
         assert!(!aerc_reports_version("aerc 0.21.0 (go1.25.0 amd64 linux)\n", "0.22.0"));
@@ -1717,11 +1572,136 @@ mod dependency_fetch_tests {
     }
 
     /// sp-x6v17: the coordinator asked specifically for this case — a present-at-the-
-    /// pinned-version aerc must skip the whole go-toolchain-then-build pipeline.
+    /// pinned-version aerc must skip install_aerc's copy entirely.
     #[test]
-    fn a_present_at_pinned_version_aerc_skips_the_build() {
-        assert!(aerc_build_can_be_skipped(Some("aerc 0.22.0 (go1.27.1 amd64 linux)\n")));
-        assert!(!aerc_build_can_be_skipped(Some("aerc 0.21.0 (go1.25.0 amd64 linux)\n")));
-        assert!(!aerc_build_can_be_skipped(None));
+    fn a_present_at_pinned_version_aerc_skips_the_install() {
+        assert!(aerc_install_can_be_skipped(Some("aerc 0.22.0 (go1.27.1 amd64 linux)\n")));
+        assert!(!aerc_install_can_be_skipped(Some("aerc 0.21.0 (go1.25.0 amd64 linux)\n")));
+        assert!(!aerc_install_can_be_skipped(None));
+    }
+
+    /// A fake `timeout` on PATH that drops its own first argument (the duration) and execs
+    /// the rest — enough for `install_aerc`'s `timeout 5 <path> -v` version checks, with no
+    /// real `timeout`(1) dependency and, critically, no `curl`, `go` or `tar` anywhere on
+    /// PATH at all. Any attempt by the code under test to spawn one of those would fail with
+    /// ENOENT, so a test whose PATH holds only this proves the code path it exercises
+    /// touches no network and no Go toolchain.
+    fn fake_timeout_only_path() -> testkit::TempDir {
+        let d = testkit::TempDir::new("install-aerc-fake-path");
+        testkit::write_exe(d.join("timeout"), "#!/bin/sh\nshift\nexec \"$@\"\n");
+        d
+    }
+
+    /// A fake aerc binary (any interpreter is fine — install_aerc only ever runs `-v`
+    /// against it) that reports the pinned AERC_VERSION, written at `path`.
+    fn fake_aerc_reporting_pinned_version(path: &Path) {
+        testkit::write_exe(path, "#!/bin/sh\nprintf 'aerc 0.22.0 (go1.27.1 amd64 linux)\\n'\n");
+    }
+
+    /// sp-41so3: before this bead, aerc's only path to ~/.local/bin was `find_usable_go`
+    /// then `go install` against a freshly-curled source archive — no concept of a release
+    /// carrying a prebuilt copy existed at all, so a fresh host (no aerc at `bin`/aerc yet)
+    /// always needed the network, no matter what sat beside it. This is exactly the shape
+    /// that failed real acceptance on 2026-10-04: every `go install` module fetch hit a TLS
+    /// handshake timeout under load. This test is RED against that code (no such function
+    /// as `install_aerc`, and `fetch_aerc` could not have passed it: it ignores
+    /// `AERC_VENDORED_REL` entirely and reaches straight for go/curl on a cache miss) and
+    /// GREEN after sp-41so3: a fresh host whose release already carries the vendored binary
+    /// installs with PATH holding nothing but a fake `timeout` — no curl, no go, no tar
+    /// resolvable at all, so any attempt to spawn one would have errored this test out.
+    #[test]
+    fn install_aerc_copies_the_vendored_binary_and_spawns_no_network_command() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let release = testkit::TempDir::new("install-aerc-release");
+        let vendor_dir = release.join("vendor/bin");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        fake_aerc_reporting_pinned_version(&vendor_dir.join("aerc"));
+        let bin = testkit::TempDir::new("install-aerc-bin");
+
+        let r = install_aerc(false, &bin, Some(release.path()));
+
+        assert!(r.is_ok(), "{r:?}");
+        let dest = bin.join("aerc");
+        assert!(dest.is_file(), "aerc was not copied to {}", dest.display());
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755, "aerc is not executable (mode {mode:o})");
+    }
+
+    #[test]
+    fn install_aerc_skips_the_copy_when_the_pinned_version_is_already_at_dest() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-skip");
+        fake_aerc_reporting_pinned_version(&bin.join("aerc"));
+
+        // release_root is None (no release to copy from at all): a correct skip never looks
+        // at it, because there is nothing to do.
+        let r = install_aerc(false, &bin, None);
+        assert!(r.is_ok(), "{r:?}");
+    }
+
+    #[test]
+    fn install_aerc_fails_closed_with_no_release_root() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-norel");
+
+        let r = install_aerc(false, &bin, None);
+        let e = r.expect_err("no release root must refuse, not silently skip");
+        assert!(e.contains(AERC_VENDORED_REL), "{e}");
+        assert!(e.contains("build-tarball.sh"), "{e}");
+        assert!(!bin.join("aerc").exists());
+    }
+
+    /// SPIRA_INSTALL_AERC_CONSIDERED (sp-41so3, the same named-opt-out shape phase 4.5's
+    /// SPIRA_INSTALL_LC_STORE_CONSIDERED already uses): an install-suite fixture installing
+    /// from a plain tree has no release at all to resolve, let alone one carrying
+    /// AERC_VENDORED_REL — without this escape hatch the fail-closed refusal above stops
+    /// every such suite dead in phase -1, long before the phase it actually means to test
+    /// (test-install-hooks-artifact.sh and 7 siblings, caught by the landing gate). Named
+    /// and loud: Ok(()), but only after printing why aerc was not installed — never a
+    /// silent skip, and no caller with a real release has reason to set it.
+    #[test]
+    fn install_aerc_considered_opt_out_reports_and_skips_with_no_release_root() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str()), ("SPIRA_INSTALL_AERC_CONSIDERED", Some("1"))]);
+        let bin = testkit::TempDir::new("install-aerc-bin-considered");
+
+        let r = install_aerc(false, &bin, None);
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!bin.join("aerc").exists(), "the opt-out must not fabricate an aerc binary");
+    }
+
+    #[test]
+    fn install_aerc_fails_closed_when_the_release_has_no_vendored_binary() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let bin = testkit::TempDir::new("install-aerc-bin-novendor");
+        // A release with a bin/ and spira/ of its own but no vendor/bin/aerc — e.g. a
+        // tarball built before sp-41so3.
+        let release = testkit::TempDir::new("install-aerc-release-novendor");
+
+        let r = install_aerc(false, &bin, Some(release.path()));
+        let e = r.expect_err("a release missing the vendored binary must refuse, not silently skip");
+        assert!(e.contains(AERC_VENDORED_REL), "{e}");
+        assert!(e.contains("build-tarball.sh"), "{e}");
+        assert!(!bin.join("aerc").exists());
+    }
+
+    #[test]
+    fn install_aerc_dry_run_reports_intent_and_copies_nothing() {
+        let fakebin = fake_timeout_only_path();
+        let _env = testkit::env(&[("PATH", fakebin.path().to_str())]);
+        let release = testkit::TempDir::new("install-aerc-release-dry");
+        let vendor_dir = release.join("vendor/bin");
+        std::fs::create_dir_all(&vendor_dir).unwrap();
+        fake_aerc_reporting_pinned_version(&vendor_dir.join("aerc"));
+        let bin = testkit::TempDir::new("install-aerc-bin-dry");
+
+        let r = install_aerc(true, &bin, Some(release.path()));
+        assert!(r.is_ok(), "{r:?}");
+        assert!(!bin.join("aerc").exists(), "a dry run must not copy anything");
     }
 }

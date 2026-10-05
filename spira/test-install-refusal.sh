@@ -173,6 +173,7 @@ run_install() {
         "DOCTOR_FAIL_FLAG=$DOCTOR_FAIL_FLAG" \
         SPIRA_INSTALL_FORCE=1 \
         SPIRA_INSTALL_LC_STORE_CONSIDERED=1 \
+        SPIRA_INSTALL_AERC_CONSIDERED=1 \
         SPIRA_INSTALL_CONFLICT_CONSIDERED=1 \
         "SPIRA_BD=$MOCK_BIN/bd" \
         "${extra_env[@]+"${extra_env[@]}"}" \
