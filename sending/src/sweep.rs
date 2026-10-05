@@ -309,7 +309,12 @@ impl<'a> Sweep<'a> {
                 // base is the case this records. ON: a ContentOnBase event. OFF: the
                 // `content-landed` label CHECK 5's exemption still reads (the gap sp-arpjt
                 // closes — dc3e364bf dropped it for OFF).
-                if g.ahead(lr, br).unwrap_or(0) > 0 {
+                let ahead = g.ahead(lr, br).unwrap_or(0);
+                if ahead > 0 && !g.has_own_commit(lr, br, id) {
+                    self.say(&format!("KEEP   {id}  {ahead} commit(s) not in {lr}, none naming the bead — an empty diff is not evidence of landing"));
+                    return;
+                }
+                if ahead > 0 {
                     if self.w.enforce() {
                         let proof = format!("merge-tree:{}", g.rev_parse(lr).unwrap_or_default());
                         self.w.content_on_base(id, &proof);

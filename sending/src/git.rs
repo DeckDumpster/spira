@@ -66,6 +66,17 @@ impl Git<'_> {
         !merged.is_empty() && self.rev_parse(&format!("{base}^{{tree}}")).is_some_and(|t| t == merged)
     }
 
+    /// A commit in `base..br` whose subject names <id>: the branch did work for the bead.
+    /// Without one an empty diff proves nothing — any branch's diff against the base can be
+    /// empty.
+    pub fn has_own_commit(&self, base: &str, br: &str, id: &str) -> bool {
+        let range = format!("{base}..{br}");
+        let grep = format!("--grep={id}");
+        self.out(&["log", "--format=%s", "-F", grep.as_str(), range.as_str()]).is_some_and(|s| {
+            s.lines().any(|l| l.match_indices(id).any(|(i, _)| !l[i + id.len()..].starts_with(|c: char| c.is_alphanumeric() || c == '.' || c == '-')))
+        })
+    }
+
     /// lib.sh landed: a LANDING RECORD on the land refs names <id> — the queue's own merge
     /// subject (`spira: land <id>`, optionally ` — <title>`) or the bead's own commit
     /// (`<id>:`). --grep only narrows; the subject is what is trusted.
