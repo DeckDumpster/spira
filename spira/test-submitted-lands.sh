@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# test-submitted-lands.sh — a work bead's close becomes open + spira-submitted (sp-qsona), and
-#   in a NON-QUEUE repository that submitted bead must still land and close: aeon close ->
-#   submitted -> landing pass lands it -> spira-lc close-on-land closes it.
+# test-submitted-lands.sh — a work bead the model submits (sp-qsona; `work submit` since
+#   sp-v62vn) must, in a NON-QUEUE repository, still land and close: work submit ->
+#   SUBMITTED -> landing pass gates and lands it -> LANDED, and close-on-land closes it.
 #
 # THE DEFECT THIS REPRODUCES. sp-qsona made spira-lc close-on-land the only thing that closes a
 # work bead, called when the work reaches the base. Queue mode reaches it through the batch
@@ -13,35 +13,61 @@
 # a push-mode scratch repo and failed phase A stage 5 ("no commit with bead id on origin/main
 # after 121s") on every release from the one that shipped sp-qsona.
 #
-# CASES (law-absence-needs-a-positive-control):
-#   1. END TO END, push mode: the real aeon.sh closes a task bead (shim) -> open+submitted;
-#      the real landing.sh then lands the branch on origin/main and the bead ends CLOSED with
-#      the submitted label gone from the ready set's point of view (closed).
-#   2. A submitted bead the landing pass REOPENS (gate FAIL) loses the submitted label, so it
-#      is claimable again — a reopen that kept it would strand it: open, excluded from every
-#      claim, never landed.
+# CASES (law-absence-needs-a-positive-control), against a real lifecycle record (below):
+#   1. END TO END, push mode: the real aeon runs a model stand-in that commits and finishes
+#      with `work submit` -> the row is SUBMITTED at the branch tip; the real landing pass
+#      gates it (the gate's GatePass: CERTIFIED), lands it on origin/main, push-delivered
+#      moves the row to LANDED and close-on-land closes the bead in bd.
+#   2. A submitted bead whose gate is RED goes back to the builders: the gate's GateRed
+#      moves the row to REWORK and nothing lands — and the next aeon really claims it again
+#      and re-submits. A red that left it unclaimable would strand it: open, excluded from
+#      every claim, never landed.
 #   3. pr/hold mode: the merge happens off-box, and the Sending is the first to see the work
-#      on the base. A submitted bead whose branch is found landed there is closed.
+#      on the base. A SUBMITTED bead whose branch is found landed there is closed.
 #   4. push mode: a bead whose lifecycle row the push gate moved from
-#      SUBMITTED to CERTIFIED is still landed by that same pass.
+#      SUBMITTED to CERTIFIED is still landed by that same pass, and ends LANDED.
+#
+# sp-v62vn (lifecycle_enforce=off retired) changed what cases 1-3 are told in: the model
+# no longer `bd close`s and the aeon no longer converts that close into open +
+# spira-submitted, so the assertions that read the spira-submitted label (1, 2, the setup
+# of 3) now read the lifecycle row it stood for; case 2's "reopened <id>" line is replaced
+# by REWORK plus a real re-claim (see case 2's note).
 #
 # defect: sp-qsona (acceptance phase A stage 5)
 # tier: T3
-# covers: landing-pass/* sending/src/* spira/lib.sh aeon/src/*
-# hermetic-ok: uses a fixture database and local git repos, no systemd or gh
+# covers: landing-pass/* sending/src/* spira/lib.sh aeon/src/* work/* spira-lc/*
+# hermetic-ok: uses fixture databases (bd, and a private dolt sql-server for spira_lifecycle) and local git repos, no systemd or gh
 # timeout: 240
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
 # THE LANDING PASS IS THE landing-pass BINARY (landing-pass/DESIGN.md §7.4): `land` for a
 # pass, `halt` to stop one. Resolved from this tree before any fixture repoints SPIRA_REPO.
+#
+# THE LIFECYCLE SERVICE IS REAL (sp-v62vn retired lifecycle_enforce=off). The aeon always
+# runs the model restricted, and a model finishes only through the work broker: `work
+# submit` -> `spira-lc serve` -> the bead machine. So this suite stands up a throwaway
+# spira_lifecycle database (testlib/lc-fixture.sh) behind the tree's own `spira-lc serve`,
+# and every actor — the aeon's claim, the model's submit, the gate stub's verdict, the
+# landing pass's delivery, close-on-land — reads and writes real lifecycle rows. bd holds
+# the bead's content only; no assertion here reads bd status as the bead's state, except
+# the close that close-on-land still writes to bd when the work lands.
 
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-submitted-lands
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+SERVE_PID=""
+trap '[ -n "$SERVE_PID" ] && kill "$SERVE_PID" >/dev/null 2>&1; lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up submittedlands || { echo "test-submitted-lands: could not build a fixture database"; exit 1; }
+lcfix_up || { echo "test-submitted-lands: could not build a lifecycle fixture"; exit 1; }
+LC_SOCK="$TMP/lc.sock"
+SPIRA_LC_SOCKET="$LC_SOCK" spira-lc serve "$LC_SOCK" > "$TMP/serve.log" 2>&1 &
+SERVE_PID=$!
+for _ in $(seq 1 50); do [ -S "$LC_SOCK" ] && break; sleep 0.1; done
+[ -S "$LC_SOCK" ] || bail "spira-lc serve never opened its socket: $(cat "$TMP/serve.log")"
+export SPIRA_LC_SOCKET="$LC_SOCK"
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-submitted-lands.sh"
@@ -70,10 +96,21 @@ stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$SPIRA_HOME/$1"; chmod +x "$
 stub confine.sh 'exit 0'
 stub mail    'exit 0'
 stub gh         'exit 1'
-REAL_LC="$(command -v spira-lc 2>/dev/null || true)"
-lc_path_stub "$SPIRA_HOME" "$TMP/lcfix"
-gate_pass() { stub gate.sh 'echo "gate: VERDICT=PASS reason=stub branch=$1 repo=${2:-?}" >&2; exit 0'; }
-gate_fail() { stub gate.sh 'echo "gate: VERDICT=FAIL reason=stub-fail branch=$1 repo=${2:-?}" >&2; exit 1'; }
+# THE GATE STUB RECORDS ITS VERDICT AS THE REAL GATE DOES: gate/src/engine.rs ends every
+# judged run with `spira-lc certify <SPIRA_GATE_BEAD> <branch tip> pass|red <detail> gate`
+# — GatePass moves a SUBMITTED row to CERTIFIED, GateRed to REWORK. The landing pass then
+# re-reads the row it is about to land. $TMP/gate-state keeps the state the row read right
+# after the verdict, for the sections that assert what the gate itself did.
+gate_stub() {   # gate_stub pass|red
+    local verdict=PASS rc=0 detail=stub
+    [ "$1" = red ] && { verdict=FAIL; rc=1; detail=stub-fail; }
+    stub gate.sh "tip=\"\$(git -C '$REPO' rev-parse \"\$1\" 2>/dev/null)\"
+[ -n \"\${SPIRA_GATE_BEAD:-}\" ] && [ -n \"\$tip\" ] && spira-lc certify \"\$SPIRA_GATE_BEAD\" \"\$tip\" $1 $detail gate >/dev/null 2>&1
+spira-lc show \"\${SPIRA_GATE_BEAD:-}\" 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin)[\"bead\"][\"state\"])' > '$TMP/gate-state' 2>/dev/null
+echo \"gate: VERDICT=$verdict reason=$detail branch=\$1 repo=\${2:-?}\" >&2; exit $rc"
+}
+gate_pass() { gate_stub pass; }
+gate_fail() { gate_stub red; }
 gate_pass
 # The fixture home (and its stubs) is the harness in force: bare names resolve here first.
 export PATH="$SPIRA_HOME:$PATH"
@@ -87,35 +124,25 @@ FAYTH_HEARTBEAT_SECONDS=600
 FAYTH
 printf 'work {{BEAD_ID}} in {{REPO}} on {{BRANCH}}\n{{PARK}}\n' > "$SPIRA_HOME/chamber/builder.md"
 
-# THE SHIM IS THE SESSION: commit, then close the bead the way a builder does. conf.sh
-# replaces PATH, so the model is injected through SPIRA_AGENT and nothing else.
-BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude" TMP
-# sp-mve9i: every decision here — the aeon's close, the landing pass's "is it submitted",
-# close-on-land's "may I close it" — reads the bead's lifecycle row, never bd status. The
-# story is still told in bd words (the shim's bd close is the builder's submit; open +
-# spira-submitted is SUBMITTED), so a stand-in lifecycle service answers the real
-# spira-lc's state reads from the bd store (testlib.sh lc_socket_mirror), and a wrapper
-# first on PATH sends show/list to that real spira-lc; every other verb still reaches the
-# landing stub as before.
-lc_socket_mirror "$TMP/lcsock"
-mkdir -p "$TMP/lcm"
-cat > "$TMP/lcm/spira-lc" <<WRAP
-#!/usr/bin/env bash
-case "\${1:-}" in show|list) exec "$REAL_LC" "\$@" ;; esac
-exec "$SPIRA_HOME/spira-lc" "\$@"
-WRAP
-chmod +x "$TMP/lcm/spira-lc"; export PATH="$TMP/lcm:$PATH"
-[ -n "$REAL_LC" ] || bail "spira-lc is not on PATH"
+# THE SHIM IS THE SESSION: commit, then finish with `work submit`, the builder's {{FINISH}}
+# brief and the only exit a model has (sp-v62vn: the aeon always runs it restricted — no
+# bd, no SPIRA_DB, no TMP; PATH is model-bin/ and the system dirs). It used to `bd close`
+# and rely on the aeon converting that close into open + spira-submitted; there is no such
+# conversion any more. conf.sh replaces PATH, so the model is injected through SPIRA_AGENT,
+# and $TMP is baked in because the restricted environment does not carry it. The fixture
+# ids are sp-sl1..sp-sl4, not sp-sl-1: `work` refuses a binding that is not sp-<alnum>.
+BIN="$TMP/bin"; mkdir -p "$BIN"; export SPIRA_AGENT="$BIN/claude"
 command -v aeon >/dev/null 2>&1 \
     || { echo "test-submitted-lands: aeon is not on PATH" >&2; exit 1; }
-cat > "$BIN/claude" <<'SHIM'
+cat > "$BIN/claude" <<SHIM
 #!/usr/bin/env bash
 cat /dev/stdin > "$TMP/prompt"
-id="$(sed -n 's/^work \(sp-[a-z0-9-]*\) .*/\1/p' "$TMP/prompt" | head -1)"
-printf '%s\n' "$id" > "$id.txt"
-git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "$id: the work"
-bd -C "$SPIRA_DB" close "$id" --reason "done" >/dev/null 2>&1
-printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\n'
+id="\$(sed -n 's/^work \\(sp-[a-z0-9-]*\\) .*/\\1/p' "$TMP/prompt" | head -1)"
+printf '%s\\n' "\$id" >> "\$id.txt"
+git add -A && git -c user.email=a@a -c user.name=aeon commit -qm "\$id: the work"
+work submit > "$TMP/submit.out" 2>&1
+printf '%s' "\$?" > "$TMP/submit.rc"
+printf '{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":3}\\n'
 exit 0
 SHIM
 chmod +x "$BIN/claude"
@@ -126,14 +153,21 @@ import sys,json
 d=json.load(sys.stdin); d=d if isinstance(d,list) else [d]
 v=d[0].get(sys.argv[1])
 print(",".join(v) if isinstance(v,list) else (v or ""))' "$2" 2>/dev/null; }
-seed() {   # seed <id> [status] [extra-label]
-    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\"${3:+,\"$3\"}"
-    printf '{"id":"%s","title":"t","status":"%s","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
-        "$1" "${2:-open}" "$_lbl" | testdb_seed
+seed() {   # seed <id> [lifecycle-state] [tip] — the bd content row plus its lifecycle row
+    local _lbl="${SPIRA_SCOPE_LABEL:+\"${SPIRA_SCOPE_LABEL}\",}\"${SPIRA_PLAN_LABEL:-plan}\",\"repo:fixture\""
+    printf '{"id":"%s","title":"t","status":"open","issue_type":"task","labels":[%s],"updated_at":"2026-09-04T00:00:00Z"}\n' \
+        "$1" "$_lbl" | testdb_seed
+    lcfix_seed "$1" "${2:-READY}" "${3:-}" || bail "could not seed $1's lifecycle row"
 }
-run_aeon() { rm -rf "$SPIRA_RUN/worktree"; aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1; }
+# A submit that did not apply says why, as TAP comments: the broker's answer, then the aeon's.
+run_aeon() {
+    rm -rf "$SPIRA_RUN/worktree" "$TMP/submit.rc" "$TMP/submit.out"
+    aeon --home "$SPIRA_HOME" builder > "$TMP/aeon.out" 2>&1
+    [ "$(cat "$TMP/submit.rc" 2>/dev/null)" = 0 ] && return 0
+    { cat "$TMP/submit.out" 2>/dev/null; tail -n 15 "$TMP/aeon.out"; } | sed 's/^/# /'
+}
 landing() {
-    rm -f "$SPIRA_RUN/landing.progress"
+    rm -f "$SPIRA_RUN/landing.progress" "$TMP/gate-state"
     SPIRA_REPO="$REPO" SPIRA_HOME_REPO=fixture SPIRA_ID_PREFIX=sp SPIRA_GH="$SPIRA_HOME/gh" \
         landing-pass land 2>&1
 }
@@ -142,37 +176,49 @@ sending() {
         command sending 2>&1
 }
 on_base() { git -C "$REPO" fetch -q origin 2>/dev/null; git -C "$REPO" log --format=%s origin/main 2>/dev/null; }
+branch_tip() { git -C "$REPO" rev-parse "spira/$1" 2>/dev/null; }
 
 # ======================================================================================
 echo
-echo "1. END TO END, push mode — aeon close -> submitted -> landed -> closed:"
+echo "1. END TO END, push mode — work submit -> SUBMITTED -> CERTIFIED -> LANDED -> closed:"
 # ======================================================================================
-testdb_reset; seed sp-sl-1
+testdb_reset; seed sp-sl1
 run_aeon
-is   "after the aeon: the close was converted, the bead is open" open "$(field sp-sl-1 status)"
-want "carrying the submitted label"                               "spira-submitted" "$(field sp-sl-1 labels)"
-nowant "and nothing is on the base yet"                           "sp-sl-1" "$(on_base)"
+is   "the model's work submit was applied by the broker"             0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
+is   "after the aeon: the lifecycle row is SUBMITTED"                SUBMITTED "$(lcfix_state sp-sl1)"
+is   "at the branch tip the model committed"                         "$(branch_tip sp-sl1)" "$(lcfix_tip sp-sl1)"
+is   "bd's status was never touched (no close to convert)"           open "$(field sp-sl1 status)"
+nowant "and nothing is on the base yet"                              "sp-sl1" "$(on_base)"
 
 out="$(landing)"
-want "the landing pass lands the submitted bead's branch" "landed spira/sp-sl-1" "$out"
-want "its commit is on origin/main"                        "sp-sl-1: the work" "$(on_base)"
-is   "and the bead is closed by the landing"               closed "$(field sp-sl-1 status)"
-want "with the landed outcome as its close reason"         "OUTCOME: landed" "$(field sp-sl-1 close_reason)"
-nowant "never the 'not landed — its bead is open' skip"     "its bead is open" "$out"
+is   "the gate's GatePass certified the row before the land"         CERTIFIED "$(cat "$TMP/gate-state" 2>/dev/null)"
+want "the landing pass lands the submitted bead's branch"            "landed spira/sp-sl1" "$out"
+want "its commit is on origin/main"                                  "sp-sl1: the work" "$(on_base)"
+is   "the lifecycle row ends LANDED"                                 LANDED "$(lcfix_state sp-sl1)"
+is   "and the bead is closed by the landing"                         closed "$(field sp-sl1 status)"
+want "with the landed outcome as its close reason"                   "OUTCOME: landed" "$(field sp-sl1 close_reason)"
+nowant "never the 'not landed — its bead is open' skip"              "its bead is open" "$out"
 
 # ======================================================================================
 echo
-echo "2. a submitted bead the landing pass REOPENS loses the label — claimable again:"
+echo "2. a submitted bead whose gate is RED goes back to the builders — claimable again:"
 # ======================================================================================
-testdb_reset; seed sp-sl-2
+testdb_reset; seed sp-sl2
 run_aeon
-want "setup: submitted" "spira-submitted" "$(field sp-sl-2 labels)"
+is   "setup: submitted" SUBMITTED "$(lcfix_state sp-sl2)"
 gate_fail
 out="$(landing)"
 gate_pass
-want   "the failed gate reopens it"          "reopened sp-sl-2" "$out"
-is     "the bead is open"                    open "$(field sp-sl-2 status)"
-nowant "and no longer carries the label"     "spira-submitted" "$(field sp-sl-2 labels)"
+is     "the red gate moves the row to REWORK, which the ready set claims" REWORK "$(lcfix_state sp-sl2)"
+nowant "the red branch is not landed"                                     "landed spira/sp-sl2" "$out"
+nowant "and nothing of it reaches the base"                               "sp-sl2" "$(on_base)"
+is     "the bead is open"                                                 open "$(field sp-sl2 status)"
+# CLAIMABLE AGAIN, proven by claiming it: a REWORK row an aeon could not take would strand
+# the bead — open, excluded from every claim, never landed.
+run_aeon
+is   "the next aeon claims it again and its submit applies"               0 "$(cat "$TMP/submit.rc" 2>/dev/null || echo missing)"
+is   "the row is SUBMITTED once more"                                     SUBMITTED "$(lcfix_state sp-sl2)"
+is   "at the new tip"                                                     "$(branch_tip sp-sl2)" "$(lcfix_tip sp-sl2)"
 
 # ======================================================================================
 echo
@@ -180,48 +226,51 @@ echo "3. pr/hold mode — a submitted bead whose branch the Sending finds on the
 # ======================================================================================
 # The forge (or a human) merged the branch; nothing on this box landed it. Simulated with a
 # merge made directly on origin/main, then the Sending sweep.
-testdb_reset; seed sp-sl-3 open spira-submitted
-git -C "$REPO" branch -q -f spira/sp-sl-3 origin/main
-git -C "$REPO" worktree add -q "$TMP/wt3" spira/sp-sl-3
+testdb_reset
+git -C "$REPO" branch -q -f spira/sp-sl3 origin/main
+git -C "$REPO" worktree add -q "$TMP/wt3" spira/sp-sl3
 printf 'three\n' > "$TMP/wt3/three.txt"
-git -C "$TMP/wt3" add -A; git -C "$TMP/wt3" commit -qm "sp-sl-3: the work"
+git -C "$TMP/wt3" add -A; git -C "$TMP/wt3" commit -qm "sp-sl3: the work"
 git -C "$REPO" worktree remove --force "$TMP/wt3"
+seed sp-sl3 SUBMITTED "$(branch_tip sp-sl3)"
 git -C "$REPO" checkout -q main 2>/dev/null; git -C "$REPO" reset -q --hard origin/main
-git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl-3" spira/sp-sl-3
+git -C "$REPO" merge -q --no-ff -m "Merge pull request #3 from spira/sp-sl3" spira/sp-sl3
 git -C "$REPO" push -q origin main 2>/dev/null
 git -C "$REPO" fetch -q origin
-is   "setup: open and submitted before the sweep" open "$(field sp-sl-3 status)"
+is   "setup: open and SUBMITTED before the sweep" "open SUBMITTED" "$(field sp-sl3 status) $(lcfix_state sp-sl3)"
 out="$(sending)"
-want "the Sending sends the landed branch"             "sp-sl-3" "$out"
-is   "and closes the submitted bead"                   closed "$(field sp-sl-3 status)"
-want "with the landed outcome"                         "OUTCOME: landed" "$(field sp-sl-3 close_reason)"
+want "the Sending sends the landed branch"             "sp-sl3" "$out"
+is   "and closes the submitted bead"                   closed "$(field sp-sl3 status)"
+want "with the landed outcome"                         "OUTCOME: landed" "$(field sp-sl3 close_reason)"
 
 # ======================================================================================
 echo
-echo "4. push mode — the gate certifies the SUBMITTED row, and it still lands:"
+echo "4. push mode — a row the push gate moved SUBMITTED -> CERTIFIED at the tip still lands:"
 # ======================================================================================
 # Local acceptance on d40bbb589: the model finishes with `work submit` (no bd close), so the
 # bead is open and only the lifecycle row says SUBMITTED. The push gate itself records
 # GatePass (SUBMITTED -> CERTIFIED) before the land; the pass then re-read the bead, found
 # no SUBMITTED row, logged "bead is now open (was closed at scan time) — not landing" and
 # every later pass skipped it as "its bead is open": READY, WORKING, SUBMITTED, CERTIFIED
-# and never LANDED. Here gate.sh moves the fixture row to CERTIFIED exactly as the real
-# gate's GatePass does.
-testdb_reset; seed sp-sl-4
+# and never LANDED. Here the row is a real one and the gate stub's `spira-lc certify` is the
+# real GatePass, so the pass's re-read sees exactly what production's does.
+testdb_reset
 timeout 5 git -C "$REPO" fetch -q origin
-timeout 5 git -C "$REPO" branch -q -f spira/sp-sl-4 origin/main
-timeout 5 git -C "$REPO" worktree add -q "$TMP/wt4" spira/sp-sl-4
+timeout 5 git -C "$REPO" branch -q -f spira/sp-sl4 origin/main
+timeout 5 git -C "$REPO" worktree add -q "$TMP/wt4" spira/sp-sl4
 printf 'four\n' > "$TMP/wt4/four.txt"
-timeout 5 git -C "$TMP/wt4" add -A; timeout 5 git -C "$TMP/wt4" commit -qm "sp-sl-4: the work"
+timeout 5 git -C "$TMP/wt4" add -A; timeout 5 git -C "$TMP/wt4" commit -qm "sp-sl4: the work"
 timeout 5 git -C "$REPO" worktree remove --force "$TMP/wt4"
-tip4="$(timeout 5 git -C "$REPO" rev-parse spira/sp-sl-4)"
-rm -rf "$LC_FIX/bead"; lc_bead SUBMITTED sp-sl-4 "$tip4" 1
-stub gate.sh "mkdir -p '$LC_FIX/bead/CERTIFIED'; mv '$LC_FIX/bead/SUBMITTED/sp-sl-4' '$LC_FIX/bead/CERTIFIED/sp-sl-4' 2>/dev/null; sed -i 's/SUBMITTED/CERTIFIED/' '$LC_FIX/bead/CERTIFIED/sp-sl-4'; echo \"gate: VERDICT=PASS reason=stub branch=\$1 repo=\${2:-?}\" >&2; exit 0"
-is   "setup: the bead is open (no model closes it)" open "$(field sp-sl-4 status)"
+tip4="$(timeout 5 git -C "$REPO" rev-parse spira/sp-sl4)"
+seed sp-sl4 SUBMITTED "$tip4"
+is   "setup: the bead is open and SUBMITTED at its tip" "open SUBMITTED $tip4" \
+     "$(field sp-sl4 status) $(lcfix_state sp-sl4) $(lcfix_tip sp-sl4)"
 out="$(landing)"
-gate_pass
+is     "the gate moved the row to CERTIFIED before the land"         CERTIFIED "$(cat "$TMP/gate-state" 2>/dev/null)"
 nowant "the pass does not refuse the land right after its own gate" "was closed at scan time" "$out"
-want   "the landing pass lands the certified bead's branch"         "landed spira/sp-sl-4" "$out"
-want   "its commit is on origin/main"                               "sp-sl-4: the work" "$(on_base)"
+want   "the landing pass lands the certified bead's branch"         "landed spira/sp-sl4" "$out"
+want   "its commit is on origin/main"                               "sp-sl4: the work" "$(on_base)"
+is     "push-delivered moves the CERTIFIED row to LANDED"           LANDED "$(lcfix_state sp-sl4)"
+is     "and close-on-land closes the bead"                          closed "$(field sp-sl4 status)"
 
 tl_summary
