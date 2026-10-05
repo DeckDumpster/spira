@@ -305,10 +305,16 @@ STUB
 lc_path_stub() {   # lc_path_stub <bindir> <fixdir>
     local bindir="${1:?lc_path_stub needs a bin dir}" fix="${2:?lc_path_stub needs a fixture dir}"
     LC_FIX="$fix"; mkdir -p "$bindir" "$fix/bead" "$fix/delivery" "$fix/show"; : > "$fix/calls.log"
+    # The two verbs that never touch the lifecycle machine's rows through this stub's
+    # fixture — close-on-land (bd close + reap, sp-2c1n0) and content-landed (git only) —
+    # go to the real spira-lc, the first one on PATH that is not this stub.
+    local real="" c
+    while IFS= read -r c; do [ "$c" -ef "$bindir/spira-lc" ] || { real="$c"; break; }; done < <(type -ap spira-lc 2>/dev/null)
     cat > "$bindir/spira-lc" <<STUB
 #!/usr/bin/env bash
 LC_FIX="$fix"
 printf '%s\\n' "\$*" >> "\$LC_FIX/calls.log"
+case "\$1" in close-on-land|content-landed) [ -n "$real" ] && exec "$real" "\$@" ;; esac
 join() { local first=1 f; printf '['; for f in "\$@"; do [ -f "\$f" ] || continue; [ \$first = 1 ] || printf ','; first=0; cat "\$f"; done; printf ']\\n'; }
 case "\$1" in
     list)
