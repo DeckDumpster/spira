@@ -40,7 +40,7 @@
 1 groomer/src/sweep.rs
 1 groomer/src/unpoison.rs
 1 inbox-triage/src/main.rs
-4 incident/src/main.rs
+3 incident/src/main.rs
 1 incident/src/real.rs
 28 install/src/bin/install.rs
 1 install/src/bin/unit_ensure.rs

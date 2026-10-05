@@ -435,7 +435,10 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let labelled = std::process::Command::new(&bd_bin)
+    // Both reads are bounded (spira-lint call-deadline): an operator's `list` waits 5 s at most.
+    let labelled = std::process::Command::new("timeout")
+        .arg("5")
+        .arg(&bd_bin)
         .args(["-C", db, "list", "--all", "--limit", "0", "--json", "--label", &env.labels])
         .output();
     let ids: Vec<String> = match labelled {
@@ -455,7 +458,7 @@ fn cmd_list(env: &Env, _bd: &dyn Bd) -> ExitCode {
         }
     };
     if !ids.is_empty() {
-        match std::process::Command::new(&bd_bin).args(["-C", db, "list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
+        match std::process::Command::new("timeout").arg("5").arg(&bd_bin).args(["-C", db, "list", "--all", "--limit", "0", "--id", &ids.join(",")]).output() {
             Ok(out) => {
                 for line in String::from_utf8_lossy(&out.stdout).lines() {
                     if line.starts_with("💡") || line.starts_with("warning") || line.starts_with("  Fix") || line.starts_with("  Or") {
