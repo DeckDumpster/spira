@@ -120,7 +120,7 @@ want "units-install --diff: names the withheld unit itself" "$new_unit_name" "$d
 skew_out="$(env -i PATH="$PATH" HOME="$TMP/home" \
     SPIRA_CONF=/nonexistent \
     SPIRA_PATH="$DOLT_DIR" \
-    SPIRA_HOME="$FIXTURE/spira" SPIRA_REPO="$FIXTURE" \
+    SPIRA_HOME="$FIXTURE/spira" SPIRA_RUN="$TMP/run" SPIRA_REPO="$FIXTURE" \
     SPIRA_WATCHERS="$FIXTURE/spira/watchers" \
     SPIRA_DOLT_DATA="" \
     SPIRA_TESTDB_DATA="" \
