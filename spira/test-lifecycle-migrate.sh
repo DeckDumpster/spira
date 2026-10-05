@@ -13,6 +13,8 @@
 # that carries every migration passes with no admin credential; only a pending migration
 # needs SPIRA_LC_ADMIN_USER/SPIRA_LC_ADMIN_PASSWORD, and without them (or with them wrong)
 # the run refuses naming exactly those variables and never prints a password.
+# A pending migration made only of guarded DML on tables the service user writes (0003's
+# UPDATE bead ... WHERE) needs no admin: the service user applies it itself.
 #
 # host-reason: starts its own disposable `dolt sql-server`, same shape as test-lc-hold.sh.
 #
@@ -134,6 +136,22 @@ out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
 wantrc "admin-migrate with only the service user succeeds" 0 $rc
 want "and says no admin was needed" "every migration already applied" "$out"
 want "0003's guarded UPDATE is read as applied, not re-run" "0003-terminal-holder.sql: no row left for it to change" "$out"
+
+echo
+echo "0003 pending with only the service user: guarded DML on a table it writes is applied by it (sp-p1z81)"
+holders() { root_sql --use-db spira_lifecycle sql -q "SELECT bead_id, COALESCE(holder, 'none') AS h FROM bead WHERE bead_id = 'fx-terminal'" -r csv 2>/dev/null; }
+root_sql --use-db spira_lifecycle sql -q "INSERT INTO bead (bead_id, state, holder, lease_until, holds, version, updated_at) VALUES ('fx-terminal', 'LANDED', 'aeon-fixture', 123, '[]', 1, 1)" >/dev/null 2>&1 \
+    || bail "could not seed a terminal row that still has a holder"
+want "positive control: the terminal row still carries a holder" "fx-terminal,aeon-fixture" "$(holders)"
+out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "admin-migrate with no admin credential succeeds" 0 $rc
+want "0003 applied as the service user" "0003-terminal-holder.sql: applied as the lifecycle service user" "$out"
+nowant "no admin was asked for" "SPIRA_LC_ADMIN_USER" "$out"
+want "the holder is gone" "fx-terminal,none" "$(holders)"
+out="$(no_admin spira-lc admin-migrate --if-enforced "$SHIPPED" 2>&1)"; rc=$?
+wantrc "a second run succeeds" 0 $rc
+want "and finds nothing pending" "every migration already applied" "$out"
+nowant "never a credential in the output" "$SVCPW" "$out"
 
 echo
 echo "a pending migration with no admin credential refuses, naming the exit (sp-p1z81)"
