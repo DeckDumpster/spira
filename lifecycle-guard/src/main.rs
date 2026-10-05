@@ -1,3 +1,4 @@
+mod bd_status;
 mod brief;
 mod finding;
 mod landstate;
@@ -154,6 +155,7 @@ fn run_one(root: &Path, rules: &Rules, gate: bool) -> Result<(usize, Vec<Finding
     let mut findings = shell::scan(&shell_files, root, rules)?.into_findings();
     findings.extend(brief::scan(&brief_files, root));
     findings.extend(landstate::scan_rust(&rust_files, root));
+    findings.extend(bd_status::scan_rust(&rust_files, root));
     Ok((scanned, findings))
 }
 

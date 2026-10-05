@@ -14,6 +14,7 @@ pub enum Class {
     BriefBd,
     LandstateCall,
     LandstatePath,
+    BdStatusRead,
 }
 
 impl Class {
@@ -29,6 +30,7 @@ impl Class {
             Class::BriefBd => "brief-bd",
             Class::LandstateCall => "landstate-call",
             Class::LandstatePath => "landstate-path",
+            Class::BdStatusRead => "bd-status-read",
         }
     }
 }
