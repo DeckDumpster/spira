@@ -27,15 +27,14 @@
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd -P)"
 . "$HERE/testlib.sh"
-# The queue binary (queue/DESIGN.md §7.4), invoked by name: the tree under test's build is
-# on the suite's PATH (sp-gypjk).
-
 # shellcheck disable=SC1090
 . "$HERE/testdb.sh"
+. "$HERE/testlib/lc-fixture.sh"
 testdb_require test-queue-transition
 TMP="$(mktemp -d)"
-trap 'testdb_drop; rm -rf "$TMP"' EXIT INT TERM
+trap 'lcfix_down; testdb_drop; rm -rf "$TMP"' EXIT INT TERM
 testdb_up qtrans || { echo "test-queue-transition: could not build a fixture database"; exit 1; }
+lcfix_up || { echo "test-queue-transition: could not build a lifecycle fixture"; exit 1; }
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 
 echo "test-queue-transition.sh"
@@ -141,6 +140,7 @@ land() {
     git -C "$REPO" checkout -q main
     git -C "$REPO" branch -D "round-$id" "work-$id" >/dev/null 2>&1
     mk_bins "$head"
+    lcfix_seed "$id" CERTIFIED "$tip"
     queue land-local "$REPONAME" --head "$head" --members "$id:$tip" >/dev/null
 }
 
@@ -292,5 +292,19 @@ out="$(queue to-local "$REPONAME")"; rc=$?
 is "6: repo_land is back to queue.local" "queue.local local/main" "$(landmode "$REPONAME")"
 is "6: the new local/main is synced to the forge's CURRENT tip, not the stale one" \
     "$ADVANCED" "$(localmain)"
+
+# ============================================================================
+echo
+echo "7 — a bead IN_DELIVERY on spira-lc refuses the transition; once LANDED it proceeds"
+# ============================================================================
+lcfix_seed sp-trbusy IN_DELIVERY "$(localmain)"
+out="$(queue to-forge "$REPONAME")"; rc=$?
+[ "$rc" -ne 0 ] && ok "7: to-forge refuses with work in delivery" || bad "7: to-forge refuses with work in delivery" "got rc=$rc out=$out"
+want "7: names the bead in delivery" "sp-trbusy" "$out"
+is "7: repo-map row is untouched (still queue.local)" "queue.local local/main" "$(landmode "$REPONAME")"
+lcfix_seed sp-trbusy LANDED "$(localmain)"
+out="$(queue to-forge "$REPONAME")"; rc=$?
+[ "$rc" -eq 0 ] && ok "7: the same transition proceeds once the bead is LANDED" \
+    || bad "7: the same transition proceeds once the bead is LANDED" "got rc=$rc out=$out"
 
 tl_summary
