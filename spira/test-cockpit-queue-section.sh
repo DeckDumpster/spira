@@ -16,21 +16,17 @@
 # next/pane assertions were identical to this suite's and are not repeated (test-cockpit-
 # queue.sh is deleted).
 #
-# The anomaly row (closed bead, branch, no landstate) and the commit-body-mention case (b)
+# The anomaly row (closed bead, branch, no lifecycle row) and the commit-body-mention case (b)
 # both moved to test-cockpit-unlanded.sh (coverage rows 10/11, cluster 3): both concern
 # unsent_keys' SP_LANDED/SP_UNLANDED_N classification, not queue_keys, and cannot be
 # exercised through the `queue` subcommand at all once this suite stopped calling `once`.
 #
 # tier: T2
-# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs UC-cockpit-observability-11 spira-lc/*
+# covers: cockpit-collect/src/* spira/lib.sh cockpit/ops/src/health.rs UC-cockpit-observability-11 spira-lc/* spira/testlib/lc-fixture.sh
 # scar: UNLND read closed beads and commit bodies, so batched open beads were invisible
 #       and body mentions falsely marked beads as landed.
 #
-# SP_QUEUE_DEPTH (sp-wenrl.2) now comes from spira-lc's own CERTIFIED list, not the
-# landstate file queue_certified_list (lib.sh, shared with batch.sh, out of this bead's
-# scope) still reads for the next-list order — so sp-c1/sp-c2 below carry both a landstate
-# record (the next-list's own source) and a spira-lc row (SP_QUEUE_DEPTH's source) until
-# queue_certified_list's own cutover.
+# SP_QUEUE_DEPTH and the next-list both come from spira-lc's CERTIFIED rows.
 #
 # SPIRA_BDJSON_FIXTURE, NOT A REAL STORE. queue_keys' only bd reads that this suite exercises
 # are two `show <ids>` calls (batch members, next/certified candidates); the query shape
@@ -44,77 +40,15 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 . "$HERE/testlib.sh"
 
-# Resolve cargo/dolt BEFORE conf.sh, same hazard as test-lifecycle-container.sh: conf.sh
-# can overwrite PATH with the harness's own tool directories.
-CARGO_BIN="$(command -v cargo 2>/dev/null || true)"
-if [ -z "$CARGO_BIN" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-    CARGO_BIN="$HOME/.cargo/bin/cargo"
-fi
-[ -n "$CARGO_BIN" ] || skip "cargo not found on PATH or at ~/.cargo/bin — needed to build spira-lc"
-DOLT_BIN="$(command -v dolt 2>/dev/null || true)"
-[ -n "$DOLT_BIN" ] || skip "dolt not found on PATH — needed for spira_lifecycle's own throwaway server"
+. "$HERE/testlib/lc-fixture.sh"
 
 TMP="$(mktemp -d)"
+trap 'lcfix_down; rm -rf "$TMP"' EXIT INT TERM
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t
 export GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 BASE_PATH="$PATH"
-export PATH="$(dirname "$CARGO_BIN"):$(dirname "$DOLT_BIN"):$BASE_PATH"
-
-# spira_lifecycle's own throwaway server — the same shape test-census.sh's own section 5
-# and test-lc-hold.sh use. A distinct store on its own port, never dolt-beads.service.
-LC_PORT=$((3309 + (RANDOM % 500)))
-LC_SERVER_PID=""
-mkdir -p "$TMP/lc-data"
-cat > "$TMP/lc-server.yaml" <<YAML
-log_level: warning
-listener:
-  port: $LC_PORT
-  max_connections: 50
-  read_timeout_millis: 30000
-  write_timeout_millis: 30000
-data_dir: "$TMP/lc-data"
-behavior:
-  dolt_transaction_commit: false
-  event_scheduler: "OFF"
-YAML
-"$DOLT_BIN" sql-server --config "$TMP/lc-server.yaml" > "$TMP/lc-server.log" 2>&1 &
-LC_SERVER_PID=$!
-_lc_stop() { [ -n "$LC_SERVER_PID" ] && kill "$LC_SERVER_PID" >/dev/null 2>&1; }
-trap '_lc_stop; rm -rf "$TMP"' EXIT INT TERM
-
-lc_up=0
-for _ in $(seq 1 50); do
-    if "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls sql -q "SELECT 1" >/dev/null 2>&1; then
-        lc_up=1
-        break
-    fi
-    sleep 0.2
-done
-[ "$lc_up" = 1 ] || bail "spira_lifecycle's throwaway dolt sql-server never came up: $(cat "$TMP/lc-server.log")"
-
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
-CARGO_TARGET_DIR_FOR_LC="$TMP/lc-cargo-target"
-CARGO_TERM_COLOR=never CARGO_TARGET_DIR="$CARGO_TARGET_DIR_FOR_LC" \
-    "$CARGO_BIN" build --manifest-path "$REPO_ROOT/spira-lc/Cargo.toml" --quiet 2>"$TMP/lc-build.log" \
-    || bail "spira-lc failed to build: $(cat "$TMP/lc-build.log")"
-LC_BIN="$CARGO_TARGET_DIR_FOR_LC/debug/spira-lc"
-
-SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" SPIRA_LC_DB=spira_lifecycle \
-SPIRA_LC_DATA_DIR="$TMP/lc-data" SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" \
-SPIRA_LC_DOLT_BIN="$DOLT_BIN" \
-    "$LC_BIN" admin-apply-ddl "$REPO_ROOT/lifecycle/schema.sql" >"$TMP/lc-schema.log" 2>&1
-wantrc "spira_lifecycle schema applies cleanly" 0 $?
-
-lc_seed_bead() {   # lc_seed_bead <id> <state> <updated_at-epoch>
-    "$DOLT_BIN" --data-dir "$TMP/lc-data" --host 127.0.0.1 --port "$LC_PORT" -u root -p "" --no-tls \
-        --use-db spira_lifecycle sql -q \
-        "INSERT INTO bead (bead_id, state, holds, version, updated_at) VALUES ('$1','$2','[]',0,$3)
-         ON DUPLICATE KEY UPDATE state='$2', updated_at=$3" >/dev/null 2>&1
-}
-
-LC_ENV=(SPIRA_LC_BIN="$LC_BIN" SPIRA_LC_HOST=127.0.0.1 SPIRA_LC_PORT="$LC_PORT" \
-        SPIRA_LC_DB=spira_lifecycle SPIRA_LC_DATA_DIR="$TMP/lc-data" \
-        SPIRA_LC_USER=root SPIRA_LC_PASSWORD="" SPIRA_LC_DOLT_BIN="$DOLT_BIN")
+lcfix_up || bail "could not build a lifecycle fixture"
+LC_ENV=($(lcfix_env))
 
 REPO="$TMP/repo"
 git init -q -b main "$REPO"
@@ -146,8 +80,6 @@ cat > "$TMP/beads.json" <<JSON
 ]
 JSON
 
-# Landstate: batch members BATCHED, certified CERTIFIED.
-mkdir -p "$RUN/landstate"
 NOW_EPOCH="$(date +%s)"
 EPOCH_C1=$(( NOW_EPOCH - 600 ))
 EPOCH_C2=$(( NOW_EPOCH - 300 ))
@@ -158,16 +90,12 @@ TIP_BOPEN="$(git -C "$REPO" rev-parse spira/sp-bopen)"
 TIP_C1="$(git -C "$REPO" rev-parse spira/sp-c1)"
 TIP_C2="$(git -C "$REPO" rev-parse spira/sp-c2)"
 
-printf 'BATCHED %s %s\n' "$TIP_B1" "$NOW_EPOCH" > "$RUN/landstate/sp-b1"
-printf 'BATCHED %s %s\n' "$TIP_B2" "$NOW_EPOCH" > "$RUN/landstate/sp-b2"
-printf 'BATCHED %s %s\n' "$TIP_B3" "$NOW_EPOCH" > "$RUN/landstate/sp-b3"
-printf 'BATCHED %s %s\n' "$TIP_BOPEN" "$NOW_EPOCH" > "$RUN/landstate/sp-bopen"
-printf 'CERTIFIED %s %s\n' "$TIP_C1" "$EPOCH_C1" > "$RUN/landstate/sp-c1"
-printf 'CERTIFIED %s %s\n' "$TIP_C2" "$EPOCH_C2" > "$RUN/landstate/sp-c2"
-
-# SP_QUEUE_DEPTH (sp-wenrl.2) reads spira-lc's own CERTIFIED list, not this landstate file.
-lc_seed_bead sp-c1 CERTIFIED "$EPOCH_C1"
-lc_seed_bead sp-c2 CERTIFIED "$EPOCH_C2"
+lcfix_seed sp-b1 IN_DELIVERY "$TIP_B1" "$NOW_EPOCH"
+lcfix_seed sp-b2 IN_DELIVERY "$TIP_B2" "$NOW_EPOCH"
+lcfix_seed sp-b3 IN_DELIVERY "$TIP_B3" "$NOW_EPOCH"
+lcfix_seed sp-bopen IN_DELIVERY "$TIP_BOPEN" "$NOW_EPOCH"
+lcfix_seed sp-c1 CERTIFIED "$TIP_C1" "$EPOCH_C1"
+lcfix_seed sp-c2 CERTIFIED "$TIP_C2" "$EPOCH_C2"
 
 # Open batch file: PR 42, members sp-b1 sp-b2 sp-b3 sp-bopen, opened 180s ago (ABSORBED FROM
 # test-cockpit-queue.sh: a non-zero SP_QUEUE_BATCH_AGE).
@@ -268,7 +196,7 @@ nowant "pane does not render old UNLND label" "UNLND" "$pane"
 
 echo "--- (e) 32 certified, no open batch: header is the whole count, rows are capped ---"
 TMP2="$(mktemp -d)"
-trap '_lc_stop; rm -rf "$TMP" "$TMP2"' EXIT INT TERM
+trap 'lcfix_down; rm -rf "$TMP" "$TMP2"' EXIT INT TERM
 REPO2="$TMP2/repo"
 git init -q -b main "$REPO2"
 git -C "$REPO2" commit --allow-empty -m "init" -q
@@ -290,12 +218,12 @@ BEADS2_JSON="$TMP2/beads.json"
 git -C "$REPO2" checkout -q main
 
 RUN2="$TMP2/run"
-mkdir -p "$RUN2/landstate" "$TMP2/queue"
+mkdir -p "$RUN2" "$TMP2/queue"
 NOW2="$(date +%s)"
 for i in $(seq 1 "$N_CERT"); do
     bid="$(printf 'sp-e%02d' "$i")"
     tip="$(git -C "$REPO2" rev-parse "spira/$bid")"
-    printf 'CERTIFIED %s %s\n' "$tip" "$(( NOW2 - i ))" > "$RUN2/landstate/$bid"
+    lcfix_seed "$bid" CERTIFIED "$tip" "$(( NOW2 - i ))"
 done
 
 MAP2="$TMP2/repo-map"
@@ -308,6 +236,7 @@ out2="$(env -i PATH="$BASE_PATH" HOME="$TMP2" LC_ALL=C.UTF-8 \
     SPIRA_REPO_MAP="$MAP2" SPIRA_FAYTHS=t \
     SPIRA_QUEUE_DIR="$TMP2/queue" \
     SPIRA_BDJSON_FIXTURE="$BEADS2_JSON" \
+    "${LC_ENV[@]}" \
     cockpit-collect probe queue 2>/dev/null)"
 val2() { printf '%s' "$out2" | grep "^$1=" | head -1 | sed "s/^$1=//"; }
 
