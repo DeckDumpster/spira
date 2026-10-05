@@ -17,11 +17,10 @@
 //!
 //! lib.sh functions this module does NOT absorb, because they belong to families that have
 //! not moved to Rust yet and stay exactly as they are: `spira_landref`/`ref_remote` (family
-//! W — base refs), `bdjson`/`bdq`/`spira_bead_status`/`spira_db_reachable`/
-//! `spira_status_seam` (families A/B — bd, and the bash test seam those two read). This
-//! module takes what it needs from them through its `BdProbe` trait (one implementor per
-//! crate, wired to whatever that crate already uses to reach bd) and through an explicit
-//! `base`/`remote` parameter the caller resolves however it already does.
+//! W — base refs). The claim witness is the lifecycle row's, reached through this module's
+//! `ClaimProbe` trait (one implementor per crate, wired to `spira-lc`; sp-mve9i retired the
+//! bd status witness), and the base through an explicit `base`/`remote` parameter the caller
+//! resolves however it already does.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -146,12 +145,12 @@ pub fn holder_alive(run: &Path, id: &str) -> bool {
     })
 }
 
-/// What this module still cannot answer itself: bd's reachability and a bead's status
-/// (families A/B, still bash — `spira_db_reachable` / `spira_bead_status`), and the
-/// lifecycle machine's own read on the same claim. One call, (reachable, status), matching
-/// `spira_holder_witnesses`'s own pair of questions.
-pub trait BdProbe {
-    fn probe(&self, id: &str) -> (bool, String);
+/// What this module still cannot answer itself: who holds the bead's claim, which is the
+/// lifecycle row's (design §3.4: bd status is inert for work beads — sp-mve9i retired the bd
+/// `in_progress` witness this probe used to carry). `Ok(None)`: the machine answered and has
+/// no row; `Err`: it did not answer.
+pub trait ClaimProbe {
+    fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String>;
 }
 
 fn is_queued_state(state: &str) -> bool {
@@ -172,30 +171,21 @@ fn lc_state(id: &str) -> Option<String> {
 }
 
 /// lib.sh `spira_holder_witnesses <id>`: `Some(why)` when somebody may be home, `None` when
-/// nobody is. THE POSITIVE CONTROL: an unreachable bd database answers "not in_progress"
-/// exactly as a genuinely open bead does, and the wrong one of those must never read as
-/// permission — so an unreachable probe counts as "somebody may be home", not as absence.
-pub fn holder_witnesses(run: &Path, id: &str, bd: &dyn BdProbe) -> Option<String> {
+/// nobody is. The claim is the lifecycle row's: WORKING is somebody home, any other state is
+/// the claim gone (sp-mve9i — bd's `in_progress` is not read). THE POSITIVE CONTROL: a
+/// machine that did not answer, or that has no row for a bead with a branch to destroy,
+/// cannot say the claim is gone, and the wrong one of those must never read as permission —
+/// so either counts as "somebody may be home", not as absence.
+pub fn holder_witnesses(run: &Path, id: &str, lc: &dyn ClaimProbe) -> Option<String> {
     if holder_alive(run, id) {
         return Some("a live process holds it".to_string());
     }
-    let (reachable, status) = bd.probe(id);
-    if !reachable {
-        return Some("the bead database did not answer, so the status witness proves nothing".to_string());
+    match lc.probe(id) {
+        Err(_) => Some("the lifecycle machine did not answer, so the claim witness proves nothing".to_string()),
+        Ok(None) => Some("no lifecycle row, so nothing proves the claim is gone".to_string()),
+        Ok(Some(row)) if row.working() => Some("WORKING — the lease has not been released".to_string()),
+        Ok(Some(_)) => None,
     }
-    if status == "in_progress" {
-        // bd's in_progress can be stale once a caller releases the claim through spira-lc
-        // instead of bd. Trust it UNLESS the lifecycle row exists and positively says the
-        // claim is gone (any state but WORKING); a row this cannot read at all proves
-        // nothing either way, so bd's own signal still governs.
-        if let Some(lc) = lc_state(id) {
-            if lc != "WORKING" {
-                return None;
-            }
-        }
-        return Some("in_progress — the lease has not been released".to_string());
-    }
-    None
 }
 
 /// Salvage before destroying, and REFUSE TO DESTROY IF IT FAILS. `Ok(None)`: nothing to
@@ -336,7 +326,7 @@ pub fn prune_worktrees(reaplog_path: &Path, repo: &Path) -> bool {
 
 /// lib.sh `spira_destroy_worktree <id> <path> <repo> <why>`. `true`: removed, or nothing to
 /// remove. `false`: refused or failed (a reap-log line names which).
-pub fn destroy_worktree(run: &Path, reaplog_path: &Path, id: &str, w: &Path, repo: &Path, why: &str, bd: &dyn BdProbe) -> bool {
+pub fn destroy_worktree(run: &Path, reaplog_path: &Path, id: &str, w: &Path, repo: &Path, why: &str, bd: &dyn ClaimProbe) -> bool {
     if w.as_os_str().is_empty() {
         return true;
     }
@@ -402,7 +392,7 @@ pub enum DestroyBranchErr {
 /// own selector asks (`content_on_base`), never `merge-base --is-ancestor`, or the two sides
 /// contradict on an empty-commit branch.
 #[allow(clippy::too_many_arguments)]
-pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn BdProbe) -> Result<(), DestroyBranchErr> {
+pub fn destroy_branch(run: &Path, reaplog_path: &Path, id: &str, br: &str, repo: &Path, why: &str, caller: &str, base: Option<&str>, bd: &dyn ClaimProbe) -> Result<(), DestroyBranchErr> {
     let g = Git(repo);
     if !g.branch_exists(br) {
         return Ok(());
@@ -477,7 +467,7 @@ pub fn reap_landed_branch(
     caller: &str,
     base: Option<&str>,
     remote: Option<&str>,
-    bd: &dyn BdProbe,
+    bd: &dyn ClaimProbe,
     log: &dyn Fn(&str),
     label_remove: &dyn Fn(&str, &str),
 ) -> ReapOutcome {
@@ -518,17 +508,22 @@ mod tests {
         TempDir::new("sending-reap-test")
     }
 
+    /// The lifecycle row's state for every bead (`None`: the machine did not answer; an
+    /// empty state: no row).
     struct FakeBd {
-        reachable: bool,
-        status: String,
+        state: Option<String>,
     }
-    impl BdProbe for FakeBd {
-        fn probe(&self, _id: &str) -> (bool, String) {
-            (self.reachable, self.status.clone())
+    impl ClaimProbe for FakeBd {
+        fn probe(&self, id: &str) -> Result<Option<spira_config::lc_state::Row>, String> {
+            match &self.state {
+                None => Err("cannot tell".into()),
+                Some(s) if s.is_empty() => Ok(None),
+                Some(s) => Ok(Some(spira_config::lc_state::Row { bead_id: id.into(), state: s.clone(), ..Default::default() })),
+            }
         }
     }
     fn open() -> FakeBd {
-        FakeBd { reachable: true, status: "open".into() }
+        FakeBd { state: Some("READY".into()) }
     }
 
     fn git(dir: &Path, args: &[&str]) {
@@ -711,15 +706,19 @@ mod tests {
     // ---- holder_witnesses ------------------------------------------------------------------
 
     #[test]
-    fn holder_witnesses_reports_in_progress_and_reflects_the_db_outage() {
+    fn holder_witnesses_reads_the_lifecycle_claim_and_reflects_the_outage() {
         let run = tempdir();
-        let in_progress = FakeBd { reachable: true, status: "in_progress".into() };
-        assert_eq!(holder_witnesses(&run, "sp-w1", &in_progress).as_deref(), Some("in_progress — the lease has not been released"));
+        let working = FakeBd { state: Some("WORKING".into()) };
+        assert_eq!(holder_witnesses(&run, "sp-w1", &working).as_deref(), Some("WORKING — the lease has not been released"));
 
-        let unreachable = FakeBd { reachable: false, status: String::new() };
-        assert_eq!(holder_witnesses(&run, "sp-w2", &unreachable).as_deref(), Some("the bead database did not answer, so the status witness proves nothing"));
+        let unreachable = FakeBd { state: None };
+        assert_eq!(holder_witnesses(&run, "sp-w2", &unreachable).as_deref(), Some("the lifecycle machine did not answer, so the claim witness proves nothing"));
 
         assert_eq!(holder_witnesses(&run, "sp-w3", &open()), None);
+        // Past the builder, the claim is gone whatever bd's status still says.
+        assert_eq!(holder_witnesses(&run, "sp-w4", &FakeBd { state: Some("SUBMITTED".into()) }), None);
+        // No row: the machine cannot say the claim is gone.
+        assert_eq!(holder_witnesses(&run, "sp-w5", &FakeBd { state: Some(String::new()) }).as_deref(), Some("no lifecycle row, so nothing proves the claim is gone"));
     }
 
 }

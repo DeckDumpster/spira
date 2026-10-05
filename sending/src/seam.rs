@@ -20,8 +20,6 @@
 /// Precedes a seam's machine-readable answer on stdout; everything before it is lib.sh's
 /// own output (its `log` lines, salvage notes), passed through to ours.
 pub const MARK: char = '\u{1e}';
-/// Separates the fields of one record in an answer.
-pub const FIELD: char = '\u{1d}';
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
@@ -29,9 +27,6 @@ pub enum Op {
     Bead,
     /// Every bead, one `bdjson list --all --limit 0`: the sweep's batched read.
     Beads,
-    /// `spira_db_reachable` + `spira_bead_status`, in one process: the one bd question the
-    /// native `holder_witnesses` (reap.rs) still cannot answer itself (families A/B).
-    Status,
     /// `spira-lc close-on-land`: close a submitted bead at the landed sha and reap its branch.
     CloseOnLand,
     LabelAdd,
@@ -39,7 +34,7 @@ pub enum Op {
 }
 
 #[cfg(test)]
-pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::Status, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
+pub const ALL: &[Op] = &[Op::Context, Op::Bead, Op::Beads, Op::CloseOnLand, Op::LabelAdd, Op::LabelRemove];
 
 const PRELUDE: &str = r#"{
 set -uo pipefail
@@ -79,22 +74,11 @@ const BEADS: &str = r#"printf '\036%s' "$(bdjson list --all --limit 0 2>/dev/nul
 exit 0
 "#;
 
-/// `<0|1>` (db reachable) FIELD `<status>` — the two bd-backed questions
-/// `reap::holder_witnesses` asks through `BdProbe`, calling the still-bash
-/// `spira_db_reachable`/`spira_bead_status` so the status seam (a suite's
-/// `spira_status_seam`) keeps governing both exactly as it did before the chokepoint moved.
-const STATUS: &str = r#"__ok=0; spira_db_reachable && __ok=1
-__st="$(spira_bead_status "$1" 2>/dev/null)"
-printf '\036%s\035%s' "$__ok" "$__st"
-exit 0
-"#;
-
 fn body(op: Op) -> &'static str {
     match op {
         Op::Context => CONTEXT,
         Op::Bead => BEAD,
         Op::Beads => BEADS,
-        Op::Status => STATUS,
         Op::CloseOnLand => "spira-lc close-on-land \"$1\" \"$2\" || true\nexit 0\n",
         Op::LabelAdd => "bdq label add \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
         Op::LabelRemove => "bdq label remove \"$1\" \"$2\" >/dev/null 2>&1 || true\nexit 0\n",
